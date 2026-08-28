@@ -122,6 +122,19 @@ html[dir="ltr"] .sheet h2{font-family:"Marcellus",serif}
 #diag{display:none !important}
 
 
+/* which kit? — a quiet card over the mirror, answered once */
+#kitAsk{position:fixed;inset:0;z-index:18;display:none;align-items:flex-end;justify-content:center;
+  background:rgba(10,7,9,.55);backdrop-filter:blur(3px);padding-bottom:calc(var(--dock) + var(--safe-b) + 24px)}
+#kitAsk.on{display:flex}
+.kaCard{width:min(360px,88%);background:rgba(43,29,36,.96);border:1px solid var(--line);
+  border-radius:20px;padding:16px 15px;box-shadow:0 14px 40px rgba(0,0,0,.55)}
+.kaTitle{font-size:14px;font-weight:600;color:var(--gold-soft);margin-bottom:12px;text-align:center}
+
+/* the two light sliders share one row */
+.ltRow{display:flex;gap:14px;align-items:flex-start}
+.ltRow > div{flex:1;min-width:0}
+.ltRow input[type=range]{width:100%}
+
 /* ---------- compact guide bar ---------- */
 #plBar{position:fixed;left:8px;right:8px;bottom:calc(var(--dock) + var(--safe-b) + 8px);
   z-index:16;display:none;flex-direction:column;gap:7px;padding:10px 12px;
@@ -545,6 +558,14 @@ document.addEventListener('DOMContentLoaded', function(){
       <span class="s wait" id="d4">4 · <span data-i18n="d_track">تتبّع 468 نقطة</span></span>
     </div>
 
+    <div id="kitAsk">
+      <div class="kaCard">
+        <div class="kaTitle" data-i18n="ka_h">بأي مكياج نعمل الآن؟</div>
+        <button class="btn pri wide" data-km="virtual" data-i18n="ka_virtual">جرّبي أي درجة — مكياج افتراضي</button>
+        <button class="btn wide" data-km="owned" id="kitAskOwned" style="margin-top:8px">من خزانتي</button>
+      </div>
+    </div>
+
     <div id="mkHud">
       <div id="mkRail"></div>
       <div id="mkRailRing"></div>
@@ -576,7 +597,7 @@ document.addEventListener('DOMContentLoaded', function(){
 
     <div id="shapeGate" class="hidden">
       <div class="sg-card">
-        <div class="sg-eyebrow">LAMHA MOBILE 1787884691</div>
+        <div class="sg-eyebrow">LAMHA MOBILE 1787921464</div>
         <h3 id="sgTitle" class="disp">جارٍ قراءة شكل وجهك</h3>
         <div class="sg-bar"><i id="sgFill"></i></div>
         <p id="sgText">انظري مباشرة إلى الكاميرا وابقي ثابتة لحظة.</p>
@@ -590,7 +611,7 @@ document.addEventListener('DOMContentLoaded', function(){
     </div>
 
     <div id="gate" class="gone">
-      <div class="mark">LAMHA MOBILE · BUILD 1787884691</div>
+      <div class="mark">LAMHA MOBILE · BUILD 1787921464</div>
       <h1 class="disp" data-i18n="gate_h">مرآة زين الذكية</h1>
       <p data-i18n="gate_p">مرآتك تحلّل بشرتك، ترسم خريطة وجهك، وتجرّب المكياج قبل أن تلمسي فرشاة واحدة.</p>
       <div class="feats">
@@ -620,16 +641,15 @@ document.addEventListener('DOMContentLoaded', function(){
       <button data-preset="evening" data-i18n="lt_eve">سهرة</button>
       <button data-preset="off" data-i18n="lt_off">بدون</button>
     </div>
-    <label class="fld" data-i18n="lt_bri">السطوع</label>
-    <input type="range" id="lt-bri" min="0" max="100" value="14">
-    <label class="fld" data-i18n="lt_tmp">حرارة اللون</label>
-    <input type="range" id="lt-tmp" min="0" max="100" value="50">
-    <label class="fld" data-i18n="lt_map">طبقات العرض</label>
-    <div class="wrap">
-      <button class="btn" data-toggle="map" data-i18n="tg_map">خريطة الوجه</button>
-      <button class="btn" data-toggle="mesh" data-i18n="tg_mesh">الشبكة</button>
-      <button class="btn" data-toggle="edges" data-i18n="tg_edges">الحدود</button>
-      <button class="btn" data-toggle="mirror" data-i18n="tg_mirror">قلب الصورة</button>
+    <div class="ltRow">
+      <div>
+        <label class="fld" data-i18n="lt_bri">السطوع</label>
+        <input type="range" id="lt-bri" min="0" max="100" value="14">
+      </div>
+      <div>
+        <label class="fld" data-i18n="lt_tmp">حرارة اللون</label>
+        <input type="range" id="lt-tmp" min="0" max="100" value="50">
+      </div>
     </div>
   </div>
 
@@ -734,6 +754,13 @@ document.addEventListener('DOMContentLoaded', function(){
       <label class="fld" data-i18n="sk_box">صندوق الجمال — مقترحات لبشرتك</label>
       <div class="cards" id="sk-cards"></div>
     </div>
+  </div>
+
+  <!-- Ground-truth accuracy check -->
+  <div class="sheet" id="sh-verify" style="max-height:74vh">
+    <div class="grab"></div><button class="close-x">✕</button>
+    <h2 data-i18n="vf_h">هل قياسات التطبيق صحيحة؟</h2>
+    <div id="vf-body"></div>
   </div>
 
   <!-- Skin progress -->
@@ -879,14 +906,18 @@ document.addEventListener('DOMContentLoaded', function(){
   <!-- Face measurements -->
   <div class="sheet" id="sh-measure">
     <div class="grab"></div><button class="close-x">✕</button>
-    <h2 data-i18n="ms_h">قياسات الوجه</h2>
-    <p class="lead" data-i18n="ms_p">انظري مباشرة إلى الكاميرا بوجه محايد. نقيس كل عنصر بالنسبة لعرض وجهك، ثم نحوّله إلى ملّيمترات.</p>
+    <div id="ms-intro">
+      <h2 data-i18n="ms_h">قياسات الوجه</h2>
+      <p class="lead" data-i18n="ms_p">انظري مباشرة إلى الكاميرا بوجه محايد. نقيس كل عنصر بالنسبة لعرض وجهك، ثم نحوّله إلى ملّيمترات.</p>
+    </div>
     <button class="btn pri wide" id="ms-run" data-i18n="ms_run">ابدئي القياس</button>
     <div id="ms-res" class="hidden">
       <div class="note" id="ms-shape"></div>
-      <button class="btn wide" id="sk-prog" style="margin-top:8px" data-i18n="pg_btn">تقدّم بشرتك عبر الوقت</button>
+      <button class="btn wide" id="sk-wb" style="margin-top:8px" data-i18n="wb_btn">معايرة اللون ببطاقة بيضاء</button>
+    <button class="btn wide" id="sk-prog" style="margin-top:8px" data-i18n="pg_btn">تقدّم بشرتك عبر الوقت</button>
     <button class="btn wide" id="sk-hair" style="margin-top:8px" data-i18n="hr_btn">شعرك — النوع والعناية والتسريحات</button>
     <button class="btn wide" id="sk-cond" style="margin-top:10px" data-i18n="sc_btn">بشرتك كما تعرفينها</button>
+    <button class="btn wide" id="ms-verify" style="margin-top:8px" data-i18n="vf_btn">تحقّقي من دقة القياس بشريط</button>
     <button class="btn wide" id="ms-calib" style="margin-top:10px" data-i18n="cal_btn">معايرة بالبطاقة — قياس حقيقي بالمليمتر</button>
     <div id="ms-groups"></div>
       <label class="fld"><span data-i18n="ms_ipd">مسافة بؤبؤ العين (للمعايرة)</span> · <span id="ms-ipd-v" class="mono">63 mm</span></label>
@@ -1052,7 +1083,7 @@ ar:{
  z_concealer:"كونسيلر", z_crease:"ثنية الجفن", z_corner:"الزاوية", z_contour:"كونتور", z_nose:"الأنف", nav_measure:"القياسات",
  nav_kit:"خزانتي", kt_h:"خزانة مكياجي",
  kt_p:"صوّري كل منتج عندك واكتبي اسمه ونوعه. التطبيق يبني قائمتك، ويقترح عليك من الموجود لديك أولاً، ويخبرك بما ينقصك.",
- kt_add:"أضيفي منتجاً بالكاميرا", kt_pick:"المسي على المنتج في الصورة لالتقاط لونه بدقّة.",
+ kt_add:"أضيفي منتجاً بالكاميرا", kt_pick:"المسي على المنتج في الصورة — سيُحدَّد كاملاً ويُقرأ لونه. المسي مكاناً آخر لتصحيح التحديد.",
  kt_type:"النوع", kt_name:"الاسم", kt_brand:"الماركة (اختياري)", kt_shade:"الدرجة",
  kt_cancel:"إلغاء", kt_save:"حفظ في خزانتي", kt_mine:"ما عندي", kt_ess:"الأساسيات — ما ينقصك",
  kt_none:"خزانتك فارغة. ابدئي بأول منتج.", kt_have:"عندك كل الأساسيات.", kt_needname:"اكتبي اسم المنتج",
@@ -1087,10 +1118,18 @@ ar:{
  pl_h:"من وجهك إلى الإطلالة", mk_plan:"دليل التطبيق خطوة بخطوة",
  pl_p:"نلتقط صورة الإطلالة النهائية أولاً، ثم نمشي معك خطوة خطوة حتى تصلي إليها بيدك.",
  pl_start:"التقطي صورة الهدف وابدئي", pl_exit:"إنهاء الدليل",
+ ka_h:"بأي مكياج نعمل الآن؟", ka_virtual:"جرّبي أي درجة — مكياج افتراضي", ka_owned:"من خزانتي",
+ ka_empty:"خزانتك فارغة — أضيفي منتجاتك أولاً، أو جرّبي المكياج الافتراضي",
  lt_auto:"اضبطي تلقائياً", lt_manual:"أضبط بنفسي",
  lt_done:"ضُبطت الإضاءة على وجهك", kt_how:"كيف تريدين إضافته؟", kt_cam:"بالكاميرا", kt_gal:"من الصور", kt_man:"يدوياً",
  kt_read:"قرأت المنتج", kt_readfail:"لم أتعرّف على تفاصيله — صحّحيها بنفسك",
- pg_btn:"تقدّم بشرتك عبر الوقت", pg_h:"تقدّم بشرتك", pg_from:"قارني منذ",
+ vf_btn:"تحقّقي من دقة القياس بشريط", vf_h:"هل قياسات التطبيق صحيحة؟",
+ wb_btn:"معايرة اللون ببطاقة بيضاء",
+ wb_hold:"أمسكي ورقة بيضاء بجانب خدك في نفس الإضاءة، ثم المسي عليها على الشاشة",
+ wb_done:"عُوّيرت الألوان ✓", wb_dark:"البقعة مظلمة — قرّبي الورقة من الضوء",
+ wb_blown:"الضوء محترق على الورقة — أبعديها قليلاً عن مصدر الضوء",
+ wb_notwhite:"هذه ليست بيضاء محايدة — المسي على ورقة بيضاء عادية",
+ wb_on:"الألوان معايَرة", pg_btn:"تقدّم بشرتك عبر الوقت", pg_h:"تقدّم بشرتك", pg_from:"قارني منذ",
  pg_p:"أقارن مسحاتك عبر الوقت وأريك ما تغيّر فعلاً — بالأرقام، وبالمليمتر إن عايرتِ بالبطاقة.",
  gs_btn:"صوّري كل مكياجك دفعة واحدة", gs_save:"أضيفيها إلى خزانتي",
  gs_hint:"افردي منتجاتك على سطح فاتح وموحّد، بإضاءة جيدة وبلا ظلال، وصوّريها من فوق.",
@@ -1279,10 +1318,18 @@ en:{
  pl_h:"From your face to the look", mk_plan:"Step-by-step application guide",
  pl_p:"We capture the finished look first, then walk you through it step by step until you get there yourself.",
  pl_start:"Capture the target and begin", pl_exit:"End the guide",
+ ka_h:"Which makeup are we working with?", ka_virtual:"Try any shade — virtual", ka_owned:"From my kit",
+ ka_empty:"Your kit is empty — add your products first, or try virtual shades",
  lt_auto:"Set it for me", lt_manual:"I'll set it myself",
  lt_done:"Lighting balanced on your face", kt_how:"How would you like to add it?", kt_cam:"With the camera", kt_gal:"From photos", kt_man:"By hand",
  kt_read:"I read the product", kt_readfail:"I couldn't read its details — please correct them",
- pg_btn:"Your skin progress over time", pg_h:"Skin progress", pg_from:"Compare since",
+ vf_btn:"Check measurement accuracy with a tape", vf_h:"Are the app's measurements right?",
+ wb_btn:"Calibrate colour with a white card",
+ wb_hold:"Hold a plain white paper beside your cheek in the same light, then tap it on screen",
+ wb_done:"Colour calibrated ✓", wb_dark:"That patch is too dark — bring the paper into the light",
+ wb_blown:"The paper is blown out — move it away from the light",
+ wb_notwhite:"That isn't neutral white — tap a plain white paper",
+ wb_on:"Colour calibrated", pg_btn:"Your skin progress over time", pg_h:"Skin progress", pg_from:"Compare since",
  pg_p:"I compare your scans over time and show what actually changed — in numbers, and in millimetres if you calibrated with a card.",
  gs_btn:"Photograph your whole kit at once", gs_save:"Add them to my kit",
  gs_hint:"Lay your products on a plain light surface, good light, no shadows, and shoot from above.",
@@ -1471,10 +1518,18 @@ id:{
  pl_h:"Dari wajahmu ke tampilan", mk_plan:"Panduan langkah demi langkah",
  pl_p:"Kami tangkap dulu foto hasil akhirnya, lalu memandumu langkah demi langkah sampai kamu mencapainya sendiri.",
  pl_start:"Ambil foto target dan mulai", pl_exit:"Akhiri panduan",
+ ka_h:"Riasan mana yang kita pakai?", ka_virtual:"Coba warna apa saja — virtual", ka_owned:"Dari koleksiku",
+ ka_empty:"Koleksimu kosong — tambahkan produk dulu, atau coba warna virtual",
  lt_auto:"Atur otomatis", lt_manual:"Saya atur sendiri",
  lt_done:"Pencahayaan disesuaikan", kt_how:"Bagaimana menambahkannya?", kt_cam:"Dengan kamera", kt_gal:"Dari foto", kt_man:"Manual",
  kt_read:"Saya membaca produk", kt_readfail:"Detail tidak terbaca — mohon perbaiki",
- pg_btn:"Kemajuan kulitmu", pg_h:"Kemajuan kulit", pg_from:"Bandingkan sejak",
+ vf_btn:"Periksa akurasi dengan pita ukur", vf_h:"Apakah ukuran aplikasi benar?",
+ wb_btn:"Kalibrasi warna dengan kartu putih",
+ wb_hold:"Pegang kertas putih polos di samping pipi, lalu ketuk di layar",
+ wb_done:"Warna dikalibrasi ✓", wb_dark:"Terlalu gelap — dekatkan ke cahaya",
+ wb_blown:"Terlalu terang — jauhkan dari cahaya",
+ wb_notwhite:"Itu bukan putih netral — ketuk kertas putih biasa",
+ wb_on:"Warna dikalibrasi", pg_btn:"Kemajuan kulitmu", pg_h:"Kemajuan kulit", pg_from:"Bandingkan sejak",
  pg_p:"Saya membandingkan pemindaianmu dan menunjukkan apa yang benar-benar berubah.",
  gs_btn:"Foto seluruh koleksimu sekaligus", gs_save:"Tambahkan ke koleksiku",
  gs_hint:"Bentangkan produkmu di permukaan polos terang, cahaya baik, tanpa bayangan, foto dari atas.",
@@ -2171,7 +2226,12 @@ function loop(){
     try{ updateGuide(); drawGuide(); }
     catch(err){ if(!S._gdErr){ S._gdErr=1; fatalLog('[guide] '+(err && (err.stack||err.message||err))); } }
   }
+  if(S.landmarks && typeof drawApplyAnim==='function'){
+    try{ drawApplyAnim(S.landmarks); }
+    catch(e){ if(!S._anmErr){ S._anmErr=1; fatalLog('[apply anim] '+(e&&(e.stack||e.message||e))); } }
+  }
   if(typeof __rearCoach==='function' && S.guide){ try{ __rearCoach(); }catch(e){} }
+  if(S.wbMode && typeof __wbDraw==='function'){ try{ __wbDraw(); }catch(e){} }
   if(S.calibMode && typeof __calibDraw==='function'){ try{ __calibDraw(); }catch(e){} }
   if(S.scanning) drawScanBeam();
 
@@ -2557,7 +2617,28 @@ function faceOvalToHairline(lm, pt, fs){
   }).filter(Boolean);
 }
 
+/* ---- power watchdog: on a phone that cannot keep up, drop the optional
+   passes rather than the frame rate. Quality degrades gracefully. ---- */
+let _pwT = performance.now(), _pwN = 0;
+function powerCheck(){
+  const now = performance.now(); _pwN++;
+  if(now - _pwT < 1500) return;
+  const fps = _pwN * 1000 / (now - _pwT);
+  _pwN = 0; _pwT = now;
+  if(fps < 22 && !S._lowPower){
+    S._lowPower = true;
+    S._featherKey = '';                      /* recompute once at the new setting */
+    if(!S._lowSaid){ S._lowSaid = 1;
+      try{ say(LANG==='ar' ? 'خفّفت المعالجة ليعمل التطبيق بسلاسة على جهازك'
+        : LANG==='id' ? 'Pemrosesan diringankan agar lancar di perangkatmu'
+        : 'Lightened the processing so it runs smoothly on your device', 4500); }catch(e){}
+    }
+  } else if(fps > 40 && S._lowPower){
+    S._lowPower = false; S._featherKey = '';
+  }
+}
 function drawMakeup(lm, tctx, tcv, pt, fsOverride){
+  powerCheck();
   tctx = tctx || ctx; tcv = tcv || cv; pt = pt || P;
   const M=S.makeup, fs=fsOverride || faceScale(lm);
   const IN = k => clamp(S.ints[k] ?? .5, 0, 1);
@@ -2566,6 +2647,10 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
   const CPU_ONLY = { glow:1, base:1 };
   const active = ZORDER.filter(k=>ZCFG[k] && M[k] && zoneVisible(k)
     && !(gpuOwns && !CPU_ONLY[k]));
+  /* while a zone is being "applied", its colour rises from nothing to full
+     behind the travelling tool — the reveal, not a different result */
+  const APP = (typeof window.applyProgress==='function' && !window.__PT)
+    ? window.applyProgress : null;
   /* foundation is a SKIN-SMOOTHING pass, not pigment on a texture:
      it reads the live face and re-paints it softened. Baking it would
      sample the flat grey backdrop and print a grey wash over everything,
@@ -2577,6 +2662,13 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
   if(!showBase && !active.length) return;
   const B = faceBBox(lm, fs*0.16);
   if(B.w<8||B.h<8) return;
+  /* ---- resolution cap ----
+     Makeup is a smooth layer: computing it above ~340px across and letting
+     the browser upscale is invisible, and it is the single biggest saving
+     available (cost falls with the square of the width). */
+  const CAP = S._lowPower ? 240 : 340;
+  const RS  = Math.min(1, CAP / Math.max(B.w, B.h));
+  const PW = Math.max(8, Math.round(B.w*RS)), PH = Math.max(8, Math.round(B.h*RS));
 
   /* ---- 1. foundation: evens tone and softens texture, eyes + lips stay sharp ---- */
   if(showBase){
@@ -2609,8 +2701,11 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
   if(!active.length) return;
 
   /* ---- 2. build the two packed masks (soft, feathered alpha) ---- */
-  mk1.width=B.w; mk1.height=B.h; mk2.width=B.w; mk2.height=B.h;
-  m1.setTransform(1,0,0,1,-B.x,-B.y); m2.setTransform(1,0,0,1,-B.x,-B.y);
+  mk1.width=PW; mk1.height=PH; mk2.width=PW; mk2.height=PH;
+  /* one transform carries both the crop and the resolution cap, so every
+     shape below keeps drawing in full-size face coordinates */
+  m1.setTransform(RS,0,0,RS,-B.x*RS,-B.y*RS);
+  m2.setTransform(RS,0,0,RS,-B.x*RS,-B.y*RS);
   m1.globalCompositeOperation='source-over'; m1.fillStyle='#000'; m1.fillRect(B.x,B.y,B.w,B.h);
   m2.globalCompositeOperation='source-over'; m2.fillStyle='#000'; m2.fillRect(B.x,B.y,B.w,B.h);
   const on = k => active.includes(k);
@@ -2698,8 +2793,8 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
 
   /* mask4 : R concealer, G crease, B outer corner */
   if(needs4){
-    mk4.width=B.w; mk4.height=B.h;
-    m4.setTransform(1,0,0,1,-B.x,-B.y);
+    mk4.width=PW; mk4.height=PH;
+    m4.setTransform(RS,0,0,RS,-B.x*RS,-B.y*RS);
     m4.globalCompositeOperation='source-over'; m4.fillStyle='#000'; m4.fillRect(B.x,B.y,B.w,B.h);
     m4.globalCompositeOperation='lighten';
     const dn = (()=>{ const a=pt(lm[168]), b=pt(lm[152]);
@@ -2801,8 +2896,8 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
   /* mask3 : R contour (sculpt), G nose */
   const needs3 = on('contour') || on('nose') || on('highlight');
   if(needs3){
-    mk3.width=B.w; mk3.height=B.h;
-    m3.setTransform(1,0,0,1,-B.x,-B.y);
+    mk3.width=PW; mk3.height=PH;
+    m3.setTransform(RS,0,0,RS,-B.x*RS,-B.y*RS);
     m3.globalCompositeOperation='source-over'; m3.fillStyle='#000'; m3.fillRect(B.x,B.y,B.w,B.h);
     m3.globalCompositeOperation='lighten';
     m3.lineCap='round'; m3.lineJoin='round';
@@ -2848,28 +2943,37 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
   pxC.width=B.w; pxC.height=B.h;
   pxX.setTransform(1,0,0,1,0,0);
   pxX.clearRect(0,0,B.w,B.h);
-  pxX.drawImage(tcv, B.x,B.y,B.w,B.h, 0,0,B.w,B.h);
-  const fd = pxX.getImageData(0,0,B.w,B.h), D = fd.data;
+  pxC.width = PW; pxC.height = PH;
+  pxX.drawImage(tcv, B.x,B.y,B.w,B.h, 0,0,PW,PH);
+  const fd = pxX.getImageData(0,0,PW,PH), D = fd.data;
   /* keep the bare skin so we can diffuse only what makeup added */
-  const skin0 = (active.length > 1) ? new Uint8ClampedArray(D) : null;
+  const skin0 = (active.length > 1 && !S._lowPower) ? new Uint8ClampedArray(D) : null;
   /* if this browser ignores ctx.filter, feather every mask by hand —
      this is what makes concealer, highlight and the face edge blend */
-  if(!BLUR_OK){ softenMask(m1, B.w, B.h, Math.max(2, Math.round(B.w*0.022))); }
-  const A1 = on('lips')||on('blush')||on('eyeshadow') ? m1.getImageData(0,0,B.w,B.h).data : null;
-  if(!BLUR_OK){
-    const R2 = Math.max(2, Math.round(B.w*0.022));
-    softenMask(m2, B.w, B.h, R2);
-    if(needs3) softenMask(m3, B.w, B.h, R2);   /* contour · highlight  */
-    if(needs4) softenMask(m4, B.w, B.h, R2);   /* concealer · crease   */
+  /* The masks only change when the LOOK changes, yet we were re-feathering
+     them 60 times a second. Feather on change, reuse otherwise. */
+  const featherKey = !BLUR_OK ? (JSON.stringify([M, S.ints, S.fins, S.shape, B.w, B.h])) : '';
+  const needFeather = !BLUR_OK && featherKey !== S._featherKey;
+  if(needFeather){ S._featherKey = featherKey;
+    softenMask(m1, PW, PH, Math.max(2, Math.round(PW*0.022))); }
+  const A1 = on('lips')||on('blush')||on('eyeshadow') ? m1.getImageData(0,0,PW,PH).data : null;
+  if(needFeather){
+    const R2 = Math.max(2, Math.round(PW*0.022));
+    softenMask(m2, PW, PH, R2);
+    if(needs3) softenMask(m3, PW, PH, R2);   /* contour · highlight  */
+    if(needs4) softenMask(m4, PW, PH, R2);   /* concealer · crease   */
   }
-  const A2 = on('liner')||on('brow')||on('glow')      ? m2.getImageData(0,0,B.w,B.h).data : null;
-  const A3 = needs3 ? m3.getImageData(0,0,B.w,B.h).data : null;
-  const A4 = needs4 ? m4.getImageData(0,0,B.w,B.h).data : null;
+  const A2 = on('liner')||on('brow')||on('glow')      ? m2.getImageData(0,0,PW,PH).data : null;
+  const A3 = needs3 ? m3.getImageData(0,0,PW,PH).data : null;
+  const A4 = needs4 ? m4.getImageData(0,0,PW,PH).data : null;
 
   const Z = active.map(k=>{
     const c=ZCFG[k], [tr,tg,tb]=hex2rgb(M[k]);
     return {arr:c.src===1?A1:(c.src===2?A2:(c.src===3?A3:A4)), ch:c.ch, gamma:c.gamma, a:c.a, add:!!c.add, I:IN(k),
-            chroma: clamp((c.chroma ?? 0.7) * (0.74 + 0.90*IN(k)), 0.05, 1),
+            chroma: clamp((c.chroma ?? 0.7) * (0.74 + 0.90*IN(k)) * (APP?APP(k):1), 0.05, 1),
+    /* how much of the skin's own light survives: full at sheer coverage,
+       fading toward the pure shade as she pushes the intensity up */
+    lit: clamp(1 - Math.max(0, (IN(k)-0.55)/0.40), 0, 1),
             grp:!!c.grp, tr,tg,tb, sheen:sheenFor(k),
             lut:new Float32Array(256), sum:0, wt:0, mean:128, sr:0, sg:0, sb:0};
   }).filter(z=>z.arr);
@@ -2894,8 +2998,14 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
       z.tg = bg + (z.tg-bg)*c;
       z.tb = bb + (z.tb-bb)*c;
     }
+    /* The light ratio keeps pores and shadows alive under sheer colour, but
+       at high intensity it also pulls the result away from the shade she
+       actually chose. Blend it toward 1 as intensity rises: sheer keeps the
+       texture, full delivers the true shade. */
+    const keepLit = (z.lit==null) ? 1 : z.lit;
     for(let y=0;y<256;y++){
-      const m = Math.pow(y/z.mean, z.gamma);
+      const m0 = Math.pow(y/z.mean, z.gamma);
+      const m  = 1 + (m0-1)*keepLit;
       z.lut[y] = m<0?0 : m>2.45?2.45 : m;
     }
   }
@@ -2948,12 +3058,18 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
      We isolate what the makeup ADDED (result − bare skin), diffuse that
      difference spatially, and lay it back down. The skin texture beneath
      is untouched; only the pigment migrates across the seams. */
-  if(skin0 && active.length > 1){
-    const W2=B.w, H2=B.h;
+  /* the blending pass is the second-heaviest thing we do: run it every other
+     frame and only when zones can actually meet. The eye cannot see the
+     difference at 30Hz on a diffusion that is smooth by definition. */
+  S._blendTick = (S._blendTick|0) + 1;
+  const wantBlend = skin0 && active.length > 1 && !S._lowPower &&
+        (S._blendTick % 2 === 0);
+  if(wantBlend){
+    const W2=PW, H2=PH;
     /* Work at 1/4 resolution: the diffusion is smooth by definition, so the
        detail lost is detail we were about to blur away — and it makes the
        pass fast enough to run every frame on a phone. */
-    const S2 = 4;
+    const S2 = S._lowPower ? 6 : 4;
     const sw = Math.max(2, Math.ceil(W2/S2)), sh = Math.max(2, Math.ceil(H2/S2));
     const sn = sw*sh;
     const cnt=new Float32Array(sn);
@@ -2983,10 +3099,14 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
       return out;
     };
     const bR=box(sR), bG=box(sG), bB=box(sB);
-    /* how much of the diffused layer replaces the crisp one:
-       high enough to dissolve the seams, low enough to keep each product read */
-    const MIX = 0.78;
-    const inv = 1-MIX;
+    /* How much of the diffused layer replaces the crisp one.
+       CRITICAL: diffusion must soften SEAMS, never dilute a small dense
+       zone like the lips — spreading its pigment over the surrounding skin
+       is what made deep shades read washed out. So the mix is applied per
+       pixel, and only where the blurred value is CLOSE to the crisp one
+       (a seam between two products); where they differ sharply (the edge of
+       a strong zone against bare skin) the crisp colour is kept. */
+    const MIX_MAX = 0.78;
     for(let y=0;y<H2;y++){
       /* bilinear position in the small grid */
       const gy=(y+0.5)/S2-0.5, y0=Math.max(0,Math.min(sh-1,Math.floor(gy)));
@@ -3001,9 +3121,22 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
         const gr=bR[i00]*w00+bR[i01]*w01+bR[i10]*w10+bR[i11]*w11;
         const gg=bG[i00]*w00+bG[i01]*w01+bG[i10]*w10+bG[i11]*w11;
         const gb=bB[i00]*w00+bB[i01]*w01+bB[i10]*w10+bB[i11]*w11;
-        const nr=skin0[q]  +(D[q]  -skin0[q])  *inv+gr*MIX;
-        const ng=skin0[q+1]+(D[q+1]-skin0[q+1])*inv+gg*MIX;
-        const nb=skin0[q+2]+(D[q+2]-skin0[q+2])*inv+gb*MIX;
+        const cr=D[q]-skin0[q], cg=D[q+1]-skin0[q+1], cb=D[q+2]-skin0[q+2];
+        /* strength of the crisp pigment here, and how far the blur strays */
+        const mag  = Math.abs(cr)+Math.abs(cg)+Math.abs(cb);
+        const stray= Math.abs(gr-cr)+Math.abs(gg-cg)+Math.abs(gb-cb);
+        /* a seam: modest local pigment, blur agrees → blend freely.
+           a strong zone's body: blur pulls it toward bare skin → keep it. */
+        /* A seam sits BETWEEN two pigments: the blur lands near the crisp
+           value, so stray is small relative to mag. The body of a lone
+           strong zone has the blur pulling hard toward bare skin: stray
+           approaches mag. Scale generously so ordinary seams blend fully
+           while a dense zone keeps its colour. */
+        const trust = mag<6 ? 1 : Math.max(0, Math.min(1, 1.55 - stray/(mag*0.62)));
+        const MIX = MIX_MAX*trust, inv = 1-MIX;
+        const nr=skin0[q]  +cr*inv+gr*MIX;
+        const ng=skin0[q+1]+cg*inv+gg*MIX;
+        const nb=skin0[q+2]+cb*inv+gb*MIX;
         D[q]  =nr<0?0:nr>255?255:nr;
         D[q+1]=ng<0?0:ng>255?255:ng;
         D[q+2]=nb<0?0:nb>255?255:nb;
@@ -3011,7 +3144,7 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
     }
   }
   pxX.putImageData(fd,0,0);
-  tctx.drawImage(pxC, B.x, B.y);
+  tctx.drawImage(pxC, 0,0,PW,PH, B.x, B.y, B.w, B.h);
 
   /* ---- false lashes: fanned strokes along the upper lash line ---- */
   if(M.lashes && zoneVisible('lashes') && !(gpuOwns)){ drawLashes(tctx, lm, pt, fs); }
@@ -3657,6 +3790,273 @@ function brushPath(lm, zone){
     default: return null;
   }
 }
+
+/* ============================================================
+   LAMHA MOBILE · APPLICATION ANIMATION
+   When a shade is chosen, the right tool travels in from the edge,
+   sweeps the zone's real path, and leaves — while the colour rises
+   from nothing to full behind it. Purely a reveal: the makeup that
+   remains is exactly what the engine would have drawn anyway.
+   ============================================================ */
+const APPLY = { on:false, zone:null, t0:0, dur:1500 };
+const TOOL = {                       /* which implement each zone deserves */
+  lips:'bullet', blush:'brush', base:'sponge', concealer:'wand',
+  contour:'brush', nose:'brush', highlight:'brush', glow:'brush',
+  eyeshadow:'shadow', crease:'shadow', corner:'shadow',
+  liner:'pen', brow:'pencil', lashes:'mascara', lens:'finger'
+};
+window.startApplyAnim = function(zone){
+  if(!zone || !S.makeup[zone]) return;
+  APPLY.on = true; APPLY.zone = zone; APPLY.t0 = performance.now();
+  APPLY.dur = (zone==='lips'||zone==='liner') ? 1500 : 1300;
+};
+/* the engine asks this: how much of the zone is laid down so far */
+window.applyProgress = function(zone){
+  if(!APPLY.on || APPLY.zone !== zone) return 1;
+  const k = (performance.now()-APPLY.t0)/APPLY.dur;
+  if(k >= 1){ APPLY.on = false; return 1; }
+  return Math.max(0, Math.min(1, k*1.12));      /* colour finishes just before the tool leaves */
+};
+function drawTool(c, kind, x, y, ang, fs, col){
+  c.save(); c.translate(x,y); c.rotate(ang);
+  const S1 = fs;
+  /* a little colour theory so the tools look moulded, not flat */
+  const dark = (hex,f)=>{ const n=parseInt(hex.slice(1),16);
+    const r=Math.round((n>>16&255)*f), g=Math.round((n>>8&255)*f), b2=Math.round((n&255)*f);
+    return 'rgb('+r+','+g+','+b2+')'; };
+  const shadow = ()=>{ c.save(); c.globalAlpha=.3; c.fillStyle='#000';
+    c.beginPath(); c.ellipse(S1*0.02, S1*0.026, S1*0.10, S1*0.030, 0,0,7); c.fill(); c.restore(); };
+  /* metal / plastic barrels get a vertical gradient so they read cylindrical */
+  const cyl=(x0,y0,w,h,c1,c2,c3)=>{
+    const g=c.createLinearGradient(0,y0,0,y0+h);
+    g.addColorStop(0,c1); g.addColorStop(0.38,c2); g.addColorStop(0.62,c2);
+    g.addColorStop(1,c3);
+    c.fillStyle=g; c.fillRect(x0,y0,w,h);
+  };
+
+  switch(kind){
+    /* ---------- LIPSTICK: metal case, slanted bullet, real highlight ---------- */
+    case 'bullet': {
+      shadow();
+      const L=S1*0.30, W=S1*0.085;
+      cyl(0,-W/2, L, W, '#6E5B52','#3A2E2C','#1C1517');           // the case
+      c.fillStyle='rgba(255,255,255,.22)';                         // specular line
+      c.fillRect(S1*0.01,-W*0.34, L-S1*0.02, W*0.10);
+      cyl(-S1*0.012,-W*0.56, S1*0.030, W*1.12, '#C9AE86','#8C7350','#5A4630'); // gold collar
+      /* the bullet: a slanted cylinder of the actual shade */
+      const bl=S1*0.115, bw=W*0.86;
+      const gb=c.createLinearGradient(0,-bw/2,0,bw/2);
+      gb.addColorStop(0, dark(col,1.22)); gb.addColorStop(0.45, col);
+      gb.addColorStop(1, dark(col,0.62));
+      c.fillStyle=gb;
+      c.beginPath();
+      c.moveTo(-S1*0.012,-bw/2);
+      c.lineTo(-bl,-bw*0.16);                                      // the slanted cut
+      c.lineTo(-bl+S1*0.006, bw*0.30);
+      c.lineTo(-S1*0.012, bw/2);
+      c.closePath(); c.fill();
+      c.fillStyle='rgba(255,255,255,.30)';                          // gloss on the bullet
+      c.beginPath(); c.ellipse(-bl*0.55,-bw*0.20, bl*0.30, bw*0.10, -0.25,0,7); c.fill();
+      break; }
+
+    /* ---------- POWDER BRUSH: ferrule, tapered natural bristles ---------- */
+    case 'brush': {
+      shadow();
+      const L=S1*0.26, W=S1*0.052;
+      cyl(S1*0.04,-W/2, L, W, '#5A4034','#3A2620','#1E1412');       // wooden handle
+      cyl(S1*0.005,-W*0.62, S1*0.048, W*1.24, '#D8D2CC','#9A948E','#5E5A56'); // metal ferrule
+      c.fillStyle='rgba(255,255,255,.35)';
+      c.fillRect(S1*0.008,-W*0.50, S1*0.040, W*0.10);
+      /* bristles: many fine strands fanning to a dome, dusted with the shade */
+      const bl=S1*0.085;
+      for(let i=0;i<34;i++){
+        const t2=(i/33)*2-1;
+        const spread=Math.cos(t2*1.25);
+        const len=bl*(0.62+0.38*spread);
+        c.strokeStyle = i%3===0 ? dark(col,0.92) : (i%3===1 ? col : dark(col,1.10));
+        c.globalAlpha = 0.55 + 0.35*spread;
+        c.lineWidth = Math.max(0.7, S1*0.0028);
+        c.beginPath();
+        c.moveTo(S1*0.004, t2*W*0.52);
+        c.quadraticCurveTo(-len*0.55, t2*W*0.66, -len, t2*W*0.40);
+        c.stroke();
+      }
+      c.globalAlpha=1;
+      break; }
+
+    /* ---------- FLAT SHADER BRUSH ---------- */
+    case 'shadow': {
+      shadow();
+      const L=S1*0.24, W=S1*0.040;
+      cyl(S1*0.03,-W/2, L, W, '#4A3A46','#2C2036','#181020');
+      cyl(0,-W*0.72, S1*0.040, W*1.44, '#D8D2CC','#9A948E','#5E5A56');
+      const bl=S1*0.060;
+      for(let i=0;i<20;i++){
+        const t2=(i/19)*2-1;
+        c.strokeStyle = i%2 ? col : dark(col,0.86);
+        c.globalAlpha = 0.6+0.3*Math.cos(t2*1.4);
+        c.lineWidth = Math.max(0.7, S1*0.0026);
+        c.beginPath();
+        c.moveTo(-S1*0.002, t2*W*0.70);
+        c.lineTo(-bl, t2*W*0.52);
+        c.stroke();
+      }
+      c.globalAlpha=1;
+      break; }
+
+    /* ---------- PENCIL / LINER PEN ---------- */
+    case 'pencil': case 'pen': {
+      shadow();
+      const L=S1*0.28, W=S1*0.042;
+      const woodA = kind==='pen' ? '#3A3038' : '#8A6A44';
+      const woodB = kind==='pen' ? '#1E1820' : '#5A4128';
+      cyl(0,-W/2, L, W, woodA, woodB, '#150F14');
+      c.fillStyle='rgba(255,255,255,.18)';
+      c.fillRect(S1*0.01,-W*0.32, L-S1*0.02, W*0.09);
+      /* sharpened cone in the product's own colour */
+      const tip=S1*0.075;
+      const gt=c.createLinearGradient(0,-W/2,0,W/2);
+      gt.addColorStop(0, dark(col,1.18)); gt.addColorStop(0.5, col); gt.addColorStop(1, dark(col,0.60));
+      c.fillStyle = kind==='pen' ? gt : '#C8A882';
+      c.beginPath(); c.moveTo(0,-W/2); c.lineTo(-tip*0.55,-W*0.22);
+      c.lineTo(-tip*0.55, W*0.22); c.lineTo(0, W/2); c.closePath(); c.fill();
+      c.fillStyle=gt;
+      c.beginPath(); c.moveTo(-tip*0.55,-W*0.22); c.lineTo(-tip,0);
+      c.lineTo(-tip*0.55, W*0.22); c.closePath(); c.fill();
+      break; }
+
+    /* ---------- BEAUTY SPONGE ---------- */
+    case 'sponge': {
+      shadow();
+      const R=S1*0.062;
+      const g=c.createRadialGradient(-R*0.3,-R*0.35,R*0.15, 0,0,R*1.25);
+      g.addColorStop(0, dark(col,1.35)); g.addColorStop(0.55, col); g.addColorStop(1, dark(col,0.72));
+      c.fillStyle=g;
+      c.beginPath();
+      c.moveTo(-R*1.05, 0);
+      c.bezierCurveTo(-R*1.05,-R*1.15, R*0.95,-R*0.98, R*1.15,-R*0.10);
+      c.bezierCurveTo(R*1.22, R*0.65, R*0.10, R*1.12, -R*0.55, R*0.86);
+      c.bezierCurveTo(-R*0.95, R*0.70, -R*1.05, R*0.35, -R*1.05, 0);
+      c.closePath(); c.fill();
+      c.globalAlpha=.20; c.fillStyle='#fff';
+      c.beginPath(); c.ellipse(-R*0.30,-R*0.42, R*0.42, R*0.26, -0.4,0,7); c.fill();
+      c.globalAlpha=1;
+      break; }
+
+    /* ---------- DOE-FOOT WAND ---------- */
+    case 'wand': {
+      shadow();
+      const L=S1*0.24, W=S1*0.028;
+      cyl(S1*0.02,-W/2, L, W, '#C9B8A8','#8A7A6C','#4A3F36');
+      const g=c.createLinearGradient(0,-W*1.1,0,W*1.1);
+      g.addColorStop(0, dark(col,1.25)); g.addColorStop(0.5, col); g.addColorStop(1, dark(col,0.70));
+      cyl(S1*0.17,-W*0.85, S1*0.09, W*1.7, '#E6DCD2','#B9A897','#6E6155');   // the cap
+      c.fillStyle=g;
+      c.beginPath(); c.ellipse(-S1*0.036,0, S1*0.046, W*1.20, 0,0,7); c.fill();
+      c.strokeStyle=dark(col,0.58); c.lineWidth=Math.max(0.8,S1*0.0026);      // the seam
+      c.beginPath(); c.moveTo(-S1*0.074,0); c.lineTo(-S1*0.002,0); c.stroke();
+      c.fillStyle=dark(col,0.86);                                             // product pooling
+      c.beginPath(); c.ellipse(-S1*0.068, W*0.30, S1*0.014, W*0.30, 0,0,7); c.fill();
+      c.globalAlpha=.30; c.fillStyle='#fff';
+      c.beginPath(); c.ellipse(-S1*0.045,-W*0.38, S1*0.018, W*0.32, 0,0,7); c.fill();
+      c.beginPath(); c.ellipse(-S1*0.020,-W*0.55, S1*0.010, W*0.16, 0,0,7); c.fill();
+      c.globalAlpha=1;
+      break; }
+
+    /* ---------- MASCARA WAND ---------- */
+    case 'mascara': {
+      shadow();
+      const L=S1*0.24, W=S1*0.030;
+      cyl(S1*0.03,-W/2, L, W, '#3A2E36','#1E1820','#120C12');
+      c.strokeStyle='#2A2028'; c.lineWidth=Math.max(1,S1*0.004);
+      c.beginPath(); c.moveTo(S1*0.03,0); c.lineTo(-S1*0.085,0); c.stroke();
+      /* the spiral brush: staggered bristles down a core */
+      for(let i=0;i<16;i++){
+        const t2=i/15, px=-S1*0.010-S1*0.075*t2;
+        const h=W*(1.5-0.55*t2);
+        c.strokeStyle = i%2 ? col : dark(col,0.75);
+        c.lineWidth=Math.max(0.8, S1*0.0032);
+        c.beginPath();
+        c.moveTo(px,-h*0.5); c.lineTo(px+S1*0.004, h*0.5);
+        c.stroke();
+      }
+      break; }
+
+    /* ---------- FINGERTIP ---------- */
+    default: {
+      shadow();
+      const R=S1*0.048;
+      const g=c.createRadialGradient(-R*0.3,-R*0.4,R*0.2, 0,0,R*1.4);
+      g.addColorStop(0,'#F0CDB6'); g.addColorStop(0.6,'#D8B49E'); g.addColorStop(1,'#A9836C');
+      c.fillStyle=g;
+      c.beginPath(); c.ellipse(0,0, R*1.05, R*0.82, 0,0,7); c.fill();
+      c.globalAlpha=.18; c.fillStyle='#8A5F4A';                   // knuckle shading
+      c.beginPath(); c.ellipse(R*0.70, R*0.18, R*0.30, R*0.52, 0,0,7); c.fill();
+      c.globalAlpha=1;
+      const ng2=c.createLinearGradient(0,-R*0.4,0,R*0.3);          // the nail
+      ng2.addColorStop(0,'#FBE7DC'); ng2.addColorStop(1,'#E3BFAB');
+      c.fillStyle=ng2;
+      c.beginPath(); c.ellipse(R*0.30,-R*0.08, R*0.36, R*0.28, 0.2,0,7); c.fill();
+      c.fillStyle='rgba(255,255,255,.55)';                          // lunula
+      c.beginPath(); c.ellipse(R*0.52,-R*0.04, R*0.11, R*0.14, 0.2,0,7); c.fill();
+      c.strokeStyle='rgba(150,105,85,.45)'; c.lineWidth=Math.max(0.7,R*0.05);
+      c.beginPath(); c.ellipse(R*0.30,-R*0.08, R*0.36, R*0.28, 0.2,0,7); c.stroke();
+      const pg=c.createRadialGradient(-R*0.62,0,R*0.04, -R*0.55,0,R*0.34);
+      pg.addColorStop(0, col); pg.addColorStop(1, dark(col,0.72));
+      c.fillStyle=pg; c.globalAlpha=.80;                            // product on the pad
+      c.beginPath(); c.ellipse(-R*0.58,0, R*0.32, R*0.30, 0,0,7); c.fill();
+      c.globalAlpha=.35; c.fillStyle='#fff';
+      c.beginPath(); c.ellipse(-R*0.66,-R*0.10, R*0.12, R*0.10, 0,0,7); c.fill();
+      c.globalAlpha=1;
+      break; }
+  }
+  c.restore();
+}
+function drawApplyAnim(lm){
+  if(!APPLY.on) return;
+  const zone = APPLY.zone;
+  const col  = S.makeup[zone];
+  if(!col){ APPLY.on=false; return; }
+  const pts = brushPath(lm, zone);
+  if(!pts || pts.length<2){ APPLY.on=false; return; }
+  const k = (performance.now()-APPLY.t0)/APPLY.dur;
+  if(k>=1){ APPLY.on=false; return; }
+  const fs = faceScale(lm);
+
+  /* travel: in from the edge, across the path, out again */
+  let t, glide=0;
+  if(k < 0.18){ t = 0; glide = 1 - k/0.18; }          /* flying in  */
+  else if(k < 0.86){ t = (k-0.18)/0.68; }             /* working    */
+  else { t = 1; glide = (k-0.86)/0.14; }              /* flying out */
+
+  const segs=[]; let total=0;
+  for(let i=0;i<pts.length-1;i++){
+    const d=Math.hypot(pts[i+1][0]-pts[i][0], pts[i+1][1]-pts[i][1]);
+    segs.push(d); total+=d;
+  }
+  if(total<1){ APPLY.on=false; return; }
+  const at=f=>{
+    let want=f*total, i=0;
+    while(i<segs.length && want>segs[i]){ want-=segs[i]; i++; }
+    if(i>=segs.length) return pts[pts.length-1];
+    const r=segs[i]?want/segs[i]:0;
+    return [pts[i][0]+(pts[i+1][0]-pts[i][0])*r, pts[i][1]+(pts[i+1][1]-pts[i][1])*r];
+  };
+  let [x,y] = at(t);
+  const [px,py] = at(Math.max(0, t-0.05));
+  let ang = Math.atan2(y-py, x-px);
+  /* glide offset: the tool enters and leaves toward the nearest screen edge */
+  if(glide>0){
+    const ease = glide*glide;
+    x += Math.cos(ang)*(-1)*fs*1.6*ease;
+    y += Math.sin(ang)*(-1)*fs*0.9*ease + fs*0.5*ease;
+  }
+  ctx.save();
+  ctx.globalAlpha = glide>0 ? Math.max(0.15, 1-glide*0.85) : 1;
+  drawTool(ctx, TOOL[zone]||'brush', x, y, ang, fs, col);
+  ctx.restore();
+}
+
 function drawBrushStroke(lm, zone){
   const pts = brushPath(lm, zone);
   if(!pts || pts.length<2) return;
@@ -4450,9 +4850,21 @@ async function runScanInner(){
       if(pose==='front'){
         const exAll=packs.map(frontExtras);
         const ex=stableFrames(exAll);          /* reject exposure-hunt frames */
+        /* correct the camera's colour cast BEFORE deriving anything from it */
+        let _rgb=[medOf(ex,'r'),medOf(ex,'g'),medOf(ex,'b')];
+        let _ITA=medOf(ex,'ITA'), _a=medOf(ex,'a'), _B=medOf(ex,'B');
+        if(S.wb && typeof wbApply==='function'){
+          _rgb = wbApply(_rgb);
+          try{
+            const lab = rgb2lab(_rgb[0], _rgb[1], _rgb[2]);
+            const bS = Math.abs(lab[2])<0.5 ? (lab[2]<0?-0.5:0.5) : lab[2];
+            _ITA = Math.atan((lab[0]-50)/bS)*180/Math.PI;
+            _a = lab[1]; _B = lab[2];
+          }catch(e){}
+        }
         S.frontX={ shine:medOf(ex,'shine'), dcDelta:medOf(ex,'dcDelta'), fine:medOf(ex,'fine'), wrink:medOf(ex,'wrink'),
-                   ITA:medOf(ex,'ITA'), a:medOf(ex,'a'), B:medOf(ex,'B'),
-                   rgb:[medOf(ex,'r'),medOf(ex,'g'),medOf(ex,'b')],
+                   ITA:_ITA, a:_a, B:_B,
+                   rgb:_rgb, wb:!!S.wb,
                    _spreadITA: spreadOf(ex,'ITA'), _used: ex.length, _total: exAll.length };
         S.frontPack = packs[packs.length-1];
         const g=poseGeom(); if(g) S.p0=g.pitch;
@@ -4515,6 +4927,8 @@ async function finishScan(){
   m.confidence = sp < 2 ? 'high' : sp < 5 ? 'medium' : 'low';
   m.light = S.light ? S.light.state : null;
   m.camera = (typeof lamhaRearIsOn==='function' && lamhaRearIsOn()) ? 'rear' : 'front';
+  m.wb = !!(S.frontX && S.frontX.wb);
+  if(!m.wb && m.confidence==='high') m.confidence='medium';   /* honesty */
   if(m.camera==='rear' && m.confidence==='medium') m.confidence='high';
   if(m.light && m.light !== 'ok' && m.confidence === 'high') m.confidence = 'medium';
   m.framesUsed = (S.frontX && S.frontX._used) || 0;
@@ -4882,7 +5296,9 @@ function renderShades(){
       <i style="background:${s.c}"></i><b>${s.n[LANG]}</b></button>`).join('');
   refreshScrollers();
   $$('#mk-shades .sw').forEach(b=> b.onclick = ()=>{
-    S.makeup[S.zone] = b.dataset.c || null; renderShades(); syncZoneControls();
+    S.makeup[S.zone] = b.dataset.c || null;
+    if(S.makeup[S.zone] && typeof startApplyAnim==='function') startApplyAnim(S.zone);
+    renderShades(); syncZoneControls();
   });
 }
 const FIN_ZONES = ['lips','blush','eyeshadow'];   // the only zones where a finish reads on skin
@@ -5117,17 +5533,24 @@ function renderPlanBar(){
 window.toggleStepBA = function(){
   const pl=S.plan; if(!pl || !pl.on) return;
   const z = pl.order[pl.idx];
+  /* flip the state and paint the button NOW — the mirror follows on the
+     next frame. Waiting for a full re-render made the tap feel sluggish. */
   if(!S.baBefore){
     S.baBefore = { zone:z, colour:S.makeup[z] };
-    S.makeup[z] = null;                    /* lift just this product off */
-    say(t('ba_on'), 2200);
+    S.makeup[z] = null;
   } else {
     S.makeup[S.baBefore.zone] = S.baBefore.colour;
     S.baBefore = null;
-    say(t('ba_off'), 2200);
   }
-  if(typeof renderShades==='function') renderShades();
-  renderPlanBar();
+  const btn = document.getElementById('plbBA');
+  if(btn) btn.classList.toggle('on', !!S.baBefore);
+  S._featherKey = '';                      /* the look changed: refeather once */
+  /* defer the heavy panels so the tap returns immediately */
+  requestAnimationFrame(()=>{
+    say(S.baBefore ? t('ba_on') : t('ba_off'), 1800);
+    if(typeof renderShades==='function') renderShades();
+    renderPlanBar();
+  });
 };
 /* leaving a step must never strand the product in the "off" state */
 function baRestore(){
@@ -5163,6 +5586,11 @@ $('#plbPrev') && ($('#plbPrev').onclick = ()=>{
 });
 $('#plbBA') && ($('#plbBA').onclick = ()=>{ try{ toggleStepBA(); }
   catch(e){ fatalLog('[step ba] '+(e&&(e.stack||e.message||e))); } });
+$('#ms-verify') && ($('#ms-verify').onclick = ()=>{
+  openSheet('sh-verify');
+  try{ lamhaVerifyRender(); }catch(e){ fatalLog('[verify] '+(e&&(e.stack||e.message||e))); } });
+$('#sk-wb') && ($('#sk-wb').onclick = ()=>{
+  try{ wbStart(); }catch(e){ fatalLog('[wb] '+(e&&(e.stack||e.message||e))); } });
 $('#sk-prog') && ($('#sk-prog').onclick = ()=>{
   openSheet('sh-prog');
   try{ lamhaRenderProgress(); }catch(e){ fatalLog('[progress] '+(e&&(e.stack||e.message||e))); }
@@ -5529,6 +5957,17 @@ function faceShapeIdx(m){
 }
 
 function renderMeasure(){
+  /* results replace the instructions — she has already followed them */
+  try{
+    const intro=document.getElementById('ms-intro');
+    if(intro) intro.style.display = S.meas ? 'none' : '';
+    const run=document.getElementById('ms-run');
+    if(run && S.meas){
+      run.classList.remove('pri','wide');
+      run.textContent = LANG==='ar' ? 'إعادة القياس' : LANG==='id' ? 'Ukur ulang' : 'Measure again';
+      run.style.cssText = 'padding:8px 14px;font-size:12px;margin-bottom:8px';
+    }
+  }catch(e){}
   const m = S.meas; if(!m) return;
   $('#ms-res').classList.remove('hidden');
   const mm = m.ipdPx > 0 ? S.ipd / m.ipdPx : 0;
@@ -5543,9 +5982,46 @@ function renderMeasure(){
                                    : ('Head tilt corrected ('+(m._yawDeg||0)+'° yaw · '+(m._pitchDeg||0)+'° pitch)')) : '') +
       (m._held ? (LANG==='ar' ? ' · مطابق لقياسك السابق' : ' · matches your previous measurement') : '') +
       '</div>') : '';
+  /* ---- honest shape reporting ----
+     Face-shape systems have no scientific consensus: two experts routinely
+     disagree on the same face. So we show the RATIOS we measured, the
+     leading shape WITH its confidence, and the runners-up — instead of
+     pronouncing a verdict we cannot justify. */
+  const top = mix[0] ? Math.round(mix[0].p*100) : 0;
+  const conf = top>=70 ? 'high' : top>=48 ? 'medium' : 'low';
+  const CONF = { ar:{high:'واضح',medium:'مرجّح',low:'بين شكلين'},
+                 en:{high:'Clear',medium:'Likely',low:'Between two shapes'},
+                 id:{high:'Jelas',medium:'Kemungkinan',low:'Di antara dua'} };
+  const confTxt = (CONF[LANG]||CONF.en)[conf];
+  const confCol = conf==='high'?'var(--jade)' : conf==='medium'?'var(--gold)' : 'var(--coral)';
+  const bar = mix.map(x=>{
+    const pct=Math.round(x.p*100);
+    return `<div style="display:flex;align-items:center;gap:8px;margin:4px 0">
+      <span style="width:92px;flex-shrink:0;font-size:11px;color:var(--dim)">${t('ms.shapes')[x.i]}</span>
+      <span style="flex:1;height:6px;border-radius:4px;background:rgba(246,217,206,.12);overflow:hidden">
+        <i style="display:block;height:100%;width:${pct}%;border-radius:4px;background:var(--gold-soft)"></i></span>
+      <span class="mono" style="width:34px;text-align:end;font-size:11px">${pct}%</span></div>`;
+  }).join('');
+  /* the raw numbers the decision rests on — she can check them herself */
+  const R = (LANG==='ar')
+    ? {lw:'الطول ÷ العرض', jc:'الفك ÷ الخد', fc:'الجبهة ÷ الخد'}
+    : {lw:'length ÷ width', jc:'jaw ÷ cheek', fc:'forehead ÷ cheek'};
+  const raw = `<div class="note" style="margin-top:6px;opacity:.8">
+      ${R.lw} <b class="mono">${(m.fl/m.fw).toFixed(2)}</b> ·
+      ${R.jc} <b class="mono">${(m.jaw/m.cheek).toFixed(2)}</b> ·
+      ${R.fc} <b class="mono">${(m.fore/m.cheek).toFixed(2)}</b></div>`;
+  const note = (conf==='low')
+    ? `<div class="note" style="margin-top:6px;color:var(--coral)">${LANG==='ar'
+        ? 'ملامحك بين شكلين — خذي من نصائح الاثنين ما يعجبك؛ لا يوجد تصنيف واحد صحيح هنا.'
+        : 'Your features sit between two shapes — borrow from both; there is no single correct label here.'}</div>`
+    : '';
   $('#ms-shape').innerHTML = corr +
-    `<b style="color:var(--gold-soft)">${t('ms.shapes')[si]}</b> · ${t('ms.lab.fr')} ${(m.fl/m.fw).toFixed(2)}
-     <br><span style="color:var(--gold)">${mixTxt}</span><br>${t('ms.shapeTip')[si]}`;
+    `<b style="color:var(--gold-soft)">${t('ms.shapes')[si]}</b>
+     <span style="color:${confCol};font-size:11px"> · ${confTxt} ${top}%</span>
+     ${raw}
+     <div style="margin-top:8px">${bar}</div>
+     ${note}
+     <div style="margin-top:8px">${t('ms.shapeTip')[si]}</div>`;
 
   const groups = ['face','brow','eye','nose','lip','th'];
   $('#ms-groups').innerHTML = groups.map(g=>{
@@ -5816,23 +6292,94 @@ function kitFileChosen(e){
     cvs.style.display='block';
     $('#kt-pickhint').classList.remove('hidden');
     kitDraft.img = kitShrink(im, 240).toDataURL('image/jpeg', 0.72);
+    ktBase = null;                    /* new photo, new base for picking */
     URL.revokeObjectURL(url);
     /* read the product automatically, then let her correct it */
     if(window.__kitAutoRead) window.__kitAutoRead(cvs, f && f.name);
   };
   im.src = url;
 }
-$('#kt-canvas').onpointerdown = e=>{
-  const cvs=$('#kt-canvas'), r=cvs.getBoundingClientRect();
-  const x=Math.round((e.clientX-r.left)*(cvs.width/r.width));
-  const y=Math.round((e.clientY-r.top)*(cvs.height/r.height));
+/* ---- pick the product BY TOUCH, from the photo ----
+   A tap grows a region outward from that point while the colour stays
+   similar, so she selects the PRODUCT, not one noisy pixel. Reflections
+   and specular highlights are excluded, and the shade is the median of
+   what remains. A second tap adjusts; dragging re-picks live. ---- */
+let ktBase = null;                    /* the untouched photo, for redraws */
+function ktPickAt(px, py){
+  const cvs=$('#kt-canvas'), ctx2=cvs.getContext('2d',{willReadFrequently:true});
+  const W=cvs.width, H=cvs.height;
+  if(!ktBase){ try{ ktBase = ctx2.getImageData(0,0,W,H); }catch(e){ return; } }
+  const src = ktBase.data;
+  const i0 = (py*W+px)*4;
+  const seed = [src[i0], src[i0+1], src[i0+2]];
+  /* flood the region while colour stays close to the seed */
+  const N=W*H, seen=new Uint8Array(N), stack=new Int32Array(1<<16);
+  const TOL = 46;
+  let sp=0; stack[sp++]=py*W+px; seen[py*W+px]=1;
+  const R=[],G=[],B=[]; const marks=[];
+  let guard=0;
+  while(sp>0 && guard++ < 90000){
+    const c=stack[--sp], cx=c%W, cy=(c/W)|0, q=c*4;
+    const r0=src[q], g0=src[q+1], b0=src[q+2];
+    const lum=(r0+g0+b0)/3;
+    marks.push(c);
+    /* skip blown highlights and deep shadow when averaging the shade */
+    if(lum>28 && lum<244){ R.push(r0); G.push(g0); B.push(b0); }
+    const nb=[c-1,c+1,c-W,c+W];
+    for(let k=0;k<4;k++){
+      const np=nb[k];
+      if(np<0||np>=N||seen[np]) continue;
+      if(k===0&&cx===0) continue;
+      if(k===1&&cx===W-1) continue;
+      const p2=np*4;
+      const d=Math.abs(src[p2]-seed[0])+Math.abs(src[p2+1]-seed[1])+Math.abs(src[p2+2]-seed[2]);
+      if(d<=TOL && sp<stack.length){ seen[np]=1; stack[sp++]=np; }
+    }
+  }
+  if(R.length<6){ R.push(seed[0]); G.push(seed[1]); B.push(seed[2]); }
+  const med=a=>{a.sort((x,y)=>x-y);const m=a.length>>1;
+    return a.length%2?a[m]:((a[m-1]+a[m])/2)|0;};
+  const rgb=[med(R),med(G),med(B)];
+  kitDraft.shade = '#'+rgb.map(v=>v.toString(16).padStart(2,'0')).join('');
+  $('#kt-dot').style.background = kitDraft.shade;
+  /* re-type the product from the colour she just chose */
   try{
-    const d=cvs.getContext('2d').getImageData(clamp(x,0,cvs.width-1), clamp(y,0,cvs.height-1), 1, 1).data;
-    kitDraft.shade = '#'+[d[0],d[1],d[2]].map(v=>v.toString(16).padStart(2,'0')).join('');
-    $('#kt-dot').style.background = kitDraft.shade;
-    renderKitShades();
-  }catch(err){}
-};
+    if(window.lamhaReadProduct){
+      const tmp=document.createElement('canvas'); tmp.width=tmp.height=8;
+      const tx=tmp.getContext('2d'); tx.fillStyle=kitDraft.shade; tx.fillRect(0,0,8,8);
+      const r2=window.lamhaReadProduct(tmp, null);
+      if(r2 && r2.ok){ kitDraft.type=r2.type; if(typeof renderKitTypes==='function') renderKitTypes(); }
+    }
+  }catch(e){}
+  renderKitShades();
+  /* show her exactly what she selected */
+  ctx2.putImageData(ktBase,0,0);
+  const ov=ctx2.getImageData(0,0,W,H), od=ov.data;
+  for(const c of marks){ const q=c*4;
+    od[q]   = od[q]*0.55 + 246*0.45;
+    od[q+1] = od[q+1]*0.55 + 217*0.45;
+    od[q+2] = od[q+2]*0.55 + 206*0.45;
+  }
+  ctx2.putImageData(ov,0,0);
+  ctx2.strokeStyle='rgba(226,169,160,.95)'; ctx2.lineWidth=Math.max(2,W*0.006);
+  ctx2.beginPath(); ctx2.arc(px,py,Math.max(7,W*0.022),0,7); ctx2.stroke();
+  say((LANG==='ar'?'حدّدت المنتج · ':'Selected · ') + kitDraft.shade +
+      ' · ' + (LANG==='ar'?'المسي مكاناً آخر لتصحيح':'tap elsewhere to adjust'), 3200);
+}
+{
+  const cvs=$('#kt-canvas');
+  let picking=false;
+  const toXY=e=>{
+    const r=cvs.getBoundingClientRect();
+    return [ clamp(Math.round((e.clientX-r.left)*(cvs.width/r.width)),0,cvs.width-1),
+             clamp(Math.round((e.clientY-r.top)*(cvs.height/r.height)),0,cvs.height-1) ];
+  };
+  cvs.onpointerdown = e=>{ picking=true; cvs.setPointerCapture(e.pointerId);
+    const [x,y]=toXY(e); try{ ktPickAt(x,y); }catch(err){ fatalLog('[kit pick] '+(err&&(err.stack||err.message||err))); } };
+  cvs.onpointermove = e=>{ if(!picking) return;
+    const [x,y]=toXY(e); try{ ktPickAt(x,y); }catch(err){} };
+  cvs.onpointerup = ()=>{ picking=false; };
+}
 
 $('#kt-save').onclick = async ()=>{
   const name = $('#kt-name').value.trim();
@@ -7172,7 +7719,13 @@ function centeredIndex(){
 function hudName(i){
   const it = stripItems[i];
   if(!it) return;
-  $('#mkName').textContent = t(HZI[S.zone]) + (it.n ? ' · ' + it.n : '');
+  let label = t(HZI[S.zone]) + (it.n ? ' · ' + it.n : '');
+  /* a virtual shade gets a real identity: name + code, so it can be bought */
+  if(it.c && !it.own && window.lamhaShadeId){
+    const id = window.lamhaShadeId(it.c, S.zone, S.fins && S.fins[S.zone]);
+    if(id) label = t(HZI[S.zone]) + ' · ' + id.name + ' · ' + id.code;
+  }
+  $('#mkName').textContent = label;
 }
 function hudApply(){
   const i = centeredIndex(), it = stripItems[i];
@@ -7180,6 +7733,7 @@ function hudApply(){
   const cur = S.makeup[S.zone];
   if(cur !== it.c){
     S.makeup[S.zone] = it.c;
+    if(it.c && typeof startApplyAnim==='function') startApplyAnim(S.zone);
     const dot = $('#mkRail .rz[data-hz="'+S.zone+'"]');
     if(dot) dot.style.background = it.c ||
       'repeating-linear-gradient(45deg,#2C2036,#2C2036 4px,#3A2C46 4px,#3A2C46 8px)';
@@ -7289,6 +7843,7 @@ window.hudCtl = {
   }
 };
 window.hudToggle = function(on){
+  if(on && typeof window.__askKitMode==='function') window.__askKitMode();
   hudOn = (on===undefined) ? !hudOn : !!on;
   $('#mkHud').classList.toggle('on', hudOn);
   if(hudOn){ if(!HZONES.includes(S.zone)) S.zone='lips'; hudRail(true); hudStrip(true); }
@@ -7413,12 +7968,16 @@ renderSkin = function(){
             + '</span></div>';
         }
       }catch(e){}
+      const wbTag = sk.wb
+        ? ' · ' + (LANG==='ar' ? 'ألوان معايَرة' : 'colour calibrated')
+        : ' · ' + (LANG==='ar' ? 'بلا معايرة لون — عايري ببطاقة بيضاء لدقة أعلى'
+                               : 'uncalibrated colour — use a white card for accuracy');
       const lab=(T2[LANG]||T2.en)[sk.confidence||'medium'];
       const camTag = sk.camera==='rear'
         ? (LANG==='ar' ? ' · بالكاميرا الخلفية (دقة أعلى)' : ' · rear camera (higher fidelity)') : '';
       const held = sk._held ? (LANG==='ar'?' · مطابقة لقراءتك السابقة':' · matches your previous reading') : '';
       host.insertAdjacentHTML('afterend', dense +
-        '<div id="sk-conf" class="note" style="margin-top:8px">◈ '+lab+camTag+held+
+        '<div id="sk-conf" class="note" style="margin-top:8px">◈ '+lab+camTag+wbTag+held+
         '<br><span style="opacity:.75">'+(tip[LANG]||tip.en)+'</span></div>');
     }
   }catch(e){}
@@ -7526,6 +8085,11 @@ function glInit(){
           float Ylo = dot(texture(uRef, v_vid).rgb, vec3(0.299,0.587,0.114));
           float ref = max(max(Ylo, 0.05), Y * 0.78);
           float rel = clamp(Y / ref, 0.70, 1.28);
+          /* Relighting keeps skin texture alive, but at high coverage it also
+             drags the shade away from the one she picked. So fade it out as
+             coverage rises: sheer = textured, full = the true shade. */
+          float keep = 1.0 - smoothstep(0.55, 0.95, mk.a);
+          rel = mix(1.0, rel, keep);
           vec3 pig  = mk.rgb * rel;
           /* procedural glitter, pinned to the skin via UV */
           if(uGlit > 0.5){
@@ -9355,6 +9919,335 @@ document.addEventListener('click', e=>{
   });
   if(mode==='auto'){ autoBalance(); openSheet(''); }
 });
+})();
+</script>
+
+
+<script>
+/* ============================================================
+   LAMHA MOBILE · WHICH KIT?
+   Entering makeup, she chooses once: try any shade freely, or
+   work only with what she already owns. Asked, never assumed.
+   ============================================================ */
+(function(){
+function askKitMode(){
+  if(S.kitModeAsked) return;
+  S.kitModeAsked = true;
+  const box=document.getElementById('kitAsk');
+  if(!box) return;
+  const owned=(S.kit||[]).length;
+  const lbl=document.getElementById('kitAskOwned');
+  if(lbl) lbl.textContent = t('ka_owned') + (owned? (' ('+owned+')') : '');
+  box.classList.add('on');
+}
+window.__askKitMode = askKitMode;
+window.__setKitMode = function(mode){
+  S.ownedOnly = (mode==='owned');
+  const b=document.getElementById('mkOwned');
+  if(b) b.classList.toggle('on', S.ownedOnly);
+  try{ store.set('m_lamha_owned', S.ownedOnly?1:0); }catch(e){}
+  const box=document.getElementById('kitAsk'); if(box) box.classList.remove('on');
+  if(typeof hudStrip==='function') hudStrip(true);
+  if(S.ownedOnly && !(S.kit||[]).length){
+    say(t('ka_empty'), 5000);
+  }
+};
+document.addEventListener('click', e=>{
+  const b=e.target.closest('#kitAsk [data-km]');
+  if(b) window.__setKitMode(b.dataset.km);
+});
+})();
+</script>
+
+
+<script>
+/* ============================================================
+   LAMHA MOBILE · SHADE IDENTITY
+   Every virtual shade gets a stable name, a family and a code,
+   so a shade she liked can be searched for and bought. We name
+   the COLOUR honestly; we do not claim a brand we can't verify.
+   ============================================================ */
+(function(){
+const FAM = {
+  ar:{red:'أحمر',berry:'توتي',plum:'عنابي',rose:'وردي',nude:'عاري',peach:'خوخي',
+      coral:'مرجاني',terracotta:'تراكوتا',brown:'بني',taupe:'تاوب',gold:'ذهبي',
+      bronze:'برونزي',copper:'نحاسي',champagne:'شامبانيا',ivory:'عاجي',beige:'بيج',
+      olive:'زيتوني',grey:'رمادي',black:'أسود',plumEye:'بنفسجي',blue:'أزرق',green:'أخضر'},
+  en:{red:'Red',berry:'Berry',plum:'Plum',rose:'Rose',nude:'Nude',peach:'Peach',
+      coral:'Coral',terracotta:'Terracotta',brown:'Brown',taupe:'Taupe',gold:'Gold',
+      bronze:'Bronze',copper:'Copper',champagne:'Champagne',ivory:'Ivory',beige:'Beige',
+      olive:'Olive',grey:'Grey',black:'Black',plumEye:'Violet',blue:'Blue',green:'Green'},
+  id:{red:'Merah',berry:'Beri',plum:'Plum',rose:'Mawar',nude:'Nude',peach:'Persik',
+      coral:'Koral',terracotta:'Terakota',brown:'Cokelat',taupe:'Taupe',gold:'Emas',
+      bronze:'Perunggu',copper:'Tembaga',champagne:'Sampanye',ivory:'Gading',beige:'Krem',
+      olive:'Zaitun',grey:'Abu-abu',black:'Hitam',plumEye:'Ungu',blue:'Biru',green:'Hijau'}
+};
+const DEPTH = { ar:['فاتح جداً','فاتح','متوسط','عميق','عميق جداً'],
+                en:['Very light','Light','Medium','Deep','Very deep'],
+                id:['Sangat terang','Terang','Sedang','Gelap','Sangat gelap'] };
+const FIN = { ar:{matte:'مطفي',satin:'ساتان',gloss:'لامع',shimmer:'لمّاع'},
+              en:{matte:'Matte',satin:'Satin',gloss:'Gloss',shimmer:'Shimmer'},
+              id:{matte:'Matte',satin:'Satin',gloss:'Kilap',shimmer:'Berkilau'} };
+
+function rgb(hex){ const n=parseInt(hex.slice(1),16); return [n>>16&255,n>>8&255,n&255]; }
+function hsl([r,g,b]){
+  r/=255;g/=255;b/=255;
+  const mx=Math.max(r,g,b), mn=Math.min(r,g,b), l=(mx+mn)/2;
+  let h=0,s2=0;
+  if(mx!==mn){ const d=mx-mn;
+    s2 = l>0.5 ? d/(2-mx-mn) : d/(mx+mn);
+    h = mx===r ? ((g-b)/d + (g<b?6:0)) : mx===g ? ((b-r)/d+2) : ((r-g)/d+4);
+    h*=60; }
+  return [h, s2, l];
+}
+function family(hex, zone){
+  const [h,s2,l]=hsl(rgb(hex));
+  /* very dark is BLACK whatever its hue — a near-black liner is not plum */
+  if(l<0.14) return 'black';
+  /* low saturation is a neutral, and the threshold must rise with darkness
+     or a dusty rose gets called a red */
+  const neutralAt = 0.10 + (1-l)*0.10;
+  if(s2<neutralAt) return l<0.22?'black' : l<0.45?'grey' : l<0.75?'taupe':'ivory';
+  /* soft, pale, low-chroma warm tones are nudes and roses, not reds */
+  /* a pale warm tone is a rose or a peach however saturated it measures:
+     lightness is what makes it read soft, not chroma */
+  if(l>0.68 && (h<25||h>=330)) return (h>=330||h<10) ? 'rose' : 'peach';
+  if(s2<0.42 && l>0.58 && (h<25||h>=330)) return (h>=330||h<12) ? 'rose' : 'peach';
+  if(s2<0.34 && l>0.45 && h>=12 && h<45) return 'beige';
+  const eye = zone==='eyeshadow'||zone==='crease'||zone==='corner'||zone==='liner';
+  if(h<12||h>=345) return l<0.42?'plum':'red';
+  if(h<22)  return l>0.62?'peach':'terracotta';
+  if(h<38)  return l>0.68?'champagne': l>0.45?'copper':'bronze';
+  if(h<55)  return l>0.70?'ivory': l>0.50?'gold':'brown';
+  if(h<80)  return 'olive';
+  if(h<160) return 'green';
+  if(h<250) return 'blue';
+  if(h<290) return eye?'plumEye':'plum';
+  if(h<320) return l>0.55?'rose':'berry';
+  return l>0.60?'rose':'berry';
+}
+function depthIdx(hex){
+  const [,,l]=hsl(rgb(hex));
+  return l>0.78?0 : l>0.62?1 : l>0.42?2 : l>0.24?3 : 4;
+}
+/* a stable, repeatable code from the colour itself */
+function shadeCode(hex, zone){
+  const [h,s2,l]=hsl(rgb(hex));
+  const Z={base:'F',concealer:'C',contour:'K',nose:'N',blush:'B',highlight:'H',
+           brow:'W',eyeshadow:'E',crease:'E',corner:'E',liner:'L',lashes:'M',
+           lens:'V',lips:'R',glow:'G'}[zone]||'X';
+  return Z + String(Math.round(h)).padStart(3,'0') + '-' +
+         String(Math.round(l*100)).padStart(2,'0') +
+         (s2>0.55?'S': s2>0.28?'M':'L');
+}
+window.lamhaShadeId = function(hex, zone, fin){
+  if(!hex) return null;
+  const lang = FAM[LANG]?LANG:'en';
+  const fam = family(hex, zone);
+  const name = (DEPTH[lang][depthIdx(hex)] + ' ' + FAM[lang][fam]).trim();
+  return { name, family:fam, code:shadeCode(hex,zone),
+           finish: fin ? (FIN[lang][fin]||fin) : null, hex };
+};
+/* what to search for in a shop — honest: colour, not a fake brand */
+window.lamhaShopQuery = function(hex, zone, fin){
+  const id = window.lamhaShadeId(hex, zone, fin);
+  if(!id) return '';
+  const Z = { lips:{ar:'أحمر شفاه',en:'lipstick',id:'lipstik'},
+              blush:{ar:'أحمر خدود',en:'blush',id:'perona pipi'},
+              base:{ar:'كريم أساس',en:'foundation',id:'alas bedak'},
+              concealer:{ar:'كونسيلر',en:'concealer',id:'concealer'},
+              contour:{ar:'كونتور',en:'contour',id:'kontur'},
+              highlight:{ar:'هايلايتر',en:'highlighter',id:'highlighter'},
+              eyeshadow:{ar:'ظلال عيون',en:'eyeshadow',id:'eyeshadow'},
+              crease:{ar:'ظلال عيون',en:'eyeshadow',id:'eyeshadow'},
+              corner:{ar:'ظلال عيون',en:'eyeshadow',id:'eyeshadow'},
+              liner:{ar:'آيلاينر',en:'eyeliner',id:'eyeliner'},
+              brow:{ar:'قلم حواجب',en:'brow pencil',id:'pensil alis'},
+              lashes:{ar:'رموش',en:'false lashes',id:'bulu mata'},
+              lens:{ar:'عدسات ملونة',en:'coloured contacts',id:'lensa warna'} }[zone];
+  const noun = Z ? (Z[LANG]||Z.en) : '';
+  return [noun, id.name, id.finish].filter(Boolean).join(' ');
+};
+})();
+</script>
+
+
+<script>
+/* ============================================================
+   LAMHA MOBILE · WHITE-CARD COLOUR CALIBRATION
+   A phone's auto white balance re-tints the face according to
+   whatever else is in frame — the single largest source of error
+   in skin-tone reading. Holding a plain white card beside the
+   face tells us exactly how the camera is skewing colour, and we
+   invert that skew. This is what clinical photography does.
+   ============================================================ */
+(function(){
+let wbPts=[];
+function cvPoint(ev){
+  const r=cv.getBoundingClientRect();
+  const x=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+  const y=(ev.touches?ev.touches[0].clientY:ev.clientY)-r.top;
+  return [x*cv.width/r.width, y*cv.height/r.height];
+}
+/* sample a patch and return its mean linear RGB */
+function samplePatch(px,py,rad){
+  try{
+    const c=document.createElement('canvas'); c.width=c.height=1;
+    const g=c.getContext('2d',{willReadFrequently:true});
+    const vw=srcW(), vh=srcH();
+    const sx=(px-map.ox)/map.sx, sy=(py-map.oy)/map.sy;
+    const fx=S.mirror ? (VW - sx) : sx;
+    const r2=Math.max(6, rad);
+    g.drawImage(SRC, Math.max(0,fx-r2), Math.max(0,sy-r2), r2*2, r2*2, 0,0,1,1);
+    const d=g.getImageData(0,0,1,1).data;
+    return [d[0],d[1],d[2]];
+  }catch(e){ return null; }
+}
+window.__wbDraw = function(){
+  if(!S.wbMode) return;
+  ctx.save();
+  ctx.strokeStyle='#F6D9CE'; ctx.lineWidth=Math.max(2, cv.width*0.005);
+  ctx.setLineDash([6,5]);
+  const r=cv.width*0.055;
+  wbPts.forEach(([x,y])=>{ ctx.beginPath(); ctx.arc(x,y,r,0,7); ctx.stroke(); });
+  ctx.restore();
+};
+window.wbStart = function(){
+  wbPts=[]; S.wbMode=true;
+  openSheet('');
+  say(t('wb_hold'), 9000);
+  const h = ev=>{
+    if(!S.wbMode) return;
+    ev.preventDefault();
+    const p=cvPoint(ev);
+    const rgb=samplePatch(p[0],p[1], cv.width*0.05);
+    if(!rgb){ return; }
+    const mx=Math.max(...rgb);
+    if(mx<70){ say(t('wb_dark'), 4000); return; }
+    if(mx>252){ say(t('wb_blown'), 4500); return; }
+    wbPts.push(p);
+    /* the card is neutral by definition: whatever tint we measure IS the error */
+    const mean=(rgb[0]+rgb[1]+rgb[2])/3;
+    const gain=[mean/Math.max(1,rgb[0]), mean/Math.max(1,rgb[1]), mean/Math.max(1,rgb[2])];
+    /* refuse absurd corrections — that means she tapped something coloured */
+    const spread=Math.max(...gain)/Math.min(...gain);
+    if(spread>1.9){ say(t('wb_notwhite'), 5000); wbPts.pop(); return; }
+    S.wb = { gain, at:Date.now(), spread:+spread.toFixed(3) };
+    store.set('m_lamha_wb', S.wb).catch(()=>{});
+    S.wbMode=false;
+    cv.removeEventListener('pointerdown', h);
+    const pct = Math.round((spread-1)*100);
+    say(t('wb_done') + ' · ' + (LANG==='ar' ? ('صحّحت انحرافاً بنسبة '+pct+'%')
+                                            : ('corrected a '+pct+'% cast')), 6000);
+    if(typeof renderSkin==='function' && S.skin) renderSkin();
+  };
+  cv.addEventListener('pointerdown', h);
+};
+/* apply the correction to any measured colour */
+window.wbApply = function(rgb){
+  if(!S.wb || !S.wb.gain) return rgb;
+  const g=S.wb.gain;
+  return [ Math.max(0,Math.min(255, rgb[0]*g[0])),
+           Math.max(0,Math.min(255, rgb[1]*g[1])),
+           Math.max(0,Math.min(255, rgb[2]*g[2])) ];
+};
+window.wbClear = function(){
+  S.wb=null; store.set('m_lamha_wb', null).catch(()=>{});
+  say(LANG==='ar'?'أُلغيت معايرة اللون':'Colour calibration cleared', 3000);
+  if(typeof renderSkin==='function' && S.skin) renderSkin();
+};
+(async()=>{ try{ const w=await store.get('m_lamha_wb'); if(w&&w.gain) S.wb=w; }catch(e){} })();
+})();
+</script>
+
+
+<script>
+/* ============================================================
+   LAMHA MOBILE · GROUND-TRUTH CHECK
+   The app cannot claim accuracy it has never tested. This lets
+   her measure her own face with a tape and enter the numbers, so
+   the app reports its REAL error — and stops claiming millimetres
+   it cannot deliver. This is the honest foundation everything
+   else rests on.
+   ============================================================ */
+(function(){
+const FIELDS = [
+  ['fw',  {ar:'عرض الوجه (بين عظمتي الخد)',en:'Face width (cheekbone to cheekbone)',id:'Lebar wajah'}],
+  ['fl',  {ar:'طول الوجه (منبت الشعر إلى الذقن)',en:'Face length (hairline to chin)',id:'Panjang wajah'}],
+  ['jaw', {ar:'عرض الفك',en:'Jaw width',id:'Lebar rahang'}],
+  ['ipd', {ar:'المسافة بين بؤبؤي العينين',en:'Pupil-to-pupil distance',id:'Jarak antar pupil'}]
+];
+const eT=o=>!o?'':(typeof o==='string'?o:(o[LANG]||o.en||o.ar||''));
+
+window.lamhaVerifyRender = function(){
+  const box=document.getElementById('vf-body'); if(!box) return;
+  const m=S.meas;
+  if(!m){
+    box.innerHTML=`<p class="lead">${LANG==='ar'
+      ? 'قيسي وجهك بالتطبيق أولاً، ثم عودي هنا وأدخلي قياسك بالشريط.'
+      : 'Measure with the app first, then come back and enter your tape numbers.'}</p>`;
+    return;
+  }
+  S.truth = S.truth || {};
+  const mmPerPx = m.ipdPx>0 ? S.ipd/m.ipdPx : 0;
+  const appVal = k => k==='ipd' ? S.ipd
+    : (k==='fw' ? m.fw : k==='fl' ? m.fl : m.jaw) * mmPerPx;
+  let h = `<p class="lead">${LANG==='ar'
+    ? 'قيسي بشريط قياس بالمليمتر وأدخلي الأرقام — سأخبرك بصدق كم يخطئ التطبيق.'
+    : 'Measure with a tape in millimetres and enter them — I will tell you honestly how far off the app is.'}</p>`;
+  FIELDS.forEach(([k,n])=>{
+    h += `<label class="fld">${eT(n)}</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="number" inputmode="decimal" data-vf="${k}" value="${S.truth[k]||''}"
+          placeholder="mm" style="flex:1;background:var(--panel-2);color:var(--mist);
+          border:1px solid var(--line);border-radius:10px;padding:9px;font-family:inherit">
+        <span class="mono" style="font-size:11px;color:var(--dim);width:74px;text-align:end">
+          ${LANG==='ar'?'التطبيق':'app'} ${appVal(k).toFixed(0)}</span>
+      </div>`;
+  });
+  /* the verdict */
+  const rows=[];
+  FIELDS.forEach(([k,n])=>{
+    const truth=parseFloat(S.truth[k]);
+    if(!isFinite(truth) || truth<=0) return;
+    const app=appVal(k);
+    const err=(app-truth)/truth*100;
+    rows.push({k, n, truth, app, err});
+  });
+  if(rows.length){
+    const worst=Math.max(...rows.map(r=>Math.abs(r.err)));
+    const mean=rows.reduce((s2,r)=>s2+Math.abs(r.err),0)/rows.length;
+    const col=e=>Math.abs(e)<4?'var(--jade)':Math.abs(e)<10?'var(--gold)':'var(--coral)';
+    h += `<div style="margin-top:14px">` + rows.map(r=>
+      `<div style="display:flex;align-items:center;gap:8px;margin:5px 0">
+        <span style="flex:1;font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${eT(r.n)}</span>
+        <span class="mono" style="font-size:11px;color:${col(r.err)}">${r.err>0?'+':''}${r.err.toFixed(1)}%</span>
+      </div>`).join('') + `</div>`;
+    const verdict = mean<4
+      ? (LANG==='ar'?'دقة جيدة — القياسات موثوقة':'Good accuracy — the measurements are trustworthy')
+      : mean<10
+      ? (LANG==='ar'?'دقة متوسطة — استعمليها كتقدير لا كرقم نهائي':'Moderate — treat these as estimates, not final numbers')
+      : (LANG==='ar'?'الخطأ كبير — تأكدي من المعايرة بالبطاقة ومن أن رأسك مواجه تماماً':'Large error — check the card calibration and that your head faces the camera squarely');
+    h += `<div class="note" style="margin-top:8px;color:${col(mean)}">
+      ◈ ${LANG==='ar'?'متوسط الخطأ':'Mean error'} <b class="mono">${mean.toFixed(1)}%</b> ·
+      ${LANG==='ar'?'أسوأ':'worst'} <b class="mono">${worst.toFixed(1)}%</b><br>${verdict}</div>`;
+    /* remember it, and let the rest of the app be honest about precision */
+    S.accuracy = { mean:+mean.toFixed(1), worst:+worst.toFixed(1), n:rows.length, at:Date.now() };
+    store.set('m_lamha_accuracy', S.accuracy).catch(()=>{});
+  }
+  box.innerHTML = h;
+  box.querySelectorAll('[data-vf]').forEach(inp=>{
+    inp.onchange = ()=>{
+      S.truth[inp.dataset.vf] = inp.value;
+      store.set('m_lamha_truth', S.truth).catch(()=>{});
+      window.lamhaVerifyRender();
+    };
+  });
+};
+(async()=>{ try{
+  const t2=await store.get('m_lamha_truth'); if(t2) S.truth=t2;
+  const a2=await store.get('m_lamha_accuracy'); if(a2) S.accuracy=a2;
+}catch(e){} })();
 })();
 </script>
 
