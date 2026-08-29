@@ -34,20 +34,21 @@ window.addEventListener('unhandledrejection', function(e){
 <link href="https://fonts.googleapis.com/css2?family=Marcellus&family=Reem+Kufi:wght@400..700&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root{
-  /* LAMHA — warm rose & champagne: softer, lighter, more feminine
-     than Kashkha's deep violet-gold */
-  --ink:#1E1418;
-  --panel:#2B1D24;
-  --panel-2:#3A2830;
-  --line:rgba(226,169,160,.30);
-  --gold:#E2A9A0;
-  --gold-soft:#F6D9CE;
-  --rose:#E8A9A0;
-  --jade:#8FC7B0;
-  --coral:#E8776B;
-  --mist:#FBF2F4;
-  --dim:#C0A3A8;
-  --r:18px;
+  /* LAMHA — warm luxe on ivory: champagne, antique gold and dusty rose.
+     Light ground, deep ink text, metallic accents. */
+  --ink:#FBF6F1;            /* the page itself is now light      */
+  --panel:#FFFFFF;          /* cards sit above it in pure white  */
+  --panel-2:#F6EDE4;        /* recessed fields, chips            */
+  --line:rgba(176,138,102,.28);
+  --gold:#A67C52;           /* antique gold — deep enough to read as text */
+  --gold-soft:#8A6A4E;      /* deeper for headings               */
+  --rose:#C98C82;
+  --jade:#7BA894;
+  --coral:#C96A5E;
+  --mist:#3A2C24;           /* body text: warm dark brown        */
+  --dim:#8B7566;            /* secondary text                    */
+  --shadow:rgba(120,90,66,.16);
+  --r:22px;
   --dock:86px;
   --safe-b:env(safe-area-inset-bottom,0px);
   --safe-t:env(safe-area-inset-top,0px);
@@ -55,22 +56,35 @@ window.addEventListener('unhandledrejection', function(e){
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{height:100%;margin:0;overscroll-behavior:none}
 body{
-  background:var(--ink);color:var(--mist);
+  /* a soft champagne wash with a whisper of warmth at the corners */
+  background:
+    radial-gradient(1200px 800px at 12% -8%, rgba(226,196,166,.42), transparent 62%),
+    radial-gradient(900px 700px at 92% 108%, rgba(214,166,158,.30), transparent 60%),
+    var(--ink);
+  color:var(--mist);
   font-family:"IBM Plex Sans Arabic",system-ui,-apple-system,sans-serif;
   font-size:15px;line-height:1.6;
   -webkit-font-smoothing:antialiased;
   overflow:hidden;
 }
 html[dir="ltr"] body{font-family:"IBM Plex Sans Arabic",system-ui,sans-serif}
-.disp{font-family:"Reem Kufi",serif;font-weight:500;letter-spacing:.01em}
-html[dir="ltr"] .disp{font-family:"Marcellus",serif;letter-spacing:.02em}
+.disp{font-family:"Reem Kufi",serif;font-weight:500;letter-spacing:.015em}
+html[dir="ltr"] .disp{font-family:"Marcellus",serif;letter-spacing:.055em;text-transform:none}
+h2{font-family:"Reem Kufi",serif;font-weight:500;letter-spacing:.012em;color:var(--gold-soft)}
+html[dir="ltr"] h2{font-family:"Marcellus",serif;letter-spacing:.03em}
+/* a hairline rule under headings — a small couture detail */
+h2::after{content:'';display:block;width:38px;height:1px;margin-top:7px;
+  background:linear-gradient(90deg,var(--gold),transparent)}
+html[dir="rtl"] h2::after{margin-inline-start:0;
+  background:linear-gradient(270deg,var(--gold),transparent)}
 .mono{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
 button{font-family:inherit;color:inherit;border:0;background:none;cursor:pointer;font-size:inherit}
 :focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:6px}
 
 /* ---------- shell ---------- */
 #app{position:fixed;inset:0;display:flex;flex-direction:column}
-#stage{position:relative;flex:1;min-height:0;overflow:hidden;background:#0C080F}
+#stage{position:relative;flex:1;min-height:0;overflow:hidden;
+  background:radial-gradient(120% 90% at 50% 0%, #FFFDFA, #F2E6DA)}
 #cv{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
 #glcv{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none;z-index:3}
 #vid{position:absolute;width:2px;height:2px;opacity:0;pointer-events:none}
@@ -104,8 +118,9 @@ button{font-family:inherit;color:inherit;border:0;background:none;cursor:pointer
 
 /* ---------- overlay panels ---------- */
 .sheet{position:absolute;left:0;right:0;bottom:0;z-index:12;
-  background:linear-gradient(to bottom,rgba(33,24,41,.97),rgba(22,16,28,.99));
-  border-top:1px solid var(--line);border-radius:22px 22px 0 0;
+  background:linear-gradient(to bottom,rgba(255,253,250,.985),rgba(250,242,234,.995));
+  border-top:1px solid var(--line);border-radius:30px 30px 0 0;
+  box-shadow:0 -18px 46px var(--shadow);
   padding:8px 16px calc(28px + var(--dock) + var(--safe-b));
   max-height:74%;overflow-y:auto;-webkit-overflow-scrolling:touch;
   touch-action:pan-y;overscroll-behavior:contain;
@@ -117,18 +132,84 @@ button{font-family:inherit;color:inherit;border:0;background:none;cursor:pointer
 html[dir="ltr"] .sheet h2{font-family:"Marcellus",serif}
 .sheet .lead{font-size:12.5px;color:var(--dim);margin:0 0 14px}
 .close-x{position:absolute;top:14px;inset-inline-end:14px;width:30px;height:30px;border-radius:50%;
-  background:rgba(243,237,247,.08);display:grid;place-items:center;font-size:16px;color:var(--dim)}
+  background:rgba(176,138,102,.16);display:grid;place-items:center;font-size:16px;color:var(--dim)}
 
 #diag{display:none !important}
 
 
 /* which kit? — a quiet card over the mirror, answered once */
 #kitAsk{position:fixed;inset:0;z-index:18;display:none;align-items:flex-end;justify-content:center;
-  background:rgba(10,7,9,.55);backdrop-filter:blur(3px);padding-bottom:calc(var(--dock) + var(--safe-b) + 24px)}
+  background:rgba(58,44,36,.30);backdrop-filter:blur(3px);padding-bottom:calc(var(--dock) + var(--safe-b) + 24px)}
 #kitAsk.on{display:flex}
-.kaCard{width:min(360px,88%);background:rgba(43,29,36,.96);border:1px solid var(--line);
+.kaCard{width:min(360px,88%);background:rgba(255,253,250,.97);border:1px solid var(--line);
   border-radius:20px;padding:16px 15px;box-shadow:0 14px 40px rgba(0,0,0,.55)}
 .kaTitle{font-size:14px;font-weight:600;color:var(--gold-soft);margin-bottom:12px;text-align:center}
+
+/* ---------- first-run tour ---------- */
+/* The layer must NOT swallow touches: the whole point of the practice steps
+   is that she reaches the real controls underneath. Only the card catches
+   pointer events; the dim and the spotlight are purely visual. */
+#tourLayer{position:absolute;inset:0;z-index:60;display:none;pointer-events:none}
+#tourLayer.on{display:block}
+#tourHole{position:absolute;border-radius:20px;
+  box-shadow:0 0 0 9999px rgba(58,44,36,.62);
+  border:2px solid var(--gold);
+  transition:all .32s cubic-bezier(.22,1,.36,1);pointer-events:none}
+/* on an action step the dim lifts, so nothing stands between her and the tool */
+#tourLayer.act #tourHole{box-shadow:0 0 0 9999px rgba(58,44,36,.20)}
+/* and the target pulses, so "tap it" always has a visible "it" */
+#tourLayer.act #tourHole{animation:tourPulse 1.25s ease-in-out infinite}
+@keyframes tourPulse{
+  0%,100%{ border-color:var(--gold);
+           box-shadow:0 0 0 9999px rgba(58,44,36,.20), 0 0 0 0 rgba(176,138,102,.55) }
+  55%    { border-color:#F0D9BC;
+           box-shadow:0 0 0 9999px rgba(58,44,36,.20), 0 0 0 14px rgba(176,138,102,0) }
+}
+/* a finger cue pointing at the target */
+/* leaving the whole tour lives in a corner, away from the step buttons */
+#tourQuit{position:absolute;top:12px;inset-inline-end:12px;z-index:62;
+  pointer-events:auto;padding:7px 13px;border-radius:999px;font-size:11px;font-weight:600;
+  background:rgba(255,253,250,.94);border:1px solid var(--line);color:var(--dim);
+  box-shadow:0 2px 8px var(--shadow)}
+#tourTap{position:absolute;z-index:61;display:none;font-size:24px;
+  filter:drop-shadow(0 2px 6px rgba(58,44,36,.45));
+  animation:tourTapMove 1.25s ease-in-out infinite;pointer-events:none}
+#tourLayer.act #tourTap{display:block}
+@keyframes tourTapMove{ 0%,100%{transform:translateY(0)} 55%{transform:translateY(-7px)} }
+#tourCard{pointer-events:auto;position:absolute;left:50%;transform:translateX(-50%);
+  width:min(330px,86%);background:rgba(255,253,250,.98);
+  border:1px solid var(--line);border-radius:20px;padding:16px;
+  box-shadow:0 14px 40px rgba(120,90,66,.34)}
+#tourCount{font-size:10.5px;color:var(--gold);letter-spacing:.12em;margin-bottom:7px}
+#tourText{font-size:13px;line-height:1.7;color:var(--mist);margin-bottom:13px}
+#tourBtns{display:flex;gap:9px;align-items:center}
+#tourSkip{flex:0 0 auto;padding:10px 14px;border-radius:999px;font-size:12px;color:var(--dim)}
+#tourNext{flex:1}
+
+/* an always-visible way back into the guided tour */
+#teachBtn{position:absolute;inset-inline-start:12px;top:14px;z-index:17;
+  padding:8px 14px;border-radius:999px;font-size:11.5px;font-weight:600;
+  background:linear-gradient(135deg,#D9B98E,#B08A66);color:#FFFBF6;
+  border:0;box-shadow:0 3px 12px rgba(176,138,102,.38);
+  display:flex;align-items:center;gap:6px}
+#teachBtn::before{content:'✦';font-size:12px}
+
+/* real products matching the shade under the ring */
+#mkShop{position:fixed;left:50%;transform:translateX(-50%);
+  bottom:calc(var(--dock) + var(--safe-b) + 118px);z-index:15;display:none;
+  gap:6px;max-width:92vw;overflow-x:auto;scrollbar-width:none;padding:2px}
+#mkShop.on{display:flex}
+#mkShop::-webkit-scrollbar{display:none}
+.shopChip{display:inline-flex;align-items:center;gap:6px;flex-shrink:0;
+  background:rgba(255,253,250,.94);border:1px solid var(--line);border-radius:999px;
+  padding:5px 11px;font-size:10.5px;color:var(--gold-soft);white-space:nowrap;
+  box-shadow:0 2px 8px var(--shadow)}
+.shopChip i{width:11px;height:11px;border-radius:50%;flex-shrink:0;
+  border:1px solid rgba(255,255,255,.9)}
+
+/* a hairline gold frame around the mirror — a couture edge, nothing more */
+#stage::after{content:'';position:absolute;inset:8px;pointer-events:none;z-index:6;
+  border:1px solid rgba(176,138,102,.22);border-radius:26px}
 
 /* the two light sliders share one row */
 .ltRow{display:flex;gap:14px;align-items:flex-start}
@@ -138,7 +219,7 @@ html[dir="ltr"] .sheet h2{font-family:"Marcellus",serif}
 /* ---------- compact guide bar ---------- */
 #plBar{position:fixed;left:8px;right:8px;bottom:calc(var(--dock) + var(--safe-b) + 8px);
   z-index:16;display:none;flex-direction:column;gap:7px;padding:10px 12px;
-  background:rgba(23,15,19,.90);border:1px solid var(--line);border-radius:16px;
+  background:rgba(255,253,250,.94);border:1px solid var(--line);border-radius:16px;
   box-shadow:0 8px 26px rgba(0,0,0,.5);backdrop-filter:blur(8px)}
 #plBar.on{display:flex}
 #plBarTop{display:flex;align-items:center;gap:8px}
@@ -148,6 +229,9 @@ html[dir="ltr"] .sheet h2{font-family:"Marcellus",serif}
   background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--dim);font-size:13px}
 #plbText{font-size:12px;line-height:1.6;color:var(--mist);opacity:.92;
   max-height:4.9em;overflow-y:auto}
+#plbCoach{display:none;font-size:11.5px;line-height:1.5;font-weight:600;
+  padding:7px 10px;border-radius:12px;background:rgba(176,138,102,.10)}
+#plbCoach.on{display:block}
 #plbRow{display:flex;gap:7px}
 #plbRow .btn{flex:1;padding:9px 6px;font-size:12px}
 #plbRow #plbNext{flex:1.4}
@@ -157,7 +241,9 @@ body.guideCompact #dock{opacity:.55}
 /* ---------- dock ---------- */
 #dock.locked{pointer-events:none;opacity:.35}
 #dock{position:relative;z-index:14;height:calc(var(--dock) + var(--safe-b));padding-bottom:var(--safe-b);
-  background:#1B1422;border-top:1px solid rgba(217,178,111,.16);
+  background:linear-gradient(180deg,#FFFDFA,#F7EEE4);
+  border-top:1px solid var(--line);
+  box-shadow:0 -6px 20px var(--shadow);
   display:flex;align-items:center;gap:2px;padding-inline:4px;
   overflow-x:auto;scrollbar-width:none}
 #dock::-webkit-scrollbar{display:none}
@@ -165,28 +251,43 @@ body.guideCompact #dock{opacity:.55}
   padding:8px 2px;border-radius:14px;color:var(--dim);transition:color .2s,background .2s}
 .dbtn svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .dbtn span{font-size:10px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.dbtn.on{color:var(--gold);background:rgba(217,178,111,.1)}
+.dbtn.on{color:var(--gold-soft);
+  background:linear-gradient(180deg,rgba(217,187,150,.30),rgba(201,140,130,.16));
+  box-shadow:inset 0 0 0 1px rgba(176,138,102,.30)}
 
 /* ---------- controls / generic ---------- */
 .row{display:flex;gap:8px;align-items:center}
 .wrap{display:flex;gap:8px;flex-wrap:wrap}
-.btn{padding:11px 16px;border-radius:12px;border:1px solid var(--line);background:rgba(243,237,247,.05);
-  font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:7px;justify-content:center;flex-shrink:0}
-.btn.pri{background:linear-gradient(135deg,var(--gold),#C89A55);color:#1A1220;border-color:transparent}
+.btn{padding:12px 17px;border-radius:999px;border:1px solid var(--line);
+  background:linear-gradient(180deg,#FFFDFA,#F7EFE6);
+  color:var(--gold-soft);
+  font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:7px;justify-content:center;flex-shrink:0;
+  box-shadow:0 1px 2px rgba(120,90,66,.07);
+  transition:transform .12s ease, box-shadow .12s ease}
+.btn:active{transform:translateY(1px);box-shadow:none}
+.btn.pri{background:linear-gradient(135deg,#D9B98E,#B08A66 58%,#9A7350);
+  color:#FFFBF6;border-color:transparent;
+  box-shadow:0 4px 14px rgba(176,138,102,.34)}
 .btn.wide{width:100%}
 .btn:disabled{opacity:.45}
-label.fld{display:block;font-size:11px;color:var(--dim);margin:14px 0 6px;letter-spacing:.04em;text-transform:uppercase}
+label.fld{display:block;font-size:11px;color:var(--dim);margin:14px 0 6px;
+  letter-spacing:.10em;text-transform:uppercase;font-weight:600}
 input[type=range]{-webkit-appearance:none;width:100%;height:26px;background:transparent}
-input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:3px;background:rgba(243,237,247,.16)}
+input[type=range]::-webkit-slider-runnable-track{height:5px;border-radius:3px;
+  background:linear-gradient(90deg,rgba(176,138,102,.45),rgba(201,140,130,.40));
+  box-shadow:0 0 0 1px rgba(255,255,255,.65)}
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;margin-top:-8px;border-radius:50%;
   background:var(--gold);border:3px solid #1B1422;box-shadow:0 2px 8px rgba(0,0,0,.5)}
 input[type=range]::-moz-range-track{height:4px;border-radius:3px;background:rgba(243,237,247,.16)}
 input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:var(--gold);border:3px solid #1B1422}
 
 /* segmented */
-.seg{display:flex;flex-wrap:wrap;background:rgba(243,237,247,.06);border-radius:12px;padding:3px;gap:3px}
-.seg button{flex:1 1 auto;min-width:74px;padding:8px 10px;border-radius:10px;font-size:12px;font-weight:600;color:var(--dim);white-space:nowrap}
-.seg button.on{background:var(--panel-2);color:var(--gold-soft);box-shadow:0 1px 6px rgba(0,0,0,.3)}
+.seg{display:flex;flex-wrap:wrap;background:var(--panel-2);border-radius:999px;padding:4px;gap:3px;
+  box-shadow:inset 0 1px 3px rgba(120,90,66,.10)}
+.seg button{flex:1 1 auto;min-width:74px;padding:9px 12px;border-radius:999px;font-size:12px;font-weight:600;
+  color:var(--dim);white-space:nowrap;transition:all .16s ease}
+.seg button.on{background:#fff;color:var(--gold-soft);
+  box-shadow:0 2px 8px var(--shadow), inset 0 0 0 1px rgba(176,138,102,.22)}
 .seg button.has{position:relative}
 .seg button.has::after{content:"";position:absolute;top:5px;inset-inline-end:6px;
   width:5px;height:5px;border-radius:50%;background:var(--gold)}
@@ -212,8 +313,11 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 /* cards */
 .cards{display:flex;gap:10px;overflow-x:auto;padding:4px 2px 10px;
   scrollbar-width:thin;scrollbar-color:rgba(217,178,111,.45) transparent;cursor:grab}
-.card{flex-shrink:0;width:172px;background:var(--panel-2);border:1px solid rgba(217,178,111,.16);
-  border-radius:var(--r);padding:13px}
+.card{flex-shrink:0;width:172px;background:var(--panel);
+  border:1px solid rgba(176,138,102,.20);
+  border-radius:var(--r);padding:14px;
+  box-shadow:0 3px 14px var(--shadow)}
+.card h4{color:var(--gold-soft)}
 .card h4{margin:0 0 4px;font-size:13.5px;font-weight:600}
 .card p{margin:0;font-size:11.5px;color:var(--dim);line-height:1.5}
 .card .tag{display:inline-block;font-size:9.5px;padding:2px 7px;border-radius:999px;
@@ -224,7 +328,7 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 .metric:last-child{border-bottom:0}
 .metric .nm{flex:1;min-width:0;font-size:13px}
 .metric .nm small{display:block;font-size:10.5px;color:var(--dim)}
-.metric .bar{width:78px;height:5px;border-radius:3px;background:rgba(243,237,247,.12);overflow:hidden;flex-shrink:0}
+.metric .bar{width:78px;height:5px;border-radius:3px;background:rgba(176,138,102,.18);overflow:hidden;flex-shrink:0}
 .metric .bar i{display:block;height:100%;border-radius:3px;transition:width .7s cubic-bezier(.22,1,.36,1)}
 .metric .val{width:34px;text-align:end;font-size:13px;font-weight:600;flex-shrink:0}
 
@@ -262,7 +366,7 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 #layers{position:absolute;top:calc(var(--safe-t) + 62px);inset-inline-end:12px;z-index:9;
   display:flex;flex-direction:column;gap:6px;transition:opacity .5s}
 #layers button{display:flex;align-items:center;gap:7px;padding:7px 10px;border-radius:12px;
-  background:rgba(12,8,15,.6);border:1px solid var(--line);color:var(--dim);font-size:11px;font-weight:600}
+  background:rgba(255,253,250,.86);border:1px solid var(--line);color:var(--dim);font-size:11px;font-weight:600}
 #layers button svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 #layers button b{font-weight:600}
 #layers button.on{color:#1A1220;background:var(--gold);border-color:transparent}
@@ -285,72 +389,88 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 .sg-eyebrow{font-family:"Marcellus",serif;font-size:10px;letter-spacing:.4em;color:var(--gold);margin-bottom:6px}
 #shapeGate h3{margin:0 0 10px;font-size:19px;font-weight:600}
 #shapeGate p{margin:10px 0 0;font-size:12.5px;color:var(--dim);line-height:1.55}
-.sg-bar{height:3px;border-radius:3px;background:rgba(243,237,247,.12);overflow:hidden}
+.sg-bar{height:3px;border-radius:3px;background:rgba(176,138,102,.18);overflow:hidden}
 .sg-bar i{display:block;height:100%;width:0;background:var(--gold);transition:width .3s}
 #shapeGate .seg{margin-top:12px}
 #shapeGate .row{margin-top:12px}
 #shapeChip{cursor:pointer}
 /* ---------- makeup HUD: the face stays clear ---------- */
-#mkHud{position:absolute;inset:0;z-index:13;pointer-events:none;display:none}
+#mkHud{position:absolute;inset:0;z-index:13;pointer-events:none;display:none;overflow:visible}
 #mkHud.on{display:block}
 #mkRail{position:fixed;inset-inline-end:3px;top:52%;z-index:13;transform:translateY(-50%);
   height:min(40vh,300px);overflow-y:auto;scroll-snap-type:y mandatory;
   display:flex;flex-direction:column;align-items:center;gap:12px;
   padding-block:calc(min(20vh,150px) - 13px);padding-inline:6px;
-  pointer-events:auto;background:rgba(12,8,15,.35);
+  pointer-events:auto;background:rgba(255,253,250,.72);
   border:1px solid rgba(217,178,111,.18);border-radius:999px;scrollbar-width:none;touch-action:pan-y}
 #mkRail::-webkit-scrollbar{display:none}
 #mkRail .rz{flex:0 0 26px;width:26px;height:26px;border-radius:50%;scroll-snap-align:center;
-  border:1.5px solid rgba(255,255,255,.35);box-shadow:0 2px 8px rgba(0,0,0,.4)}
+  border:1.5px solid rgba(255,255,255,.9);box-shadow:0 2px 8px rgba(120,90,66,.28)}
 #mkRailRing{position:fixed;inset-inline-end:1px;top:52%;z-index:13;transform:translateY(-50%);
   width:38px;height:38px;border-radius:50%;border:3px solid var(--gold);pointer-events:none;
-  box-shadow:0 0 0 3px rgba(12,8,15,.6),0 6px 18px rgba(0,0,0,.5)}
+  box-shadow:0 0 0 3px rgba(255,253,250,.9),0 6px 18px rgba(0,0,0,.5)}
 #mkZName{position:fixed;inset-inline-end:46px;top:52%;z-index:13;transform:translateY(-50%);
-  background:rgba(12,8,15,.78);border:1px solid var(--line);border-radius:999px;
+  background:rgba(255,253,250,.92);border:1px solid var(--line);border-radius:999px;
   padding:5px 13px;font-size:11.5px;color:var(--gold-soft);white-space:nowrap;pointer-events:none}
-#mkPick{position:fixed;left:0;right:0;bottom:calc(var(--dock) + var(--safe-b) + 2px);pointer-events:auto;z-index:13}
+#mkPick{position:fixed;left:0;right:0;bottom:calc(var(--dock) + var(--safe-b) + 2px);
+  pointer-events:auto;z-index:13;overflow:visible}
 #mkStyle{position:fixed;left:50%;transform:translateX(-50%);
   bottom:calc(var(--dock) + var(--safe-b) + 84px);z-index:15;display:none;gap:6px;
   max-width:92vw;overflow-x:auto;scrollbar-width:none;padding:2px}
 #mkStyle.on{display:flex}
 #mkStyle button{flex-shrink:0;padding:6px 12px;border-radius:999px;font-size:11px;
-  background:rgba(12,8,15,.75);border:1px solid var(--line);color:var(--dim);font-family:inherit}
+  background:rgba(255,253,250,.90);border:1px solid var(--line);color:var(--dim);font-family:inherit}
 #mkStyle button.on{border-color:var(--gold);color:var(--gold-soft);background:rgba(217,178,111,.15)}
 #mkName{position:fixed;inset-inline-start:5px;bottom:calc(var(--dock) + var(--safe-b) + 66px);z-index:13;
-  background:rgba(12,8,15,.78);border:1px solid var(--line);border-radius:999px;
+  background:rgba(255,253,250,.92);border:1px solid var(--line);border-radius:999px;
   padding:5px 13px;font-size:11px;color:var(--gold-soft);white-space:nowrap;
   max-width:44vw;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
 #mkRing{position:absolute;left:50%;bottom:8px;transform:translateX(-50%);
   width:54px;height:54px;border-radius:50%;border:3px solid var(--gold);
-  box-shadow:0 0 0 3px rgba(12,8,15,.65),0 8px 24px rgba(0,0,0,.5);pointer-events:none;z-index:2}
+  box-shadow:0 0 0 3px rgba(255,253,250,.9),0 8px 24px rgba(0,0,0,.5);pointer-events:none;z-index:2}
 #mkStrip{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;
   padding:8px calc(50% - 20px);align-items:center;scrollbar-width:none;touch-action:pan-x}
 #mkStrip::-webkit-scrollbar{display:none}
 #mkStrip .msw{flex:0 0 40px;height:40px;border-radius:50%;scroll-snap-align:center;
-  border:1.5px solid rgba(255,255,255,.35);box-shadow:0 3px 10px rgba(0,0,0,.4)}
+  border:2px solid rgba(255,255,255,.95);box-shadow:0 3px 10px rgba(120,90,66,.30)}
 #mkStrip .msw.own{box-shadow:0 0 0 2px rgba(127,191,168,.8),0 3px 10px rgba(0,0,0,.4)}
 #mkIntWrap{display:contents}
-#mkIntGrab{position:fixed;z-index:14;width:32px;height:32px;border-radius:50%;
-  background:rgba(12,8,15,.85);border:1.5px solid var(--gold);color:var(--gold-soft);
-  display:grid;place-items:center;font-size:14px;pointer-events:auto;touch-action:none;
-  box-shadow:0 4px 14px rgba(0,0,0,.5)}
-#mkInt{position:fixed;z-index:13;top:60%;
-  inset-inline-start:calc(14px - min(34vh,240px)/2);
-  width:min(34vh,240px);height:28px;margin:0;
-  transform:translateY(-50%) rotate(-90deg);
-  accent-color:var(--gold);opacity:.95;direction:ltr;
-  pointer-events:auto;touch-action:none}
-#mkMore{position:fixed;inset-inline-start:6px;bottom:calc(var(--dock) + var(--safe-b) + 76px);z-index:15;
+/* a real vertical rail, drawn directly — no rotation, nothing to clip */
+#mkInt{position:fixed;z-index:17;
+  /* the zone wheel occupies the trailing edge, so the rail takes the
+     leading edge — the two never overlap again */
+  /* the rail takes the UPPER part of the edge; the buttons stack below it */
+  inset-inline-start:12px; top:16%; height:30%;
+  width:34px; margin:0;
+  border-radius:999px;
+  background:rgba(255,253,250,.72);
+  border:1px solid var(--line);
+  box-shadow:0 3px 14px var(--shadow);
+  pointer-events:auto;touch-action:none;
+  display:flex;align-items:flex-end;justify-content:center;
+  overflow:hidden}
+#mkIntFill{width:100%;border-radius:999px;
+  background:linear-gradient(180deg,var(--rose),var(--gold));
+  transition:height .06s linear}
+#mkIntKnob{position:absolute;left:50%;transform:translate(-50%,50%);
+  width:26px;height:26px;border-radius:50%;
+  background:#fff;border:2px solid var(--gold);
+  box-shadow:0 2px 8px var(--shadow);pointer-events:none}
+#mkIntVal{position:absolute;inset-inline-start:42px;
+  background:rgba(255,253,250,.94);border:1px solid var(--line);
+  border-radius:999px;padding:3px 9px;font-size:11px;color:var(--gold-soft);
+  pointer-events:none;white-space:nowrap;box-shadow:0 2px 8px var(--shadow)}
+#mkMore{position:fixed;inset-inline-start:6px;bottom:calc(var(--dock) + var(--safe-b) + 58px);z-index:15;
   pointer-events:auto;display:flex;align-items:center;gap:7px;padding:9px 14px;border-radius:999px;
-  background:rgba(12,8,15,.78);border:1px solid var(--gold);color:var(--gold-soft);font-size:15px;
+  background:rgba(255,253,250,.92);border:1px solid var(--gold);color:var(--gold-soft);font-size:15px;
   box-shadow:0 5px 16px rgba(0,0,0,.45)}
 #mkMore b{font-size:11.5px;font-weight:600}
-#mkVoice{position:fixed;inset-inline-start:6px;bottom:calc(var(--dock) + var(--safe-b) + 128px);
+#mkVoice{position:fixed;inset-inline-start:6px;bottom:calc(var(--dock) + var(--safe-b) + 118px);
   z-index:15;pointer-events:auto;width:44px;height:44px;border-radius:50%;font-size:19px;
-  background:rgba(12,8,15,.78);border:1px solid var(--line);color:var(--gold-soft)}
+  background:rgba(255,253,250,.92);border:1px solid var(--line);color:var(--gold-soft)}
 #mkOwned{position:fixed;inset-inline-start:6px;bottom:calc(var(--dock) + var(--safe-b) + 180px);
   z-index:15;pointer-events:auto;padding:8px 12px;border-radius:999px;font-size:11px;
-  background:rgba(12,8,15,.78);border:1px solid var(--line);color:var(--dim);font-family:inherit}
+  background:rgba(255,253,250,.92);border:1px solid var(--line);color:var(--dim);font-family:inherit}
 #mkOwned.on{border-color:var(--jade);color:var(--jade);background:rgba(143,199,176,.16)}
 #mkVoice.rec{border-color:#FF6E5E;box-shadow:0 0 0 3px rgba(255,110,94,.25);animation:vpulse 1.2s infinite}
 @keyframes vpulse{50%{box-shadow:0 0 0 7px rgba(255,110,94,.12)}}
@@ -375,10 +495,20 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 #status.show{opacity:1}
 
 /* gate / permission screen */
-#gate{position:absolute;inset:0;z-index:30;background:radial-gradient(120% 90% at 50% 0%,#2C2036,#16101C 70%);
+#gate{position:absolute;inset:0;z-index:30;
+  background:
+    radial-gradient(120% 90% at 50% -6%, #FFFDFA, #F3E7DA 72%),
+    linear-gradient(#F3E7DA,#EADCCC);
   display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px 26px;gap:6px}
-#gate .mark{font-family:"Marcellus",serif;font-size:13px;letter-spacing:.42em;color:var(--gold);margin-bottom:6px}
-#gate h1{font-family:"Reem Kufi",serif;font-size:33px;margin:0;font-weight:500;line-height:1.25}
+#gate .mark{font-family:"Marcellus",serif;font-size:12px;letter-spacing:.48em;color:var(--gold);
+  margin-bottom:14px;padding-bottom:12px;position:relative}
+/* a thin gold rule with a diamond at its centre — the house mark */
+#gate .mark::after{content:'';position:absolute;left:50%;bottom:0;transform:translateX(-50%);
+  width:96px;height:1px;background:linear-gradient(90deg,transparent,var(--gold),transparent)}
+#gate .mark::before{content:'◆';position:absolute;left:50%;bottom:-6px;transform:translateX(-50%);
+  font-size:7px;color:var(--gold);letter-spacing:0}
+#gate h1{font-family:"Reem Kufi",serif;font-size:33px;margin:0;font-weight:500;line-height:1.28;
+  color:var(--gold-soft)}
 html[dir="ltr"] #gate h1{font-family:"Marcellus",serif}
 #gate p{color:var(--dim);font-size:13.5px;max-width:330px;margin:8px 0 20px}
 #gate .feats{display:flex;flex-direction:column;gap:9px;margin-bottom:26px;text-align:start;width:100%;max-width:330px}
@@ -405,8 +535,10 @@ html[dir="ltr"] #gate h1{font-family:"Marcellus",serif}
 .extract i{display:block;height:38px;border-radius:10px;margin-bottom:5px;border:1px solid rgba(243,237,247,.14)}
 .extract b{font-size:10px;color:var(--dim);font-weight:500}
 
-.note{font-size:11.5px;color:var(--dim);background:rgba(243,237,247,.045);border-inline-start:2px solid var(--gold);
-  padding:9px 12px;border-radius:0 10px 10px 0;margin-top:12px;line-height:1.6}
+.note{font-size:11.5px;color:var(--mist);background:linear-gradient(180deg,#FFFDFA,#FAF3EC);
+  border-inline-start:2px solid var(--gold);
+  padding:10px 13px;border-radius:0 14px 14px 0;margin-top:12px;line-height:1.65;
+  box-shadow:0 1px 6px var(--shadow)}
 html[dir="ltr"] .note{border-radius:0 10px 10px 0}
 
 html[dir="rtl"]{--dx:-1}
@@ -422,9 +554,9 @@ html[dir="ltr"]{--dx:1}
   body::before{                       /* soft studio backdrop */
     content:''; position:fixed; inset:0; z-index:0; pointer-events:none;
     background:
-      radial-gradient(1100px 700px at 50% -10%, rgba(226,169,160,.10), transparent 60%),
-      radial-gradient(800px 600px at 50% 110%, rgba(217,178,111,.07), transparent 60%),
-      #0A0709;
+      radial-gradient(1100px 760px at 50% -12%, rgba(226,196,166,.55), transparent 62%),
+      radial-gradient(820px 620px at 50% 112%, rgba(214,166,158,.40), transparent 60%),
+      linear-gradient(160deg,#F7EFE6,#EFE2D6);
   }
   #app{
     /* centre by geometry, not by transform: a transform here also becomes
@@ -441,16 +573,17 @@ html[dir="ltr"]{--dx:1}
     overflow:hidden;
     z-index:1;
     box-shadow:
-      0 0 0 11px #171216,                 /* the body of the phone   */
-      0 0 0 13px rgba(255,255,255,.07),   /* its polished edge       */
-      0 42px 90px rgba(0,0,0,.65);        /* it sits above the desk  */
+      0 0 0 11px #E8D8C6,                     /* warm champagne body   */
+      0 0 0 12px rgba(176,138,102,.55),       /* brushed gold edge     */
+      0 0 0 13px rgba(255,255,255,.60),       /* its polished highlight*/
+      0 34px 78px rgba(120,90,66,.30);        /* it rests on the desk  */
   }
   #app::after{                        /* the camera notch */
     content:''; position:absolute; z-index:40; pointer-events:none;
     top:9px; left:50%; transform:translateX(-50%);
     width:104px; height:26px; border-radius:16px;
-    background:#0B080D;
-    box-shadow:inset 0 0 0 1px rgba(255,255,255,.05);
+    background:#E4D2BE;
+    box-shadow:inset 0 0 0 1px rgba(176,138,102,.35);
   }
   /* with no transform on #app, fixed children would escape to the desktop —
      re-anchor them to the frame without changing any of their offsets */
@@ -460,15 +593,14 @@ html[dir="ltr"]{--dx:1}
   .sheet{ max-height:52%; }
   /* the vertical intensity rail is sized in vh — inside the frame that is
      wrong, so re-express it against the frame's own height */
-  #mkInt{ top:58%; width:min(300px,34%); inset-inline-start:calc(16px - min(300px,34%)/2); }
-  #mkIntGrab{ display:none; }        /* no dragging needed on a fixed frame */
+  /* placeInt() positions the rail from the frame's own box — no override here */
   /* the sheets that are used WHILE looking at yourself stay shorter still */
   #sh-light{ max-height:34% !important; }
   #sh-skin{  max-height:44% !important; }
   #sh-meas{  max-height:40% !important; }
   /* the sheets used while looking at yourself let the mirror show through */
   #sh-skin, #sh-meas, #sh-light{
-    background:rgba(43,29,36,.82);
+    background:rgba(255,253,250,.88);
     backdrop-filter:blur(14px);
   }
   #sh-makeup{max-height:50% !important; }
@@ -558,6 +690,9 @@ document.addEventListener('DOMContentLoaded', function(){
       <span class="s wait" id="d4">4 · <span data-i18n="d_track">تتبّع 468 نقطة</span></span>
     </div>
 
+
+    <button id="teachBtn" title="علّميني"><span data-i18n="tr_short">علّميني</span></button>
+
     <div id="kitAsk">
       <div class="kaCard">
         <div class="kaTitle" data-i18n="ka_h">بأي مكياج نعمل الآن؟</div>
@@ -573,11 +708,13 @@ document.addEventListener('DOMContentLoaded', function(){
       <button id="mkMore">☰ <b data-i18n="mk_full">اللوحة الكاملة</b></button>
       <button id="mkVoice" title="تحكم صوتي">🎙</button>
       <button id="mkOwned" title="من خزانتي"><span data-i18n="ow_short">خزانتي</span></button>
+      <!-- the vertical intensity rail sits directly in the HUD: nested inside
+           the short #mkPick bar it was clipped away entirely -->
+      <div id="mkInt"><i id="mkIntFill"></i><b id="mkIntKnob"></b><span id="mkIntVal"></span></div>
       <div id="mkPick">
         <div id="mkName"></div>
+        <div id="mkShop"></div>
         <div id="mkStyle"></div>
-        <div id="mkIntWrap"><input id="mkInt" type="range" min="0" max="100" value="50">
-        <button id="mkIntGrab" title="اسحبيني">✥</button></div>
         <div id="mkStrip"></div>
         <div id="mkRing"></div>
       </div>
@@ -597,7 +734,7 @@ document.addEventListener('DOMContentLoaded', function(){
 
     <div id="shapeGate" class="hidden">
       <div class="sg-card">
-        <div class="sg-eyebrow">LAMHA MOBILE 1787921464</div>
+        <div class="sg-eyebrow">LAMHA MOBILE 1788000017</div>
         <h3 id="sgTitle" class="disp">جارٍ قراءة شكل وجهك</h3>
         <div class="sg-bar"><i id="sgFill"></i></div>
         <p id="sgText">انظري مباشرة إلى الكاميرا وابقي ثابتة لحظة.</p>
@@ -611,7 +748,7 @@ document.addEventListener('DOMContentLoaded', function(){
     </div>
 
     <div id="gate" class="gone">
-      <div class="mark">LAMHA MOBILE · BUILD 1787921464</div>
+      <div class="mark">LAMHA MOBILE · BUILD 1788000017</div>
       <h1 class="disp" data-i18n="gate_h">مرآة زين الذكية</h1>
       <p data-i18n="gate_p">مرآتك تحلّل بشرتك، ترسم خريطة وجهك، وتجرّب المكياج قبل أن تلمسي فرشاة واحدة.</p>
       <div class="feats">
@@ -622,6 +759,8 @@ document.addEventListener('DOMContentLoaded', function(){
       </div>
       <button class="btn pri wide" id="startBtn" style="max-width:330px">افتحي المرآة</button>
       <input type="file" id="gateFile" accept="image/*" class="hidden">
+      <button class="btn wide" id="demoBtn" style="margin-top:8px" data-i18n="dm_btn">جرّبي على صورة بدل وجهي</button>
+      <input type="file" id="demo-file" accept="image/*" class="hidden">
       <button class="btn wide" id="stillBtn" style="max-width:330px;margin-top:9px"></button>
       <p id="gatePriv" style="font-size:11px;margin-top:14px;opacity:.75"></p>
     </div>
@@ -698,6 +837,7 @@ document.addEventListener('DOMContentLoaded', function(){
     <label class="fld" data-i18n="mk_looks">إطلالات جاهزة</label>
     <div class="cards" id="mk-looks"></div>
     <button class="btn wide" id="mk-save" style="margin-top:8px" data-i18n="mk_save">احفظي هذه الإطلالة</button>
+    <button class="btn wide" id="tour-replay" style="margin-top:8px" data-i18n="tr_btn">أعيدي الجولة التعريفية</button>
     <button class="btn wide" id="mk-photo-mode" style="margin-top:8px" data-i18n="pm_btn">جرّبي على صورة بدل الكاميرا</button>
     <input type="file" id="pm-file" accept="image/*" style="display:none">
     <button class="btn wide" id="mk-lamha" style="margin-top:8px" data-i18n="lm_btn">إطلالة تناسب ملامحك</button>
@@ -848,10 +988,10 @@ document.addEventListener('DOMContentLoaded', function(){
       <div class="seg" id="kt-types"></div>
       <label class="fld" data-i18n="kt_name">الاسم</label>
       <input id="kt-name" type="text" placeholder="…" style="width:100%;padding:11px 13px;border-radius:12px;
-        border:1px solid var(--line);background:rgba(243,237,247,.05);color:var(--mist);font-family:inherit;font-size:14px">
+        border:1px solid var(--line);background:rgba(176,138,102,.10);color:var(--mist);font-family:inherit;font-size:14px">
       <label class="fld" data-i18n="kt_brand">الماركة (اختياري)</label>
       <input id="kt-brand" type="text" placeholder="…" style="width:100%;padding:11px 13px;border-radius:12px;
-        border:1px solid var(--line);background:rgba(243,237,247,.05);color:var(--mist);font-family:inherit;font-size:14px">
+        border:1px solid var(--line);background:rgba(176,138,102,.10);color:var(--mist);font-family:inherit;font-size:14px">
       <label class="fld"><span data-i18n="kt_shade">الدرجة</span> <i id="kt-dot" style="display:inline-block;width:14px;height:14px;border-radius:50%;vertical-align:-2px;background:#C98C82;border:1px solid rgba(255,255,255,.25)"></i></label>
       <div class="shades" id="kt-shades"></div>
       <div class="row" style="margin-top:10px">
@@ -875,6 +1015,7 @@ document.addEventListener('DOMContentLoaded', function(){
       <button id="plbFull" title="اللوحة الكاملة">☰</button>
     </div>
     <div id="plbText"></div>
+    <div id="plbCoach"></div>
     <div id="plbRow">
       <button class="btn" id="plbPrev" data-i18n="rt_prev">السابقة</button>
       <button class="btn" id="plbBA"><span data-i18n="ba_btn">قبل / بعد</span></button>
@@ -987,6 +1128,22 @@ document.addEventListener('DOMContentLoaded', function(){
       <svg viewBox="0 0 24 24"><path d="M3 17l5-6 4 3 5-7 4 4"/><path d="M3 21h18"/></svg>
       <span data-i18n="nav_hist">التقدّم</span></button>
   </nav>
+
+    <div id="tourLayer">
+      <div id="tourHole"></div>
+    <div id="tourTap">👆</div>
+      <button id="tourQuit" data-i18n="tr_quit">تخطّي التعليم</button>
+      <div id="tourCard">
+        <div id="tourCount"></div>
+        <div id="tourText"></div>
+        <div id="tourBtns">
+          <button id="tourBack" data-i18n="tr_back">السابقة</button>
+          <button id="tourSkip" data-i18n="tr_skip">تخطّي هذه</button>
+          <button id="tourNext" class="btn pri" data-i18n="tr_next">التالي</button>
+        </div>
+      </div>
+    </div>
+
 </div>
 <script>
 /* =========================================================
@@ -1118,6 +1275,9 @@ ar:{
  pl_h:"من وجهك إلى الإطلالة", mk_plan:"دليل التطبيق خطوة بخطوة",
  pl_p:"نلتقط صورة الإطلالة النهائية أولاً، ثم نمشي معك خطوة خطوة حتى تصلي إليها بيدك.",
  pl_start:"التقطي صورة الهدف وابدئي", pl_exit:"إنهاء الدليل",
+ dm_btn:"جرّبي على صورة بدل وجهي",
+ dm_hint:"اختاري صورة وجه واضحة — يعمل التطبيق كاملاً عليها، ولا شيء يُرفع لأي مكان.",
+ tr_skip:"تخطّي هذه", tr_back:"السابقة", tr_quit:"تخطّي التعليم", tr_next:"التالي", tr_btn:"أعيدي الجولة التعريفية", tr_short:"علّميني",
  ka_h:"بأي مكياج نعمل الآن؟", ka_virtual:"جرّبي أي درجة — مكياج افتراضي", ka_owned:"من خزانتي",
  ka_empty:"خزانتك فارغة — أضيفي منتجاتك أولاً، أو جرّبي المكياج الافتراضي",
  lt_auto:"اضبطي تلقائياً", lt_manual:"أضبط بنفسي",
@@ -1318,6 +1478,9 @@ en:{
  pl_h:"From your face to the look", mk_plan:"Step-by-step application guide",
  pl_p:"We capture the finished look first, then walk you through it step by step until you get there yourself.",
  pl_start:"Capture the target and begin", pl_exit:"End the guide",
+ dm_btn:"Use a photo instead of my face",
+ dm_hint:"Pick a clear face photo — the whole app works on it, and nothing is uploaded anywhere.",
+ tr_skip:"Skip this", tr_back:"Back", tr_quit:"Exit tour", tr_next:"Next", tr_btn:"Replay the tour", tr_short:"Teach me",
  ka_h:"Which makeup are we working with?", ka_virtual:"Try any shade — virtual", ka_owned:"From my kit",
  ka_empty:"Your kit is empty — add your products first, or try virtual shades",
  lt_auto:"Set it for me", lt_manual:"I'll set it myself",
@@ -1518,6 +1681,9 @@ id:{
  pl_h:"Dari wajahmu ke tampilan", mk_plan:"Panduan langkah demi langkah",
  pl_p:"Kami tangkap dulu foto hasil akhirnya, lalu memandumu langkah demi langkah sampai kamu mencapainya sendiri.",
  pl_start:"Ambil foto target dan mulai", pl_exit:"Akhiri panduan",
+ dm_btn:"Pakai foto, bukan wajahku",
+ dm_hint:"Pilih foto wajah yang jelas — seluruh aplikasi bekerja padanya, tanpa mengunggah apa pun.",
+ tr_skip:"Lewati ini", tr_back:"Kembali", tr_quit:"Keluar tur", tr_next:"Lanjut", tr_btn:"Ulangi tur", tr_short:"Ajari saya",
  ka_h:"Riasan mana yang kita pakai?", ka_virtual:"Coba warna apa saja — virtual", ka_owned:"Dari koleksiku",
  ka_empty:"Koleksimu kosong — tambahkan produk dulu, atau coba warna virtual",
  lt_auto:"Atur otomatis", lt_manual:"Saya atur sendiri",
@@ -2226,6 +2392,10 @@ function loop(){
     try{ updateGuide(); drawGuide(); }
     catch(err){ if(!S._gdErr){ S._gdErr=1; fatalLog('[guide] '+(err && (err.stack||err.message||err))); } }
   }
+  if(S.plan && S.plan.on && typeof renderPlanBar==='function'){
+    S._coachTick = (S._coachTick|0)+1;
+    if(S._coachTick % 45 === 0){ try{ renderPlanBar(); }catch(e){} }
+  }
   if(S.landmarks && typeof drawApplyAnim==='function'){
     try{ drawApplyAnim(S.landmarks); }
     catch(e){ if(!S._anmErr){ S._anmErr=1; fatalLog('[apply anim] '+(e&&(e.stack||e.message||e))); } }
@@ -2442,17 +2612,19 @@ function sculptAreas(lm){
   const line=(kind,idx,wid,w,tag)=>{ if(w) out.push({kind,t:'line',pts:idx.map(i=>Array.isArray(i)?i:P(lm[i])),wid,w,tag}); };
   const blob=(kind,i,r,w,tag)=>{ if(w) out.push({kind,t:'blob',pt:Array.isArray(i)?i:P(lm[i]),r,w,tag}); };
   /* contour — the recessed areas */
-  line('c', L.contourL, fs*.075, c.cheek, 'cont');
-  line('c', L.contourR, fs*.075, c.cheek, 'cont');
-  line('c', L.contourL.slice(0,3), fs*.070, c.cheekOuter, 'cont');
-  line('c', L.contourR.slice(0,3), fs*.070, c.cheekOuter, 'cont');
-  blob('c', 54,  fs*.10, c.temple, 'cont');  blob('c', 284, fs*.10, c.temple, 'cont');
+  /* the cheek hollow is a defined band, not a wide wash: references show
+     roughly 5% of face width, blended upward and outward */
+  line('c', L.contourL, fs*.052, c.cheek, 'cont');
+  line('c', L.contourR, fs*.052, c.cheek, 'cont');
+  line('c', L.contourL.slice(0,3), fs*.048, c.cheekOuter, 'cont');
+  line('c', L.contourR.slice(0,3), fs*.048, c.cheekOuter, 'cont');
+  blob('c', 54,  fs*.075, c.temple, 'cont');  blob('c', 284, fs*.075, c.temple, 'cont');
   line('c', [103,67],  fs*.055, c.foreSide, 'cont');
   line('c', [332,297], fs*.055, c.foreSide, 'cont');
   line('c', [103,67,109,10,338,297,332], fs*.060, c.hairline, 'cont');
-  line('c', L.jawL, fs*.050, c.jaw || c.jawSide, 'jaw');
-  line('c', L.jawR, fs*.050, c.jaw || c.jawSide, 'jaw');
-  blob('c', 172, fs*.09, c.jawCorner, 'jaw'); blob('c', 397, fs*.09, c.jawCorner, 'jaw');
+  line('c', L.jawL, fs*.038, c.jaw || c.jawSide, 'jaw');
+  line('c', L.jawR, fs*.038, c.jaw || c.jawSide, 'jaw');
+  blob('c', 172, fs*.068, c.jawCorner, 'jaw'); blob('c', 397, fs*.068, c.jawCorner, 'jaw');
   line('c', [176,152,400], fs*.045, c.chinBottom, 'jaw');
   if(c.underJaw){
     const dn=(()=>{ const a=P(lm[168]), b=P(lm[152]);
@@ -2726,7 +2898,10 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
       const [px,py]=pt(lm[ci]), [ex,ey]=pt(lm[ei]);
       const x=px, y=py-fs*0.028;
       const ang=Math.atan2((ey-fs*0.09)-y, ex-x);      // apple, swept up toward the ear
-      const ra=fs*0.20, rb=fs*0.125;
+      /* Reference blush covers roughly a quarter of the face width, swept up
+       toward the temple. The old 0.20 radius (40% diameter) covered the whole
+       cheek and read as a stain rather than colour. */
+    const ra=fs*0.125, rb=fs*0.082;
       const g=m1.createRadialGradient(0,0,0,0,0,ra);
       [[0,1],[.30,.86],[.52,.60],[.72,.30],[.88,.10],[1,0]]
         .forEach(([o,v])=> g.addColorStop(o,`rgba(0,255,0,${v})`));
@@ -2761,7 +2936,7 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
       lash.forEach((i,k)=>{ const [x,y]=pt(lm[i]); k?m2.lineTo(x,y):m2.moveTo(x,y); });
       const [ex,ey]=pt(lm[lash[0]]), [ix,iy]=pt(lm[lash[lash.length-1]]);
       const dx=ex-ix, dy=ey-iy, len=Math.hypot(dx,dy)||1;
-      m2.lineTo(ex+dx/len*fs*0.075, ey+dy/len*fs*0.075 - fs*0.034);
+      m2.lineTo(ex+dx/len*fs*0.048, ey+dy/len*fs*0.048 - fs*0.024);
       m2.lineWidth=Math.max(1.5, fs*0.013*(0.55+IN('liner'))); m2.stroke();
     });
     m2.restore();
@@ -2803,12 +2978,19 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
     m4.save();
     m4.filter=`blur(${Math.max(2, fs*0.024).toFixed(1)}px)`;
     m4.fillStyle='#ff0000';
+    /* The under-eye triangle: its base follows the lower lash line and its
+       apex points DOWN toward the cheek. Depth ~9% of face width — the old
+       18.5% reached the middle of the cheek and read as a painted patch.
+       The outer edge sits a little lower, as artists actually place it. */
     [[133,33],[362,263]].forEach(([inner,outer])=>{
       const i0=pt(lm[inner]), o0=pt(lm[outer]);
-      const top = fs*0.030, depth = fs*0.185;
-      const a=[i0[0]+dn[0]*top,        i0[1]+dn[1]*top];
-      const b=[o0[0]+dn[0]*top*1.25,   o0[1]+dn[1]*top*1.25];
-      const apex=[(a[0]+b[0])/2 + dn[0]*depth, (a[1]+b[1])/2 + dn[1]*depth];
+      const top   = fs*0.026;          /* just under the lash line          */
+      const depth = fs*0.092;          /* how far it reaches down the cheek */
+      const a=[i0[0]+dn[0]*top,       i0[1]+dn[1]*top];
+      const b=[o0[0]+dn[0]*top*1.15,  o0[1]+dn[1]*top*1.15];
+      /* apex shifted toward the inner corner: the triangle is not symmetric */
+      const apex=[a[0]*0.62 + b[0]*0.38 + dn[0]*depth,
+                  a[1]*0.62 + b[1]*0.38 + dn[1]*depth];
       m4.beginPath(); m4.moveTo(a[0],a[1]); m4.lineTo(b[0],b[1]); m4.lineTo(apex[0],apex[1]);
       m4.closePath(); m4.fill();
     });
@@ -2824,31 +3006,33 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
 
     /* forehead centre — brightens and opens the face */
     { const g0=pt(lm[151]), t0=pt(lm[10]);
-      const mx=(g0[0]+t0[0])/2, my=(g0[1]+t0[1])/2;
+      const mx=g0[0]*0.55+t0[0]*0.45, my=g0[1]*0.55+t0[1]*0.45;
       const ang2=Math.atan2(t0[1]-g0[1], t0[0]-g0[0]) + Math.PI/2;
-      dab(mx, my, fs*0.115, fs*0.070, ang2); }
+      dab(mx, my, fs*0.085, fs*0.045, ang2); }
 
     /* nose bridge — a slim lifted strip */
     { const b0=pt(lm[168]), n0=pt(lm[4]);
-      const mx=(b0[0]*0.45+n0[0]*0.55), my=(b0[1]*0.45+n0[1]*0.55);
-      const ang2=Math.atan2(n0[1]-b0[1], n0[0]-b0[0]) + Math.PI/2;
-      dab(mx, my, fs*0.062, fs*0.020, ang2); }
+      const mx=(b0[0]+n0[0])/2, my=(b0[1]+n0[1])/2;
+      /* along the bridge, not across it: no quarter-turn */
+      const ang2=Math.atan2(n0[1]-b0[1], n0[0]-b0[0]);
+      const len=Math.hypot(n0[0]-b0[0], n0[1]-b0[1]);
+      dab(mx, my, len*0.42, fs*0.016, ang2); }
 
     /* philtrum — the small lift above the upper lip */
     { const u0=pt(lm[164]), l0=pt(lm[0]);
       const mx=(u0[0]+l0[0])/2, my=(u0[1]+l0[1])/2;
-      dab(mx, my, fs*0.040, fs*0.022, 0); }
+      dab(mx, my, fs*0.030, fs*0.016, 0); }
 
     /* chin — below the lower lip */
     { const c1=pt(lm[17]), c2=pt(lm[152]);
       const mx=c1[0]*0.35+c2[0]*0.65, my=c1[1]*0.35+c2[1]*0.65;
-      dab(mx, my, fs*0.070, fs*0.048, 0); }
+      dab(mx, my, fs*0.052, fs*0.034, 0); }
 
     /* smile-line dabs at the mouth corners — lifted slightly outward */
     [[61,132],[291,361]].forEach(([corner, side])=>{
       const c0=pt(lm[corner]), s0=pt(lm[side]);
       const mx=c0[0]+(s0[0]-c0[0])*0.16, my=c0[1]+(s0[1]-c0[1])*0.16 - fs*0.010;
-      dab(mx, my, fs*0.048, fs*0.030, 0);
+      dab(mx, my, fs*0.036, fs*0.024, 0);
     });
     m4.restore();
     /* clear the lips themselves out of the concealer channel only */
@@ -2863,7 +3047,7 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
       m4.save();
       m4.strokeStyle='#00ff00'; m4.lineCap='round'; m4.lineJoin='round';
       m4.filter=`blur(${Math.max(1.5, fs*0.018).toFixed(1)}px)`;
-      m4.lineWidth=fs*0.042;
+      m4.lineWidth=fs*0.030;   /* a brow band, not a stripe across the forehead */
       [L.socketL, L.socketR].forEach(idx=> strokePts(m4, idx.map(i=>pt(lm[i]))));
       m4.restore();
     }
@@ -3314,8 +3498,8 @@ function drawFaceMap(lm, withLabels){
     const ang=Math.atan2((e[1]-fs*0.09)-c[1], e[0]-c[0]);
     /* the gradient fades to ~30% opacity by 0.72r and to nothing at 1.0r,
        so the border traces 0.62r — the extent the eye actually sees */
-    const VIS = 0.62;
-    const ra=fs*0.20*VIS, rb=fs*0.125*VIS, pts=[];
+    const VIS = 0.66;
+    const ra=fs*0.125*VIS, rb=fs*0.082*VIS, pts=[];
     for(let k=0;k<=44;k++){ const th=k/44*Math.PI*2, x=Math.cos(th)*ra, y=Math.sin(th)*rb;
       pts.push([c[0]+x*Math.cos(ang)-y*Math.sin(ang), c[1]+x*Math.sin(ang)+y*Math.cos(ang)]); }
     outline(pts, 'blush', (0.85*focus('blush')).toFixed(2));
@@ -4736,7 +4920,7 @@ function lightBarHTML(){
       <span style="font-size:15px">${bad?'💡':'✓'}</span>
       <span style="flex:1;font-size:11.5px;color:${col}">${msg}</span>
     </div>
-    <div style="height:6px;border-radius:4px;background:rgba(246,217,206,.12);overflow:hidden;margin-top:5px">
+    <div style="height:6px;border-radius:4px;background:rgba(176,138,102,.16);overflow:hidden;margin-top:5px">
       <i style="display:block;height:100%;width:${pct}%;border-radius:4px;background:${col}"></i>
     </div>
   </div>`;
@@ -4762,7 +4946,7 @@ function poseCoachHTML(pose, prog, phase, waitingGo){
     ${poseDemoSVG(pose, phase)}
     <div style="flex:1;min-width:0">
       <div style="font-size:12px;color:var(--gold-soft);margin-bottom:6px">${txt}</div>
-      <div style="height:8px;border-radius:5px;background:rgba(246,217,206,.12);overflow:hidden">
+      <div style="height:8px;border-radius:5px;background:rgba(176,138,102,.16);overflow:hidden">
         <i style="display:block;height:100%;width:${pct}%;border-radius:5px;
            background:linear-gradient(90deg,var(--rose),var(--gold-soft));transition:width .12s"></i>
       </div>
@@ -5001,7 +5185,7 @@ function drawPetals(s){
   x.setTransform(dpr,0,0,dpr,0,0);
   x.clearRect(0,0,150,150);
   const cx=75, cy=75, R=62;
-  x.strokeStyle='rgba(243,237,247,.12)';
+  x.strokeStyle='rgba(176,138,102,.18)';
   [0.33,0.66,1].forEach(f=>{ x.beginPath(); x.arc(cx,cy,R*f,0,7); x.stroke(); });
   MET_KEYS.forEach((k,i)=>{
     const a0 = -Math.PI/2 + i*(Math.PI*2/7) - Math.PI/7*0.82;
@@ -5082,7 +5266,7 @@ function drawTrend(){
   c.width=w*dpr; c.height=hh*dpr; x.setTransform(dpr,0,0,dpr,0,0);
   x.clearRect(0,0,w,hh);
   const h=S.history.slice(-20);
-  x.strokeStyle='rgba(243,237,247,.08)';
+  x.strokeStyle='rgba(176,138,102,.16)';
   for(let i=0;i<=4;i++){ const y=18+i*(hh-40)/4; x.beginPath(); x.moveTo(14,y); x.lineTo(w-14,y); x.stroke(); }
   if(h.length<2){
     x.fillStyle='rgba(166,149,180,.7)'; x.font='12px "IBM Plex Sans Arabic"'; x.textAlign='center';
@@ -5521,6 +5705,17 @@ function renderPlanBar(){
       background:${S.makeup[z]};vertical-align:0;margin-inline-start:5px;
       border:1px solid rgba(255,255,255,.25)"></span>`;
   $('#plbText').textContent = t('plTip.'+z) + extra;
+  /* live coaching on what she has actually done so far */
+  try{
+    const c = window.lamhaCoach && window.lamhaCoach(z);
+    const box = document.getElementById('plbCoach');
+    if(box){
+      if(c){ box.textContent = '◈ ' + c;
+        box.style.color = /ممتاز|Well done|Bagus/.test(c) ? 'var(--jade)' : 'var(--coral)';
+        box.classList.add('on');
+      } else box.classList.remove('on');
+    }
+  }catch(e){}
   $('#plbPrev').disabled = pl.idx===0;
   $('#plbNext').textContent = pl.idx===pl.order.length-1
     ? (LANG==='ar'?'إنهاء':LANG==='id'?'Selesai':'Finish') : t('rt_next');
@@ -5596,6 +5791,27 @@ $('#sk-prog') && ($('#sk-prog').onclick = ()=>{
   try{ lamhaRenderProgress(); }catch(e){ fatalLog('[progress] '+(e&&(e.stack||e.message||e))); }
 });
 $('#pg-from') && ($('#pg-from').onchange = ()=>{ try{ lamhaRenderProgress(); }catch(e){} });
+$('#demoBtn') && ($('#demoBtn').onclick = ()=>{
+  say(t('dm_hint'), 6000);
+  $('#demo-file').click();
+});
+$('#demo-file') && ($('#demo-file').onchange = e=>{
+  const f=e.target.files && e.target.files[0];
+  if(f && typeof bootStill==='function') bootStill(f);
+  e.target.value='';
+});
+$('#tourNext') && ($('#tourNext').onclick = ()=> lamhaTourNext());
+$('#tourSkip') && ($('#tourSkip').onclick = ()=> lamhaTourNext());
+$('#tour-replay') && ($('#tour-replay').onclick = ()=>{ openSheet(''); lamhaTourStart(); });
+$('#tourBack') && ($('#tourBack').onclick = ()=>{ try{ lamhaTourBack(); }catch(e){} });
+$('#tourQuit') && ($('#tourQuit').onclick = ()=>{ try{ lamhaTourSkip(); }catch(e){} });
+$('#teachBtn') && ($('#teachBtn').onclick = ()=>{
+  try{
+    openSheet('');
+    S.kitModeAsked = true;              /* the tour handles the flow now */
+    lamhaTourStart();
+  }catch(e){ fatalLog('[tour] '+(e&&(e.stack||e.message||e))); }
+});
 $('#gs-shot') && ($('#gs-shot').onclick = ()=>{
   $('#gs-hint').classList.remove('hidden');
   $('#gs-how').classList.toggle('hidden');
@@ -5998,7 +6214,7 @@ function renderMeasure(){
     const pct=Math.round(x.p*100);
     return `<div style="display:flex;align-items:center;gap:8px;margin:4px 0">
       <span style="width:92px;flex-shrink:0;font-size:11px;color:var(--dim)">${t('ms.shapes')[x.i]}</span>
-      <span style="flex:1;height:6px;border-radius:4px;background:rgba(246,217,206,.12);overflow:hidden">
+      <span style="flex:1;height:6px;border-radius:4px;background:rgba(176,138,102,.16);overflow:hidden">
         <i style="display:block;height:100%;width:${pct}%;border-radius:4px;background:var(--gold-soft)"></i></span>
       <span class="mono" style="width:34px;text-align:end;font-size:11px">${pct}%</span></div>`;
   }).join('');
@@ -7473,7 +7689,7 @@ $('#oc-run').onclick = ()=>{
     const v = Math.round((r.finalIntensities[z]||0)*100);
     return '<div style="display:flex;align-items:center;gap:8px;margin:3px 0">'
       + '<span style="width:86px;flex-shrink:0;font-size:11px;color:var(--dim)">'+t(ZN[z])+'</span>'
-      + '<span style="flex:1;height:6px;border-radius:3px;background:rgba(243,237,247,.08);overflow:hidden">'
+      + '<span style="flex:1;height:6px;border-radius:3px;background:rgba(176,138,102,.16);overflow:hidden">'
       + '<i style="display:block;height:100%;width:'+v+'%;background:var(--gold);border-radius:3px"></i></span>'
       + '<span class="mono" style="width:34px;text-align:end;font-size:11px">'+v+'%</span></div>';
   }).join('') + '</div>';
@@ -7699,7 +7915,7 @@ function hudStrip(jump){
     setTimeout(()=> suppress=false, 120);
   });
   const v = Math.round((S.ints[S.zone] ?? .5)*100);
-  $('#mkInt').value = v;
+  if(typeof intSet==='function') intSet(v/100, true);
   $$('#mkStrip .msw').forEach(b=> b.onclick = ()=>{
     const el = b, st2=$('#mkStrip');
     st2.scrollTo({left: st2.scrollLeft + (el.getBoundingClientRect().left + el.offsetWidth/2)
@@ -7726,6 +7942,21 @@ function hudName(i){
     if(id) label = t(HZI[S.zone]) + ' · ' + id.name + ' · ' + id.code;
   }
   $('#mkName').textContent = label;
+  /* which real products on her local shelves come closest */
+  try{
+    const box=document.getElementById('mkShop');
+    if(box){
+      if(it.c && !it.own && window.lamhaFindProducts){
+        const hits=window.lamhaFindProducts(it.c, S.zone, 2);
+        box.innerHTML = hits.length
+          ? hits.map(h=>`<span class="shopChip">
+               <i style="background:${h.c}"></i>${h.b} · ${h.n}
+               <b style="opacity:.6">${window.lamhaMatchQuality(h.d)}</b></span>`).join('')
+          : '';
+        box.classList.toggle('on', hits.length>0);
+      } else { box.classList.remove('on'); box.innerHTML=''; }
+    }
+  }catch(e){}
 }
 function hudApply(){
   const i = centeredIndex(), it = stripItems[i];
@@ -7747,46 +7978,64 @@ $('#mkStrip').addEventListener('scroll', ()=>{
   clearTimeout(scrollT);
   scrollT = setTimeout(hudApply, 130);
 }, {passive:true});
-$('#mkInt').oninput = ()=>{ S.ints[S.zone] = (+$('#mkInt').value)/100; };
+/* ---- the vertical rail: paint it, and let her drag it ---- */
+function intSet(v, silent){
+  v = Math.max(0, Math.min(1, v));
+  S.ints[S.zone] = v;
+  const fill=$('#mkIntFill'), knob=$('#mkIntKnob'), val=$('#mkIntVal'), rail=$('#mkInt');
+  if(fill) fill.style.height = (v*100)+'%';
+  if(knob && rail){
+    const h = rail.clientHeight || 1;
+    knob.style.bottom = (v*h)+'px';
+  }
+  if(val && rail){
+    const h = rail.clientHeight || 1;
+    val.style.bottom = (v*h - 11)+'px';
+    val.textContent = Math.round(v*100)+'%';
+  }
+  if(!silent && typeof renderShades==='function') renderShades();
+}
+window.__intSet = intSet;
+{
+  const rail=$('#mkInt');
+  let dragging=false;
+  const fromEvent=e=>{
+    const r=rail.getBoundingClientRect();
+    return 1 - (e.clientY - r.top) / (r.height||1);      /* top = strongest */
+  };
+  const move=e=>{ if(!dragging) return; e.preventDefault(); intSet(fromEvent(e), true); };
+  rail.addEventListener('pointerdown', e=>{
+    dragging=true; rail.setPointerCapture(e.pointerId);
+    intSet(fromEvent(e), true);
+  });
+  rail.addEventListener('pointermove', move);
+  rail.addEventListener('pointerup', ()=>{ dragging=false;
+    if(typeof renderShades==='function') renderShades(); });
+  rail.addEventListener('pointercancel', ()=>{ dragging=false; });
+}
 
 /* ---- the slider goes wherever you drop it, and stays there ---- */
 let intPos = null;
 function intLen(){ return Math.min(innerHeight*0.34, 240); }
+/* The rail is anchored by CSS to the frame's own edge, so there is nothing
+   to position by hand any more — which removes the whole class of bugs we
+   have been chasing (window vs frame coordinates, layout timing, clipping). */
 function placeInt(){
-  const L = intLen();
-  const rtl = (document.documentElement.dir||'rtl') !== 'ltr';
-  if(!intPos) intPos = { x: rtl ? innerWidth-14 : 14, y: Math.round(innerHeight*0.55) };
-  intPos.x = clamp(intPos.x, 14, innerWidth-14);
-  intPos.y = clamp(intPos.y, L/2+56, innerHeight - L/2 - 120);
-  const el = $('#mkInt'), gb = $('#mkIntGrab');
-  el.style.insetInlineStart = 'auto';
-  el.style.width = L+'px';
-  el.style.left = (intPos.x - L/2)+'px';
-  el.style.top  = intPos.y+'px';
-  gb.style.left = (intPos.x - 16)+'px';
-  gb.style.top  = (intPos.y - L/2 - 40)+'px';
+  if(typeof intSet==='function') intSet(S.ints[S.zone] ?? .5, true);
 }
 (async ()=>{ try{
   const sv = await store.get('m_talla_intpos');
   if(sv && sv.x!=null) intPos = sv;
-}catch(e){} placeInt(); })();
+}catch(e){}
+  /* wait for a laid-out frame before the first placement */
+  (function tryPlace(n){
+    const app=document.getElementById('app');
+    const r=app&&app.getBoundingClientRect();
+    if(r && r.width>60 && r.height>60){ placeInt(); return; }
+    if(n<40) requestAnimationFrame(()=>tryPlace(n+1));
+  })(0);
+})();
 addEventListener('resize', placeInt);
-{
-  const gb = $('#mkIntGrab');
-  let drag = false;
-  gb.addEventListener('pointerdown', e=>{
-    drag = true; gb.setPointerCapture(e.pointerId); e.preventDefault();
-  });
-  gb.addEventListener('pointermove', e=>{
-    if(!drag) return;
-    intPos = { x: e.clientX, y: e.clientY + intLen()/2 + 40 };
-    placeInt();
-  });
-  gb.addEventListener('pointerup', async e=>{
-    drag = false;
-    try{ await store.set('m_talla_intpos', intPos); }catch(err){}
-  });
-}
 $('#mkMore').onclick = ()=>{ hudToggle(false); openSheet('sh-makeup'); };
 $('#mkOwned') && ($('#mkOwned').onclick = ()=>{
   S.ownedOnly = !S.ownedOnly;
@@ -7831,7 +8080,7 @@ window.hudCtl = {
   },
   bump(d){
     const v = clamp((S.ints[S.zone] ?? .5) + d, 0, 1);
-    S.ints[S.zone]=v; $('#mkInt').value=Math.round(v*100);
+    S.ints[S.zone]=v; if(typeof window.__intSet==='function') window.__intSet(v, true);
     say(t(HZI[S.zone]) + ' · ' + Math.round(v*100) + '%', 1200);
   },
   clear(){
@@ -7844,6 +8093,11 @@ window.hudCtl = {
 };
 window.hudToggle = function(on){
   if(on && typeof window.__askKitMode==='function') window.__askKitMode();
+  /* the frame has real dimensions only once it is on screen — position the
+     intensity rail now rather than at load time, when it measured zero */
+  if(on && typeof placeInt==='function'){
+    requestAnimationFrame(()=>{ try{ placeInt(); }catch(e){} });
+  }
   hudOn = (on===undefined) ? !hudOn : !!on;
   $('#mkHud').classList.toggle('on', hudOn);
   if(hudOn){ if(!HZONES.includes(S.zone)) S.zone='lips'; hudRail(true); hudStrip(true); }
@@ -8227,7 +8481,14 @@ function buildOvalMask(){
     const d=x2.getImageData(0,0,T,T).data;
     let raw=new Uint8ClampedArray(T*T);
     for(let i=0;i<T*T;i++) raw[i]=d[i*4];
-    ovalA=_feather1(raw,T,T,10);          /* manual feather — never depends on ctx.filter */
+    /* feather the rim, then restore the interior to solid: a soft mask that
+       bleeds inward scales down every zone's coverage across the whole face */
+    const soft=_feather1(raw,T,T,10);
+    ovalA=new Uint8Array(T*T);
+    for(let i=0;i<T*T;i++){
+      const v = raw[i] ? 255 : soft[i];   /* solid where the oval truly is */
+      ovalA[i] = v;
+    }
   }catch(e){ ovalA=null; }
 }
 let bakeTf=null;
@@ -8299,11 +8560,16 @@ function bake(){
       pigment[i]  = Math.max(0, Math.min(255, (B[i]  -inv)/ac));
       pigment[i+1]= Math.max(0, Math.min(255, (B[i+1]-inv)/ac));
       pigment[i+2]= Math.max(0, Math.min(255, (B[i+2]-inv)/ac));
-      pigment[i+3]= Math.min(255, ac*255);
+      /* the recovery loses a little at the top from rounding over the grey
+         span; lift the last few percent so full coverage means full */
+      pigment[i+3]= Math.min(255, Math.round(ac*255*1.06));
       if(ovalA) pigment[i+3] = (pigment[i+3]*ovalA[i>>2])/255 | 0;
       if(mouthA && mouthA[i>>2]) pigment[i+3] = (pigment[i+3]*(255-mouthA[i>>2]))/255 | 0;
     }
-    _featherRGBA(pigment, T, T, 3);   /* the universal, filter-independent soften pass */
+    /* No global feather here: each zone was already softened when the CPU
+       engine drew it. Blurring the finished texture again spreads every
+       zone into the empty pixels around it, which is exactly what drained
+       the colour — peak coverage fell in all zones at once. */
     let nz=0;
     for(let i=3;i<pigment.length;i+=257*4){ if(pigment[i]>10) nz++; }
     pigOK = nz > 12;                       /* real coverage exists somewhere */
@@ -9745,7 +10011,7 @@ window.lamhaRenderProgress = function(){
     const pct=Math.max(0,Math.min(100,r.to));
     return `<div style="display:flex;align-items:center;gap:8px;margin:5px 0">
       <span style="width:96px;flex-shrink:0;font-size:11px;color:var(--dim)">${eT(MET_N[r.k])}</span>
-      <span style="flex:1;height:6px;border-radius:4px;background:rgba(246,217,206,.12);overflow:hidden">
+      <span style="flex:1;height:6px;border-radius:4px;background:rgba(176,138,102,.16);overflow:hidden">
         <i style="display:block;height:100%;width:${pct}%;border-radius:4px;background:var(--gold-soft)"></i></span>
       <span class="mono" style="width:52px;text-align:end;font-size:11px;color:${col(r.d)}">
         ${arrow(r.d)} ${r.d>0?'+':''}${Math.round(r.d)}</span></div>`;
@@ -9932,6 +10198,12 @@ document.addEventListener('click', e=>{
 (function(){
 function askKitMode(){
   if(S.kitModeAsked) return;
+  /* never two overlays at once: if the tour is explaining the screen,
+     queue this question until it finishes */
+  if(typeof window.lamhaTourRunning==='function' && window.lamhaTourRunning()){
+    S._kitAskPending = true;
+    return;
+  }
   S.kitModeAsked = true;
   const box=document.getElementById('kitAsk');
   if(!box) return;
@@ -10248,6 +10520,585 @@ window.lamhaVerifyRender = function(){
   const t2=await store.get('m_lamha_truth'); if(t2) S.truth=t2;
   const a2=await store.get('m_lamha_accuracy'); if(a2) S.accuracy=a2;
 }catch(e){} })();
+})();
+</script>
+
+
+<script>
+/* ============================================================
+   LAMHA MOBILE · LOCAL SHADE REFERENCE
+   Not a paid brand catalogue — an open colour reference for the
+   products actually sold in her market, so a shade she likes can
+   be found on a real shelf near her. Matching is by measured
+   colour distance, and every match is shown WITH its distance so
+   she can judge it herself.
+   ============================================================ */
+(function(){
+/* Shades are grouped by market. Colours are approximations of the
+   published shade appearance — useful for narrowing a search, never
+   a substitute for testing on skin, and we say so. */
+const LOCAL = [
+  /* ---------- Indonesia ---------- */
+  {m:'id', b:'Wardah', p:'Colorfit Velvet Matte', t:'lips', n:'01 Cinnamon',   c:'#B4635A'},
+  {m:'id', b:'Wardah', p:'Colorfit Velvet Matte', t:'lips', n:'03 Ruby Cream', c:'#B03246'},
+  {m:'id', b:'Wardah', p:'Colorfit Velvet Matte', t:'lips', n:'07 Rosy Nude',  c:'#C08078'},
+  {m:'id', b:'Wardah', p:'Colorfit Matte Foundation', t:'base', n:'11W Sand Beige', c:'#E0BC98'},
+  {m:'id', b:'Wardah', p:'Colorfit Matte Foundation', t:'base', n:'23W Almond',     c:'#CFA278'},
+  {m:'id', b:'Wardah', p:'Colorfit Matte Foundation', t:'base', n:'33W Chestnut',   c:'#B98A64'},
+  {m:'id', b:'Emina',  p:'Creamatte',   t:'lips', n:'Rustic Brown', c:'#9A5C4C'},
+  {m:'id', b:'Emina',  p:'Creamatte',   t:'lips', n:'Cherrymu',     c:'#B93A48'},
+  {m:'id', b:'Make Over', p:'Powerstay Matte', t:'lips', n:'Vintage Rose', c:'#A85E5E'},
+  {m:'id', b:'Make Over', p:'Powerstay Matte', t:'lips', n:'Bold Brick',   c:'#A83B32'},
+  {m:'id', b:'Sariayu', p:'Duo Lip Colour', t:'lips', n:'Krakatau',  c:'#8E3742'},
+  {m:'id', b:'Pixy',   p:'Silky Fit',     t:'base', n:'Beige',       c:'#DDB694'},
+  {m:'id', b:'Pixy',   p:'Silky Fit',     t:'base', n:'Natural',     c:'#D0A882'},
+  {m:'id', b:'Wardah', p:'Colorfit Blush On', t:'blush', n:'Peach Fresh', c:'#E0A392'},
+  {m:'id', b:'Wardah', p:'Colorfit Blush On', t:'blush', n:'Rose Cheek',  c:'#D08A8A'},
+  /* ---------- North Africa / Levant / Gulf ---------- */
+  {m:'ar', b:'Maybelline', p:'SuperStay Matte Ink', t:'lips', n:'20 Pioneer',  c:'#B62634'},
+  {m:'ar', b:'Maybelline', p:'SuperStay Matte Ink', t:'lips', n:'65 Seductress', c:'#9C4A50'},
+  {m:'ar', b:'Maybelline', p:'SuperStay Matte Ink', t:'lips', n:'70 Amazonian', c:'#A76A62'},
+  {m:'ar', b:'Maybelline', p:'Fit Me Matte', t:'base', n:'220 Natural Beige', c:'#DDB48C'},
+  {m:'ar', b:'Maybelline', p:'Fit Me Matte', t:'base', n:'310 Sun Beige',     c:'#CE9E72'},
+  {m:'ar', b:'Maybelline', p:'Fit Me Matte', t:'base', n:'330 Toffee',        c:'#B98058'},
+  {m:'ar', b:"L'Oréal",   p:'Infaillible 24H', t:'base', n:'200 Golden Sand', c:'#DCB68F'},
+  {m:'ar', b:"L'Oréal",   p:'Infaillible 24H', t:'base', n:'260 Golden Sun',  c:'#C69468'},
+  {m:'ar', b:"L'Oréal",   p:'Color Riche',     t:'lips', n:'297 Red Passion', c:'#BE2437'},
+  {m:'ar', b:'Bourjois',  p:'Rouge Velvet',    t:'lips', n:'08 Rubi\'s Cute', c:'#A93448'},
+  {m:'ar', b:'Essence',   p:'Soft & Precise',  t:'brow', n:'04 Dark Blonde',  c:'#8A6B4E'},
+  {m:'ar', b:'Essence',   p:'Soft & Precise',  t:'brow', n:'05 Cool Brown',   c:'#5C463A'},
+  {m:'ar', b:'Flormar',   p:'Silk Matte',      t:'lips', n:'12 Terracotta',   c:'#AA5B48'},
+  {m:'ar', b:'Golden Rose', p:'Longstay',      t:'lips', n:'02 Nude Rose',    c:'#C08C82'},
+  {m:'ar', b:'Nivea',     p:'Labello',         t:'lips', n:'Cherry Shine',    c:'#C4707A'}
+];
+
+function labOf(hex){
+  const n=parseInt(hex.slice(1),16), r=n>>16&255, g=n>>8&255, b=n&255;
+  const f=v=>{v/=255; return v>0.04045?Math.pow((v+0.055)/1.055,2.4):v/12.92;};
+  const R=f(r),G=f(g),B=f(b);
+  let X=(R*.4124+G*.3576+B*.1805)/.95047, Y=(R*.2126+G*.7152+B*.0722), Z=(R*.0193+G*.1192+B*.9505)/1.08883;
+  const q=v=> v>0.008856?Math.cbrt(v):(7.787*v+16/116);
+  return [116*q(Y)-16, 500*(q(X)-q(Y)), 200*(q(Y)-q(Z))];
+}
+const CACHE = LOCAL.map(x=>({...x, lab:labOf(x.c)}));
+
+/* which market to search: follows the interface language, but she may widen it */
+function marketOf(){ return S.shadeMarket || (LANG==='id' ? 'id' : LANG==='ar' ? 'ar' : 'all'); }
+
+window.lamhaFindProducts = function(hex, zone, limit){
+  if(!hex) return [];
+  const me = labOf(hex);
+  const mk = marketOf();
+  const ZMAP = { nose:'contour', crease:'eyeshadow', corner:'eyeshadow' };
+  const want = ZMAP[zone] || zone;
+  return CACHE
+    .filter(x => (mk==='all' || x.m===mk) && x.t===want)
+    .map(x => ({...x, d: Math.hypot(me[0]-x.lab[0], me[1]-x.lab[1], me[2]-x.lab[2])}))
+    .sort((a,b)=>a.d-b.d)
+    .slice(0, limit||3);
+};
+/* an honest label for how close a match really is */
+window.lamhaMatchQuality = function(d){
+  const T = { ar:{ex:'مطابقة قريبة جداً',good:'قريبة',fair:'مشابهة',far:'بعيدة نوعاً ما'},
+              en:{ex:'Very close match',good:'Close',fair:'Similar',far:'Somewhat different'},
+              id:{ex:'Sangat mirip',good:'Mirip',fair:'Serupa',far:'Agak berbeda'} };
+  const t2 = T[LANG]||T.en;
+  return d<6 ? t2.ex : d<12 ? t2.good : d<22 ? t2.fair : t2.far;
+};
+window.LAMHA_LOCAL_COUNT = CACHE.length;
+})();
+</script>
+
+
+<script>
+/* ============================================================
+   LAMHA MOBILE · LIVE COACHING
+   The guide already shows WHERE and HOW. This watches what she
+   has actually done and says what to fix — the part no rival
+   attempts, because their product is the result, not the skill.
+   Everything is measured from her own face, on her own device.
+   ============================================================ */
+(function(){
+const T = {
+  ar:{
+    ready:'ابدئي حين تكونين مستعدة',
+    tooHigh:'الكونتور مرتفع — أنزليه تحت عظمة الخد بإصبع',
+    tooLow:'الكونتور منخفض — ارفعيه قليلاً نحو عظمة الخد',
+    blendMore:'الحافة ما زالت ظاهرة — ادمجي بحركات دائرية للأعلى وللخارج',
+    tooMuch:'الكمية أكثر من اللازم — خفّفي بإسفنجة نظيفة',
+    tooLittle:'اللون خفيف جداً — ابني طبقة أخرى',
+    uneven:'الجانبان غير متساويين — قارني في المرآة وسوّي الأضعف',
+    good:'ممتاز — الحدود مدموجة والجانبان متوازنان',
+    lipLine:'ابدئي من قوس كيوبيد ثم اتجهي للزوايا',
+    liftEye:'اسحبي الزاوية الخارجية للأعلى لا للخارج'
+  },
+  en:{
+    ready:'Start when you are ready',
+    tooHigh:'Contour sits high — bring it a finger below the cheekbone',
+    tooLow:'Contour sits low — lift it toward the cheekbone',
+    blendMore:'The edge still shows — blend in circles, up and outward',
+    tooMuch:'That is heavier than needed — lift some off with a clean sponge',
+    tooLittle:'Very light — build one more layer',
+    uneven:'The two sides differ — even out the lighter one',
+    good:'Well done — edges blended and both sides balanced',
+    lipLine:'Start at the cupid\u2019s bow, then work to the corners',
+    liftEye:'Pull the outer corner up, not out'
+  },
+  id:{
+    ready:'Mulai saat kamu siap',
+    tooHigh:'Kontur terlalu tinggi — turunkan seukuran jari',
+    tooLow:'Kontur terlalu rendah — naikkan ke tulang pipi',
+    blendMore:'Tepinya masih terlihat — baurkan memutar ke atas dan keluar',
+    tooMuch:'Terlalu banyak — angkat dengan spons bersih',
+    tooLittle:'Terlalu tipis — tambah satu lapis lagi',
+    uneven:'Kedua sisi berbeda — ratakan sisi yang lebih tipis',
+    good:'Bagus — tepi membaur dan kedua sisi seimbang',
+    lipLine:'Mulai dari busur bibir lalu ke sudut',
+    liftEye:'Tarik sudut luar ke atas, bukan keluar'
+  }
+};
+const tt = k => (T[LANG]||T.en)[k];
+
+/* sample the real face inside a zone and outside it, to judge her work */
+const _cC=document.createElement('canvas'); _cC.width=_cC.height=12;
+function patchLab(cx, cy, r){
+  try{
+    const g=_cC.getContext('2d',{willReadFrequently:true});
+    const vw=srcW(), vh=srcH();
+    g.drawImage(SRC, Math.max(0,cx-r), Math.max(0,cy-r), r*2, r*2, 0,0,12,12);
+    const d=g.getImageData(0,0,12,12).data;
+    let R=0,G=0,B=0,n=0;
+    for(let i=0;i<d.length;i+=4){ R+=d[i]; G+=d[i+1]; B+=d[i+2]; n++; }
+    return rgb2lab(R/n, G/n, B/n);
+  }catch(e){ return null; }
+}
+function dE(a,b){ return a&&b ? Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]) : 0; }
+
+let lastCheck=0, lastMsg='';
+window.lamhaCoach = function(zone){
+  const now=performance.now();
+  if(now-lastCheck < 1400) return lastMsg;
+  lastCheck=now;
+  const lm=S.landmarks; if(!lm){ lastMsg=''; return ''; }
+  const vw=srcW(), vh=srcH();
+  const V = i => [lm[i].x*vw, lm[i].y*vh];
+  const fs = Math.hypot(V(454)[0]-V(234)[0], V(454)[1]-V(234)[1]);
+  const r  = Math.max(4, fs*0.035);
+  let msg='';
+  try{
+    if(zone==='contour' || zone==='blush'){
+      /* left and right of the same feature must match */
+      const L2 = patchLab(...V(zone==='blush'?50:227), r);
+      const R2 = patchLab(...V(zone==='blush'?280:447), r);
+      const skinL = patchLab(...V(151), r);              /* forehead: bare skin */
+      const applied = (dE(L2,skinL)+dE(R2,skinL))/2;
+      const asym = dE(L2,R2);
+      if(applied < 3.5) msg = tt('tooLittle');
+      else if(applied > 26) msg = tt('tooMuch');
+      else if(asym > 7) msg = tt('uneven');
+      else {
+        /* is the edge still hard? compare just inside vs just outside */
+        const inr = patchLab(...V(zone==='blush'?50:227), r*0.6);
+        const out = patchLab(V(zone==='blush'?50:227)[0]+fs*0.10,
+                             V(zone==='blush'?50:227)[1]+fs*0.06, r*0.6);
+        msg = dE(inr,out) > 13 ? tt('blendMore') : tt('good');
+      }
+    } else if(zone==='lips'){
+      const up = patchLab(...V(13), r*0.7);
+      const lo = patchLab(...V(14), r*0.7);
+      const skinL = patchLab(...V(151), r);
+      const applied = (dE(up,skinL)+dE(lo,skinL))/2;
+      if(applied < 6) msg = tt('tooLittle');
+      else if(dE(up,lo) > 9) msg = tt('uneven');
+      else msg = tt('good');
+    } else if(zone==='corner' || zone==='liner'){
+      msg = tt('liftEye');
+    } else {
+      const L2 = patchLab(...V(zone==='eyeshadow'?159:105), r);
+      const R2 = patchLab(...V(zone==='eyeshadow'?386:334), r);
+      const asym = dE(L2,R2);
+      msg = asym > 8 ? tt('uneven') : tt('good');
+    }
+  }catch(e){ msg=''; }
+  lastMsg = msg;
+  return msg;
+};
+})();
+</script>
+
+
+<script>
+/* ============================================================
+   LAMHA MOBILE · FIRST-RUN TOUR
+   The app should explain itself. A spotlight moves from one
+   control to the next with a single sentence each — skippable,
+   shown once, and re-openable from the full panel.
+   ============================================================ */
+(function(){
+const STEPS = [
+  /* ---------------- 1 · the skin scan ---------------- */
+  { el:'#dock [data-sheet="sh-skin"]',
+    t:{ar:'نبدأ من هنا: امسحي بشرتك مرة واحدة، فيعرف التطبيق لونها وشكل وجهك — وكل نصيحة بعدها ستكون لكِ أنتِ.',
+       en:'We start here: scan your skin once so the app learns your tone and face shape — every later suggestion is then yours alone.',
+       id:'Mulai di sini: pindai kulitmu sekali agar aplikasi tahu warna dan bentuk wajahmu.'},
+    before:()=>{ try{ if(typeof openSheet==='function') openSheet(''); }catch(e){} } },
+
+  /* ---------------- 2 · the mirror itself ---------------- */
+  { el:'#stage',
+    t:{ar:'هذه مرآتك. وجهك يظهر هنا حياً، وكل ما تختارينه يُرسم عليه في اللحظة.',
+       en:'This is your mirror. Your face is live here, and everything you choose is drawn on it at once.',
+       id:'Ini cerminmu. Wajahmu tampil langsung dan semua pilihanmu digambar seketika.'},
+    before:()=>{ try{ dockGo('sh-mirror'); }catch(e){} } },
+
+  { el:'[data-toggle="map"]',
+    t:{ar:'جرّبي «خريطة الوجه» — سترين مناطق وجهك مرسومة بأسمائها. المسيها الآن.',
+       en:'Try the face map — you will see your facial zones drawn and named. Tap it now.',
+       id:'Coba "peta wajah" — area wajahmu akan tergambar. Ketuk sekarang.'},
+    waitFlag:'showMap' },
+
+  { el:'[data-toggle="topo"]',
+    t:{ar:'والآن «التضاريس» — تُظهر نتوءات وجهك وغوره، وعليها يُبنى النحت. المسيها.',
+       en:'Now "contours" — it reveals where your face rises and hollows, which is what sculpting follows. Tap it.',
+       id:'Sekarang "kontur" — menunjukkan tonjolan dan cekungan wajahmu.'},
+    waitFlag:'showTopo',
+    /* leave the mirror clean for the next step */
+    after:()=>{ try{ S.showMap=false; S.showTopo=false; if(typeof syncToggles==='function') syncToggles(); }catch(e){} } },
+
+  { el:'#dock [data-sheet="sh-kit"]',
+    t:{ar:'الآن المسي «خزانتي» في الشريط السفلي — الزر الذي يومض تحت إصبعك.',
+       en:'Now tap "My kit" in the bottom bar — the button pulsing under the finger.',
+       id:'Sekarang ketuk "Koleksiku" di bilah bawah.'},
+    waitSheet:'sh-kit',
+    before:()=>{ try{ if(typeof openSheet==='function') openSheet(''); }catch(e){} } },
+
+  { el:'#kt-add',
+    t:{ar:'هذه خزانتك. من هذا الزر تُدخلين مكياجك الحقيقي — بالكاميرا، أو من صورك، أو يدوياً.',
+       en:'This is your kit. This button adds your real products — by camera, from your photos, or by hand.',
+       id:'Ini koleksimu. Tombol ini menambahkan produk aslimu.'} },
+
+  { el:'#gs-shot',
+    t:{ar:'أو صوّري كل مكياجك دفعة واحدة على الطاولة فيتعرّف عليه ويضيفه كله. وإن لم تملكي شيئاً بعد، الدرجات الافتراضية أمامك بحرية.',
+       en:'Or photograph the whole kit at once on a table and it reads and adds them all. If you own nothing yet, the virtual shades are free to explore.',
+       id:'Atau foto seluruh koleksimu sekaligus. Jika belum punya, warna virtual bebas dicoba.'} },
+
+  { el:'#sh-kit .close-x',
+    t:{ar:'انتهينا من الخزانة — المسي ✕ للخروج والعودة إلى المرآة.',
+       en:'That is the kit — tap ✕ to close it and return to the mirror.',
+       id:'Selesai — ketuk ✕ untuk kembali ke cermin.'},
+    waitSheetClosed:'sh-kit' },
+
+  /* ---------------- 3 · into makeup, described piece by piece ------------- */
+  { el:'#dock [data-sheet="sh-makeup"]',
+    t:{ar:'عدنا إلى المرآة. الآن المسي «المكياج» في الشريط السفلي لندخل إلى عناصر المكياج.',
+       en:'We are back at the mirror. Now tap "Makeup" in the bottom bar to open the makeup zones.',
+       id:'Kita kembali ke cermin. Sekarang ketuk "Riasan" untuk membuka area riasan.'},
+    waitHud:true,                               /* only her tap opens the HUD */
+    before:()=>{ try{
+      if(typeof hudToggle==='function') hudToggle(false);
+      dockGo('sh-mirror');
+    }catch(e){} } },
+
+  { el:'#mkRail',
+    t:{ar:'هذه عجلة العناصر: شفاه، خدود، حواجب، ظلال… العنصر الذي يستقر في الحلقة هو الذي تعملين عليه.',
+       en:'This is the zone wheel: lips, blush, brows, shadow… whichever settles in the ring is the one you are working on.',
+       id:'Ini roda area: bibir, pipi, alis, eyeshadow… yang berhenti di lingkaran itulah yang aktif.'} },
+
+  /* ---------------- 4 · her first real action ---------------- */
+  { el:'#mkRail',
+    t:{ar:'جرّبي معي الآن: اسحبي العجلة حتى تصل «شفاه» إلى الحلقة.',
+       en:'Try it with me now: scroll the wheel until "Lips" reaches the ring.',
+       id:'Coba sekarang: geser roda sampai "Bibir" masuk lingkaran.'},
+    waitZone:'lips', clearFace:true,
+    before:()=>{ try{
+      /* the tour just visited the kit, which can leave the app in "my kit
+         only" mode — with an empty kit the strip shows nothing at all.
+         Practice always runs on the full palette. */
+      if(S.ownedOnly){
+        S.ownedOnly=false;
+        const b=document.getElementById('mkOwned'); if(b) b.classList.remove('on');
+      }
+      if(typeof hudToggle==='function') hudToggle(true);
+      if(typeof hudStrip==='function') hudStrip(true);
+    }catch(e){} } },                          /* advances when she gets there */
+
+  { el:'#mkStrip',
+    t:{ar:'ممتاز. الآن اسحبي شريط الألوان واتركي لوناً يستقر في الدائرة — سيظهر على شفتيك فوراً.',
+       en:'Well done. Now swipe the shades and let one settle in the ring — it appears on your lips at once.',
+       id:'Bagus. Sekarang geser warna dan biarkan satu berhenti di lingkaran.'},
+    waitColor:'lips', clearFace:true,
+    before:()=>{ try{
+      /* if she skipped the wheel step, put her on lips so the strip below
+         really shows lip shades and the instruction makes sense */
+      if(S.zone!=='lips' && typeof hudCtl!=='undefined' && hudCtl.setZone) hudCtl.setZone('lips');
+      if(S.ownedOnly){
+        S.ownedOnly=false;
+        const b=document.getElementById('mkOwned'); if(b) b.classList.remove('on');
+        if(typeof hudStrip==='function') hudStrip(true);
+      }
+    }catch(e){} } },                         /* advances when a shade is on */
+
+  { el:'#mkInt',
+    t:{ar:'اخترتِ لونك. اسحبي هذا الشريط للأعلى ليصير اللون أعمق، وللأسفل ليخفّ — جرّبي الآن.',
+       en:'You picked your shade. Drag this rail up for a deeper colour, down for lighter — try it now.',
+       id:'Warnamu terpilih. Geser bilah ini ke atas untuk lebih pekat, ke bawah untuk lebih tipis.'},
+    waitInt:'lips', clearFace:true,
+    before:()=>{ try{
+      if(S.zone!=='lips' && typeof hudCtl!=='undefined' && hudCtl.setZone) hudCtl.setZone('lips');
+    }catch(e){} } },                           /* advances when she moves it */
+
+  /* ---------------- 5 · the full panel and the guide ---------------- */
+  { el:'#mkMore',
+    t:{ar:'أحسنتِ. ومن «اللوحة الكاملة» تجدين الإطلالات الجاهزة، ومكياج المناسبة، والدليل خطوة بخطوة.',
+       en:'Nicely done. The full panel holds ready looks, occasion makeup, and the step-by-step guide.',
+       id:'Bagus sekali. Panel lengkap berisi tampilan siap pakai dan panduan langkah demi langkah.'} },
+
+  { el:'#sh-makeup .lead', info:true,
+    t:{ar:'هذه اللوحة الكاملة: إطلالات جاهزة بلمسة، ومكياج المناسبة الذي يحسب لكِ من الإضاءة واللباس، ولمعات كل عنصر، وحفظ إطلالاتك، والتقاط صورة.',
+       en:'This is the full panel: ready looks in one tap, occasion makeup computed from your light and outfit, finishes for every zone, saved looks, and a photo.',
+       id:'Ini panel lengkap: tampilan siap pakai, riasan acara, hasil akhir tiap area, simpan tampilan, dan ambil foto.'},
+    before:()=>{ try{
+      if(typeof hudToggle==='function') hudToggle(false);
+      if(typeof openSheet==='function') openSheet('sh-makeup');
+    }catch(e){} } },
+
+  { el:'#mk-plan',
+    t:{ar:'انزلي في هذه اللوحة حتى «دليل التطبيق خطوة بخطوة» — الزر المضيء تحت — والمسيه ليبدأ التعليم الحقيقي.',
+       en:'Scroll down this panel to "Step-by-step guide" — the highlighted button below — and tap it to begin the real teaching.',
+       id:'Gulir panel ini ke "Panduan langkah demi langkah" — tombol yang menyala — lalu ketuk.'},
+    waitSheet:'sh-plan',
+    before:()=>{ try{
+      /* the button lives inside the full panel — it must be open, and stay
+         open, or the tour points at something that is not on screen */
+      if(typeof hudToggle==='function') hudToggle(false);
+      if(typeof openSheet==='function') openSheet('sh-makeup');
+    }catch(e){} } },
+
+  { el:'#plBar',
+    t:{ar:'وهنا التعليم الحقيقي: وضعتُ لكِ إطلالة كاملة، والدليل يرسم على وجهك أين يوضع كل عنصر، وفرشاة متحركة تريك اتجاه الدمج.',
+       en:'Here is the real teaching: I have put a full look on you, and the guide draws where each product goes while a moving brush shows the blending direction.',
+       id:'Inilah pengajaran sesungguhnya: panduan menggambar di wajahmu dan kuas bergerak menunjukkan arah.'},
+    before:()=>{ try{
+      const seed={ lips:6, blush:1, brow:2, eyeshadow:1, highlight:1 };
+      Object.entries(seed).forEach(([z,i])=>{
+        if(S.makeup[z]) return;
+        const list=SHADES[z];
+        if(list && list[Math.min(i,list.length-1)]) S.makeup[z]=list[Math.min(i,list.length-1)].c;
+      });
+      if(typeof renderShades==='function') renderShades();
+      if(typeof hudToggle==='function') hudToggle(false);
+      /* she opened the guide herself in the previous step; only capture the
+         target look if it has not been captured yet */
+      if(!S.plan || !S.plan.on){
+        const b=document.getElementById('pl-start');
+        if(b && b.onclick) b.onclick();
+      }
+    }catch(e){} } },
+
+  { el:'#plbBA',
+    before:()=>{ try{
+      /* these buttons live in the compact guide bar — if the guide is not
+         running they do not exist on screen, which is exactly the
+         "target not visible" error. Start it first. */
+      if(!S.plan || !S.plan.on){
+        const b=document.getElementById('pl-start');
+        if(b && b.onclick) b.onclick();
+      }
+    }catch(e){} },
+    t:{ar:'في كل خطوة: «قبل / بعد» يرفع هذا العنصر وحده لترى الفرق الذي أحدثته يدك.',
+       en:'At each step, "before / after" lifts only that product so you see the difference your own hand made.',
+       id:'Di tiap langkah, "sebelum / sesudah" mengangkat produk itu saja.'} },
+
+  { el:'#plbNext',
+    before:()=>{ try{
+      if(!S.plan || !S.plan.on){
+        const b=document.getElementById('pl-start');
+        if(b && b.onclick) b.onclick();
+      }
+    }catch(e){} },
+    t:{ar:'ثم «التالية» — خطوة بعد خطوة حتى تكتمل إطلالتك، ويكون التطبيق قد علّمكِ لا وضعه عنك.',
+       en:'Then "next" — step by step until the look is complete, and the app has taught you rather than done it for you.',
+       id:'Lalu "berikutnya" — sampai selesai, dan aplikasi telah mengajarimu.'} }
+];
+const eT=o=>!o?'':(o[LANG]||o.en||o.ar||'');
+let idx=0;
+
+
+/* switch the dock to a tab exactly as a tap would — highlight included */
+function dockGo(sheetId){
+  try{
+    const btn = document.querySelector('#dock [data-sheet="'+sheetId+'"]');
+    if(btn && btn.onclick){ btn.onclick(); return; }
+    document.querySelectorAll('#dock .dbtn').forEach(b=>
+      b.classList.toggle('on', b.dataset.sheet===sheetId));
+  }catch(e){}
+}
+
+function box(){ return document.getElementById('tourLayer'); }
+let waitTimer=null, goingBack=false;
+function clearWait(){ if(waitTimer){ clearInterval(waitTimer); waitTimer=null; } }
+/* If a step asks for an action, poll until she does it, then move on by
+   itself. The card also keeps its "next" button, so nobody gets stuck. */
+function armWait(st){
+  clearWait();
+  /* stepping backwards should never trap her in a condition she already met */
+  if(goingBack){ goingBack=false; return; }
+  if(!st.wait && !st.waitZone && !st.waitColor && !st.waitFlag && !st.waitHud
+     && !st.waitSheet && !st.waitSheetClosed && st.waitInt===undefined) return;
+  /* Snapshot what is true on entry, then wait for a CHANGE. Comparing against
+     an absolute value made steps complete instantly whenever the condition
+     happened to be satisfied already — which is why the swipe steps skipped. */
+  const startInt   = st.waitInt   ? (S.ints[st.waitInt] ?? .5) : null;
+  const startColor = st.waitColor ? (S.makeup[st.waitColor] || null) : null;
+  const startFlag  = st.waitFlag  ? !!S[st.waitFlag] : null;
+  waitTimer = setInterval(()=>{
+    let done=false;
+    try{
+      if(st.waitSheet){
+        const sh=document.getElementById(st.waitSheet);
+        done = !!(sh && sh.classList.contains('open'));
+      }
+      if(st.waitSheetClosed){
+        const sh=document.getElementById(st.waitSheetClosed);
+        done = !!(sh && !sh.classList.contains('open'));
+      }
+      if(st.waitHud){
+        const h=document.getElementById('mkHud');
+        done = !!(h && h.classList.contains('on'));
+      }
+      if(st.waitFlag)  done = !!S[st.waitFlag] !== startFlag;
+      if(st.waitZone)  done = S.zone === st.waitZone;
+      if(st.waitColor) done = !!S.makeup[st.waitColor] && S.makeup[st.waitColor] !== startColor;
+      if(st.waitInt!==undefined && st.waitInt!==null)
+        done = Math.abs((S.ints[st.waitInt] ?? .5) - startInt) > 0.06;
+      if(st.wait){
+        const el=document.querySelector(st.wait);
+        done = !!(el && el.classList.contains('on'));
+      }
+    }catch(e){}
+    if(done){ clearWait(); window.lamhaTourNext(); }
+  }, 260);
+}
+function show(){
+  const b=box(); if(!b) return;
+  clearWait();
+  /* let the step we are leaving undo whatever it switched on */
+  try{ const prev=STEPS[idx-1]; if(prev && prev.after) prev.after(); }catch(e){}
+  if(idx>=STEPS.length){ finish(); return; }
+  S.tourOn=true;
+  const st=STEPS[idx];
+  if(st.before) st.before();
+  /* two frames: one for the sheet to open, one for the scroll to settle,
+     so getBoundingClientRect reports where the element really is */
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    const el=document.querySelector(st.el);
+    /* Scroll ONLY when the target sits inside a scrollable sheet, and scroll
+       that sheet — never the page. Scrolling everything moved the mirror and
+       the dock out of place, which broke steps that were already working. */
+    if(el){
+      try{
+        const sheet = el.closest('.sheet');
+        if(sheet && sheet.scrollHeight > sheet.clientHeight + 8){
+          const sr = sheet.getBoundingClientRect();
+          const er = el.getBoundingClientRect();
+          const off = (er.top - sr.top) - (sr.height/2 - er.height/2);
+          sheet.scrollTop += off;
+        }
+      }catch(e){}
+    }
+    const app=document.getElementById('app');
+    const fr=app?app.getBoundingClientRect():{left:0,top:0,width:innerWidth,height:innerHeight};
+    if(!el){
+      if(!S._tourWarned){ S._tourWarned=1;
+        try{ fatalLog('[tour] target not found: '+st.el); }catch(e){}
+      }
+      idx++; return show();
+    }
+    const r=el.getBoundingClientRect();
+    /* a hidden or collapsed target means the panel that holds it is closed —
+       skip rather than draw a spotlight over empty space */
+    if(r.width<4 || r.height<4){
+      try{ fatalLog('[tour] target not visible: '+st.el); }catch(e){}
+      idx++; return show();
+    }
+    const pad=10;
+    const hole=document.getElementById('tourHole');
+    const card=document.getElementById('tourCard');
+    const txt=document.getElementById('tourText');
+    const cnt=document.getElementById('tourCount');
+    hole.style.left=(r.left-fr.left-pad)+'px';
+    hole.style.top=(r.top-fr.top-pad)+'px';
+    hole.style.width=(r.width+pad*2)+'px';
+    hole.style.height=(r.height+pad*2)+'px';
+    const tap=document.getElementById('tourTap');
+    if(tap){
+      tap.style.left=(r.left-fr.left + r.width/2 - 12)+'px';
+      tap.style.top =(r.top -fr.top  + r.height + 4)+'px';
+    }
+    txt.textContent=eT(st.t);
+    cnt.textContent=(idx+1)+' / '+STEPS.length;
+    /* Keep the card away from the element it describes — and, while she is
+       practising on her lips, away from her mouth as well. */
+    const midY=(r.top-fr.top)+r.height/2;
+    let top = midY > fr.height*0.52 ? '14%' : 'auto';
+    let bottom = midY > fr.height*0.52 ? 'auto' : '16%';
+    if(st.clearFace){ top='8%'; bottom='auto'; }
+    card.style.top = top;
+    card.style.bottom = bottom;
+    b.classList.add('on');
+    const asks = !!(st.wait||st.waitZone||st.waitColor||st.waitFlag||st.waitHud||st.waitSheet||st.waitSheetClosed||st.waitInt!==undefined);
+    b.classList.toggle('act', asks);
+    /* an informational step hides the finger: there is nothing to tap */
+    const tapCue=document.getElementById('tourTap');
+    if(tapCue) tapCue.style.display = (asks && !st.info) ? '' : 'none';          /* lift the dim while she works */
+    const backBtn=document.getElementById('tourBack');
+    if(backBtn) backBtn.style.visibility = idx>0 ? 'visible' : 'hidden';
+    const nextBtn=document.getElementById('tourNext');
+    if(nextBtn){
+      nextBtn.textContent = asks
+        ? (LANG==='ar'?'تخطّي هذه':LANG==='id'?'Lewati ini':'Skip this')
+        : t('tr_next');
+    }
+    armWait(st);
+  }));
+}
+function finish(){
+  clearWait();
+  const b=box(); if(b) b.classList.remove('on');
+  S.tourOn=false;
+  try{ store.set('m_lamha_tour', 1); }catch(e){}
+  /* whatever the tour postponed may now ask its question */
+  if(S._kitAskPending){ S._kitAskPending=false;
+    setTimeout(()=>{ try{ window.__askKitMode(); }catch(e){} }, 380); }
+}
+window.lamhaTourStart = function(){ idx=0; S.tourOn=true; show(); };
+window.lamhaTourNext  = function(){ idx++; show(); };
+window.lamhaTourBack  = function(){
+  /* let the step we are leaving clean up, then step back — otherwise a
+     sheet or the guide stays open and the previous step cannot be reached */
+  try{ const cur=STEPS[idx]; if(cur && cur.after) cur.after(); }catch(e){}
+  try{ if(S.plan && S.plan.on && typeof endPlan==='function' && idx<=12) endPlan(); }catch(e){}
+  idx = Math.max(0, idx-1);
+  goingBack = true;
+  show();
+};
+window.lamhaTourSkip  = finish;
+window.lamhaTourRunning = ()=> !!S.tourOn;
+
+(async()=>{
+  try{
+    const seen = await store.get('m_lamha_tour');
+    if(seen) return;
+  }catch(e){}
+  /* wait until the mirror is actually running, then introduce it */
+  let n=0;
+  (function wait(){
+    if(S.running && document.getElementById('tourLayer')){
+      setTimeout(()=>{ try{ window.lamhaTourStart(); }catch(e){} }, 900);
+      return;
+    }
+    if(n++ < 300) setTimeout(wait, 200);
+  })();
+})();
 })();
 </script>
 
