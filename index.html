@@ -745,7 +745,7 @@ document.addEventListener('DOMContentLoaded', function(){
 
     <div id="shapeGate" class="hidden">
       <div class="sg-card">
-        <div class="sg-eyebrow">LAMHA MOBILE 1788076616</div>
+        <div class="sg-eyebrow">LAMHA MOBILE 1788077183</div>
         <h3 id="sgTitle" class="disp">جارٍ قراءة شكل وجهك</h3>
         <div class="sg-bar"><i id="sgFill"></i></div>
         <p id="sgText">انظري مباشرة إلى الكاميرا وابقي ثابتة لحظة.</p>
@@ -759,7 +759,7 @@ document.addEventListener('DOMContentLoaded', function(){
     </div>
 
     <div id="gate" class="gone">
-      <div class="mark">LAMHA MOBILE · BUILD 1788076616</div>
+      <div class="mark">LAMHA MOBILE · BUILD 1788077183</div>
       <h1 class="disp" data-i18n="gate_h">مرآة زين الذكية</h1>
       <p data-i18n="gate_p">مرآتك تحلّل بشرتك، ترسم خريطة وجهك، وتجرّب المكياج قبل أن تلمسي فرشاة واحدة.</p>
       <div class="feats">
@@ -10913,7 +10913,7 @@ const STEPS = [
       if(typeof openSheet==='function') openSheet('sh-makeup');
     }catch(e){} } },
 
-  { el:'#plBar',
+  { el:'#plBar', autoHide:10000,
     t:{ar:'وهنا التعليم الحقيقي: وضعتُ لكِ إطلالة كاملة، والدليل يرسم على وجهك أين يوضع كل عنصر، وفرشاة متحركة تريك اتجاه الدمج.',
        en:'Here is the real teaching: I have put a full look on you, and the guide draws where each product goes while a moving brush shows the blending direction.',
        id:'Inilah pengajaran sesungguhnya: panduan menggambar di wajahmu dan kuas bergerak menunjukkan arah.'},
@@ -10936,7 +10936,7 @@ const STEPS = [
       }
     }catch(e){} } },
 
-  { el:'#plbBA', autoHide:9000,
+  { el:'#plbBA', autoHide:10000,
     before:()=>{ try{
       /* these buttons live in the compact guide bar — if the guide is not
          running they do not exist on screen, which is exactly the
@@ -10950,7 +10950,7 @@ const STEPS = [
        en:'At each step, "before / after" lifts only that product so you see the difference your own hand made.',
        id:'Di tiap langkah, "sebelum / sesudah" mengangkat produk itu saja.'} },
 
-  { el:'#plbNext', autoHide:9000,
+  { el:'#plbNext', autoHide:10000,
     before:()=>{ try{
       if(!S.plan || !S.plan.on){
         const b=document.getElementById('pl-start');
@@ -11023,7 +11023,7 @@ function armWait(st){
 }
 function show(){
   const b=box(); if(!b) return;
-  clearWait();
+  clearWait(); clearAutoHide();
   /* let the step we are leaving undo whatever it switched on */
   try{ const prev=STEPS[idx-1]; if(prev && prev.after) prev.after(); }catch(e){}
   if(idx>=STEPS.length){ finish(); return; }
@@ -11122,7 +11122,6 @@ function show(){
     armWait(st);
     /* a step that only explains the guide bar fades itself away, so the
        mirror is hers again while she works */
-    clearAutoHide();
     if(st.autoHide){
       hideTimer = setTimeout(()=>{
         b.classList.remove('on');
@@ -11136,7 +11135,7 @@ function finish(){
   const sh=document.getElementById('tourShield'); if(sh) sh.style.display='none';
   const b=box(); if(b) b.classList.remove('on');
   S.tourOn=false;
-  try{ store.set('m_lamha_tour', 1); }catch(e){}
+  try{ store.set('m_lamha_tour_v2', 1); }catch(e){}
   /* the tour put a demonstration look on her — take it off when it ends and
      close the guide, so she starts from her own bare face */
   try{
@@ -11144,12 +11143,21 @@ function finish(){
       Object.keys(S._tourSeed).forEach(z=>{
         if(S.makeup[z] === S._tourSeed[z]) S.makeup[z] = null;
       });
+      /* the practice steps also put a lip shade on: clear it if it is still
+         the one the tour applied and she never changed it */
+      if(S._tourLip && S.makeup.lips === S._tourLip){ S.makeup.lips = null; }
+      S._tourLip = null;
       S._tourSeed = null;
       if(typeof renderShades==='function') renderShades();
     }
     if(S.plan && S.plan.on && typeof endPlan==='function') endPlan();
-    if(typeof hudToggle==='function') hudToggle(false);
     if(typeof openSheet==='function') openSheet('');
+    /* hand her the makeup screen, ready and bare, so she starts straight away */
+    setTimeout(()=>{ try{
+      if(typeof dockGo==='function') dockGo('sh-makeup');
+      if(typeof hudToggle==='function') hudToggle(true);
+      if(typeof hudStrip==='function') hudStrip(true);
+    }catch(e){} }, 260);
   }catch(e){}
   /* whatever the tour postponed may now ask its question */
   if(S._kitAskPending){ S._kitAskPending=false;
@@ -11172,7 +11180,7 @@ window.lamhaTourRunning = ()=> !!S.tourOn;
 
 (async()=>{
   try{
-    const seen = await store.get('m_lamha_tour');
+    const seen = await store.get('m_lamha_tour_v2');
     if(seen) return;
   }catch(e){}
   /* wait until the mirror is actually running, then introduce it */
