@@ -160,6 +160,8 @@ html[dir="ltr"] .sheet h2{font-family:"Marcellus",serif}
 /* a blocking shield with a hole over the target: while the tour asks for one
    specific tap, nothing else in the app responds — so she cannot get lost */
 #tourShield{position:absolute;inset:0;z-index:59;display:none;pointer-events:auto}
+/* the card sits above the shield so its buttons always respond */
+#tourCard, #tourQuit{z-index:63}
 #tourLayer.act ~ #tourShield, #tourLayer.act #tourShield{display:block}
 /* and the target pulses, so "tap it" always has a visible "it" */
 #tourLayer.act #tourHole{animation:tourPulse 1.25s ease-in-out infinite}
@@ -743,7 +745,7 @@ document.addEventListener('DOMContentLoaded', function(){
 
     <div id="shapeGate" class="hidden">
       <div class="sg-card">
-        <div class="sg-eyebrow">LAMHA MOBILE 1788075450</div>
+        <div class="sg-eyebrow">LAMHA MOBILE 1788076616</div>
         <h3 id="sgTitle" class="disp">جارٍ قراءة شكل وجهك</h3>
         <div class="sg-bar"><i id="sgFill"></i></div>
         <p id="sgText">انظري مباشرة إلى الكاميرا وابقي ثابتة لحظة.</p>
@@ -757,7 +759,7 @@ document.addEventListener('DOMContentLoaded', function(){
     </div>
 
     <div id="gate" class="gone">
-      <div class="mark">LAMHA MOBILE · BUILD 1788075450</div>
+      <div class="mark">LAMHA MOBILE · BUILD 1788076616</div>
       <h1 class="disp" data-i18n="gate_h">مرآة زين الذكية</h1>
       <p data-i18n="gate_p">مرآتك تحلّل بشرتك، ترسم خريطة وجهك، وتجرّب المكياج قبل أن تلمسي فرشاة واحدة.</p>
       <div class="feats">
@@ -10917,10 +10919,12 @@ const STEPS = [
        id:'Inilah pengajaran sesungguhnya: panduan menggambar di wajahmu dan kuas bergerak menunjukkan arah.'},
     before:()=>{ try{
       const seed={ lips:6, blush:1, brow:2, eyeshadow:1, highlight:1 };
+      S._tourSeed = S._tourSeed || {};
       Object.entries(seed).forEach(([z,i])=>{
-        if(S.makeup[z]) return;
+        if(S.makeup[z]) return;                 /* never overwrite her choice */
         const list=SHADES[z];
-        if(list && list[Math.min(i,list.length-1)]) S.makeup[z]=list[Math.min(i,list.length-1)].c;
+        const c = list && list[Math.min(i,list.length-1)] && list[Math.min(i,list.length-1)].c;
+        if(c){ S.makeup[z]=c; S._tourSeed[z]=c; } /* remember what WE applied */
       });
       if(typeof renderShades==='function') renderShades();
       if(typeof hudToggle==='function') hudToggle(false);
@@ -10932,7 +10936,7 @@ const STEPS = [
       }
     }catch(e){} } },
 
-  { el:'#plbBA',
+  { el:'#plbBA', autoHide:9000,
     before:()=>{ try{
       /* these buttons live in the compact guide bar — if the guide is not
          running they do not exist on screen, which is exactly the
@@ -10946,7 +10950,7 @@ const STEPS = [
        en:'At each step, "before / after" lifts only that product so you see the difference your own hand made.',
        id:'Di tiap langkah, "sebelum / sesudah" mengangkat produk itu saja.'} },
 
-  { el:'#plbNext',
+  { el:'#plbNext', autoHide:9000,
     before:()=>{ try{
       if(!S.plan || !S.plan.on){
         const b=document.getElementById('pl-start');
@@ -10972,7 +10976,8 @@ function dockGo(sheetId){
 }
 
 function box(){ return document.getElementById('tourLayer'); }
-let waitTimer=null, goingBack=false;
+let waitTimer=null, goingBack=false, hideTimer=null;
+function clearAutoHide(){ if(hideTimer){ clearTimeout(hideTimer); hideTimer=null; } }
 function clearWait(){ if(waitTimer){ clearInterval(waitTimer); waitTimer=null; } }
 /* If a step asks for an action, poll until she does it, then move on by
    itself. The card also keeps its "next" button, so nobody gets stuck. */
@@ -11071,8 +11076,14 @@ function show(){
     /* the shield blocks everything except the highlighted control */
     const shield=document.getElementById('tourShield');
     if(shield){
-      const L=r.left-fr.left-pad, T=r.top-fr.top-pad,
-            Wd=r.width+pad*2, Hg=r.height+pad*2;
+      /* A swipe travels well beyond the control it starts on, so the hole
+         must be a corridor, not a keyhole — otherwise the finger leaves the
+         opening mid-gesture and the shield eats the rest of the drag. */
+      const drag = !!(st.waitZone || st.waitColor || st.waitInt!==undefined);
+      const padX = drag ? Math.max(pad, fr.width)  : pad;
+      const padY = drag ? Math.max(pad, 90)        : pad;
+      const L=r.left-fr.left-padX, T=r.top-fr.top-padY,
+            Wd=r.width+padX*2, Hg=r.height+padY*2;
       shield.style.display = asksNow ? 'block' : 'none';
       shield.style.clipPath =
         'polygon(0 0, 100% 0, 100% 100%, 0 100%, 0 0,' +
@@ -11109,14 +11120,37 @@ function show(){
       nextBtn.textContent = t('tr_next');
     }
     armWait(st);
+    /* a step that only explains the guide bar fades itself away, so the
+       mirror is hers again while she works */
+    clearAutoHide();
+    if(st.autoHide){
+      hideTimer = setTimeout(()=>{
+        b.classList.remove('on');
+        const sh2=document.getElementById('tourShield'); if(sh2) sh2.style.display='none';
+      }, st.autoHide);
+    }
   }));
 }
 function finish(){
-  clearWait();
+  clearWait(); clearAutoHide();
   const sh=document.getElementById('tourShield'); if(sh) sh.style.display='none';
   const b=box(); if(b) b.classList.remove('on');
   S.tourOn=false;
   try{ store.set('m_lamha_tour', 1); }catch(e){}
+  /* the tour put a demonstration look on her — take it off when it ends and
+     close the guide, so she starts from her own bare face */
+  try{
+    if(S._tourSeed){
+      Object.keys(S._tourSeed).forEach(z=>{
+        if(S.makeup[z] === S._tourSeed[z]) S.makeup[z] = null;
+      });
+      S._tourSeed = null;
+      if(typeof renderShades==='function') renderShades();
+    }
+    if(S.plan && S.plan.on && typeof endPlan==='function') endPlan();
+    if(typeof hudToggle==='function') hudToggle(false);
+    if(typeof openSheet==='function') openSheet('');
+  }catch(e){}
   /* whatever the tour postponed may now ask its question */
   if(S._kitAskPending){ S._kitAskPending=false;
     setTimeout(()=>{ try{ window.__askKitMode(); }catch(e){} }, 380); }
@@ -11124,6 +11158,7 @@ function finish(){
 window.lamhaTourStart = function(){ idx=0; S.tourOn=true; show(); };
 window.lamhaTourNext  = function(){ idx++; show(); };
 window.lamhaTourBack  = function(){
+  const sh0=document.getElementById('tourShield'); if(sh0) sh0.style.display='none';
   /* let the step we are leaving clean up, then step back — otherwise a
      sheet or the guide stays open and the previous step cannot be reached */
   try{ const cur=STEPS[idx]; if(cur && cur.after) cur.after(); }catch(e){}
