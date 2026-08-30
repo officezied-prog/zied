@@ -152,22 +152,28 @@ html[dir="ltr"] .sheet h2{font-family:"Marcellus",serif}
 #tourLayer{position:absolute;inset:0;z-index:60;display:none;pointer-events:none}
 #tourLayer.on{display:block}
 #tourHole{position:absolute;border-radius:20px;
-  box-shadow:0 0 0 9999px rgba(58,44,36,.62);
+  box-shadow:0 0 0 9999px rgba(58,44,36,.30);
   border:2px solid var(--gold);
   transition:all .32s cubic-bezier(.22,1,.36,1);pointer-events:none}
 /* on an action step the dim lifts, so nothing stands between her and the tool */
-#tourLayer.act #tourHole{box-shadow:0 0 0 9999px rgba(58,44,36,.20)}
+#tourLayer.act #tourHole{box-shadow:0 0 0 9999px rgba(58,44,36,.12)}
+/* a blocking shield with a hole over the target: while the tour asks for one
+   specific tap, nothing else in the app responds — so she cannot get lost */
+#tourShield{position:absolute;inset:0;z-index:59;display:none;pointer-events:auto}
+#tourLayer.act ~ #tourShield, #tourLayer.act #tourShield{display:block}
 /* and the target pulses, so "tap it" always has a visible "it" */
 #tourLayer.act #tourHole{animation:tourPulse 1.25s ease-in-out infinite}
 @keyframes tourPulse{
   0%,100%{ border-color:var(--gold);
-           box-shadow:0 0 0 9999px rgba(58,44,36,.20), 0 0 0 0 rgba(176,138,102,.55) }
+           box-shadow:0 0 0 9999px rgba(58,44,36,.12), 0 0 0 0 rgba(176,138,102,.55) }
   55%    { border-color:#F0D9BC;
-           box-shadow:0 0 0 9999px rgba(58,44,36,.20), 0 0 0 14px rgba(176,138,102,0) }
+           box-shadow:0 0 0 9999px rgba(58,44,36,.12), 0 0 0 14px rgba(176,138,102,0) }
 }
 /* a finger cue pointing at the target */
 /* leaving the whole tour lives in a corner, away from the step buttons */
-#tourQuit{position:absolute;top:12px;inset-inline-end:12px;z-index:62;
+/* directly beneath the "Teach me" button, on the SAME side — the opposite
+   edge is where the layer toggles live, and it was covering them */
+#tourQuit{position:absolute;top:56px;inset-inline-start:12px;z-index:62;
   pointer-events:auto;padding:7px 13px;border-radius:999px;font-size:11px;font-weight:600;
   background:rgba(255,253,250,.94);border:1px solid var(--line);color:var(--dim);
   box-shadow:0 2px 8px var(--shadow)}
@@ -177,11 +183,14 @@ html[dir="ltr"] .sheet h2{font-family:"Marcellus",serif}
 #tourLayer.act #tourTap{display:block}
 @keyframes tourTapMove{ 0%,100%{transform:translateY(0)} 55%{transform:translateY(-7px)} }
 #tourCard{pointer-events:auto;position:absolute;left:50%;transform:translateX(-50%);
-  width:min(330px,86%);background:rgba(255,253,250,.98);
-  border:1px solid var(--line);border-radius:20px;padding:16px;
-  box-shadow:0 14px 40px rgba(120,90,66,.34)}
+  width:min(340px,88%);
+  background:rgba(255,253,250,.93);
+  border:1px solid var(--line);border-radius:20px;
+  padding:13px 15px;
+  box-shadow:0 10px 30px var(--shadow);
+  backdrop-filter:blur(10px)}
 #tourCount{font-size:10.5px;color:var(--gold);letter-spacing:.12em;margin-bottom:7px}
-#tourText{font-size:13px;line-height:1.7;color:var(--mist);margin-bottom:13px}
+#tourText{font-size:12.5px;line-height:1.6;color:var(--mist);margin-bottom:13px}
 #tourBtns{display:flex;gap:9px;align-items:center}
 #tourSkip{flex:0 0 auto;padding:10px 14px;border-radius:999px;font-size:12px;color:var(--dim)}
 #tourNext{flex:1}
@@ -734,7 +743,7 @@ document.addEventListener('DOMContentLoaded', function(){
 
     <div id="shapeGate" class="hidden">
       <div class="sg-card">
-        <div class="sg-eyebrow">LAMHA MOBILE 1788000017</div>
+        <div class="sg-eyebrow">LAMHA MOBILE 1788075450</div>
         <h3 id="sgTitle" class="disp">جارٍ قراءة شكل وجهك</h3>
         <div class="sg-bar"><i id="sgFill"></i></div>
         <p id="sgText">انظري مباشرة إلى الكاميرا وابقي ثابتة لحظة.</p>
@@ -748,7 +757,7 @@ document.addEventListener('DOMContentLoaded', function(){
     </div>
 
     <div id="gate" class="gone">
-      <div class="mark">LAMHA MOBILE · BUILD 1788000017</div>
+      <div class="mark">LAMHA MOBILE · BUILD 1788075450</div>
       <h1 class="disp" data-i18n="gate_h">مرآة زين الذكية</h1>
       <p data-i18n="gate_p">مرآتك تحلّل بشرتك، ترسم خريطة وجهك، وتجرّب المكياج قبل أن تلمسي فرشاة واحدة.</p>
       <div class="feats">
@@ -1130,6 +1139,7 @@ document.addEventListener('DOMContentLoaded', function(){
   </nav>
 
     <div id="tourLayer">
+      <div id="tourShield"></div>
       <div id="tourHole"></div>
     <div id="tourTap">👆</div>
       <button id="tourQuit" data-i18n="tr_quit">تخطّي التعليم</button>
@@ -1277,7 +1287,7 @@ ar:{
  pl_start:"التقطي صورة الهدف وابدئي", pl_exit:"إنهاء الدليل",
  dm_btn:"جرّبي على صورة بدل وجهي",
  dm_hint:"اختاري صورة وجه واضحة — يعمل التطبيق كاملاً عليها، ولا شيء يُرفع لأي مكان.",
- tr_skip:"تخطّي هذه", tr_back:"السابقة", tr_quit:"تخطّي التعليم", tr_next:"التالي", tr_btn:"أعيدي الجولة التعريفية", tr_short:"علّميني",
+ tr_skip:"التالية", tr_back:"السابقة", tr_quit:"تخطّي التعليم", tr_next:"التالي", tr_btn:"أعيدي الجولة التعريفية", tr_short:"علّميني",
  ka_h:"بأي مكياج نعمل الآن؟", ka_virtual:"جرّبي أي درجة — مكياج افتراضي", ka_owned:"من خزانتي",
  ka_empty:"خزانتك فارغة — أضيفي منتجاتك أولاً، أو جرّبي المكياج الافتراضي",
  lt_auto:"اضبطي تلقائياً", lt_manual:"أضبط بنفسي",
@@ -1480,7 +1490,7 @@ en:{
  pl_start:"Capture the target and begin", pl_exit:"End the guide",
  dm_btn:"Use a photo instead of my face",
  dm_hint:"Pick a clear face photo — the whole app works on it, and nothing is uploaded anywhere.",
- tr_skip:"Skip this", tr_back:"Back", tr_quit:"Exit tour", tr_next:"Next", tr_btn:"Replay the tour", tr_short:"Teach me",
+ tr_skip:"Next", tr_back:"Back", tr_quit:"Exit tour", tr_next:"Next", tr_btn:"Replay the tour", tr_short:"Teach me",
  ka_h:"Which makeup are we working with?", ka_virtual:"Try any shade — virtual", ka_owned:"From my kit",
  ka_empty:"Your kit is empty — add your products first, or try virtual shades",
  lt_auto:"Set it for me", lt_manual:"I'll set it myself",
@@ -1683,7 +1693,7 @@ id:{
  pl_start:"Ambil foto target dan mulai", pl_exit:"Akhiri panduan",
  dm_btn:"Pakai foto, bukan wajahku",
  dm_hint:"Pilih foto wajah yang jelas — seluruh aplikasi bekerja padanya, tanpa mengunggah apa pun.",
- tr_skip:"Lewati ini", tr_back:"Kembali", tr_quit:"Keluar tur", tr_next:"Lanjut", tr_btn:"Ulangi tur", tr_short:"Ajari saya",
+ tr_skip:"Lanjut", tr_back:"Kembali", tr_quit:"Keluar tur", tr_next:"Lanjut", tr_btn:"Ulangi tur", tr_short:"Ajari saya",
  ka_h:"Riasan mana yang kita pakai?", ka_virtual:"Coba warna apa saja — virtual", ka_owned:"Dari koleksiku",
  ka_empty:"Koleksimu kosong — tambahkan produk dulu, atau coba warna virtual",
  lt_auto:"Atur otomatis", lt_manual:"Saya atur sendiri",
@@ -7972,6 +7982,37 @@ function hudApply(){
   }
   hudName(i);
 }
+/* explicit horizontal dragging: on some devices the native scroll of a
+   fixed overlay is swallowed by parent gesture handlers, so the shade strip
+   would not move at all. Drive it from pointer events and snap on release. */
+{
+  const strip=$('#mkStrip');
+  let dragging=false, startX=0, startLeft=0, moved=0;
+  strip.addEventListener('pointerdown', e=>{
+    dragging=true; moved=0; startX=e.clientX; startLeft=strip.scrollLeft;
+    try{ strip.setPointerCapture(e.pointerId); }catch(err){}
+  });
+  strip.addEventListener('pointermove', e=>{
+    if(!dragging) return;
+    const dx=e.clientX-startX;
+    moved=Math.max(moved, Math.abs(dx));
+    if(moved>3){ if(e.preventDefault) e.preventDefault(); strip.scrollLeft = startLeft - dx; }
+  });
+  const endDrag=()=>{
+    if(!dragging) return; dragging=false;
+    if(moved<=3) return;                       /* a tap, not a drag */
+    const r=strip.getBoundingClientRect(), cx=r.left+r.width/2;
+    let best=null, bd=1e9;
+    strip.querySelectorAll('.msw').forEach(el=>{
+      const er=el.getBoundingClientRect();
+      const d=Math.abs(er.left+er.width/2-cx);
+      if(d<bd){ bd=d; best=el; }
+    });
+    if(best) best.scrollIntoView({inline:'center', block:'nearest', behavior:'smooth'});
+  };
+  strip.addEventListener('pointerup', endDrag);
+  strip.addEventListener('pointercancel', endDrag);
+}
 $('#mkStrip').addEventListener('scroll', ()=>{
   if(suppress) return;
   hudName(centeredIndex());
@@ -10772,20 +10813,12 @@ const STEPS = [
     before:()=>{ try{ if(typeof openSheet==='function') openSheet(''); }catch(e){} } },
 
   { el:'#kt-add',
-    t:{ar:'هذه خزانتك. من هذا الزر تُدخلين مكياجك الحقيقي — بالكاميرا، أو من صورك، أو يدوياً.',
-       en:'This is your kit. This button adds your real products — by camera, from your photos, or by hand.',
-       id:'Ini koleksimu. Tombol ini menambahkan produk aslimu.'} },
+    t:{ar:'هذه خزانتك. من هنا تُدخلين مكياجك الحقيقي منتجاً منتجاً — بالكاميرا أو من صورك أو يدوياً. ومن الزر الذي تحته تصوّرين مكياجك كله دفعة واحدة على الطاولة فيتعرّف عليه ويضيفه. وإن لم تملكي شيئاً بعد، الدرجات الافتراضية أمامك بحرية.',
+       en:'This is your kit. Here you add your real products one by one — by camera, from your photos, or by hand. The button below photographs the whole kit at once on a table and adds it all. And if you own nothing yet, the virtual shades are free to explore.',
+       id:'Ini koleksimu. Tambahkan produk satu per satu, atau foto seluruh koleksimu sekaligus. Jika belum punya, warna virtual bebas dicoba.'},
+    /* "next" closes the kit and moves on — no separate exit step */
+    after:()=>{ try{ if(typeof openSheet==='function') openSheet(''); }catch(e){} } },
 
-  { el:'#gs-shot',
-    t:{ar:'أو صوّري كل مكياجك دفعة واحدة على الطاولة فيتعرّف عليه ويضيفه كله. وإن لم تملكي شيئاً بعد، الدرجات الافتراضية أمامك بحرية.',
-       en:'Or photograph the whole kit at once on a table and it reads and adds them all. If you own nothing yet, the virtual shades are free to explore.',
-       id:'Atau foto seluruh koleksimu sekaligus. Jika belum punya, warna virtual bebas dicoba.'} },
-
-  { el:'#sh-kit .close-x',
-    t:{ar:'انتهينا من الخزانة — المسي ✕ للخروج والعودة إلى المرآة.',
-       en:'That is the kit — tap ✕ to close it and return to the mirror.',
-       id:'Selesai — ketuk ✕ untuk kembali ke cermin.'},
-    waitSheetClosed:'sh-kit' },
 
   /* ---------------- 3 · into makeup, described piece by piece ------------- */
   { el:'#dock [data-sheet="sh-makeup"]',
@@ -10797,6 +10830,11 @@ const STEPS = [
       if(typeof hudToggle==='function') hudToggle(false);
       dockGo('sh-mirror');
     }catch(e){} } },
+
+  { el:'#mkHud', info:true,
+    t:{ar:'هذه شاشة المكياج: على اليمين عجلة عناصر الوجه، وتحت شريط الألوان، وعلى اليسار شريط قوة اللون — وكل ما تختارينه يظهر على وجهك في اللحظة.',
+       en:'This is the makeup screen: the zone wheel on the right, the shade strip below, the intensity rail on the left — and everything you choose appears on your face at once.',
+       id:'Ini layar riasan: roda area di kanan, deretan warna di bawah, bilah intensitas di kiri.'} },
 
   { el:'#mkRail',
     t:{ar:'هذه عجلة العناصر: شفاه، خدود، حواجب، ظلال… العنصر الذي يستقر في الحلقة هو الذي تعملين عليه.',
@@ -10852,7 +10890,7 @@ const STEPS = [
        en:'Nicely done. The full panel holds ready looks, occasion makeup, and the step-by-step guide.',
        id:'Bagus sekali. Panel lengkap berisi tampilan siap pakai dan panduan langkah demi langkah.'} },
 
-  { el:'#sh-makeup .lead', info:true,
+  { el:'#sh-makeup h2', info:true,
     t:{ar:'هذه اللوحة الكاملة: إطلالات جاهزة بلمسة، ومكياج المناسبة الذي يحسب لكِ من الإضاءة واللباس، ولمعات كل عنصر، وحفظ إطلالاتك، والتقاط صورة.',
        en:'This is the full panel: ready looks in one tap, occasion makeup computed from your light and outfit, finishes for every zone, saved looks, and a photo.',
        id:'Ini panel lengkap: tampilan siap pakai, riasan acara, hasil akhir tiap area, simpan tampilan, dan ambil foto.'},
@@ -11021,6 +11059,7 @@ function show(){
       idx++; return show();
     }
     const pad=10;
+    const asksNow = !!(st.wait||st.waitZone||st.waitColor||st.waitFlag||st.waitHud||st.waitSheet||st.waitSheetClosed||st.waitInt!==undefined);
     const hole=document.getElementById('tourHole');
     const card=document.getElementById('tourCard');
     const txt=document.getElementById('tourText');
@@ -11029,6 +11068,17 @@ function show(){
     hole.style.top=(r.top-fr.top-pad)+'px';
     hole.style.width=(r.width+pad*2)+'px';
     hole.style.height=(r.height+pad*2)+'px';
+    /* the shield blocks everything except the highlighted control */
+    const shield=document.getElementById('tourShield');
+    if(shield){
+      const L=r.left-fr.left-pad, T=r.top-fr.top-pad,
+            Wd=r.width+pad*2, Hg=r.height+pad*2;
+      shield.style.display = asksNow ? 'block' : 'none';
+      shield.style.clipPath =
+        'polygon(0 0, 100% 0, 100% 100%, 0 100%, 0 0,' +
+        L+'px '+T+'px,' + L+'px '+(T+Hg)+'px,' +
+        (L+Wd)+'px '+(T+Hg)+'px,' + (L+Wd)+'px '+T+'px,' + L+'px '+T+'px)';
+    }
     const tap=document.getElementById('tourTap');
     if(tap){
       tap.style.left=(r.left-fr.left + r.width/2 - 12)+'px';
@@ -11054,15 +11104,16 @@ function show(){
     if(backBtn) backBtn.style.visibility = idx>0 ? 'visible' : 'hidden';
     const nextBtn=document.getElementById('tourNext');
     if(nextBtn){
-      nextBtn.textContent = asks
-        ? (LANG==='ar'?'تخطّي هذه':LANG==='id'?'Lewati ini':'Skip this')
-        : t('tr_next');
+      /* one word everywhere: "next". The step still waits for her action,
+         but nobody has to decode two different labels. */
+      nextBtn.textContent = t('tr_next');
     }
     armWait(st);
   }));
 }
 function finish(){
   clearWait();
+  const sh=document.getElementById('tourShield'); if(sh) sh.style.display='none';
   const b=box(); if(b) b.classList.remove('on');
   S.tourOn=false;
   try{ store.set('m_lamha_tour', 1); }catch(e){}
