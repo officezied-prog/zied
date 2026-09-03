@@ -686,6 +686,7 @@ document.addEventListener('DOMContentLoaded', function(){
       <button data-toggle="map" title="خريطة الوجه"><svg viewBox="0 0 24 24"><path d="M12 3c4 0 7 3.6 7 8s-3 10-7 10-7-5.6-7-10 3-8 7-8z"/><path d="M5 11h14M12 3v18M8 6.5c2.6-1.2 5.4-1.2 8 0"/></svg><b data-i18n="tg_map">خريطة الوجه</b></button>
       <button data-toggle="topo" title="تضاريس الوجه"><svg viewBox="0 0 24 24"><path d="M3 15c3-4 6-4 9 0s6 4 9 0"/><path d="M3 19c3-4 6-4 9 0s6 4 9 0"/><path d="M6 10c2-3 4-3 6 0"/></svg><b data-i18n="tg_topo">التضاريس</b></button>
       <button data-toggle="compare" title="قبل / بعد"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg><b data-i18n="tg_compare">قبل / بعد</b></button>
+      <button data-toggle="bmap" title="شبكة الحاجب"><svg viewBox="0 0 24 24"><path d="M3 10c3-3 6-4.4 9-4.4S18 7 21 10"/><path d="M4 14h16"/><path d="M8 3v18M16 3v18M12 3v18"/></svg><b data-i18n="tg_bmap">شبكة الحاجب</b></button>
       <button data-toggle="mesh" title="الشبكة"><svg viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M9 4v16M15 4v16"/></svg><b data-i18n="tg_mesh">الشبكة</b></button>
       <button data-toggle="edges" title="الحدود"><svg viewBox="0 0 24 24"><path d="M12 3c4 0 7 3.5 7 8s-3 10-7 10-7-5.5-7-10 3-8 7-8z" stroke-dasharray="3 3"/></svg><b data-i18n="tg_edges">الحدود</b></button>
       <button data-toggle="gl" title="WebGL"><svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg><b data-i18n="tg_gl">WebGL م0</b></button>
@@ -1045,6 +1046,7 @@ document.addEventListener('DOMContentLoaded', function(){
       <img id="pl-target" alt="">
       <div class="note" data-i18n="pl_note">الصورة تُبنى على وجهك كما هو الآن، مضافاً إليه ما تبقّى من خطوات فقط.</div>
       <button class="btn wide" id="pl-refresh" style="margin-top:8px" data-i18n="pl_refresh">حدّثي الصورة من وجهي الآن</button>
+      <button class="btn wide pri" data-toggle="bmap" style="margin-top:8px" data-i18n="pl_bmap">شبكة رسم الحاجب</button>
       <label class="fld" data-i18n="pl_steps">الخطوات</label>
       <div id="pl-steps"></div>
       <div class="row" style="margin-top:10px">
@@ -1281,9 +1283,12 @@ ar:{
  sg_done:"ضُبط التطبيق على شكل وجهك",
  gl:{limit:"حدّ ممنوع",dir:"اتجاه الدمج",start:"بداية الحاجب",arch:"القوس",tail:"النهاية",
   limitB:"أحمر الخدود لا ينزل تحت مستوى أرنبة الأنف — المشطوب ممنوع",
-  limitC:"الكونتور لا يتجاوز الخط من الأذن إلى زاوية الفم",
+  limitC:"الظل على خط الأذن → زاوية الفم، ويقف عند الخط النازل من زاوية العين",
   brow3:"البداية فوق فتحة الأنف · القوس فوق البؤبؤ · النهاية عند زاوية العين",
-  crease:"ابقي فوق خط الجفن المتقطّع",line:"خط العمل",centre:"الفاتح في الوسط، الغامق على الجانبين"},
+  crease:"ابقي فوق خط الجفن المتقطّع",line:"خط العمل",centre:"الفاتح في الوسط، الغامق على الجانبين",
+  gap:"المسافة بين الحاجبين = عرض الأنف"},
+ tg_bmap:"شبكة الحاجب", bm_on:"شبكة رسم الحاجب ظاهرة — النقاط الست هي البداية والقوس والنهاية.",
+ bm_off:"أُخفيت شبكة الحاجب.", pl_bmap:"شبكة رسم الحاجب",
  pl_h:"من وجهك إلى الإطلالة", mk_plan:"دليل التطبيق خطوة بخطوة",
  pl_p:"نلتقط صورة الإطلالة النهائية أولاً، ثم نمشي معك خطوة خطوة حتى تصلي إليها بيدك.",
  pl_start:"التقطي صورة الهدف وابدئي", pl_exit:"إنهاء الدليل",
@@ -1484,9 +1489,12 @@ en:{
  sg_done:"The app is now set to your face shape",
  gl:{limit:"Off limits",dir:"Blend this way",start:"Brow start",arch:"Arch",tail:"Tail",
   limitB:"Blush never goes below the tip of the nose — the hatched side is off limits",
-  limitC:"Contour never crosses the ear-to-mouth-corner line",
+  limitC:"Shadow rides the ear-to-mouth line and stops under the outer corner of the eye",
   brow3:"Start above the nostril · arch above the pupil · tail at the eye corner",
-  crease:"Stay above the dashed socket line",line:"Working line",centre:"Light down the centre, dark on the sides"},
+  crease:"Stay above the dashed socket line",line:"Working line",centre:"Light down the centre, dark on the sides",
+  gap:"Gap between the brows = width of the nose"},
+ tg_bmap:"Brow grid", bm_on:"Brow mapping is on — the six dots are start, arch and tail.",
+ bm_off:"Brow mapping hidden.", pl_bmap:"Brow mapping grid",
  pl_h:"From your face to the look", mk_plan:"Step-by-step application guide",
  pl_p:"We capture the finished look first, then walk you through it step by step until you get there yourself.",
  pl_start:"Capture the target and begin", pl_exit:"End the guide",
@@ -1687,9 +1695,12 @@ id:{
  sg_done:"Aplikasi kini disetel ke bentuk wajahmu",
  gl:{limit:"Terlarang",dir:"Arah meratakan",start:"Awal alis",arch:"Lengkung",tail:"Ujung",
   limitB:"Perona tidak turun di bawah ujung hidung — sisi berarsir terlarang",
-  limitC:"Kontur tidak melewati garis telinga ke sudut mulut",
+  limitC:"Bayangan di garis telinga-sudut mulut, berhenti di bawah sudut luar mata",
   brow3:"Awal di atas cuping · lengkung di atas pupil · ujung di sudut mata",
-  crease:"Tetap di atas garis kelopak",line:"Garis kerja",centre:"Terang di tengah, gelap di sisi"},
+  crease:"Tetap di atas garis kelopak",line:"Garis kerja",centre:"Terang di tengah, gelap di sisi",
+  gap:"Jarak antar alis = lebar hidung"},
+ tg_bmap:"Grid alis", bm_on:"Pemetaan alis aktif — enam titik: awal, lengkung, ujung.",
+ bm_off:"Pemetaan alis disembunyikan.", pl_bmap:"Grid pemetaan alis",
  pl_h:"Dari wajahmu ke tampilan", mk_plan:"Panduan langkah demi langkah",
  pl_p:"Kami tangkap dulu foto hasil akhirnya, lalu memandumu langkah demi langkah sampai kamu mencapainya sendiri.",
  pl_start:"Ambil foto target dan mulai", pl_exit:"Akhiri panduan",
@@ -1799,7 +1810,7 @@ const S = {
   fins:{lashes:'matte', lens:'matte', lips:'matte', blush:'matte', crease:'satin', corner:'matte', concealer:'matte', contour:'matte', highlight:'matte', nose:'matte', eyeshadow:'satin', liner:'matte', brow:'matte', base:'satin', glow:'satin'},
   makeup:{ lips:null, blush:null, crease:null, corner:null, concealer:null, contour:null, highlight:null, nose:null, eyeshadow:null, liner:null, brow:null, base:null, glow:null, lashes:null, lens:null },
   skin:null, history:[], routineMode:'skin', routineStep:0, highlightZone:null,
-  scanning:false, guide:false, guideState:null, guideFit:0,
+  scanning:false, guide:false, guideState:null, guideFit:0, browMap:false,
   showTopo:false, showGL:true, showEdges:false, compare:false, compareX:0.5, saved:[], kit:[], mapFocus:[], mapHit:[]
 };
 
@@ -2386,6 +2397,10 @@ function loop(){
     catch(err){ if(!S._glErr){ S._glErr=1; fatalLog('[webgl frame] '+(err && (err.stack||err.message||err))); } }
   }
   glPhase = (glPhase + 0.9) % 4096;
+  if(S.landmarks && S.browMap && !(S.plan && (S.plan.capture||S.plan.captureStep))){
+    try{ drawBrowMap(S.landmarks); }
+    catch(err){ if(!S._bmErr){ S._bmErr=1; fatalLog('[brow map] '+(err && (err.stack||err.message||err))); } }
+  }
   if(S.landmarks && S.stepZone && !(S.plan && (S.plan.capture||S.plan.captureStep))){
     try{ drawStepGuide(S.landmarks, S.stepZone);
          if(S.brushAnim!==false) drawBrushStroke(S.landmarks, S.stepZone); }
@@ -2593,15 +2608,18 @@ const SHAPE_PLAN = [
   {c:{cheek:1,   jaw:.25, underJaw:.35},                        h:{cheekTop:1, foreC:.7, chin:.6, underEye:1, bridge:.7, noseTip:.5, cupid:.6, brow:.6}},
   {c:{cheek:1,   temple:.9, jawSide:.8, underJaw:.7},           h:{foreC:1, chin:1, underEye:.9, bridge:1, noseTip:.6, cheekTop:.5}},
   {c:{jawCorner:1, foreSide:.9, cheek:.6, underJaw:.6},         h:{foreC:1, chin:.9, cheekTop:.9, underEye:.8, bridge:.6, noseTip:.5}},
-  {c:{hairline:1, chinBottom:1, cheek:.6, underJaw:.8},         h:{cheekTop:1, underEye:1, foreC:.4, bridge:.5, noseTip:.4}},
-  {c:{temple:1,  foreSide:.8, chinTip:.7, cheek:.6, underJaw:.3}, h:{jawSide:.8, underEye:1, cheekTop:.8, foreC:.4, bridge:.6, noseTip:.5}},
-  {c:{cheekOuter:1, foreSide:.4, chinTip:.4, underJaw:.3},      h:{foreC:1, chin:.9, underEye:1, cheekTop:.5, bridge:.7, noseTip:.5}},
+  /* oblong: shorten, never lengthen — no vertical strip of light down the centre */
+  {c:{hairline:1, chinBottom:1, cheek:.6, underJaw:.8},         h:{cheekTop:1, underEye:1, foreC:.4, noseTip:.4}},
+  /* heart: the forehead is already the widest part — no light on it */
+  {c:{temple:1,  foreSide:.8, chinTip:.7, cheek:.6, underJaw:.3}, h:{jawSide:.8, underEye:1, cheekTop:.8, bridge:.6, noseTip:.5}},
+  /* diamond: forehead and chin are the narrowest parts — they get light, never shadow */
+  {c:{cheekOuter:1, underJaw:.3},                               h:{foreC:1, chin:.9, underEye:1, cheekTop:.5, bridge:.7, noseTip:.5}},
   {c:{jawSide:1, jawCorner:.9, cheek:.5, underJaw:.7},          h:{foreC:1, temple:.8, cheekTop:.9, underEye:.8, bridge:.6, noseTip:.5}},
   /* 7 rectangle — shorten AND soften: hairline + chin + jaw corners */
   {c:{hairline:1, chinBottom:.9, jawCorner:.9, foreSide:.7, cheek:.6, underJaw:.7},
-                                                                h:{cheekTop:1, underEye:1, foreC:.5, bridge:.5, noseTip:.4, chin:.4}},
+                                                                h:{cheekTop:1, underEye:1, foreC:.5, noseTip:.4, chin:.4}},
   /* 8 inverted triangle — narrow the forehead, widen the jaw */
-  {c:{foreSide:1, temple:.9, cheek:.5, underJaw:.2},            h:{jawSide:1, chin:.9, underEye:1, cheekTop:.7, foreC:.35, bridge:.6, noseTip:.5}}
+  {c:{foreSide:1, temple:.9, cheek:.5, underJaw:.2},            h:{jawSide:1, chin:.9, underEye:1, cheekTop:.7, bridge:.6, noseTip:.5}}
 ];
 S.shape = 0;
 S.pattern = 'daily';
@@ -2615,7 +2633,7 @@ const PATTERNS = {
 const PAT_KEYS = ['natural','daily','charm','elegant','sculpted'];
 
 function sculptAreas(lm){
-  const plan = SHAPE_PLAN[clamp(S.shape|0,0,6)], fs=faceScale(lm), out=[];
+  const plan = SHAPE_PLAN[clamp(S.shape|0,0,8)], fs=faceScale(lm), out=[];
   const pt = PATTERNS[S.pattern] || PATTERNS.daily;
   const wgt = (src,k)=> clamp((src[k]||0) * (pt[k] ?? pt.all), 0, 1);
   const c0=plan.c||{}, h0=plan.h||{}, g=noseGeom(lm);
@@ -2624,12 +2642,14 @@ function sculptAreas(lm){
   const line=(kind,idx,wid,w,tag)=>{ if(w) out.push({kind,t:'line',pts:idx.map(i=>Array.isArray(i)?i:P(lm[i])),wid,w,tag}); };
   const blob=(kind,i,r,w,tag)=>{ if(w) out.push({kind,t:'blob',pt:Array.isArray(i)?i:P(lm[i]),r,w,tag}); };
   /* contour — the recessed areas */
-  /* the cheek hollow is a defined band, not a wide wash: references show
-     roughly 5% of face width, blended upward and outward */
-  line('c', L.contourL, fs*.052, c.cheek, 'cont');
-  line('c', L.contourR, fs*.052, c.cheek, 'cont');
-  line('c', L.contourL.slice(0,3), fs*.048, c.cheekOuter, 'cont');
-  line('c', L.contourR.slice(0,3), fs*.048, c.cheekOuter, 'cont');
+  /* the cheek stroke: a brush-handle line from the ear on the ear-to-mouth
+     axis, ending under the outer corner of the eye. Measured on a
+     professional map the dense colour is ~9% of the face wide. */
+  const ck = cheekGeom(lm);
+  ck.forEach(k=>{
+    line('c', k.band, fs*.090, c.cheek, 'cont');
+    line('c', [k.band[0], glExt(k.band[0], k.band[1], 0.40)], fs*.085, c.cheekOuter, 'cont');
+  });
   blob('c', 54,  fs*.075, c.temple, 'cont');  blob('c', 284, fs*.075, c.temple, 'cont');
   line('c', [103,67],  fs*.055, c.foreSide, 'cont');
   line('c', [332,297], fs*.055, c.foreSide, 'cont');
@@ -2682,6 +2702,55 @@ function strokePts(c, pts){
   pts.forEach(([x,y],k)=> k?c.lineTo(x,y):c.moveTo(x,y));
   c.stroke();
 }
+
+/* the two axes of the face, so nothing is measured against the screen */
+function faceAxes(lm){
+  const eA=P(lm[33]), eB=P(lm[263]);
+  let ax=eB[0]-eA[0], ay=eB[1]-eA[1];
+  const al=Math.hypot(ax,ay)||1; ax/=al; ay/=al;
+  let UP=[ay,-ax];
+  const g=P(lm[168]), c=P(lm[152]);
+  if((c[0]-g[0])*UP[0] + (c[1]-g[1])*UP[1] > 0) UP=[-UP[0],-UP[1]];
+  return { AX:[ax,ay], UP };
+}
+
+/* =========================================================
+   CHEEK CONTOUR — where the shadow goes and where it must stop.
+   The axis is the classic one: the line a brush handle makes from
+   the ear to the corner of the mouth (to the philtrum on a long face,
+   so the stroke adds no length). The shadow is centred on that axis:
+   its upper half sits in the hollow under the cheekbone, its lower
+   half shades the cheek below it. The pigment stops at the vertical
+   dropped from the outer corner of the eye; the blend may feather on
+   as far as the outer edge of the iris and no further. Dragged past
+   that wall it pulls the whole face down instead of lifting it.
+   (Measured on two professional maps: the dense colour ends under
+   the outer corner, the feathered tip reaches the iris line, and the
+   colour sits on the axis, not above it.)
+   ========================================================= */
+function cheekGeom(lm){
+  const {AX, UP} = faceAxes(lm);
+  const fs = faceScale(lm);
+  const long = (S.shape|0)===3;
+  return [
+    {ear:234, aim: long?164:61,  inn:133, out:33,  lidT:159, lidB:145, temple:54},
+    {ear:454, aim: long?164:291, inn:362, out:263, lidT:386, lidB:374, temple:284}
+  ].map(s=>{
+    const e=P(lm[s.ear]), a=P(lm[s.aim]);
+    const ei=P(lm[s.inn]), eo=P(lm[s.out]), lt=P(lm[s.lidT]), lb=P(lm[s.lidB]);
+    const pup=[(ei[0]+eo[0]+lt[0]+lb[0])/4, (ei[1]+eo[1]+lt[1]+lb[1])/4];
+    const mid=glExt(ei,eo,.5), o70=glExt(ei,eo,.70);
+    const iris=[o70[0]+pup[0]-mid[0], o70[1]+pup[1]-mid[1]];
+    const axis=[e, a];
+    const wall = q => [[q[0]+UP[0]*fs*0.04, q[1]+UP[1]*fs*0.04],[q[0]-UP[0]*fs*0.60, q[1]-UP[1]*fs*0.60]];
+    const stop = wall(iris), edge = wall(eo);
+    const hit = segHit(axis[0], axis[1], edge[0], edge[1]) || glExt(axis[0], axis[1], 0.50);
+    const end = segHit(axis[0], axis[1], stop[0], stop[1]) || glExt(axis[0], axis[1], 0.55);
+    return { ear:e, aim:a, iris, corner:eo, axis, stop, edge, band:[e, hit], end,
+             temple:P(lm[s.temple]), UP, AX };
+  });
+}
+
 function faceBBox(lm, pad){
   let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
   L.faceOval.concat(L.browUpL,L.browUpR).forEach(i=>{
@@ -3948,8 +4017,8 @@ function brushPath(lm, zone){
       return [[i0[0]+dn[0], i0[1]+dn[1]], [o0[0], o0[1]+fs*0.12], [o0[0], o0[1]+fs*0.05]];
     }
     case 'contour': {
-      const a=V(234), b=V(58), c=V(172);
-      return [a, b, c];                       /* down the jaw, toward the chin */
+      const k = cheekGeom(lm)[0];             /* along the cheek axis, then blend up toward the temple */
+      return [k.band[0], k.band[1], glExt(k.band[1], k.temple, 0.35)];
     }
     case 'blush': {
       const ap=V(50), ear=V(234);
@@ -4351,18 +4420,16 @@ function drawStepGuide(lm, zone){
       else glRing(a.pt, a.r, GL_GOLD, w*0.8);
     });
     if(zone==='highlight') return;
-    /* the classic limit: never bring it inside the line from ear to mouth corner */
-    [[234,61],[454,291]].forEach(([e,m])=>{
-      glLine([V(e), V(m)], GL_STOP, w, [fs*0.02, fs*0.018]);
-      glHatch(V(e), V(m), 1, GL_STOP, w);
+    /* the cheek: the axis it rides, the wall it stops at, the way it blends */
+    const ck = cheekGeom(lm), pc = SHAPE_PLAN[clamp(S.shape|0,0,8)].c || {};
+    const inner = k => (pc.cheekOuter && !pc.cheek) ? glExt(k.band[0], k.band[1], 0.40) : k.band[1];
+    ck.forEach(k=>{
+      glLine(k.axis, GL_GOLD, w*0.8, [fs*0.02, fs*0.018]);
+      glLine(k.stop, GL_STOP, w*0.9, [fs*0.011, fs*0.011]);
+      glHatch(k.stop[0], k.stop[1], k.ear[0] < k.iris[0] ? -1 : 1, GL_STOP, w);
+      glDot(k.end, w*1.5, '#FFFFFF');
+      glArrow(inner(k), glExt(inner(k), k.temple, 0.42), GL_GOLD, w);
     });
-    const dn=(()=>{ const p0=V(168), p1=V(152);
-      const d=Math.hypot(p1[0]-p0[0],p1[1]-p0[1])||1; return [(p1[0]-p0[0])/d,(p1[1]-p0[1])/d]; })();
-    const off=fs*0.055;
-    [L.jawL, L.jawR].forEach(idx=>
-      glLine(idx.map(i=>{ const [x,y]=V(i); return [x+dn[0]*off, y+dn[1]*off]; }), GL_GOLD, w*0.9));
-    const a = V(L.contourL[3]);
-    glArrow(a, [a[0]+ (V(234)[0]-a[0])*0.55, a[1] - fs*0.10], GL_GOLD, w);
     caps.push({txt:t('gl.limitC'), col:GL_STOP});
     drawCaps(caps);
     return;
@@ -4428,7 +4495,9 @@ function drawStepGuide(lm, zone){
   }
 
   if(zone==='brow'){
-    /* the three mapping rays every artist draws before touching a brow */
+    /* the three mapping rays every artist draws before touching a brow
+       (the full grid, when it is on, already draws them and the six points) */
+    if(S.browMap){ caps.push({txt:t('gl.brow3'), col:GL_GOLD}); caps.push({txt:t('gl.gap'), col:GL_STOP}); drawCaps(caps); return; }
     [[129, 33, L.browUpL, 70],[358, 263, L.browUpR, 300]].forEach(([nostril, outer, up, head])=>{
       const n = V(nostril), h = V(head);
       glLine([n, [h[0], h[1]-fs*0.10]], GL_GOLD, w*0.85, [fs*0.02, fs*0.018]);
@@ -4451,6 +4520,141 @@ function drawStepGuide(lm, zone){
     glArrow(r, glExt(r, l, 0.30), GL_GOLD, w*0.85);
     return;
   }
+}
+
+/* =========================================================
+   BROW MAPPING — the grid an artist draws before touching a brow,
+   laid live over the face.
+   Three rays leave each nostril: straight up along the axis of the
+   face (where the brow must start), through the outer edge of the
+   iris (where the arch belongs), through the outer corner of the eye
+   (where the tail must finish). Where a ray meets the brow is a
+   point. Two horizontals prove the pair sits level, three verticals
+   prove it sits centred, and the gap between the heads is read
+   against the width of the nose.
+   ========================================================= */
+function segHit(p, q, a, b){
+  const rx=q[0]-p[0], ry=q[1]-p[1], sx=b[0]-a[0], sy=b[1]-a[1];
+  const d = rx*sy - ry*sx;
+  if(Math.abs(d) < 1e-9) return null;
+  const tt = ((a[0]-p[0])*sy - (a[1]-p[1])*sx)/d;
+  const uu = ((a[0]-p[0])*ry - (a[1]-p[1])*rx)/d;
+  if(tt<0 || tt>1 || uu<0 || uu>1) return null;
+  return [p[0]+rx*tt, p[1]+ry*tt];
+}
+function polyHit(from, to, poly){
+  let best=null, bd=Infinity;
+  for(let i=0;i<poly.length-1;i++){
+    const h = segHit(from, to, poly[i], poly[i+1]);
+    if(h){ const d=Math.hypot(h[0]-from[0], h[1]-from[1]); if(d<bd){ bd=d; best=h; } }
+  }
+  return best;
+}
+function polyNear(poly, p){
+  let best=null, bd=Infinity;
+  for(let i=0;i<poly.length-1;i++){
+    const a=poly[i], b=poly[i+1];
+    const dx=b[0]-a[0], dy=b[1]-a[1], l2=dx*dx+dy*dy||1;
+    let u=((p[0]-a[0])*dx+(p[1]-a[1])*dy)/l2; u=u<0?0:u>1?1:u;
+    const q=[a[0]+dx*u, a[1]+dy*u], d=Math.hypot(q[0]-p[0], q[1]-p[1]);
+    if(d<bd){ bd=d; best=q; }
+  }
+  return best;
+}
+function glDot(p, r, col){
+  ctx.save();
+  ctx.fillStyle=GL_INK; ctx.beginPath(); ctx.arc(p[0],p[1],r*1.9,0,7); ctx.fill();
+  ctx.fillStyle=col;    ctx.beginPath(); ctx.arc(p[0],p[1],r,0,7); ctx.fill();
+  ctx.restore();
+}
+
+function drawBrowMap(lm){
+  const fs = faceScale(lm);
+  const w  = Math.max(1.3, fs*0.0074);          // construction lines stay thin
+  const V  = i => P(lm[i]);
+
+  /* --- the two axes of the face, so nothing is drawn against the screen --- */
+  const eA=V(33), eB=V(263);
+  let ax=eB[0]-eA[0], ay=eB[1]-eA[1];
+  const al=Math.hypot(ax,ay)||1; ax/=al; ay/=al;
+  const AX=[ax,ay];
+  let UP=[ay,-ax];
+  const glab=V(168), chin=V(152);
+  if((chin[0]-glab[0])*UP[0] + (chin[1]-glab[1])*UP[1] > 0) UP=[-UP[0],-UP[1]];
+
+  const half   = fs*0.62;
+  const across = p => [[p[0]-AX[0]*half, p[1]-AX[1]*half],[p[0]+AX[0]*half, p[1]+AX[1]*half]];
+  const rise   = (p,u,d) => [[p[0]+UP[0]*u, p[1]+UP[1]*u],[p[0]-UP[0]*d, p[1]-UP[1]*d]];
+  const hgt    = p => p[0]*UP[0] + p[1]*UP[1];
+  /* a full-width horizontal at the height of p, centred on the face */
+  const level  = p => {
+    const d = (p[0]-glab[0])*UP[0] + (p[1]-glab[1])*UP[1];
+    return across([glab[0]+UP[0]*d, glab[1]+UP[1]*d]);
+  };
+
+  const SIDE = [
+    {nos:129, inn:133, out:33,  lidT:159, lidB:145, up:L.browUpL, lo:L.browLoL},
+    {nos:358, inn:362, out:263, lidT:386, lidB:374, up:L.browUpR, lo:L.browLoR}
+  ];
+
+  const B = SIDE.map(s=>{
+    const n=V(s.nos), ei=V(s.inn), eo=V(s.out), lt=V(s.lidT), lb=V(s.lidB);
+    /* the centre of the pupil: the ray that finds the arch */
+    const pup = [(ei[0]+eo[0]+lt[0]+lb[0])/4, (ei[1]+eo[1]+lt[1]+lb[1])/4];
+
+    const bu=s.up.map(V), bl=s.lo.map(V);
+    /* the chord of the brow, stretched well past both ends, catches any ray */
+    const c0=bu[0], c1=bu[bu.length-1];
+    const chord=[glExt(c1,c0,2.4), glExt(c0,c1,2.4)];
+    const far=fs*1.5;
+    const shoot = dir => {
+      const to=[n[0]+dir[0]*far, n[1]+dir[1]*far];
+      return polyHit(n,to,bu) || polyHit(n,to,bl) || segHit(n,to,chord[0],chord[1]) || to;
+    };
+    const at = p => { const dx=p[0]-n[0], dy=p[1]-n[1], d=Math.hypot(dx,dy)||1; return [dx/d,dy/d]; };
+    const head = shoot(UP), tail = shoot(at(eo));
+    let arch = shoot(at(pup));
+    /* the arch belongs around two thirds of the way out. A wide nose or a
+       narrow eye can throw the ray past the tail, so it is held inside the
+       usable band and put back down on the brow, never floating beside it. */
+    const dx=tail[0]-head[0], dy=tail[1]-head[1], l2=dx*dx+dy*dy||1;
+    const fa=((arch[0]-head[0])*dx+(arch[1]-head[1])*dy)/l2;
+    const fc=fa<0.55?0.55:fa>0.80?0.80:fa;
+    if(fc!==fa){
+      const on=[head[0]+dx*fc, head[1]+dy*fc];
+      arch = polyNear(bu, on) || on;
+    }
+    return { n, eo, pup, bu, bl, head, arch, tail };
+  });
+
+  const dash = [fs*0.019, fs*0.016];
+
+  /* --- 1. the shape being aimed at: the upper and lower edge of each brow --- */
+  B.forEach(s=>{ glLine(s.bu, GL_GOLD, w*1.05); glLine(s.bl, GL_GOLD, w*1.05); });
+
+  /* --- 2. the three verticals: one down the centre, one under each head --- */
+  glLine(rise(glab, fs*0.46, fs*1.34), GL_STOP, w*0.9, [fs*0.013, fs*0.020]);
+  B.forEach(s=> glLine(rise(s.head, fs*0.30, fs*1.62), GL_GOLD, w*0.9));
+
+  /* --- 3. the two rays out of each nostril: the arch, then the tail --- */
+  B.forEach(s=>{
+    glLine([s.n, glExt(s.n, s.arch, 1.16)], GL_GOLD, w, dash);
+    glLine([s.n, glExt(s.n, s.tail, 1.16)], GL_STOP, w, dash);
+  });
+
+  /* --- 4. the two horizontals: both heads start here, both tails finish here --- */
+  const hi = (a,b) => hgt(a) > hgt(b) ? a : b;
+  glLine(level(hi(B[0].head, B[1].head)), GL_GOLD, w*0.85);
+  glLine(level(hi(B[0].tail, B[1].tail)), GL_STOP, w*0.85, dash);
+
+  /* --- 5. the gap between the heads, to be read against the width of the nose --- */
+  const g0=B[0].head, g1=B[1].head;
+  glLine([g0,g1], GL_STOP, w*0.9, [fs*0.011, fs*0.009]);
+  [g0,g1].forEach(p=> glLine(rise(p, fs*0.028, fs*0.028), GL_STOP, w*0.9));
+
+  /* --- 6. the six points that decide the whole brow --- */
+  B.forEach(s=>{ glDot(s.head, w*1.7, '#FFFFFF'); glDot(s.arch, w*1.7, '#FFFFFF'); glDot(s.tail, w*1.7, '#FFFFFF'); });
+
 }
 
 let beamT=0;
@@ -5420,7 +5624,7 @@ $$('#lt-presets button').forEach(b=> b.onclick = ()=>{
 function syncToggles(){
   $$('[data-toggle]').forEach(b=>{
     const k=b.dataset.toggle;
-    const v = k==='map'?S.showMap : k==='mesh'?S.showMesh :
+    const v = k==='map'?S.showMap : k==='mesh'?S.showMesh : k==='bmap'?S.browMap :
               k==='topo'?S.showTopo : k==='compare'?S.compare :
               k==='gl'?S.showGL : k==='edges'?S.showEdges : S.mirror;
     b.classList.toggle('on', v);
@@ -5432,6 +5636,7 @@ $$('[data-toggle]').forEach(b=> b.onclick = e=>{
   const k = b.dataset.toggle;
   if(k==='map'){ S.showMap=!S.showMap; if(!S.showMap) S.mapFocus=[]; }
   if(k==='mesh'){ S.showMesh=!S.showMesh; }
+  if(k==='bmap'){ S.browMap=!S.browMap; say(t(S.browMap?'bm_on':'bm_off')); }
   if(k==='topo'){ S.showTopo=!S.showTopo; }
   if(k==='gl'){ S.showGL=!S.showGL; if(typeof glSetVisible==='function') glSetVisible(S.showGL);
     try{ store.set('m_lamha_gl', S.showGL?1:0); }catch(e){} }
@@ -5508,7 +5713,7 @@ function renderShapeChips(){
     S.shape=+b.dataset.sh; S.shapeLocked=true; renderShapeChips();
     if(typeof shapeChipUpdate==='function') shapeChipUpdate();
   });
-  $('#sc-desc').textContent = t('shapeDesc')[clamp(S.shape|0,0,6)];
+  $('#sc-desc').textContent = t('shapeDesc')[clamp(S.shape|0,0,8)];
   $('#sc-pattern').innerHTML = PAT_KEYS.map(k=>
     `<button data-pat="${k}" class="${S.pattern===k?'on':''}">${t('patN.'+k)}</button>`).join('');
   $$('#sc-pattern button').forEach(b=> b.onclick = ()=>{ S.pattern=b.dataset.pat; renderShapeChips(); });
@@ -5663,6 +5868,7 @@ const ZI18N = {base:'base',contour:'contour',nose:'nose',highlight:'highlight',b
 function endPlan(){
   if(typeof baRestore==='function') baRestore();
   S.plan = null;
+  S.browMap = false; if(typeof syncToggles==='function') syncToggles();
   S.stepZone = null;
   S.highlightZone = null;
   if(typeof planHud === 'function') planHud(false);
@@ -5688,7 +5894,7 @@ function renderPlan(){
   const pl=S.plan; if(!pl || !pl.on) return;
   $('#pl-steps').innerHTML = pl.order.map((z,i)=>{
     const cls = i===pl.idx ? 'on' : i<pl.idx ? 'done' : '';
-    const extra = (z==='contour'||z==='highlight') ? ' ' + t('shapeDesc')[clamp(S.shape|0,0,6)] : '';
+    const extra = (z==='contour'||z==='highlight') ? ' ' + t('shapeDesc')[clamp(S.shape|0,0,8)] : '';
     return `<div class="step ${cls}" data-i="${i}">
       <div class="no mono">${i+1}</div>
       <div class="tx"><b>${t('z_'+ZI18N[z])}
@@ -5710,7 +5916,7 @@ function renderPlanBar(){
   if(!bar) return;
   if(!pl || !pl.on){ bar.classList.remove('on'); document.body.classList.remove('guideCompact'); return; }
   const z = pl.order[pl.idx];
-  const extra = (z==='contour'||z==='highlight') ? ' ' + t('shapeDesc')[clamp(S.shape|0,0,6)] : '';
+  const extra = (z==='contour'||z==='highlight') ? ' ' + t('shapeDesc')[clamp(S.shape|0,0,8)] : '';
   $('#plbTitle').innerHTML = `<span class="mono" style="opacity:.6">${pl.idx+1}/${pl.order.length}</span>
     &nbsp;${t('z_'+ZI18N[z])}
     <span style="display:inline-block;width:10px;height:10px;border-radius:50%;
@@ -5769,8 +5975,10 @@ $('#pl-start').onclick = ()=>{
   const order = PLAN_ORDER.filter(z=>S.makeup[z]);
   if(!order.length){ say(t('pl_none'), 4000); return; }
   S.plan = {on:true, order, idx:0, target:null, capture:true};
+  S.browMap = true; syncToggles();
   $('#pl-body').classList.remove('hidden');
   planHud(true);
+  say(t('bm_on'), 4200);
   renderPlan();
   openSheet('');            /* hand the screen back to her face */
 };
@@ -6303,7 +6511,7 @@ function shapeChipUpdate(){
   const c = $('#shapeChip');
   if(!S.shapeKnown){ c.classList.add('hidden'); return; }
   c.classList.remove('hidden');
-  c.textContent = '◇ ' + t('ms.shapes')[clamp(S.shape|0,0,6)];
+  c.textContent = '◇ ' + t('ms.shapes')[clamp(S.shape|0,0,8)];
 }
 $('#shapeChip').onclick = ()=> openShapeGate(true);
 
