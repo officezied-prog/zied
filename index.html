@@ -28,6 +28,15 @@ window.addEventListener('unhandledrejection', function(e){
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#16101C">
+<meta name="color-scheme" content="light only">
+<!-- Without this, some Android browsers (Samsung Internet's "Dark mode for
+     websites", and Chrome's "Force dark") re-theme pages that never state a
+     colour scheme of their own. They spare photos and video — which is why
+     the camera looked normal — but repaint every flat UI colour: shade
+     swatches, the intensity rail, chips — through their own dark-mode guess,
+     which is what produced muddy near-black circles that had nothing to do
+     with any colour actually chosen in the app. This line opts the whole
+     page out of that repainting, on every device, unconditionally. -->
 <title>LAMHA MOBILE — لمحة موبايل</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -40,6 +49,7 @@ window.addEventListener('unhandledrejection', function(e){
   --panel:#FFFFFF;          /* cards sit above it in pure white  */
   --panel-2:#F6EDE4;        /* recessed fields, chips            */
   --line:rgba(176,138,102,.28);
+  color-scheme: light;      /* same guarantee as the meta tag, belt and braces */
   --gold:#A67C52;           /* antique gold — deep enough to read as text */
   --gold-soft:#8A6A4E;      /* deeper for headings               */
   --rose:#C98C82;
@@ -454,7 +464,11 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
   inset-inline-start:12px; top:16%; height:30%;
   width:34px; margin:0;
   border-radius:999px;
-  background:rgba(255,253,250,.72);
+  /* opaque enough, and blurred, that a dim room behind the live camera
+     never reads through and darkens the true colour of the fill —
+     matched to the same treatment every other floating panel already gets */
+  background:rgba(255,253,250,.94);
+  backdrop-filter:blur(10px);
   border:1px solid var(--line);
   box-shadow:0 3px 14px var(--shadow);
   pointer-events:auto;touch-action:none;
@@ -1233,6 +1247,8 @@ ar:{
  rt_h:"روتين موجّه", rt_p:"خطوة خطوة — المرآة تضيء المنطقة التي تعملين عليها الآن.",
  rt_skin:"عناية", rt_day:"مكياج نهاري", rt_night:"مكياج مسائي", rt_prev:"السابقة", rt_next:"التالية",
  g_morning:"صباح النور", g_noon:"نهارك جميل", g_eve:"مساء الخير", g_night:"ليلة هادئة",
+sk_lowlight:"الإضاءة كانت ضعيفة أثناء المسح — الألوان والدرجات المقترحة قد لا تكون دقيقة. أعيدي المسح قرب نافذة أو في ضوء أقوى.",
+sk_lowlight_held:"أبقيتُ درجتك على آخر قراءة موثوقة بدل هذه.",
  st_ready:"المرآة جاهزة", st_noface:"قرّبي وجهك من الكاميرا", st_scan:"لا تتحركي… جارٍ المسح",
  st_done:"اكتمل التحليل", st_saved:"حُفظت الصورة", st_cleared:"تم المسح",
  st_applied:"طُبّقت الإطلالة", st_noface2:"لم أجد وجهاً واضحاً في الصورة",
@@ -1453,6 +1469,8 @@ en:{
  rt_h:"Guided routine", rt_p:"Step by step — the mirror lights the zone you're working on.",
  rt_skin:"Skincare", rt_day:"Day makeup", rt_night:"Evening makeup", rt_prev:"Back", rt_next:"Next",
  g_morning:"Good morning", g_noon:"Good afternoon", g_eve:"Good evening", g_night:"Late night",
+sk_lowlight:"The light was low during this scan — the suggested colours and shades may not be accurate. Rescan near a window or in stronger light.",
+sk_lowlight_held:"Your shade is still set from the last trustworthy reading.",
  st_ready:"Mirror ready", st_noface:"Bring your face closer", st_scan:"Hold still — scanning",
  st_done:"Analysis complete", st_saved:"Photo saved", st_cleared:"Cleared",
  st_applied:"Look applied", st_noface2:"No clear face found in that photo",
@@ -1673,6 +1691,8 @@ id:{
  rt_h:"Rutinitas terpandu", rt_p:"Langkah demi langkah — cermin menyorot area yang sedang kamu kerjakan.",
  rt_skin:"Perawatan", rt_day:"Riasan siang", rt_night:"Riasan malam", rt_prev:"Kembali", rt_next:"Lanjut",
  g_morning:"Selamat pagi", g_noon:"Selamat siang", g_eve:"Selamat malam", g_night:"Larut malam",
+sk_lowlight:"Cahaya kurang saat pemindaian — warna dan rona yang disarankan mungkin kurang akurat. Pindai ulang dekat jendela atau di cahaya lebih terang.",
+sk_lowlight_held:"Rona kulitmu tetap memakai pembacaan terakhir yang bisa dipercaya.",
  st_ready:"Cermin siap", st_noface:"Dekatkan wajahmu", st_scan:"Jangan bergerak — memindai",
  st_done:"Analisis selesai", st_saved:"Foto tersimpan", st_cleared:"Dihapus",
  st_applied:"Tampilan diterapkan", st_noface2:"Tidak ada wajah jelas di foto itu",
@@ -5572,6 +5592,7 @@ async function runScanInner(){
   $('#sk-cap').classList.remove('hidden');
   S.guide = true;
 
+  S._scanDark = 0; S._scanFrames = 0;
   for(const pose of (STILL ? ['front'] : POSE_ORDER)){
     S.curPose=pose; renderPoses();
     await waitPose(pose);
@@ -5589,6 +5610,8 @@ async function runScanInner(){
       if(pose==='front'){
         const exAll=packs.map(frontExtras);
         const ex=stableFrames(exAll);          /* reject exposure-hunt frames */
+        S._scanDark = (S._scanDark||0) + (S.light && S.light.state==='dark' ? 1 : 0);
+        S._scanFrames = (S._scanFrames||0) + 1;
         /* correct the camera's colour cast BEFORE deriving anything from it */
         let _rgb=[medOf(ex,'r'),medOf(ex,'g'),medOf(ex,'b')];
         let _ITA=medOf(ex,'ITA'), _a=medOf(ex,'a'), _B=medOf(ex,'B');
@@ -5659,12 +5682,23 @@ async function finishScan(){
         m._held = true;                     /* reading confirmed, not redrawn */
       }
     }
+    /* a scan taken in poor light must not push a reliable shade list
+       toward the wrong (usually far too dark) end of the catalogue —
+       keep ranking on the last trustworthy reading instead */
+    if(m.lowLight && prev && !prev.lowLight && isFinite(prev.ITA)){
+      m.ITA = prev.ITA; m.a = prev.a; m.B = prev.B; m.rgb = prev.rgb;
+      m._heldForLight = true;
+    }
   }catch(e){}
 
   /* honest confidence from how much the frames disagreed */
   const sp = (S.frontX && S.frontX._spreadITA) || 0;
   m.confidence = sp < 2 ? 'high' : sp < 5 ? 'medium' : 'low';
   m.light = S.light ? S.light.state : null;
+  /* was the room too dark for MOST of the scan, not just the last frame? —
+     reuses the app's own light meter (updateLight, mean<0.26), the same one
+     that already warns during face-centring, so no new threshold is invented */
+  m.lowLight = S._scanFrames > 0 && (S._scanDark / S._scanFrames) > 0.4;
   m.camera = (typeof lamhaRearIsOn==='function' && lamhaRearIsOn()) ? 'rear' : 'front';
   m.wb = !!(S.frontX && S.frontX.wb);
   if(!m.wb && m.confidence==='high') m.confidence='medium';   /* honesty */
@@ -5701,6 +5735,12 @@ function metColor(v){ return v>=75?'#7FBFA8': v>=55?'#D9B26F': v>=40?'#E8A9A0':'
 function renderSkin(){
   const s = S.skin; if(!s) return;
   $('#sk-res').classList.remove('hidden');
+  const warn = $('#sk-lowlight');
+  if(s.lowLight){
+    const msg = t('sk_lowlight') + (s._heldForLight ? ' · ' + t('sk_lowlight_held') : '');
+    if(warn) warn.textContent = '◐ ' + msg;
+    else $('#sk-res').insertAdjacentHTML('afterbegin', `<div id="sk-lowlight" class="note" style="color:var(--coral);margin-bottom:8px">◐ ${msg}</div>`);
+  } else if(warn) warn.remove();
   $('#sk-score').textContent = s.score;
   const vd = s.score>=85?0 : s.score>=72?1 : s.score>=58?2 : s.score>=44?3 : 4;
   $('#sk-verdict').textContent = t('vd')[vd];
