@@ -492,6 +492,7 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
   font-size:12px;font-weight:600;box-shadow:0 6px 22px rgba(0,0,0,.45)}
 #planHud button svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 #planHud button:active{background:var(--gold);color:#1A1220}
+#planHud button.on{background:var(--gold);color:#1A1220;border-color:transparent}
 #planHud:not(.hidden) ~ #status{bottom:70px}
 #photoView{position:absolute;inset:0;z-index:20;background:rgba(12,8,15,.94);
   display:flex;flex-direction:column;padding:12px}
@@ -735,6 +736,9 @@ document.addEventListener('DOMContentLoaded', function(){
     <div id="planHud" class="hidden">
       <button id="ph-target"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="9" cy="10" r="2"/><path d="M3 17l5-4 4 3 3-2 6 4"/></svg><b data-i18n="ph_target">الإطلالة</b></button>
       <button id="ph-step"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg><b data-i18n="ph_step">هذه الخطوة</b></button>
+      <button id="ph-guide" data-toggle="guide" class="on"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><b data-i18n="ph_guide">الخطوط</b></button>
+      <button id="ph-doc" onclick="guideDoctor()"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></svg><b data-i18n="ph_doc">لماذا؟</b></button>
+      <button id="ph-ghost" data-toggle="ghost" class="on"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 000 16z"/></svg><b data-i18n="ph_ghost">الإطلالة على وجهي</b></button>
     </div>
 
     <div id="photoView" class="hidden">
@@ -1040,13 +1044,13 @@ document.addEventListener('DOMContentLoaded', function(){
     <div class="grab"></div><button class="close-x">✕</button>
     <h2 data-i18n="pl_h">من وجهك إلى الإطلالة</h2>
     <p class="lead" data-i18n="pl_p">نلتقط صورة الإطلالة النهائية أولاً، ثم نمشي معك خطوة خطوة حتى تصلي إليها بيدك.</p>
+    <div class="note" data-i18n="pl_first">الخطوة ١: خريطة الوضع — كل كريم يظهر على وجهك كخط بلونه لتنسخيه. الخطوة ٢: الدمج بالأسهم. ثم الخطوات واحدة واحدة.</div>
     <button class="btn pri wide" id="pl-start" data-i18n="pl_start">التقطي صورة الهدف وابدئي</button>
     <div id="pl-body" class="hidden">
       <label class="fld" data-i18n="pl_target">صورة الهدف</label>
       <img id="pl-target" alt="">
       <div class="note" data-i18n="pl_note">الصورة تُبنى على وجهك كما هو الآن، مضافاً إليه ما تبقّى من خطوات فقط.</div>
       <button class="btn wide" id="pl-refresh" style="margin-top:8px" data-i18n="pl_refresh">حدّثي الصورة من وجهي الآن</button>
-      <button class="btn wide pri" data-toggle="bmap" style="margin-top:8px" data-i18n="pl_bmap">شبكة رسم الحاجب</button>
       <label class="fld" data-i18n="pl_steps">الخطوات</label>
       <div id="pl-steps"></div>
       <div class="row" style="margin-top:10px">
@@ -1286,9 +1290,21 @@ ar:{
   limitC:"الظل على خط الأذن → زاوية الفم، ويقف عند الخط النازل من زاوية العين",
   brow3:"البداية فوق فتحة الأنف · القوس فوق البؤبؤ · النهاية عند زاوية العين",
   crease:"ابقي فوق خط الجفن المتقطّع",line:"خط العمل",centre:"الفاتح في الوسط، الغامق على الجانبين",
-  gap:"المسافة بين الحاجبين = عرض الأنف"},
+  gap:"المسافة بين الحاجبين = عرض الأنف",
+  place:"ضعي كل كريم كخط في مكانه تماماً كما تَرين — ولا تدمجي بعد",
+  placeHow:"عصا الكونتور والهايلايت والأحمر: خط واحد سميك، لا مساحة",
+  blend:"الآن ادمجي: كل سهم هو اتجاه الفرشاة، من الخط إلى الخارج",
+  blendTool:"الكونتور بفرشاة كثيفة مائلة · الهايلايت والأحمر بإسفنجة رطبة، طبعاً لا سحباً"},
  tg_bmap:"شبكة الحاجب", bm_on:"شبكة رسم الحاجب ظاهرة — النقاط الست هي البداية والقوس والنهاية.",
  bm_off:"أُخفيت شبكة الحاجب.", pl_bmap:"شبكة رسم الحاجب",
+ pl_first:"الخطوة ١: خريطة الوضع — كل كريم يظهر على وجهك كخط بلونه لتنسخيه. الخطوة ٢: الدمج بالأسهم. ثم الخطوات واحدة واحدة.",
+ gpu_note:"محرك GPU يسرّع الرسم فقط — لا يغيّر شكل المكياج. يتوقف وحده أثناء الإرشاد ومع الهايلايتر.",
+ ph_doc:"لماذا؟", gdoc:{face:"وجهك مُتتبَّع", noface:"لا أرى وجهك — قرّبي الكاميرا وأضيئي", on:"الدليل يعمل — خطوة", off:"الدليل متوقف — افتحي «من وجهك إلى الإطلالة» واضغطي ابدئي", strokes:"عدد الخطوط", layer:"طبقة الرسم فوق الوجه"},
+ ph_ghost:"الإطلالة على وجهي", gh_on:"الإطلالة المستهدفة ظاهرة باهتة على وجهك للمقارنة.", gh_off:"أُزيلت الإطلالة — المرآة الآن وجهك وحده.",
+ ph_guide:"الخطوط", gd_on:"خطوط الإرشاد ظاهرة — لكل خطوة خطوطها وحدودها.", gd_off:"أُخفيت الخطوط. اضغطي «الخطوط» لإعادتها.",
+ z_place:"خريطة الوضع", z_blend:"الدمج", pl_mapfirst:"ابدئي بخريطة الوضع: كل الكريمات كخطوط ثم الدمج",
+ pf_on:"سيبدأ الدليل بخريطة الوضع ثم الدمج، ثم كل خطوة وحدها.", pf_off:"سيبدأ الدليل بالخطوات مباشرة.",
+ gd_hint:"لكل خطوة خطوطها على وجهك. زر «الخطوط» يخفيها وقت العمل ويعيدها.",
  pl_h:"من وجهك إلى الإطلالة", mk_plan:"دليل التطبيق خطوة بخطوة",
  pl_p:"نلتقط صورة الإطلالة النهائية أولاً، ثم نمشي معك خطوة خطوة حتى تصلي إليها بيدك.",
  pl_start:"التقطي صورة الهدف وابدئي", pl_exit:"إنهاء الدليل",
@@ -1317,6 +1333,8 @@ ar:{
  pl_note:"الصورة تُبنى على وجهك كما هو الآن، مضافاً إليه ما تبقّى من خطوات فقط. تُعاد كل خطوة وتُمحى القديمة.",
  pl_none:"اختاري ألوان الإطلالة أولاً من تبويب المكياج",
  plTip:{
+  place:"انظري إلى وجهك: كل كريم مرسوم كخط في مكانه بلونه. ارسمي على وجهك الخطوط نفسها بعصا الكونتور والهايلايت والأحمر، خطاً خطاً، ولا تدمجي. زر «هذه الخطوة» يصوّر لكِ وجهك بالخطوط لتنسخي منه.",
+  blend:"الخطوط باهتة الآن والأسهم تدل على اتجاه الدمج. الكونتور: فرشاة كثيفة مائلة، للأعلى وللخارج نحو الصدغ. الهايلايت والأحمر: إسفنجة رطبة بالطبع لا بالسحب. الأنف: نزولاً نحو الطرف. توقفي حين تختفي الحواف.",
   concealer:"مثلث مقلوب تحت كل عين قاعدته عند الرموش ورأسه على الخد، وحلقة رفيعة حول الشفاه لتحديدها. ربتي ولا تسحبي.",
   base:"وزّعي الأساس من وسط الوجه إلى الخارج بطبقة رقيقة، ثم اطبعي بإسفنجة رطبة عند الأنف وحول الفم.",
   contour:"ارسمي خطاً واحداً في المنطقة الغائرة ثم ادمجيه للأعلى وللخارج حتى تختفي حافته تماماً.",
@@ -1492,9 +1510,21 @@ en:{
   limitC:"Shadow rides the ear-to-mouth line and stops under the outer corner of the eye",
   brow3:"Start above the nostril · arch above the pupil · tail at the eye corner",
   crease:"Stay above the dashed socket line",line:"Working line",centre:"Light down the centre, dark on the sides",
-  gap:"Gap between the brows = width of the nose"},
+  gap:"Gap between the brows = width of the nose",
+  place:"Lay every cream down as a stroke exactly where you see it — do not blend yet",
+  placeHow:"Contour, highlight and blush sticks: one thick stroke each, not an area",
+  blend:"Now blend: every arrow is the direction of the brush, from the stroke outward",
+  blendTool:"Contour with a dense angled brush · highlight and blush with a damp sponge, pressing not dragging"},
  tg_bmap:"Brow grid", bm_on:"Brow mapping is on — the six dots are start, arch and tail.",
  bm_off:"Brow mapping hidden.", pl_bmap:"Brow mapping grid",
+ pl_first:"Step 1: the placement map — every cream appears on your face as a stroke in its shade, to copy. Step 2: blending, with arrows. Then the steps one by one.",
+ gpu_note:"The GPU engine only speeds up drawing — it never changes the look. It stands down on its own during the guide and whenever highlighter is in the look.",
+ ph_doc:"Why?", gdoc:{face:"Your face is tracked", noface:"I cannot see your face — come closer and add light", on:"Guide running — step", off:"Guide is off — open the step-by-step sheet and press start", strokes:"Strokes", layer:"Drawing layer is on top"},
+ ph_ghost:"Target on my face", gh_on:"The target look is on your face, faint, to compare against.", gh_off:"Target removed — the mirror is your own face now.",
+ ph_guide:"Lines", gd_on:"Guide lines on — every step has its own lines and limits.", gd_off:"Lines hidden. Tap “Lines” to bring them back.",
+ z_place:"Placement map", z_blend:"Blend", pl_mapfirst:"Start with the placement map: every cream as a stroke, then blend",
+ pf_on:"The guide will open with the placement map, then blending, then each step.", pf_off:"The guide will go straight to the steps.",
+ gd_hint:"Every step draws its own lines on your face. “Lines” hides them while you work and brings them back.",
  pl_h:"From your face to the look", mk_plan:"Step-by-step application guide",
  pl_p:"We capture the finished look first, then walk you through it step by step until you get there yourself.",
  pl_start:"Capture the target and begin", pl_exit:"End the guide",
@@ -1523,6 +1553,8 @@ en:{
  pl_note:"The photo is built on your face as it is right now, plus only the steps still ahead. It is redone at every step and the old one is dropped.",
  pl_none:"Pick the shades for your look in the makeup tab first",
  plTip:{
+  place:"Look at your face: every cream is drawn as a stroke in its place, in its shade. Draw the same strokes on your own face with the contour, highlight and blush sticks, one by one, and do not blend. “This step” photographs your face with the strokes so you can copy from it.",
+  blend:"The strokes are faint now and the arrows show the blend direction. Contour: a dense angled brush, up and out toward the temple. Highlight and blush: a damp sponge, pressing not dragging. Nose: down toward the tip. Stop when the edges vanish.",
   concealer:"An inverted triangle under each eye — base at the lashes, point on the cheek — and a thin ring around the lips to frame them. Tap, don't drag.",
   base:"Work the base from the centre outward in one thin layer, then press with a damp sponge around the nose and mouth.",
   contour:"Draw one line in the hollow, then blend up and outward until no edge is left.",
@@ -1698,9 +1730,21 @@ id:{
   limitC:"Bayangan di garis telinga-sudut mulut, berhenti di bawah sudut luar mata",
   brow3:"Awal di atas cuping · lengkung di atas pupil · ujung di sudut mata",
   crease:"Tetap di atas garis kelopak",line:"Garis kerja",centre:"Terang di tengah, gelap di sisi",
-  gap:"Jarak antar alis = lebar hidung"},
+  gap:"Jarak antar alis = lebar hidung",
+  place:"Letakkan tiap krim sebagai garis tepat seperti yang terlihat — jangan blend dulu",
+  placeHow:"Stik kontur, highlight, blush: satu garis tebal, bukan area",
+  blend:"Sekarang blend: tiap panah adalah arah kuas, dari garis ke luar",
+  blendTool:"Kontur dengan kuas padat miring · highlight dan blush dengan spons lembap, ditekan bukan diseret"},
  tg_bmap:"Grid alis", bm_on:"Pemetaan alis aktif — enam titik: awal, lengkung, ujung.",
  bm_off:"Pemetaan alis disembunyikan.", pl_bmap:"Grid pemetaan alis",
+ pl_first:"Langkah 1: peta penempatan — tiap krim tampil di wajahmu sebagai garis berwarna untuk ditiru. Langkah 2: blending dengan panah. Lalu langkah satu per satu.",
+ gpu_note:"Mesin GPU hanya mempercepat gambar — tidak mengubah tampilan. Mati sendiri saat panduan dan saat ada highlighter.",
+ ph_doc:"Kenapa?", gdoc:{face:"Wajahmu terlacak", noface:"Saya tidak melihat wajahmu — dekatkan dan tambah cahaya", on:"Panduan berjalan — langkah", off:"Panduan mati — buka lembar langkah demi langkah dan tekan mulai", strokes:"Garis", layer:"Lapisan gambar di atas"},
+ ph_ghost:"Target di wajahku", gh_on:"Tampilan target tampil samar di wajahmu untuk dibandingkan.", gh_off:"Target dihapus — cermin kini wajahmu sendiri.",
+ ph_guide:"Garis", gd_on:"Garis panduan tampil — tiap langkah punya garis dan batasnya.", gd_off:"Garis disembunyikan. Ketuk “Garis” untuk menampilkan lagi.",
+ z_place:"Peta penempatan", z_blend:"Blending", pl_mapfirst:"Mulai dengan peta penempatan: tiap krim sebagai garis, lalu blend",
+ pf_on:"Panduan dimulai dengan peta penempatan, lalu blending, lalu tiap langkah.", pf_off:"Panduan langsung ke langkah-langkah.",
+ gd_hint:"Tiap langkah menggambar garisnya sendiri di wajahmu. “Garis” menyembunyikan saat bekerja dan menampilkan lagi.",
  pl_h:"Dari wajahmu ke tampilan", mk_plan:"Panduan langkah demi langkah",
  pl_p:"Kami tangkap dulu foto hasil akhirnya, lalu memandumu langkah demi langkah sampai kamu mencapainya sendiri.",
  pl_start:"Ambil foto target dan mulai", pl_exit:"Akhiri panduan",
@@ -1729,6 +1773,8 @@ id:{
  pl_note:"Foto dibangun dari wajahmu saat ini, ditambah hanya langkah yang tersisa. Diperbarui tiap langkah dan yang lama dihapus.",
  pl_none:"Pilih warna tampilanmu dulu di tab riasan",
  plTip:{
+  place:"Lihat wajahmu: tiap krim digambar sebagai garis di tempatnya, dengan warnanya. Gambar garis yang sama di wajahmu dengan stik kontur, highlight dan blush, satu per satu, jangan di-blend. Tombol “Langkah ini” memotret wajahmu dengan garis untuk ditiru.",
+  blend:"Garis kini samar dan panah menunjukkan arah blend. Kontur: kuas padat miring, ke atas dan ke luar menuju pelipis. Highlight dan blush: spons lembap, ditekan bukan diseret. Hidung: ke bawah menuju ujung. Berhenti saat tepi menghilang.",
   concealer:"Segitiga terbalik di bawah tiap mata — alasnya di bulu mata, ujungnya di pipi — dan cincin tipis di sekitar bibir. Tepuk, jangan tarik.",
   base:"Ratakan alas dari tengah ke luar dalam satu lapis tipis, lalu tekan dengan spons lembap di sekitar hidung dan mulut.",
   contour:"Tarik satu garis di cekungan, lalu ratakan ke atas dan ke luar sampai tepinya hilang.",
@@ -1810,7 +1856,7 @@ const S = {
   fins:{lashes:'matte', lens:'matte', lips:'matte', blush:'matte', crease:'satin', corner:'matte', concealer:'matte', contour:'matte', highlight:'matte', nose:'matte', eyeshadow:'satin', liner:'matte', brow:'matte', base:'satin', glow:'satin'},
   makeup:{ lips:null, blush:null, crease:null, corner:null, concealer:null, contour:null, highlight:null, nose:null, eyeshadow:null, liner:null, brow:null, base:null, glow:null, lashes:null, lens:null },
   skin:null, history:[], routineMode:'skin', routineStep:0, highlightZone:null,
-  scanning:false, guide:false, guideState:null, guideFit:0, browMap:false,
+  scanning:false, guide:false, guideState:null, guideFit:0, browMap:false, showGuide:true, ghost:true,
   showTopo:false, showGL:true, showEdges:false, compare:false, compareX:0.5, saved:[], kit:[], mapFocus:[], mapHit:[]
 };
 
@@ -2392,26 +2438,37 @@ function loop(){
     try{ window.__edgeOnly=true; drawFaceMap(S.landmarks, false); }
     catch(e){} finally{ window.__edgeOnly=false; }
   }
-  if(S.showGL && S.landmarks && typeof glFrame==='function'){
+  const glWanted = S.showGL && !cpuOwnsAll();
+  if(glWanted !== S._glShown){
+    S._glShown = glWanted;
+    try{ if(typeof glSetVisible==='function') glSetVisible(glWanted); }catch(e){}
+  }
+  if(glWanted && S.landmarks && typeof glFrame==='function'){
     try{ glFrame(S.landmarks); }
     catch(err){ if(!S._glErr){ S._glErr=1; fatalLog('[webgl frame] '+(err && (err.stack||err.message||err))); } }
   }
   glPhase = (glPhase + 0.9) % 4096;
-  if(S.landmarks && S.browMap && !(S.plan && (S.plan.capture||S.plan.captureStep))){
+  if(S.landmarks && S.browMap && S.showGuide !== false && !(S.plan && (S.plan.capture||S.plan.captureStep))){
     try{ drawBrowMap(S.landmarks); }
     catch(err){ if(!S._bmErr){ S._bmErr=1; fatalLog('[brow map] '+(err && (err.stack||err.message||err))); } }
   }
-  if(S.landmarks && S.stepZone && !(S.plan && (S.plan.capture||S.plan.captureStep))){
+  if(S.landmarks && S.stepZone && S.showGuide !== false && !(S.plan && (S.plan.capture||S.plan.captureStep))){
     try{ drawStepGuide(S.landmarks, S.stepZone);
          if(S.brushAnim!==false) drawBrushStroke(S.landmarks, S.stepZone); }
     catch(err){ if(!S._sgErr){ S._sgErr=1; fatalLog('[step guide] '+(err && (err.stack||err.message||err))); } }
   }
   if(S.plan && S.plan.captureStep && S.landmarks){
     S.plan.captureStep = false;
-    try{ showPhoto(cv.toDataURL('image/jpeg',0.9), t('pv_step')+' — '+t('z_'+ZI18N[S.plan.order[S.plan.idx]])); }catch(e){}
+    try{
+      const zc = S.plan.order[S.plan.idx];
+      if(zc==='place' || zc==='blend') drawPlacementMap(S.landmarks, true);   /* the photo she copies from */
+      showPhoto(cv.toDataURL('image/jpeg',0.9), t('pv_step')+' — '+t('z_'+ZI18N[zc]));
+    }catch(e){}
   }
   if(S.plan && S.plan.capture && S.landmarks){
     S.plan.capture = false;
+    /* her bare face, the reading everything afterwards is compared against */
+    if(typeof window.watchBaseline === 'function') S.plan.base = window.watchBaseline(S.landmarks);
     try{ S.plan.target = cv.toDataURL('image/jpeg', 0.88); }catch(e){ S.plan.target = null; }
     if(typeof planShowTarget === 'function') planShowTarget();
   }
@@ -2663,8 +2720,8 @@ function sculptAreas(lm){
       const d=Math.hypot(b[0]-a[0],b[1]-a[1])||1; return [(b[0]-a[0])/d,(b[1]-a[1])/d]; })();
     const off=fs*0.055;
     const shift=idx=>idx.map(i=>{ const [x,y]=P(lm[i]); return [x+dn[0]*off, y+dn[1]*off]; });
-    out.push({kind:'c',t:'line',pts:shift(L.jawL),wid:fs*.055,w:c.underJaw,tag:'jaw'});
-    out.push({kind:'c',t:'line',pts:shift(L.jawR),wid:fs*.055,w:c.underJaw,tag:'jaw'});
+    out.push({kind:'c',t:'line',pts:shift(L.jawL),wid:fs*.055,w:c.underJaw,tag:'jaw',sub:'under'});
+    out.push({kind:'c',t:'line',pts:shift(L.jawR),wid:fs*.055,w:c.underJaw,tag:'jaw',sub:'under'});
   }
   blob('c', 152, fs*.07, c.chinTip, 'jaw');
   /* highlight — the raised areas */
@@ -2793,13 +2850,30 @@ function sheenFor(zone){
   return 0;
 }
 
+/* The guide is drawn on the 2D canvas. The WebGL layer sits above it at
+   z-index 3, so while any guide line is on screen the GPU layer must stand
+   down or it buries every line under a repainted face. */
+function guideOwnsScreen(){
+  return !!((S.plan && S.plan.on) || S.browMap || S.stepZone);
+}
+/* The GPU layer is composited ABOVE everything the CPU drew, so any zone the
+   CPU keeps is pushed to the very bottom of the stack. Foundation belongs
+   there anyway. Highlighter does not: in ZORDER it sits above contour, nose,
+   highlight and blush, and with the GPU on it would end up buried under all
+   four — the nose contour painted over the nose highlight. So when a
+   highlighter is in the look the CPU draws the whole picture and the order
+   is the same either way. The engine is a speed choice, never a look change. */
+function cpuOwnsAll(){ return guideOwnsScreen() || !!S.makeup.glow; }
 function zoneVisible(k){
   const pl=S.plan;
   if(!pl || !pl.on) return true;
   if(pl.captureStep) return k === pl.order[pl.idx];
-  /* live view stays bare so you can see the real makeup you are applying */
-  if(!pl.capture) return false;
-  /* the target frame = your face right now + only the steps still ahead */
+  /* The live view carries a faint ghost of the look she is aiming at, so the
+     target is on her face and not only in a photo. It is drawn on the canvas
+     only — the watcher reads the camera itself, so the ghost never fools it.
+     "Ghost" off returns the bare mirror. */
+  if(!pl.capture && S.ghost === false) return false;
+  /* her face now + only the steps still ahead */
   const i=pl.order.indexOf(k);
   return i>=0 && i>=pl.idx;
 }
@@ -2894,8 +2968,10 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
   powerCheck();
   tctx = tctx || ctx; tcv = tcv || cv; pt = pt || P;
   const M=S.makeup, fs=fsOverride || faceScale(lm);
-  const IN = k => clamp(S.ints[k] ?? .5, 0, 1);
-  const gpuOwns = !window.__PT && S.showGL && window.glFaceActive;
+  /* faint while she works: a reference under her hand, not a result */
+  const GH = (S.plan && S.plan.on && !S.plan.capture && !S.plan.captureStep && !window.__PT) ? 0.40 : 1;
+  const IN = k => clamp((S.ints[k] ?? .5) * GH, 0, 1);
+  const gpuOwns = !window.__PT && S.showGL && !cpuOwnsAll() && window.glFaceActive;
   /* zones the GPU cannot represent as flat pigment stay with the CPU */
   const CPU_ONLY = { glow:1, base:1 };
   const active = ZORDER.filter(k=>ZCFG[k] && M[k] && zoneVisible(k)
@@ -2908,7 +2984,7 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
      it reads the live face and re-paints it softened. Baking it would
      sample the flat grey backdrop and print a grey wash over everything,
      so the CPU always owns it — even when the GPU owns the pigment zones. */
-  const showBase = !!M.base && zoneVisible('base') && !window.__PT;
+  const showBase = !!M.base && zoneVisible('base') && !window.__PT && GH === 1;
   if(window.__PT){
     /* bake pass: pigment zones only */
   }
@@ -4381,6 +4457,8 @@ function drawBrushStroke(lm, zone){
 }
 
 function drawStepGuide(lm, zone){
+  if(zone==='place'){ drawPlacementMap(lm); return; }
+  if(zone==='blend'){ drawBlendMap(lm); return; }
   const fs = faceScale(lm), w = Math.max(1.6, fs*0.010);
   const caps = [];
   const V = i => P(lm[i]);
@@ -4655,6 +4733,267 @@ function drawBrowMap(lm){
   /* --- 6. the six points that decide the whole brow --- */
   B.forEach(s=>{ glDot(s.head, w*1.7, '#FFFFFF'); glDot(s.arch, w*1.7, '#FFFFFF'); glDot(s.tail, w*1.7, '#FFFFFF'); });
 
+}
+
+
+/* =========================================================
+   PLACEMENT MAP — every cream where it goes, before anything is blended.
+   The professional lays each product down as a crisp stroke — shadow,
+   light, colour — and only then blends. This draws exactly those strokes
+   on the live face, in the chosen shades and on the same geometry the
+   mirror itself renders, so they can be copied one for one. The blend
+   phase then fades the strokes and shows the direction each one travels
+   and the tool that moves it.
+   ========================================================= */
+/* The map is a set of separate marks to copy, not the finished footprint.
+   Each one is drawn compact — blending is what spreads it — and a mark that
+   would land on top of one already placed is dropped. Measured on a real
+   face: the highlighter and the cream highlight claim the same five points,
+   so five pairs of circles sat at 100% overlap and could not be told apart. */
+const MARK = 0.55;
+function markSpot(a, lm){
+  if(a.t==='blob')    return [a.pt, a.r];
+  if(a.t==='ellipse') return [a.pt, Math.max(a.ra, a.rb)];
+  if(a.t==='line' && a.pts.length===2)
+    return [[(a.pts[0][0]+a.pts[1][0])/2, (a.pts[0][1]+a.pts[1][1])/2], a.wid/2];
+  return [null, 0];
+}
+/* the outline of a mark that covers an area rather than a spot */
+function markArea(a, lm){
+  if(a.t==='poly') return a.idx.map(i=>P(lm[i]));
+  if(a.t==='lips') return L.lipsOuter.map(i=>P(lm[i]));
+  if(a.t==='lid')  return (a.side==='L'?L.eyeUpL.concat([...L.socketL].reverse())
+                                       :L.eyeUpR.concat([...L.socketR].reverse())).map(i=>P(lm[i]));
+  return null;
+}
+function inPoly(p, poly){
+  let inside=false;
+  for(let i=0, j=poly.length-1; i<poly.length; j=i++){
+    const a=poly[i], b=poly[j];
+    if((a[1]>p[1]) !== (b[1]>p[1]) &&
+       p[0] < (b[0]-a[0])*(p[1]-a[1])/((b[1]-a[1])||1e-9) + a[0]) inside=!inside;
+  }
+  return inside;
+}
+/* Two pale creams in one place are a duplicate; a pale cream beside a shadow
+   is the whole point of the map. Only marks of the same family are thinned
+   against each other. */
+const MARK_FAMILY = { highlight:'light', glow:'light', concealer:'light',
+                      contour:'dark', nose:'dark' };
+function thinOut(list, lm){
+  /* every outline on the map, whatever order it was built in */
+  const areas = list.map(a=>({zone:a.zone, poly:markArea(a, lm)})).filter(x=>x.poly);
+  const kept=[];
+  list.forEach(a=>{
+    const [c, r] = markSpot(a, lm);
+    /* a mark mostly buried inside another product's outline cannot be copied.
+       A single point misses one that straddles the edge, so the mark is
+       sampled across its whole body and the majority decides. */
+    const probe = [];
+    if(a.t==='line'){
+      for(let i=0;i<a.pts.length-1;i++)
+        for(let f=0; f<1; f+=0.25)
+          probe.push([a.pts[i][0]+(a.pts[i+1][0]-a.pts[i][0])*f,
+                      a.pts[i][1]+(a.pts[i+1][1]-a.pts[i][1])*f]);
+      probe.push(a.pts[a.pts.length-1]);
+    } else if(c){
+      probe.push(c);
+      for(let k=0;k<8;k++){ const th=k*Math.PI/4;
+        probe.push([c[0]+Math.cos(th)*r*0.7, c[1]+Math.sin(th)*r*0.7]); }
+    }
+    if(probe.length && areas.some(x => x.zone !== a.zone &&
+       probe.filter(q=>inPoly(q, x.poly)).length > probe.length/2)) return;
+    /* nor can two creams of the same family in the same place */
+    const fam = MARK_FAMILY[a.zone];
+    if(c && fam && kept.some(k => k.c && MARK_FAMILY[k.a.zone] === fam &&
+       Math.hypot(k.c[0]-c[0], k.c[1]-c[1]) < Math.min(k.r, r)*0.85)) return;
+    kept.push({a, c, r});
+  });
+  /* and no product may vanish from the map: a zone with nothing left keeps
+     one mark — nudged clear of whatever it collided with, never stacked on
+     it, because two circles in one place are what made the map unreadable */
+  const have = new Set(kept.map(k=>k.a.zone));
+  list.forEach(a=>{
+    if(have.has(a.zone)) return;
+    have.add(a.zone);
+    const [c, r] = markSpot(a, lm);
+    const hit = c && kept.find(k => k.c && Math.hypot(k.c[0]-c[0], k.c[1]-c[1]) < (k.r + r)*0.95);
+    if(hit && (a.t==='blob' || a.t==='ellipse')){
+      let dx=c[0]-hit.c[0], dy=c[1]-hit.c[1];
+      if(!dx && !dy){ dx=0; dy=1; }
+      const d=Math.hypot(dx,dy)||1, push=(hit.r + r)*1.08;
+      a.pt = [hit.c[0]+dx/d*push, hit.c[1]+dy/d*push];
+    }
+    kept.push({a, c:(a.pt||c), r});
+  });
+  /* a last pass to prise apart round marks that still crowd each other, such
+     as the cheekbone highlight sitting inside the apple of the blush. Each
+     may shift a little — a mark you can copy beats a mark placed to the
+     pixel and hidden — but never more than 3% of the face. */
+  const round = kept.filter(k => k.a.t==='blob' || k.a.t==='ellipse');
+  const cap = faceScale(lm)*0.03;
+  round.forEach(k=>{ k.home = k.a.pt.slice(); });
+  for(let pass=0; pass<4; pass++){
+    for(let i=0;i<round.length;i++) for(let j=i+1;j<round.length;j++){
+      const A=round[i], B=round[j];
+      let dx=B.a.pt[0]-A.a.pt[0], dy=B.a.pt[1]-A.a.pt[1];
+      const d=Math.hypot(dx,dy)||1e-6, want=(A.r+B.r)*0.62;
+      if(d >= want) continue;
+      if(d < 1e-5){ dx=0; dy=1; }
+      const push=(want-d)/2/d;
+      [[A,-1],[B,1]].forEach(([m,sg])=>{
+        const nx=m.a.pt[0]+dx*push*sg, ny=m.a.pt[1]+dy*push*sg;
+        if(Math.hypot(nx-m.home[0], ny-m.home[1]) <= cap) m.a.pt=[nx,ny];
+      });
+    }
+  }
+  return list.filter(a => kept.some(k=>k.a===a));
+}
+const PLACE_ZONES = ['contour','highlight','blush','nose','lips','eyeshadow','brow','liner','glow','concealer'];
+
+function placementStrokes(lm){
+  const fs=faceScale(lm), M=S.makeup, out=[];
+  const inPlan = k => !S.plan || !S.plan.on || S.plan.order.includes(k);
+  const has = k => !!M[k] && inPlan(k);
+  const col = (k, d) => M[k] || d;
+  if(has('contour') || has('highlight')){
+    sculptAreas(lm).filter(a=>a.w>0.15).forEach(a=>{
+      const k = a.kind==='c' ? 'contour' : 'highlight';
+      if(!has(k)) return;
+      const m = Object.assign({zone:k, col:col(k, k==='contour'?'#8A5638':'#F4E6CE')}, a);
+      if(m.wid) m.wid *= MARK;
+      if(m.r)   m.r   *= MARK;
+      /* the brow-bone highlight lies along the lower edge of the brow. Once
+         the brow itself is a mark on the map the two read as one smudge, so
+         here it is dropped clear of the arch — measured: 50% overlap to 0. */
+      if(m.tag==='brow' && has('brow') && m.pts){
+        const g=P(lm[168]), c2=P(lm[152]);
+        const dx=c2[0]-g[0], dy=c2[1]-g[1], d=Math.hypot(dx,dy)||1, o=fs*0.045;
+        m.pts = m.pts.map(([x,y])=>[x+dx/d*o, y+dy/d*o]);
+      }
+      out.push(m);
+    });
+  }
+  if(has('nose')){
+    const g=noseGeom(lm);
+    [g.left, g.right].forEach(p=> out.push({zone:'nose', col:col('nose', col('contour','#8A5638')), t:'line', pts:p, wid:g.nw*0.28*MARK, tag:'nose'}));
+  }
+  if(has('blush')){
+    /* the same apple and sweep the mirror blends from, laid down smaller: blending spreads it */
+    [[L.cheekL,L.earL],[L.cheekR,L.earR]].forEach(([ci,ei])=>{
+      const [px,py]=P(lm[ci]), [ex,ey]=P(lm[ei]);
+      const x=px, y=py-fs*0.028, ang=Math.atan2((ey-fs*0.09)-y, ex-x);
+      out.push({zone:'blush', col:col('blush','#E07B86'), t:'ellipse', pt:[x,y], ra:fs*0.095*MARK, rb:fs*0.050*MARK, ang, tag:'blush'});
+    });
+  }
+  if(has('lips'))      out.push({zone:'lips', col:col('lips','#C2506A'), t:'lips', tag:'lip'});
+  if(has('brow')){
+    [[L.browUpL,L.browLoL],[L.browUpR,L.browLoR]].forEach(([u,d])=>
+      out.push({zone:'brow', col:col('brow','#4A3128'), t:'poly',
+                idx:u.concat([...d].reverse()), tag:'brow'}));
+  }
+  if(has('liner')){
+    [L.eyeUpL, L.eyeUpR].forEach(lash=>{
+      const p=lash.map(i=>P(lm[i]));
+      const a=p[0], b=p[p.length-1];
+      const dx=a[0]-b[0], dy=a[1]-b[1], d=Math.hypot(dx,dy)||1;
+      p.unshift([a[0]+dx/d*fs*0.048, a[1]+dy/d*fs*0.048-fs*0.024]);   /* the wing */
+      out.push({zone:'liner', col:col('liner','#1A1218'), t:'line', pts:p, wid:fs*0.016, tag:'eye'});
+    });
+  }
+  if(has('glow')){
+    [50,280,4,0,151].forEach(i=>
+      out.push({zone:'glow', col:col('glow','#F7E8D2'), t:'blob', pt:P(lm[i]), r:fs*0.038*MARK, tag:'high'}));
+  }
+  if(has('concealer')){
+    [[230,133],[450,362]].forEach(([c0,c1])=>
+      out.push({zone:'concealer', col:col('concealer','#F0D8BE'), t:'blob', pt:P(lm[c0]), r:fs*0.055*MARK, tag:'high'}));
+  }
+  if(has('eyeshadow')){
+    out.push({zone:'eyeshadow', col:col('eyeshadow','#B07A6A'), t:'lid', side:'L', tag:'eye'});
+    out.push({zone:'eyeshadow', col:col('eyeshadow','#B07A6A'), t:'lid', side:'R', tag:'eye'});
+  }
+  return thinOut(out, lm);
+}
+
+/* one stroke, painted like cream on skin: opaque, round-ended, no feather */
+function paintStroke(a, lm, alpha){
+  ctx.save();
+  ctx.globalAlpha=alpha; ctx.fillStyle=a.col; ctx.strokeStyle=a.col;
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  if(a.t==='line'){
+    ctx.lineWidth=a.wid; ctx.beginPath();
+    a.pts.forEach(([x,y],k)=> k?ctx.lineTo(x,y):ctx.moveTo(x,y)); ctx.stroke();
+  } else if(a.t==='blob'){
+    ctx.beginPath(); ctx.arc(a.pt[0],a.pt[1],a.r,0,7); ctx.fill();
+  } else if(a.t==='ellipse'){
+    ctx.translate(a.pt[0],a.pt[1]); ctx.rotate(a.ang); ctx.scale(1, a.rb/a.ra);
+    ctx.beginPath(); ctx.arc(0,0,a.ra,0,7); ctx.fill();
+  } else if(a.t==='lips'){
+    ctx.beginPath();
+    L.lipsOuter.forEach((i,k)=>{ const [x,y]=P(lm[i]); k?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.closePath();
+    const f0=P(lm[L.lipsInner[0]]); ctx.moveTo(f0[0],f0[1]);
+    for(let k=L.lipsInner.length-1;k>=0;k--){ const [x,y]=P(lm[L.lipsInner[k]]); ctx.lineTo(x,y); }
+    ctx.closePath(); ctx.fill('evenodd');
+  } else if(a.t==='poly'){
+    ctx.beginPath();
+    a.idx.forEach((i,k)=>{ const [x,y]=P(lm[i]); k?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+    ctx.closePath(); ctx.fill();
+  } else if(a.t==='lid'){
+    if(a.side==='L') lidShape(ctx, lm, L.eyeUpL, L.socketL); else lidShape(ctx, lm, L.eyeUpR, L.socketR);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawPlacementMap(lm, silent){
+  /* the under-jaw band is where the jaw stroke is blended to, not a stroke of its own */
+  placementStrokes(lm).filter(a=>a.sub!=='under').forEach(a=> paintStroke(a, lm, 0.92));
+  if(!silent) drawCaps([{txt:t('gl.place'), col:GL_GOLD},{txt:t('gl.placeHow'), col:GL_STOP}]);
+}
+
+function drawBlendMap(lm){
+  const fs=faceScale(lm), w=Math.max(1.4, fs*0.0080);
+  const st=placementStrokes(lm);
+  st.forEach(a=> paintStroke(a, lm, 0.30));
+  const {UP, AX}=faceAxes(lm);
+  const V=i=>P(lm[i]);
+  const cx=V(168)[0];
+  const norm=v=>{ const d=Math.hypot(v[0],v[1])||1; return [v[0]/d, v[1]/d]; };
+  const neg=v=>[-v[0],-v[1]];
+  const outward = p => (p[0] < cx) ? neg(AX) : AX;
+  const toTemple = p => { const tp=V(p[0]<cx?54:284); return norm([tp[0]-p[0], tp[1]-p[1]]); };
+  const arrow=(p,d,len)=> glArrow(p, [p[0]+d[0]*len, p[1]+d[1]*len], GL_GOLD, w);
+  const mid = a => a.t==='line' ? a.pts[Math.floor(a.pts.length/2)] : a.pt;
+  const L1=fs*0.11, L2=fs*0.075, eyeY=V(133)[1];
+  st.forEach(a=>{
+    if(a.sub==='under') return;                                                  /* the reach of the jaw blend, no arrow of its own */
+    if(a.t==='lips'){ const c=V(13); arrow(c, AX, L2); arrow(c, neg(AX), L2); return; }
+    if(a.t==='lid'){ const p=V(a.side==='L'?159:386); arrow(p, toTemple(p), L2); return; }
+    const c = a.t==='poly'
+      ? (()=>{ const q=a.idx.map(i=>V(i));
+               return [q.reduce((t,v)=>t+v[0],0)/q.length, q.reduce((t,v)=>t+v[1],0)/q.length]; })()
+      : mid(a);
+    if(!c) return;
+    switch(a.zone){
+      case 'contour':
+        if(a.tag==='jaw') arrow(c, neg(UP), L2);                                  /* down, into the neck */
+        else if(a.t==='line' && a.tag==='cont' && a.pts.length===2) arrow(c, toTemple(c), L1);  /* cheek: up and out */
+        else arrow(c, UP, L2);                                                   /* forehead, temples: up into the hair */
+        break;
+      case 'nose':  arrow(c, neg(UP), L2); break;                                 /* down toward the tip */
+      case 'blush': arrow(c, toTemple(c), L1); break;                             /* up toward the temple */
+      case 'brow':  arrow(c, outward(c), L2); break;                              /* brush the hairs outward */
+      case 'liner': arrow(c, toTemple(c), L2); break;                             /* the wing, up and out */
+      case 'glow': case 'concealer': arrow(c, outward(c), L2); break;
+      case 'highlight':
+        if(Math.abs(c[0]-cx) < fs*0.06){ arrow(c, AX, L2); arrow(c, neg(AX), L2); }        /* centre: spread sideways */
+        else if(c[1] > eyeY && a.tag==='high') arrow(c, norm([outward(c)[0]-UP[0], outward(c)[1]-UP[1]]), L2);  /* under the eye: down and out */
+        else arrow(c, outward(c), L2);
+        break;
+    }
+  });
+  drawCaps([{txt:t('gl.blend'), col:GL_GOLD},{txt:t('gl.blendTool'), col:GL_STOP}]);
 }
 
 let beamT=0;
@@ -5624,7 +5963,7 @@ $$('#lt-presets button').forEach(b=> b.onclick = ()=>{
 function syncToggles(){
   $$('[data-toggle]').forEach(b=>{
     const k=b.dataset.toggle;
-    const v = k==='map'?S.showMap : k==='mesh'?S.showMesh : k==='bmap'?S.browMap :
+    const v = k==='map'?S.showMap : k==='mesh'?S.showMesh : k==='bmap'?S.browMap : k==='guide'?(S.showGuide!==false) : k==='ghost'?(S.ghost!==false) :
               k==='topo'?S.showTopo : k==='compare'?S.compare :
               k==='gl'?S.showGL : k==='edges'?S.showEdges : S.mirror;
     b.classList.toggle('on', v);
@@ -5637,8 +5976,10 @@ $$('[data-toggle]').forEach(b=> b.onclick = e=>{
   if(k==='map'){ S.showMap=!S.showMap; if(!S.showMap) S.mapFocus=[]; }
   if(k==='mesh'){ S.showMesh=!S.showMesh; }
   if(k==='bmap'){ S.browMap=!S.browMap; say(t(S.browMap?'bm_on':'bm_off')); }
+  if(k==='guide'){ S.showGuide=!(S.showGuide!==false); say(t(S.showGuide?'gd_on':'gd_off')); }
+  if(k==='ghost'){ S.ghost=!(S.ghost!==false); say(t(S.ghost?'gh_on':'gh_off')); }
   if(k==='topo'){ S.showTopo=!S.showTopo; }
-  if(k==='gl'){ S.showGL=!S.showGL; if(typeof glSetVisible==='function') glSetVisible(S.showGL);
+  if(k==='gl'){ S.showGL=!S.showGL; say(t('gpu_note'), 5000); if(typeof glSetVisible==='function') glSetVisible(S.showGL);
     try{ store.set('m_lamha_gl', S.showGL?1:0); }catch(e){} }
   if(k==='edges'){ S.showEdges=!S.showEdges; }
   if(k==='compare'){ S.compare=!S.compare; }
@@ -5864,11 +6205,12 @@ $('#cp-apply').onclick = ()=>{
 /* ---------- step-by-step: target first, then one layer at a time ---------- */
 const PLAN_ORDER = ['base','contour','nose','highlight','blush','eyeshadow','liner','brow','glow','lips'];
 const ZI18N = {base:'base',contour:'contour',nose:'nose',highlight:'highlight',blush:'blush',
-               eyeshadow:'eye',liner:'liner',brow:'brow',glow:'glow',lips:'lips'};
+               eyeshadow:'eye',liner:'liner',brow:'brow',glow:'glow',lips:'lips',
+               place:'place', blend:'blend'};
 function endPlan(){
   if(typeof baRestore==='function') baRestore();
   S.plan = null;
-  S.browMap = false; if(typeof syncToggles==='function') syncToggles();
+  S.browMap = false; S.showGuide = true; if(typeof syncToggles==='function') syncToggles();
   S.stepZone = null;
   S.highlightZone = null;
   if(typeof planHud === 'function') planHud(false);
@@ -5889,6 +6231,7 @@ function planRecapture(){
   S.plan.target = null;                       // the old photo is dropped here
   const im=$('#pl-target'); im.removeAttribute('src'); im.style.display='none';
   S.plan.capture = true;
+  S.plan.base = null;                         // and so is the bare-face reading
 }
 function renderPlan(){
   const pl=S.plan; if(!pl || !pl.on) return;
@@ -5899,11 +6242,12 @@ function renderPlan(){
       <div class="no mono">${i+1}</div>
       <div class="tx"><b>${t('z_'+ZI18N[z])}
         <span style="display:inline-block;width:11px;height:11px;border-radius:50%;
-          background:${S.makeup[z]};vertical-align:-1px;margin-inline-start:6px;
+          background:${S.makeup[z]||'transparent'};vertical-align:-1px;margin-inline-start:6px;
           border:1px solid rgba(255,255,255,.2)"></span></b>
         <small>${t('plTip.'+z)}${extra}</small></div></div>`;
   }).join('');
   S.stepZone = pl.order[pl.idx];
+  S.browMap = (S.stepZone === 'brow');       // each step draws its own lines only
   S.highlightZone = null;
   S.showMap = false; S.showMesh = false;     // only the boundary of the current area shows
   syncToggles();
@@ -5920,16 +6264,26 @@ function renderPlanBar(){
   $('#plbTitle').innerHTML = `<span class="mono" style="opacity:.6">${pl.idx+1}/${pl.order.length}</span>
     &nbsp;${t('z_'+ZI18N[z])}
     <span style="display:inline-block;width:10px;height:10px;border-radius:50%;
-      background:${S.makeup[z]};vertical-align:0;margin-inline-start:5px;
+      background:${S.makeup[z]||'transparent'};vertical-align:0;margin-inline-start:5px;
       border:1px solid rgba(255,255,255,.25)"></span>`;
   $('#plbText').textContent = t('plTip.'+z) + extra;
   /* live coaching on what she has actually done so far */
   try{
-    const c = window.lamhaCoach && window.lamhaCoach(z);
+    let c = null;
+    if((z==='place' || z==='blend') && window.watchReport){
+      if(!S.plan.base) c = window.__wt ? window.__wt('wWait') : null;
+      else {
+        const now = performance.now();
+        if(!S._wT || now - S._wT > 1200){ S._wT = now; S._wRep = window.watchReport(S.landmarks, S.plan.base); }
+        const rep = S._wRep;
+        c = rep ? window.watchMessage(rep, z) : null;
+        S._wOK = !!rep && (z==='place' ? rep.allPlaced : rep.allBlended);
+      }
+    } else { S._wOK = false; c = window.lamhaCoach && window.lamhaCoach(z); }
     const box = document.getElementById('plbCoach');
     if(box){
       if(c){ box.textContent = '◈ ' + c;
-        box.style.color = /ممتاز|Well done|Bagus/.test(c) ? 'var(--jade)' : 'var(--coral)';
+        box.style.color = (S._wOK || /ممتاز|Well done|Bagus|✓/.test(c)) ? 'var(--jade)' : 'var(--coral)';
         box.classList.add('on');
       } else box.classList.remove('on');
     }
@@ -5946,6 +6300,7 @@ function renderPlanBar(){
 window.toggleStepBA = function(){
   const pl=S.plan; if(!pl || !pl.on) return;
   const z = pl.order[pl.idx];
+  if(z==='place' || z==='blend') return;
   /* flip the state and paint the button NOW — the mirror follows on the
      next frame. Waiting for a full re-render made the tap feel sluggish. */
   if(!S.baBefore){
@@ -5974,11 +6329,12 @@ $('#mk-plan').onclick = ()=> openSheet('sh-plan');
 $('#pl-start').onclick = ()=>{
   const order = PLAN_ORDER.filter(z=>S.makeup[z]);
   if(!order.length){ say(t('pl_none'), 4000); return; }
+  order.unshift('place','blend');       /* the map is always the first two steps */
   S.plan = {on:true, order, idx:0, target:null, capture:true};
-  S.browMap = true; syncToggles();
+  S.showGuide = true;
   $('#pl-body').classList.remove('hidden');
   planHud(true);
-  say(t('bm_on'), 4200);
+  say(t('gd_hint'), 4200);
   renderPlan();
   openSheet('');            /* hand the screen back to her face */
 };
@@ -6066,6 +6422,24 @@ $('#ph-target').onclick = ()=>{
 };
 $('#ph-step').onclick = ()=>{ if(S.plan && S.plan.on) S.plan.captureStep = true; };
 function planHud(on){ $('#planHud').classList.toggle('hidden', !on); }
+
+/* Why is nothing on my face? — the answer, in one tap. */
+window.guideDoctor = function(){
+  const L=[], y='✓', n='✕';
+  const cam = !!(S.landmarks);
+  L.push((cam?y:n)+' '+(cam ? t('gdoc.face') : t('gdoc.noface')));
+  const pl = S.plan && S.plan.on;
+  L.push((pl?y:n)+' '+(pl ? t('gdoc.on')+' '+(S.plan.idx+1)+'/'+S.plan.order.length+' · '+t('z_'+(ZI18N[S.stepZone]||S.stepZone||'base')) : t('gdoc.off')));
+  L.push((S.showGuide!==false?y:n)+' '+t('ph_guide'));
+  if(cam){
+    let k=0; try{ k = placementStrokes(S.landmarks).length; }catch(e){ k=-1; }
+    L.push((k>0?y:n)+' '+t('gdoc.strokes')+': '+(k<0?'!':k));
+  }
+  const hidden = S.showGL && guideOwnsScreen() && S._glShown;
+  L.push((hidden?n:y)+' '+t('gdoc.layer'));
+  say(L.join('  |  '), 9000);
+  return L.join(' | ');
+};
 $('#pl-exit').onclick = ()=>{ baRestore(); endPlan(); renderPlanBar(); openSheet(''); };
 
 /* skin + history + routine */
@@ -10873,6 +11247,11 @@ window.LAMHA_LOCAL_COUNT = CACHE.length;
 const T = {
   ar:{
     ready:'ابدئي حين تكونين مستعدة',
+    wNeed:'ما زال ناقصاً: {} — ضعيه كخط مثل الصورة',
+    wPlaced:'كل الخطوط في مكانها ✓ انتقلي إلى الدمج',
+    wBlend:'ما زالت الحافة ظاهرة في: {} — تابعي الدمج باتجاه السهم',
+    wDone:'تم الدمج ✓ لم تعد أي حافة ظاهرة',
+    wWait:'ثبّتي وجهك لحظة حتى أقارن',
     tooHigh:'الكونتور مرتفع — أنزليه تحت عظمة الخد بإصبع',
     tooLow:'الكونتور منخفض — ارفعيه قليلاً نحو عظمة الخد',
     blendMore:'الحافة ما زالت ظاهرة — ادمجي بحركات دائرية للأعلى وللخارج',
@@ -10885,6 +11264,11 @@ const T = {
   },
   en:{
     ready:'Start when you are ready',
+    wNeed:'Still missing: {} — lay it down as a stroke like the picture',
+    wPlaced:'Every stroke is in place ✓ move on to blending',
+    wBlend:'The edge still shows on: {} — keep blending along the arrow',
+    wDone:'Blended ✓ no edge shows anywhere',
+    wWait:'Hold still a moment so I can compare',
     tooHigh:'Contour sits high — bring it a finger below the cheekbone',
     tooLow:'Contour sits low — lift it toward the cheekbone',
     blendMore:'The edge still shows — blend in circles, up and outward',
@@ -10897,6 +11281,11 @@ const T = {
   },
   id:{
     ready:'Mulai saat kamu siap',
+    wNeed:'Masih kurang: {} — letakkan sebagai garis seperti di gambar',
+    wPlaced:'Semua garis sudah di tempatnya ✓ lanjut ke blending',
+    wBlend:'Tepi masih terlihat di: {} — lanjutkan blending mengikuti panah',
+    wDone:'Sudah membaur ✓ tidak ada tepi yang terlihat',
+    wWait:'Diam sejenak agar saya bisa membandingkan',
     tooHigh:'Kontur terlalu tinggi — turunkan seukuran jari',
     tooLow:'Kontur terlalu rendah — naikkan ke tulang pipi',
     blendMore:'Tepinya masih terlihat — baurkan memutar ke atas dan keluar',
@@ -10909,6 +11298,7 @@ const T = {
   }
 };
 const tt = k => (T[LANG]||T.en)[k];
+window.__wt = tt;
 
 /* sample the real face inside a zone and outside it, to judge her work */
 const _cC=document.createElement('canvas'); _cC.width=_cC.height=12;
@@ -10925,7 +11315,127 @@ function patchLab(cx, cy, r){
 }
 function dE(a,b){ return a&&b ? Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]) : 0; }
 
+/* ============================================================
+   THE WATCHER — the app looks at what she has actually done.
+   Measured on a professional three-panel sequence (bare cream,
+   unblended, blended) across five regions of the face. Two
+   statistics separate the three states cleanly, but only when
+   both are read against HER OWN bare face, captured once when
+   the placement phase opens:
+     · colour   dE(now, bare) — was anything put here at all
+                bare 0 · cream 18-42 · blended 14-21   → threshold 8
+     · edge     local gradient ÷ the gradient of the bare face
+                at the same spot. Absolute gradient fails, because
+                the eye socket and the side of the nose are steep
+                on a bare face too (4.8 and 4.0 against 1.3 on the
+                cheek). The ratio does not:
+                cream 2.16-3.80 · blended 0.75-1.08  → hard >= 1.9,
+                                                       done < 1.35
+   ============================================================ */
+const WATCH = { place:8, hard:1.9, done:1.35 };
+
+/* probe points live in VIDEO coordinates, where patchLab reads */
+function watchPoints(lm){
+  const vw=srcW(), vh=srcH();
+  const toVid = p => {
+    let x = (p[0] - map.ox) / (map.sx || 1);
+    if(S.mirror) x = VW - x;
+    return [ x/VW*vw, (p[1]-map.oy)/(map.sy||1)/VH*vh ];
+  };
+  const fs = Math.hypot(lm[454].x*vw - lm[234].x*vw, lm[454].y*vh - lm[234].y*vh);
+  const out=[];
+  placementStrokes(lm).filter(a=>a.sub!=='under').forEach((a,i)=>{
+    let c, dir;
+    if(a.t==='line'){
+      const k=Math.floor(a.pts.length/2);
+      c=a.pts[k];
+      const p0=a.pts[Math.max(0,k-1)], p1=a.pts[Math.min(a.pts.length-1,k+1)];
+      const dx=p1[0]-p0[0], dy=p1[1]-p0[1], d=Math.hypot(dx,dy)||1;
+      dir=[-dy/d, dx/d];                              // across the stroke
+    } else if(a.pt){
+      c=a.pt; dir=[1,0];
+    } else if(a.t==='poly'){
+      const q=a.idx.map(i=>P(lm[i]));
+      c=[q.reduce((t,v)=>t+v[0],0)/q.length, q.reduce((t,v)=>t+v[1],0)/q.length]; dir=[0,1];
+    } else if(a.t==='lips'){ c=P(lm[13]); dir=[0,1]; }
+    else if(a.t==='lid'){ c=P(lm[a.side==='L'?159:386]); dir=[0,1]; }
+    else return;
+    const cv2=toVid(c), e=toVid([c[0]+dir[0]*100, c[1]+dir[1]*100]);
+    const ex=e[0]-cv2[0], ey=e[1]-cv2[1], el=Math.hypot(ex,ey)||1;
+    out.push({ key:a.zone+'#'+i, zone:a.zone, c:cv2, n:[ex/el, ey/el], fs });
+  });
+  return out;
+}
+
+/* the colour here, and how sharply it changes across the stroke */
+function watchProbe(p){
+  const r = Math.max(3, p.fs*0.018), step = Math.max(3, p.fs*0.030);
+  const lab = patchLab(p.c[0], p.c[1], r);
+  if(!lab) return null;
+  let g=0, prev=null;
+  for(let k=-3;k<=3;k++){
+    const s = patchLab(p.c[0]+p.n[0]*k*step, p.c[1]+p.n[1]*k*step, r*0.8);
+    if(prev && s) g = Math.max(g, dE(prev, s));
+    prev = s;
+  }
+  return { lab, grad: g / (step / p.fs * 100) };     // per 1% of face width
+}
+
+function watchBaseline(lm){
+  const base = {};
+  watchPoints(lm).forEach(p=>{ const q = watchProbe(p); if(q) base[p.key] = q; });
+  return Object.keys(base).length ? base : null;
+}
+
+/* what she has done, judged against her own bare face */
+function watchReport(lm, base){
+  if(!base) return null;
+  const zones = {};
+  watchPoints(lm).forEach(p=>{
+    const b = base[p.key]; if(!b) return;
+    const q = watchProbe(p); if(!q) return;
+    const z = zones[p.zone] || (zones[p.zone] = { n:0, placed:0, hard:0, ratio:0, dE:0 });
+    const ratio = q.grad / Math.max(0.5, b.grad);
+    const de = dE(q.lab, b.lab);
+    z.n++; z.dE += de; z.ratio += ratio;
+    if(de >= WATCH.place) z.placed++;
+    if(ratio >= WATCH.hard) z.hard++;
+  });
+  const list = Object.keys(zones).map(k=>{
+    const z = zones[k];
+    return { zone:k, n:z.n, placed:z.placed, hard:z.hard,
+             dE:z.dE/z.n, ratio:z.ratio/z.n,
+             done: z.placed===z.n && z.ratio/z.n < WATCH.done };
+  });
+  const missing = list.filter(z=>z.placed < z.n);
+  const hard    = list.filter(z=>z.placed===z.n && z.hard > 0);
+  return { list, missing, hard,
+           allPlaced: list.length>0 && missing.length===0,
+           allBlended: list.length>0 && missing.length===0 && hard.length===0 };
+}
+
+/* the sentence she reads under the step title */
+function watchMessage(rep, phase){
+  if(!rep) return '';
+  const nm = z => t('z_'+(ZI18N[z]||z));
+  const few = a => a.slice(0,2).map(z=>nm(z.zone)).join('، ');
+  if(phase === 'place'){
+    if(!rep.allPlaced) return tt('wNeed').replace('{}', few(rep.missing));
+    return tt('wPlaced');
+  }
+  if(!rep.allPlaced) return tt('wNeed').replace('{}', few(rep.missing));
+  if(rep.hard.length)  return tt('wBlend').replace('{}', few(rep.hard));
+  return tt('wDone');
+}
+
+
 let lastCheck=0, lastMsg='';
+window.WATCH = WATCH;
+window.watchPoints = watchPoints;
+window.watchProbe = watchProbe;
+window.watchBaseline = lm => { try{ return watchBaseline(lm); }catch(e){ return null; } };
+window.watchReport   = (lm,b) => { try{ return watchReport(lm,b); }catch(e){ return null; } };
+window.watchMessage  = watchMessage;
 window.lamhaCoach = function(zone){
   const now=performance.now();
   if(now-lastCheck < 1400) return lastMsg;
