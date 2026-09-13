@@ -284,3 +284,37 @@ class AccountRepository {
 String sha256Hex(Uint8List bytes) => sha256.convert(bytes).toString();
 
 String base64Preview(Uint8List bytes) => base64Encode(bytes.take(64).toList());
+
+/// Shop mode: photograph something on a rack, get an answer before buying it.
+///
+/// The call is synchronous by design — the user is standing in the shop.
+class ShopRepository {
+  ShopRepository(this._api);
+
+  final ApiClient _api;
+
+  Future<ScanResult> scan(String mediaId, {String? role}) async =>
+      ScanResult.fromJson(await _api.post('/v1/shop/scan', body: {
+        'media_id': mediaId,
+        if (role != null) 'role': role,
+      },) as Map<String, dynamic>,);
+
+  Future<List<ScanResult>> openScans({int limit = 20}) async {
+    final json = await _api.get('/v1/shop/scans', query: {'limit': limit}) as List;
+    return json
+        .map((e) => ScanResult.fromJson({
+              ...e as Map<String, dynamic>,
+              'scan_id': e['id'],
+            }),)
+        .toList();
+  }
+
+  Future<String> markBought(String scanId) async {
+    final json = await _api.post('/v1/shop/scans/$scanId/bought')
+        as Map<String, dynamic>;
+    return json['garment_id'] as String;
+  }
+
+  Future<void> dismiss(String scanId) =>
+      _api.post('/v1/shop/scans/$scanId/dismiss');
+}

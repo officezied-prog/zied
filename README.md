@@ -12,10 +12,11 @@ PostgreSQL database and a real Flutter toolchain, not just written.**
 | 2 | Upload → segmentation → tagged wardrobe | ✅ |
 | 3 | Occasion- and weather-aware styling engine | ✅ |
 | 4 | Virtual try-on pipeline | ✅ |
-| 5 | Flutter app (iOS + Android) | ✅ 31 Dart tests, `flutter analyze` clean |
+| 5 | Flutter app (iOS + Android) | ✅ `flutter analyze` clean |
+| 6 | Wardrobe advice, one-call styling, shop mode | ✅ |
 
-**238 tests pass in total:** 20 SQL assertions, 170 Python tests against a real
-database, 48 Dart tests. `ruff` and `flutter analyze` both clean.
+**286 tests pass in total:** 20 SQL assertions, 192 Python tests against a real
+database, 74 Dart tests. `ruff` and `flutter analyze` both clean.
 
 ## Two capabilities worth naming
 
@@ -30,6 +31,23 @@ Placement is a rule per garment role rather than one bounding box: a jilbab,
 abaya, thobe or maxi dress hangs from the shoulders to the ankles and suppresses
 the separates underneath; a coat sits wider than the shirt it covers; a bag is
 small and at one hip; shoes rest on the ground. The face is never regenerated.
+
+### Shop mode: an answer before the money is spent
+
+`POST /v1/shop/scan` takes a photograph of something on a rail and judges it
+against the wardrobe at home. Three numbers decide it: pieces already owned
+that are close enough to be the same purchase (CIEDE2000 under 8, same
+category), pieces it would newly go with, and occasions the wardrobe cannot
+dress today that it would unlock.
+
+`wear_with` returns the outfit it would join — the best piece of each role, in
+the order they are worn — so the answer is not just yes or no but *what to wear
+it with*. When the verdict is negative, `look_for_colors` and `look_for_roles`
+name what **is** missing, so a wasted trip becomes a useful one.
+
+The photograph is stored and identified; nothing about the shop is. No
+retailer, no location, no scraped price — the question is "does this go with
+what I own", and collecting where somebody shops would answer a different one.
 
 ### Advice that knows when to say nothing
 
@@ -51,24 +69,24 @@ entirely.
 | Artefact | Status |
 |---|---|
 | `docs/01-architecture.md` | System architecture, pipelines, model stack, security, cost, phase plan |
-| `docs/02-data-model.md` | 36 tables across 3 schemas, ER diagrams, design rationale |
+| `docs/02-data-model.md` | 39 tables across 3 schemas, ER diagrams, design rationale |
 | `docs/03-api.md` | Conventions, endpoint reference, end-to-end flows |
 | `docs/04-phase2-backend.md` | Ingestion + CV service: decisions, defects found, test coverage |
 | `docs/05-styling-tryon-app.md` | Styling engine, try-on pipeline and mobile app |
-| `api/openapi/openapi.yaml` | OpenAPI 3.1 — **validates clean**, 42 paths / 59 operations / 38 schemas |
-| `db/migrations/0001…0018` | **Apply clean** on PostgreSQL 16.13 + pgvector 0.6.0 |
+| `api/openapi/openapi.yaml` | OpenAPI 3.1 — **validates clean**, 48 paths / 65 operations / 51 schemas |
+| `db/migrations/0001…0019` | **Apply clean** on PostgreSQL 16.13 + pgvector 0.6.0 |
 | `db/seeds/0001…0007` | 71 categories · 15 occasions · 29 colour families · 34 pairing rules · 39 palette affinities · 6 try-on models · detector vocabularies |
 | `db/tests/smoke_test.sql` | **20/20 assertions passing** |
-| `api/app/`, `workers/` | FastAPI service, vision worker, styling engine, try-on worker — **170 tests** |
-| `mobile/` | Flutter app — **48 tests**, analyze clean |
+| `api/app/`, `workers/` | FastAPI service, vision worker, styling engine, try-on worker — **192 tests** |
+| `mobile/` | Flutter app — **74 tests**, analyze clean |
 
 ## Verify it yourself
 
 ```bash
 createdb smartstylist
 make venv
-make verify   # migrations + seeds + SQL smoke test, 170 python tests, ruff,
-              # OpenAPI validation, flutter analyze, 31 dart tests
+make verify   # migrations + seeds + SQL smoke test, 192 python tests, ruff,
+              # OpenAPI validation, flutter analyze, 74 dart tests
 ```
 
 Or one piece at a time:
@@ -150,7 +168,7 @@ workers/styling/ engine · scoring · combiner · rationale · embeddings · wea
                 geo · economics · advice
 workers/vton/   pipeline · preprocess · placement · providers · qa · runner
 mobile/         Flutter app: core · models · data · providers · screens · widgets
-tests/          170 python tests   ·   mobile/test/  48 dart tests
+tests/          192 python tests   ·   mobile/test/  74 dart tests
 infra/          Dockerfile.api · Dockerfile.worker (cpu + gpu stages)
 docs/           01 architecture · 02 data model · 03 API · 04 phase 2 · 05 phases 3-5
 scripts/        db_bootstrap.sh · demo_journey.py

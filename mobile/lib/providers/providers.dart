@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/api_client.dart';
 import '../core/config.dart';
 import '../data/demo_repositories.dart';
+import '../data/demo_shop.dart';
 import '../data/repositories.dart';
 import '../models/models.dart';
 
@@ -64,6 +65,8 @@ final tryOnRepositoryProvider = Provider<TryOnRepository>((ref) =>
     AppConfig.demoMode ? DemoTryOnRepository() : TryOnRepository(ref.watch(apiClientProvider)),);
 final accountRepositoryProvider = Provider<AccountRepository>((ref) =>
     AppConfig.demoMode ? DemoAccountRepository() : AccountRepository(ref.watch(apiClientProvider)),);
+final shopRepositoryProvider = Provider<ShopRepository>((ref) =>
+    AppConfig.demoMode ? DemoShopRepository() : ShopRepository(ref.watch(apiClientProvider)),);
 
 // ── wardrobe ────────────────────────────────────────────────────────────────
 class WardrobeFilter {
@@ -359,3 +362,64 @@ class ImportController extends StateNotifier<ImportProgress> {
 final importControllerProvider =
     StateNotifierProvider<ImportController, ImportProgress>(
         (ref) => ImportController(ref.watch(uploadRepositoryProvider), ref),);
+
+
+// ── shop mode ───────────────────────────────────────────────────────────────
+/// One scan at a time: the user is holding the garment and waiting.
+class ShopState {
+  const ShopState({this.result, this.scanning = false, this.error, this.filed});
+
+  final ScanResult? result;
+  final bool scanning;
+  final Object? error;
+
+  /// Set for one frame after "I bought it", so the screen can confirm.
+  final String? filed;
+
+  ShopState copyWith({ScanResult? result, bool? scanning, Object? error,
+      String? filed, bool clear = false,}) =>
+      ShopState(
+        result: clear ? null : (result ?? this.result),
+        scanning: scanning ?? this.scanning,
+        error: clear ? null : (error ?? this.error),
+        filed: clear ? null : (filed ?? this.filed),
+      );
+}
+
+class ShopController extends StateNotifier<ShopState> {
+  ShopController(this._repo, this._ref) : super(const ShopState());
+
+  final ShopRepository _repo;
+  final Ref _ref;
+
+  Future<void> scan(String mediaId, {String? role}) async {
+    state = const ShopState(scanning: true);
+    try {
+      state = ShopState(result: await _repo.scan(mediaId, role: role));
+    } catch (error) {
+      state = ShopState(error: error);
+    }
+  }
+
+  Future<void> bought() async {
+    final scan = state.result;
+    if (scan == null) return;
+    await _repo.markBought(scan.scanId);
+    state = ShopState(filed: scan.displayCategory);
+    _ref.invalidate(wardrobeProvider);
+    _ref.invalidate(wardrobeStatsProvider);
+  }
+
+  Future<void> dismiss() async {
+    final scan = state.result;
+    if (scan == null) return;
+    await _repo.dismiss(scan.scanId);
+    state = const ShopState();
+  }
+
+  void reset() => state = const ShopState();
+}
+
+final shopControllerProvider =
+    StateNotifierProvider<ShopController, ShopState>(
+        (ref) => ShopController(ref.watch(shopRepositoryProvider), ref),);

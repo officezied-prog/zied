@@ -489,3 +489,178 @@ class IngestJob {
   double get progress =>
       itemsDiscovered == 0 ? 0 : itemsProcessed / itemsDiscovered;
 }
+
+// ── shop mode ───────────────────────────────────────────────────────────────
+
+/// What the app thinks of something on a rack, given what is already at home.
+enum ScanVerdict {
+  fillsAGap('fills_a_gap'),
+  addsVariety('adds_variety'),
+  haveSimilar('have_similar'),
+  hardToWear('hard_to_wear');
+
+  const ScanVerdict(this.wire);
+
+  final String wire;
+
+  static ScanVerdict parse(String? value) => ScanVerdict.values.firstWhere(
+        (v) => v.wire == value,
+        orElse: () => ScanVerdict.addsVariety,
+      );
+
+  bool get isWorthBuying =>
+      this == ScanVerdict.fillsAGap || this == ScanVerdict.addsVariety;
+}
+
+/// Something already owned that is close enough to be the same purchase.
+@immutable
+class OwnedMatch {
+  const OwnedMatch({
+    required this.garmentId,
+    required this.name,
+    required this.hex,
+    required this.deltaE,
+  });
+
+  final String garmentId;
+  final String name;
+  final String hex;
+  final double deltaE;
+
+  factory OwnedMatch.fromJson(Map<String, dynamic> json) => OwnedMatch(
+        garmentId: json['garment_id'].toString(),
+        name: (json['name'] ?? '').toString(),
+        hex: (json['hex'] ?? '#000000').toString(),
+        deltaE: _toDouble(json['delta_e']) ?? 0,
+      );
+
+  int get argb => int.parse('FF${hex.replaceAll('#', '')}', radix: 16);
+}
+
+/// A piece at home the scanned garment would go with.
+@immutable
+class WearWith {
+  const WearWith({
+    required this.garmentId,
+    required this.name,
+    required this.role,
+    required this.hex,
+    required this.score,
+  });
+
+  final String garmentId;
+  final String name;
+  final String role;
+  final String hex;
+  final double score;
+
+  factory WearWith.fromJson(Map<String, dynamic> json) => WearWith(
+        garmentId: json['garment_id'].toString(),
+        name: (json['name'] ?? '').toString(),
+        role: (json['role'] ?? 'base_top').toString(),
+        hex: (json['hex'] ?? '#000000').toString(),
+        score: _toDouble(json['score']) ?? 0,
+      );
+
+  int get argb => int.parse('FF${hex.replaceAll('#', '')}', radix: 16);
+}
+
+/// A colour the wardrobe barely has, ranked by what buying it would unlock.
+@immutable
+class ColorOpportunity {
+  const ColorOpportunity({
+    required this.family,
+    required this.pairsWith,
+    required this.coverage,
+    required this.isNeutral,
+  });
+
+  final String family;
+  final int pairsWith;
+  final double coverage;
+  final bool isNeutral;
+
+  factory ColorOpportunity.fromJson(Map<String, dynamic> json) => ColorOpportunity(
+        family: (json['family'] ?? '').toString(),
+        pairsWith: (json['pairs_with'] as num?)?.toInt() ?? 0,
+        coverage: _toDouble(json['coverage']) ?? 0,
+        isNeutral: json['is_neutral'] == true,
+      );
+}
+
+@immutable
+class ScanResult {
+  const ScanResult({
+    required this.scanId,
+    required this.category,
+    required this.role,
+    required this.primaryHex,
+    required this.colorFamily,
+    required this.verdict,
+    required this.headline,
+    required this.detail,
+    required this.newPairings,
+    required this.totalComplements,
+    this.pattern = 'solid',
+    this.confidence = 0,
+    this.pairingShare = 0,
+    this.duplicates = const [],
+    this.unlockedOccasions = const [],
+    this.wearWith = const [],
+    this.lookForColors = const [],
+    this.lookForRoles = const [],
+    this.photoUrl,
+  });
+
+  final String scanId;
+  final String category;
+  final String role;
+  final String primaryHex;
+  final String colorFamily;
+  final ScanVerdict verdict;
+  final String headline;
+  final String detail;
+  final int newPairings;
+  final int totalComplements;
+  final String pattern;
+  final double confidence;
+  final double pairingShare;
+  final List<OwnedMatch> duplicates;
+  final List<String> unlockedOccasions;
+  final List<WearWith> wearWith;
+  final List<ColorOpportunity> lookForColors;
+  final List<String> lookForRoles;
+  final String? photoUrl;
+
+  factory ScanResult.fromJson(Map<String, dynamic> json) => ScanResult(
+        scanId: json['scan_id'].toString(),
+        category: (json['category'] ?? '').toString(),
+        role: (json['role'] ?? 'base_top').toString(),
+        primaryHex: (json['primary_hex'] ?? '#808080').toString(),
+        colorFamily: (json['color_family'] ?? '').toString(),
+        verdict: ScanVerdict.parse(json['verdict'] as String?),
+        headline: (json['headline'] ?? '').toString(),
+        detail: (json['detail'] ?? '').toString(),
+        newPairings: (json['new_pairings'] as num?)?.toInt() ?? 0,
+        totalComplements: (json['total_complements'] as num?)?.toInt() ?? 0,
+        pattern: (json['pattern'] ?? 'solid').toString(),
+        confidence: _toDouble(json['confidence']) ?? 0,
+        pairingShare: _toDouble(json['pairing_share']) ?? 0,
+        duplicates: ((json['duplicates'] as List?) ?? const [])
+            .map((e) => OwnedMatch.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        unlockedOccasions: _strings(json['unlocked_occasions']),
+        wearWith: ((json['wear_with'] as List?) ?? const [])
+            .map((e) => WearWith.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        lookForColors: ((json['look_for_colors'] as List?) ?? const [])
+            .map((e) => ColorOpportunity.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        lookForRoles: _strings(json['look_for_roles']),
+        photoUrl: _as<String>(json['photo_url']),
+      );
+
+  int get argb => int.parse('FF${primaryHex.replaceAll('#', '')}', radix: 16);
+
+  String get displayCategory => category.replaceAll('_', ' ');
+}
