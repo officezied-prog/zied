@@ -56,6 +56,26 @@ Supabase where it is built in). The Python tests build their own database from
 
 ## Run it
 
+### With Docker — one command, nothing else to install
+
+```bash
+docker compose up --build
+```
+
+Then open **http://localhost:8000/docs**. The stack brings up PostgreSQL with
+pgvector, applies all migrations and seeds, creates a demo user, and starts the
+API together with both workers.
+
+To call the endpoints straight from that page, click **Authorize** and send the
+header `X-Debug-User: 00000000-0000-4000-8000-000000000001` — the demo user the
+stack creates.
+
+> `docker-compose.yml` sets `SS_ALLOW_DEBUG_USER_HEADER=true` so the docs page is
+> usable without minting a JWT by hand. It is a **development-only** switch and
+> must never be set in a deployed environment.
+
+### Without Docker
+
 ```bash
 make api           # uvicorn on :8000, interactive docs at /docs
 make worker        # vision worker  (ingest → segmentation → tagging)

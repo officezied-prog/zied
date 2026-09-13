@@ -1,0 +1,70 @@
+# One-command local stack: database, API and both workers.
+#
+#   docker compose up --build
+#   -> interactive API docs at http://localhost:8000/docs
+#
+# DEVELOPMENT ONLY. `SS_ALLOW_DEBUG_USER_HEADER=true` below lets any request
+# authenticate by sending an `X-Debug-User` header instead of a signed token.
+# That exists so the docs page is usable without minting a JWT by hand. It must
+# never be set in a deployed environment.
+
+name: smartstylist
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: smartstylist
+      POSTGRES_PASSWORD: smartstylist
+      POSTGRES_DB: smartstylist
+    ports: ["5433:5432"]
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./db/migrations:/sql/migrations:ro
+      - ./db/seeds:/sql/seeds:ro
+      - ./infra/db-init.sh:/docker-entrypoint-initdb.d/10-smartstylist.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartstylist -d smartstylist"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build: { context: ., dockerfile: infra/Dockerfile.api }
+    depends_on:
+      db: { condition: service_healthy }
+    environment: &app-env
+      SS_ENVIRONMENT: local
+      SS_DATABASE_URL: postgresql+asyncpg://smartstylist:smartstylist@db:5432/smartstylist
+      SS_STORAGE_BACKEND: local
+      SS_STORAGE_LOCAL_ROOT: /data/storage
+      SS_STORAGE_PUBLIC_BASE_URL: http://localhost:8000/_storage
+      SS_JWT_SECRET: local-development-secret-not-for-production
+      SS_ALLOW_DEBUG_USER_HEADER: "true"   # DEV ONLY — see the note above
+      SS_SEGMENTER: stub
+    ports: ["8000:8000"]
+    volumes:
+      - storage:/data/storage
+    command: ["uvicorn", "api.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  worker:
+    build: { context: ., dockerfile: infra/Dockerfile.worker, target: cpu }
+    depends_on:
+      db: { condition: service_healthy }
+    environment: *app-env
+    volumes:
+      - storage:/data/storage
+    command: ["python", "-m", "workers.vision.runner"]
+
+  vton:
+    build: { context: ., dockerfile: infra/Dockerfile.worker, target: cpu }
+    depends_on:
+      db: { condition: service_healthy }
+    environment: *app-env
+    volumes:
+      - storage:/data/storage
+    command: ["python", "-m", "workers.vton.runner"]
+
+volumes:
+  db-data:
+  storage:
