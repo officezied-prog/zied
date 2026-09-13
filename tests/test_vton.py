@@ -390,3 +390,68 @@ async def test_cancelling_a_queued_job(client, body_photo, closet_with_cutouts,
     assert (await client.delete(f"/v1/vton/jobs/{job['id']}")).status_code == 204
     assert (await client.get(f"/v1/vton/jobs/{job['id']}")).json()["status"] == "cancelled"
     assert await run_vton_worker() == 0, "a cancelled job must not be picked up"
+
+
+# ── one call: occasion in, a picture of you wearing it out ──────────────────
+async def test_style_and_wear_returns_an_outfit_already_rendering(
+        client, body_photo, closet_with_cutouts, run_vton_worker):
+    photo_id = await body_photo()
+
+    r = await client.post("/v1/outfits/style-and-wear", json={
+        "occasion": "conference",
+        "body_photo_id": photo_id,
+        "weather_override": {"temp_c": 20, "feels_like_c": 20},
+    })
+    assert r.status_code == 202, r.text
+    body = r.json()
+
+    outfit = body["outfit"]
+    assert outfit["items"], "an outfit came back"
+    assert outfit["rationale"], "and it explains itself"
+    roles = {i["role"] for i in outfit["items"]}
+    assert "footwear" in roles
+
+    render = body["render"]
+    assert render["status"] == "queued"
+    assert render["outfit_id"] == outfit["id"]
+    assert set(render["garment_ids"]) <= {i["garment"]["id"] for i in outfit["items"]}
+
+    await run_vton_worker()
+    done = (await client.get(f"/v1/vton/jobs/{render['id']}")).json()
+    assert done["status"] == "succeeded"
+    assert done["result_url"]
+
+
+async def test_style_and_wear_offers_runners_up_without_re_scoring(
+        client, body_photo, closet_with_cutouts):
+    photo_id = await body_photo()
+    body = (await client.post("/v1/outfits/style-and-wear", json={
+        "occasion": "conference", "body_photo_id": photo_id,
+        "weather_override": {"temp_c": 20, "feels_like_c": 20},
+    })).json()
+
+    best = body["outfit"]
+    alternatives = body["alternatives"]
+    if alternatives:
+        assert all(a["id"] != best["id"] for a in alternatives)
+        assert best["total_score"] >= max(a["total_score"] for a in alternatives)
+
+
+async def test_style_and_wear_needs_consent_like_any_other_render(
+        client, closet_with_cutouts):
+    r = await client.post("/v1/outfits/style-and-wear", json={
+        "occasion": "conference",
+        "weather_override": {"temp_c": 20, "feels_like_c": 20},
+    })
+    assert r.status_code == 403
+    assert r.json()["required_consent"] == "vton_processing"
+
+
+async def test_style_and_wear_explains_an_unwearable_occasion(client, body_photo):
+    await body_photo()
+    r = await client.post("/v1/outfits/style-and-wear", json={
+        "occasion": "formal_event",
+        "weather_override": {"temp_c": 20, "feels_like_c": 20},
+    })
+    assert r.status_code == 422
+    assert r.json()["missing_roles"]

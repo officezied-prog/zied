@@ -390,3 +390,57 @@ class VtonJob(Model):
     expires_at: datetime | None = None
     queued_at: datetime
     cache_hit: bool = False
+
+
+# ── wardrobe advice & one-call styling (Phase 6) ────────────────────────────
+class OccasionCoverage(Model):
+    slug: str
+    display_name: str
+    wearable: bool
+    missing_roles: list[str] = Field(default_factory=list)
+    option_count: int
+
+
+class ColorOpportunity(Model):
+    family: str
+    pairs_with: int
+    coverage: float
+    is_neutral: bool
+
+
+class Suggestion(Model):
+    role: str
+    color_family: str | None = None
+    reason: str
+    blocking: bool
+    price_low: float | None = None
+    price_high: float | None = None
+    currency: str = "USD"
+
+
+class WardrobeAdvice(Model):
+    headline: str
+    tone: Literal["use_what_you_have", "essentials_only", "suggest_gaps",
+                  "suggest_upgrades"]
+    coverage: list[OccasionCoverage] = Field(default_factory=list)
+    color_opportunities: list[ColorOpportunity] = Field(default_factory=list)
+    suggestions: list[Suggestion] = Field(default_factory=list)
+    #: Why the advice reads the way it does. Never a label for the person.
+    basis: str
+
+
+class StyleAndWearRequest(Model):
+    occasion: str
+    scheduled_for: datetime | None = None
+    location: LatLon | None = None
+    weather_override: Weather | None = None
+    body_photo_id: UUID | None = None
+    model_id: str | None = None
+    exclude_garment_ids: list[UUID] = Field(default_factory=list)
+
+
+class StyleAndWearResponse(Model):
+    outfit: Outfit
+    render: VtonJob
+    weather: Weather | None = None
+    alternatives: list[Outfit] = Field(default_factory=list)

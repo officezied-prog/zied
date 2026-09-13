@@ -660,6 +660,38 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/Garment' }
 
+  /v1/wardrobe/advice:
+    get:
+      tags: [Wardrobe]
+      operationId: wardrobeAdvice
+      summary: What the wardrobe cannot do yet, and whether to suggest buying
+      description: |
+        Two answers in one payload, deliberately separated.
+
+        `coverage` and `color_opportunities` are facts about the clothes: which
+        occasions cannot be dressed and which colour would unlock the most new
+        combinations. They are returned to everyone, because knowing you have
+        nothing to wear on your feet to a formal event is useful regardless of
+        budget.
+
+        `suggestions` is gated. `tone` says how the advice should read, derived
+        from what the wardrobe itself shows about how welcome a purchase
+        suggestion would be — the prices the user recorded, or failing that the
+        brands they own. A wardrobe that reads as budget-conscious is told only
+        about a gap that actually blocks an occasion, never sold to; one being
+        actively built is offered gaps and upgrades.
+
+        Three guarantees hold: the derived band is computed on demand and
+        **never stored**, it is **never shown to the user as a label**, and it
+        **never changes a price**. `style_preferences.budget_tier` and
+        `allow_new_purchases` override the inference entirely.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WardrobeAdvice' }
+
   /v1/wardrobe/stats:
     get:
       tags: [Wardrobe]
@@ -692,6 +724,42 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/RecommendationResponse' }
+        '422': { $ref: '#/components/responses/UnprocessableWardrobe' }
+
+  /v1/outfits/style-and-wear:
+    post:
+      tags: [Styling]
+      operationId: styleAndWear
+      summary: Style an occasion and start rendering it on the user's photo
+      description: |
+        The product's core loop in one call: an occasion goes in, the best
+        outfit the wardrobe can produce comes back with a try-on render already
+        queued on the user's body photo.
+
+        Done as one call on purpose. Splitting it across recommend + create-job
+        makes the client pick the winner, and a client that picks differently
+        from the engine produces a picture of an outfit nobody recommended.
+        Runners-up come back too, so switching to the second choice costs a
+        render and no re-scoring.
+      parameters: [{ $ref: '#/components/parameters/idempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StyleAndWearRequest' }
+      responses:
+        '202':
+          description: Outfit chosen, render queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StyleAndWearResponse' }
+        '200':
+          description: Outfit chosen, and an identical render already existed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StyleAndWearResponse' }
+        '402': { $ref: '#/components/responses/QuotaExceeded' }
+        '403': { $ref: '#/components/responses/ConsentRequired' }
         '422': { $ref: '#/components/responses/UnprocessableWardrobe' }
 
   /v1/outfits:
@@ -1578,6 +1646,101 @@ components:
         error_code: { type: [string, 'null'] }
         expires_at: { type: [string, 'null'], format: date-time }
         queued_at: { type: string, format: date-time }
+
+    StyleAndWearRequest:
+      type: object
+      required: [occasion]
+      properties:
+        occasion: { type: string, example: business_meeting }
+        scheduled_for: { type: string, format: date-time }
+        location:
+          type: object
+          properties:
+            lat: { type: number }
+            lon: { type: number }
+        weather_override: { $ref: '#/components/schemas/Weather' }
+        body_photo_id:
+          type: string
+          format: uuid
+          description: Defaults to the primary body photo.
+        model_id: { type: string }
+        exclude_garment_ids:
+          type: array
+          items: { type: string, format: uuid }
+
+    StyleAndWearResponse:
+      type: object
+      properties:
+        outfit: { $ref: '#/components/schemas/Outfit' }
+        render: { $ref: '#/components/schemas/VtonJob' }
+        weather: { $ref: '#/components/schemas/Weather' }
+        alternatives:
+          type: array
+          description: Runners-up, already scored and saved.
+          items: { $ref: '#/components/schemas/Outfit' }
+
+    OccasionCoverage:
+      type: object
+      properties:
+        slug: { type: string }
+        display_name: { type: string }
+        wearable: { type: boolean }
+        missing_roles:
+          type: array
+          items: { type: string }
+          description: Which slot blocks this occasion, when it is blocked.
+        option_count: { type: integer }
+
+    ColorOpportunity:
+      type: object
+      description: A colour the wardrobe barely has, ranked by what it would unlock.
+      properties:
+        family: { type: string, example: camel }
+        pairs_with:
+          type: integer
+          description: How many owned pieces it would pair well with.
+        coverage: { type: number, minimum: 0, maximum: 1 }
+        is_neutral: { type: boolean }
+
+    Suggestion:
+      type: object
+      properties:
+        role: { $ref: '#/components/schemas/GarmentRole' }
+        color_family: { type: [string, 'null'] }
+        reason: { type: string }
+        blocking:
+          type: boolean
+          description: >
+            True when the wardrobe genuinely cannot dress an occasion without
+            it. Blocking gaps are reported whatever the tone; anything else is
+            optional and only appears for a wardrobe that welcomes suggestions.
+        price_low: { type: [number, 'null'] }
+        price_high: { type: [number, 'null'] }
+        currency: { type: string }
+
+    WardrobeAdvice:
+      type: object
+      properties:
+        headline: { type: string }
+        tone:
+          type: string
+          enum: [use_what_you_have, essentials_only, suggest_gaps, suggest_upgrades]
+        coverage:
+          type: array
+          items: { $ref: '#/components/schemas/OccasionCoverage' }
+        color_opportunities:
+          type: array
+          items: { $ref: '#/components/schemas/ColorOpportunity' }
+        suggestions:
+          type: array
+          items: { $ref: '#/components/schemas/Suggestion' }
+        basis:
+          type: string
+          description: >
+            What the advice was based on, phrased as evidence about the
+            wardrobe ("what you paid for 7 pieces") — never as a description of
+            the person.
+          example: what you paid for 7 pieces
 
     DeletionRequest:
       type: object
