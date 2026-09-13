@@ -118,9 +118,25 @@ class GarmentImage extends StatelessWidget {
   Widget build(BuildContext context) {
     final url = garment.cutoutUrl ?? garment.imageUrl;
     if (url == null) {
-      return ColoredBox(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        child: const Center(child: Icon(Icons.checkroom, size: 28)),
+      // No photo: draw the garment's own dominant colour rather than a grey
+      // box, so the grid still reads as a wardrobe at a glance.
+      final family = garment.primaryColor?.family;
+      final swatch = family == null
+          ? Theme.of(context).colorScheme.surfaceContainerHighest
+          : AppTheme.familySwatch(family);
+      final light = ThemeData.estimateBrightnessForColor(swatch) == Brightness.light;
+      return Container(
+        decoration: BoxDecoration(
+          color: swatch,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        ),
+        alignment: Alignment.center,
+        child: Icon(
+          _roleIcon(garment.role),
+          size: 26,
+          color: (light ? Colors.black : Colors.white).withValues(alpha: 0.42),
+        ),
       );
     }
     return CachedNetworkImage(
@@ -134,6 +150,18 @@ class GarmentImage extends StatelessWidget {
     );
   }
 }
+
+IconData _roleIcon(String role) => switch (role) {
+      'base_top' || 'mid_layer' => Icons.dry_cleaning_outlined,
+      'outerwear' => Icons.checkroom,
+      'bottom' => Icons.airline_seat_legroom_normal_outlined,
+      'full_body' => Icons.woman_outlined,
+      'footwear' => Icons.ice_skating_outlined,
+      'bag' => Icons.shopping_bag_outlined,
+      'headwear' => Icons.emoji_people_outlined,
+      'belt' => Icons.remove_outlined,
+      _ => Icons.style_outlined,
+    };
 
 class ColorDot extends StatelessWidget {
   const ColorDot({super.key, required this.family, this.size = 12});

@@ -14,8 +14,8 @@ PostgreSQL database and a real Flutter toolchain, not just written.**
 | 4 | Virtual try-on pipeline | ✅ |
 | 5 | Flutter app (iOS + Android) | ✅ 31 Dart tests, `flutter analyze` clean |
 
-**182 tests pass in total:** 20 SQL assertions, 131 Python tests against a real
-database, 31 Dart tests. `ruff` and `flutter analyze` both clean.
+**203 tests pass in total:** 20 SQL assertions, 135 Python tests against a real
+database, 48 Dart tests. `ruff` and `flutter analyze` both clean.
 
 | Artefact | Status |
 |---|---|
@@ -29,7 +29,7 @@ database, 31 Dart tests. `ruff` and `flutter analyze` both clean.
 | `db/seeds/0001…0006` | 71 categories · 15 occasions · 29 colour families · 34 pairing rules · 39 palette affinities · 6 try-on models · detector vocabularies |
 | `db/tests/smoke_test.sql` | **20/20 assertions passing** |
 | `api/app/`, `workers/` | FastAPI service, vision worker, styling engine, try-on worker — **131 tests** |
-| `mobile/` | Flutter app — **31 tests**, analyze clean |
+| `mobile/` | Flutter app — **48 tests**, analyze clean |
 
 ## Verify it yourself
 
@@ -85,6 +85,20 @@ make worker-vton   # try-on worker  (GPU queue)
 cd mobile && flutter run --dart-define=SS_API_BASE_URL=http://10.0.2.2:8000
 ```
 
+### The app with no backend at all
+
+```bash
+cd mobile
+flutter run --dart-define=SS_DEMO=true          # phone, emulator or desktop
+flutter build web --dart-define=SS_DEMO=true    # a browser build
+```
+
+Demo mode swaps only the transport: the screens, state machines and models are
+the shipping ones, and the scores and rationales are copied from a real run of
+the styling engine rather than invented. A banner says so on every screen, so a
+sample closet is never mistaken for the user's own. Useful for design reviews,
+store screenshots, and showing the app before the backend is up.
+
 ## Layout
 
 ```
@@ -102,7 +116,7 @@ workers/vision/ pipeline · colour · phash · labels · segmenters · runner
 workers/styling/ engine · scoring · combiner · rationale · embeddings · weather · geo
 workers/vton/   pipeline · preprocess · providers (composite/diffusion/hosted) · qa · runner
 mobile/         Flutter app: core · models · data · providers · screens · widgets
-tests/          131 python tests   ·   mobile/test/  31 dart tests
+tests/          135 python tests   ·   mobile/test/  48 dart tests
 infra/          Dockerfile.api · Dockerfile.worker (cpu + gpu stages)
 docs/           01 architecture · 02 data model · 03 API · 04 phase 2 · 05 phases 3-5
 scripts/        db_bootstrap.sh · demo_journey.py

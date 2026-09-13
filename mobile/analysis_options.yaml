@@ -12,3 +12,4 @@ analyzer:
     invalid_annotation_target: ignore
   exclude:
     - build/**
+    - web/**
