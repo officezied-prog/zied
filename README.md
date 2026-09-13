@@ -14,7 +14,7 @@ PostgreSQL database and a real Flutter toolchain, not just written.**
 | 4 | Virtual try-on pipeline | ✅ |
 | 5 | Flutter app (iOS + Android) | ✅ 31 Dart tests, `flutter analyze` clean |
 
-**203 tests pass in total:** 20 SQL assertions, 135 Python tests against a real
+**201 tests pass in total:** 20 SQL assertions, 133 Python tests against a real
 database, 48 Dart tests. `ruff` and `flutter analyze` both clean.
 
 | Artefact | Status |
@@ -28,7 +28,7 @@ database, 48 Dart tests. `ruff` and `flutter analyze` both clean.
 | `db/migrations/0001…0016` | **Apply clean** on PostgreSQL 16.13 + pgvector 0.6.0 |
 | `db/seeds/0001…0006` | 71 categories · 15 occasions · 29 colour families · 34 pairing rules · 39 palette affinities · 6 try-on models · detector vocabularies |
 | `db/tests/smoke_test.sql` | **20/20 assertions passing** |
-| `api/app/`, `workers/` | FastAPI service, vision worker, styling engine, try-on worker — **131 tests** |
+| `api/app/`, `workers/` | FastAPI service, vision worker, styling engine, try-on worker — **133 tests** |
 | `mobile/` | Flutter app — **48 tests**, analyze clean |
 
 ## Verify it yourself
@@ -36,7 +36,7 @@ database, 48 Dart tests. `ruff` and `flutter analyze` both clean.
 ```bash
 createdb smartstylist
 make venv
-make verify   # migrations + seeds + SQL smoke test, 131 python tests, ruff,
+make verify   # migrations + seeds + SQL smoke test, 133 python tests, ruff,
               # OpenAPI validation, flutter analyze, 31 dart tests
 ```
 
@@ -116,7 +116,7 @@ workers/vision/ pipeline · colour · phash · labels · segmenters · runner
 workers/styling/ engine · scoring · combiner · rationale · embeddings · weather · geo
 workers/vton/   pipeline · preprocess · providers (composite/diffusion/hosted) · qa · runner
 mobile/         Flutter app: core · models · data · providers · screens · widgets
-tests/          135 python tests   ·   mobile/test/  48 dart tests
+tests/          133 python tests   ·   mobile/test/  48 dart tests
 infra/          Dockerfile.api · Dockerfile.worker (cpu + gpu stages)
 docs/           01 architecture · 02 data model · 03 API · 04 phase 2 · 05 phases 3-5
 scripts/        db_bootstrap.sh · demo_journey.py
