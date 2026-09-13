@@ -1,0 +1,15 @@
+# API + worker runtime
+fastapi==0.141.1
+uvicorn[standard]==0.40.0
+sqlalchemy[asyncio]==2.0.52
+asyncpg==0.31.0
+pydantic-settings==2.13.1
+pyjwt[crypto]==2.14.0
+python-multipart==0.0.20
+pillow==12.3.0
+numpy==2.4.6
+
+# Optional, per deployment:
+#   boto3            — only when SS_STORAGE_BACKEND=s3
+#   ultralytics      — only in the GPU/vision worker image (SS_SEGMENTER=yolo)
+#   torch            — pulled in by ultralytics; pin to the CUDA build you deploy
