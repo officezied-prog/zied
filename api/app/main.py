@@ -19,6 +19,7 @@ from .routers import (
     ingest,
     me,
     outfits,
+    shop,
     storage_dev,
     taxonomy,
     uploads,
@@ -57,7 +58,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_error_handlers(app)
 
     for module in (health, me, taxonomy, uploads, ingest, detections, garments,
-                   wardrobe, outfits, weather, body_photos, vton):
+                   wardrobe, outfits, weather, body_photos, vton, shop):
         app.include_router(module.router)
     if s.storage_backend == "local":
         app.include_router(storage_dev.router)

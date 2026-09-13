@@ -5,6 +5,7 @@ import 'core/config.dart';
 import 'core/theme.dart';
 import 'screens/event_selector_screen.dart';
 import 'screens/profile_screen.dart';
+import 'screens/shop_screen.dart';
 import 'screens/tryon_screen.dart';
 import 'screens/wardrobe_screen.dart';
 
@@ -36,6 +37,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   static const _tabs = <Widget>[
     WardrobeScreen(),
     EventSelectorScreen(),
+    ShopScreen(),
     TryOnScreen(),
     ProfileScreen(),
   ];
@@ -62,6 +64,11 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             icon: Icon(Icons.auto_awesome_outlined),
             selectedIcon: Icon(Icons.auto_awesome),
             label: 'Style',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.storefront_outlined),
+            selectedIcon: Icon(Icons.storefront),
+            label: 'Shop',
           ),
           NavigationDestination(
             icon: Icon(Icons.person_outline),

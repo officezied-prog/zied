@@ -70,6 +70,58 @@ class VisionPipeline:
             self._families = [dict(r) for r in rows]
         return self._families
 
+    # ── shop mode: identify without keeping ─────────────────────────────────
+    async def identify_one(self, conn: AsyncConnection, *, image_bytes: bytes
+                           ) -> dict | None:
+        """Read one garment out of a photo, and write nothing.
+
+        Shop mode photographs something the user does not own. Running the full
+        ingest would file it in their wardrobe, which is exactly wrong: they are
+        deciding whether to buy it. This does the same detection, mapping and
+        colour work and hands the result back.
+        """
+        image = load_normalised(image_bytes, max_side=self.settings.max_image_side)
+        segments = self.segmenter.segment(image.rgb)
+        if not segments:
+            return None
+
+        # The subject of a rack photo is the largest confident thing in it.
+        segment = max(segments, key=lambda s: s.area_ratio * s.confidence)
+        mapper = await self._mapper_for(conn)
+        families = await self._families_for(conn)
+
+        match = mapper.map(segment.label)
+        palette = extract_palette(
+            image.rgb, segment.mask,
+            max_colors=self.settings.max_colors_per_garment,
+            seed=abs(hash(segment.label)) % 10_000,
+        )
+        if not palette:
+            return None
+        colors = [self._describe_color(hex_value, ratio, lab, families)
+                  for hex_value, ratio, lab in palette]
+
+        defaults = None
+        if match is not None:
+            defaults = await fetch_one(conn, """
+                select slug, display_name, default_role::text as role,
+                       default_formality, default_warmth
+                  from public.garment_categories where id = :id
+            """, {"id": match.category.id})
+
+        return {
+            "category_id": match.category.id if match else None,
+            "category": defaults["slug"] if defaults else segment.label,
+            "role": defaults["role"] if defaults else "base_top",
+            "formality": defaults["default_formality"] if defaults else 3,
+            "pattern": segment.attributes.get("pattern", "solid"),
+            "label": segment.label,
+            "confidence": round(min(segment.confidence,
+                                    match.score if match else segment.confidence), 3),
+            "colors": colors,
+            "area_ratio": round(segment.area_ratio, 4),
+        }
+
     # ── main entry point ────────────────────────────────────────────────────
     async def process_media(
         self, conn: AsyncConnection, *, media_id: UUID, user_id: UUID,

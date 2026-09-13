@@ -41,6 +41,7 @@ tags:
   - name: Taxonomy
   - name: Styling
   - name: Virtual try-on
+  - name: Shop
   - name: Webhooks
   - name: Ops
 
@@ -978,6 +979,103 @@ paths:
       responses:
         '204': { description: Cancelled or deleted }
 
+  # ─────────────────────────────── Shop ───────────────────────────────
+  /v1/shop/scan:
+    post:
+      tags: [Shop]
+      operationId: scanGarment
+      summary: Judge something on the rack against the wardrobe at home
+      description: |
+        Photograph a garment in a shop and get an answer before the money is
+        spent. Synchronous on purpose: the user is standing in front of the
+        rail, and a job id to poll is the wrong answer.
+
+        The verdict is arithmetic over clothes already owned — how many pieces
+        it duplicates, how many it would newly pair with, and which occasions
+        the wardrobe cannot dress today that it would unlock. When the answer
+        is negative, `look_for_colors` and `look_for_roles` say what to look
+        for instead, so the trip is not wasted.
+
+        The photograph is stored and identified, but nothing about the shop is:
+        no retailer, no location, no scraped price.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScanRequest' }
+      responses:
+        '200':
+          description: A verdict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScanResult' }
+        '400':
+          description: Nothing recognisable in the photo
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/shop/scans:
+    get:
+      tags: [Shop]
+      operationId: listShopScans
+      summary: Things photographed while shopping and not yet decided on
+      description: |
+        Kept because the decision is rarely made on the spot: people photograph
+        three things, walk around, and come back.
+      parameters:
+        - name: open_only
+          in: query
+          schema: { type: boolean, default: true }
+          description: Hide scans already bought or dismissed.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ShopScan' }
+
+  /v1/shop/scans/{scanId}/bought:
+    parameters:
+      - name: scanId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Shop]
+      operationId: markScanBought
+      summary: They bought it — file it in the wardrobe
+      description: |
+        Creates a garment from the scan, carrying over the category, pattern
+        and measured colour, so the next scan counts it as owned.
+      responses:
+        '201':
+          description: Filed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScanPurchase' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/shop/scans/{scanId}/dismiss:
+    parameters:
+      - name: scanId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Shop]
+      operationId: dismissScan
+      summary: Walked away from it
+      responses:
+        '204': { description: Dismissed }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   # ───────────────────────────── Webhooks ─────────────────────────────
   /webhooks/vton/{provider}:
     parameters:
@@ -1741,6 +1839,111 @@ components:
             wardrobe ("what you paid for 7 pieces") — never as a description of
             the person.
           example: what you paid for 7 pieces
+
+    ScanVerdict:
+      type: string
+      enum: [fills_a_gap, adds_variety, have_similar, hard_to_wear]
+      description: |
+        `fills_a_gap` unlocks an occasion the wardrobe cannot dress today;
+        `adds_variety` works with much of what is owned; `have_similar` is
+        close to something already there; `hard_to_wear` pairs with very
+        little of it.
+
+    ScanRequest:
+      type: object
+      required: [media_id]
+      properties:
+        media_id: { type: string, format: uuid }
+        role:
+          type: [string, 'null']
+          description: >
+            Override the detected role. Worth sending when the camera reads a
+            garment wrong on a hanger.
+
+    OwnedMatch:
+      type: object
+      description: A piece already owned that is close enough to be the same buy.
+      properties:
+        garment_id: { type: string, format: uuid }
+        name: { type: string }
+        hex: { type: string, example: '#1B2A4A' }
+        delta_e:
+          type: number
+          description: CIEDE2000 distance. Under 8 reads as the same colour.
+
+    WearWith:
+      type: object
+      description: A piece already at home that the scanned garment would go with.
+      properties:
+        garment_id: { type: string, format: uuid }
+        name: { type: string }
+        role: { $ref: '#/components/schemas/GarmentRole' }
+        hex: { type: string }
+        score: { type: number, minimum: 0, maximum: 1 }
+
+    ScanResult:
+      type: object
+      properties:
+        scan_id: { type: string, format: uuid }
+        category: { type: string }
+        role: { $ref: '#/components/schemas/GarmentRole' }
+        pattern: { type: string }
+        primary_hex: { type: string }
+        color_family: { type: string }
+        confidence: { type: number }
+        verdict: { $ref: '#/components/schemas/ScanVerdict' }
+        headline: { type: string, example: You have this covered. }
+        detail: { type: string }
+        new_pairings:
+          type: integer
+          description: Owned pieces in complementary roles this would work with.
+        total_complements:
+          type: integer
+          description: Owned pieces in complementary roles, whether they work or not.
+        pairing_share: { type: number, minimum: 0, maximum: 1 }
+        duplicates:
+          type: array
+          items: { $ref: '#/components/schemas/OwnedMatch' }
+        unlocked_occasions:
+          type: array
+          items: { type: string }
+        wear_with:
+          type: array
+          description: >
+            The outfit this would make out of clothes already owned — the best
+            of each role, in the order they are worn.
+          items: { $ref: '#/components/schemas/WearWith' }
+        look_for_colors:
+          type: array
+          description: Filled when the verdict is negative — what to look for instead.
+          items: { $ref: '#/components/schemas/ColorOpportunity' }
+        look_for_roles:
+          type: array
+          items: { type: string }
+
+    ShopScan:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        category: { type: string }
+        role: { $ref: '#/components/schemas/GarmentRole' }
+        color_family: { type: string }
+        primary_hex: { type: string }
+        verdict: { $ref: '#/components/schemas/ScanVerdict' }
+        headline: { type: string }
+        new_pairings: { type: integer }
+        duplicate_count: { type: integer }
+        unlocked_occasions:
+          type: array
+          items: { type: string }
+        photo_url: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+
+    ScanPurchase:
+      type: object
+      properties:
+        scan_id: { type: string, format: uuid }
+        garment_id: { type: string, format: uuid }
 
     DeletionRequest:
       type: object

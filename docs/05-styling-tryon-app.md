@@ -114,6 +114,7 @@ no quota. `consume_quota()` is atomic, so parallel taps cannot overshoot.
 | Occasion | The 15 seeded occasions as a grid; the whole engine hangs off this one question |
 | Results | Ranked looks with the assembled rationale and the top two reasons; like/dislike inline |
 | Look detail | Pieces head-to-toe, the full score breakdown as bars, per-slot swap, "see it on me" |
+| Shop | Judge something on a rail against the wardrobe at home, before buying it |
 | Try on | Consent → body photo → render, with layer-by-layer progress and queue position |
 | Profile | Wardrobe stats and wardrobe gaps; every consent as its own switch |
 
@@ -135,7 +136,48 @@ no quota. `consume_quota()` is atomic, so parallel taps cannot overshoot.
 
 ---
 
-## Two defects these phases found
+## Phase 6 — shop mode
+
+`POST /v1/shop/scan`, `workers/styling/shopping.py`, migration `0019`.
+
+The question in a shop is never "is this nice". It is "will I wear it", and the
+only honest way to answer is to count three things against clothes already
+owned:
+
+| | |
+|---|---|
+| **duplicates** | same category, and a colour within CIEDE2000 8 — the point where a person stops calling two garments the same colour |
+| **new pairings** | pieces in complementary roles this would go with, scored by `public.score_color_pair` |
+| **unlocked** | occasions the wardrobe cannot dress today and could with this, taken from `wardrobe_coverage` rather than simulated |
+
+Saturation is measured **per role**, not across the wardrobe:
+`wardrobe_saturation(user, role, family)` exists because owning a navy blazer
+says nothing about whether to buy navy trousers.
+
+`wear_with` returns the outfit the piece would join — the best of each role, in
+the order they are worn — because a shopper wants the other half of the answer.
+When the verdict is negative, `look_for_colors` and `look_for_roles` name what
+*is* missing, so the trip is not wasted.
+
+**Decisions worth defending**
+
+* **Synchronous.** Someone is standing in front of the rail holding the
+  garment. A job id to poll is the wrong answer.
+* **The scan files nothing.** `identify_one()` runs the same detection, mapping
+  and colour extraction as ingest and writes nothing — they have not bought it.
+  `POST /v1/shop/scans/{id}/bought` is what turns a scan into a garment.
+* **Nothing about the shop is recorded.** No retailer, no geolocation, no
+  scraped price, no link. The feature answers "does this go with what I own";
+  collecting where somebody shops would serve a different purpose than the one
+  asked for, so there is nowhere in the schema to put it.
+* **The demo computes rather than recites.** `mobile/lib/core/color_math.dart`
+  ports CIELAB and CIEDE2000 and is pinned to the same Sharma reference pairs
+  as the Python and SQL implementations, so the verdicts a browser shows with
+  no server attached are the ones the engine would give.
+
+---
+
+## Three defects these phases found
 
 **The temperature filter made cold weather unwearable.** Candidate retrieval
 filtered each garment into a two-sided warmth *band*, which excluded every light
@@ -153,6 +195,15 @@ deleting the source photo, or withdrawing consent, must erase them too.
 Migration **0016** makes the erasure explicit and complete, and
 `v_purgeable_media` tells the retention worker what bytes to delete.
 
+**"Safe with anything" was reading as "goes with nothing".** The colour
+catalogue scores a neutral anchor at exactly 0.65 — its way of saying a pairing
+is fine — and shop mode counted a pairing only above 0.70. Read against a real
+wardrobe of navy, grey and camel, an olive field jacket came back as *works
+with 0 of 11 pieces you own — this would be hard to wear*, which would talk a
+user out of a perfectly wearable coat. The bar for **wearable** now sits at the
+anchor score; a separate, higher bar decides what is good enough to name as an
+outfit.
+
 Two more were caught before they shipped: writing to the shared weather cache
 needed a validating `SECURITY DEFINER` writer (migration **0012**) so one client
 could not poison a whole map cell, and the 422 for an unbuildable outfit was
@@ -167,16 +218,21 @@ could not poison a whole map cell, and the 422 for an unbuildable outfit was
 | `db/tests/smoke_test.sql` | 20 | consent gate, RLS isolation, triggers, quotas, colour maths |
 | `test_color.py` | 13 | CIEDE2000 vs. the published reference set; Python ↔ SQL agreement |
 | `test_phash.py` | 7 | scale, brightness, contrast and quantisation invariance |
-| `test_labels.py` | 22 | DeepFashion2 / ModaNet / natural-language label mapping |
+| `test_labels.py` | 21 | DeepFashion2 / ModaNet / natural-language label mapping |
 | `test_ingest_flow.py` | 16 | upload → wardrobe, three dedupe layers, review queue, tenant isolation |
 | `test_uploads_and_consent.py` | 11 | signed-URL tampering and expiry, append-only consent ledger |
 | `test_worker.py` | 6 | concurrent claiming, crash recovery, failure isolation |
 | `test_styling.py` | 15 | scoring terms, Python ↔ SQL colour pairing, weather cache and its validator |
 | `test_recommend_api.py` | 20 | occasion/weather/laundry filtering, diversity, feedback loop, swap, 422 diagnostics |
-| `test_vton.py` | 18 | consent gate, real render with face preserved, cache, quota, licensing, erasure |
-| `test_contract.py` | 4 | the live routes never drift from the published OpenAPI contract |
-| `mobile/test/*` | 31 | model parsing, typed errors, polling, six widget tests over stubbed transport |
-| **Total** | **182** | |
+| `test_vton.py` | 22 | consent gate, real render with face preserved, cache, quota, licensing, erasure |
+| `test_placement.py` | 12 | per-role placement: a full-length gown suppresses the separates, a coat sits wider, a bag hangs at one hip |
+| `test_advice.py` | 21 | coverage by body region, colour opportunities, budget-band inference and the three guarantees on it |
+| `test_shop.py` | 22 | duplicate detection, saturation per role, unlocked occasions, the outfit it would join, what to look for instead |
+| `test_contract.py` | 6 | the live routes never drift from the published OpenAPI contract |
+| `mobile/test/color_math_test.dart` | 7 | the Dart CIELAB/CIEDE2000 port, pinned to the same reference pairs as Python and SQL |
+| `mobile/test/demo_shop_test.dart` | 19 | the on-device shop verdict: duplicates, saturation, outfit assembly, thresholds |
+| `mobile/test/*` (rest) | 48 | model parsing, typed errors, polling, demo repositories, six widget tests |
+| **Total** | **286** | |
 
 ---
 

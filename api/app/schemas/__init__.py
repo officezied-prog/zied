@@ -444,3 +444,73 @@ class StyleAndWearResponse(Model):
     render: VtonJob
     weather: Weather | None = None
     alternatives: list[Outfit] = Field(default_factory=list)
+
+
+# ── shop mode (Phase 7) ─────────────────────────────────────────────────────
+Verdict = Literal["fills_a_gap", "adds_variety", "have_similar", "hard_to_wear"]
+
+
+class ScanRequest(Model):
+    media_id: UUID
+    #: Override the detected role when the camera reads it wrong on a hanger.
+    role: str | None = None
+
+
+class OwnedMatch(Model):
+    """A piece already in the wardrobe that is close enough to be the same buy."""
+    garment_id: UUID
+    name: str
+    hex: str
+    delta_e: float
+
+
+class WearWith(Model):
+    """A piece already at home that this would go with."""
+    garment_id: UUID
+    name: str
+    role: str
+    hex: str
+    score: float
+
+
+class ScanResult(Model):
+    scan_id: UUID
+    category: str
+    role: str
+    pattern: str
+    primary_hex: str
+    color_family: str
+    confidence: float
+    verdict: Verdict
+    headline: str
+    detail: str
+    new_pairings: int
+    total_complements: int
+    pairing_share: float
+    duplicates: list[OwnedMatch] = Field(default_factory=list)
+    unlocked_occasions: list[str] = Field(default_factory=list)
+    #: The outfit this would make out of clothes already owned.
+    wear_with: list[WearWith] = Field(default_factory=list)
+    #: Filled when the verdict is negative: what to look for instead.
+    look_for_colors: list[ColorOpportunity] = Field(default_factory=list)
+    look_for_roles: list[str] = Field(default_factory=list)
+
+
+class ShopScan(Model):
+    id: UUID
+    category: str
+    role: str
+    color_family: str
+    primary_hex: str
+    verdict: Verdict
+    headline: str
+    new_pairings: int
+    duplicate_count: int
+    unlocked_occasions: list[str] = Field(default_factory=list)
+    photo_url: str | None = None
+    created_at: datetime
+
+
+class ScanPurchase(Model):
+    scan_id: UUID
+    garment_id: UUID

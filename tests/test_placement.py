@@ -130,7 +130,7 @@ def test_a_full_outfit_lands_on_the_right_parts_of_the_body(zones):
     assert result.metadata["covered"] == []
 
     def near(sample, target, tolerance=42):
-        return all(abs(int(a) - int(b)) < tolerance for a, b in zip(sample, target))
+        return all(abs(int(a) - int(b)) < tolerance for a, b in zip(sample, target, strict=True))
 
     torso = target_box(zones, "base_top", W, H)
     legs = target_box(zones, "bottom", W, H)
@@ -162,7 +162,7 @@ def test_a_jilbab_replaces_the_separates_in_the_render(zones):
     for fraction in (0.2, 0.55, 0.85):
         y = gown[1] + int(gown[3] * fraction)
         pixel = out[y, W // 2]
-        assert all(abs(int(a) - int(b)) < 48 for a, b in zip(pixel, green)), \
+        assert all(abs(int(a) - int(b)) < 48 for a, b in zip(pixel, green, strict=True)), \
             f"the gown should cover the body at {int(fraction * 100)}% of its length"
 
 
