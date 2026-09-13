@@ -113,3 +113,39 @@ def test_no_stale_entries_in_the_known_list(contract, implemented):
     known = {(m, _normalise(p)) for m, p in KNOWN_UNIMPLEMENTED}
     shipped = sorted(known & implemented)
     assert not shipped, f"these are implemented now — remove them from the list: {shipped}"
+
+
+def test_docs_page_offers_an_authorize_button(app):
+    """The interactive docs must have a global Authorize control.
+
+    Without a declared security scheme, Swagger UI renders no Authorize button
+    and a reader has to paste the auth header into every endpoint by hand —
+    which is exactly what happened before this was added.
+    """
+    schema = app.openapi()
+    schemes = schema["components"]["securitySchemes"]
+    assert "Bearer token" in schemes
+    assert schemes["Bearer token"]["type"] == "http"
+    assert schemes["Bearer token"]["scheme"] == "bearer"
+
+    debug = schemes["Debug user (local only)"]
+    assert debug["type"] == "apiKey"
+    assert debug["in"] == "header"
+    assert debug["name"] == "X-Debug-User"
+    assert "never be enabled in a" in debug["description"], (
+        "the debug scheme must warn that it bypasses signature verification"
+    )
+
+
+def test_protected_routes_declare_their_security(app):
+    """Every authenticated route must advertise how to authenticate to it."""
+    schema = app.openapi()
+    public = {"/healthz", "/readyz"}
+    missing = [
+        f"{method.upper()} {path}"
+        for path, item in schema["paths"].items()
+        if path not in public and not path.startswith("/_storage")
+        for method, op in item.items()
+        if method in ("get", "post", "put", "patch", "delete") and not op.get("security")
+    ]
+    assert not missing, f"routes with no declared security scheme: {missing}"
