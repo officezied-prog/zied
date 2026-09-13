@@ -1,0 +1,33 @@
+# Vision worker. Build with SEGMENTER=stub for a small CPU image, or extend the
+# `gpu` stage for the real detector. Model weights are baked in, never fetched at
+# runtime, so a cold start cannot be blocked on a download.
+FROM python:3.12-slim AS cpu
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends libpq5 libgl1 libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY api ./api
+COPY workers ./workers
+
+RUN useradd -r -u 10001 app && chown -R app /app
+USER app
+CMD ["python", "-m", "workers.vision.runner"]
+
+# ── GPU variant ─────────────────────────────────────────────────────────────
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS gpu
+ENV PYTHONUNBUFFERED=1 SS_SEGMENTER=yolo
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3.12 python3-pip libgl1 libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt ultralytics
+COPY api ./api
+COPY workers ./workers
+COPY models/ /app/models/
+CMD ["python3", "-m", "workers.vision.runner"]

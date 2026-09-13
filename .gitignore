@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+/models/
+mobile/build/
+mobile/.dart_tool/
+mobile/.flutter-plugins*

@@ -1,0 +1,1589 @@
+openapi: 3.1.0
+info:
+  title: SmartStylist API
+  version: 1.0.0-phase1
+  summary: AI smart wardrobe, styling engine and virtual try-on
+  description: |
+    Contract that the Flutter client, the FastAPI service and the workers all
+    build against.
+
+    ## Conventions
+    * **Auth** — `Authorization: Bearer <JWT>` (RS256). The `sub` claim is the
+      user id and is what PostgreSQL row-level security keys on.
+    * **Async work** — anything model-bound returns `202 Accepted` with a job
+      resource and `poll_after_ms`. Clients poll `GET /{job}` or wait for a push.
+    * **Idempotency** — every job-creating `POST` accepts an `Idempotency-Key`
+      header; replaying a key returns the original job instead of a second one.
+    * **Pagination** — opaque cursors: `?limit=&cursor=`, response carries
+      `next_cursor` (null at the end). No offsets.
+    * **Errors** — RFC 9457 `application/problem+json`.
+    * **Uploads** — the API never proxies image bytes. Clients presign, PUT
+      directly to object storage, then confirm.
+    * **Rate limits** — `RateLimit-Limit` / `RateLimit-Remaining` /
+      `RateLimit-Reset` on every response; `429` carries `Retry-After`.
+servers:
+  - url: https://api.smartstylist.app
+    description: Production
+  - url: https://staging-api.smartstylist.app
+    description: Staging
+  - url: http://localhost:8000
+    description: Local
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Account
+  - name: Consent & Biometrics
+  - name: Uploads & Media
+  - name: Social ingestion
+  - name: Wardrobe
+  - name: Taxonomy
+  - name: Styling
+  - name: Virtual try-on
+  - name: Webhooks
+  - name: Ops
+
+paths:
+  # ───────────────────────────── Account ─────────────────────────────
+  /v1/me:
+    get:
+      tags: [Account]
+      operationId: getMe
+      summary: Current user profile
+      responses:
+        '200': { $ref: '#/components/responses/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      tags: [Account]
+      operationId: updateMe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserUpdate' }
+      responses:
+        '200': { $ref: '#/components/responses/User' }
+    delete:
+      tags: [Account]
+      operationId: deleteAccount
+      summary: Request account erasure (GDPR Art. 17)
+      description: Soft-deletes immediately; a maintenance job purges storage and rows after the grace window.
+      responses:
+        '202': { $ref: '#/components/responses/DeletionRequest' }
+
+  /v1/me/devices:
+    post:
+      tags: [Account]
+      operationId: registerDevice
+      summary: Register a push token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceRegistration' }
+      responses:
+        '201': { description: Registered }
+
+  /v1/me/style-preferences:
+    get:
+      tags: [Account]
+      operationId: getStylePreferences
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StylePreferences' }
+          description: OK
+    put:
+      tags: [Account]
+      operationId: putStylePreferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StylePreferences' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StylePreferences' }
+
+  # ─────────────────────── Consent & biometrics ───────────────────────
+  /v1/me/consents:
+    get:
+      tags: [Consent & Biometrics]
+      operationId: listConsents
+      summary: Current consent state per purpose
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ConsentState' }
+    post:
+      tags: [Consent & Biometrics]
+      operationId: recordConsent
+      summary: Grant or revoke a consent (append-only)
+      description: |
+        Revoking `biometric_processing` clears the biometric profile.
+        Revoking `vton_processing` deletes body reference photos and cancels
+        queued renders.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConsentDecision' }
+      responses:
+        '201':
+          description: Recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsentState' }
+
+  /v1/me/biometrics:
+    get:
+      tags: [Consent & Biometrics]
+      operationId: getBiometrics
+      summary: Read the biometric profile (audited)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BiometricProfile' }
+        '403': { $ref: '#/components/responses/ConsentRequired' }
+    put:
+      tags: [Consent & Biometrics]
+      operationId: putBiometrics
+      summary: Create or patch the biometric profile (audited)
+      description: Requires an active `biometric_processing` consent; partial patches are merged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BiometricProfile' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BiometricProfile' }
+        '403': { $ref: '#/components/responses/ConsentRequired' }
+    delete:
+      tags: [Consent & Biometrics]
+      operationId: deleteBiometrics
+      responses:
+        '204': { description: Deleted }
+
+  /v1/me/body-photos:
+    get:
+      tags: [Consent & Biometrics]
+      operationId: listBodyPhotos
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/BodyPhoto' }
+    post:
+      tags: [Consent & Biometrics]
+      operationId: createBodyPhoto
+      summary: Register an uploaded photo as a try-on body reference
+      description: |
+        Queues pose estimation, human parsing and a quality/moderation check.
+        Requires `vton_processing` consent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [media_id]
+              properties:
+                media_id: { type: string, format: uuid }
+                pose:
+                  type: string
+                  enum: [front_full, front_half, side, back, custom]
+                  default: front_full
+                is_primary: { type: boolean, default: true }
+      responses:
+        '202':
+          description: Accepted, processing
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BodyPhoto' }
+        '403': { $ref: '#/components/responses/ConsentRequired' }
+
+  /v1/me/body-photos/{photoId}:
+    parameters: [{ $ref: '#/components/parameters/photoId' }]
+    delete:
+      tags: [Consent & Biometrics]
+      operationId: deleteBodyPhoto
+      responses:
+        '204': { description: Deleted }
+
+  # ───────────────────────── Uploads & media ─────────────────────────
+  /v1/uploads/presign:
+    post:
+      tags: [Uploads & Media]
+      operationId: presignUploads
+      summary: Reserve media rows and get presigned PUT URLs
+      description: |
+        Send the sha256 of each file. Files already stored for this user are
+        returned with `duplicate_of` set and no upload URL, so a re-import of
+        the same camera roll costs nothing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                purpose:
+                  type: string
+                  enum: [wardrobe, body_reference, avatar]
+                  default: wardrobe
+                files:
+                  type: array
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: [filename, mime_type, byte_size, sha256]
+                    properties:
+                      filename: { type: string }
+                      mime_type: { type: string, enum: [image/jpeg, image/png, image/heic, image/webp] }
+                      byte_size: { type: integer, maximum: 26214400 }
+                      sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+                      width: { type: integer }
+                      height: { type: integer }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uploads:
+                    type: array
+                    items: { $ref: '#/components/schemas/PresignedUpload' }
+
+  /v1/media/{mediaId}:
+    parameters: [{ $ref: '#/components/parameters/mediaId' }]
+    get:
+      tags: [Uploads & Media]
+      operationId: getMedia
+      summary: Media metadata with a short-lived signed URL
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Media' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Uploads & Media]
+      operationId: deleteMedia
+      responses:
+        '204': { description: Deleted }
+
+  # ───────────────────────── Social ingestion ─────────────────────────
+  /v1/social/providers:
+    get:
+      tags: [Social ingestion]
+      operationId: listSocialProviders
+      summary: Providers enabled for this build, with their requirements
+      description: |
+        Availability is per-deployment. Instagram requires a professional
+        (business/creator) account; TikTok returns only the authenticated
+        user's own posts. The app must work with all of them disabled.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SocialProviderInfo' }
+
+  /v1/social/{provider}/authorize:
+    parameters: [{ $ref: '#/components/parameters/provider' }]
+    post:
+      tags: [Social ingestion]
+      operationId: startSocialAuth
+      summary: Begin the OAuth flow
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authorization_url: { type: string, format: uri }
+                  state: { type: string }
+                  expires_at: { type: string, format: date-time }
+
+  /v1/social/{provider}/callback:
+    parameters: [{ $ref: '#/components/parameters/provider' }]
+    get:
+      tags: [Social ingestion]
+      operationId: completeSocialAuth
+      summary: OAuth redirect target
+      security: []
+      parameters:
+        - { name: code, in: query, required: true, schema: { type: string } }
+        - { name: state, in: query, required: true, schema: { type: string } }
+      responses:
+        '302': { description: Redirect back into the app via deep link }
+
+  /v1/social/{provider}:
+    parameters: [{ $ref: '#/components/parameters/provider' }]
+    delete:
+      tags: [Social ingestion]
+      operationId: disconnectSocial
+      summary: Disconnect and delete provider-derived data
+      responses:
+        '202': { $ref: '#/components/responses/DeletionRequest' }
+
+  /v1/social/{provider}/sync:
+    parameters: [{ $ref: '#/components/parameters/provider' }]
+    post:
+      tags: [Social ingestion]
+      operationId: syncSocial
+      summary: Pull the authorised account's own recent posts
+      parameters: [{ $ref: '#/components/parameters/idempotencyKey' }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                limit: { type: integer, default: 50, maximum: 500 }
+                since: { type: string, format: date-time }
+      responses:
+        '202': { $ref: '#/components/responses/IngestJob' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/ingest/jobs:
+    get:
+      tags: [Social ingestion]
+      operationId: listIngestJobs
+      parameters:
+        - { $ref: '#/components/parameters/limit' }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/IngestJob' }
+    post:
+      tags: [Social ingestion]
+      operationId: createIngestJob
+      summary: Run the CV pipeline over uploaded media
+      parameters: [{ $ref: '#/components/parameters/idempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [media_ids]
+              properties:
+                media_ids:
+                  type: array
+                  maxItems: 200
+                  items: { type: string, format: uuid }
+                auto_accept:
+                  type: boolean
+                  default: true
+                  description: Promote high-confidence detections straight to the wardrobe.
+      responses:
+        '202': { $ref: '#/components/responses/IngestJob' }
+
+  /v1/ingest/jobs/{jobId}:
+    parameters: [{ $ref: '#/components/parameters/jobId' }]
+    get:
+      tags: [Social ingestion]
+      operationId: getIngestJob
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IngestJob' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/detections:
+    get:
+      tags: [Social ingestion]
+      operationId: listDetections
+      summary: Detections awaiting review
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, accepted, rejected, duplicate], default: pending } }
+        - { $ref: '#/components/parameters/limit' }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Detection' }
+
+  /v1/detections/{detectionId}/accept:
+    parameters: [{ $ref: '#/components/parameters/detectionId' }]
+    post:
+      tags: [Social ingestion]
+      operationId: acceptDetection
+      summary: Promote a detection to a wardrobe item, with corrections
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GarmentUpdate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Garment' }
+
+  /v1/detections/{detectionId}/reject:
+    parameters: [{ $ref: '#/components/parameters/detectionId' }]
+    post:
+      tags: [Social ingestion]
+      operationId: rejectDetection
+      responses:
+        '204': { description: Rejected }
+
+  # ───────────────────────────── Taxonomy ─────────────────────────────
+  /v1/taxonomy/categories:
+    get:
+      tags: [Taxonomy]
+      operationId: listCategories
+      description: Cacheable reference data; honours `ETag` / `If-None-Match`.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Category' }
+        '304': { description: Not modified }
+
+  /v1/taxonomy/occasions:
+    get:
+      tags: [Taxonomy]
+      operationId: listOccasions
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Occasion' }
+
+  /v1/taxonomy/color-families:
+    get:
+      tags: [Taxonomy]
+      operationId: listColorFamilies
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ColorFamily' }
+
+  # ───────────────────────────── Wardrobe ─────────────────────────────
+  /v1/garments:
+    get:
+      tags: [Wardrobe]
+      operationId: listGarments
+      parameters:
+        - { name: role, in: query, schema: { $ref: '#/components/schemas/GarmentRole' } }
+        - { name: category, in: query, schema: { type: string }, description: Category slug; includes descendants }
+        - { name: color_family, in: query, schema: { type: string } }
+        - { name: season, in: query, schema: { $ref: '#/components/schemas/Season' } }
+        - { name: formality_min, in: query, schema: { type: integer, minimum: 1, maximum: 5 } }
+        - { name: formality_max, in: query, schema: { type: integer, minimum: 1, maximum: 5 } }
+        - { name: available_only, in: query, schema: { type: boolean, default: false }, description: Exclude laundry/archived/unavailable }
+        - { name: q, in: query, schema: { type: string }, description: Fuzzy match on name and brand }
+        - { name: sort, in: query, schema: { type: string, enum: [recent, least_worn, most_worn, color], default: recent } }
+        - { $ref: '#/components/parameters/limit' }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Garment' }
+    post:
+      tags: [Wardrobe]
+      operationId: createGarment
+      summary: Add an item manually
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GarmentCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Garment' }
+
+  /v1/garments/bulk:
+    patch:
+      tags: [Wardrobe]
+      operationId: bulkUpdateGarments
+      summary: Bulk edit (laundry, archive, season retag)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, patch]
+              properties:
+                ids:
+                  type: array
+                  maxItems: 200
+                  items: { type: string, format: uuid }
+                patch: { $ref: '#/components/schemas/GarmentUpdate' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated: { type: integer }
+
+  /v1/garments/{garmentId}:
+    parameters: [{ $ref: '#/components/parameters/garmentId' }]
+    get:
+      tags: [Wardrobe]
+      operationId: getGarment
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Garment' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Wardrobe]
+      operationId: updateGarment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GarmentUpdate' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Garment' }
+    delete:
+      tags: [Wardrobe]
+      operationId: deleteGarment
+      responses:
+        '204': { description: Deleted }
+
+  /v1/garments/{garmentId}/wear:
+    parameters: [{ $ref: '#/components/parameters/garmentId' }]
+    post:
+      tags: [Wardrobe]
+      operationId: logWear
+      summary: Log that the item was worn
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                worn_on: { type: string, format: date }
+                outfit_id: { type: string, format: uuid }
+      responses:
+        '201': { description: Logged }
+
+  /v1/garments/{garmentId}/similar:
+    parameters: [{ $ref: '#/components/parameters/garmentId' }]
+    get:
+      tags: [Wardrobe]
+      operationId: similarGarments
+      summary: Nearest neighbours in embedding space
+      parameters:
+        - { name: scope, in: query, schema: { type: string, enum: [closet, catalogue], default: closet } }
+        - { $ref: '#/components/parameters/limit' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Garment' }
+
+  /v1/wardrobe/stats:
+    get:
+      tags: [Wardrobe]
+      operationId: wardrobeStats
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WardrobeStats' }
+
+  # ────────────────────────────── Styling ──────────────────────────────
+  /v1/outfits/recommend:
+    post:
+      tags: [Styling]
+      operationId: recommendOutfits
+      summary: Rank outfits for an occasion, place and time
+      description: |
+        Synchronous (p95 target < 900 ms). Weather is resolved from `location`
+        unless supplied explicitly. Returned outfits are persisted so they can
+        be saved, tried on and given feedback without re-scoring.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecommendationRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecommendationResponse' }
+        '422': { $ref: '#/components/responses/UnprocessableWardrobe' }
+
+  /v1/outfits:
+    get:
+      tags: [Styling]
+      operationId: listOutfits
+      parameters:
+        - { name: favorite, in: query, schema: { type: boolean } }
+        - { name: occasion, in: query, schema: { type: string } }
+        - { name: planned_from, in: query, schema: { type: string, format: date } }
+        - { name: planned_to, in: query, schema: { type: string, format: date } }
+        - { $ref: '#/components/parameters/limit' }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Outfit' }
+    post:
+      tags: [Styling]
+      operationId: createOutfit
+      summary: Save a user-composed outfit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OutfitCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Outfit' }
+
+  /v1/outfits/{outfitId}:
+    parameters: [{ $ref: '#/components/parameters/outfitId' }]
+    get:
+      tags: [Styling]
+      operationId: getOutfit
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Outfit' }
+    patch:
+      tags: [Styling]
+      operationId: updateOutfit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                is_favorite: { type: boolean }
+                planned_for: { type: string, format: date }
+                is_archived: { type: boolean }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Outfit' }
+    delete:
+      tags: [Styling]
+      operationId: deleteOutfit
+      responses:
+        '204': { description: Deleted }
+
+  /v1/outfits/{outfitId}/feedback:
+    parameters: [{ $ref: '#/components/parameters/outfitId' }]
+    post:
+      tags: [Styling]
+      operationId: submitOutfitFeedback
+      summary: Like / dislike / save / worn — updates the taste vector
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OutfitFeedback' }
+      responses:
+        '201': { description: Recorded }
+
+  /v1/outfits/{outfitId}/swap:
+    parameters: [{ $ref: '#/components/parameters/outfitId' }]
+    post:
+      tags: [Styling]
+      operationId: swapOutfitItem
+      summary: Ask for alternatives for one slot, keeping the rest fixed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { $ref: '#/components/schemas/GarmentRole' }
+                exclude_garment_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ScoredGarment' }
+
+  /v1/weather:
+    get:
+      tags: [Styling]
+      operationId: getWeather
+      parameters:
+        - { name: lat, in: query, required: true, schema: { type: number, format: double } }
+        - { name: lon, in: query, required: true, schema: { type: number, format: double } }
+        - { name: at, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Weather' }
+
+  # ────────────────────────── Virtual try-on ──────────────────────────
+  /v1/vton/models:
+    get:
+      tags: [Virtual try-on]
+      operationId: listVtonModels
+      summary: Try-on engines available to this user's tier
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/VtonModel' }
+
+  /v1/vton/jobs:
+    get:
+      tags: [Virtual try-on]
+      operationId: listVtonJobs
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/JobStatus' } }
+        - { $ref: '#/components/parameters/limit' }
+        - { $ref: '#/components/parameters/cursor' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/VtonJob' }
+    post:
+      tags: [Virtual try-on]
+      operationId: createVtonJob
+      summary: Render an outfit (or single garment) on the user's body photo
+      description: |
+        Returns `200` immediately when an identical render is already cached
+        (same body photo, garment set, model, params and seed), otherwise `202`
+        with a queued job. Consumes one `vton_renders` quota unit.
+      parameters: [{ $ref: '#/components/parameters/idempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VtonJobCreate' }
+      responses:
+        '200':
+          description: Cache hit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VtonJob' }
+        '202':
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VtonJob' }
+        '402': { $ref: '#/components/responses/QuotaExceeded' }
+        '403': { $ref: '#/components/responses/ConsentRequired' }
+
+  /v1/vton/jobs/{jobId}:
+    parameters: [{ $ref: '#/components/parameters/jobId' }]
+    get:
+      tags: [Virtual try-on]
+      operationId: getVtonJob
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VtonJob' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Virtual try-on]
+      operationId: cancelVtonJob
+      summary: Cancel a queued job or delete a finished render
+      responses:
+        '204': { description: Cancelled or deleted }
+
+  # ───────────────────────────── Webhooks ─────────────────────────────
+  /webhooks/vton/{provider}:
+    parameters:
+      - { name: provider, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [Webhooks]
+      operationId: vtonProviderCallback
+      summary: Hosted VTON completion callback
+      security: []
+      description: HMAC-verified; recorded in `webhook_events` for idempotency.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '204': { description: Accepted }
+
+  /webhooks/meta/deauthorize:
+    post:
+      tags: [Webhooks]
+      operationId: metaDeauthorize
+      summary: Meta deauthorize callback
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                signed_request: { type: string }
+      responses:
+        '200': { description: Acknowledged }
+
+  /webhooks/meta/data-deletion:
+    post:
+      tags: [Webhooks]
+      operationId: metaDataDeletion
+      summary: Meta data-deletion request callback
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                signed_request: { type: string }
+      responses:
+        '200':
+          description: Confirmation URL and code, as the platform requires
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string, format: uri }
+                  confirmation_code: { type: string }
+
+  # ─────────────────────────────── Ops ───────────────────────────────
+  /healthz:
+    get:
+      tags: [Ops]
+      operationId: health
+      security: []
+      responses:
+        '200': { description: Alive }
+  /readyz:
+    get:
+      tags: [Ops]
+      operationId: ready
+      security: []
+      responses:
+        '200': { description: 'DB, queue and storage reachable' }
+        '503': { description: Not ready }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    limit: { name: limit, in: query, schema: { type: integer, default: 50, minimum: 1, maximum: 200 } }
+    cursor: { name: cursor, in: query, schema: { type: string } }
+    idempotencyKey:
+      name: Idempotency-Key
+      in: header
+      schema: { type: string, maxLength: 128 }
+      description: Replaying a key returns the original job.
+    provider:
+      name: provider
+      in: path
+      required: true
+      schema: { type: string, enum: [instagram, tiktok, facebook] }
+    mediaId:     { name: mediaId,     in: path, required: true, schema: { type: string, format: uuid } }
+    garmentId:   { name: garmentId,   in: path, required: true, schema: { type: string, format: uuid } }
+    outfitId:    { name: outfitId,    in: path, required: true, schema: { type: string, format: uuid } }
+    jobId:       { name: jobId,       in: path, required: true, schema: { type: string, format: uuid } }
+    photoId:     { name: photoId,     in: path, required: true, schema: { type: string, format: uuid } }
+    detectionId: { name: detectionId, in: path, required: true, schema: { type: string, format: uuid } }
+
+  responses:
+    User:
+      description: OK
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/User' }
+    IngestJob:
+      description: Accepted
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/IngestJob' }
+    DeletionRequest:
+      description: Accepted
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/DeletionRequest' }
+    Unauthorized:
+      description: Missing or invalid token
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: Not found
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: Conflicting in-flight operation
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ConsentRequired:
+      description: Required consent is missing or was revoked
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: https://api.smartstylist.app/problems/consent-required
+            title: Consent required
+            status: 403
+            detail: biometric_processing consent is required for this operation
+            required_consent: biometric_processing
+    QuotaExceeded:
+      description: Monthly quota exhausted
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    UnprocessableWardrobe:
+      description: Not enough wearable items to build an outfit
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: https://api.smartstylist.app/problems/insufficient-wardrobe
+            title: Not enough items
+            status: 422
+            detail: No footwear available for business_meeting at 4°C
+            missing_roles: [footwear]
+
+  schemas:
+    Problem:
+      type: object
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        trace_id: { type: string }
+      additionalProperties: true
+
+    Page:
+      type: object
+      properties:
+        next_cursor: { type: [string, 'null'] }
+        total_estimate: { type: integer }
+
+    JobStatus:
+      type: string
+      enum: [queued, running, succeeded, failed, cancelled, partial, expired]
+
+    GarmentRole:
+      type: string
+      enum: [base_top, mid_layer, outerwear, bottom, full_body, footwear, bag,
+             headwear, eyewear, jewelry, belt, scarf, watch, hosiery, other_accessory]
+
+    Season:
+      type: string
+      enum: [spring, summer, autumn, winter, all_season]
+
+    Pattern:
+      type: string
+      enum: [solid, striped, checked, plaid, floral, polka_dot, animal, geometric,
+             abstract, camouflage, graphic, paisley, houndstooth, herringbone,
+             tie_dye, logo, colorblock, other]
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        display_name: { type: string }
+        locale: { type: string }
+        country_code: { type: string, minLength: 2, maxLength: 2 }
+        timezone: { type: string }
+        units: { type: string, enum: [metric, imperial] }
+        onboarding_stage: { type: string, enum: [created, profile, biometrics, wardrobe, ready] }
+        avatar_url: { type: [string, 'null'], format: uri }
+        created_at: { type: string, format: date-time }
+
+    UserUpdate:
+      type: object
+      properties:
+        display_name: { type: string }
+        locale: { type: string }
+        timezone: { type: string }
+        units: { type: string, enum: [metric, imperial] }
+        country_code: { type: string }
+
+    DeviceRegistration:
+      type: object
+      required: [platform, push_token]
+      properties:
+        platform: { type: string, enum: [ios, android, web] }
+        push_token: { type: string }
+        app_version: { type: string }
+        os_version: { type: string }
+        device_model: { type: string }
+
+    ConsentState:
+      type: object
+      properties:
+        consent_type:
+          type: string
+          enum: [terms_of_service, privacy_policy, biometric_processing,
+                 social_ingest, vton_processing, model_training, marketing]
+        granted: { type: boolean }
+        policy_version: { type: string }
+        decided_at: { type: string, format: date-time }
+
+    ConsentDecision:
+      type: object
+      required: [consent_type, granted, policy_version]
+      properties:
+        consent_type: { type: string }
+        granted: { type: boolean }
+        policy_version: { type: string }
+
+    BiometricProfile:
+      type: object
+      description: All lengths in centimetres, weight in kilograms. Special-category data.
+      properties:
+        height_cm: { type: number }
+        weight_kg: { type: number }
+        chest_bust_cm: { type: number }
+        underbust_cm: { type: number }
+        waist_cm: { type: number }
+        hip_cm: { type: number }
+        shoulder_width_cm: { type: number }
+        inseam_cm: { type: number }
+        arm_length_cm: { type: number }
+        neck_cm: { type: number }
+        foot_length_cm: { type: number }
+        shoe_size_eu: { type: number }
+        body_shape:
+          type: string
+          enum: [hourglass, pear, apple, rectangle, inverted_triangle, oval, athletic, unspecified]
+        measurement_source:
+          type: string
+          enum: [self_reported, photo_estimated, smpl_fitted, tailor_measured, imported]
+        skin_tone_hex: { type: string, pattern: '^#[0-9A-Fa-f]{6}$' }
+        skin_tone_monk: { type: integer, minimum: 1, maximum: 10 }
+        skin_undertone: { type: string, enum: [cool, warm, neutral, olive, unspecified] }
+        hair_color_hex: { type: string }
+        eye_color_hex: { type: string }
+        contrast_level: { type: integer, minimum: 1, maximum: 5 }
+        seasonal_palette:
+          type: string
+          enum: [bright_spring, true_spring, light_spring, light_summer, true_summer,
+                 soft_summer, soft_autumn, true_autumn, dark_autumn, dark_winter,
+                 true_winter, bright_winter, unspecified]
+        face_shape:
+          type: string
+          enum: [oval, round, square, heart, diamond, oblong, triangle, unspecified]
+        sizing_profile: { type: string, enum: [womenswear, menswear, unisex] }
+        size_labels: { type: object, additionalProperties: { type: string } }
+
+    BodyPhoto:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        pose: { type: string }
+        is_primary: { type: boolean }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        quality_score: { type: number }
+        quality_issues: { type: array, items: { type: string } }
+        url: { type: [string, 'null'], format: uri, description: 'Signed, 5-minute TTL' }
+        created_at: { type: string, format: date-time }
+
+    StylePreferences:
+      type: object
+      properties:
+        style_archetypes: { type: array, items: { type: string } }
+        preferred_colors: { type: array, items: { type: string } }
+        avoided_colors: { type: array, items: { type: string } }
+        avoided_categories: { type: array, items: { type: string } }
+        avoided_patterns: { type: array, items: { $ref: '#/components/schemas/Pattern' } }
+        modesty_rules:
+          type: object
+          additionalProperties: true
+          example: { min_sleeve: elbow, cover_knees: true, headwear_required: true }
+        fit_preference: { type: string }
+        budget_tier: { type: integer, minimum: 1, maximum: 5 }
+        favourite_brands: { type: array, items: { type: string } }
+        allow_new_purchases: { type: boolean }
+
+    PresignedUpload:
+      type: object
+      properties:
+        media_id: { type: string, format: uuid }
+        upload_url: { type: [string, 'null'], format: uri }
+        method: { type: string, enum: [PUT] }
+        headers: { type: object, additionalProperties: { type: string } }
+        expires_at: { type: string, format: date-time }
+        duplicate_of: { type: [string, 'null'], format: uuid }
+
+    Media:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string, format: uri }
+        thumbnail_url: { type: string, format: uri }
+        mime_type: { type: string }
+        width: { type: integer }
+        height: { type: integer }
+        source: { type: string }
+        moderation_status: { type: string, enum: [pending, approved, rejected, needs_review] }
+        created_at: { type: string, format: date-time }
+
+    SocialProviderInfo:
+      type: object
+      properties:
+        provider: { type: string, enum: [instagram, tiktok, facebook] }
+        enabled: { type: boolean }
+        connected: { type: boolean }
+        handle: { type: [string, 'null'] }
+        scopes: { type: array, items: { type: string } }
+        requirements:
+          type: array
+          items: { type: string }
+          example: ["Instagram professional (business or creator) account required"]
+        last_synced_at: { type: [string, 'null'], format: date-time }
+
+    IngestJob:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        source: { type: string }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        items_discovered: { type: integer }
+        items_processed: { type: integer }
+        items_failed: { type: integer }
+        garments_created: { type: integer }
+        needs_review: { type: integer }
+        poll_after_ms: { type: integer }
+        error_code: { type: [string, 'null'] }
+        queued_at: { type: string, format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+
+    Detection:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        media_id: { type: string, format: uuid }
+        cutout_url: { type: [string, 'null'], format: uri }
+        label: { type: string }
+        suggested_category: { type: string }
+        confidence: { type: number }
+        bbox: { type: array, items: { type: number }, minItems: 4, maxItems: 4 }
+        colors: { type: array, items: { $ref: '#/components/schemas/GarmentColor' } }
+        attributes: { type: object, additionalProperties: true }
+        status: { type: string }
+
+    Category:
+      type: object
+      properties:
+        id: { type: integer }
+        parent_id: { type: [integer, 'null'] }
+        slug: { type: string }
+        display_name: { type: string }
+        level: { type: integer }
+        default_role: { $ref: '#/components/schemas/GarmentRole' }
+        default_formality: { type: integer }
+        default_warmth: { type: integer }
+        size_system: { type: [string, 'null'] }
+
+    ColorFamily:
+      type: object
+      properties:
+        slug: { type: string }
+        display_name: { type: string }
+        anchor_hex: { type: string }
+        is_neutral: { type: boolean }
+        warm_cool: { type: string }
+
+    Occasion:
+      type: object
+      properties:
+        id: { type: integer }
+        slug: { type: string }
+        display_name: { type: string }
+        description: { type: string }
+        formality_min: { type: integer }
+        formality_max: { type: integer }
+        required_roles: { type: array, items: { $ref: '#/components/schemas/GarmentRole' } }
+        icon: { type: string }
+        is_custom: { type: boolean }
+
+    GarmentColor:
+      type: object
+      properties:
+        hex: { type: string }
+        ratio: { type: number }
+        color_family: { type: string }
+        is_neutral: { type: boolean }
+
+    Garment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        category: { type: string }
+        category_id: { type: integer }
+        role: { $ref: '#/components/schemas/GarmentRole' }
+        name: { type: [string, 'null'] }
+        brand: { type: [string, 'null'] }
+        pattern: { $ref: '#/components/schemas/Pattern' }
+        material: { type: array, items: { type: string } }
+        fit: { type: string }
+        size_label: { type: [string, 'null'] }
+        formality: { type: integer, minimum: 1, maximum: 5 }
+        warmth: { type: integer, minimum: 0, maximum: 5 }
+        seasons: { type: array, items: { $ref: '#/components/schemas/Season' } }
+        occasion_tags: { type: array, items: { type: string } }
+        colors: { type: array, items: { $ref: '#/components/schemas/GarmentColor' } }
+        image_url: { type: [string, 'null'], format: uri }
+        cutout_url: { type: [string, 'null'], format: uri }
+        thumbnail_url: { type: [string, 'null'], format: uri }
+        ownership: { type: string, enum: [owned, wishlist, borrowed, sold, donated] }
+        in_laundry: { type: boolean }
+        wear_count: { type: integer }
+        last_worn_at: { type: [string, 'null'], format: date }
+        auto_tagged: { type: boolean }
+        user_verified: { type: boolean }
+        tag_confidence: { type: [number, 'null'] }
+        created_at: { type: string, format: date-time }
+
+    GarmentCreate:
+      type: object
+      required: [category_id]
+      properties:
+        category_id: { type: integer }
+        media_id: { type: string, format: uuid }
+        name: { type: string }
+        brand: { type: string }
+        pattern: { $ref: '#/components/schemas/Pattern' }
+        material: { type: array, items: { type: string } }
+        size_label: { type: string }
+        formality: { type: integer, minimum: 1, maximum: 5 }
+        warmth: { type: integer, minimum: 0, maximum: 5 }
+        seasons: { type: array, items: { $ref: '#/components/schemas/Season' } }
+        purchase_price: { type: number }
+        purchase_currency: { type: string, minLength: 3, maxLength: 3 }
+        ownership: { type: string }
+
+    GarmentUpdate:
+      allOf:
+        - $ref: '#/components/schemas/GarmentCreate'
+        - type: object
+          properties:
+            category_id: { type: integer }
+            in_laundry: { type: boolean }
+            is_archived: { type: boolean }
+            user_verified: { type: boolean }
+            condition: { type: integer, minimum: 1, maximum: 5 }
+
+    ScoredGarment:
+      type: object
+      properties:
+        garment: { $ref: '#/components/schemas/Garment' }
+        score: { type: number }
+        reason: { type: string }
+
+    WardrobeStats:
+      type: object
+      properties:
+        items: { type: integer }
+        never_worn: { type: integer }
+        worn_last_30d: { type: integer }
+        avg_cost_per_wear: { type: [number, 'null'] }
+        closet_value: { type: [number, 'null'] }
+        by_role: { type: object, additionalProperties: { type: integer } }
+        gaps:
+          type: array
+          items: { type: string }
+          description: Roles/occasions the closet cannot currently cover.
+
+    RecommendationRequest:
+      type: object
+      required: [occasion]
+      properties:
+        occasion: { type: string, example: business_meeting }
+        scheduled_for: { type: string, format: date-time }
+        location:
+          type: object
+          properties:
+            lat: { type: number }
+            lon: { type: number }
+        weather_override: { $ref: '#/components/schemas/Weather' }
+        count: { type: integer, default: 5, minimum: 1, maximum: 20 }
+        must_include_garment_ids: { type: array, items: { type: string, format: uuid } }
+        exclude_garment_ids: { type: array, items: { type: string, format: uuid } }
+        allow_wishlist: { type: boolean, default: false }
+        explain: { type: boolean, default: true }
+        strategy: { type: string, enum: [rules, embedding, hybrid, llm_reranked], default: hybrid }
+
+    RecommendationResponse:
+      type: object
+      properties:
+        run_id: { type: string, format: uuid }
+        engine_version: { type: string }
+        weather: { $ref: '#/components/schemas/Weather' }
+        candidate_count: { type: integer }
+        latency_ms: { type: integer }
+        outfits:
+          type: array
+          items: { $ref: '#/components/schemas/Outfit' }
+
+    Outfit:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: [string, 'null'] }
+        occasion: { type: [string, 'null'] }
+        origin: { type: string, enum: [ai, user, template, import] }
+        total_score: { type: [number, 'null'] }
+        score_breakdown:
+          type: object
+          additionalProperties: { type: number }
+          example:
+            color_harmony: 0.91
+            formality_fit: 0.95
+            weather_fit: 0.78
+            personal_taste: 0.83
+            novelty: 0.66
+        rationale: { type: [string, 'null'] }
+        formality: { type: [integer, 'null'] }
+        dominant_colors: { type: array, items: { type: string } }
+        planned_for: { type: [string, 'null'], format: date }
+        is_favorite: { type: boolean }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              role: { $ref: '#/components/schemas/GarmentRole' }
+              layer_order: { type: integer }
+              is_optional: { type: boolean }
+              garment: { $ref: '#/components/schemas/Garment' }
+        created_at: { type: string, format: date-time }
+
+    OutfitCreate:
+      type: object
+      required: [items]
+      properties:
+        name: { type: string }
+        occasion: { type: string }
+        planned_for: { type: string, format: date }
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [garment_id]
+            properties:
+              garment_id: { type: string, format: uuid }
+              role: { $ref: '#/components/schemas/GarmentRole' }
+              layer_order: { type: integer }
+
+    OutfitFeedback:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [like, dislike, save, worn, skip, shared, purchase_intent] }
+        reason: { type: string, example: too_formal }
+        garment_id: { type: string, format: uuid, description: Blame a specific item }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+
+    Weather:
+      type: object
+      properties:
+        temp_c: { type: number }
+        feels_like_c: { type: number }
+        temp_min_c: { type: number }
+        temp_max_c: { type: number }
+        humidity_pct: { type: integer }
+        wind_kph: { type: number }
+        precip_prob: { type: number, minimum: 0, maximum: 1 }
+        uv_index: { type: number }
+        condition: { type: string, example: clouds }
+        is_daylight: { type: boolean }
+        valid_at: { type: string, format: date-time }
+
+    VtonModel:
+      type: object
+      properties:
+        id: { type: string, example: idm-vton@1 }
+        display_name: { type: string }
+        family: { type: string, enum: [diffusion, gan, warp_gan, hybrid] }
+        supports_roles: { type: array, items: { $ref: '#/components/schemas/GarmentRole' } }
+        supports_multi_garment: { type: boolean }
+        avg_latency_ms: { type: integer }
+        available_to_user: { type: boolean }
+
+    VtonJobCreate:
+      type: object
+      properties:
+        outfit_id: { type: string, format: uuid }
+        garment_ids:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items: { type: string, format: uuid }
+        body_photo_id: { type: string, format: uuid, description: Defaults to the primary body photo. }
+        model_id: { type: string, description: Defaults to the best model the user's tier allows. }
+        params:
+          type: object
+          properties:
+            steps: { type: integer, minimum: 10, maximum: 60 }
+            guidance: { type: number }
+            seed: { type: integer }
+            preserve_face: { type: boolean, default: true }
+      anyOf:
+        - required: [outfit_id]
+        - required: [garment_ids]
+
+    VtonJob:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        model_id: { type: string }
+        outfit_id: { type: [string, 'null'], format: uuid }
+        garment_ids: { type: array, items: { type: string, format: uuid } }
+        pass_index: { type: integer }
+        total_passes: { type: integer }
+        queue_position: { type: [integer, 'null'] }
+        poll_after_ms: { type: integer }
+        result_url: { type: [string, 'null'], format: uri }
+        preview_url: { type: [string, 'null'], format: uri }
+        qa_flags: { type: array, items: { type: string } }
+        duration_ms: { type: [integer, 'null'] }
+        error_code: { type: [string, 'null'] }
+        expires_at: { type: [string, 'null'], format: date-time }
+        queued_at: { type: string, format: date-time }
+
+    DeletionRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        scope: { type: string, enum: [provider_data, account, biometrics, media] }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        requested_at: { type: string, format: date-time }
+        completes_by: { type: string, format: date-time }
