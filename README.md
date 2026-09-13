@@ -14,8 +14,39 @@ PostgreSQL database and a real Flutter toolchain, not just written.**
 | 4 | Virtual try-on pipeline | ✅ |
 | 5 | Flutter app (iOS + Android) | ✅ 31 Dart tests, `flutter analyze` clean |
 
-**201 tests pass in total:** 20 SQL assertions, 133 Python tests against a real
+**238 tests pass in total:** 20 SQL assertions, 170 Python tests against a real
 database, 48 Dart tests. `ruff` and `flutter analyze` both clean.
+
+## Two capabilities worth naming
+
+### One call: occasion in, a picture of you wearing it out
+
+`POST /v1/outfits/style-and-wear` takes an occasion and returns the best outfit
+the wardrobe can produce, with a try-on render already queued on the user's own
+photo. Runners-up come back scored, so switching to the second choice costs a
+render and no re-scoring.
+
+Placement is a rule per garment role rather than one bounding box: a jilbab,
+abaya, thobe or maxi dress hangs from the shoulders to the ankles and suppresses
+the separates underneath; a coat sits wider than the shirt it covers; a bag is
+small and at one hip; shoes rest on the ground. The face is never regenerated.
+
+### Advice that knows when to say nothing
+
+`GET /v1/wardrobe/advice` answers two questions separately.
+
+*What the wardrobe cannot do* — which occasions are unwearable and which slot
+blocks each one, plus the absent colour that would unlock the most combinations.
+Returned to everyone.
+
+*Whether to phrase any of it as shopping* — inferred from what the user recorded
+paying for what they own, or failing that the brands they have. A wardrobe that
+reads as budget-conscious is told only about a gap that actually blocks an
+occasion; one being actively built is offered gaps and upgrades. Three
+guarantees hold: the derived band is **never stored**, **never shown as a label
+for the person**, and **never changes a price**. The user's own
+`budget_tier` and `allow_new_purchases` settings override the inference
+entirely.
 
 | Artefact | Status |
 |---|---|
@@ -25,10 +56,10 @@ database, 48 Dart tests. `ruff` and `flutter analyze` both clean.
 | `docs/04-phase2-backend.md` | Ingestion + CV service: decisions, defects found, test coverage |
 | `docs/05-styling-tryon-app.md` | Styling engine, try-on pipeline and mobile app |
 | `api/openapi/openapi.yaml` | OpenAPI 3.1 — **validates clean**, 42 paths / 59 operations / 38 schemas |
-| `db/migrations/0001…0016` | **Apply clean** on PostgreSQL 16.13 + pgvector 0.6.0 |
-| `db/seeds/0001…0006` | 71 categories · 15 occasions · 29 colour families · 34 pairing rules · 39 palette affinities · 6 try-on models · detector vocabularies |
+| `db/migrations/0001…0018` | **Apply clean** on PostgreSQL 16.13 + pgvector 0.6.0 |
+| `db/seeds/0001…0007` | 71 categories · 15 occasions · 29 colour families · 34 pairing rules · 39 palette affinities · 6 try-on models · detector vocabularies |
 | `db/tests/smoke_test.sql` | **20/20 assertions passing** |
-| `api/app/`, `workers/` | FastAPI service, vision worker, styling engine, try-on worker — **133 tests** |
+| `api/app/`, `workers/` | FastAPI service, vision worker, styling engine, try-on worker — **170 tests** |
 | `mobile/` | Flutter app — **48 tests**, analyze clean |
 
 ## Verify it yourself
@@ -36,7 +67,7 @@ database, 48 Dart tests. `ruff` and `flutter analyze` both clean.
 ```bash
 createdb smartstylist
 make venv
-make verify   # migrations + seeds + SQL smoke test, 133 python tests, ruff,
+make verify   # migrations + seeds + SQL smoke test, 170 python tests, ruff,
               # OpenAPI validation, flutter analyze, 31 dart tests
 ```
 
@@ -109,14 +140,17 @@ db/migrations/  0001 extensions+enums · 0002 identity/consent/biometrics
                 0010 ingest work queue (SKIP LOCKED) · 0011 view security_invoker
                 0012 weather-cache writer · 0013 candidate warmth model
                 0014 try-on queue · 0015 body-photo accessors · 0016 render erasure
-db/seeds/       taxonomy · occasions · colour theory · try-on registry · detector labels
+                0017 wardrobe economics · 0018 coverage by body region
+db/seeds/       taxonomy · occasions · colour theory · try-on registry · detector
+                labels · brand tiers and price bands
 db/tests/       smoke_test.sql
 api/app/        FastAPI: config · db · security · storage · 11 routers
 workers/vision/ pipeline · colour · phash · labels · segmenters · runner
-workers/styling/ engine · scoring · combiner · rationale · embeddings · weather · geo
-workers/vton/   pipeline · preprocess · providers (composite/diffusion/hosted) · qa · runner
+workers/styling/ engine · scoring · combiner · rationale · embeddings · weather ·
+                geo · economics · advice
+workers/vton/   pipeline · preprocess · placement · providers · qa · runner
 mobile/         Flutter app: core · models · data · providers · screens · widgets
-tests/          133 python tests   ·   mobile/test/  48 dart tests
+tests/          170 python tests   ·   mobile/test/  48 dart tests
 infra/          Dockerfile.api · Dockerfile.worker (cpu + gpu stages)
 docs/           01 architecture · 02 data model · 03 API · 04 phase 2 · 05 phases 3-5
 scripts/        db_bootstrap.sh · demo_journey.py

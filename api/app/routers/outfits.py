@@ -5,10 +5,10 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Response, status
 
 from ..db import execute, fetch_all, fetch_one
-from ..deps import ConnDep, PrincipalDep, SettingsDep
+from ..deps import ConnDep, IdempotencyDep, PrincipalDep, SettingsDep
 from ..errors import Conflict, InvalidRequest, NotFound, ProblemError
 from ..schemas import (
     Outfit,
@@ -18,7 +18,10 @@ from ..schemas import (
     RecommendationRequest,
     RecommendationResponse,
     ScoredGarment,
+    StyleAndWearRequest,
+    StyleAndWearResponse,
     SwapRequest,
+    VtonJobCreate,
     Weather,
 )
 from ..storage import get_store
@@ -78,6 +81,70 @@ async def recommend(body: RecommendationRequest, conn: ConnDep, principal: Princ
         weather=Weather(**result.weather.as_dict()) if result.weather else None,
         candidate_count=result.candidate_count, latency_ms=result.latency_ms,
         outfits=outfits,
+    )
+
+
+@router.post("/style-and-wear", response_model=StyleAndWearResponse,
+             status_code=status.HTTP_202_ACCEPTED)
+async def style_and_wear(body: StyleAndWearRequest, conn: ConnDep,
+                         principal: PrincipalDep, settings: SettingsDep,
+                         idempotency: IdempotencyDep, response: Response):
+    """The whole point of the product, in one call.
+
+    Occasion in; the best outfit the wardrobe can produce, already queued as a
+    render on the user's own photo, out. Doing this as one call rather than
+    three matters: the alternative makes the client pick a winner, and a client
+    that picks differently from the engine produces a picture of an outfit
+    nobody recommended.
+
+    Runners-up come back too, so swapping to the second choice needs no
+    re-scoring — only a new render.
+    """
+    from workers.styling.engine import ENGINE_VERSION, UnknownOccasion
+    from workers.styling.weather import Weather as EngineWeather
+
+    from .vton import create_job as create_render
+
+    engine = get_styling_engine(settings)
+    override = (EngineWeather(**body.weather_override.model_dump())
+                if body.weather_override else None)
+
+    try:
+        result = await engine.recommend(
+            conn, principal.user_id,
+            occasion=body.occasion,
+            lat=body.location.lat if body.location else None,
+            lon=body.location.lon if body.location else None,
+            at=body.scheduled_for or datetime.now(UTC),
+            count=3,
+            weather_override=override,
+            exclude=frozenset(str(g) for g in body.exclude_garment_ids),
+        )
+    except UnknownOccasion as exc:
+        raise InvalidRequest(f"Unknown occasion: {body.occasion}") from exc
+
+    if not result.outfit_ids:
+        raise InsufficientWardrobe(body.occasion, result.missing_roles)
+
+    outfits = [await _load_outfit(conn, principal.user_id, oid, settings)
+               for oid in result.outfit_ids]
+    best = outfits[0]
+
+    render = await create_render(
+        VtonJobCreate(outfit_id=UUID(str(best.id)), body_photo_id=body.body_photo_id,
+                      model_id=body.model_id),
+        conn, principal, settings, idempotency, response,
+    )
+    # create_job sets 200 on a cache hit; a fresh look is still 202.
+    if response.status_code == status.HTTP_200_OK and not render.cache_hit:
+        response.status_code = status.HTTP_202_ACCEPTED
+
+    _ = ENGINE_VERSION
+    return StyleAndWearResponse(
+        outfit=best,
+        render=render,
+        weather=Weather(**result.weather.as_dict()) if result.weather else None,
+        alternatives=outfits[1:],
     )
 
 
