@@ -66,9 +66,11 @@ Then open **http://localhost:8000/docs**. The stack brings up PostgreSQL with
 pgvector, applies all migrations and seeds, creates a demo user, and starts the
 API together with both workers.
 
-To call the endpoints straight from that page, click **Authorize** and send the
-header `X-Debug-User: 00000000-0000-4000-8000-000000000001` — the demo user the
-stack creates.
+To call the endpoints straight from that page, click the green **Authorize**
+button at the top right, paste `00000000-0000-4000-8000-000000000001` into
+**Debug user (local only)**, and press Authorize. That is the demo user the
+stack creates, with its consents already granted. Every endpoint on the page is
+then callable with "Try it out".
 
 > `docker-compose.yml` sets `SS_ALLOW_DEBUG_USER_HEADER=true` so the docs page is
 > usable without minting a JWT by hand. It is a **development-only** switch and
