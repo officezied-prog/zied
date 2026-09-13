@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/api_client.dart';
 import '../core/config.dart';
+import '../data/demo_repositories.dart';
 import '../data/repositories.dart';
 import '../models/models.dart';
 
@@ -51,16 +52,18 @@ final apiClientProvider = Provider<ApiClient>((ref) {
   return client;
 });
 
-final uploadRepositoryProvider =
-    Provider((ref) => UploadRepository(ref.watch(apiClientProvider)));
-final wardrobeRepositoryProvider =
-    Provider((ref) => WardrobeRepository(ref.watch(apiClientProvider)));
-final stylingRepositoryProvider =
-    Provider((ref) => StylingRepository(ref.watch(apiClientProvider)));
-final tryOnRepositoryProvider =
-    Provider((ref) => TryOnRepository(ref.watch(apiClientProvider)));
-final accountRepositoryProvider =
-    Provider((ref) => AccountRepository(ref.watch(apiClientProvider)));
+// In demo mode only the transport changes: the screens, state machines and
+// models below are the same objects the shipping app uses.
+final uploadRepositoryProvider = Provider<UploadRepository>((ref) =>
+    AppConfig.demoMode ? DemoUploadRepository() : UploadRepository(ref.watch(apiClientProvider)),);
+final wardrobeRepositoryProvider = Provider<WardrobeRepository>((ref) =>
+    AppConfig.demoMode ? DemoWardrobeRepository() : WardrobeRepository(ref.watch(apiClientProvider)),);
+final stylingRepositoryProvider = Provider<StylingRepository>((ref) =>
+    AppConfig.demoMode ? DemoStylingRepository() : StylingRepository(ref.watch(apiClientProvider)),);
+final tryOnRepositoryProvider = Provider<TryOnRepository>((ref) =>
+    AppConfig.demoMode ? DemoTryOnRepository() : TryOnRepository(ref.watch(apiClientProvider)),);
+final accountRepositoryProvider = Provider<AccountRepository>((ref) =>
+    AppConfig.demoMode ? DemoAccountRepository() : AccountRepository(ref.watch(apiClientProvider)),);
 
 // ── wardrobe ────────────────────────────────────────────────────────────────
 class WardrobeFilter {

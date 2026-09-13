@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/config.dart';
 import 'core/theme.dart';
 import 'screens/event_selector_screen.dart';
 import 'screens/profile_screen.dart';
@@ -42,7 +43,12 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(index: _index, children: _tabs),
+      body: Column(
+        children: [
+          if (AppConfig.demoMode) const _DemoBanner(),
+          Expanded(child: IndexedStack(index: _index, children: _tabs)),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (value) => setState(() => _index = value),
@@ -68,6 +74,39 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             label: 'Profile',
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Sample data must never be mistaken for the user's own wardrobe.
+class _DemoBanner extends StatelessWidget {
+  const _DemoBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.secondaryContainer,
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              Icon(Icons.science_outlined, size: 16, color: scheme.onSecondaryContainer),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Demo mode — a sample wardrobe, no server attached',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSecondaryContainer,
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
