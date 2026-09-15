@@ -11,6 +11,20 @@
 window.__errBox = [];
 window.__dbg = /[?&]debug\b/.test(location.search);
 window.__lamhaReady = false;
+/* v75 language: decided before the first paint — her saved choice, its cookie copy, the phone's language */
+window.lamhaSaveLang = function(l){
+  if(!/^(ar|en|id)$/.test(l || '')) return;
+  try{ localStorage.setItem('zeen_lang', JSON.stringify(l)); }catch(e){}
+  try{ document.cookie = 'lamha_lang=' + l + '; max-age=31536000; path=/; SameSite=Lax'; }catch(e){}
+};
+window.__lang0 = (function(){
+  try{ const v = JSON.parse(localStorage.getItem('zeen_lang') || 'null'); if(/^(ar|en|id)$/.test(v || '')) return v; }catch(e){}
+  try{ const m = document.cookie.match(/(?:^|; )lamha_lang=(ar|en|id)/); if(m) return m[1]; }catch(e){}
+  try{ const ls = (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || '']).map(x => String(x).toLowerCase());
+       for(const l of ls){ if(l.indexOf('ar') === 0) return 'ar'; if(l.indexOf('id') === 0 || l.indexOf('in') === 0 || l.indexOf('ms') === 0) return 'id'; if(l.indexOf('en') === 0) return 'en'; } }catch(e){}
+  return 'ar';
+})();
+try{ document.documentElement.lang = window.__lang0; document.documentElement.dir = window.__lang0 === 'ar' ? 'rtl' : 'ltr'; }catch(e){}
 window.addEventListener('load', function(){ setTimeout(function(){ window.__lamhaReady = true; }, 6000); });
 window.__keepErr = function(m){
   try{
@@ -2381,6 +2395,7 @@ $1('#csGo').onclick = async () => {
 };
 document.querySelectorAll('#consent [data-cl]').forEach(b => b.onclick = async () => {
   try{ LANG = b.dataset.cl; }catch(e){ return; }
+  if(window.lamhaSaveLang) window.lamhaSaveLang(b.dataset.cl);   /* v75 language */
   await st.set('zeen_lang', b.dataset.cl);
   if(typeof applyLang === 'function') applyLang();
   lx(); renderConsent();
@@ -3125,7 +3140,7 @@ id:{
     "Tulang pipi seimbang — kontur klasik di bawah tulang cocok untukmu.",
     "Tulang pipi menonjol — kontur sangat ringan dan sorot lebih sedikit."]}}
 }};
-let LANG = 'ar';
+let LANG = window.__lang0 || 'ar';   /* v75 language */
 const t = k => { const d = I18N[LANG]; return k.split('.').reduce((o,p)=>o&&o[p], d) ?? k; };
 
 /* ---------------- state ---------------- */
@@ -3700,6 +3715,9 @@ function grabFrame(){
   if(FRM.width !== w || FRM.height !== h){ FRM.width = w; FRM.height = h; }
   FRX.drawImage(vid, 0, 0, w, h); return true;
 }
+/* v75 lighter: the camera says when it has a new frame */
+const VFC_OK = typeof vid.requestVideoFrameCallback === 'function';
+if(VFC_OK){ const onVF = () => { S._vfNew = true; try{ vid.requestVideoFrameCallback(onVF); }catch(e){} }; try{ vid.requestVideoFrameCallback(onVF); }catch(e){} }
 const raw = document.createElement('canvas'), rctx = raw.getContext('2d',{willReadFrequently:true});
 let VW=0, VH=0;
 
@@ -3791,6 +3809,12 @@ function loop(){
   if(!S.running) return;
   requestAnimationFrame(loop);
   if(!STILL && vid.readyState < 2) return;
+  /* v75 lighter: a camera frame is worked on once (a 60–120 Hz screen ran the detector and the makeup
+     two to four times on the same picture), and never more than ~30 times a second */
+  { const nowG = performance.now(), since = nowG - (S._lastProc || 0);
+    if(!STILL && VFC_OK){ if(!S._vfNew && since < 250) return; if(since < 24) return; }
+    else if(since < 31) return;
+    S._vfNew = false; S._lastProc = nowG; }
   const frOK = !STILL && grabFrame(); if(frOK) SRC = FRM;       /* v73 one frame */
   if(frOK && S.showGL && window.glUploadVideo) window.glUploadVideo();   /* v74: the same frame, from the <video> */
   computeMap();
@@ -4714,6 +4738,14 @@ const drawFoundation = (()=>{
     if(I < 0.01 || !S.makeup.base) return;
     const f=4, sw=Math.max(2,Math.ceil(PW/f)), sh=Math.max(2,Math.ceil(PH/f)), sn=sw*sh;
     const kx=sw/B.w, ky=sh/B.h;
+    /* v75 lighter: the colour maths below is reused while her face is still (same box within 2 px, same
+       shade, strength and finish), and refreshed at least every sixth frame for the light */
+    const fin0 = S.fins.base || 'satin';
+    const fKey = [Math.round(B.x/2), Math.round(B.y/2), Math.round(B.w/2), Math.round(B.h/2), sw, sh, I.toFixed(2), S.makeup.base, fin0].join('|');
+    const fReuse = buf.key === fKey && (buf.reuse|0) < 5 && aC.width === sw && aC.height === sh;
+    if(fReuse) buf.reuse = (buf.reuse|0) + 1;
+    else {
+    buf.key = null;
     /* 1 · where it goes: face up to the hairline — not eyes, brows, lips */
     mC.width=sw; mC.height=sh;
     mX.setTransform(kx,0,0,ky,-B.x*kx,-B.y*ky);
@@ -4800,8 +4832,10 @@ const drawFoundation = (()=>{
       a[q+3] = g[q+3] = Math.min(255, m*357);     /* feathered edge, full inside */
     }
     aX.putImageData(A,0,0); gX.putImageData(G,0,0);
+    buf.key = fKey; buf.reuse = 0;
+    }
     /* 4 · a whisper of softening for the finish: the film fills fine grain */
-    const kSoft = (fin==='matte' ? 0.30 : fin==='satin' ? 0.18 : 0.08) * I;
+    const kSoft = (fin0==='matte' ? 0.30 : fin0==='satin' ? 0.18 : 0.08) * I;
     if(kSoft > 0.02){
       softC.width=B.w; softC.height=B.h;
       softX.setTransform(1,0,0,1,0,0); softX.drawImage(tcv, B.x,B.y,B.w,B.h, 0,0,B.w,B.h);
@@ -8693,6 +8727,7 @@ $('#startBtn').onclick = boot;
 function applyLang(){
   document.documentElement.lang = LANG;
   document.documentElement.dir = LANG==='ar' ? 'rtl' : 'ltr';
+  { const lkh = document.getElementById('lk-h'); if(lkh) lkh.textContent = LANG==='ar' ? 'إطلالتي: الشعر والحجاب' : LANG==='id' ? 'Tampilanku: rambut & hijab' : 'My look: hair & hijab'; }   /* v75 */
   $$('[data-i18n]').forEach(el=>{
     const v = t(el.dataset.i18n);
     if(typeof v === 'string') el.textContent = v;
@@ -8705,7 +8740,7 @@ function applyLang(){
   if(S.meas && typeof renderMeasure==='function') renderMeasure();
   tick();
 }
-$$('#langsw button').forEach(b=> b.onclick = async ()=>{ LANG = b.dataset.lang; await store.set('zeen_lang', LANG); applyLang(); });
+$$('#langsw button').forEach(b=> b.onclick = async ()=>{ LANG = b.dataset.lang; if(window.lamhaSaveLang) window.lamhaSaveLang(LANG); await store.set('zeen_lang', LANG); applyLang(); });
 
 function tick(){
   const d = new Date(), h = d.getHours();
@@ -8734,7 +8769,8 @@ function loadWeather(){
    INIT
    ========================================================= */
 (async function init(){
-  const savedLang = await store.get('zeen_lang'); if(savedLang) LANG = savedLang;
+  const savedLang = await store.get('zeen_lang'); if(/^(ar|en|id)$/.test(savedLang || '')) LANG = savedLang;   /* v75: else the first-paint choice */
+  if(window.lamhaSaveLang) window.lamhaSaveLang(LANG);
   S.history = (await store.get('m_zeen_mirror_history')) || [];
   S.saved   = (await store.get('talla_looks')) || [];
   S.kit     = (await store.get('m_talla_kit')) || [];
@@ -11635,7 +11671,7 @@ function watchdog(){
     if(slowStreak>=patience){
       S.showGL=false; window.glSetVisible(false);
       if(typeof syncToggles==='function') syncToggles();
-      say('الجهاز بطيء مع محرك GPU — رجعت للمحرك المضمون', 5000);
+      say(LANG==='ar' ? 'الجهاز بطيء مع محرك GPU — رجعت للمحرك المضمون' : LANG==='id' ? 'Perangkat lambat dengan mesin GPU — kembali ke mesin standar' : 'This device is slow with the GPU engine — back to the standard engine', 5000);
     }
   }
 }
@@ -17538,7 +17574,7 @@ const sp = document.getElementById('sk-pro'); if(sp) sp.onclick = ()=>{ openShee
    ===================================================================== */
 (function(){
 'use strict';
-const VERSION = 'v74';
+const VERSION = 'v75';
 window.LAMHA_VERSION = VERSION;
 try{ if(!/ v\d+/.test(document.title)) document.title = document.title.replace('LAMHA MOBILE', 'LAMHA MOBILE '+VERSION); }catch(e){}
 const PRO = window.LAMHA_PRO;
