@@ -14645,78 +14645,153 @@ function hairFromSeg(){
   HS.bb = n ? [u0, v0, u1+1, v1+1] : null; HS.W = W; HS.H = H; HS.snap = O._snap;
   return HS;
 }
+/* v76 hair colour — see the patch notes: the hair model's mask refined on the live picture, and a
+   colour with depth. Working grid ≤ 200 px; the colour models are rebuilt with each new mask. */
+const HR = { hv:-1, t:0, hh:null, hn:null, rat:1, prev:null, pk:'', noteT:-1e9 };
+const hrP = document.createElement('canvas'), hrPX = hrP.getContext('2d', { willReadFrequently:true });
+const hrF = document.createElement('canvas'), hrFX = hrF.getContext('2d', { willReadFrequently:true });
+const hrM = document.createElement('canvas'), hrMX = hrM.getContext('2d', { willReadFrequently:true });
+const hrA = document.createElement('canvas'), hrAX = hrA.getContext('2d');
+const hrC = document.createElement('canvas'), hrCX = hrC.getContext('2d');
+function hrBlur(src, W, H, r){                       /* separable box blur, edge-clamped */
+  const tmp = new Float32Array(W*H), out = new Float32Array(W*H), win = 2*r + 1;
+  for(let y=0;y<H;y++){ const row = y*W; let acc = 0;
+    for(let k=-r;k<=r;k++) acc += src[row + Math.min(W-1, Math.max(0, k))];
+    for(let x=0;x<W;x++){ tmp[row+x] = acc/win; acc += src[row + Math.min(W-1, x+r+1)] - src[row + Math.max(0, x-r)]; } }
+  for(let x=0;x<W;x++){ let acc = 0;
+    for(let k=-r;k<=r;k++) acc += tmp[Math.min(H-1, Math.max(0, k))*W + x];
+    for(let y=0;y<H;y++){ out[y*W+x] = acc/win; acc += tmp[Math.min(H-1, y+r+1)*W + x] - tmp[Math.max(0, y-r)*W + x]; } }
+  return out;
+}
+function hrHsl(hex){
+  const n = parseInt(hex.slice(1), 16), r = (n>>16&255)/255, g = (n>>8&255)/255, b = (n&255)/255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn)/2, d = mx - mn;
+  let h = 0, s = 0;
+  if(d > 1e-6){ s = d/(1 - Math.abs(2*l - 1));
+    h = mx === r ? ((g - b)/d + (g < b ? 6 : 0)) : mx === g ? ((b - r)/d + 2) : ((r - g)/d + 4); h /= 6; }
+  return [h, Math.min(1, s), l];
+}
+function hrRgb(h, s, l){
+  const c = (1 - Math.abs(2*l - 1))*s, hp = h*6, x = c*(1 - Math.abs(hp % 2 - 1)), m = l - c/2;
+  const [r, g, b] = hp < 1 ? [c, x, 0] : hp < 2 ? [x, c, 0] : hp < 3 ? [0, c, x] : hp < 4 ? [0, x, c] : hp < 5 ? [x, 0, c] : [c, 0, x];
+  return [(r + m)*255, (g + m)*255, (b + m)*255];
+}
+function hairNote(){
+  const now = performance.now(); if(now - HR.noteT < 60000) return; HR.noteT = now;
+  try{ say(LANG==='ar' ? 'لون الشعر يحتاج نموذج الشعر، ولم يُحمَّل على هذا الجهاز — جرّبي إعادة فتح التطبيق مع الإنترنت'
+    : LANG==='id' ? 'Warna rambut memerlukan model rambut yang belum termuat — buka ulang aplikasi dengan internet'
+    : 'Hair colour needs the hair model, which has not loaded on this device — reopen the app online', 5000); }catch(e){}
+}
 window.drawHairColour = function(tctx){
   if(!S.hairColour || !S.landmarks) return;
   const O = window.LAMHA_OCC;
-  /* can the model feed us? (off, failed to load, or a phone on the main-thread
-     fallback outside a lesson → the old path) */
-  const liveBlocked = O && !STILL && (O.mode === 'off' || (O.mode === 'lesson' && O.engine === 'main' && !(S.plan && S.plan.on)));
-  const segCan = !!(O && O.on && !O.unavailable && !liveBlocked);
-  const hs = segCan ? hairFromSeg() : null;
-  if(!hs){ if(!segCan) drawHairFlood(tctx); return; }   /* the model is on its way: wait, no flash of the old tint */
-  if(!hs.bb || hs.n < 60) return;                        /* no hair to colour — a hijab is clothes, not hair */
+  if(!(O && O.on && !O.unavailable)){ hairNote(); return; }        /* never the colour-flood guess */
+  const hs = hairFromSeg();
+  if(!hs || !hs.bb || hs.n < 60) return;                           /* the model is on its way, or no hair (a hijab is clothes) */
   try{
-    const lm = S.landmarks, sn = hs.snap, W = hs.W, H = hs.H;
+    const lm = S.landmarks, sn = hs.snap, W = hs.W, H = hs.H, fs = faceScale(lm);
     /* her move since the mask was read: a similarity on the outer eye corners, in source px */
     const P1 = [sn[33].x*VW, sn[33].y*VH], P2 = [sn[263].x*VW, sn[263].y*VH];
     const Q1 = [lm[33].x*VW, lm[33].y*VH], Q2 = [lm[263].x*VW, lm[263].y*VH];
-    const ax = P2[0]-P1[0], ay = P2[1]-P1[1], bx = Q2[0]-Q1[0], by = Q2[1]-Q1[1];
-    const den = ax*ax + ay*ay || 1;
-    const ca = (ax*bx + ay*by)/den, sa = (ax*by - ay*bx)/den;       /* s·cos, s·sin */
+    const ax = P2[0]-P1[0], ay = P2[1]-P1[1], bx = Q2[0]-Q1[0], by = Q2[1]-Q1[1], den = ax*ax + ay*ay || 1;
+    const ca = (ax*bx + ay*by)/den, sa = (ax*by - ay*bx)/den;
     const ex = Q1[0] - (ca*P1[0] - sa*P1[1]), ey = Q1[1] - (sa*P1[0] + ca*P1[1]);
-    /* model grid → source px → her move → the mirror's display, as one transform */
-    const place = (c, ox, oy) => {
-      c.setTransform(1,0,0,1,0,0); c.translate(-ox, -oy);
-      if(S.mirror){ c.translate(map.ox + VW*map.sx, map.oy); c.scale(-map.sx, map.sy); }
-      else { c.translate(map.ox, map.oy); c.scale(map.sx, map.sy); }
-      c.transform(ca, sa, -sa, ca, ex, ey);
-      c.scale(VW/W, VH/H);
+    const place = (c, ox, oy, k) => {                               /* model grid → her move → the mirror, at scale k */
+      c.setTransform(k, 0, 0, k, -ox*k, -oy*k);
+      if(S.mirror){ c.translate(map.ox + VW*map.sx, map.oy); c.scale(-map.sx, map.sy); } else { c.translate(map.ox, map.oy); c.scale(map.sx, map.sy); }
+      c.transform(ca, sa, -sa, ca, ex, ey); c.scale(VW/W, VH/H);
     };
-    /* only the hair's box is touched, carried to the display the same way */
     const corners = [[hs.bb[0],hs.bb[1]],[hs.bb[2],hs.bb[1]],[hs.bb[0],hs.bb[3]],[hs.bb[2],hs.bb[3]]].map(([u,v])=>{
       const sx = u*VW/W, sy = v*VH/H, mx = ca*sx - sa*sy + ex, my = sa*sx + ca*sy + ey;
-      return [S.mirror ? map.ox + (VW - mx)*map.sx : map.ox + mx*map.sx, map.oy + my*map.sy];
-    });
-    const cell = Math.max(2, VW*map.sx/W);                   /* one model cell on screen */
-    const rx0 = Math.max(0, Math.floor(Math.min(...corners.map(p=>p[0])) - cell*3));
-    const ry0 = Math.max(0, Math.floor(Math.min(...corners.map(p=>p[1])) - cell*3));
-    const rx1 = Math.min(cv.width,  Math.ceil(Math.max(...corners.map(p=>p[0])) + cell*3));
-    const ry1 = Math.min(cv.height, Math.ceil(Math.max(...corners.map(p=>p[1])) + cell*3));
-    const rw = rx1 - rx0, rh = ry1 - ry0; if(rw < 4 || rh < 4) return;
-    /* the mask at display size, feathered by about one model cell */
-    hsL1.width = rw; hsL1.height = rh;
-    hsL1X.save(); place(hsL1X, rx0, ry0);
-    if(BLUR_OK) hsL1X.filter = `blur(${(cell*0.8).toFixed(1)}px)`;
-    hsL1X.imageSmoothingEnabled = true;
-    hsL1X.drawImage(hsMask, 0, 0);
-    hsL1X.restore();
-    hsL2.width = rw; hsL2.height = rh;
-    hsL2X.drawImage(hsL1, 0, 0);                             /* the same mask for the colour layer */
-    const n2 = parseInt(S.hairColour.slice(1), 16), tr = n2>>16&255, tg = n2>>8&255, tb = n2&255;
-    const t = (0.299*tr + 0.587*tg + 0.114*tb)/255, m = Math.max(0.03, Math.min(0.97, hs.m));
-    const strength = (S.ints && S.ints.hair != null) ? S.ints.hair : 0.85;
-    /* 1 · her lightness toward the shade's */
-    let lift = null;
-    if(t > m + 0.02){ const gv = Math.min(0.85, 1 - (1-t)/(1-m)); lift = ['screen', Math.round(gv*255)]; }
-    else if(t < m - 0.02){ const gv = Math.max(0.2, t/m); lift = ['multiply', Math.round(gv*255)]; }
-    if(lift){
-      hsL1X.globalCompositeOperation = 'source-in';
-      hsL1X.fillStyle = `rgb(${lift[1]},${lift[1]},${lift[1]})`; hsL1X.fillRect(0,0,rw,rh);
-      hsL1X.globalCompositeOperation = 'source-over';
+      return [S.mirror ? map.ox + (VW - mx)*map.sx : map.ox + mx*map.sx, map.oy + my*map.sy]; });
+    const cell = Math.max(2, VW*map.sx/W), margin = cell*3 + fs*0.10;   /* room for hair that moved since */
+    const rx0 = Math.max(0, Math.floor(Math.min(...corners.map(p=>p[0])) - margin));
+    const ry0 = Math.max(0, Math.floor(Math.min(...corners.map(p=>p[1])) - margin));
+    const rx1 = Math.min(cv.width,  Math.ceil(Math.max(...corners.map(p=>p[0])) + margin));
+    const ry1 = Math.min(cv.height, Math.ceil(Math.max(...corners.map(p=>p[1])) + margin));
+    const rw = rx1 - rx0, rh = ry1 - ry0; if(rw < 8 || rh < 8) return;
+    const k = Math.min(1, 200/Math.max(rw, rh)), ww = Math.max(8, Math.round(rw*k)), wh = Math.max(8, Math.round(rh*k)), N = ww*wh;
+    /* 1 · the model's mask (the prior), carried to now */
+    hrP.width = ww; hrP.height = wh; hrPX.save(); place(hrPX, rx0, ry0, k);
+    if(BLUR_OK) hrPX.filter = `blur(${Math.max(0.5, cell*k*0.6).toFixed(2)}px)`;
+    hrPX.imageSmoothingEnabled = true; hrPX.drawImage(hsMask, 0, 0); hrPX.restore();
+    const pd = hrPX.getImageData(0, 0, ww, wh).data;
+    /* 2 · the live picture at the same grid */
+    hrF.width = ww; hrF.height = wh; hrFX.save(); hrFX.setTransform(k, 0, 0, k, -rx0*k, -ry0*k);
+    if(S.mirror){ hrFX.translate(cv.width, 0); hrFX.scale(-1, 1); hrFX.drawImage(SRC, cv.width - map.ox - VW*map.sx, map.oy, VW*map.sx, VH*map.sy); }
+    else hrFX.drawImage(SRC, map.ox, map.oy, VW*map.sx, VH*map.sy);
+    hrFX.restore();
+    const fd = hrFX.getImageData(0, 0, ww, wh).data;
+    /* 3 · her face (red) and her eyes, brows, lips (green) */
+    hrM.width = ww; hrM.height = wh; hrMX.setTransform(k, 0, 0, k, -rx0*k, -ry0*k);
+    const poly = (idx, g) => { const pts = idx.map(i => P(lm[i])); let cx = 0, cy = 0; pts.forEach(p => { cx += p[0]; cy += p[1]; }); cx /= pts.length; cy /= pts.length;
+      hrMX.beginPath(); pts.forEach(([x, y], j) => { const px = cx + (x-cx)*g, py = cy + (y-cy)*g; j ? hrMX.lineTo(px, py) : hrMX.moveTo(px, py); }); hrMX.closePath(); hrMX.fill(); };
+    hrMX.fillStyle = '#ff0000'; poly(L.faceOval, 0.98);
+    hrMX.globalCompositeOperation = 'lighter'; hrMX.fillStyle = '#00ff00';
+    poly(L.eyeUpL.concat([...L.eyeLoL].reverse()), 1.6); poly(L.eyeUpR.concat([...L.eyeLoR].reverse()), 1.6); poly(L.lipsOuter, 1.1);
+    hrMX.fillStyle = '#0000ff';                                   /* the brows: bare unless a fringe over the brows */
+    poly(L.browUpL.concat([...L.browLoL].reverse()), 1.35); poly(L.browUpR.concat([...L.browLoR].reverse()), 1.35);
+    hrMX.globalCompositeOperation = 'source-over';
+    const md = hrMX.getImageData(0, 0, ww, wh).data;
+    const P0 = new Float32Array(N); for(let i = 0; i < N; i++) P0[i] = pd[i*4+3]/255;
+    const band = hrBlur(P0, ww, wh, Math.max(1, Math.round(fs*0.08*k)));
+    /* 4 · two colour models from this picture: her hair, and everything that is not hair */
+    const bin = (r, g, b) => ((r*10)>>8)*100 + ((g*10)>>8)*10 + ((b*10)>>8);
+    const pk = [ww, wh, Math.round(rx0/4), Math.round(ry0/4)].join('|');
+    if(HR.hv !== hs.ver || ++HR.t > 12 || !HR.hh || HR.pk !== pk){
+      const hh = new Float32Array(1000), hn = new Float32Array(1000); let sh = 0, sN = 0;
+      for(let i = 0, q = 0; i < N; i++, q += 4){
+        const face = md[q] > 128, feat = md[q+1] > 128 || md[q+2] > 128; if(feat) continue;
+        const b = bin(fd[q], fd[q+1], fd[q+2]);
+        if(P0[i] > 0.8 && !face){ hh[b]++; sh++; }
+        else if((band[i] > 0.02 && P0[i] < 0.08) || (face && P0[i] < 0.3)){ hn[b]++; sN++; }
+      }
+      HR.hh = hh; HR.hn = hn; HR.rat = sN ? sh/sN : 1; HR.hv = hs.ver; HR.t = 0;
     }
-    /* 2 · the shade's hue and saturation */
-    hsL2X.globalCompositeOperation = 'source-in';
-    hsL2X.fillStyle = S.hairColour; hsL2X.fillRect(0,0,rw,rh);
-    hsL2X.globalCompositeOperation = 'source-over';
-    tctx.save();
-    tctx.setTransform(1,0,0,1,0,0);
-    tctx.globalAlpha = strength;
+    const hh = HR.hh, hn = HR.hn, rat = HR.rat;
+    /* 5 · each cell: the model's word and the colours' word; the colour with depth */
+    const [sh0, ss0, sl0] = hrHsl(S.hairColour), m = Math.max(0.03, Math.min(0.97, hs.m));
+    const A = new Float32Array(N), ia = hrAX.createImageData(ww, wh), ic = hrCX.createImageData(ww, wh);
+    const still = HR.prev && HR.prev.length === N && HR.pk === pk;
+    for(let i = 0, q = 0; i < N; i++, q += 4){
+      if(band[i] < 0.02){ continue; }
+      const face = md[q] > 128, feat = md[q+1] > 128, brow = md[q+2] > 128;
+      if(feat || (brow && P0[i] < 0.5)) continue;                  /* eyes, lips; bare brows (a fringe over the brows is hair) */
+      const b = bin(fd[q], fd[q+1], fd[q+2]), hc = hh[b], nc = hn[b]*rat, pc = (hc + 0.5)/(hc + nc + 1);
+      let a = 0.55*P0[i] + 0.45*pc;
+      if(face){ const p2 = pc*pc; a *= p2 + (1 - p2)*P0[i]*P0[i]; }   /* inside the face: hair by colour, or where the model is sure */
+      let t = (a - 0.30)/0.32; t = t < 0 ? 0 : t > 1 ? 1 : t; a = t*t*(3 - 2*t);
+      const y = (0.299*fd[q] + 0.587*fd[q+1] + 0.114*fd[q+2])/255, rr = y/(m + 0.03);
+      if(rr > 1.7) a *= 0.65;                                      /* her shine stays shine */
+      if(still) a = 0.6*a + 0.4*HR.prev[i];                        /* no flicker while she is still */
+      A[i] = a;
+      const f = 0.50 + 0.50*Math.exp(-((rr - 1)*(rr - 1))/0.30);   /* depth: deep strands and shine less saturated */
+      const [cr, cg, cb] = hrRgb(sh0, ss0*f, sl0);
+      ia.data[q] = ia.data[q+1] = ia.data[q+2] = 255; ia.data[q+3] = a*255;
+      ic.data[q] = cr; ic.data[q+1] = cg; ic.data[q+2] = cb; ic.data[q+3] = a*255;
+    }
+    HR.prev = A; HR.pk = pk;
+    hrA.width = ww; hrA.height = wh; hrAX.putImageData(ia, 0, 0);
+    hrC.width = ww; hrC.height = wh; hrCX.putImageData(ic, 0, 0);
+    /* 6 · onto the mirror: her lightness toward the shade's, then the shade's hue */
+    const up = (dst, dX, src) => { dst.width = rw; dst.height = rh; dX.save(); dX.imageSmoothingEnabled = true;
+      if(BLUR_OK) dX.filter = `blur(${Math.max(0.6, 0.5/k).toFixed(1)}px)`; dX.drawImage(src, 0, 0, ww, wh, 0, 0, rw, rh); dX.restore(); };
+    up(hsL1, hsL1X, hrA); up(hsL2, hsL2X, hrC);
+    const n2 = parseInt(S.hairColour.slice(1), 16), tr = n2>>16&255, tg = n2>>8&255, tb = n2&255;
+    const tl = (0.299*tr + 0.587*tg + 0.114*tb)/255;
+    const strength = (S.ints && S.ints.hair != null) ? S.ints.hair : 0.85;
+    let lift = null;
+    if(tl > m + 0.02){ const gv = Math.min(0.62, (1 - (1-tl)/(1-m))*0.75); lift = ['screen', Math.round(gv*255)]; }   /* capped: dark hair does not go grey */
+    else if(tl < m - 0.02){ const gv = Math.max(0.25, tl/m); lift = ['multiply', Math.round(gv*255)]; }
+    if(lift){ hsL1X.globalCompositeOperation = 'source-in'; hsL1X.fillStyle = `rgb(${lift[1]},${lift[1]},${lift[1]})`; hsL1X.fillRect(0, 0, rw, rh); hsL1X.globalCompositeOperation = 'source-over'; }
+    tctx.save(); tctx.setTransform(1, 0, 0, 1, 0, 0); tctx.globalAlpha = strength;
     if(lift){ tctx.globalCompositeOperation = lift[0]; tctx.drawImage(hsL1, rx0, ry0); }
-    tctx.globalCompositeOperation = 'color';
-    tctx.drawImage(hsL2, rx0, ry0);
+    tctx.globalCompositeOperation = 'color'; tctx.drawImage(hsL2, rx0, ry0);
     tctx.restore();
-  }catch(e){}
+    HR.last = { ww, wh, rat:+rat.toFixed(2), n:hs.n };
+  }catch(e){ HR.err = String(e && e.message || e); }
 };
+window.__hairInfo = () => ({ last:HR.last, err:HR.err || null, ver:HS.ver });
 window.lamhaHairSegInfo = () => ({ ver:HS.ver, n:HS.n, m:+HS.m.toFixed(3), bb:HS.bb, W:HS.W, H:HS.H });
 window.hairMaskQuality = ()=> maskQuality;
 window.hairMaskData = ()=> ({mask, W:maskW, H:maskH, pix:srcPix});
@@ -17574,7 +17649,7 @@ const sp = document.getElementById('sk-pro'); if(sp) sp.onclick = ()=>{ openShee
    ===================================================================== */
 (function(){
 'use strict';
-const VERSION = 'v75';
+const VERSION = 'v76';
 window.LAMHA_VERSION = VERSION;
 try{ if(!/ v\d+/.test(document.title)) document.title = document.title.replace('LAMHA MOBILE', 'LAMHA MOBILE '+VERSION); }catch(e){}
 const PRO = window.LAMHA_PRO;
@@ -17862,10 +17937,15 @@ OCC.tick = function(){
   const now = performance.now();
   if(STILL){ if(OCC.stillKey === SRC) return; }
   else {
+    /* v76 hair colour: a colour, a cut or a hijab on her hair needs the hair mask whatever the occlusion
+       policy — on a slow phone it is read less often, never replaced by a colour-flood guess */
+    const hairNeed = !!(S.hairColour || S.tryCut || S.wornHijab);
     const lessonOnly = OCC.mode === 'lesson' && OCC.engine === 'main';
-    if(OCC.mode === 'off' || (lessonOnly && !(S.plan && S.plan.on))){ OCC.active = false; return; }
-    if(now - OCC.lastRun < OCC.gap) return;
-    const moved = motion() > 5, stale = now - OCC.lastRun > 1100, holding = OCC.inner > 0.01;
+    const blocked = OCC.mode === 'off' || (lessonOnly && !(S.plan && S.plan.on));
+    if(blocked && !hairNeed){ OCC.active = false; return; }
+    const gapNow = blocked ? Math.max(OCC.engine === 'main' ? 700 : 400, OCC.gap) : OCC.gap;
+    if(now - OCC.lastRun < gapNow) return;
+    const moved = motion() > 5, stale = now - OCC.lastRun > (hairNeed ? 600 : 1100), holding = OCC.inner > 0.01;
     if(!(moved || stale || holding)) return;
   }
   OCC.busy = true;
