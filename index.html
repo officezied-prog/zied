@@ -3689,8 +3689,17 @@ const LOOKS = [
 const cv = $('#cv'), ctx = cv.getContext('2d', {willReadFrequently:false});
 const vid = $('#vid');
 let SRC = vid, STILL = false;
-const srcW = () => STILL ? SRC.width : (SRC.videoWidth || 1280);
-const srcH = () => STILL ? SRC.height : (SRC.videoHeight || 720);
+const srcW = () => STILL ? SRC.width : (SRC.videoWidth || SRC.width || 1280);
+const srcH = () => STILL ? SRC.height : (SRC.videoHeight || SRC.height || 720);
+/* v73 one frame: the camera frame is copied once per loop and the landmarks, the mirror, the GPU
+   layer, the occlusion and every sampler use that same copy. Drawing the live <video> after the
+   detection showed a newer frame than the landmarks were read on — the makeup trailed the face. */
+const FRM = document.createElement('canvas'), FRX = FRM.getContext('2d', { alpha:false });
+function grabFrame(){
+  const w = vid.videoWidth, h = vid.videoHeight; if(!w || !h) return false;
+  if(FRM.width !== w || FRM.height !== h){ FRM.width = w; FRM.height = h; }
+  FRX.drawImage(vid, 0, 0, w, h); return true;
+}
 const raw = document.createElement('canvas'), rctx = raw.getContext('2d',{willReadFrequently:true});
 let VW=0, VH=0;
 
@@ -3782,12 +3791,14 @@ function loop(){
   if(!S.running) return;
   requestAnimationFrame(loop);
   if(!STILL && vid.readyState < 2) return;
+  const frOK = !STILL && grabFrame(); if(frOK) SRC = FRM;       /* v73 one frame */
+  if(frOK && S.showGL && window.glUploadVideo) window.glUploadVideo();   /* v74: the same frame, from the <video> */
   computeMap();
 
   const now = performance.now();
   if(landmarker && !STILL){
     try{
-      const res = landmarker.detectForVideo(vid, now);
+      const res = landmarker.detectForVideo(frOK ? FRM : vid, now);
       if(res?.faceLandmarks?.length){
         const nl = res.faceLandmarks[0];
         S.landmarks = euroSmooth(nl); S._lmSeen = now; S.trackHold = false;
@@ -4596,7 +4607,7 @@ function softenMask(c2, W, H, r){
 
 /* the mesh's face oval stops short of the hairline; foundation must not.
    Push the forehead arc up along the face's own vertical axis. */
-function faceOvalToHairline(lm, pt, fs){
+function faceOvalToHairline(lm, pt, fs, liftK){
   /* tolerate both calling styles: pt(landmarkObject) and pt(index) */
   const G = i => { const l = lm[i]; if(!l) return null;
     try{ const r = pt(l); if(r && isFinite(r[0])) return r; }catch(e){}
@@ -4606,7 +4617,7 @@ function faceOvalToHairline(lm, pt, fs){
   if(!chin || !top) return L.faceOval.map(i=>G(i)).filter(Boolean);
   let ux = top[0]-chin[0], uy = top[1]-chin[1];
   const ul = Math.hypot(ux,uy)||1; ux/=ul; uy/=ul;
-  const lift = fs*0.20;                       /* to the hairline */
+  const lift = fs*(liftK != null ? liftK : 0.20);   /* to the hairline */
   return L.faceOval.map(i=>{
     const p0 = G(i); if(!p0) return null;
     const [x,y] = p0;
@@ -4618,6 +4629,14 @@ function faceOvalToHairline(lm, pt, fs){
   }).filter(Boolean);
 }
 
+/* v73: the foundation's outline — near the hairline, not into the hair, and inset so its soft edge
+   fades out AT the face edge instead of spilling past the jaw onto the background */
+function baseOutline(lm, pt, fs){
+  const o = faceOvalToHairline(lm, pt, fs, 0.10); if(o.length < 3) return o;
+  let cx = 0, cy = 0; o.forEach(p => { cx += p[0]; cy += p[1]; }); cx /= o.length; cy /= o.length;
+  const ins = fs*0.028;
+  return o.map(([x, y]) => { const dx = x-cx, dy = y-cy, d = Math.hypot(dx, dy) || 1; return [x - dx/d*ins, y - dy/d*ins]; });
+}
 /* ---- power watchdog: on a phone that cannot keep up, drop the optional
    passes rather than the frame rate. Quality degrades gracefully. ---- */
 let _pwT = performance.now(), _pwN = 0;
@@ -4702,7 +4721,7 @@ const drawFoundation = (()=>{
     mX.save();
     mX.filter = `blur(${Math.max(0.6, fs*0.02*kx).toFixed(2)}px)`;
     mX.fillStyle='#fff'; mX.beginPath();
-    faceOvalToHairline(lm, pt, fs).forEach(([x,y],k)=>{ k ? mX.lineTo(x,y) : mX.moveTo(x,y); });
+    baseOutline(lm, pt, fs).forEach(([x,y],k)=>{ k ? mX.lineTo(x,y) : mX.moveTo(x,y); });   /* v73 */
     mX.closePath(); mX.fill();
     mX.fillStyle='#000'; mX.beginPath(); holes(mX, lm, pt, HOLES()); mX.fill();
     mX.restore();
@@ -4787,7 +4806,7 @@ const drawFoundation = (()=>{
       softC.width=B.w; softC.height=B.h;
       softX.setTransform(1,0,0,1,0,0); softX.drawImage(tcv, B.x,B.y,B.w,B.h, 0,0,B.w,B.h);
       tctx.save(); tctx.beginPath();
-      faceOvalToHairline(lm, pt, fs).forEach(([x,y],k)=>{ k ? tctx.lineTo(x,y) : tctx.moveTo(x,y); });
+      baseOutline(lm, pt, fs).forEach(([x,y],k)=>{ k ? tctx.lineTo(x,y) : tctx.moveTo(x,y); });   /* v73 */
       tctx.closePath(); holes(tctx, lm, pt, HOLES()); tctx.clip('evenodd');
       tctx.globalAlpha = kSoft;
       tctx.filter = `blur(${Math.max(0.8, fs*0.0045).toFixed(1)}px)`;
@@ -5056,7 +5075,7 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
     blX.drawImage(tcv, B.x,B.y,B.w,B.h, 0,0,B.w,B.h);
     tctx.save();
     tctx.beginPath();
-    faceOvalToHairline(lm, pt, fs).forEach(([x,y],k)=>{ k?tctx.lineTo(x,y):tctx.moveTo(x,y); }); tctx.closePath();
+    baseOutline(lm, pt, fs).forEach(([x,y],k)=>{ k?tctx.lineTo(x,y):tctx.moveTo(x,y); }); tctx.closePath();   /* v73 */
     [ L.lipsOuter,
       L.eyeUpL.concat([...L.eyeLoL].reverse()),
       L.eyeUpR.concat([...L.eyeLoR].reverse()),
@@ -5091,13 +5110,19 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
      bake, whose shader already rides her live highlights */
   const SH = (!window.__PT && (on('highlight') || on('glow'))) ? sheenPlan(lm) : null;
 
+  /* v72 lips and lashes: a solid lip is solid up to its outline (see pass B) */
+  const lipSolid = !['ombre','blurred'].includes(S.lipStyle || 'full');
   m1.globalCompositeOperation='lighten';
   if(on('lips')){
     /* the lip style (the studio's pattern row) — the same colour, laid differently:
        full · ombre (deep at the centre, fading out) · two shades (the lower lip lighter)
        · lined (a deeper edge round a softer fill) · blurred (a soft, diffused edge) */
     const ls = S.lipStyle || 'full';
-    const path = (idx, cont) => idx.forEach((i,k)=>{ const [x,y]=pt(lm[i]); (k || cont) ? m1.lineTo(x,y) : m1.moveTo(x,y); });
+    /* v72: landmarks 61/291 sit inside the real corners of the mouth — push them out along the mouth line */
+    const cA = pt(lm[61]), cB = pt(lm[291]), mwL = Math.hypot(cB[0]-cA[0], cB[1]-cA[1]) || 1, exL = mwL*0.035;
+    const mux = (cB[0]-cA[0])/mwL, muy = (cB[1]-cA[1])/mwL;
+    const PO = i => i === 61 ? [cA[0]-mux*exL, cA[1]-muy*exL] : i === 291 ? [cB[0]+mux*exL, cB[1]+muy*exL] : pt(lm[i]);
+    const path = (idx, cont) => idx.forEach((i,k)=>{ const [x,y]=PO(i); (k || cont) ? m1.lineTo(x,y) : m1.moveTo(x,y); });
     const ring = () => { m1.beginPath(); path(L.lipsOuter); m1.closePath(); path([...L.lipsInner].reverse()); m1.closePath(); };
     m1.save(); m1.filter=`blur(${Math.max(.7, fs*(ls==='blurred' ? 0.017 : 0.006)).toFixed(1)}px)`;
     if(ls==='twotone'){
@@ -5761,6 +5786,7 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
       }
       let u=w/255;
       if(z.k==='liner') u = Math.min(1, Math.max(0, (u-0.12)/0.62));   // v68: a line is solid, not a fade
+      else if(z.k==='lips' && lipSolid) u = Math.min(1, Math.max(0, (u-0.06)/0.60));   // v72: solid to the outline, soft just outside
       else u=u*u*u*(u*(u*6-15)+10);   // smootherstep — a long, invisible fade at every border
       const a=u*z.I*z.a;
       if(FINB){ const fm=FINB[k]; if(a*fm.s>fsp) fsp=a*fm.s; if(a*fm.g>fgl) fgl=a*fm.g;
@@ -5908,55 +5934,74 @@ const LASH_STYLES = {
   lower:   {n:16, len:.021, tail:.45, w:1.05, lower:true}         /* natural, with the lower lashes too */
 };
 function drawLashes(c, lm, pt, fs){
+  /* v72 lips and lashes: rooted on the upper lid, pointing along the lid's own normal (turned toward
+     the brow, steadied by the face's up) — not away from the centre of the eye, which fanned them
+     into a sunburst and laid the corner ones flat along the lid past the inner corner. Longest and
+     flicked at the OUTER corner. On a lowered eye (looking at the phone) they hang down over the
+     lash line, as her own lashes do; half-way they point at the camera and look short. */
   const st = LASH_STYLES[S.lashStyle] || LASH_STYLES.natural;
   const I = clamp(S.ints.lashes ?? .6, 0, 1);
+  const F0 = pt(lm[152]), F1 = pt(lm[10]), fl = Math.hypot(F1[0]-F0[0], F1[1]-F0[1]) || 1;
+  const fu = [(F1[0]-F0[0])/fl, (F1[1]-F0[1])/fl];                       /* face up */
   c.save();
   c.strokeStyle = S.makeup.lashes;
   c.globalAlpha = .55 + .4*I;
   c.lineCap = 'round';
+  const info = [];
   [[L.eyeUpL, L.eyeLoL],[L.eyeUpR, L.eyeLoR]].forEach(([up, lo])=>{
-    const ring = up.concat(lo).map(i=>pt(lm[i]));
-    const cx = ring.reduce((a,q)=>a+q[0],0)/ring.length;
-    const cy = ring.reduce((a,q)=>a+q[1],0)/ring.length;
-    const pts = up.map(i=>pt(lm[i]));
+    const pts = up.map(i=>pt(lm[i])), n = pts.length, O = pts[0], N = pts[n-1];   /* outer corner → inner corner */
+    const ew = Math.hypot(N[0]-O[0], N[1]-O[1]) || 1;
+    const T = [(O[0]-N[0])/ew, (O[1]-N[1])/ew];                            /* toward the outer corner */
+    const mu = pt(lm[up[4]]), ml = pt(lm[lo[4]]), r = Math.hypot(mu[0]-ml[0], mu[1]-ml[1])/ew;
+    let s = clamp((r - LASH_OPEN[0])/(LASH_OPEN[1] - LASH_OPEN[0]), 0, 1); s = s*s*(3 - 2*s);   /* 0 lowered … 1 open */
+    info.push({ r:+r.toFixed(3), s:+s.toFixed(2) });
+    const nrm = (k, away) => {                                             /* the lid's normal at segment k */
+      const a = pts[k], b = pts[Math.min(n-1, k+1)];
+      let nx = -(b[1]-a[1]), ny = b[0]-a[0]; const nl = Math.hypot(nx,ny)||1; nx/=nl; ny/=nl;
+      if(nx*fu[0] + ny*fu[1] < 0){ nx=-nx; ny=-ny; }
+      nx = nx*.8 + fu[0]*.2; ny = ny*.8 + fu[1]*.2; const n2 = Math.hypot(nx,ny)||1;   /* the lid's curve fans them; the face's up only steadies */
+      return [nx/n2, ny/n2];
+    };
     for(let j=0;j<st.n;j++){
-      const t = .12 + .82*(j/(st.n-1));
-      const f = t*(pts.length-1), k=Math.min(pts.length-2, Math.floor(f)), fr=f-k;
-      const bx = pts[k][0]+(pts[k+1][0]-pts[k][0])*fr;
-      const by = pts[k][1]+(pts[k+1][1]-pts[k][1])*fr;
-      /* outward normal = away from the eye centre */
-      let nx = bx-cx, ny = by-cy;
-      const nl = Math.hypot(nx,ny)||1; nx/=nl; ny/=nl;
-      /* tangent toward the outer corner for the flick */
-      const tx0 = pts[pts.length-1][0]-pts[0][0], ty0 = pts[pts.length-1][1]-pts[0][1];
-      const tl = Math.hypot(tx0,ty0)||1;
-      const outT = Math.pow(t, 1.6) * st.tail * .45;
-      const Ln = fs*st.len*(.55 + .45*I) * (st.tail>1 ? (.6+.8*t) : (st.tail<.2 ? (1-Math.abs(t-.5)*.5) : (.75+.5*t)))
-        * (st.wisp ? [1.25, .76, 1.02][j % 3] : 1);
-      c.lineWidth = Math.max(.8, fs*.0042*st.w);
-      c.beginPath();
-      c.moveTo(bx, by);
-      c.quadraticCurveTo(
-        bx + nx*Ln*.45 + (tx0/tl)*Ln*outT*.5,
-        by + ny*Ln*.45 + (ty0/tl)*Ln*outT*.5,
-        bx + nx*Ln + (tx0/tl)*Ln*outT,
-        by + ny*Ln + (ty0/tl)*Ln*outT);
-      c.stroke();
+      const t = .03 + .83*(j/(st.n-1)), u = 1 - t;                         /* u = 1 at the outer corner */
+      const f = t*(n-1), k = Math.min(n-2, Math.floor(f)), fr = f-k;
+      const bx = pts[k][0]+(pts[k+1][0]-pts[k][0])*fr, by = pts[k][1]+(pts[k+1][1]-pts[k][1])*fr;
+      const [nx, ny] = nrm(k);
+      const flick = Math.pow(u, 1.6) * st.tail * .45;
+      /* where the lash leaves the lid (c0) and where it ends (d): open → up and out, lowered → down and out */
+      /* v72 lashes fan: the outer ones lean toward the temple, the inner ones a little toward the nose */
+      const fan = -0.28 + 1.0*Math.pow(u, 1.3);
+      const c0x = -nx*.9 + T[0]*.3 + (nx + T[0]*fan*.2 - (-nx*.9 + T[0]*.3))*s, c0y = -ny*.9 + T[1]*.3 + (ny + T[1]*fan*.2 - (-ny*.9 + T[1]*.3))*s;
+      const upx = nx + T[0]*(fan*.55 + flick), upy = ny + T[1]*(fan*.55 + flick);
+      const dnx = -nx*.85 + T[0]*(.45 + flick*.6), dny = -ny*.85 + T[1]*(.45 + flick*.6);
+      let dx = dnx + (upx-dnx)*s, dy = dny + (upy-dny)*s; const dl = Math.hypot(dx,dy)||1; dx/=dl; dy/=dl;
+      const c0l = Math.hypot(c0x, c0y)||1;
+      const prof = st.tail>1 ? (.6+.8*u) : (st.tail<.2 ? (1-Math.abs(u-.5)*.5) : (.75+.5*u));
+      const Ln = fs*st.len*(.55 + .45*I) * prof * (st.wisp ? [1.25, .76, 1.02][j % 3] : 1) * (.62 + .38*Math.abs(2*s - 1));
+      /* tapered: the whole lash fine, its root half full — a lash is thick where it grows */
+      const qx = bx + c0x/c0l*Ln*.5, qy = by + c0y/c0l*Ln*.5, ex = bx + dx*Ln, ey = by + dy*Ln, lw = Math.max(.8, fs*.0042*st.w);
+      c.lineWidth = Math.max(.6, lw*.55); c.beginPath(); c.moveTo(bx, by); c.quadraticCurveTo(qx, qy, ex, ey); c.stroke();
+      c.lineWidth = lw; c.beginPath(); c.moveTo(bx, by); c.quadraticCurveTo((bx+qx)/2, (by+qy)/2, (bx + 2*qx + ex)/4, (by + 2*qy + ey)/4); c.stroke();
     }
-    if(st.lower){                               /* short, fine lashes along the lower lid */
-      const lp = lo.map(i=>pt(lm[i]));
+    if(st.lower){                               /* short, fine lashes along the lower lid, pointing down */
+      const lp = lo.map(i=>pt(lm[i]));           /* inner → outer */
       for(let j=0;j<10;j++){
         const t = .18 + .76*(j/9), f = t*(lp.length-1), k=Math.min(lp.length-2, Math.floor(f)), fr=f-k;
         const bx = lp[k][0]+(lp[k+1][0]-lp[k][0])*fr, by = lp[k][1]+(lp[k+1][1]-lp[k][1])*fr;
-        let nx = bx-cx, ny = by-cy; const nl = Math.hypot(nx,ny)||1; nx/=nl; ny/=nl;
+        let nx = -(lp[k+1][1]-lp[k][1]), ny = lp[k+1][0]-lp[k][0]; const nl = Math.hypot(nx,ny)||1; nx/=nl; ny/=nl;
+        if(nx*fu[0] + ny*fu[1] > 0){ nx=-nx; ny=-ny; }
+        nx = nx*.6 - fu[0]*.4; ny = ny*.6 - fu[1]*.4; const n2 = Math.hypot(nx,ny)||1; nx/=n2; ny/=n2;
         const Ln2 = fs*st.len*.42*(.55+.45*I)*(.7+.5*t);
         c.lineWidth = Math.max(.7, fs*.0030);
-        c.beginPath(); c.moveTo(bx, by); c.lineTo(bx + nx*Ln2, by + ny*Ln2); c.stroke();
+        c.beginPath(); c.moveTo(bx, by); c.lineTo(bx + nx*Ln2 + T[0]*Ln2*.25*t, by + ny*Ln2 + T[1]*Ln2*.25*t); c.stroke();
       }
     }
   });
   c.restore();
+  drawLashes.last = info;
 }
+/* v72: lid gap ÷ eye width at which the lashes are fully lowered / fully open (calibrated on portraits) */
+const LASH_OPEN = [0.19, 0.27];
 function drawLens(c, lm, pt, fs){
   const I = clamp(S.ints.lens ?? .55, 0, 1);
   c.save();
@@ -7079,34 +7124,66 @@ const EURO = { n:0, x:null, dx:null, t:0, out:null };
    (slow) / ~15 ms (fast) and still removes more than half the jitter */
 const E_MIN = 1.3, E_BETA = 50.0, E_DC = 1.5;
 function euroReset(){ EURO.n = 0; }
+/* v73 rigid follow: the head's pose (centre + tilt) has its own quick filter; only the shape relative
+   to it is smoothed per landmark. Units: x scaled by the frame's aspect so a tilt is a true angle. */
+const RIG = { p:null, d:null };
+const R_MIN = 1.0, R_BETA_POS = 80.0, R_BETA_ANG = 20.0, R_DC = 4.0;
+function euroPose(lm, ar){
+  const n = lm.length; let cx = 0, cy = 0;
+  for(let i=0;i<n;i++){ cx += lm[i].x*ar; cy += lm[i].y; }
+  cx /= n; cy /= n;
+  const cl = idx => { let x = 0, y = 0; for(const i of idx){ x += lm[i].x*ar; y += lm[i].y; } return [x/idx.length, y/idx.length]; };
+  const a = cl(L.eyeUpL.concat(L.eyeLoL)), b = cl(L.eyeUpR.concat(L.eyeLoR));
+  return [cx, cy, Math.atan2(b[1]-a[1], b[0]-a[0])];
+}
 function euroSmooth(lm){
   const n = lm.length, now = performance.now();
+  const ar = (srcW()/srcH()) || 1;
+  const pr = euroPose(lm, ar), co = Math.cos(-pr[2]), si = Math.sin(-pr[2]);
+  /* this frame's landmarks in the head's own frame (the rigid motion taken out) */
+  const loc = (p) => { const X = p.x*ar - pr[0], Y = p.y - pr[1]; return [X*co - Y*si, X*si + Y*co]; };
   if(EURO.n !== n){
     EURO.n = n; EURO.t = now;
     EURO.x = new Float32Array(n*3); EURO.dx = new Float32Array(n*3);
     EURO.out = Array.from({length:n}, ()=>({x:0,y:0,z:0}));
     for(let i=0;i<n;i++){
-      const p=lm[i], o=EURO.out[i];
-      EURO.x[i*3]=o.x=p.x; EURO.x[i*3+1]=o.y=p.y; EURO.x[i*3+2]=o.z=p.z||0;
+      const p=lm[i], o=EURO.out[i], q = loc(p);
+      EURO.x[i*3]=q[0]; EURO.x[i*3+1]=q[1]; EURO.x[i*3+2]=p.z||0;
+      o.x=p.x; o.y=p.y; o.z=p.z||0;
     }
+    RIG.p = pr.slice(); RIG.d = [0,0,0];
     return EURO.out;
   }
   let dt = (now-EURO.t)/1000; EURO.t = now;
   dt = Math.min(0.1, Math.max(0.004, dt));
+  /* 1 · the pose: quick when she moves, calm when she is still */
+  const aDr = 1/(1 + 1/(2*Math.PI*R_DC)/dt);
+  for(let k=0;k<3;k++){
+    let dv = pr[k] - RIG.p[k];
+    if(k === 2){ while(dv > Math.PI) dv -= 2*Math.PI; while(dv < -Math.PI) dv += 2*Math.PI; }
+    RIG.d[k] += aDr*(dv/dt - RIG.d[k]);
+    const a0 = 1/(1 + 1/(2*Math.PI*(R_MIN + (k === 2 ? R_BETA_ANG : R_BETA_POS)*Math.abs(RIG.d[k])))/dt);
+    const a = Math.max(a0, Math.min(0.9, dt*9));
+    RIG.p[k] += a*dv;
+  }
+  const c2 = Math.cos(RIG.p[2]), s2 = Math.sin(RIG.p[2]);
+  /* 2 · the shape in the head's frame: the one-euro as before (jitter, expressions) */
   const aD = 1/(1 + 1/(2*Math.PI*E_DC)/dt);
   for(let i=0;i<n;i++){
-    const p=lm[i], o=EURO.out[i];
+    const p=lm[i], o=EURO.out[i], q = loc(p);
     for(let c=0;c<3;c++){
-      const k=i*3+c, v = c===0?p.x : c===1?p.y : (p.z||0);
+      const k=i*3+c, v = c===0 ? q[0] : c===1 ? q[1] : (p.z||0);
       const prev = EURO.x[k];
       const dx = (v-prev)/dt;
       const edx = EURO.dx[k] + aD*(dx-EURO.dx[k]);
       EURO.dx[k] = edx;
-      const a = 1/(1 + 1/(2*Math.PI*(E_MIN + E_BETA*Math.abs(edx)))/dt);
-      const nv = prev + a*(v-prev);
-      EURO.x[k] = nv;
-      if(c===0) o.x=nv; else if(c===1) o.y=nv; else o.z=nv;
+      const a0 = 1/(1 + 1/(2*Math.PI*(E_MIN + E_BETA*Math.abs(edx)))/dt);
+      const a = Math.max(a0, Math.min(0.85, dt*7));
+      EURO.x[k] = prev + a*(v-prev);
     }
+    /* 3 · back to the picture with the filtered pose */
+    const X = EURO.x[i*3], Y = EURO.x[i*3+1];
+    o.x = (RIG.p[0] + X*c2 - Y*s2)/ar; o.y = RIG.p[1] + X*s2 + Y*c2; o.z = EURO.x[i*3+2];
   }
   return EURO.out;
 }
@@ -11087,8 +11164,9 @@ function glInit(){
           vec2 c=(a_pos/u_res)*2.0-1.0;
           gl_Position=vec4(c*vec2(1.0,-1.0),0.0,1.0); }`;
       const fs=`#version 300 es
-        precision mediump float;
+        precision highp float;   /* v74: mediump is 16-bit on phone GPUs */
         in vec2 v_uv; in vec2 v_vid; out vec4 o;
+        uniform float uFlipV; uniform float uSwapRB;   /* v74 texture check: this device's upload, corrected */
         uniform sampler2D uVideo; uniform sampler2D uMk; uniform sampler2D uRef; uniform sampler2D uFin;
         uniform float uMeanY; uniform vec3 uTint;
         uniform float uLin; uniform float uTime; uniform sampler2D uOcc; uniform float uOccOn;
@@ -11103,7 +11181,8 @@ function glInit(){
           /* something in front of her face (hand, brush, hair, fabric) wears nothing */
           float occ = uOccOn > 0.5 ? texture(uOcc, v_vid).r : 0.0;
           if(occ > 0.985){ o = vec4(0.0); return; }
-          vec3 skin = texture(uVideo, v_vid).rgb;
+          vec3 skin = texture(uVideo, mix(v_vid, vec2(v_vid.x, 1.0 - v_vid.y), uFlipV)).rgb;
+          if(uSwapRB > 0.5) skin = skin.bgr;
           float Y   = dot(skin, vec3(0.299,0.587,0.114));
           /* LOCAL light reference with a trust rule: a dark neighbourhood
              (beard, hair, shadow edge) may never inflate the pigment —
@@ -11336,6 +11415,56 @@ function takeSnap(){
   return true;
 }
 window.glResnap = takeSnap;
+/* v74 texture check — see the patch notes: the frame texture is verified against the frame copy */
+const texFix = { flip:0, swap:0, ok:false, agree:0, bad:0, lastT:0, last:null };
+let vidFresh = false, stillKey = null, fbo = null;
+function texCheck(){
+  const now = performance.now();
+  if(now - texFix.lastT < (texFix.ok ? 15000 : 700)) return;
+  texFix.lastT = now;
+  const w = vid.videoWidth, h = vid.videoHeight; if(!w || !h || FRM.width !== w || FRM.height !== h) return;
+  if(!fbo) fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texVideo, 0);
+  if(gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE){ gl.bindFramebuffer(gl.FRAMEBUFFER, null); return; }
+  const px = new Uint8Array(4), T4 = [], A = [], Fl = [];
+  for(let j=0;j<4;j++) for(let i=0;i<4;i++){
+    const x = Math.round(w*(0.2 + 0.2*i)), y = Math.round(h*(0.2 + 0.2*j));
+    gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); T4.push([px[0], px[1], px[2]]);
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  try{
+    for(let j=0;j<4;j++) for(let i=0;i<4;i++){
+      const x = Math.round(w*(0.2 + 0.2*i)), y = Math.round(h*(0.2 + 0.2*j));
+      const a = FRX.getImageData(x, y, 1, 1).data, b = FRX.getImageData(x, h-1-y, 1, 1).data;
+      A.push([a[0], a[1], a[2]]); Fl.push([b[0], b[1], b[2]]);
+    }
+  }catch(e){ return; }
+  const D = (P2, sw) => { let s = 0; for(let k=0;k<16;k++){ const t = T4[k], p = P2[k]; s += Math.abs((sw ? t[2] : t[0]) - p[0]) + Math.abs(t[1] - p[1]) + Math.abs((sw ? t[0] : t[2]) - p[2]); } return s/48; };
+  const cand = [[D(A,0), 0, 0], [D(Fl,0), 1, 0], [D(A,1), 0, 1], [D(Fl,1), 1, 1]].sort((p, q) => p[0] - q[0]);
+  const lumT = T4.reduce((s, t) => s + t[0] + t[1] + t[2], 0)/48, lumA = A.reduce((s, t) => s + t[0] + t[1] + t[2], 0)/48;
+  texFix.last = { d:cand.map(c => Math.round(c[0])), lumT:Math.round(lumT), lumA:Math.round(lumA) };
+  const best = cand[0];
+  if(best[0] < 24 && (cand[1][0] - best[0] > 6 || (best[1] === 0 && best[2] === 0))){
+    if(best[1] === texFix.flip && best[2] === texFix.swap){ if(++texFix.agree >= 2) texFix.ok = true; }
+    else { texFix.flip = best[1]; texFix.swap = best[2]; texFix.agree = 1; texFix.ok = false;
+      try{ fatalLog('[gpu] frame texture arrives ' + (best[1] ? 'flipped ' : '') + (best[2] ? 'red/blue swapped ' : '') + '— corrected ' + JSON.stringify(texFix.last)); }catch(e){} }
+    texFix.bad = 0;
+  } else if(lumA > 30 && (lumT < 6 || best[0] > 45)){
+    if(++texFix.bad >= 3){
+      try{ fatalLog('[gpu] frame texture unusable — GPU layer off ' + JSON.stringify(texFix.last)); }catch(e){}
+      S.showGL = false; window.glSetVisible(false); if(typeof syncToggles === 'function') syncToggles();
+      try{ say(LANG === 'ar' ? 'محرك GPU لا يقرأ الكاميرا صحيحاً على هذا الجهاز — رجعت للمحرك المضمون' : LANG === 'id' ? 'Mesin GPU tidak membaca kamera dengan benar — kembali ke mesin standar' : 'The GPU engine misreads the camera on this device — back to the standard engine', 5000); }catch(e){}
+    }
+  }
+}
+window.glUploadVideo = function(){
+  if(!gl || !ready || STILL) return;
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texVideo);
+  try{ gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,vid); vidFresh = true; }catch(e){ vidFresh = false; return; }
+  try{ texCheck(); }catch(e){}
+};
+window.__glTexFix = () => texFix;
 
 /* ---------- the double-background bake ---------- */
 const bkB=document.createElement('canvas'), bkW=document.createElement('canvas');
@@ -11573,16 +11702,25 @@ window.glFrame=function(lm){
   gl.useProgram(prog);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, texVideo);
-  try{ gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,SRC); }catch(e){}
+  /* v74: live — the <video>, uploaded at the top of the loop (glUploadVideo); a still — its pixels, once */
+  if(STILL){
+    if(stillKey !== SRC){
+      try{ const w = SRC.width, h = SRC.height, pxS = SRC.getContext('2d').getImageData(0, 0, w, h).data;
+           gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,pxS); stillKey = SRC; }
+      catch(e){ try{ gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,SRC); }catch(e2){} }
+    }
+  } else if(!vidFresh){ try{ gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,vid); }catch(e){} }
+  vidFresh = false;
   const nowR = performance.now();
   if(nowR - refT > 150){
     refT = nowR;
     try{
-      const rc = refC.getContext('2d');
+      const rc = refC.getContext('2d', { willReadFrequently:true });
       rc.drawImage(SRC, 0, 0, 64, 48);
+      const rp = rc.getImageData(0, 0, 64, 48).data;                     /* v74: pixels, not the canvas */
       gl.activeTexture(gl.TEXTURE2);
       gl.bindTexture(gl.TEXTURE_2D, texRef);
-      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,refC);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,64,48,0,gl.RGBA,gl.UNSIGNED_BYTE,rp);
     }catch(e){}
   }
   gl.activeTexture(gl.TEXTURE1);
@@ -11625,7 +11763,9 @@ window.glFrame=function(lm){
   }
   gl.uniform1i(gl.getUniformLocation(prog,'uOcc'), 4);
   gl.uniform1f(gl.getUniformLocation(prog,'uOccOn'), (OC && OC.active) ? 1 : 0);
-  gl.uniform1f(gl.getUniformLocation(prog,'uTime'), performance.now()/1000);
+  gl.uniform1f(gl.getUniformLocation(prog,'uTime'), (performance.now()/1000) % 64);   /* v74: small, for 16-bit GPUs */
+  gl.uniform1f(gl.getUniformLocation(prog,'uFlipV'), STILL ? 0 : texFix.flip);
+  gl.uniform1f(gl.getUniformLocation(prog,'uSwapRB'), STILL ? 0 : texFix.swap);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
   gl.drawElements(gl.TRIANGLES, idxN, gl.UNSIGNED_SHORT, 0);
 };
@@ -17398,7 +17538,7 @@ const sp = document.getElementById('sk-pro'); if(sp) sp.onclick = ()=>{ openShee
    ===================================================================== */
 (function(){
 'use strict';
-const VERSION = 'v71';
+const VERSION = 'v74';
 window.LAMHA_VERSION = VERSION;
 try{ if(!/ v\d+/.test(document.title)) document.title = document.title.replace('LAMHA MOBILE', 'LAMHA MOBILE '+VERSION); }catch(e){}
 const PRO = window.LAMHA_PRO;
@@ -17725,8 +17865,17 @@ window.lamhaOcclude = function(ctx2){
   if(tint){ tx.save(); tx.globalCompositeOperation='soft-light'; tx.fillStyle=tint; tx.fillRect(0,0,W2,H2); tx.restore(); }
   tx.save(); tx.globalCompositeOperation='destination-in'; tx.imageSmoothingEnabled = true;
   if(BLUR_OK) tx.filter = `blur(${Math.max(1, dw/OCC.W*0.6).toFixed(1)}px)`;
-  if(S.mirror){ tx.translate(W2,0); tx.scale(-1,1); tx.drawImage(mC, 0,0,OCC.W,OCC.H, W2 - map.ox - dw, map.oy, dw, dh); }
-  else tx.drawImage(mC, 0,0,OCC.W,OCC.H, map.ox, map.oy, dw, dh);
+  /* v73: the mask was read on an earlier frame — carried with her head since (the eye corners) */
+  tx.setTransform(1,0,0,1,0,0);
+  if(S.mirror){ tx.translate(map.ox + VW*map.sx, map.oy); tx.scale(-map.sx, map.sy); } else { tx.translate(map.ox, map.oy); tx.scale(map.sx, map.sy); }
+  const sn = OCC._snap, lmN = S.landmarks;
+  if(sn && lmN && sn[33] && sn[263] && lmN[33] && lmN[263]){
+    const P1 = [sn[33].x*VW, sn[33].y*VH], P2 = [sn[263].x*VW, sn[263].y*VH], Q1 = [lmN[33].x*VW, lmN[33].y*VH], Q2 = [lmN[263].x*VW, lmN[263].y*VH];
+    const ax = P2[0]-P1[0], ay = P2[1]-P1[1], bx = Q2[0]-Q1[0], by = Q2[1]-Q1[1], den = ax*ax + ay*ay || 1;
+    const ca = (ax*bx + ay*by)/den, sa = (ax*by - ay*bx)/den;
+    tx.transform(ca, sa, -sa, ca, Q1[0] - (ca*P1[0] - sa*P1[1]), Q1[1] - (sa*P1[0] + ca*P1[1]));
+  }
+  tx.drawImage(mC, 0,0,OCC.W,OCC.H, 0, 0, VW, VH);
   tx.restore();
   ctx2.drawImage(tmp, 0, 0);
 };
