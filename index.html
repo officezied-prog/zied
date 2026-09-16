@@ -1256,6 +1256,90 @@ html[dir="rtl"] .chSend svg{transform:scaleX(-1)}
 .skt-ul{margin:4px 0 0;padding-inline-start:18px;font-size:12px;line-height:1.65;color:var(--mist)}
 .skt-ul li{margin:3px 0}
 </style><!-- /lamha-skt-css -->
+<style id="lamha-v80-css">
+/* ---------- v80: face coach bar, mirror mode, readable progress ---------- */
+#fcBar{position:absolute;left:8px;right:8px;bottom:calc(var(--dock) + var(--safe-b) + 8px);z-index:16;display:none;flex-direction:column;gap:6px;padding:9px 12px;
+  background:rgba(255,253,250,.94);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 26px rgba(0,0,0,.35);backdrop-filter:blur(8px);max-height:34%}
+#fcBar.on{display:flex}
+#fcTop{display:flex;align-items:center;gap:8px}
+#fcTitle{flex:1;font-size:13px;font-weight:600;color:var(--gold-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#fcTop button{width:30px;height:30px;border-radius:50%;flex-shrink:0;background:rgba(255,255,255,.4);border:1px solid var(--line);color:var(--dim);font-size:13px}
+#fcTop button.on{background:var(--gold);color:#fff}
+#fcBody{font-size:12px;line-height:1.5;color:var(--mist);overflow-y:auto}
+#fcBody .note{margin:0;padding:0;background:none;box-shadow:none}
+.fcLine{font-size:13px;font-weight:600;color:var(--gold-soft)}
+.fcBig{font-size:20px;line-height:1.35;text-align:center;padding:4px 0}
+.fcHint{font-size:11px;color:var(--dim);text-align:center}
+#fcRow{display:flex;gap:7px}
+#fcRow .btn{flex:1;padding:8px 6px;font-size:12px}
+/* mirror mode: the app read in a wall mirror — flipped so the text is the right way round */
+body.fcMirror #app{transform:scaleX(-1)}
+body.fcMirror #fcBar .fcBig{font-size:26px}
+/* progress, readable */
+.h2Card{background:var(--panel);border:1px solid rgba(176,138,102,.20);border-radius:16px;padding:12px 14px;margin:10px 0;box-shadow:0 3px 14px var(--shadow)}
+.h2Card.soft{background:var(--panel-2);box-shadow:none;border-color:transparent}
+.h2Card h3{margin:0 0 6px;font-size:14px;font-weight:600;color:var(--gold-soft)}
+.h2Card summary{cursor:pointer;font-size:13.5px;color:var(--gold-soft)}
+.h2Card summary small{color:var(--dim);font-weight:500}
+.h2Hint{font-size:11.5px;color:var(--dim);line-height:1.55;margin:2px 0 8px}
+.h2Sess{border-top:1px solid rgba(176,138,102,.14);padding:8px 0}
+.h2Sess:first-of-type{border-top:0}
+.h2Date{font-size:12px;font-weight:600;color:var(--gold-soft);margin-bottom:4px}
+.h2Row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:2px 10px;align-items:baseline;font-size:12.5px;padding:3px 0}
+.h2Row > span{color:var(--mist)}
+.h2Row > b{font-weight:600;color:var(--mist);white-space:nowrap}
+.h2Row > b small,.h2Row > small{font-size:11px;color:var(--dim);font-weight:500}
+.h2Row b.up{color:#4E7F69}.h2Row b.dn{color:var(--coral)}
+</style><!-- /lamha-v80-css -->
+<style id="lamha-v81-css">
+/* ---------- v81: hijab on a real photo; style guide ---------- */
+#lk-body .hpCard{border-color:rgba(166,124,82,.45)}
+.hpTpls{display:flex;gap:8px;overflow-x:auto;padding:6px 2px;scrollbar-width:thin}
+.hpTpl{flex-shrink:0;width:74px;height:96px;border-radius:12px;overflow:hidden;border:2px solid transparent;background:var(--panel-2);padding:0;display:grid;place-items:center;font-size:26px;color:var(--gold-soft);cursor:pointer}
+.hpTpl img{width:100%;height:100%;object-fit:cover;display:block}
+.hpTpl.on{border-color:var(--gold);box-shadow:0 0 0 2px rgba(166,124,82,.25)}
+.hpAdd{border:2px dashed var(--line)}
+.hpBtn{display:inline-flex;padding:6px 11px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.6);font-size:12px;color:var(--mist);cursor:pointer}
+.hpOut{margin:10px 0;border-radius:14px;overflow:hidden;background:#000}
+.hpOut canvas{width:100%;height:auto;display:block}
+#lk-body .lkTools button.pri{background:linear-gradient(135deg,#D9B98E,#B08A66 58%,#9A7350);color:#FFFBF6;border-color:transparent}
+/* v82: the photo try-on — opens over the mirror when a wrap is chosen (nothing is drawn on the video any more) */
+#hpTry{position:fixed;inset:0;z-index:100010;   /* over the app's own dock (99999) */background:rgba(26,20,16,.93);overflow:auto;padding:12px 12px 20px;color:#F6EFE7;-webkit-overflow-scrolling:touch}
+.hpTryIn{max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:8px}
+.hpTryTop{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13.5px;line-height:1.5}
+.hpTryX{flex:0 0 auto;width:38px;height:38px;border-radius:50%;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.12);color:#fff;font-size:15px;cursor:pointer}
+.hpTryStage{position:relative;min-height:200px;border-radius:16px;overflow:hidden;background:#0f0b09;display:grid;place-items:center}
+.hpTryStage canvas{width:100%;height:auto;display:block}
+.hpTryMsg{position:absolute;left:12px;right:12px;bottom:12px;padding:10px 12px;border-radius:12px;background:rgba(0,0,0,.66);font-size:12.5px;line-height:1.65;text-align:center}
+.hpTryLbl{font-size:11.5px;opacity:.75;margin-top:2px}
+#hpTry .hpTpl{width:78px;height:104px;position:relative;background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.18)}
+#hpTry .hpTpl span{position:absolute;left:0;right:0;bottom:0;padding:3px 4px;font-size:9.5px;line-height:1.3;background:linear-gradient(transparent,rgba(0,0,0,.8));color:#fff;text-align:center}
+#hpTry .hpTpl.on{border-color:var(--gold,#C9A227);box-shadow:0 0 0 2px rgba(201,162,39,.3)}
+.hpTrySws{display:flex;flex-wrap:wrap;gap:6px}
+.hpTrySws button{display:inline-flex;align-items:center;gap:6px;padding:5px 11px 5px 5px;border-radius:999px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.08);color:#F6EFE7;font-size:11.5px;cursor:pointer}
+.hpTrySws button.on{border-color:var(--gold,#C9A227);background:rgba(255,255,255,.2)}
+.hpTrySws i{width:16px;height:16px;border-radius:50%;border:1px solid rgba(0,0,0,.28)}
+.hpTryAct{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
+.hpTryAct button,#hpTry .hpTryAct .hpBtn{padding:9px 13px;border-radius:12px;border:1px solid rgba(255,255,255,.24);background:rgba(255,255,255,.1);color:#F6EFE7;font-size:12.5px;cursor:pointer}
+.hpTryAct button.pri{background:linear-gradient(135deg,#D9B98E,#B08A66 58%,#9A7350);color:#2A1E14;border-color:transparent;font-weight:600}
+.hpTryNote{font-size:11px;opacity:.74;line-height:1.6}
+body.hpTryOn{overflow:hidden}
+/* the style guide (colours of clothes and hijab, shops, occasions, 40+) */
+.sgCard{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:10px 0;background:rgba(255,255,255,.62)}
+.sgCard h4{margin:0 0 6px;font-size:13.5px;color:var(--gold-soft)}
+.sgCard p,.sgCard li{font-size:12.5px;line-height:1.7;margin:4px 0}
+.sgSw{display:inline-flex;align-items:center;gap:6px;padding:4px 9px 4px 4px;border-radius:999px;border:1px solid var(--line);background:#fff;font-size:11.5px;margin:3px 2px;color:var(--mist);text-decoration:none}
+.sgSw i{width:18px;height:18px;border-radius:50%;border:1px solid rgba(0,0,0,.12)}
+.sgLinks{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.sgLinks a{font-size:11.5px;padding:5px 10px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.7);color:var(--gold-soft);text-decoration:none}
+.sgNote{font-size:11px;color:var(--dim);margin-top:6px;line-height:1.5}
+.sgOcc{display:grid;grid-template-columns:1fr auto;gap:4px 10px;font-size:12.5px}
+.sgOcc b{font-family:"IBM Plex Mono",monospace;font-weight:500;color:var(--gold-soft)}
+body.lamha40 #app{font-size:17px}
+body.lamha40 .sheet{font-size:15px}
+body.lamha40 .sheet .lead,body.lamha40 .note,body.lamha40 small{font-size:13px !important}
+body.lamha40 .dbtn span{font-size:11.5px}
+</style><!-- /lamha-v81-css -->
 </head>
 <body>
 <div id="fatal" style="display:none;position:fixed;inset:0;z-index:99;background:#16101C;color:#F3EDF7;
@@ -3863,7 +3947,7 @@ function updateVR(){
     y1 = Math.max(cv.height*0.32, (r.top-st.top)*k);
   }
   /* an open sheet, or the studio's compact bar: the face stays above it */
-  const sh = document.querySelector('.sheet.open') || document.querySelector('.stBar.on');
+  const sh = document.querySelector('.sheet.open') || document.querySelector('.stBar.on') || document.querySelector('#fcBar.on');   /* v80: the coach bar */
   if(sh){
     const r = sh.getBoundingClientRect();
     const sx0=(r.left-st.left)*k, sx1=(r.right-st.left)*k;
@@ -17833,7 +17917,7 @@ const sp = document.getElementById('sk-pro'); if(sp) sp.onclick = ()=>{ openShee
    ===================================================================== */
 (function(){
 'use strict';
-const VERSION = 'v79';
+const VERSION = 'v82';
 window.LAMHA_VERSION = VERSION;
 try{ if(!/ v\d+/.test(document.title)) document.title = document.title.replace('LAMHA MOBILE', 'LAMHA MOBILE '+VERSION); }catch(e){}
 const PRO = window.LAMHA_PRO;
@@ -19638,7 +19722,8 @@ function drawWorn(tctx){
   tctx.strokeStyle = 'rgba(0,0,0,0.34)'; tctx.lineWidth = G.fl*0.06; tctx.stroke(G.inner); tctx.restore();
   tctx.restore();
 }
-LK.wear = function(style, hex){ WORN.style = style || null; if(hex) WORN.col = hex; S.wornHijab = !!WORN.style; HCv.ver = -1; };
+LK.wear = function(style, hex){ WORN.style = style || null; if(hex) WORN.col = hex; S.wornHijab = !!WORN.style && !LK.photoWrap; HCv.ver = -1;
+  if(LK.onWear){ try{ LK.onWear(WORN.style, WORN.col); }catch(e){} } };   /* v82: every wrap choice opens the photo try-on */
 LK.fit = v => { WORN.fit = v !== false; };                                      /* v70: fit the wrap to her face shape (on by default) */
 LK.wornInfo = () => { const st = WORN.style ? fitStyle(WSTYLE[WORN.style] || WSTYLE.satin, faceKeyNow()) : null;
   return { style:WORN.style, col:WORN.col, hair:HCv.n, fit:WORN.fit !== false, face:(st && st.fitFace) || null, note:(st && st.fitNote) || '' }; };
@@ -20264,9 +20349,9 @@ window.drawApplyAnim = function(lm){
   /* a new cut first (under a hijab it would not show), then the hijab. With the GPU face
      drawn over the mirror, whatever covers her forehead goes on the layer above it */
   const top = (window.lamhaTop && window.lamhaTop()) || ctx;
-  if(CUT.key && !WORN.style){ try{ drawCut(top); }catch(e){ if(!LK._cutErr){ LK._cutErr = String(e && (e.stack || e.message || e));
+  if(CUT.key && !(WORN.style && !LK.photoWrap)){ try{ drawCut(top); }catch(e){ if(!LK._cutErr){ LK._cutErr = String(e && (e.stack || e.message || e));
     try{ fatalLog('[cut] ' + LK._cutErr); }catch(e2){} } } }
-  const draw = WORN.style ? drawWorn : S.hijabColour ? drawHijab : null;
+  const draw = (WORN.style && !LK.photoWrap) ? drawWorn : S.hijabColour ? drawHijab : null;   /* v82: a wrap is tried on a photo, not drawn on the video */
   if(draw){ try{ draw(draw === drawWorn ? top : ctx); }catch(e){ if(!LK._hijErr){ LK._hijErr = String(e && (e.stack || e.message || e));
     try{ fatalLog('[hijab] ' + LK._hijErr); }catch(e2){} } } }
   return _daa && _daa.apply(this, arguments);
@@ -20546,7 +20631,7 @@ if(typeof _os === 'function') window.openSheet = function(id){
   if(id === 'sh-look'){ try{ LK.open(); }catch(e){ try{ fatalLog('[look] ' + (e && (e.stack || e.message || e))); }catch(e2){} } }
   return r;
 };
-Object.assign(LK, { autoFill, scoreCuts, CUTS, WRAPS, render: () => render() });   /* for the studio's compact bar */
+Object.assign(LK, { autoFill, scoreCuts, CUTS, WRAPS, render: () => render(), hijabColours });   /* for the studio's compact bar; v81: the style guide */
 const nav = document.getElementById('nav-look'); if(nav) nav.textContent = tx(T3('إطلالتي','My look','Tampilanku'));
 const css = document.createElement('style');
 css.textContent = '#lk-body .lkRow{margin:9px 0}#lk-body .lkRow>b{display:block;font-size:12.5px;margin-bottom:5px;color:var(--gold-soft)}' +
@@ -22586,7 +22671,7 @@ const forSpeech = s => String(s).replace(/<[^>]+>/g, ' ')
 const QU = [];
 function speakRaw(text, g){
   if(!window.speechSynthesis || !window.SpeechSynthesisUtterance) return { v:null, none:true };
-  const pv = pickVoice(g); if(!pv.v) return pv;
+  const pv = (window.lamhaAdvisor && window.lamhaAdvisor._pickVoice ? window.lamhaAdvisor._pickVoice(g) : pickVoice(g)); if(!pv.v) return pv;
   g = g || PS().g;
   const parts = (text.match(/[^.!?؟…\n]+[.!?؟…]*/g) || [text]).map(s => s.trim()).filter(Boolean);
   try{ speechSynthesis.cancel(); }catch(e){}
@@ -22595,7 +22680,7 @@ function speakRaw(text, g){
     const u = new SpeechSynthesisUtterance(s);
     u.voice = pv.v; u.lang = String(pv.v.lang || '').replace('_', '-') || ({ ar:'ar-SA', en:'en-US', id:'id-ID' })[lang()];
     /* a mature man: a little lower and slower; a small shift only when the device lacks that voice */
-    u.pitch = g === 'm' ? 0.9 : (pv.match || pv.unknown ? 1.02 : 1.1);
+    u.pitch = g === 'm' ? 0.9 : (pv.match ? 1.02 : 1.15);   /* v80: an unknown voice is lifted, not trusted */
     u.rate  = g === 'm' ? 0.94 : 1.0;
     QU.push(u); try{ speechSynthesis.speak(u); }catch(e){}
   });
@@ -23325,6 +23410,7 @@ function zoneMenu(z){
 }
 function examples(k){ const ex = (eT(KB2().examples) || []).slice(); const out = []; while(ex.length && out.length < k) out.push(ex.splice(Math.floor(Math.random()*ex.length), 1)[0]); return out; }
 function fallback(){
+  if(window.lamhaAdvisor && window.lamhaAdvisor._fb){ try{ return window.lamhaAdvisor._fb(window.lamhaAdvisor._last || ''); }catch(e){} }   /* v80: the clarifier */
   bot(C('fallback2'), examples(3).map(x => ({ t:x, say:false, a:() => onUser(x) })).concat([{ t:C('menu'), a:H.menu }]));
 }
 H.fallback = () => fallback();
@@ -23374,6 +23460,7 @@ function routeLocal(n, raw, T, L){
 onUser = function(text){
   me(text);
   if(!ST.persona){ ST.persona = 'noor'; save(); renderHead(); }
+  try{ window.lamhaAdvisor._last = text; const ev = new CustomEvent('lamha-user-said', { detail:{ text }, cancelable:true }); if(!document.dispatchEvent(ev)) return; }catch(e){}   /* v80: the listening layer and the watchdog */
   const n = norm(text), T = toks(n);
   if(ctx.await){ const f = ctx.await; ctx.await = null; try{ if(f(n, text) !== false) return; }catch(e){} }
   try{ route(n, text, T); }
@@ -23405,7 +23492,7 @@ function voiceErr(code){
 }
 speakRaw = function(text, g){
   if(!window.speechSynthesis || !window.SpeechSynthesisUtterance) return { v:null, none:true };
-  const pv = pickVoice(g); if(!pv.v) return pv;
+  const pv = (window.lamhaAdvisor && window.lamhaAdvisor._pickVoice ? window.lamhaAdvisor._pickVoice(g) : pickVoice(g)); if(!pv.v) return pv;
   g = g || PS().g;
   const parts = (String(text).match(/[^.!?؟…\n]+[.!?؟…]*/g) || [String(text)]).map(s => s.trim()).filter(Boolean);
   try{ speechSynthesis.cancel(); }catch(e){}
@@ -23413,7 +23500,7 @@ speakRaw = function(text, g){
   const go = () => parts.forEach(s => {
     const u = new SpeechSynthesisUtterance(s);
     u.voice = pv.v; u.lang = String(pv.v.lang || '').replace('_', '-') || ({ ar:'ar-SA', en:'en-US', id:'id-ID' })[lang()];
-    u.pitch = g === 'm' ? 0.9 : (pv.match || pv.unknown ? 1.02 : 1.1);
+    u.pitch = g === 'm' ? 0.9 : (pv.match ? 1.02 : 1.15);   /* v80: an unknown voice is lifted, not trusted */
     u.rate  = g === 'm' ? 0.94 : 1.0;
     u.onerror = ev => voiceErr(ev && ev.error);
     QU.push(u); try{ speechSynthesis.speak(u); }catch(e){}
@@ -23428,12 +23515,13 @@ speak = function(html){
   const r = speakRaw(text); if(!r) return;
   if(r.none){ voicesWaiting = true; if(!voiceNoted){ voiceNoted = true; note(C('voiceNone') + ' ' + voiceHelp()); } return; }
   if(r.onlineOnly){ if(!voiceNoted){ voiceNoted = true; askOnline(); } return; }
+  if(r.v && !r.hers && (!r.match || r.unknown) && PS().g === 'f'){ try{ document.dispatchEvent(new Event('lamha-voice-doubt')); }catch(e){} }   /* v80: offer the picker */
   if(r.v && !r.match && !r.unknown && !voiceNoted){ voiceNoted = true; note(C(PS().g === 'm' ? 'voiceMissM' : 'voiceMissF')); }
 };
 try{ if(window.speechSynthesis) speechSynthesis.addEventListener('voiceschanged', () => {
   if(voicesWaiting && pickVoice().v){ voicesWaiting = false; note(C('voiceNow')); speakRaw(forSpeech(C('voiceNow'))); } }); }catch(e){}
 H.voice = () => {
-  const r = pickVoice(), vi = voiceInfo();
+  const r = (window.lamhaAdvisor && window.lamhaAdvisor._pickVoice ? window.lamhaAdvisor._pickVoice() : pickVoice()), vi = voiceInfo();
   let h = '';
   if(r.v) h = esc(C('voiceSet').replace('{v}', r.v.name + (r.online ? C('onLine') : C('onDevice'))));
   else if(r.onlineOnly) h = esc(C('voiceOnlineQ'));
@@ -23441,11 +23529,15 @@ H.voice = () => {
   bot(h, [
     r.v ? { t:C('voiceTest'), pri:true, a:() => { const s = speakRaw(forSpeech(C('sample').replace('{n}', pname()))); if(s && !s.v) note(C('voiceNone')); } } : null,
     r.onlineOnly ? { t:C('allow'), pri:true, a:() => { ST.online = true; save(); speakRaw(forSpeech(C('voiceOn'))); } } : null,
+    { t:(lang() === 'ar' ? 'أصوات جهازي' : lang() === 'id' ? 'Suara di ponselku' : 'Voices on my phone'), a:() => { if(window.lamhaVoicePicker) window.lamhaVoicePicker(); } },
     { t:ST.voice ? C('voiceOffBtn') : C('voiceOnBtn'), a:toggleVoice } ], { silent:true });
 };
 Object.assign(CX.ar, { voiceOffBtn:'أطفئي الصوت 🔇', voiceOnBtn:'شغّلي الصوت 🔊' });
 Object.assign(CX.en, { voiceOffBtn:'Turn the voice off 🔇', voiceOnBtn:'Turn the voice on 🔊' });
 Object.assign(CX.id, { voiceOffBtn:'Matikan suara 🔇', voiceOnBtn:'Nyalakan suara 🔊' });
+/* v80: what the advisor IV layer builds on */
+window.lamhaAdvisor.bot = bot; window.lamhaAdvisor._H = H; window.lamhaAdvisor.persona = () => ST.persona; window.lamhaAdvisor._pickVoice = pickVoice;
+window.lamhaAdvisor._setFallback = f => { window.lamhaAdvisor._fb = f; };
 /* iPhone and Android unlock sound on the first touch inside the sheet; the voices list warms up too */
 let audioUnlocked = false;
 try{ $c('#sh-chat').addEventListener('pointerdown', () => {
@@ -23566,7 +23658,10 @@ const MARK_W = /^(اسمي|انا|ناديني|سميني|نادني|my|name|is|
 function pickName(n, raw){
   const mm = NAME_MARK.exec(' ' + n);
   if(mm){ const w = raw.split(/\s+/).find(x => norm(x) === mm[1]); return cleanName(w || mm[1]); }
-  const ws = raw.split(/\s+/).filter(x => !MARK_W.test(norm(x)) && cleanName(x));
+  const all = String(raw || '').trim().split(/\s+/);
+  if(all.length > 2) return '';                                   /* v80: a sentence is not a name */
+  if(/(مكياج|عندي|الان|بشره|شعر|روج|كريم|makeup|\bnow\b|\bhave\b|skin|hair|dandan|punya)/.test(n)) return '';
+  const ws = all.filter(x => !MARK_W.test(norm(x)) && cleanName(x));
   return cleanName(ws[0] || '');
 }
 function askName(){
@@ -25495,5 +25590,866 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
 
 </script>
 <!-- LAMHA SKT END -->
+<!-- LAMHA V80 BEGIN -->
+<script>
+/* ============================================================
+   LAMHA · ADVISOR IV (v80) — she reported: Noor spoke with a man's voice; the second message got no answer;
+   "now I have makeup" got "I didn't understand, write what you have". Three fixes, without touching the engine:
+     1 · the voice: she picks it herself from the voices on her phone (each with ▶ to listen), remembered per
+         advisor; until she does, a voice of unknown gender is not silently accepted as a woman's — the picker
+         is offered at once, and Noor's pitch is raised a little;
+     2 · no bare "I didn't understand": a warm clarifier that reads the cues in her sentence (makeup, a product,
+         "I have", "now", a feeling) and offers what she most likely meant, as taps;
+     3 · a watchdog: if nothing answered her within 2.5 s, the clarifier answers;
+     and a listening layer: a feeling ("I'm tired", "I look bad") is met before any advice.
+   ============================================================ */
+(function(){
+'use strict';
+const A = window.lamhaAdvisor; if(!A) return;
+const lang = () => (typeof LANG !== 'undefined' && /^(ar|en|id)$/.test(LANG)) ? LANG : 'ar';
+const L3 = (ar, en, id) => ({ ar, en, id })[lang()];
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+const $c = s => document.querySelector(s);
+const lod = async k => { try{ if(typeof store !== 'undefined') return await store.get(k); }catch(e){} try{ return JSON.parse(localStorage.getItem(k) || 'null'); }catch(e){ return null; } };
+const sav = async (k, v) => { try{ if(typeof store !== 'undefined') return await store.set(k, v); }catch(e){} try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} };
+const KEY = 'm_lamha_chat4';
+let C4 = { voice:{}, seen:0 };
+(async () => { const v = await lod(KEY); if(v && typeof v === 'object') C4 = Object.assign({ voice:{}, seen:0 }, v); })();
+const save4 = () => sav(KEY, C4);
+/* the advisor's private helpers are reachable through the objects it exposes; we keep our own copies of the small ones */
+const norm = s => { let n = String(s || '').toLowerCase(); n = n.replace(/[ً-ْـ]/g, '').replace(/[إأآا]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim(); return n; };
+const has = (n, re) => re.test(' ' + n + ' ');
+const FEEL = /(تعبان|تعبت|مرهق|زهق|حزين|مكتئب|خايف|قلقان|محبط|مش عاجب|ما عجب|ماعجب|وحش|قبيح|بشع|مش حلو|شكلي سي|بكيت|ابكي|وحيد|ضايق|زعلان|مضايق|كره|بكره شكلي|عيب|ما اعرف|مش عارف|محتار|tired|exhausted|sad|anxious|worried|ugly|hate (my|how)|i look (bad|awful|terrible)|frustrat|confus|don.?t know|lelah|capek|sedih|takut|jelek|bingung|benci)/;
+const MK = /(مكياج|ميك اب|ميكب|makeup|make-up|riasan|dandan)/;
+/* \b does not know Arabic letters: word edges are spaces (has() pads the text with them) */
+const HAVE = /(\s(عندي|معي|لدي|اشتريت|جبت|عندى)\s|\b(i have|i got|bought|punya|ada|beli)\b)/;
+const NOW = /(\s(الان|دلوقتي|هسه|هلق|حاليا|توا)\s|\b(now|sekarang)\b)/;
+const PRODUCT = /(كريم|سيروم|غسول|واقي|تونر|مرطب|احمر شفاه|روج|ماسكارا|كحل|ايلاينر|اساس|فاونديشن|كونسيلر|بودره|بلاشر|حمره|ظلال|ايشادو|هايلايتر|كونتور|برايمر|cream|serum|cleanser|sunscreen|toner|moisturi|lipstick|mascara|liner|foundation|concealer|powder|blush|shadow|highlighter|contour|primer|krim|pelembap|tabir|lipstik|maskara|alas|bedak|perona)/;
+const ZONES = { lips:/(شفا|شفة|شفاه|روج|احمر شفاه|lip|bibir)/, eyes:/(عين|عيون|جفن|ظلال|ايشادو|كحل|ايلاينر|رموش|eye|lash|liner|shadow|mata|bulu)/, base:/(اساس|فاونديشن|كونسيلر|بشره|بشرتي|base|foundation|concealer|skin|kulit|alas)/, brow:/(حاجب|حواجب|brow|alis)/, cheek:/(خد|خدود|بلاشر|حمره|blush|cheek|pipi|perona)/, hair:/(شعر|صبغ|hair|dye|rambut)/, hijab:/(حجاب|لفه|طرحه|hijab|jilbab)/ };
+const zoneOf = n => { for(const k in ZONES) if(has(n, ZONES[k])) return k; return null; };
+const chip = (t, a, pri) => ({ t, a, pri: !!pri });
+const bot = (h, chips, opt) => A.bot ? A.bot(h, chips, opt) : null;
+
+/* ---------------- 1 · her own voice choice ---------------- */
+const voicesFor = () => { let vs = []; try{ vs = speechSynthesis.getVoices() || []; }catch(e){} const l = lang(); return vs.filter(v => { const x = String(v.lang || '').replace('_', '-').toLowerCase(); return x === l || x.startsWith(l + '-'); }); };
+function chosen(g){ const nm = C4.voice[g]; if(!nm) return null; return voicesFor().find(v => v.name === nm) || null; }
+/* offered inside the chat: every voice for her language, each with ▶, and a tick on the one in use */
+function voicePicker(g){
+  g = g || ((A.persona && A.persona() === 'karim') ? 'm' : 'f');
+  const vs = voicesFor(); if(!vs.length){ bot(esc(L3('لا أجد أصواتاً لهذه اللغة على جهازكِ. على أندرويد: الإعدادات ← اللغة والإدخال ← تحويل النص إلى كلام ← ثبّتي صوتاً عربياً من Google.', 'I find no voices for this language on your device. On Android: Settings → Language & input → Text-to-speech → install an Arabic voice from Google.', 'Tidak ada suara untuk bahasa ini di perangkatmu. Di Android: Setelan → Bahasa & masukan → Text-to-speech → pasang suara.')), null, { silent:true }); return; }
+  const cur = C4.voice[g];
+  const head = esc(L3('هذه الأصوات على جهازكِ — اضغطي ▶ لتسمعي، ثم «اختاري» الصوت الذي يناسب ' + (g === 'f' ? 'نور' : 'كريم') + ':', 'These voices are on your device — tap ▶ to hear one, then "choose" the one that suits ' + (g === 'f' ? 'Noor' : 'Karim') + ':', 'Ini suara di perangkatmu — ketuk ▶ untuk mendengar, lalu "pilih" yang cocok untuk ' + (g === 'f' ? 'Noor' : 'Karim') + ':'));
+  const list = vs.slice(0, 12).map(v => chip((cur === v.name ? '✓ ' : '') + '▶ ' + v.name.replace(/^(Microsoft|Google|Apple)\s+/i, '').slice(0, 28), () => { try{ speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(L3('أهلاً، أنا ' + (g === 'f' ? 'نور' : 'كريم') + '. هل يعجبكِ صوتي؟', 'Hello, I am ' + (g === 'f' ? 'Noor' : 'Karim') + '. Do you like my voice?', 'Halo, aku ' + (g === 'f' ? 'Noor' : 'Karim') + '. Suka suaraku?')); u.voice = v; u.lang = v.lang; u.pitch = g === 'f' ? 1.1 : 0.9; speechSynthesis.speak(u); }catch(e){}
+    C4.voice[g] = v.name; save4(); bot(esc(L3('اخترتِ: ' + v.name, 'Chosen: ' + v.name, 'Dipilih: ' + v.name)), null, { silent:true, now:true }); }));
+  bot(head, list.concat([chip(L3('الصوت التلقائي', 'Automatic voice', 'Suara otomatis'), () => { delete C4.voice[g]; save4(); bot(esc(L3('عدتُ إلى الاختيار التلقائي.', 'Back to the automatic choice.', 'Kembali ke pilihan otomatis.')), null, { silent:true }); })]), { silent:true });
+}
+/* the engine's own picker is replaced: hers first; otherwise no voice of unknown gender passes as a match */
+if(typeof A._pickVoice === 'function'){
+  const pv0 = A._pickVoice;
+  A._pickVoice = function(g){ const P = A.persona ? A.persona() : 'noor'; g = g || (P === 'karim' ? 'm' : 'f'); const v = chosen(g); if(v) return { v, match:true, unknown:false, online: v.localService === false, hers:true }; return pv0.apply(this, arguments); };
+}
+/* offered once, at the first spoken reply of unknown or wrong gender */
+document.addEventListener('lamha-voice-doubt', () => { if(C4.seen) return; C4.seen = 1; save4();
+  bot(esc(L3('إن لم يكن هذا صوت امرأة، فاختاري صوتاً بنفسكِ:', 'If that was not a woman’s voice, pick one yourself:', 'Jika itu bukan suara perempuan, pilih sendiri:')), [chip(L3('أصوات جهازي', 'Voices on my phone', 'Suara di ponselku'), () => voicePicker(), true)], { silent:true }); });
+window.lamhaVoicePicker = voicePicker;
+
+/* ---------------- 2 · the clarifier, and 4 · the listening layer ---------------- */
+const act = (k, z) => { try{ const H = A._H; if(!H) return; if(k === 'kit') return H.kit(''); if(k === 'check') return H.check(''); if(k === 'teach') return H.teach('', '', z || ''); if(k === 'fix') return H.fix('', '', z || ''); if(k === 'suggest') return H.suggest(''); if(k === 'scan') return (typeof A.scan === 'function') ? A.scan() : H.scan(''); if(k === 'kitadd'){ try{ openSheet('sh-kit'); const b = document.getElementById('kt-add'); if(b) b.click(); }catch(e){} } if(k === 'try'){ try{ openSheet(''); if(typeof hudToggle === 'function') hudToggle(true); }catch(e){} } if(k === 'menu') return H.menu(); }catch(e){} };
+function name(){ try{ return (A.friend && A.friend.name) || ''; }catch(e){ return ''; } }
+function clarify(text){
+  const n = norm(text), z = zoneOf(n), mk = has(n, MK) || has(n, PRODUCT), hv = has(n, HAVE), now = has(n, NOW), feel = has(n, FEEL);
+  const nm = name() ? (lang() === 'ar' ? ' يا ' + name() : ' ' + name()) : '';
+  const chips = [];
+  let h = '';
+  if(feel){
+    h = esc(L3('أسمعكِ' + nm + '، وهذا طبيعي — كلنا نمرّ بأيام كهذه. خذي نفساً؛ أنا هنا ولا شيء مستعجل. ', 'I hear you' + nm + ', and that is normal — we all have days like this. Take a breath; I am here and nothing is urgent. ', 'Aku mendengarmu' + nm + ', dan itu wajar — kita semua punya hari seperti ini. Tarik napas; aku di sini dan tidak ada yang mendesak. '));
+    chips.push(chip(L3('احكي لي أكثر', 'Tell me more', 'Ceritakan lebih'), () => { bot(esc(L3('أنا معكِ. ما الذي يضايقكِ أكثر: شكل البشرة، أم المكياج، أم أمر آخر؟', 'I am with you. What bothers you most: your skin, the makeup, or something else?', 'Aku bersamamu. Apa yang paling mengganggumu: kulit, makeup, atau hal lain?')), [chip(L3('البشرة', 'My skin', 'Kulitku'), () => act('fix', 'base')), chip(L3('المكياج', 'The makeup', 'Makeup'), () => act('suggest')), chip(L3('شيء آخر', 'Something else', 'Hal lain'), () => bot(esc(L3('اكتبيه كما تحبين — أقرأ وأردّ، ولو لم يكن عن المكياج.', 'Write it as you like — I read and answer, even if it is not about makeup.', 'Tulis sesukamu — aku membaca dan menjawab, walau bukan soal makeup.')), null))]); }, true));
+    chips.push(chip(L3('اقتراح لطيف الآن', 'A gentle idea for now', 'Ide lembut sekarang'), () => act('suggest')));
+    bot(h + esc(L3('حين تريدين، نبدأ بشيء صغير.', 'When you want, we start with something small.', 'Kapan pun kamu mau, kita mulai dari hal kecil.')), chips); return;
+  }
+  if(mk && hv){
+    h = esc(L3('جميل' + nm + '! فهمت أن عندكِ ' + (z === 'lips' ? 'شيئاً للشفاه' : z === 'eyes' ? 'شيئاً للعينين' : 'مكياجاً') + '. أيّهما تقصدين؟', 'Lovely' + nm + '! I understand you have ' + (z === 'lips' ? 'something for the lips' : z === 'eyes' ? 'something for the eyes' : 'makeup') + '. Which do you mean?', 'Bagus' + nm + '! Aku paham kamu punya ' + (z === 'lips' ? 'sesuatu untuk bibir' : 'makeup') + '. Yang mana maksudmu?'));
+    chips.push(chip(L3('عندي منتجات — أضيفيها لخزانتي', 'I own products — add them to my kit', 'Aku punya produk — tambahkan ke koleksi'), () => act('kitadd'), true));
+    chips.push(chip(L3('أضع مكياجاً الآن — شوفيه', 'I am wearing makeup now — check it', 'Aku sedang pakai makeup — lihat'), () => act('check')));
+    chips.push(chip(L3('علّميني أستعمل ما عندي', 'Teach me to use what I have', 'Ajari aku memakai yang kupunya'), () => act('teach', z === 'lips' ? 'lips' : z === 'eyes' ? 'eyeshadow' : '')));
+    bot(h, chips); return;
+  }
+  if(mk && now){
+    h = esc(L3('تمام' + nm + ' — أنتِ الآن مع المكياج. ماذا تحبين؟', 'Alright' + nm + ' — you are at your makeup now. What would you like?', 'Baik' + nm + ' — kamu sedang bermakeup. Mau apa?'));
+    chips.push(chip(L3('شوفي وجهي وقولي رأيك', 'Look at my face and tell me', 'Lihat wajahku dan beri pendapat'), () => act('check'), true));
+    chips.push(chip(L3('علّميني خطوة خطوة', 'Teach me step by step', 'Ajari langkah demi langkah'), () => act('teach', '')));
+    chips.push(chip(L3('اقترحي إطلالة', 'Suggest a look', 'Sarankan tampilan'), () => act('suggest')));
+    bot(h, chips); return;
+  }
+  if(z){
+    const zn = { lips:L3('الشفاه', 'the lips', 'bibir'), eyes:L3('العينين', 'the eyes', 'mata'), base:L3('البشرة والأساس', 'skin and base', 'kulit dan alas'), brow:L3('الحواجب', 'the brows', 'alis'), cheek:L3('الخدود', 'the cheeks', 'pipi'), hair:L3('الشعر', 'hair', 'rambut'), hijab:L3('الحجاب', 'the hijab', 'hijab') }[z];
+    h = esc(L3('فهمت أنكِ تسألين عن ' + zn + nm + '. أقرب شيء لقصدكِ؟', 'I understand you are asking about ' + zn + nm + '. Closest to what you mean?', 'Aku paham kamu bertanya soal ' + zn + nm + '. Yang paling dekat?'));
+    if(z === 'hair' || z === 'hijab') chips.push(chip(L3('جرّبي لوناً أو لفّة', 'Try a colour or a wrap', 'Coba warna atau lilitan'), () => { try{ openSheet('sh-look'); }catch(e){} }, true));
+    else { chips.push(chip(L3('علّميني', 'Teach me', 'Ajari aku'), () => act('teach', z === 'eyes' ? 'eyeshadow' : z === 'cheek' ? 'blush' : z), true)); chips.push(chip(L3('عندي مشكلة فيها', 'I have a problem there', 'Ada masalah di situ'), () => act('fix', z === 'eyes' ? 'eyeshadow' : z === 'cheek' ? 'blush' : z))); chips.push(chip(L3('أي لون يناسبني؟', 'Which colour suits me?', 'Warna apa yang cocok?'), () => act('suggest'))); }
+    chips.push(chip(L3('غير ذلك', 'Something else', 'Lainnya'), () => act('menu')));
+    bot(h, chips); return;
+  }
+  /* nothing recognisable: still a person, not an error message */
+  h = esc(L3('لم ألتقط قصدكِ تماماً' + nm + ' — وهذا ذنبي لا ذنبكِ. قوليها بكلمات أخرى، أو اختاري من هنا:', 'I did not quite catch that' + nm + ' — my fault, not yours. Say it another way, or pick from here:', 'Aku belum menangkap maksudmu' + nm + ' — salahku, bukan salahmu. Katakan dengan cara lain, atau pilih di sini:'));
+  chips.push(chip(L3('مكياج اليوم', 'Today’s makeup', 'Makeup hari ini'), () => act('suggest'), true)); chips.push(chip(L3('مشكلة في بشرتي', 'A skin problem', 'Masalah kulit'), () => act('fix', 'base'))); chips.push(chip(L3('ما عندي من منتجات', 'What I own', 'Yang kupunya'), () => act('kit'))); chips.push(chip(L3('كل الخيارات', 'All options', 'Semua pilihan'), () => act('menu')));
+  bot(h, chips);
+}
+/* the engine's fallback, replaced */
+if(A._setFallback) A._setFallback(clarify);
+
+/* ---------------- 3 · the watchdog: every message gets an answer ---------------- */
+let lastUser = 0, lastBot = 0;
+const log = () => $c('#chLog');
+try{ new MutationObserver(ms => { ms.forEach(m => m.addedNodes.forEach(n => { if(n.nodeType !== 1) return; if(n.classList.contains('chMsg') && n.classList.contains('bot')) lastBot = Date.now(); if(n.classList.contains('chChips')) lastBot = Date.now(); })); }).observe(log() || document.body, { childList:true, subtree:true }); }catch(e){}
+document.addEventListener('lamha-user-said', e => { const text = e.detail && e.detail.text; lastUser = Date.now();
+  setTimeout(() => { if(lastBot < lastUser && Date.now() - lastUser >= 2400){ try{ clarify(text || ''); }catch(x){} } }, 2600); });
+/* the listening layer runs before the router for feelings */
+document.addEventListener('lamha-user-said', e => { const text = e.detail && e.detail.text; if(!text) return; const n = norm(text);
+  if(has(n, FEEL) && !has(n, MK) && !zoneOf(n)){ e.preventDefault(); clarify(text); } });
+})();
+
+</script>
+<script>
+/* ============================================================
+   LAMHA · FACE COACH (v80) — she reported: with the rear camera nothing was scanned; text covered her face;
+   the face was too small to see herself. Rules, for every step that needs her face:
+     · the face is never under a sheet or a block of text: during a scan the sheet closes and a slim bar at the
+       bottom carries the coach (rail, light, one line, the capture button);
+     · the rear camera is driven by VOICE and vibration, not by the screen: "come closer", "hold still", "done";
+       and the honest reading starts by itself once she is well placed for a second, then speaks its summary;
+     · mirror mode: with the phone's back to her she can read the screen in a wall mirror — the whole app is
+       flipped so the text reads the right way round;
+     · text on the mirror stays small and outside the face oval.
+   ============================================================ */
+(function(){
+'use strict';
+const lang = () => (typeof LANG !== 'undefined' && /^(ar|en|id)$/.test(LANG)) ? LANG : 'ar';
+const L3 = (ar, en, id) => ({ ar, en, id })[lang()];
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+const $q = s => document.querySelector(s);
+const isRear = () => typeof lamhaRearIsOn === 'function' && lamhaRearIsOn();
+
+/* ---------------- speech for the coach (her chosen voice when she picked one) ---------------- */
+let lastSaid = '', lastAt = 0;
+function speakCoach(text, force){
+  if(!text || !window.speechSynthesis) return;
+  const now = Date.now(); if(!force && (text === lastSaid && now - lastAt < 4000)) return; if(!force && now - lastAt < 1400) return;
+  lastSaid = text; lastAt = now;
+  try{
+    const l = lang(); let vs = speechSynthesis.getVoices().filter(v => { const x = String(v.lang || '').replace('_', '-').toLowerCase(); return x === l || x.startsWith(l + '-'); });
+    let v = null; try{ const A = window.lamhaAdvisor; if(A && A._pickVoice){ const p = A._pickVoice('f'); v = p && p.v; } }catch(e){}
+    if(!v) v = vs[0] || null;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text); if(v){ u.voice = v; u.lang = v.lang; } else u.lang = ({ ar:'ar-SA', en:'en-US', id:'id-ID' })[l];
+    u.rate = 1.0; u.pitch = 1.05; speechSynthesis.speak(u);
+  }catch(e){}
+}
+const buzz = p => { try{ if(navigator.vibrate) navigator.vibrate(p); }catch(e){} };
+
+/* ---------------- the slim bar ---------------- */
+let bar = null;
+function ensureBar(){
+  if(bar) return bar;
+  bar = document.createElement('div'); bar.id = 'fcBar';
+  bar.innerHTML = '<div id="fcTop"><button id="fcClose" aria-label="✕">✕</button><div id="fcTitle"></div><button id="fcMirror" title="mirror">🪞</button></div><div id="fcBody"></div><div id="fcRow"><button class="btn" id="fcCap"></button></div>';
+  document.getElementById('app').appendChild(bar);
+  $q('#fcClose').onclick = () => { try{ S.scanAbort = true; }catch(e){} hideBar(); try{ openSheet('sh-skin'); }catch(e){} };
+  $q('#fcMirror').onclick = () => mirrorMode(!document.body.classList.contains('fcMirror'));
+  $q('#fcCap').onclick = () => { const b = $q('#sk-cap'); if(b) b.click(); };
+  return bar;
+}
+function showBar(title){ ensureBar(); $q('#fcTitle').textContent = title || ''; $q('#fcCap').textContent = L3('التقاط الآن', 'Capture now', 'Ambil sekarang'); bar.classList.add('on'); try{ updateVR(); setTimeout(updateVR, 380); }catch(e){} }
+function hideBar(){ if(bar){ bar.classList.remove('on'); } try{ updateVR(); }catch(e){} }
+/* the scan writes its coach into #sk-hint; the bar mirrors it, and the sheet stays closed so the face is free */
+let mirroring = false;
+function watchScan(){
+  const hint = $q('#sk-hint'), res = $q('#sk-res'), cap = $q('#sk-cap'); if(!hint) return;
+  new MutationObserver(() => {
+    const on = !hint.classList.contains('hidden');
+    if(on && !mirroring){ mirroring = true; try{ openSheet(''); S.scanAbort = false; }catch(e){} showBar(L3('مسح البشرة', 'Skin scan', 'Pindai kulit')); }   /* closing the sheet must not abort the scan */
+    if(!on && mirroring){ mirroring = false; hideBar();
+      /* the result appears a moment after the coach hides: bring the sheet back once it is there (not on abort) */
+      [300, 900, 1600].forEach(ms => setTimeout(() => { if(res && !res.classList.contains('hidden') && !$q('#sh-skin').classList.contains('open') && !isRear()){ try{ openSheet('sh-skin'); }catch(e){} } }, ms)); }
+    if(on){ const body = $q('#fcBody'); if(body && body.innerHTML !== hint.innerHTML) body.innerHTML = hint.innerHTML;
+      const fc = $q('#fcCap'); if(fc && cap) fc.style.display = cap.classList.contains('hidden') ? 'none' : ''; }
+  }).observe(hint, { attributes:true, childList:true, subtree:true, characterData:true });
+  if(cap) new MutationObserver(() => { const fc = $q('#fcCap'); if(fc) fc.style.display = cap.classList.contains('hidden') ? 'none' : ''; }).observe(cap, { attributes:true });
+  /* the "Go" button of the chin pose lives inside the hint: forward the tap */
+  ensureBar().addEventListener('click', e => { const b = e.target.closest && e.target.closest('#sk-go'); if(b){ const real = hint.querySelector('#sk-go'); if(real && real !== b) real.click(); } });
+}
+/* the honest reading: its own slim bar while it runs (≈3 s), then the sheet with the result */
+function watchTruth(){
+  const K = window.LAMHA_SKT; if(!K || !K.scan) return;
+  const scan0 = K.scan;
+  K.scan = async function(){
+    const wasOpen = $q('#sh-skin') && $q('#sh-skin').classList.contains('open');
+    try{ openSheet(''); }catch(e){} showBar(L3('القراءة الصادقة', 'Honest reading', 'Pembacaan jujur')); const body = $q('#fcBody'); if(body) body.innerHTML = '<div class="fcLine">' + esc(L3('اثبتي… أقرأ بشرتكِ', 'Hold still… reading your skin', 'Tahan… membaca kulitmu')) + '</div>'; $q('#fcCap').style.display = 'none';
+    speakCoach(L3('اثبتي، أقرأ بشرتك الآن.', 'Hold still, reading your skin now.', 'Tahan, membaca kulitmu sekarang.'), true);
+    let r; try{ r = await scan0.apply(this, arguments); }finally{ hideBar(); }
+    try{ openSheet('sh-skin'); const box = $q('#skt-out'); if(box) setTimeout(() => box.scrollIntoView({ block:'start', behavior:'smooth' }), 300); }catch(e){}
+    try{ summary(); }catch(e){}
+    return r;
+  };
+  const b = $q('#skt-run'); if(b) b.onclick = K.scan;
+}
+/* what the reading found, said aloud — for the rear camera, where she cannot see the screen */
+function summary(){
+  const K = window.LAMHA_SKT; const st = K && K.state && K.state(); const s = st && st.sessions && st.sessions[st.sessions.length - 1]; if(!s) return;
+  if(!s.ok){ speakCoach(L3('لم تمرّ لقطات كافية. عدّلي الضوء والمسافة وأعيدي.', 'Not enough frames passed. Fix light and distance and try again.', 'Bingkai yang lolos tidak cukup. Perbaiki cahaya dan jarak lalu ulangi.'), true); buzz([80, 60, 80]); return; }
+  const r = s.r, band = r.ITA && r.ITA.v != null ? ({ ar:['فاتحة جداً','فاتحة','متوسطة','حنطية','سمراء','داكنة'], en:['very light','light','intermediate','tan','brown','dark'], id:['sangat terang','terang','sedang','sawo matang','cokelat','gelap'] })[lang()][r.ITA.v > 55 ? 0 : r.ITA.v > 41 ? 1 : r.ITA.v > 28 ? 2 : r.ITA.v > 10 ? 3 : r.ITA.v > -30 ? 4 : 5] : null;
+  const parts = [L3('اكتمل.', 'Done.', 'Selesai.')];
+  if(band) parts.push(L3('لون بشرتك ' + band + '.', 'Your skin tone reads ' + band + '.', 'Warna kulitmu ' + band + '.'));
+  if(r.bumps && r.bumps.v != null) parts.push(L3('وجدت ' + Math.round(r.bumps.v) + ' نتوءاً أحمر.', 'I count ' + Math.round(r.bumps.v) + ' red bumps.', 'Kutemukan ' + Math.round(r.bumps.v) + ' bintik merah.'));
+  if(r.circ && r.circ.v != null) parts.push(L3('تحت العين أغمق من الخد بـ ' + Math.round(r.circ.v) + ' درجات.', 'Under the eye is ' + Math.round(r.circ.v) + ' units darker than the cheek.', 'Bawah mata ' + Math.round(r.circ.v) + ' tingkat lebih gelap dari pipi.'));
+  parts.push(L3('التفاصيل على الشاشة.', 'Details are on the screen.', 'Detail ada di layar.'));
+  speakCoach(parts.join(' '), true); buzz([120]);
+}
+
+/* ---------------- the rear camera: voice, vibration, auto-start ---------------- */
+let rearWatch = 0, okSince = 0, autoDone = false, lastState = '';
+const PH = { far:L3('اقتربي قليلاً', 'Come a little closer', 'Mendekat sedikit'), near:L3('ابتعدي قليلاً', 'Move back a little', 'Mundur sedikit'), center:L3('وسّطي وجهك', 'Centre your face', 'Tengahkan wajahmu'), dark:L3('الضوء ضعيف، واجهي النافذة', 'Too dark, face the window', 'Terlalu gelap, hadap jendela'), bright:L3('الضوء قوي جداً', 'Too bright', 'Terlalu terang'), uneven:L3('الضوء من جهة واحدة، واجهيه', 'Light from one side, face it', 'Cahaya dari satu sisi, hadapi'), noface:L3('لا أرى وجهك، وجّهي ظهر الهاتف إليه', 'I cannot see your face, point the back of the phone at it', 'Aku tak melihat wajahmu, arahkan punggung ponsel ke wajah'), ok:L3('ممتاز، اثبتي', 'Perfect, hold still', 'Bagus, tahan') };
+function rearTick(){
+  if(!isRear()){ stopRear(); return; }
+  const st = S.guideState || 'noface';
+  if(st !== lastState){ lastState = st; speakCoach(PH[st] || ''); if(st === 'ok') buzz([40]); }
+  else if(st !== 'ok') speakCoach(PH[st] || '');
+  if(st === 'ok'){ if(!okSince) okSince = Date.now();
+    if(!autoDone && Date.now() - okSince > 1200 && window.LAMHA_SKT && !S.scanning){ autoDone = true; try{ window.LAMHA_SKT.scan(); }catch(e){} } }
+  else okSince = 0;
+}
+function startRear(){ if(rearWatch) return; autoDone = false; okSince = 0; lastState = '';
+  speakCoach(L3('الكاميرا الخلفية تعمل. وجّهي ظهر الهاتف إلى وجهك على بعد ذراع، وسأرشدك بصوتي، وأقرأ بشرتك تلقائياً حين تثبتين.', 'Rear camera on. Point the back of the phone at your face at arm’s length; I will guide you by voice and read your skin by myself once you hold still.', 'Kamera belakang aktif. Arahkan punggung ponsel ke wajahmu sejauh lengan; aku memandu dengan suara dan membaca kulitmu sendiri saat kamu diam.'), true);
+  showBar(L3('الكاميرا الخلفية — أرشدكِ بصوتي', 'Rear camera — I guide you by voice', 'Kamera belakang — kupandu dengan suara'));
+  $q('#fcBody').innerHTML = '<div class="fcLine fcBig" id="fcState"></div><div class="fcHint">' + esc(L3('لا ترين الشاشة؟ ضعي مرآة أمامك واضغطي 🪞 لتقرئي الشاشة فيها.', 'Cannot see the screen? Put a mirror in front of you and tap 🪞 to read the screen in it.', 'Tak bisa melihat layar? Taruh cermin di depanmu dan ketuk 🪞 untuk membaca layar di cermin.')) + '</div>';
+  $q('#fcCap').style.display = 'none';
+  rearWatch = setInterval(() => { rearTick(); const el = $q('#fcState'); if(el) el.textContent = PH[S.guideState] || ''; }, 700);
+}
+function stopRear(){ if(rearWatch){ clearInterval(rearWatch); rearWatch = 0; } if(!mirroring) hideBar(); mirrorMode(false); }
+function mirrorMode(on){ document.body.classList.toggle('fcMirror', !!on); const b = $q('#fcMirror'); if(b) b.classList.toggle('on', !!on); }
+function hookRear(){
+  if(typeof window.lamhaRearScan !== 'function' || window.lamhaRearScan._fc) return;
+  const r0 = window.lamhaRearScan, off0 = window.lamhaRearOff;
+  window.lamhaRearScan = async function(){ const r = await r0.apply(this, arguments); setTimeout(() => { if(isRear()) startRear(); else stopRear(); }, 400); return r; };
+  window.lamhaRearScan._fc = true;
+  if(typeof off0 === 'function') window.lamhaRearOff = async function(){ stopRear(); return off0.apply(this, arguments); };
+  const btn = $q('#sk-rear'); if(btn){ btn.onclick = () => { window.lamhaRearScan(); }; }
+}
+/* the mirror's own guide text: smaller, and below the oval rather than on the chin */
+function softenGuide(){
+  if(typeof drawGuide !== 'function' || drawGuide._fc) return;
+  const d0 = drawGuide;
+  const d = function(){
+    if(!isRear()) return d0.apply(this, arguments);
+    /* rear mode: only the oval — the words are spoken and shown in the bar */
+    try{ const g = guideGeom(), st = S.guideState, col = st === 'ok' ? '127,191,168' : '217,178,111'; ctx.save(); ctx.setLineDash(st === 'ok' ? [] : [g.ry*0.06, g.ry*0.05]); ctx.lineWidth = Math.max(2, cv.width*0.004); ctx.strokeStyle = 'rgba(' + col + ',.95)'; ctx.beginPath(); ctx.ellipse(g.cx, g.cy, g.rx, g.ry, 0, 0, Math.PI*2); ctx.stroke(); ctx.restore(); }catch(e){}
+  };
+  d._fc = true; try{ drawGuide = d; }catch(e){}
+}
+function init(){ watchScan(); watchTruth(); hookRear(); softenGuide(); }
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else setTimeout(init, 0);
+window.LAMHA_FC = { showBar, hideBar, mirrorMode, speak:speakCoach, summary };
+})();
+
+</script>
+<script>
+/* ============================================================
+   LAMHA · PROGRESS, READABLE (v80) — she reported: the log's numbers and line meant nothing.
+   Every number gets its name and unit; the old 0–100 estimate is named as such; the honest readings (v79)
+   are shown in words with their change verdict; the chart carries labelled axes and a legend.
+   ============================================================ */
+(function(){
+'use strict';
+const lang = () => (typeof LANG !== 'undefined' && /^(ar|en|id)$/.test(LANG)) ? LANG : 'ar';
+const L3 = (ar, en, id) => ({ ar, en, id })[lang()];
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+const $q = s => document.querySelector(s);
+const fd = ts => { try{ return new Date(ts).toLocaleDateString(lang() === 'ar' ? 'ar-EG' : lang() === 'id' ? 'id-ID' : 'en-GB', { day:'numeric', month:'short' }); }catch(e){ return ''; } };
+const fmt = (v, d) => (v == null || !isFinite(v)) ? '—' : (Math.round(v*Math.pow(10, d))/Math.pow(10, d)).toLocaleString(lang() === 'ar' ? 'ar-EG' : lang() === 'id' ? 'id-ID' : 'en-GB');
+const band = ita => ({ ar:['فاتحة جداً','فاتحة','متوسطة','حنطية','سمراء','داكنة'], en:['very light','light','intermediate','tan','brown','dark'], id:['sangat terang','terang','sedang','sawo matang','cokelat','gelap'] })[lang()][ita > 55 ? 0 : ita > 41 ? 1 : ita > 28 ? 2 : ita > 10 ? 3 : ita > -30 ? 4 : 5];
+const camName = c => ({ rear:L3('الكاميرا الخلفية','rear camera','kamera belakang'), front:L3('الكاميرا الأمامية','front camera','kamera depan'), photo:L3('صورة','photo','foto') })[c] || c || '';
+
+function honestRows(){
+  const K = window.LAMHA_SKT; const st = K && K.state && K.state(); const ss = (st && st.sessions) || []; if(!ss.length) return '';
+  const rows = ss.slice(-10).reverse();
+  let h = '<div class="h2Card"><h3>' + esc(L3('القراءات الصادقة', 'Honest readings', 'Pembacaan jujur')) + '</h3><div class="h2Hint">' + esc(L3('كل صف = قراءة. السهم يظهر فقط حين يتجاوز التغيّر ضجيج هاتفكِ المقاس؛ وإلا «بلا تغيّر يُقاس».', 'Each row is one reading. An arrow appears only when the change is bigger than your phone’s measured noise; otherwise "no measurable change".', 'Setiap baris satu pembacaan. Panah muncul hanya jika perubahan melebihi derau ponselmu; jika tidak, "tidak ada perubahan terukur".')) + '</div>';
+  rows.forEach((s, i) => {
+    const prev = rows[i + 1]; const r = s.r || {};
+    const cell = (k, label, unit, dec, wordsFn) => { const v = r[k] && r[k].v; if(v == null) return ''; let ch = '';
+      if(prev && prev.r[k] && prev.r[k].v != null && K.protoKey(prev.proto) === K.protoKey(s.proto)){ const m = K.mdc(k, s); const d = v - prev.r[k].v; if(m){ ch = Math.abs(d) > m.v ? '<b class="' + (d > 0 ? 'up' : 'dn') + '">' + (d > 0 ? '▲' : '▼') + ' ' + (d > 0 ? '+' : '') + fmt(d, dec) + '</b>' : '<small>' + esc(L3('بلا تغيّر يُقاس', 'no measurable change', 'tidak ada perubahan terukur')) + '</small>'; } }
+      return '<div class="h2Row"><span>' + esc(label) + '</span><b>' + (wordsFn ? esc(wordsFn(v)) + ' · ' : '') + fmt(v, dec) + ' <small>' + esc(unit) + '</small></b>' + ch + '</div>'; };
+    h += '<div class="h2Sess"><div class="h2Date">' + esc(fd(s.ts)) + ' · ' + esc(camName(s.proto.cam)) + (s.proto.torch ? ' · ' + esc(L3('بضوء الهاتف', 'with torch', 'dengan lampu')) : '') + '</div>'
+      + cell('ITA', L3('لون البشرة', 'Skin tone', 'Warna kulit'), '°', 0, v => band(v))
+      + cell('dA', L3('الاحمرار (فرق a* عن وسط الوجه)', 'Redness (Δa* vs face)', 'Kemerahan (Δa*)'), 'a*', 1)
+      + cell('bumps', L3('نتوءات حمراء', 'Red bumps', 'Bintik merah'), L3('عدد', 'count', 'jumlah'), 0)
+      + cell('spots', L3('بقع داكنة', 'Dark spots', 'Noda gelap'), '/10cm²', 1)
+      + cell('circ', L3('تحت العين أغمق من الخد بـ', 'Under-eye darker than cheek by', 'Bawah mata lebih gelap dari pipi'), 'L*', 1)
+      + cell('shine', L3('لمعان منطقة T', 'T-zone shine', 'Kilap zona T'), '%', 1)
+      + '</div>';
+  });
+  return h + '</div>';
+}
+function legacyRows(){
+  const h = (typeof S !== 'undefined' && S.history) || []; if(!h.length) return '';
+  const vd = s => s >= 85 ? L3('ممتازة','excellent','sangat baik') : s >= 72 ? L3('جيدة جداً','very good','baik sekali') : s >= 58 ? L3('جيدة','good','baik') : s >= 44 ? L3('تحتاج عناية','needs care','perlu perawatan') : L3('تحتاج اهتماماً','needs attention','perlu perhatian');
+  let out = '<details class="h2Card soft"><summary><b>' + esc(L3('التقدير القديم (0–100)', 'The older estimate (0–100)', 'Perkiraan lama (0–100)')) + '</b> <small>' + esc(L3('تقدير نسبي غير معاير — لا درجة طبية', 'a relative, uncalibrated estimate — not a medical grade', 'perkiraan relatif tanpa kalibrasi — bukan nilai medis')) + '</small></summary>';
+  out += '<div class="h2Hint">' + esc(L3('الرقم = متوسط سبعة تقديرات (هالات، بقع، احمرار، ملمس، مسام، خطوط، تجاعيد) من 0 إلى 100، حيث 100 أفضل. الفرق بين مسحتين أقل من 5 نقاط لا يعني شيئاً — الإضاءة وحدها تغيّره.', 'The number is the mean of seven estimates (circles, spots, redness, texture, pores, lines, wrinkles) from 0 to 100, 100 best. A difference under 5 points between two scans means nothing — lighting alone moves it that much.', 'Angka = rata-rata tujuh perkiraan (lingkar mata, noda, kemerahan, tekstur, pori, garis, kerutan) dari 0 sampai 100, 100 terbaik. Selisih di bawah 5 poin antar dua pindaian tidak berarti — cahaya saja mengubahnya.')) + '</div>';
+  h.slice().reverse().slice(0, 14).forEach((e, i, arr) => { const prev = arr[i + 1]; const d = prev ? e.score - prev.score : null;
+    out += '<div class="h2Row"><span>' + esc(fd(e.ts)) + (e.cam ? ' · ' + esc(camName(e.cam)) : '') + '</span><b>' + esc(String(e.score)) + '/100 <small>' + esc(vd(e.score)) + '</small></b>' + (d != null ? (Math.abs(d) >= 5 ? '<b class="' + (d > 0 ? 'up' : 'dn') + '">' + (d > 0 ? '▲ +' : '▼ ') + d + '</b>' : '<small>' + esc(L3('فرق ضمن الضجيج', 'within noise', 'dalam derau')) + '</small>') : '') + '</div>'; });
+  return out + '</details>';
+}
+function chart(){
+  const c = $q('#trend'); if(!c) return;
+  const K = window.LAMHA_SKT; const st = K && K.state && K.state(); const ss = ((st && st.sessions) || []).filter(s => s.r && s.r.ITA && s.r.ITA.v != null).slice(-20);
+  const x = c.getContext('2d'), dpr = Math.min(devicePixelRatio || 1, 2), w = c.clientWidth || 320, hh = 210;
+  c.width = w*dpr; c.height = hh*dpr; x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, w, hh);
+  const rtl = lang() === 'ar'; x.direction = rtl ? 'rtl' : 'ltr';
+  const font = s => (s || 11) + 'px "IBM Plex Sans Arabic", "Segoe UI", sans-serif';
+  const useHonest = ss.length >= 2, series = useHonest ? ss.map(s => ({ ts:s.ts, v:s.r.ITA.v })) : ((typeof S !== 'undefined' && S.history) || []).slice(-20).map(e => ({ ts:e.ts, v:e.score }));
+  const title = useHonest ? L3('لون البشرة ITA° عبر القراءات الصادقة (أعلى = أفتح)', 'Skin tone ITA° across honest readings (higher = lighter)', 'Warna kulit ITA° pada pembacaan jujur (lebih tinggi = lebih terang)') : L3('التقدير القديم 0–100 عبر المسحات (أعلى = أفضل، غير معاير)', 'The old 0–100 estimate across scans (higher = better, uncalibrated)', 'Perkiraan lama 0–100 antar pindaian (lebih tinggi = lebih baik, tanpa kalibrasi)');
+  x.fillStyle = '#6E5A4C'; x.font = font(11.5); x.textAlign = rtl ? 'right' : 'left'; x.fillText(title, rtl ? w - 10 : 10, 16);
+  if(series.length < 2){ x.fillStyle = '#9A8B7E'; x.font = font(12); x.textAlign = 'center'; x.fillText(L3('يلزم قراءتان على الأقل لرسم خط', 'At least two readings are needed for a line', 'Perlu minimal dua pembacaan untuk garis'), w/2, hh/2); return; }
+  const lo = useHonest ? Math.floor((Math.min(...series.map(p => p.v)) - 10)/10)*10 : 0, hi = useHonest ? Math.ceil((Math.max(...series.map(p => p.v)) + 10)/10)*10 : 100;
+  const padL = 36, padR = 12, top = 30, bot = hh - 34; const X = i => padL + i*(w - padL - padR)/(series.length - 1), Y = v => top + (hi - v)/(hi - lo)*(bot - top);
+  x.strokeStyle = 'rgba(176,138,102,.22)'; x.lineWidth = 1; x.fillStyle = '#9A8B7E'; x.font = font(10); x.textAlign = 'right';
+  for(let i = 0; i <= 4; i++){ const v = lo + (hi - lo)*i/4, y = Y(v); x.beginPath(); x.moveTo(padL, y); x.lineTo(w - padR, y); x.stroke(); x.fillText(String(Math.round(v)) + (useHonest ? '°' : ''), padL - 4, y + 3); }
+  x.beginPath(); series.forEach((p, i) => i ? x.lineTo(X(i), Y(p.v)) : x.moveTo(X(i), Y(p.v))); x.strokeStyle = '#B08A66'; x.lineWidth = 2; x.stroke();
+  series.forEach((p, i) => { x.beginPath(); x.arc(X(i), Y(p.v), 3.4, 0, 7); x.fillStyle = '#8A6A4E'; x.fill(); });
+  x.fillStyle = '#9A8B7E'; x.font = font(10); x.textAlign = 'center';
+  const step = Math.max(1, Math.ceil(series.length/6)); series.forEach((p, i) => { if(i % step === 0 || i === series.length - 1) x.fillText(fd(p.ts), X(i), hh - 16); });
+  x.textAlign = rtl ? 'right' : 'left'; x.fillText(L3('كل نقطة = قراءة · الأفقي: التاريخ', 'each dot = one reading · horizontal: date', 'tiap titik = satu pembacaan · mendatar: tanggal'), rtl ? w - 10 : 10, hh - 3);
+}
+function render(){
+  const list = $q('#hs-list'); if(!list) return;
+  const hasAny = ((window.LAMHA_SKT && LAMHA_SKT.state && LAMHA_SKT.state().sessions) || []).length || ((typeof S !== 'undefined' && S.history) || []).length;
+  list.innerHTML = hasAny ? honestRows() + legacyRows() : '<p class="lead">' + esc(L3('لا قراءات بعد. ابدئي بـ«القراءة الصادقة» في ورقة تحليل البشرة.', 'No readings yet. Start with the honest reading in the skin sheet.', 'Belum ada pembacaan. Mulai dengan pembacaan jujur di lembar kulit.')) + '</p>';
+  chart();
+}
+function hook(){
+  if(typeof renderHistory === 'function' && !renderHistory._h2){ const r0 = renderHistory; const r = function(){ try{ r0.apply(this, arguments); }catch(e){} try{ render(); }catch(e){} }; r._h2 = true; try{ renderHistory = r; }catch(e){} }
+  const p = $q('#sh-hist .lead'); if(p) p.textContent = L3('كل قراءة تُحفظ هنا بكلمات وأرقام مسمّاة — لا درجات غامضة.', 'Every reading is kept here in words and named numbers — no mysterious scores.', 'Setiap pembacaan disimpan di sini dengan kata dan angka bernama — tanpa skor misterius.');
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hook); else setTimeout(hook, 0);
+window.LAMHA_H2 = { render };
+})();
+
+</script>
+<!-- LAMHA V80 END -->
+<!-- LAMHA V81 BEGIN -->
+<script>
+/* Hijab photo templates (v81, widened 2026-09-16 for v82): openly licensed photographs on Wikimedia Commons —
+   one woman, frontal face, fabric around it, hair covered, no personality-rights restriction listed, no public
+   figure (a former president, an election candidate and a recording artist were dropped for that reason, and
+   photos of children, of groups, of a veiled face and of a painted mural were dropped as unusable).
+   Chosen from 366 openly licensed candidates screened by landmarks + segmentation (face ≥150 px at 960, |turn|
+   < 0.12, cloth ring ≥ 0.35) and then by eye. Fetched on demand (and kept in the browser cache afterwards),
+   processed in memory; the woman's face is removed and replaced with HERS, so she is no longer identifiable in
+   the result; the photographer's credit and licence are shown with every result (CC BY / CC BY-SA require it).
+   `styles` says which of the app's wrap styles the photograph actually shows — the try-on picks by that. */
+window.LAMHA_HIJAB_TEMPLATES = [
+  { styles:['satin','indonesian'], url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/Pink_hijab_libya_%28cropped%29.jpg/960px-Pink_hijab_libya_%28cropped%29.jpg', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/Pink_hijab_libya_%28cropped%29.jpg/250px-Pink_hijab_libya_%28cropped%29.jpg', credit:'Dietmar Bartz, Wikimedia Commons', lic:'CC BY 3.0', page:'https://commons.wikimedia.org/wiki/File:Pink_hijab_libya_(cropped).jpg' },
+  { styles:['amira'], url:'https://upload.wikimedia.org/wikipedia/commons/b/bd/Luluty_hijab_2.jpg', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bd/Luluty_hijab_2.jpg/250px-Luluty_hijab_2.jpg', credit:'Luluty hijab, Wikimedia Commons', lic:'CC BY-SA 4.0', page:'https://commons.wikimedia.org/wiki/File:Luluty_hijab_2.jpg' },
+  { styles:['turkish'], crop:'tight', url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/3/35/EPSF-SCU_1.jpg/960px-EPSF-SCU_1.jpg', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/3/35/EPSF-SCU_1.jpg/250px-EPSF-SCU_1.jpg', credit:'Rana152, Wikimedia Commons', lic:'CC BY-SA 4.0', page:'https://commons.wikimedia.org/wiki/File:EPSF-SCU_1.jpg' },
+  { styles:['khaleeji'], crop:'tight', url:'https://upload.wikimedia.org/wikipedia/commons/b/b8/Somwmnhjbhd3a.png', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b8/Somwmnhjbhd3a.png/250px-Somwmnhjbhd3a.png', credit:'aflaanta std, Wikimedia Commons', lic:'CC BY 3.0', page:'https://commons.wikimedia.org/wiki/File:Somwmnhjbhd3a.png' },
+  { styles:['turkish','amira'], url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f1/Hijjab_Tunisie_01.JPG/960px-Hijjab_Tunisie_01.JPG', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f1/Hijjab_Tunisie_01.JPG/250px-Hijjab_Tunisie_01.JPG', credit:'Touzrimounir, Wikimedia Commons', lic:'CC BY-SA 4.0', page:'https://commons.wikimedia.org/wiki/File:Hijjab_Tunisie_01.JPG' },
+  { styles:['modern'], url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/A_muslim_woman_wearing_hijab.jpg/960px-A_muslim_woman_wearing_hijab.jpg', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/A_muslim_woman_wearing_hijab.jpg/250px-A_muslim_woman_wearing_hijab.jpg', credit:'عالية جاسم صقر الهملان, Wikimedia Commons', lic:'CC BY-SA 4.0', page:'https://commons.wikimedia.org/wiki/File:A_muslim_woman_wearing_hijab.jpg' },
+  { styles:['indonesian','shayla'], crop:'portrait', url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7e/Woman_in_Shalimar_Bagh_Garden_-_Srinagar_-_Jammu_%26_Kashmir_-_India_%2826238334143%29.jpg/960px-Woman_in_Shalimar_Bagh_Garden_-_Srinagar_-_Jammu_%26_Kashmir_-_India_%2826238334143%29.jpg', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7e/Woman_in_Shalimar_Bagh_Garden_-_Srinagar_-_Jammu_%26_Kashmir_-_India_%2826238334143%29.jpg/250px-Woman_in_Shalimar_Bagh_Garden_-_Srinagar_-_Jammu_%26_Kashmir_-_India_%2826238334143%29.jpg', credit:'Adam Jones, Wikimedia Commons', lic:'CC BY-SA 2.0', page:'https://commons.wikimedia.org/wiki/File:Woman_in_Shalimar_Bagh_Garden_-_Srinagar_-_Jammu_%26_Kashmir_-_India_(26238334143).jpg' },
+  { styles:['shayla'], url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c9/Cham_Woman_-_Chau_Doc_-_Vietnam_-_03.JPG/960px-Cham_Woman_-_Chau_Doc_-_Vietnam_-_03.JPG', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c9/Cham_Woman_-_Chau_Doc_-_Vietnam_-_03.JPG/250px-Cham_Woman_-_Chau_Doc_-_Vietnam_-_03.JPG', credit:'Adam Jones, Wikimedia Commons', lic:'CC BY-SA 3.0', page:'https://commons.wikimedia.org/wiki/File:Cham_Woman_-_Chau_Doc_-_Vietnam_-_03.JPG' },
+  { styles:['shayla'], url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4c/The_old_lady.jpg/960px-The_old_lady.jpg', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4c/The_old_lady.jpg/250px-The_old_lady.jpg', credit:'Mona Hassan Abo-Abda, Wikimedia Commons', lic:'CC BY-SA 4.0', page:'https://commons.wikimedia.org/wiki/File:The_old_lady.jpg' }
+];
+
+</script>
+<script>
+/* ============================================================
+   LAMHA · HIJAB ON A REAL PHOTO (v81) — the drawn hijab looked like a cut-out (a tester laughed at it). Now the
+   hijab is a real photograph: a natural picture of a woman in a hijab becomes a template — its face is removed
+   and HER face is put in its place, aligned to the template's own face (a similarity fit over the face mesh),
+   matched in colour and lighting (Reinhard transfer in Lab inside the face), shaded at the edge by the
+   template's own shadows, feathered under the fabric's edge; the template's visible skin (neck, hands) is
+   shifted toward her tone, and the fabric can be recoloured to any of her recommended colours (hue and chroma
+   change, the folds and light stay). Stills only — no video, no heavy phone work.
+   Templates: openly licensed photographs (Wikimedia Commons, CC0 / CC BY / CC BY-SA, no personality-rights
+   restriction listed), fetched on demand and processed in memory; credits shown. She may also use a photo of
+   her own (a friend who agreed, a mannequin, herself in a hijab) as a template.
+   ============================================================ */
+(function(){
+'use strict';
+const lang = () => (typeof LANG !== 'undefined' && /^(ar|en|id)$/.test(LANG)) ? LANG : 'ar';
+const L3 = (ar, en, id) => ({ ar, en, id })[lang()];
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+const $q = s => document.querySelector(s);
+const say2 = (m, ms) => { try{ say(m, ms || 3000); }catch(e){} };
+const P = () => window.LAMHA_PRO;
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const rgb2lab = (r, g, b) => P().lab(r, g, b);
+function lab2rgb(L, a, bb){ const fy = (L + 16)/116, fx = fy + a/500, fz = fy - bb/200; const f = v => v*v*v > 0.008856 ? v*v*v : (v - 16/116)/7.787;
+  const X = f(fx)*0.95047, Y = f(fy), Z = f(fz)*1.08883; let R = X*3.2406 + Y*-1.5372 + Z*-0.4986, G = X*-0.9689 + Y*1.8758 + Z*0.0415, B = X*0.0557 + Y*-0.2040 + Z*1.0570;
+  const g = v => { v = v <= 0.0031308 ? 12.92*v : 1.055*Math.pow(Math.max(0, v), 1/2.4) - 0.055; return clamp(Math.round(v*255), 0, 255); }; return [g(R), g(G), g(B)]; }
+
+/* ---------------- templates ---------------- */
+/* curated on 2026-09-15 from Wikimedia Commons: frontal face, fabric around it, neck covered; fetched on demand */
+const TEMPLATES = window.LAMHA_HIJAB_TEMPLATES || [];
+const HP = { T:null, U:null, out:null, col:null, tpl:null, own:[] };
+
+async function loadImage(src){
+  /* v82: template photos are kept in the browser's cache after the first use, so the try-on works offline later */
+  let url = src, tmp = null;
+  if(/^https:\/\//.test(src) && window.caches){ try{ const cc = await caches.open('lamha-hijab-tpl-v1'); let r = await cc.match(src);
+    if(!r){ const f = await fetch(src, { mode:'cors' }); if(f.ok){ await cc.put(src, f.clone()); r = f; } }
+    if(r && r.ok){ tmp = url = URL.createObjectURL(await r.blob()); } }catch(e){ url = src; tmp = null; } }
+  const im = new Image(); im.crossOrigin = 'anonymous';
+  try{ await new Promise((res, rej) => { im.onload = res; im.onerror = () => rej(new Error('image')); im.src = url; }); }
+  finally{ if(tmp) setTimeout(() => URL.revokeObjectURL(tmp), 0); }
+  return im; }
+function toCanvas(im, maxW){ const sc = Math.min(1, maxW/Math.max(im.naturalWidth || im.width, 1)); const c = document.createElement('canvas'); c.width = Math.round((im.naturalWidth || im.width)*sc); c.height = Math.round((im.naturalHeight || im.height)*sc); c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); return c; }
+function detect(c){ try{ if(typeof imgLandmarker === 'undefined' || !imgLandmarker) return null; const r = imgLandmarker.detect(c); return r && r.faceLandmarks && r.faceLandmarks[0] || null; }catch(e){ return null; } }
+async function segment(c){ try{ const seg = await P().ensureSegmenter(); if(!seg) return null; let cat = null, W = 0, H = 0; seg.segment(c, r => { const m = r && r.categoryMask; if(m){ W = m.width; H = m.height; cat = m.getAsUint8Array().slice(); } }); return cat ? { cat, W, H } : null; }catch(e){ return null; } }
+function ovalOf(lm, W, H){ const pts = L.faceOval.map(i => [lm[i].x*W, lm[i].y*H]); let cx = 0, cy = 0; pts.forEach(p => { cx += p[0]; cy += p[1]; }); cx /= pts.length; cy /= pts.length;
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; pts.forEach(p => { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }); return { pts, cx, cy, x0, y0, x1, y1, w: x1 - x0, h: y1 - y0 }; }
+async function prepTemplate(src, credit, opts){
+  opts = opts || {};
+  const im = await loadImage(src); let c = toCanvas(im, 1000); let lm = detect(c); if(!lm) throw new Error(L3('لم أجد وجهاً في صورة القالب', 'No face found in the template photo', 'Tidak ada wajah di foto template'));
+  if(opts.crop === 'portrait' || opts.crop === 'tight'){
+    /* v82: a head-and-shoulders crop round her face, cut from the photo at its own resolution — it keeps
+       passers-by out of the frame (their faces must not travel with the look) and gives every wrap the same framing */
+    const f = ovalOf(lm, 1, 1), iw = im.naturalWidth || im.width, ih = im.naturalHeight || im.height;
+    const k = opts.crop === 'tight' ? 2.2 : 3.4, kh = opts.crop === 'tight' ? 1.2 : 1.3;
+    const wpx = Math.min(iw, f.w*iw*k), hpx = Math.min(ih, wpx*kh);
+    const x = clamp(f.cx*iw - wpx/2, 0, iw - wpx), y = clamp(f.cy*ih - hpx*(opts.crop === 'tight' ? 0.42 : 0.36), 0, ih - hpx);
+    const sc = Math.min(1, 1000/wpx), cc = document.createElement('canvas');
+    cc.width = Math.round(wpx*sc); cc.height = Math.round(hpx*sc);
+    cc.getContext('2d').drawImage(im, Math.round(x), Math.round(y), Math.round(wpx), Math.round(hpx), 0, 0, cc.width, cc.height);
+    const lm2 = detect(cc); if(!lm2) throw new Error(L3('لم أجد وجهاً في صورة القالب', 'No face found in the template photo', 'Tidak ada wajah di foto template'));
+    c = cc; lm = lm2;
+  }
+  const seg = await segment(c); const ov = ovalOf(lm, c.width, c.height);
+  return { c, W:c.width, H:c.height, lm, seg, ov, credit: credit || '' };
+}
+/* her face: the mirror's current frame, or a photo she picks */
+function faceFromMirror(){
+  if(typeof S === 'undefined' || !S.landmarks || typeof SRC === 'undefined') return null;
+  const W = srcW(), H = srcH(); const c = document.createElement('canvas'); c.width = W; c.height = H; c.getContext('2d').drawImage(SRC, 0, 0, W, H);
+  const lm = S.landmarks.map(p => ({ x:p.x, y:p.y, z:p.z || 0 })); return { c, W, H, lm, ov: ovalOf(lm, W, H) };
+}
+async function faceFromFile(file){ const url = URL.createObjectURL(file); try{ const im = await loadImage(url); const c = toCanvas(im, 1200); const lm = detect(c); if(!lm) throw new Error(L3('لم أجد وجهاً واضحاً في صورتك', 'No clear face in your photo', 'Tidak ada wajah jelas di fotomu')); return { c, W:c.width, H:c.height, lm, ov: ovalOf(lm, c.width, c.height) }; } finally{ URL.revokeObjectURL(url); } }
+
+/* ---------------- the fit: a similarity (scale, rotation, shift) from her mesh to the template's ---------------- */
+const FIT_IDX = [].concat(L.faceOval, [1, 4, 6, 9, 10, 33, 133, 263, 362, 61, 291, 13, 14, 168, 197, 195, 5, 152, 234, 454, 93, 323, 50, 280, 205, 425, 70, 300, 105, 334]);
+function similarity(U, T){
+  const p = FIT_IDX.map(i => [U.lm[i].x*U.W, U.lm[i].y*U.H]), q = FIT_IDX.map(i => [T.lm[i].x*T.W, T.lm[i].y*T.H]);
+  const mp = [0, 0], mq = [0, 0]; p.forEach(a => { mp[0] += a[0]; mp[1] += a[1]; }); q.forEach(a => { mq[0] += a[0]; mq[1] += a[1]; }); mp[0] /= p.length; mp[1] /= p.length; mq[0] /= q.length; mq[1] /= q.length;
+  let a = 0, b = 0, n = 0; for(let i = 0; i < p.length; i++){ const px = p[i][0] - mp[0], py = p[i][1] - mp[1], qx = q[i][0] - mq[0], qy = q[i][1] - mq[1]; a += px*qx + py*qy; b += px*qy - py*qx; n += px*px + py*py; }
+  const th = Math.atan2(b, a), s = Math.hypot(a, b)/Math.max(1e-6, n);
+  const ca = Math.cos(th)*s, sa = Math.sin(th)*s; return { a:ca, b:sa, c:-sa, d:ca, e: mq[0] - (ca*mp[0] - sa*mp[1]), f: mq[1] - (sa*mp[0] + ca*mp[1]), s, th };
+}
+/* Lab statistics inside an oval (trimmed) */
+function labStats(img, ov, inset){
+  const D = img.data, W = img.width; const rx = ov.w*0.5*inset, ry = ov.h*0.5*inset; let n = 0; const Ls = [], As = [], Bs = [];
+  for(let y = Math.max(0, ov.cy - ry|0); y < Math.min(img.height, ov.cy + ry); y += 2) for(let x = Math.max(0, ov.cx - rx|0); x < Math.min(W, ov.cx + rx); x += 2){
+    const dx = (x - ov.cx)/rx, dy = (y - ov.cy)/ry; if(dx*dx + dy*dy > 1) continue; const q = (y*W + x)*4; if(D[q+3] < 200) continue; const l = rgb2lab(D[q], D[q+1], D[q+2]); Ls.push(l[0]); As.push(l[1]); Bs.push(l[2]); n++; }
+  if(n < 50) return null;
+  const st = arr => { const v = arr.slice().sort((x, y) => x - y), lo = v[Math.floor(v.length*.1)], hi = v[Math.floor(v.length*.9)]; let s = 0, s2 = 0, k = 0; for(const x of v){ if(x < lo || x > hi) continue; s += x; s2 += x*x; k++; } const m = s/k; return { m, sd: Math.sqrt(Math.max(1e-6, s2/k - m*m)) }; };
+  return { L: st(Ls), a: st(As), b: st(Bs), n };
+}
+/* ---------------- compose ---------------- */
+async function compose(T, U, opts){
+  opts = opts || {}; const W = T.W, H = T.H, ov = T.ov, fw = ov.w;
+  /* 0 · the mask: the template's face oval, inset, feathered (used to spare the face from the recolour, then to cut her face) */
+  const mask = document.createElement('canvas'); mask.width = W; mask.height = H; const mx = mask.getContext('2d');
+  mx.filter = 'blur(' + Math.max(1.5, fw*0.028).toFixed(1) + 'px)'; mx.fillStyle = '#fff'; mx.beginPath();
+  ov.pts.forEach((p, i) => { const px = ov.cx + (p[0] - ov.cx)*0.955, py = ov.cy + (p[1] - ov.cy)*0.955 - (p[1] < ov.cy ? fw*0.01 : 0); i ? mx.lineTo(px, py) : mx.moveTo(px, py); }); mx.closePath(); mx.fill(); mx.filter = 'none';
+  const mk = mx.getImageData(0, 0, W, H).data;
+  /* 1 · the template, with its skin shifted toward hers and the fabric recoloured when asked */
+  const base = document.createElement('canvas'); base.width = W; base.height = H; const bx = base.getContext('2d'); bx.drawImage(T.c, 0, 0);
+  const uImg = U.c.getContext('2d').getImageData(0, 0, U.W, U.H), tImg = bx.getImageData(0, 0, W, H);
+  const su = labStats(uImg, U.ov, 0.8), stt = labStats(tImg, ov, 0.8); if(!su || !stt) throw new Error('stats');
+  const dL = su.L.m - stt.L.m, dA = su.a.m - stt.a.m, dB = su.b.m - stt.b.m;
+  if(T.seg){ const { cat, W:cw, H:chh } = T.seg; const D = tImg.data; const tc = opts.hex ? hexLab(opts.hex) : null;
+    const cls = (x, y) => cat[Math.min(chh - 1, (y/H*chh)|0)*cw + Math.min(cw - 1, (x/W*cw)|0)];
+    /* the fabric's own colour: fabric (or "hair" — the model's word for a scarf over the crown) in a ring round the face */
+    let fab = null;
+    if(tc){ const Ls = [], As = [], Bs = []; const rr0 = fw*1.05, rr1 = fw*1.7;
+      for(let y = 0; y < H; y += 2) for(let x = 0; x < W; x += 2){ const d = Math.hypot((x - ov.cx)/(ov.w*.5), (y - ov.cy)/(ov.h*.5)); if(d < 1.05 || d > 1.7) continue; const k = cls(x, y); if(k !== 4 && k !== 1) continue; const l = rgb2lab(D[(y*W + x)*4], D[(y*W + x)*4 + 1], D[(y*W + x)*4 + 2]); Ls.push(l[0]); As.push(l[1]); Bs.push(l[2]); }
+      const med = a => { const v = a.slice().sort((p, q) => p - q); return v.length ? v[v.length >> 1] : null; }; if(Ls.length > 40) fab = [med(Ls), med(As), med(Bs)]; }
+    for(let y = 0; y < H; y++) for(let x = 0; x < W; x++){ const k = cls(x, y); const q = (y*W + x)*4;
+      if(k === 2){ /* her tone on the template's neck and hands, softly */ const l = rgb2lab(D[q], D[q+1], D[q+2]); const o = lab2rgb(clamp(l[0] + dL*0.85, 0, 100), l[1] + dA*0.85, l[2] + dB*0.85); D[q] = o[0]; D[q+1] = o[1]; D[q+2] = o[2]; }
+      else if(tc && fab && mk[q+3] < 250){ /* every pixel that shares the fabric's colour is the fabric — wherever it falls (the "face" class spills onto the fabric's edge, so only the face oval itself is spared); the blouse and the wall keep theirs */
+        /* the fabric's hue, at any lightness: a fold in shadow is still the fabric */
+        const l = rgb2lab(D[q], D[q+1], D[q+2]); const C0 = Math.hypot(l[1], l[2]), Cf = Math.hypot(fab[1], fab[2]);
+        let hd = Math.abs(Math.atan2(l[2], l[1]) - Math.atan2(fab[2], fab[1]))*180/Math.PI; if(hd > 180) hd = 360 - hd;
+        const dab = Math.hypot(l[1] - fab[1], l[2] - fab[2]);
+        const wh = (Cf > 8 && C0 > 0.3*Cf) ? clamp((30 - hd)/14, 0, 1) : 0, wd = clamp((14 - dab)/8, 0, 1); const w = Math.max(wh, wd); if(w <= 0) continue;
+        const kk = Math.pow(Math.max(0.15, C0)/Math.max(0.15, Cf), 0.5);
+        const L2 = l[0] + (tc[0] - fab[0])*0.45, a2 = tc[1]*kk, b2 = tc[2]*kk; const o = lab2rgb(clamp(l[0]*(1 - w) + L2*w, 0, 100), l[1]*(1 - w) + a2*w, l[2]*(1 - w) + b2*w); D[q] = o[0]; D[q+1] = o[1]; D[q+2] = o[2]; } }
+    bx.putImageData(tImg, 0, 0); }
+  /* 2 · her face, fitted to the template's face */
+  const M = similarity(U, T);
+  const layer = document.createElement('canvas'); layer.width = W; layer.height = H; const lx = layer.getContext('2d');
+  lx.setTransform(M.a, M.b, M.c, M.d, M.e, M.f); lx.imageSmoothingEnabled = true; lx.imageSmoothingQuality = 'high'; lx.drawImage(U.c, 0, 0); lx.setTransform(1, 0, 0, 1, 0, 0);
+  /* 2b · her hair over the forehead stays out — the fabric covers it, as a hijab would */
+  const useg = U.seg || (U.seg = await segment(U.c));
+  if(useg){ const { cat, W:cw, H:chh } = useg; const hm = document.createElement('canvas'); hm.width = cw; hm.height = chh; const hx = hm.getContext('2d'); const id = hx.createImageData(cw, chh);
+    for(let i = 0; i < cw*chh; i++) if(cat[i] === 1) id.data[i*4 + 3] = 255; hx.putImageData(id, 0, 0);
+    const hm2 = document.createElement('canvas'); hm2.width = W; hm2.height = H; const h2 = hm2.getContext('2d'); h2.filter = 'blur(' + Math.max(1.5, fw*0.02).toFixed(1) + 'px)';
+    h2.setTransform(M.a, M.b, M.c, M.d, M.e, M.f); h2.drawImage(hm, 0, 0, U.W, U.H); h2.drawImage(hm, 0, 0, U.W, U.H); h2.setTransform(1, 0, 0, 1, 0, 0);
+    lx.globalCompositeOperation = 'destination-out'; lx.drawImage(hm2, 0, 0); lx.drawImage(hm2, 0, 0); lx.globalCompositeOperation = 'source-over'; }
+  /* 3 · colour and light: her face statistics moved onto the template's; the template's own shading kept toward the edge */
+  const bxo = { x0: Math.max(0, ov.x0 - fw*0.15)|0, y0: Math.max(0, ov.y0 - fw*0.15)|0, x1: Math.min(W, ov.x1 + fw*0.15)|0, y1: Math.min(H, ov.y1 + fw*0.15)|0 };
+  const li = lx.getImageData(bxo.x0, bxo.y0, bxo.x1 - bxo.x0, bxo.y1 - bxo.y0), ti = bx.getImageData(bxo.x0, bxo.y0, bxo.x1 - bxo.x0, bxo.y1 - bxo.y0);
+  const bw = li.width, bh = li.height; const tL = new Float32Array(bw*bh); for(let i = 0, q = 0; i < bw*bh; i++, q += 4) tL[i] = rgb2lab(ti.data[q], ti.data[q+1], ti.data[q+2])[0];
+  const tLb = P().boxBlur(tL, bw, bh, Math.max(2, Math.round(fw*0.05)));
+  const k = 0.85, gL = stt.L.sd/Math.max(1e-3, su.L.sd), gA = stt.a.sd/Math.max(1e-3, su.a.sd), gB = stt.b.sd/Math.max(1e-3, su.b.sd);
+  const rx = ov.w*0.5, ry = ov.h*0.5;
+  for(let y = 0; y < bh; y++) for(let x = 0; x < bw; x++){ const q = (y*bw + x)*4; if(li.data[q+3] < 8) continue;
+    const l = rgb2lab(li.data[q], li.data[q+1], li.data[q+2]);
+    let Lp = l[0] + k*((stt.L.m + (l[0] - su.L.m)*clamp(gL, 0.6, 1.6)) - l[0]), Ap = l[1] + k*((stt.a.m + (l[1] - su.a.m)*clamp(gA, 0.6, 1.6)) - l[1]), Bp = l[2] + k*((stt.b.m + (l[2] - su.b.m)*clamp(gB, 0.6, 1.6)) - l[2]);
+    const dx = (x + bxo.x0 - ov.cx)/rx, dy = (y + bxo.y0 - ov.cy)/ry, d = Math.hypot(dx, dy); const w = clamp((d - 0.5)/0.5, 0, 1);
+    /* strands over the upper forehead that the segmenter missed: much darker than her skin, above the brows → the fabric shows instead */
+    if(dy < -0.55 && l[0] < su.L.m - 13){ const a = clamp((l[0] - (su.L.m - 25))/12, 0, 1); li.data[q+3] = Math.round(li.data[q+3]*a); if(!li.data[q+3]) continue; }
+    const sh = clamp(tLb[y*bw + x]/Math.max(15, stt.L.m), 0.35, 1.4); Lp = Lp*(1 - w) + Lp*sh*w;
+    const o = lab2rgb(clamp(Lp, 0, 100), Ap, Bp); li.data[q] = o[0]; li.data[q+1] = o[1]; li.data[q+2] = o[2]; }
+  /* 3b · v82: sharpness and grain — a webcam face is softer and cleaner than the photograph around it (the tester's
+     frame: washed out, soft). Detail is measured inside both faces (mean |Laplacian| of luma); hers is sharpened
+     a little toward the photograph's, then given the photograph's grain if it is still too smooth. */
+  const lap = (d, w, h, ox, oy, alpha) => { let s = 0, n = 0; const Y = (i) => 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+    for(let y = 2; y < h - 2; y += 2) for(let x = 2; x < w - 2; x += 2){ const ex = (x + ox - ov.cx)/(rx*0.8), ey = (y + oy - ov.cy)/(ry*0.8); if(ex*ex + ey*ey > 1) continue;
+      const i = (y*w + x)*4; if(alpha && d[i+3] < 220) continue; s += Math.abs(4*Y(i) - Y(i - 4) - Y(i + 4) - Y(i - w*4) - Y(i + w*4)); n++; }
+    return n > 80 ? s/n : 0; };
+  const eT = lap(ti.data, bw, bh, bxo.x0, bxo.y0, false); let eU = lap(li.data, bw, bh, bxo.x0, bxo.y0, true);
+  if(eT > 0 && eU > 0 && eT > eU*1.15){
+    const Yl = new Float32Array(bw*bh); for(let i = 0, q = 0; i < bw*bh; i++, q += 4) Yl[i] = 0.299*li.data[q] + 0.587*li.data[q+1] + 0.114*li.data[q+2];
+    const Yb = P().boxBlur(Yl, bw, bh, 1), amt = clamp((eT/eU - 1)*0.9, 0, 1.4);
+    for(let i = 0, q = 0; i < bw*bh; i++, q += 4){ if(li.data[q+3] < 8) continue; const dd = (Yl[i] - Yb[i])*amt; li.data[q] = clamp(li.data[q] + dd, 0, 255); li.data[q+1] = clamp(li.data[q+1] + dd, 0, 255); li.data[q+2] = clamp(li.data[q+2] + dd, 0, 255); }
+    eU = lap(li.data, bw, bh, bxo.x0, bxo.y0, true);
+    if(eT > eU*1.1){ const sd = clamp((eT - eU)*0.45, 0, 6);
+      for(let q = 0; q < li.data.length; q += 4){ if(li.data[q+3] < 8) continue; const g = (Math.random() + Math.random() + Math.random() - 1.5)*sd*1.4;
+        li.data[q] = clamp(li.data[q] + g, 0, 255); li.data[q+1] = clamp(li.data[q+1] + g, 0, 255); li.data[q+2] = clamp(li.data[q+2] + g, 0, 255); } }
+    HP.lastDetail = { eT: +eT.toFixed(2), eU1: +eU.toFixed(2), amt: +amt.toFixed(2) };
+  }
+  lx.putImageData(li, bxo.x0, bxo.y0);
+  /* 4 · her face cut to the oval */
+  lx.globalCompositeOperation = 'destination-in'; lx.drawImage(mask, 0, 0); lx.globalCompositeOperation = 'source-over';
+  bx.drawImage(layer, 0, 0);
+  return base;
+}
+function hexLab(hex){ const n = parseInt(String(hex).replace('#', ''), 16); return rgb2lab(n >> 16 & 255, n >> 8 & 255, n & 255); }
+
+/* ---------------- the card in the look sheet ---------------- */
+const CX = {
+  h:{ar:'🧕 حجاب على صورة حقيقية',en:'🧕 A hijab on a real photo',id:'🧕 Hijab di foto asli'},
+  p:{ar:'صورة طبيعية لامرأة بحجاب تصير قالباً: نزيل وجهها ونضع وجهكِ مكانه بلونه وإضاءته. اختاري قالباً ثم صورتكِ.',en:'A natural photo of a woman in a hijab becomes a template: her face is removed and yours put in its place, in its colour and light. Pick a template, then your photo.',id:'Foto alami wanita berhijab menjadi template: wajahnya dihapus dan wajahmu diletakkan di sana, dengan warna dan cahayanya. Pilih template, lalu fotomu.'},
+  tpl:{ar:'القالب',en:'Template',id:'Template'}, own:{ar:'قالب من صوري',en:'A template of my own',id:'Template dari fotoku'},
+  ownHint:{ar:'صورة لكِ أو لصديقة موافقة بحجاب يظهر وجهها كاملاً من الأمام.',en:'A photo of you or a consenting friend in a hijab, face fully visible from the front.',id:'Foto kamu atau teman yang setuju, berhijab, wajah terlihat penuh dari depan.'},
+  me:{ar:'صورتي',en:'My face',id:'Wajahku'}, fromMirror:{ar:'من المرآة الآن',en:'From the mirror now',id:'Dari cermin sekarang'}, fromPhoto:{ar:'من صوري',en:'From my photos',id:'Dari fotoku'},
+  go:{ar:'ركّبي',en:'Compose',id:'Susun'}, working:{ar:'جارٍ التركيب…',en:'Composing…',id:'Menyusun…'},
+  col:{ar:'لوّني القماش',en:'Recolour the fabric',id:'Warnai kain'}, orig:{ar:'اللون الأصلي',en:'Original colour',id:'Warna asli'},
+  share:{ar:'مشاركة / حفظ',en:'Share / save',id:'Bagikan / simpan'}, credit:{ar:'الصورة',en:'Photo',id:'Foto'},
+  noFace:{ar:'لا أرى وجهكِ في المرآة الآن — انظري إلى الكاميرا أو اختاري صورة.',en:'I cannot see your face in the mirror now — look at the camera or pick a photo.',id:'Aku tak melihat wajahmu di cermin — lihat kamera atau pilih foto.'},
+  needBoth:{ar:'اختاري قالباً وصورتكِ أولاً.',en:'Pick a template and your photo first.',id:'Pilih template dan fotomu dulu.'},
+  frontal:{ar:'يعمل أفضل حين تكون صورتكِ من الأمام وبإضاءة موزّعة كما في القالب.',en:'Works best when your photo is frontal and evenly lit, like the template.',id:'Paling baik jika fotomu dari depan dan cahaya merata seperti template.'},
+  lic:{ar:'القوالب صور بترخيص مفتوح من ويكيميديا كومنز (CC BY / CC BY-SA / CC0)، تُجلب عند الطلب وتُعالج في هاتفكِ. اسم المصوّر يظهر تحت النتيجة.',en:'Templates are openly licensed photos from Wikimedia Commons (CC BY / CC BY-SA / CC0), fetched on demand and processed on your phone. The photographer’s credit shows under the result.',id:'Template adalah foto berlisensi terbuka dari Wikimedia Commons (CC BY / CC BY-SA / CC0), diambil saat diminta dan diproses di ponselmu. Kredit fotografer tampil di bawah hasil.'}
+};
+const c = k => (CX[k] || {})[lang()] || (CX[k] || {}).en || k;
+const PLAIN = [{ hex:'#1d1d1f', ar:'أسود', en:'Black', id:'Hitam' }, { hex:'#f1e9dc', ar:'عاجي', en:'Ivory', id:'Gading' }, { hex:'#c9a985', ar:'بيج', en:'Beige', id:'Krem' }, { hex:'#6b7a45', ar:'زيتي', en:'Olive', id:'Zaitun' },
+  { hex:'#1f6f73', ar:'أزرق مخضرّ', en:'Teal', id:'Teal' }, { hex:'#1f2f5c', ar:'كحلي', en:'Navy', id:'Navy' }, { hex:'#7a1f34', ar:'خمري', en:'Burgundy', id:'Marun' }, { hex:'#c98a90', ar:'وردي مغبرّ', en:'Dusty rose', id:'Mawar pudar' }];
+let busy = false;
+function colours(){
+  let cols = (window.LAMHA_LOOK && LAMHA_LOOK.last && LAMHA_LOOK.last.hijab && LAMHA_LOOK.last.hijab.swatches) || [];
+  /* no hijab colours rendered yet: her colours from the style guide (skin depth + undertone), else a plain set */
+  if(!cols.length){ try{ const sg = window.LAMHA_STYLE, lk = window.LAMHA_LOOK; const sk = sg && sg.herSkin && sg.herSkin(); if(sk && lk && lk.hijabColours) cols = sg.palette(lk.hijabColours(sk.depth, sk.under, (lk.sel && lk.sel.occ) || null).colors); }catch(e){ cols = []; } }
+  if(!cols.length) cols = PLAIN.map(x => ({ hex: x.hex, name: x[lang()] || x.en }));
+  return cols;
+}
+function cardHtml(){
+  const cols = colours();
+  let h = '<div class="lkCard hpCard"><h4>' + esc(c('h')) + '</h4><p>' + esc(c('p')) + '</p>';
+  h += '<div class="lkMeta">' + esc(c('tpl')) + '</div><div class="hpTpls">' + TEMPLATES.map((t, i) => '<button class="hpTpl' + (HP.tpl === i ? ' on' : '') + '" data-hp-tpl="' + i + '"><img loading="lazy" src="' + esc(t.thumb || t.url) + '" alt=""></button>').join('') +
+    HP.own.map((o, i) => '<button class="hpTpl' + (HP.tpl === 'o' + i ? ' on' : '') + '" data-hp-tpl="o' + i + '"><img src="' + esc(o.thumb) + '" alt=""></button>').join('') +
+    '<label class="hpTpl hpAdd">+<input type="file" accept="image/*" data-hp-own hidden></label></div><small>' + esc(c('ownHint')) + '</small>';
+  h += '<div class="lkMeta" style="margin-top:8px">' + esc(c('me')) + (HP.U ? ' ✓' : '') + '</div><div class="lkChips"><button data-hp-me="mirror">' + esc(c('fromMirror')) + '</button><label class="hpBtn"><span>' + esc(c('fromPhoto')) + '</span><input type="file" accept="image/*" data-hp-me-file hidden></label></div>';
+  h += '<div class="lkTools"><button class="pri" data-hp-go' + (busy ? ' disabled' : '') + '>' + esc(busy ? c('working') : c('go')) + '</button></div>';
+  if(HP.out){ h += '<div class="hpOut"><canvas id="hpCanvas"></canvas></div>';
+    if(cols.length) h += '<div class="lkMeta">' + esc(c('col')) + '</div><div class="lkSws"><button class="lkSw' + (!HP.col ? ' on' : '') + '" data-hp-col=""><i style="background:#ddd"></i>' + esc(c('orig')) + '</button>' + cols.map(x => '<button class="lkSw' + (HP.col === x.hex ? ' on' : '') + '" data-hp-col="' + esc(x.hex) + '"><i style="background:' + esc(x.hex) + '"></i>' + esc(x.name) + '</button>').join('') + '</div>';
+    h += '<div class="lkTools"><button data-hp-share>' + esc(c('share')) + '</button></div>';
+    if(HP.T && HP.T.credit) h += '<div class="lkMeta">' + esc(c('credit')) + ': ' + esc(HP.T.credit) + '</div>'; }
+  h += '<small>' + esc(c('frontal')) + '</small><small>' + esc(c('lic')) + '</small></div>';
+  return h;
+}
+function mount(){
+  const body = $q('#lk-body'); if(!body) return;
+  let box = $q('#hpBox'); if(!box){ box = document.createElement('div'); box.id = 'hpBox'; body.insertBefore(box, body.firstChild); }
+  box.innerHTML = cardHtml();
+  if(HP.out){ const cv2 = $q('#hpCanvas'); if(cv2){ cv2.width = HP.out.width; cv2.height = HP.out.height; cv2.getContext('2d').drawImage(HP.out, 0, 0); } }
+}
+async function pickTemplate(key){
+  try{ busy = true; mount();
+    if(String(key).startsWith('o')){ const o = HP.own[+String(key).slice(1)]; HP.T = await prepTemplate(o.url, L3('صورتكِ', 'your photo', 'fotomu')); }
+    else { const t = TEMPLATES[+key]; HP.T = await prepTemplate(t.url, t.credit + (t.lic ? ' · ' + t.lic : ''), { crop: t.crop }); }
+    HP.tpl = key; HP.out = null; }catch(e){ say2(String(e && e.message || e), 4000); HP.T = null; HP.tpl = null; }
+  busy = false; mount();
+}
+async function run(){
+  if(!HP.T || !HP.U){ say2(c('needBoth'), 3000); return; }
+  busy = true; mount();
+  try{ HP.out = await compose(HP.T, HP.U, { hex: HP.col }); }catch(e){ say2(String(e && e.message || e), 4000); }
+  busy = false; mount(); const cv2 = $q('#hpCanvas'); if(cv2) cv2.scrollIntoView({ block:'center', behavior:'smooth' });
+}
+async function share(){
+  if(!HP.out) return; const blob = await new Promise(r => HP.out.toBlob(r, 'image/jpeg', .92)); if(!blob) return;
+  const file = new File([blob], 'lamha-hijab-' + Date.now() + '.jpg', { type:'image/jpeg' });
+  if(navigator.canShare && navigator.canShare({ files:[file] })){ try{ await navigator.share({ files:[file], title:'LAMHA' }); return; }catch(e){} }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+document.addEventListener('click', async e => {
+  const b = e.target.closest && e.target.closest('[data-hp-tpl],[data-hp-me],[data-hp-go],[data-hp-col],[data-hp-share]'); if(!b || !$q('#hpBox') || !$q('#hpBox').contains(b)) return;
+  if(b.dataset.hpTpl != null) return pickTemplate(b.dataset.hpTpl);
+  if(b.dataset.hpMe === 'mirror'){ const u = faceFromMirror(); if(!u){ say2(c('noFace'), 3500); return; } HP.U = u; mount(); return; }
+  if(b.hasAttribute('data-hp-go')) return run();
+  if(b.dataset.hpCol != null){ HP.col = b.dataset.hpCol || null; if(HP.T && HP.U) return run(); mount(); return; }
+  if(b.hasAttribute('data-hp-share')) return share();
+});
+document.addEventListener('change', async e => {
+  const el = e.target; if(!el || !$q('#hpBox') || !$q('#hpBox').contains(el)) return;
+  const f = el.files && el.files[0]; if(!f) return;
+  if(el.hasAttribute('data-hp-me-file')){ try{ HP.U = await faceFromFile(f); mount(); }catch(x){ say2(String(x && x.message || x), 4000); } }
+  else if(el.hasAttribute('data-hp-own')){ const url = URL.createObjectURL(f); const im = await loadImage(url); const th = toCanvas(im, 160).toDataURL('image/jpeg', .7); HP.own.push({ url, thumb: th }); await pickTemplate('o' + (HP.own.length - 1)); }
+  el.value = '';
+});
+/* the look sheet re-renders itself; the card is put back on top each time */
+function hook(){ const body = $q('#lk-body'); if(!body) return; new MutationObserver(() => { if(!$q('#hpBox') && body.children.length) mount(); }).observe(body, { childList:true }); if(body.children.length) mount(); }
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hook); else setTimeout(hook, 0);
+window.LAMHA_HP = { prepTemplate, compose, faceFromMirror, faceFromFile, similarity, state: HP, mount, colours, TEMPLATES };
+})();
+
+</script>
+<script>
+/* ============================================================
+   LAMHA · STYLE GUIDE (v81) — the growth study's additions, built on what the app already measures:
+     · a colour guide for clothes and hijab from her measured depth and undertone, each colour with search links in
+       her market's shops (labelled as search links; an affiliate tag is appended only when the publisher sets one);
+     · every colour tied to a real product line (the shop searches carry the colour name);
+     · occasions: the next Ramadan, Eid al-Fitr and Eid al-Adha from the Umm al-Qura calendar, plus her own dates;
+     · a 40+ mode: larger type and a "mature skin" rule set (satin not shimmer, cream products, lifted lines);
+     · the share card (LOOK's own) reachable from here.
+   The care routine and sunscreen reminders live in LAMHA CARE (v78).
+   ============================================================ */
+(function(){
+'use strict';
+const lang = () => (typeof LANG !== 'undefined' && /^(ar|en|id)$/.test(LANG)) ? LANG : 'ar';
+const L3 = (ar, en, id) => ({ ar, en, id })[lang()];
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+const $q = s => document.querySelector(s);
+const lod = async k => { try{ if(typeof store !== 'undefined') return await store.get(k); }catch(e){} try{ return JSON.parse(localStorage.getItem(k) || 'null'); }catch(e){ return null; } };
+const sav = async (k, v) => { try{ if(typeof store !== 'undefined') return await store.set(k, v); }catch(e){} try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} };
+const KEY = 'm_lamha_style'; let SG = { m40:false, mk:null };
+(async () => { const v = await lod(KEY); if(v) SG = Object.assign(SG, v); apply40(); })();
+
+/* colours: name, hex, and a search word per language (the shops search by words, not hex) */
+const COL = {
+  dustyRose:{ hex:'#C9A0A6', ar:'وردي مغبر', en:'dusty rose', id:'mawar pudar' }, lavender:{ hex:'#B7A6D6', ar:'لافندر', en:'lavender', id:'lavender' }, powderBlue:{ hex:'#A9C4DE', ar:'أزرق فاتح', en:'powder blue', id:'biru muda' },
+  grey:{ hex:'#8E8E93', ar:'رمادي', en:'grey', id:'abu-abu' }, navy:{ hex:'#1F2A44', ar:'كحلي', en:'navy', id:'navy' }, mauve:{ hex:'#9C7A93', ar:'موف', en:'mauve', id:'mauve' }, mint:{ hex:'#9ED3B6', ar:'نعناعي', en:'mint', id:'mint' },
+  peach:{ hex:'#F2B79B', ar:'خوخي', en:'peach', id:'persik' }, coral:{ hex:'#E8846C', ar:'مرجاني', en:'coral', id:'koral' }, camel:{ hex:'#B98A5A', ar:'كاميل', en:'camel', id:'camel' }, olive:{ hex:'#7B7A3A', ar:'زيتي', en:'olive', id:'zaitun' },
+  forest:{ hex:'#2F5A3C', ar:'أخضر غامق', en:'forest green', id:'hijau tua' }, terracotta:{ hex:'#B5623F', ar:'تراكوتا', en:'terracotta', id:'terakota' }, cream:{ hex:'#F1E6D2', ar:'كريمي', en:'cream', id:'krem' }, teal:{ hex:'#1F6F73', ar:'تركواز غامق', en:'teal', id:'teal' },
+  emerald:{ hex:'#1E8A5A', ar:'زمردي', en:'emerald', id:'zamrud' }, plum:{ hex:'#5E2A4D', ar:'عنابي', en:'plum', id:'plum' }, royal:{ hex:'#2E4BB3', ar:'أزرق ملكي', en:'royal blue', id:'biru royal' }, burgundy:{ hex:'#6E1E2B', ar:'برغندي', en:'burgundy', id:'burgundy' },
+  mustard:{ hex:'#D2A22C', ar:'خردلي', en:'mustard', id:'mustard' }, gold:{ hex:'#C8A24A', ar:'ذهبي', en:'gold', id:'emas' }, rust:{ hex:'#A24A2A', ar:'صدئي', en:'rust', id:'karat' }, white:{ hex:'#F7F5F0', ar:'أبيض', en:'white', id:'putih' },
+  fuchsia:{ hex:'#C7327E', ar:'فوشيا', en:'fuchsia', id:'fuchsia' }, cobalt:{ hex:'#2B4FBF', ar:'كوبالت', en:'cobalt', id:'cobalt' }, turquoise:{ hex:'#3AB0B5', ar:'تركواز', en:'turquoise', id:'turkuois' }, red:{ hex:'#B6262E', ar:'أحمر', en:'red', id:'merah' },
+  beige:{ hex:'#D8C3A5', ar:'بيج', en:'beige', id:'krem' }, khaki:{ hex:'#9C8B5C', ar:'كاكي', en:'khaki', id:'khaki' }, black:{ hex:'#1A1A1A', ar:'أسود', en:'black', id:'hitam' }, chocolate:{ hex:'#4E2E22', ar:'شوكولاتة', en:'chocolate', id:'cokelat' },
+  charcoal:{ hex:'#3A3A3A', ar:'فحمي', en:'charcoal', id:'arang' }, champagne:{ hex:'#EBD8B7', ar:'شامبانيا', en:'champagne', id:'sampanye' }, blush:{ hex:'#E9B9B5', ar:'وردي خفيف', en:'blush pink', id:'merah muda' }, ivory:{ hex:'#F4EFE3', ar:'عاجي', en:'ivory', id:'gading' }
+};
+/* clothes near the face: the hijab rule, plus tops that hold the same family; deep tones can carry the brightest */
+const SHOPS = {
+  sa:[{ n:'Noon', u:'https://www.noon.com/saudi-ar/search/?q=' }, { n:'Amazon.sa', u:'https://www.amazon.sa/s?k=' }, { n:'Nice One', u:'https://niceonesa.com/ar/search?q=' }, { n:'Modanisa', u:'https://www.modanisa.com/ar/search?q=' }],
+  ae:[{ n:'Noon', u:'https://www.noon.com/uae-ar/search/?q=' }, { n:'Amazon.ae', u:'https://www.amazon.ae/s?k=' }, { n:'Namshi', u:'https://www.namshi.com/uae-ar/search/?q=' }, { n:'Modanisa', u:'https://www.modanisa.com/ar/search?q=' }],
+  eg:[{ n:'Amazon.eg', u:'https://www.amazon.eg/s?k=' }, { n:'Jumia', u:'https://www.jumia.com.eg/catalog/?q=' }, { n:'Noon', u:'https://www.noon.com/egypt-ar/search/?q=' }],
+  ma:[{ n:'Jumia', u:'https://www.jumia.ma/catalog/?q=' }, { n:'Modanisa', u:'https://www.modanisa.com/fr/search?q=' }], dz:[{ n:'Jumia', u:'https://www.jumia.dz/catalog/?q=' }], tn:[{ n:'Jumia', u:'https://www.jumia.com.tn/catalog/?q=' }],
+  id:[{ n:'Shopee', u:'https://shopee.co.id/search?keyword=' }, { n:'Tokopedia', u:'https://www.tokopedia.com/search?q=' }, { n:'Sociolla', u:'https://www.sociolla.com/search?q=' }],
+  my:[{ n:'Shopee', u:'https://shopee.com.my/search?keyword=' }, { n:'Lazada', u:'https://www.lazada.com.my/catalog/?q=' }], tr:[{ n:'Trendyol', u:'https://www.trendyol.com/sr?q=' }, { n:'Modanisa', u:'https://www.modanisa.com/tr/arama?q=' }],
+  kw:[{ n:'Boutiqaat', u:'https://www.boutiqaat.com/ar/search?q=' }, { n:'Noon', u:'https://www.noon.com/kuwait-ar/search/?q=' }], qa:[{ n:'Noon', u:'https://www.noon.com/qatar-ar/search/?q=' }], iq:[{ n:'Noon', u:'https://www.noon.com/saudi-ar/search/?q=' }], jo:[{ n:'Amazon.sa', u:'https://www.amazon.sa/s?k=' }]
+};
+const MKN = { sa:'السعودية', ae:'الإمارات', kw:'الكويت', qa:'قطر', eg:'مصر', ma:'المغرب', dz:'الجزائر', tn:'تونس', iq:'العراق', jo:'الأردن', id:'Indonesia', my:'Malaysia', tr:'Türkiye' };
+function market(){ if(SG.mk) return SG.mk; try{ const cs = window.LAMHA_CARE && LAMHA_CARE.state && LAMHA_CARE.state(); if(cs && cs.prof && cs.prof.mk && SHOPS[cs.prof.mk]) return cs.prof.mk; }catch(e){} return lang() === 'id' ? 'id' : 'sa'; }
+function affiliate(){ try{ return (window.LAMHA_PUBLISHER || {}).affiliate || {}; }catch(e){ return {}; } }
+function link(shop, q){ const aff = affiliate()[shop.n.toLowerCase().replace(/[^a-z]/g, '')]; return shop.u + encodeURIComponent(q) + (aff ? aff : ''); }
+function herSkin(){
+  try{ const lk = window.LAMHA_LOOK; const s = lk && lk.sel; if(s && (s.depth || s.under)) return { depth: s.depth || 'wheat', under: s.under || 'neutral' }; }catch(e){}
+  try{ const p = S.pro && S.pro.skin; if(p){ const L = p.tone.L; return { depth: L > 68 ? 'fair' : L < 48 ? 'dark' : 'wheat', under: p.undertone || 'neutral' }; } }catch(e){}
+  return null;
+}
+function colourGuide(){
+  const sk = herSkin(); const lk = window.LAMHA_LOOK;
+  if(!sk || !lk || !lk.hijabColours) return '<div class="sgCard"><h4>' + esc(L3('🎨 ألوان ثيابي وحجابي', '🎨 My clothes and hijab colours', '🎨 Warna baju dan hijabku')) + '</h4><p>' + esc(L3('أحتاج قراءة بشرتك أولاً: تحليل البشرة أو أسئلة «إطلالتي».', 'I need your skin reading first: the skin analysis or the "My look" questions.', 'Aku perlu pembacaan kulitmu dulu: analisis kulit atau pertanyaan "Tampilanku".')) + '</p></div>';
+  const occ = (lk.sel && lk.sel.occ) || null; const hc = lk.hijabColours(sk.depth, sk.under, occ); const mk = market(), shops = SHOPS[mk] || SHOPS.sa;
+  const word = k => (COL[k] || {})[lang()] || k, hex = k => (COL[k] || {}).hex || '#999';
+  const swatch = k => '<span class="sgSw"><i style="background:' + hex(k) + '"></i>' + esc(word(k)) + '</span>';
+  const kind = L3('حجاب', 'hijab', 'hijab'), kind2 = L3('بلوزة', 'blouse', 'blus');
+  let h = '<div class="sgCard"><h4>' + esc(L3('🎨 ألوان ثيابي وحجابي', '🎨 My clothes and hijab colours', '🎨 Warna baju dan hijabku')) + '</h4>';
+  h += '<p>' + esc(L3('من درجة بشرتك (' + ({ fair:'فاتحة', wheat:'حنطية', dark:'سمراء' })[sk.depth] + ') ودرجتها الأساسية (' + ({ warm:'دافئة', cool:'باردة', neutral:'محايدة', olive:'زيتونية' })[sk.under] + '): الألوان القريبة من الوجه التي تصفّيه:', 'From your depth (' + sk.depth + ') and undertone (' + sk.under + '): the colours near the face that flatter it:', 'Dari kedalaman kulit (' + sk.depth + ') dan undertone (' + sk.under + '): warna dekat wajah yang menyanjung:')) + '</p>';
+  h += '<div>' + hc.colors.map(swatch).join('') + '</div>';
+  if(hc.avoid && hc.avoid.length) h += '<p class="sgNote">' + esc(L3('تجنّبي قرب الوجه: ', 'Avoid near the face: ', 'Hindari dekat wajah: ')) + esc(hc.avoid.map(word).join('، ')) + '</p>';
+  h += '<p class="sgNote">' + esc(L3('القاعدة: الألوان الدافئة (خوخي، كاميل، تراكوتا) للبشرة الدافئة؛ الباردة (وردي مغبر، لافندر، كحلي) للباردة؛ البشرة السمراء تحمل أشدّ الألوان إشراقاً؛ والحجاب أهمّ من البلوزة لأنه يلامس الوجه.', 'The rule: warm colours (peach, camel, terracotta) for warm undertones; cool ones (dusty rose, lavender, navy) for cool; deep skin carries the brightest colours; the hijab matters more than the blouse because it touches the face.', 'Aturannya: warna hangat untuk undertone hangat; warna sejuk untuk undertone sejuk; kulit gelap cocok warna paling cerah; hijab lebih penting daripada blus karena menyentuh wajah.')) + '</p>';
+  h += '<div class="lkMeta">' + esc(L3('ابحثي عنها في متاجر ', 'Find them in shops in ', 'Cari di toko di ')) + esc(MKN[mk] || mk) + ' <select data-sg-mk style="font-size:11px;padding:2px 6px;border-radius:8px;border:1px solid var(--line)">' + Object.keys(SHOPS).map(k => '<option value="' + k + '"' + (k === mk ? ' selected' : '') + '>' + esc(MKN[k] || k) + '</option>').join('') + '</select></div>';
+  h += hc.colors.slice(0, 4).map(k => '<div class="sgLinks"><span class="sgSw"><i style="background:' + hex(k) + '"></i>' + esc(word(k)) + '</span>' + shops.map(s => '<a href="' + esc(link(s, kind + ' ' + word(k))) + '" target="_blank" rel="noopener">' + esc(s.n) + ' · ' + esc(kind) + '</a>').join('') + '<a href="' + esc(link(shops[0], kind2 + ' ' + word(k))) + '" target="_blank" rel="noopener">' + esc(shops[0].n) + ' · ' + esc(kind2) + '</a></div>').join('');
+  const aff = Object.keys(affiliate()).length;
+  h += '<p class="sgNote">' + esc(aff ? L3('روابط تسويقية: قد يحصل التطبيق على عمولة صغيرة دون زيادة على سعرك.', 'Affiliate links: the app may earn a small commission at no extra cost to you.', 'Tautan afiliasi: aplikasi bisa menerima komisi kecil tanpa biaya tambahan.') : L3('روابط بحث فقط، بلا عمولة ولا علاقة تجارية بالمتاجر.', 'Search links only — no commission, no relation to the shops.', 'Hanya tautan pencarian — tanpa komisi, tanpa hubungan dengan toko.')) + '</p></div>';
+  return h;
+}
+/* occasions: Umm al-Qura through Intl */
+function hijri(d){ try{ const f = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura', { day:'numeric', month:'numeric', year:'numeric' }); const p = {}; f.formatToParts(d).forEach(x => { if(x.type !== 'literal') p[x.type] = +x.value; }); return p.month ? p : null; }catch(e){ return null; } }
+function nextDates(){
+  const out = []; const today = new Date(); today.setHours(0, 0, 0, 0); const want = [{ k:'ramadan', m:9, d:1 }, { k:'fitr', m:10, d:1 }, { k:'adha', m:12, d:10 }];
+  for(let i = 0; i < 400 && want.length; i++){ const d = new Date(today); d.setDate(today.getDate() + i); const h = hijri(d); if(!h) return out;
+    for(let j = want.length - 1; j >= 0; j--){ const w = want[j]; if(h.month === w.m && h.day === w.d){ out.push({ k:w.k, date:d, days:i }); want.splice(j, 1); } } }
+  return out;
+}
+function occasions(){
+  const N = { ramadan:L3('أول رمضان', 'Ramadan begins', 'Awal Ramadan'), fitr:L3('عيد الفطر', 'Eid al-Fitr', 'Idulfitri'), adha:L3('عيد الأضحى', 'Eid al-Adha', 'Iduladha') };
+  const ds = nextDates(); const fd = d => d.toLocaleDateString(lang() === 'ar' ? 'ar-EG' : lang() === 'id' ? 'id-ID' : 'en-GB', { day:'numeric', month:'long' });
+  let h = '<div class="sgCard"><h4>' + esc(L3('📅 مناسباتي', '📅 My occasions', '📅 Acaraku')) + '</h4>';
+  if(!ds.length) h += '<p>' + esc(L3('التقويم الهجري غير متاح على هذا المتصفح.', 'The Hijri calendar is not available in this browser.', 'Kalender Hijriah tidak tersedia di browser ini.')) + '</p>';
+  else h += '<div class="sgOcc">' + ds.sort((a, b) => a.days - b.days).map(o => '<span>' + esc(N[o.k]) + ' · ' + esc(fd(o.date)) + '</span><b>' + (o.days === 0 ? esc(L3('اليوم', 'today', 'hari ini')) : esc(L3('بعد ' + o.days + ' يوماً', 'in ' + o.days + ' days', o.days + ' hari lagi'))) + '</b>').join('') + '</div>';
+  let own = []; try{ own = ((window.lamhaAdvisor && lamhaAdvisor.friend && lamhaAdvisor.friend.occ) || []).filter(o => o.date && o.date >= new Date().toISOString().slice(0, 10)).slice(0, 4); }catch(e){}
+  if(own.length) h += '<div class="sgOcc" style="margin-top:6px">' + own.map(o => '<span>' + esc(o.k) + ' · ' + esc(o.date) + '</span><b></b>').join('') + '</div>';
+  h += '<p class="sgNote">' + esc(L3('قبل رمضان بأسبوعين: تجربة إطلالة العيد في المرآة وحفظها؛ قبل العيد بيومين: تصوير بالفلاش. قولي للمستشارة «عندي عرس بعد أسبوع» وتسجّله هنا.', 'Two weeks before Ramadan: try the Eid look in the mirror and save it; two days before Eid: a flash photo. Tell the advisor "I have a wedding next week" and it lands here.', 'Dua minggu sebelum Ramadan: coba tampilan Lebaran di cermin dan simpan; dua hari sebelum Lebaran: foto dengan flash. Katakan pada penasihat "aku ada pernikahan minggu depan" dan tercatat di sini.')) + '</p>';
+  h += '<div class="lkTools"><button data-sg-occ="eid">' + esc(L3('إطلالة العيد', 'Eid look', 'Tampilan Lebaran')) + '</button><button data-sg-occ="wedding">' + esc(L3('إطلالة عرس', 'Wedding look', 'Tampilan pernikahan')) + '</button></div></div>';
+  return h;
+}
+/* 40+ */
+function apply40(){ document.body.classList.toggle('lamha40', !!SG.m40); }
+function style40(){
+  try{
+    if(typeof S === 'undefined') return;
+    ['highlight','glow'].forEach(z => { if(S.fins && S.fins[z] !== undefined) S.fins[z] = 'satin'; }); if(S.fins && S.fins.eyeshadow !== undefined) S.fins.eyeshadow = 'matte'; if(S.fins && S.fins.lips !== undefined) S.fins.lips = 'satin';
+    if(S.ints){ if(S.ints.highlight != null) S.ints.highlight = Math.min(S.ints.highlight, 0.3); if(S.ints.contour != null) S.ints.contour = Math.min(S.ints.contour, 0.35); if(S.ints.brow != null) S.ints.brow = Math.max(S.ints.brow, 0.55); if(S.ints.blush != null) S.ints.blush = Math.max(0.4, Math.min(S.ints.blush, 0.5)); }
+    if(typeof BLUSH_STYLES !== 'undefined' && BLUSH_STYLES.lifted) S.blushStyle = 'lifted'; if(typeof LINER_STYLES !== 'undefined' && LINER_STYLES.thin) S.linerStyle = 'thin'; S.lipStyle = 'lined';
+    try{ syncZoneControls(); renderShades(); }catch(e){} try{ if(window.LAMHA_STUDIO && LAMHA_STUDIO.render) LAMHA_STUDIO.render(); }catch(e){}
+  }catch(e){}
+}
+function mode40(){
+  let h = '<div class="sgCard"><h4>' + esc(L3('✦ وضع ما بعد الأربعين', '✦ The 40+ mode', '✦ Mode 40+')) + '</h4><p>' + esc(L3('خط أكبر في كل التطبيق، وقواعد مكياج للبشرة الناضجة: لمعة ساتان لا غلِتر (اللمعان يبرز الخطوط)، أحمر خدود كريمي مرفوع نحو الصدغ، حاجب ممتلئ قليلاً، شفاه محدّدة بقلم، كونتور خفيف، وأساس رقيق فوق ترطيب جيد.', 'Larger type across the app, and makeup rules for mature skin: satin not glitter (shimmer settles into lines), cream blush lifted toward the temple, a slightly fuller brow, lined lips, light contour, and a thin base over good moisture.', 'Huruf lebih besar di seluruh aplikasi, dan aturan makeup untuk kulit matang: satin bukan glitter, blush krim diangkat ke pelipis, alis sedikit lebih penuh, bibir bergaris, kontur ringan, dan alas tipis di atas pelembap yang baik.')) + '</p>';
+  h += '<div class="lkTools"><button data-sg-40="toggle" class="' + (SG.m40 ? 'on' : '') + '">' + esc(SG.m40 ? L3('إيقاف الوضع', 'Turn the mode off', 'Matikan mode') : L3('تفعيل الوضع', 'Turn the mode on', 'Aktifkan mode')) + '</button><button data-sg-40="apply">' + esc(L3('طبّقي قواعد البشرة الناضجة على المرآة', 'Apply the mature-skin rules to the mirror', 'Terapkan aturan kulit matang ke cermin')) + '</button></div>';
+  h += '<p class="sgNote">' + esc(L3('المصدر: قواعد فنّاني المكياج للبشرة الناضجة (شارلوت تيلبوري، بوبي براون، Wayne Goss) كما في دراسة v64/v69 — لا ادّعاء طبي.', 'Source: makeup artists’ rules for mature skin (Charlotte Tilbury, Bobbi Brown, Wayne Goss) as in the v64/v69 study — no medical claim.', 'Sumber: aturan penata rias untuk kulit matang (Charlotte Tilbury, Bobbi Brown, Wayne Goss) — tanpa klaim medis.')) + '</p></div>';
+  return h;
+}
+function shareCard(){ return '<div class="sgCard"><h4>' + esc(L3('📤 بطاقة إطلالتي', '📤 My look card', '📤 Kartu tampilanku')) + '</h4><p>' + esc(L3('بطاقة بصورتك من المرآة وألوانك وحجابك وقصّتك — للحفظ أو المشاركة. الصورة تُشارك بقرارك فقط.', 'A card with your mirror photo, your colours, hijab and cut — to save or share. The photo is shared only when you decide.', 'Kartu dengan foto cermin, warna, hijab, dan potongan — untuk disimpan atau dibagikan. Foto dibagikan hanya atas keputusanmu.')) + '</p><div class="lkTools"><button data-sg-share>' + esc(L3('اصنعي البطاقة', 'Make the card', 'Buat kartu')) + '</button></div></div>'; }
+function html(){ return '<div id="sgBox">' + colourGuide() + occasions() + mode40() + shareCard() + '</div>'; }
+function mount(){ const body = $q('#lk-body'); if(!body) return; let box = $q('#sgBox'); const h = html(); if(box){ box.outerHTML = h; } else { body.insertAdjacentHTML('beforeend', h); } }
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest('[data-sg-occ],[data-sg-40],[data-sg-share]'); if(!b || !$q('#sgBox') || !$q('#sgBox').contains(b)) return;
+  if(b.dataset.sgOcc){ try{ const lk = window.LAMHA_LOOK; if(lk && lk.sel){ lk.sel.occ = b.dataset.sgOcc === 'eid' ? 'party' : 'wedding'; lk.render && lk.render(); } }catch(x){} try{ if(window.lamhaSuggest) window.lamhaSuggest(); }catch(x){} return; }
+  if(b.dataset.sg40 === 'toggle'){ SG.m40 = !SG.m40; sav(KEY, SG); apply40(); mount(); if(SG.m40) style40(); return; }
+  if(b.dataset.sg40 === 'apply'){ style40(); try{ say(L3('طُبّقت قواعد البشرة الناضجة — عدّليها كما تحبين', 'Mature-skin rules applied — adjust as you like', 'Aturan kulit matang diterapkan'), 3000); }catch(x){} return; }
+  if(b.hasAttribute('data-sg-share')){ try{ const cb = document.getElementById('lk-photo'); if(cb) cb.checked = true; const btn = document.querySelector('#lk-body [data-lkact="save"]'); if(btn) btn.click(); }catch(x){} }
+});
+document.addEventListener('change', e => { const el = e.target; if(el && el.hasAttribute && el.hasAttribute('data-sg-mk')){ SG.mk = el.value; sav(KEY, SG); mount(); } });
+function hook(){ const body = $q('#lk-body'); if(!body) return; new MutationObserver(() => { if(!$q('#sgBox') && body.children.length) setTimeout(mount, 0); }).observe(body, { childList:true }); if(body.children.length) mount(); }
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hook); else setTimeout(hook, 0);
+window.LAMHA_STYLE = { mount, nextDates, colourGuide, style40, herSkin, palette: keys => (keys || []).map(k => ({ hex: (COL[k] || {}).hex || '#999', name: (COL[k] || {})[lang()] || k })), state:() => SG };
+})();
+
+</script>
+<script>
+/* ============================================================
+   LAMHA · THE PHOTO TRY-ON (v82) — a tester sent a mirror frame with the drawn wrap: a flat green hood with a
+   straight cut across the forehead. The live drawing is gone. Choosing a wrap anywhere (the studio bar, the
+   look sheet, "the wrap for my face") now opens this sheet: her current mirror frame is fitted into a real
+   photograph of that wrap (LAMHA_HP.compose — face swapped, colour and light matched, fabric recoloured), and the
+   mirror behind stays her own. Colour and wrap can be changed here; a new frame is taken only when she asks.
+   ============================================================ */
+(function(){
+'use strict';
+const LK = window.LAMHA_LOOK, HPm = window.LAMHA_HP; if(!LK || !HPm) return;
+const lang = () => (typeof LANG !== 'undefined' && /^(ar|en|id)$/.test(LANG)) ? LANG : 'ar';
+const L3 = (ar, en, id) => ({ ar, en, id })[lang()];
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+const $q = s => document.querySelector(s);
+const tx = o => (o && typeof o === 'object') ? (o[lang()] || o.en || o.ar || '') : String(o || '');
+LK.photoWrap = true;                                   /* the core's draw loop leaves the video alone while this is on */
+
+const TPL = HPm.TEMPLATES;
+const TR = { open:false, style:null, col:null, tpl:null, force:null, U:null, out:null, busy:false, msg:'', seq:0, orig:false };
+const prepared = {};
+function prep(i){ return prepared[i] || (prepared[i] = HPm.prepTemplate(TPL[i].url, TPL[i].credit + (TPL[i].lic ? ' · ' + TPL[i].lic : ''), { crop: TPL[i].crop }).catch(e => { delete prepared[i]; throw e; })); }
+/* the photograph for a wrap: its own template first, else the one on screen, else the first */
+function tplFor(style){
+  if(TR.tpl != null && (TPL[TR.tpl].styles || []).includes(style)) return TR.tpl;
+  const i = TPL.findIndex(t => (t.styles || []).includes(style)); return i >= 0 ? i : (TR.tpl != null ? TR.tpl : 0);
+}
+const wrapName = k => { try{ return tx(LK.WRAPS[k].n); }catch(e){ return k || ''; } };
+
+function freshFace(){ const u = HPm.faceFromMirror(); if(u){ TR.U = u; return true; } return false; }
+
+function html(){
+  const t = TR.tpl != null ? TPL[TR.tpl] : null, cols = HPm.colours ? HPm.colours() : [];
+  /* the sheet is named after the wrap in the photograph, never after one we have no photograph of */
+  const tst = t ? (t.styles || [])[0] : null;
+  const missing = TR.style && t && !(t.styles || []).includes(TR.style) ? TR.style : null;
+  let h = '<div class="hpTryIn"><div class="hpTryTop"><b>' + esc(L3('حجابكِ على صورة حقيقية', 'Your hijab on a real photo', 'Hijabmu di foto asli')) + (tst ? ' · ' + esc(wrapName(tst)) : '') + '</b>' +
+    '<button class="hpTryX" data-tr-close aria-label="' + esc(L3('رجوع إلى المرآة', 'Back to the mirror', 'Kembali ke cermin')) + '">✕</button></div>';
+  h += '<div class="hpTryStage">' + (TR.out ? '<canvas id="hpTryCv"></canvas>' : '') + (TR.busy || TR.msg ? '<div class="hpTryMsg">' + esc(TR.busy ? L3('جارٍ التركيب على الصورة…', 'Putting you in the photo…', 'Menyusun foto…') : TR.msg) + '</div>' : '') + '</div>';
+  if(missing) h += '<div class="hpTryLbl">' + esc(L3('اخترتِ «' + wrapName(missing) + '»: لا توجد صورة طبيعية لهذه اللفّة بعد، والمعروض «' + wrapName(tst) + '».', 'You picked "' + wrapName(missing) + '": there is no natural photo of that wrap yet, so "' + wrapName(tst) + '" is shown.', 'Kamu memilih "' + wrapName(missing) + '": belum ada foto asli gaya itu, yang tampil "' + wrapName(tst) + '".')) + '</div>';
+  h += '<div class="hpTryLbl">' + esc(L3('اللفّة', 'Wrap', 'Gaya')) + '</div><div class="hpTpls">' + TPL.map((x, i) => '<button class="hpTpl' + (TR.tpl === i ? ' on' : '') + '" data-tr-tpl="' + i + '" title="' + esc(wrapName((x.styles || [])[0])) + '"><img loading="lazy" src="' + esc(x.thumb || x.url) + '" alt=""><span>' + esc(wrapName((x.styles || [])[0])) + '</span></button>').join('') + '</div>';
+  if(cols.length) h += '<div class="hpTryLbl">' + esc(L3('لون القماش', 'Fabric colour', 'Warna kain')) + '</div><div class="hpTrySws"><button class="' + (TR.orig ? 'on' : '') + '" data-tr-col=""><i style="background:linear-gradient(135deg,#eee,#bbb)"></i>' + esc(L3('لون الصورة', 'As photographed', 'Warna asli')) + '</button>' +
+    cols.map(x => '<button class="' + (!TR.orig && TR.col && TR.col.toLowerCase() === String(x.hex).toLowerCase() ? 'on' : '') + '" data-tr-col="' + esc(x.hex) + '"><i style="background:' + esc(x.hex) + '"></i>' + esc(x.name) + '</button>').join('') + '</div>';
+  h += '<div class="hpTryAct"><button data-tr-again>' + esc(L3('📷 صورة جديدة من المرآة', '📷 New frame from the mirror', '📷 Foto baru dari cermin')) + '</button>' +
+    '<label class="hpBtn"><span>' + esc(L3('🖼 وجهي من صورة', '🖼 My face from a photo', '🖼 Wajahku dari foto')) + '</span><input type="file" accept="image/*" data-tr-file hidden></label>' +
+    (TR.out ? '<button class="pri" data-tr-share>' + esc(L3('مشاركة / حفظ', 'Share / save', 'Bagikan / simpan')) + '</button>' : '') + '</div>';
+  h += '<small class="hpTryNote">' + esc(L3('أفضل نتيجة: وجهكِ من الأمام، إضاءة أمامية هادئة، بلا نظارة. الصورة لا تغادر هاتفكِ إلا إن شاركتِها.', 'Best result: face the camera, soft light in front, no glasses. The picture stays on your phone unless you share it.', 'Hasil terbaik: menghadap kamera, cahaya lembut dari depan, tanpa kacamata. Foto tetap di ponselmu kecuali kamu bagikan.')) + '</small>';
+  if(t) h += '<small class="hpTryNote">' + esc(L3('الصورة الأصلية', 'Original photo', 'Foto asli')) + ': ' + esc(t.credit) + ' · ' + esc(t.lic) + ' — ' + esc(L3('وجه صاحبتها أُزيل ووُضع وجهكِ مكانه.', 'her face was removed and yours put in its place.', 'wajahnya dihapus dan diganti wajahmu.')) + '</small>';
+  return h + '</div>';
+}
+function render(){
+  let box = $q('#hpTry');
+  if(!TR.open){ if(box) box.hidden = true; document.body.classList.remove('hpTryOn'); return; }
+  if(!box){ box = document.createElement('div'); box.id = 'hpTry'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); document.body.appendChild(box); }
+  const sc = box.querySelector('.hpTpls') ? box.querySelector('.hpTpls').scrollLeft : 0;
+  box.innerHTML = html(); box.hidden = false; document.body.classList.add('hpTryOn');
+  const tp = box.querySelector('.hpTpls'); if(tp) tp.scrollLeft = sc;
+  if(TR.out){ const cv = $q('#hpTryCv'); if(cv){ cv.width = TR.out.width; cv.height = TR.out.height; cv.getContext('2d').drawImage(TR.out, 0, 0); } }
+}
+async function run(){
+  if(!TR.U){ TR.msg = L3('لا أرى وجهكِ في المرآة الآن — انظري إلى الكاميرا ثم «صورة جديدة من المرآة»، أو اختاري صورة لوجهكِ.', 'I cannot see your face in the mirror — look at the camera and tap "New frame from the mirror", or pick a photo of your face.', 'Aku tak melihat wajahmu — lihat kamera lalu "Foto baru dari cermin", atau pilih foto wajahmu.'); TR.busy = false; render(); return; }
+  const my = ++TR.seq; TR.busy = true; TR.msg = ''; render();
+  try{ const T = await prep(TR.tpl); const out = await HPm.compose(T, TR.U, { hex: TR.orig ? null : TR.col });
+    if(my !== TR.seq) return; TR.out = out; TR.msg = ''; }
+  catch(e){ if(my !== TR.seq) return; TR.msg = /image|fetch|network/i.test(String(e && e.message)) ? L3('تعذّر تحميل صورة اللفّة — تحتاج اتصالاً بالإنترنت أوّل مرة.', 'Could not load the wrap photo — it needs the internet the first time.', 'Gagal memuat foto — perlu internet pertama kali.') : String(e && e.message || e); }
+  if(my === TR.seq){ TR.busy = false; render(); }
+}
+/* the core calls this on every wrap choice (LK.wear) */
+LK.onWear = function(style, col){
+  if(!style){ if(TR.open){ TR.open = false; TR.seq++; render(); } return; }
+  const opening = !TR.open;
+  TR.style = style; if(col) { TR.col = col; TR.orig = false; }
+  TR.tpl = TR.force != null ? TR.force : tplFor(style); TR.force = null;
+  TR.open = true;
+  if(opening){ TR.out = null; freshFace(); }
+  run();
+  if(opening) setTimeout(() => { const x = $q('#hpTry .hpTryX'); if(x) try{ x.focus({ preventScroll:true }); }catch(e){} }, 60);
+};
+function close(){ TR.open = false; TR.seq++; render(); try{ LK.wear(null); }catch(e){} }
+async function share(){
+  if(!TR.out) return; const blob = await new Promise(r => TR.out.toBlob(r, 'image/jpeg', .92)); if(!blob) return;
+  const file = new File([blob], 'lamha-hijab-' + Date.now() + '.jpg', { type:'image/jpeg' });
+  if(navigator.canShare && navigator.canShare({ files:[file] })){ try{ await navigator.share({ files:[file], title:'LAMHA' }); return; }catch(e){ if(e && e.name === 'AbortError') return; } }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+document.addEventListener('click', e => {
+  const box = $q('#hpTry'); if(!box || box.hidden) return;
+  const b = e.target.closest && e.target.closest('[data-tr-close],[data-tr-tpl],[data-tr-col],[data-tr-again],[data-tr-share]'); if(!b || !box.contains(b)) return;
+  if(b.hasAttribute('data-tr-close')) return close();
+  if(b.dataset.trTpl != null){ const i = +b.dataset.trTpl; TR.force = i; try{ LK.wear((TPL[i].styles || [])[0] || TR.style, TR.col); }catch(x){ TR.tpl = i; TR.force = null; run(); } return; }
+  if(b.dataset.trCol != null){ if(!b.dataset.trCol){ TR.orig = true; run(); return; } TR.orig = false; TR.force = TR.tpl; try{ LK.wear(TR.style, b.dataset.trCol); }catch(x){ TR.col = b.dataset.trCol; run(); } return; }
+  if(b.hasAttribute('data-tr-again')){ if(!freshFace()){ TR.msg = L3('لا أرى وجهكِ في المرآة الآن — انظري إلى الكاميرا.', 'I cannot see your face in the mirror now — look at the camera.', 'Aku tak melihat wajahmu — lihat kamera.'); render(); return; } run(); return; }
+  if(b.hasAttribute('data-tr-share')) return share();
+});
+document.addEventListener('change', async e => {
+  const el = e.target; const box = $q('#hpTry'); if(!el || !box || !box.contains(el) || !el.hasAttribute('data-tr-file')) return;
+  const f = el.files && el.files[0]; el.value = ''; if(!f) return;
+  try{ TR.U = await HPm.faceFromFile(f); run(); }catch(x){ TR.msg = String(x && x.message || x); render(); }
+});
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && TR.open) close(); });
+window.LAMHA_TRY = { state: TR, open: (style, col) => LK.wear(style || 'satin', col), close, tplFor };
+})();
+
+</script>
+<!-- LAMHA V81 END -->
 </body>
 </html>
