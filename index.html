@@ -1959,9 +1959,6 @@ document.addEventListener('DOMContentLoaded', function(){
     <button class="dbtn" data-sheet="sh-makeup">
       <svg viewBox="0 0 24 24"><path d="M9 3h6v5H9zM8 8h8v13H8z"/><path d="M8 13h8"/></svg>
       <span data-i18n="nav_makeup">المكياج</span></button>
-    <button class="dbtn" data-sheet="sh-look">
-      <svg viewBox="0 0 24 24"><path d="M12 2.5c-4.4 0-7.5 3.4-7.5 8.2 0 4.6 2 9.8 7.5 10.8 5.5-1 7.5-6.2 7.5-10.8 0-4.8-3.1-8.2-7.5-8.2z"/><path d="M8.3 11.5c.4-2.6 1.8-4 3.7-4s3.3 1.4 3.7 4c0 2.9-1.6 5.3-3.7 5.3s-3.7-2.4-3.7-5.3z"/></svg>
-      <span id="nav-look">إطلالتي</span></button>
     <button class="dbtn" data-sheet="sh-kit">
       <svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/></svg>
       <span data-i18n="nav_kit">خزانتي</span></button>
@@ -17917,7 +17914,7 @@ const sp = document.getElementById('sk-pro'); if(sp) sp.onclick = ()=>{ openShee
    ===================================================================== */
 (function(){
 'use strict';
-const VERSION = 'v82';
+const VERSION = 'v84';
 window.LAMHA_VERSION = VERSION;
 try{ if(!/ v\d+/.test(document.title)) document.title = document.title.replace('LAMHA MOBILE', 'LAMHA MOBILE '+VERSION); }catch(e){}
 const PRO = window.LAMHA_PRO;
@@ -20341,7 +20338,7 @@ function drawCut(tctx){
   tctx.translate(F.C[0], F.C[1]); tctx.rotate(da); tctx.scale(k, k); tctx.translate(-Fb.C[0], -Fb.C[1]);
   tctx.drawImage(layer, 0, 0); tctx.restore();
 }
-LK.tryCut = function(key){ CUT.key = CUTP[key] ? key : null; CUT._key = ''; S.tryCut = CUT.key; if(CUT.key) LK.wear(null); };
+LK.tryCut = function(){ CUT.key = null; CUT._key = ''; S.tryCut = null; };   /* v84: the haircuts left this app */
 LK.cutInfo = () => ({ key:CUT.key, list:Object.keys(CUTP) });
 LK._drawCut = drawCut;
 const _daa = window.drawApplyAnim;
@@ -20351,7 +20348,7 @@ window.drawApplyAnim = function(lm){
   const top = (window.lamhaTop && window.lamhaTop()) || ctx;
   if(CUT.key && !(WORN.style && !LK.photoWrap)){ try{ drawCut(top); }catch(e){ if(!LK._cutErr){ LK._cutErr = String(e && (e.stack || e.message || e));
     try{ fatalLog('[cut] ' + LK._cutErr); }catch(e2){} } } }
-  const draw = (WORN.style && !LK.photoWrap) ? drawWorn : S.hijabColour ? drawHijab : null;   /* v82: a wrap is tried on a photo, not drawn on the video */
+  const draw = LK.hijabOff ? null : ((WORN.style && !LK.photoWrap) ? drawWorn : S.hijabColour ? drawHijab : null);   /* v83: the hijab left this app */
   if(draw){ try{ draw(draw === drawWorn ? top : ctx); }catch(e){ if(!LK._hijErr){ LK._hijErr = String(e && (e.stack || e.message || e));
     try{ fatalLog('[hijab] ' + LK._hijErr); }catch(e2){} } } }
   return _daa && _daa.apply(this, arguments);
@@ -20360,8 +20357,8 @@ LK._drawHijab = drawHijab; LK._drawWorn = drawWorn;
 
 /* ---------- the sheet: the first question is always the hijab; every step can be skipped ---------- */
 const U = {
-  title:T3('إطلالتي: الشعر والحجاب','My look: hair & hijab','Tampilanku: rambut & hijab'),
-  lead:T3('قصّة الشعر ولونه، أو لون الحجاب ولفّته، والياقة — من شكل وجهك وبشرتك ورقبتك والمناسبة.','Your cut and hair colour, or hijab colour and wrap, and neckline — from your face, skin, neck and occasion.','Potongan dan warna rambut, atau warna dan gaya hijab — dari wajah, kulit, leher dan acara.'),
+  title:T3('إطلالتي: الشعر والقصّة','My look: hair & cut','Tampilanku: rambut & potongan'),
+  lead:T3('قصّة الشعر ولونه والياقة — من شكل وجهك وبشرتك ورقبتك والمناسبة.','Your cut, hair colour and neckline — from your face, skin, neck and occasion.','Potongan, warna rambut dan garis leher — dari wajah, kulit, leher dan acara.'),
   qHijab:T3('هل تلبسين حجاباً؟','Do you wear a hijab?','Apakah kamu berhijab?'),
   yes:T3('نعم','Yes','Ya'), no:T3('لا','No','Tidak'), skip:T3('تخطّي','Skip','Lewati'),
   autoWear:T3('✦ ركّبيه حسب وجهي','✦ Fit it to my face','✦ Pas dengan wajahku'), fitted:T3('مُركَّبة حسب شكل وجهك','Fitted to your face shape','Disesuaikan dengan bentuk wajahmu'),
@@ -20431,7 +20428,7 @@ function render(){
   const s = LK.sel || (LK.sel = autoFill()), cam = LK.cam;
   let h = '';
   /* 1 · the hijab question comes first */
-  h += '<div class="lkRow lkFirst"><b>' + tx(U.qHijab) + '</b><div class="lkChips">' +
+  if(!LK.hijabOff) h += '<div class="lkRow lkFirst"><b>' + tx(U.qHijab) + '</b><div class="lkChips">' +
        '<button data-lk="hijab" data-v="1" class="' + (s.hijab === true ? 'on' : '') + '">' + tx(U.yes) + (s.auto.hijab === true ? ' ✦' : '') + '</button>' +
        '<button data-lk="hijab" data-v="0" class="' + (s.hijab === false ? 'on' : '') + '">' + tx(U.no) + (s.auto.hijab === false ? ' ✦' : '') + '</button>' +
        '<button data-lk="hijab" data-v="" class="skip' + (s.hijab == null ? ' on' : '') + '">' + tx(U.skip) + '</button></div>' +
@@ -20449,7 +20446,7 @@ function render(){
   /* 2 · the answer, as cards */
   const r = LK.recommend({ face:s.face, depth:s.depth, under:s.under, neck:s.neck, hijab:s.hijab === true, occ:s.occ, conf:s.conf });
   LK.last = r;
-  if(r.hijab){
+  if(r.hijab && !LK.hijabOff){
     /* her own hijab in the picture: recolour it; none: put one on her, in the wrap she picks */
     const hj = r.hijab, own = !!(cam && cam.hijab && cam.hijab.yes), worn = LK.wornInfo(), onHex = worn.style ? worn.col : S.hijabColour;
     h += '<div class="lkCard"><h4>🧕 ' + tx(U.hijCol) + '</h4><div class="lkSws">' +
@@ -20565,7 +20562,7 @@ async function savePNG(){
     if(sws && sws.length){ y += 6; sws.slice(0, 6).forEach((s, i) => { const bx = rtl ? X - 64 - i*82 : X + i*82;
       g.fillStyle = s.hex; g.beginPath(); g.roundRect(bx, y, 64, 64, 14); g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 4; g.stroke(); }); y += 84; }
   };
-  if(r.hijab){
+  if(r.hijab && !LK.hijabOff){
     block('🧕 ' + tx(U.hijCol), r.hijab.colors.join('، '), r.hijab.swatches);
     block('🌀 ' + tx(U.wrap) + ': ' + r.hijab.style_name, r.hijab.time_minutes + ' ' + tx(U.min) + ' · ' + r.hijab.difficulty + ' · ' + r.hijab.fabric);
   }
@@ -20978,12 +20975,10 @@ const MK = [
   { k:'lashes',    ic:'lashes',    n:T3('الرموش','Lashes','Bulu mata'),          zone:'lashes',    tabs:['sty','col'] },
   { k:'brow',      ic:'brows',     n:T3('الحواجب','Brows','Alis'),              zone:'brow',      tabs:['sty','col'] },
   { k:'lens',      ic:'lens',      n:T3('العدسات','Lenses','Lensa'),             zone:'lens',      tabs:['col'] },
-  { k:'glow',      ic:'glow',      n:T3('اللمعة','Glow','Kilau'),               zone:'glow',      tabs:['col'] }
+  { k:'glow',      ic:'glow',      n:T3('اللمعة','Glow','Kilau'),               zone:'glow',      tabs:['col'] },
+  { k:'hair',      ic:'hairCol',   n:T3('لون الشعر','Hair colour','Warna rambut'), zone:'hair',      tabs:['col'] }   /* v84: with the elements, not on the first screen */
 ];
 const LOOKC = [
-  { k:'hijab',  ic:'hijab',   n:T3('الحجاب','Hijab','Hijab'),              tabs:['wrap','col'] },
-  { k:'cut',    ic:'cut',     n:T3('القصّة','Haircut','Potongan'),          tabs:['cut'] },
-  { k:'hair',   ic:'hairCol', n:T3('لون الشعر','Hair colour','Warna rambut'), tabs:['col'] },
   { k:'advice', ic:'advice',  n:T3('توصياتي','My advice','Saranku'),       tabs:[] }
 ];
 const PAT_N = { natural:T3('ناعم','Soft','Lembut'), daily:T3('يومي','Daily','Harian'), charm:T3('جذّاب','Charm','Menawan'), elegant:T3('راقٍ','Elegant','Elegan'), sculpted:T3('منحوت','Sculpted','Terpahat') };
@@ -21169,6 +21164,7 @@ function hasVal(c){
     if(c.k === 'cut') return !!(LK.cutInfo && LK.cutInfo().key);
     if(c.k === 'hair') return !!S.hairColour;
     return false; }
+  if(c.k === 'hair') return !!S.hairColour;   /* v84 */
   if(c.k === 'shadow') return !!(S.makeup.eyeshadow || S.makeup.crease || S.makeup.corner);
   return !!S.makeup[c.zone];
 }
@@ -21180,6 +21176,7 @@ function currentName(C){
     if(C.k === 'hair') return S.hairColour ? tx(T3('لون الشعر','Hair colour','Warna rambut')) : tx(T3('لونك الطبيعي','Your natural colour','Warna alami'));
     return '';
   }
+  if(C.k === 'hair') return S.hairColour ? tx(T3('لون الشعر','Hair colour','Warna rambut')) : tx(T3('لونكِ الطبيعي','Your natural colour','Warna alamimu'));   /* v84 */
   const c = curCol(C); if(!c) return tx(C.n);
   const it = colourList(C.zone).find(x => x.c && x.c.toLowerCase() === c.toLowerCase());
   return tx(C.n) + (it ? ' · ' + shadeLabel(C.zone, it) : '');
@@ -21203,7 +21200,8 @@ function render(scroll){
   tabsEl.style.display = tabs.length > 1 ? '' : 'none';
   let h = '';
   if(!look){
-    if(tab === 'col') h = colOpts(C); else if(tab === 'sty') h = styOpts(C); else if(tab === 'fin') h = finOpts(C); else if(tab === 'cover') h = coverOpts();
+    if(C.k === 'hair') h = hairOpts();   /* v84 */
+    else if(tab === 'col') h = colOpts(C); else if(tab === 'sty') h = styOpts(C); else if(tab === 'fin') h = finOpts(C); else if(tab === 'cover') h = coverOpts();
   } else if(LK){
     if(C.k === 'hijab') h = tab === 'wrap' ? wrapOpts(LK) : hijabColOpts(LK);
     else if(C.k === 'cut') h = cutOpts(LK);
@@ -21214,7 +21212,7 @@ function render(scroll){
   rangeEl.style.display = showInt ? '' : 'none';
   if(showInt){ const v = look ? (S.ints.hair ?? .6) : C.k === 'shadow' ? (S.shadowInt ?? .8) : (S.ints[C.zone] ?? .5);
     intEl.value = Math.round(v*100); valEl.textContent = Math.round(v*100) + '%'; }
-  ownedEl.style.display = look ? 'none' : ''; ownedEl.classList.toggle('on', !!S.ownedOnly); ownedEl.textContent = tx(T3('خزانتي','My kit','Kitku'));
+  ownedEl.style.display = (look || C.k === 'hair') ? 'none' : ''; ownedEl.classList.toggle('on', !!S.ownedOnly); ownedEl.textContent = tx(T3('خزانتي','My kit','Kitku'));
   fullEl.textContent = look ? '✦ ' + tx(T3('توصياتي','Advice','Saran')) : '⋯';
   fullEl.title = look ? '' : tx(T3('اللوحة الكاملة','Full palette','Palet lengkap'));
   nameEl.textContent = ST._name || currentName(C); ST._name = '';
@@ -21231,6 +21229,7 @@ ST.render = render;
 /* ---------- picks ---------- */
 function mkPick(kind, b){
   const C = MK.find(c => c.k === ST.cat), zone = C.zone, v = b.dataset.v;
+  if(C.k === 'hair'){ if(window.lamhaHairSet) window.lamhaHairSet(v || null); return; }   /* v84 */
   if(kind === 'col'){
     const it = b.dataset.i != null ? ST._list[+b.dataset.i] : null, c = it ? it.c : null;
     if(C.k === 'shadow'){ S.shadowBase = c; if(c && !S.shadowLook) S.shadowLook = 'lid'; applyShadow(); if(c) anim('eyeshadow'); }
@@ -21302,13 +21301,13 @@ intEl.addEventListener('input', () => {
 });
 intEl.addEventListener('change', sync);
 
-function syncZone(){ if(ST.mode === 'mk'){ const C = MK.find(c => c.k === ST.cat); if(C) S.zone = C.zone; } }
+function syncZone(){ if(ST.mode === 'mk'){ const C = MK.find(c => c.k === ST.cat); if(C && C.zone !== 'hair') S.zone = C.zone; } }
 ST.isOpen = () => bar.classList.contains('on');
 ST.open = function(mode, cat){
   ST.mode = mode === 'look' ? 'look' : 'mk';
   if(cat) ST.cat = cat;
   else if(ST.mode === 'mk'){ if(!MK.some(c => c.k === ST.cat)){ const z = S.zone; const c = MK.find(m => m.zone === z || ((z === 'crease' || z === 'corner') && m.k === 'shadow')); ST.cat = c ? c.k : 'lips'; } }
-  else if(!LOOKC.some(c => c.k === ST.cat) || ST.cat === 'advice'){ const LK = window.LAMHA_LOOK; ST.cat = LK && LK.sel && LK.sel.hijab ? 'hijab' : 'cut'; }
+  else if(!LOOKC.some(c => c.k === ST.cat)) ST.cat = LOOKC[0].k;
   if(ST.mode === 'mk' && typeof window.__askKitMode === 'function'){ try{ window.__askKitMode(); }catch(e){} }
   if(ST.mode === 'look'){ const LK = window.LAMHA_LOOK;
     if(LK && !LK.cam && !LK._reading && S.landmarks && LK.readFromCamera){ LK._reading = true;
@@ -21327,7 +21326,7 @@ ST.close = function(quiet){
   if(!quiet) document.querySelectorAll('.dbtn').forEach(b => b.classList.toggle('on', b.dataset.sheet === ''));
   try{ updateVR(); setTimeout(updateVR, 320); }catch(e){}
 };
-ST.openLook = cat => { ST._sheetOk = false; try{ window.openSheet(''); }catch(e){} ST.open('look', cat); };
+ST.openLook = cat => { ST._sheetOk = false; try{ window.openSheet(''); }catch(e){} ST.open('mk', 'hair'); };   /* v84: what is left of «إطلالتي» is the hair colour, with the elements */
 
 /* the makeup button, and everything else that asked for the old HUD, opens the bar */
 window.hudToggle = function(on){
@@ -23351,7 +23350,7 @@ function actFor(a){
     teach:() => H.teach('', '', z || undefined), fix:() => H.fix('', '', z || undefined), check:() => H.check(z ? norm(zoneName(z)) : ''),
     watch:() => startWatch(z || undefined), try:() => { if(z) tryZone(z); }, scan:startScan, harmony:() => H.harmony(''), kit:() => H.kit(''),
     suggest:() => H.suggest(''), rules:() => rules(z || null), skin:() => H.skin(''), expiry:() => H.expiry(z ? norm(zoneName(z)) + ' ' + z : ''),
-    look:() => { try{ if(window.LAMHA_STUDIO && LAMHA_STUDIO.openLook) LAMHA_STUDIO.openLook('hijab'); else openSheet('sh-look'); }catch(e){} },
+    look:() => { try{ if(window.LAMHA_STUDIO) LAMHA_STUDIO.open('mk', 'hair'); }catch(e){} },
     occasion:openOccasion, menu:H.menu };
   return map[k] || null;
 }
@@ -25684,7 +25683,7 @@ function clarify(text){
   if(z){
     const zn = { lips:L3('الشفاه', 'the lips', 'bibir'), eyes:L3('العينين', 'the eyes', 'mata'), base:L3('البشرة والأساس', 'skin and base', 'kulit dan alas'), brow:L3('الحواجب', 'the brows', 'alis'), cheek:L3('الخدود', 'the cheeks', 'pipi'), hair:L3('الشعر', 'hair', 'rambut'), hijab:L3('الحجاب', 'the hijab', 'hijab') }[z];
     h = esc(L3('فهمت أنكِ تسألين عن ' + zn + nm + '. أقرب شيء لقصدكِ؟', 'I understand you are asking about ' + zn + nm + '. Closest to what you mean?', 'Aku paham kamu bertanya soal ' + zn + nm + '. Yang paling dekat?'));
-    if(z === 'hair' || z === 'hijab') chips.push(chip(L3('جرّبي لوناً أو لفّة', 'Try a colour or a wrap', 'Coba warna atau lilitan'), () => { try{ openSheet('sh-look'); }catch(e){} }, true));
+    if(z === 'hair') chips.push(chip(L3('جرّبي لون شعر', 'Try a hair colour', 'Coba warna rambut'), () => { try{ if(window.LAMHA_STUDIO) LAMHA_STUDIO.open('mk', 'hair'); }catch(e){} }, true));
     else { chips.push(chip(L3('علّميني', 'Teach me', 'Ajari aku'), () => act('teach', z === 'eyes' ? 'eyeshadow' : z === 'cheek' ? 'blush' : z), true)); chips.push(chip(L3('عندي مشكلة فيها', 'I have a problem there', 'Ada masalah di situ'), () => act('fix', z === 'eyes' ? 'eyeshadow' : z === 'cheek' ? 'blush' : z))); chips.push(chip(L3('أي لون يناسبني؟', 'Which colour suits me?', 'Warna apa yang cocok?'), () => act('suggest'))); }
     chips.push(chip(L3('غير ذلك', 'Something else', 'Lainnya'), () => act('menu')));
     bot(h, chips); return;
@@ -25936,290 +25935,7 @@ window.LAMHA_H2 = { render };
 <!-- LAMHA V80 END -->
 <!-- LAMHA V81 BEGIN -->
 <script>
-/* Hijab photo templates (v81, widened 2026-09-16 for v82): openly licensed photographs on Wikimedia Commons —
-   one woman, frontal face, fabric around it, hair covered, no personality-rights restriction listed, no public
-   figure (a former president, an election candidate and a recording artist were dropped for that reason, and
-   photos of children, of groups, of a veiled face and of a painted mural were dropped as unusable).
-   Chosen from 366 openly licensed candidates screened by landmarks + segmentation (face ≥150 px at 960, |turn|
-   < 0.12, cloth ring ≥ 0.35) and then by eye. Fetched on demand (and kept in the browser cache afterwards),
-   processed in memory; the woman's face is removed and replaced with HERS, so she is no longer identifiable in
-   the result; the photographer's credit and licence are shown with every result (CC BY / CC BY-SA require it).
-   `styles` says which of the app's wrap styles the photograph actually shows — the try-on picks by that. */
-window.LAMHA_HIJAB_TEMPLATES = [
-  { styles:['satin','indonesian'], url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/Pink_hijab_libya_%28cropped%29.jpg/960px-Pink_hijab_libya_%28cropped%29.jpg', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/Pink_hijab_libya_%28cropped%29.jpg/250px-Pink_hijab_libya_%28cropped%29.jpg', credit:'Dietmar Bartz, Wikimedia Commons', lic:'CC BY 3.0', page:'https://commons.wikimedia.org/wiki/File:Pink_hijab_libya_(cropped).jpg' },
-  { styles:['amira'], url:'https://upload.wikimedia.org/wikipedia/commons/b/bd/Luluty_hijab_2.jpg', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bd/Luluty_hijab_2.jpg/250px-Luluty_hijab_2.jpg', credit:'Luluty hijab, Wikimedia Commons', lic:'CC BY-SA 4.0', page:'https://commons.wikimedia.org/wiki/File:Luluty_hijab_2.jpg' },
-  { styles:['turkish'], crop:'tight', url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/3/35/EPSF-SCU_1.jpg/960px-EPSF-SCU_1.jpg', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/3/35/EPSF-SCU_1.jpg/250px-EPSF-SCU_1.jpg', credit:'Rana152, Wikimedia Commons', lic:'CC BY-SA 4.0', page:'https://commons.wikimedia.org/wiki/File:EPSF-SCU_1.jpg' },
-  { styles:['khaleeji'], crop:'tight', url:'https://upload.wikimedia.org/wikipedia/commons/b/b8/Somwmnhjbhd3a.png', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b8/Somwmnhjbhd3a.png/250px-Somwmnhjbhd3a.png', credit:'aflaanta std, Wikimedia Commons', lic:'CC BY 3.0', page:'https://commons.wikimedia.org/wiki/File:Somwmnhjbhd3a.png' },
-  { styles:['turkish','amira'], url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f1/Hijjab_Tunisie_01.JPG/960px-Hijjab_Tunisie_01.JPG', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f1/Hijjab_Tunisie_01.JPG/250px-Hijjab_Tunisie_01.JPG', credit:'Touzrimounir, Wikimedia Commons', lic:'CC BY-SA 4.0', page:'https://commons.wikimedia.org/wiki/File:Hijjab_Tunisie_01.JPG' },
-  { styles:['modern'], url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/A_muslim_woman_wearing_hijab.jpg/960px-A_muslim_woman_wearing_hijab.jpg', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/A_muslim_woman_wearing_hijab.jpg/250px-A_muslim_woman_wearing_hijab.jpg', credit:'عالية جاسم صقر الهملان, Wikimedia Commons', lic:'CC BY-SA 4.0', page:'https://commons.wikimedia.org/wiki/File:A_muslim_woman_wearing_hijab.jpg' },
-  { styles:['indonesian','shayla'], crop:'portrait', url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7e/Woman_in_Shalimar_Bagh_Garden_-_Srinagar_-_Jammu_%26_Kashmir_-_India_%2826238334143%29.jpg/960px-Woman_in_Shalimar_Bagh_Garden_-_Srinagar_-_Jammu_%26_Kashmir_-_India_%2826238334143%29.jpg', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7e/Woman_in_Shalimar_Bagh_Garden_-_Srinagar_-_Jammu_%26_Kashmir_-_India_%2826238334143%29.jpg/250px-Woman_in_Shalimar_Bagh_Garden_-_Srinagar_-_Jammu_%26_Kashmir_-_India_%2826238334143%29.jpg', credit:'Adam Jones, Wikimedia Commons', lic:'CC BY-SA 2.0', page:'https://commons.wikimedia.org/wiki/File:Woman_in_Shalimar_Bagh_Garden_-_Srinagar_-_Jammu_%26_Kashmir_-_India_(26238334143).jpg' },
-  { styles:['shayla'], url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c9/Cham_Woman_-_Chau_Doc_-_Vietnam_-_03.JPG/960px-Cham_Woman_-_Chau_Doc_-_Vietnam_-_03.JPG', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c9/Cham_Woman_-_Chau_Doc_-_Vietnam_-_03.JPG/250px-Cham_Woman_-_Chau_Doc_-_Vietnam_-_03.JPG', credit:'Adam Jones, Wikimedia Commons', lic:'CC BY-SA 3.0', page:'https://commons.wikimedia.org/wiki/File:Cham_Woman_-_Chau_Doc_-_Vietnam_-_03.JPG' },
-  { styles:['shayla'], url:'https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4c/The_old_lady.jpg/960px-The_old_lady.jpg', thumb:'https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4c/The_old_lady.jpg/250px-The_old_lady.jpg', credit:'Mona Hassan Abo-Abda, Wikimedia Commons', lic:'CC BY-SA 4.0', page:'https://commons.wikimedia.org/wiki/File:The_old_lady.jpg' }
-];
-
-</script>
-<script>
-/* ============================================================
-   LAMHA · HIJAB ON A REAL PHOTO (v81) — the drawn hijab looked like a cut-out (a tester laughed at it). Now the
-   hijab is a real photograph: a natural picture of a woman in a hijab becomes a template — its face is removed
-   and HER face is put in its place, aligned to the template's own face (a similarity fit over the face mesh),
-   matched in colour and lighting (Reinhard transfer in Lab inside the face), shaded at the edge by the
-   template's own shadows, feathered under the fabric's edge; the template's visible skin (neck, hands) is
-   shifted toward her tone, and the fabric can be recoloured to any of her recommended colours (hue and chroma
-   change, the folds and light stay). Stills only — no video, no heavy phone work.
-   Templates: openly licensed photographs (Wikimedia Commons, CC0 / CC BY / CC BY-SA, no personality-rights
-   restriction listed), fetched on demand and processed in memory; credits shown. She may also use a photo of
-   her own (a friend who agreed, a mannequin, herself in a hijab) as a template.
-   ============================================================ */
-(function(){
-'use strict';
-const lang = () => (typeof LANG !== 'undefined' && /^(ar|en|id)$/.test(LANG)) ? LANG : 'ar';
-const L3 = (ar, en, id) => ({ ar, en, id })[lang()];
-const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
-const $q = s => document.querySelector(s);
-const say2 = (m, ms) => { try{ say(m, ms || 3000); }catch(e){} };
-const P = () => window.LAMHA_PRO;
-const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
-const rgb2lab = (r, g, b) => P().lab(r, g, b);
-function lab2rgb(L, a, bb){ const fy = (L + 16)/116, fx = fy + a/500, fz = fy - bb/200; const f = v => v*v*v > 0.008856 ? v*v*v : (v - 16/116)/7.787;
-  const X = f(fx)*0.95047, Y = f(fy), Z = f(fz)*1.08883; let R = X*3.2406 + Y*-1.5372 + Z*-0.4986, G = X*-0.9689 + Y*1.8758 + Z*0.0415, B = X*0.0557 + Y*-0.2040 + Z*1.0570;
-  const g = v => { v = v <= 0.0031308 ? 12.92*v : 1.055*Math.pow(Math.max(0, v), 1/2.4) - 0.055; return clamp(Math.round(v*255), 0, 255); }; return [g(R), g(G), g(B)]; }
-
-/* ---------------- templates ---------------- */
-/* curated on 2026-09-15 from Wikimedia Commons: frontal face, fabric around it, neck covered; fetched on demand */
-const TEMPLATES = window.LAMHA_HIJAB_TEMPLATES || [];
-const HP = { T:null, U:null, out:null, col:null, tpl:null, own:[] };
-
-async function loadImage(src){
-  /* v82: template photos are kept in the browser's cache after the first use, so the try-on works offline later */
-  let url = src, tmp = null;
-  if(/^https:\/\//.test(src) && window.caches){ try{ const cc = await caches.open('lamha-hijab-tpl-v1'); let r = await cc.match(src);
-    if(!r){ const f = await fetch(src, { mode:'cors' }); if(f.ok){ await cc.put(src, f.clone()); r = f; } }
-    if(r && r.ok){ tmp = url = URL.createObjectURL(await r.blob()); } }catch(e){ url = src; tmp = null; } }
-  const im = new Image(); im.crossOrigin = 'anonymous';
-  try{ await new Promise((res, rej) => { im.onload = res; im.onerror = () => rej(new Error('image')); im.src = url; }); }
-  finally{ if(tmp) setTimeout(() => URL.revokeObjectURL(tmp), 0); }
-  return im; }
-function toCanvas(im, maxW){ const sc = Math.min(1, maxW/Math.max(im.naturalWidth || im.width, 1)); const c = document.createElement('canvas'); c.width = Math.round((im.naturalWidth || im.width)*sc); c.height = Math.round((im.naturalHeight || im.height)*sc); c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); return c; }
-function detect(c){ try{ if(typeof imgLandmarker === 'undefined' || !imgLandmarker) return null; const r = imgLandmarker.detect(c); return r && r.faceLandmarks && r.faceLandmarks[0] || null; }catch(e){ return null; } }
-async function segment(c){ try{ const seg = await P().ensureSegmenter(); if(!seg) return null; let cat = null, W = 0, H = 0; seg.segment(c, r => { const m = r && r.categoryMask; if(m){ W = m.width; H = m.height; cat = m.getAsUint8Array().slice(); } }); return cat ? { cat, W, H } : null; }catch(e){ return null; } }
-function ovalOf(lm, W, H){ const pts = L.faceOval.map(i => [lm[i].x*W, lm[i].y*H]); let cx = 0, cy = 0; pts.forEach(p => { cx += p[0]; cy += p[1]; }); cx /= pts.length; cy /= pts.length;
-  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; pts.forEach(p => { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }); return { pts, cx, cy, x0, y0, x1, y1, w: x1 - x0, h: y1 - y0 }; }
-async function prepTemplate(src, credit, opts){
-  opts = opts || {};
-  const im = await loadImage(src); let c = toCanvas(im, 1000); let lm = detect(c); if(!lm) throw new Error(L3('لم أجد وجهاً في صورة القالب', 'No face found in the template photo', 'Tidak ada wajah di foto template'));
-  if(opts.crop === 'portrait' || opts.crop === 'tight'){
-    /* v82: a head-and-shoulders crop round her face, cut from the photo at its own resolution — it keeps
-       passers-by out of the frame (their faces must not travel with the look) and gives every wrap the same framing */
-    const f = ovalOf(lm, 1, 1), iw = im.naturalWidth || im.width, ih = im.naturalHeight || im.height;
-    const k = opts.crop === 'tight' ? 2.2 : 3.4, kh = opts.crop === 'tight' ? 1.2 : 1.3;
-    const wpx = Math.min(iw, f.w*iw*k), hpx = Math.min(ih, wpx*kh);
-    const x = clamp(f.cx*iw - wpx/2, 0, iw - wpx), y = clamp(f.cy*ih - hpx*(opts.crop === 'tight' ? 0.42 : 0.36), 0, ih - hpx);
-    const sc = Math.min(1, 1000/wpx), cc = document.createElement('canvas');
-    cc.width = Math.round(wpx*sc); cc.height = Math.round(hpx*sc);
-    cc.getContext('2d').drawImage(im, Math.round(x), Math.round(y), Math.round(wpx), Math.round(hpx), 0, 0, cc.width, cc.height);
-    const lm2 = detect(cc); if(!lm2) throw new Error(L3('لم أجد وجهاً في صورة القالب', 'No face found in the template photo', 'Tidak ada wajah di foto template'));
-    c = cc; lm = lm2;
-  }
-  const seg = await segment(c); const ov = ovalOf(lm, c.width, c.height);
-  return { c, W:c.width, H:c.height, lm, seg, ov, credit: credit || '' };
-}
-/* her face: the mirror's current frame, or a photo she picks */
-function faceFromMirror(){
-  if(typeof S === 'undefined' || !S.landmarks || typeof SRC === 'undefined') return null;
-  const W = srcW(), H = srcH(); const c = document.createElement('canvas'); c.width = W; c.height = H; c.getContext('2d').drawImage(SRC, 0, 0, W, H);
-  const lm = S.landmarks.map(p => ({ x:p.x, y:p.y, z:p.z || 0 })); return { c, W, H, lm, ov: ovalOf(lm, W, H) };
-}
-async function faceFromFile(file){ const url = URL.createObjectURL(file); try{ const im = await loadImage(url); const c = toCanvas(im, 1200); const lm = detect(c); if(!lm) throw new Error(L3('لم أجد وجهاً واضحاً في صورتك', 'No clear face in your photo', 'Tidak ada wajah jelas di fotomu')); return { c, W:c.width, H:c.height, lm, ov: ovalOf(lm, c.width, c.height) }; } finally{ URL.revokeObjectURL(url); } }
-
-/* ---------------- the fit: a similarity (scale, rotation, shift) from her mesh to the template's ---------------- */
-const FIT_IDX = [].concat(L.faceOval, [1, 4, 6, 9, 10, 33, 133, 263, 362, 61, 291, 13, 14, 168, 197, 195, 5, 152, 234, 454, 93, 323, 50, 280, 205, 425, 70, 300, 105, 334]);
-function similarity(U, T){
-  const p = FIT_IDX.map(i => [U.lm[i].x*U.W, U.lm[i].y*U.H]), q = FIT_IDX.map(i => [T.lm[i].x*T.W, T.lm[i].y*T.H]);
-  const mp = [0, 0], mq = [0, 0]; p.forEach(a => { mp[0] += a[0]; mp[1] += a[1]; }); q.forEach(a => { mq[0] += a[0]; mq[1] += a[1]; }); mp[0] /= p.length; mp[1] /= p.length; mq[0] /= q.length; mq[1] /= q.length;
-  let a = 0, b = 0, n = 0; for(let i = 0; i < p.length; i++){ const px = p[i][0] - mp[0], py = p[i][1] - mp[1], qx = q[i][0] - mq[0], qy = q[i][1] - mq[1]; a += px*qx + py*qy; b += px*qy - py*qx; n += px*px + py*py; }
-  const th = Math.atan2(b, a), s = Math.hypot(a, b)/Math.max(1e-6, n);
-  const ca = Math.cos(th)*s, sa = Math.sin(th)*s; return { a:ca, b:sa, c:-sa, d:ca, e: mq[0] - (ca*mp[0] - sa*mp[1]), f: mq[1] - (sa*mp[0] + ca*mp[1]), s, th };
-}
-/* Lab statistics inside an oval (trimmed) */
-function labStats(img, ov, inset){
-  const D = img.data, W = img.width; const rx = ov.w*0.5*inset, ry = ov.h*0.5*inset; let n = 0; const Ls = [], As = [], Bs = [];
-  for(let y = Math.max(0, ov.cy - ry|0); y < Math.min(img.height, ov.cy + ry); y += 2) for(let x = Math.max(0, ov.cx - rx|0); x < Math.min(W, ov.cx + rx); x += 2){
-    const dx = (x - ov.cx)/rx, dy = (y - ov.cy)/ry; if(dx*dx + dy*dy > 1) continue; const q = (y*W + x)*4; if(D[q+3] < 200) continue; const l = rgb2lab(D[q], D[q+1], D[q+2]); Ls.push(l[0]); As.push(l[1]); Bs.push(l[2]); n++; }
-  if(n < 50) return null;
-  const st = arr => { const v = arr.slice().sort((x, y) => x - y), lo = v[Math.floor(v.length*.1)], hi = v[Math.floor(v.length*.9)]; let s = 0, s2 = 0, k = 0; for(const x of v){ if(x < lo || x > hi) continue; s += x; s2 += x*x; k++; } const m = s/k; return { m, sd: Math.sqrt(Math.max(1e-6, s2/k - m*m)) }; };
-  return { L: st(Ls), a: st(As), b: st(Bs), n };
-}
-/* ---------------- compose ---------------- */
-async function compose(T, U, opts){
-  opts = opts || {}; const W = T.W, H = T.H, ov = T.ov, fw = ov.w;
-  /* 0 · the mask: the template's face oval, inset, feathered (used to spare the face from the recolour, then to cut her face) */
-  const mask = document.createElement('canvas'); mask.width = W; mask.height = H; const mx = mask.getContext('2d');
-  mx.filter = 'blur(' + Math.max(1.5, fw*0.028).toFixed(1) + 'px)'; mx.fillStyle = '#fff'; mx.beginPath();
-  ov.pts.forEach((p, i) => { const px = ov.cx + (p[0] - ov.cx)*0.955, py = ov.cy + (p[1] - ov.cy)*0.955 - (p[1] < ov.cy ? fw*0.01 : 0); i ? mx.lineTo(px, py) : mx.moveTo(px, py); }); mx.closePath(); mx.fill(); mx.filter = 'none';
-  const mk = mx.getImageData(0, 0, W, H).data;
-  /* 1 · the template, with its skin shifted toward hers and the fabric recoloured when asked */
-  const base = document.createElement('canvas'); base.width = W; base.height = H; const bx = base.getContext('2d'); bx.drawImage(T.c, 0, 0);
-  const uImg = U.c.getContext('2d').getImageData(0, 0, U.W, U.H), tImg = bx.getImageData(0, 0, W, H);
-  const su = labStats(uImg, U.ov, 0.8), stt = labStats(tImg, ov, 0.8); if(!su || !stt) throw new Error('stats');
-  const dL = su.L.m - stt.L.m, dA = su.a.m - stt.a.m, dB = su.b.m - stt.b.m;
-  if(T.seg){ const { cat, W:cw, H:chh } = T.seg; const D = tImg.data; const tc = opts.hex ? hexLab(opts.hex) : null;
-    const cls = (x, y) => cat[Math.min(chh - 1, (y/H*chh)|0)*cw + Math.min(cw - 1, (x/W*cw)|0)];
-    /* the fabric's own colour: fabric (or "hair" — the model's word for a scarf over the crown) in a ring round the face */
-    let fab = null;
-    if(tc){ const Ls = [], As = [], Bs = []; const rr0 = fw*1.05, rr1 = fw*1.7;
-      for(let y = 0; y < H; y += 2) for(let x = 0; x < W; x += 2){ const d = Math.hypot((x - ov.cx)/(ov.w*.5), (y - ov.cy)/(ov.h*.5)); if(d < 1.05 || d > 1.7) continue; const k = cls(x, y); if(k !== 4 && k !== 1) continue; const l = rgb2lab(D[(y*W + x)*4], D[(y*W + x)*4 + 1], D[(y*W + x)*4 + 2]); Ls.push(l[0]); As.push(l[1]); Bs.push(l[2]); }
-      const med = a => { const v = a.slice().sort((p, q) => p - q); return v.length ? v[v.length >> 1] : null; }; if(Ls.length > 40) fab = [med(Ls), med(As), med(Bs)]; }
-    for(let y = 0; y < H; y++) for(let x = 0; x < W; x++){ const k = cls(x, y); const q = (y*W + x)*4;
-      if(k === 2){ /* her tone on the template's neck and hands, softly */ const l = rgb2lab(D[q], D[q+1], D[q+2]); const o = lab2rgb(clamp(l[0] + dL*0.85, 0, 100), l[1] + dA*0.85, l[2] + dB*0.85); D[q] = o[0]; D[q+1] = o[1]; D[q+2] = o[2]; }
-      else if(tc && fab && mk[q+3] < 250){ /* every pixel that shares the fabric's colour is the fabric — wherever it falls (the "face" class spills onto the fabric's edge, so only the face oval itself is spared); the blouse and the wall keep theirs */
-        /* the fabric's hue, at any lightness: a fold in shadow is still the fabric */
-        const l = rgb2lab(D[q], D[q+1], D[q+2]); const C0 = Math.hypot(l[1], l[2]), Cf = Math.hypot(fab[1], fab[2]);
-        let hd = Math.abs(Math.atan2(l[2], l[1]) - Math.atan2(fab[2], fab[1]))*180/Math.PI; if(hd > 180) hd = 360 - hd;
-        const dab = Math.hypot(l[1] - fab[1], l[2] - fab[2]);
-        const wh = (Cf > 8 && C0 > 0.3*Cf) ? clamp((30 - hd)/14, 0, 1) : 0, wd = clamp((14 - dab)/8, 0, 1); const w = Math.max(wh, wd); if(w <= 0) continue;
-        const kk = Math.pow(Math.max(0.15, C0)/Math.max(0.15, Cf), 0.5);
-        const L2 = l[0] + (tc[0] - fab[0])*0.45, a2 = tc[1]*kk, b2 = tc[2]*kk; const o = lab2rgb(clamp(l[0]*(1 - w) + L2*w, 0, 100), l[1]*(1 - w) + a2*w, l[2]*(1 - w) + b2*w); D[q] = o[0]; D[q+1] = o[1]; D[q+2] = o[2]; } }
-    bx.putImageData(tImg, 0, 0); }
-  /* 2 · her face, fitted to the template's face */
-  const M = similarity(U, T);
-  const layer = document.createElement('canvas'); layer.width = W; layer.height = H; const lx = layer.getContext('2d');
-  lx.setTransform(M.a, M.b, M.c, M.d, M.e, M.f); lx.imageSmoothingEnabled = true; lx.imageSmoothingQuality = 'high'; lx.drawImage(U.c, 0, 0); lx.setTransform(1, 0, 0, 1, 0, 0);
-  /* 2b · her hair over the forehead stays out — the fabric covers it, as a hijab would */
-  const useg = U.seg || (U.seg = await segment(U.c));
-  if(useg){ const { cat, W:cw, H:chh } = useg; const hm = document.createElement('canvas'); hm.width = cw; hm.height = chh; const hx = hm.getContext('2d'); const id = hx.createImageData(cw, chh);
-    for(let i = 0; i < cw*chh; i++) if(cat[i] === 1) id.data[i*4 + 3] = 255; hx.putImageData(id, 0, 0);
-    const hm2 = document.createElement('canvas'); hm2.width = W; hm2.height = H; const h2 = hm2.getContext('2d'); h2.filter = 'blur(' + Math.max(1.5, fw*0.02).toFixed(1) + 'px)';
-    h2.setTransform(M.a, M.b, M.c, M.d, M.e, M.f); h2.drawImage(hm, 0, 0, U.W, U.H); h2.drawImage(hm, 0, 0, U.W, U.H); h2.setTransform(1, 0, 0, 1, 0, 0);
-    lx.globalCompositeOperation = 'destination-out'; lx.drawImage(hm2, 0, 0); lx.drawImage(hm2, 0, 0); lx.globalCompositeOperation = 'source-over'; }
-  /* 3 · colour and light: her face statistics moved onto the template's; the template's own shading kept toward the edge */
-  const bxo = { x0: Math.max(0, ov.x0 - fw*0.15)|0, y0: Math.max(0, ov.y0 - fw*0.15)|0, x1: Math.min(W, ov.x1 + fw*0.15)|0, y1: Math.min(H, ov.y1 + fw*0.15)|0 };
-  const li = lx.getImageData(bxo.x0, bxo.y0, bxo.x1 - bxo.x0, bxo.y1 - bxo.y0), ti = bx.getImageData(bxo.x0, bxo.y0, bxo.x1 - bxo.x0, bxo.y1 - bxo.y0);
-  const bw = li.width, bh = li.height; const tL = new Float32Array(bw*bh); for(let i = 0, q = 0; i < bw*bh; i++, q += 4) tL[i] = rgb2lab(ti.data[q], ti.data[q+1], ti.data[q+2])[0];
-  const tLb = P().boxBlur(tL, bw, bh, Math.max(2, Math.round(fw*0.05)));
-  const k = 0.85, gL = stt.L.sd/Math.max(1e-3, su.L.sd), gA = stt.a.sd/Math.max(1e-3, su.a.sd), gB = stt.b.sd/Math.max(1e-3, su.b.sd);
-  const rx = ov.w*0.5, ry = ov.h*0.5;
-  for(let y = 0; y < bh; y++) for(let x = 0; x < bw; x++){ const q = (y*bw + x)*4; if(li.data[q+3] < 8) continue;
-    const l = rgb2lab(li.data[q], li.data[q+1], li.data[q+2]);
-    let Lp = l[0] + k*((stt.L.m + (l[0] - su.L.m)*clamp(gL, 0.6, 1.6)) - l[0]), Ap = l[1] + k*((stt.a.m + (l[1] - su.a.m)*clamp(gA, 0.6, 1.6)) - l[1]), Bp = l[2] + k*((stt.b.m + (l[2] - su.b.m)*clamp(gB, 0.6, 1.6)) - l[2]);
-    const dx = (x + bxo.x0 - ov.cx)/rx, dy = (y + bxo.y0 - ov.cy)/ry, d = Math.hypot(dx, dy); const w = clamp((d - 0.5)/0.5, 0, 1);
-    /* strands over the upper forehead that the segmenter missed: much darker than her skin, above the brows → the fabric shows instead */
-    if(dy < -0.55 && l[0] < su.L.m - 13){ const a = clamp((l[0] - (su.L.m - 25))/12, 0, 1); li.data[q+3] = Math.round(li.data[q+3]*a); if(!li.data[q+3]) continue; }
-    const sh = clamp(tLb[y*bw + x]/Math.max(15, stt.L.m), 0.35, 1.4); Lp = Lp*(1 - w) + Lp*sh*w;
-    const o = lab2rgb(clamp(Lp, 0, 100), Ap, Bp); li.data[q] = o[0]; li.data[q+1] = o[1]; li.data[q+2] = o[2]; }
-  /* 3b · v82: sharpness and grain — a webcam face is softer and cleaner than the photograph around it (the tester's
-     frame: washed out, soft). Detail is measured inside both faces (mean |Laplacian| of luma); hers is sharpened
-     a little toward the photograph's, then given the photograph's grain if it is still too smooth. */
-  const lap = (d, w, h, ox, oy, alpha) => { let s = 0, n = 0; const Y = (i) => 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
-    for(let y = 2; y < h - 2; y += 2) for(let x = 2; x < w - 2; x += 2){ const ex = (x + ox - ov.cx)/(rx*0.8), ey = (y + oy - ov.cy)/(ry*0.8); if(ex*ex + ey*ey > 1) continue;
-      const i = (y*w + x)*4; if(alpha && d[i+3] < 220) continue; s += Math.abs(4*Y(i) - Y(i - 4) - Y(i + 4) - Y(i - w*4) - Y(i + w*4)); n++; }
-    return n > 80 ? s/n : 0; };
-  const eT = lap(ti.data, bw, bh, bxo.x0, bxo.y0, false); let eU = lap(li.data, bw, bh, bxo.x0, bxo.y0, true);
-  if(eT > 0 && eU > 0 && eT > eU*1.15){
-    const Yl = new Float32Array(bw*bh); for(let i = 0, q = 0; i < bw*bh; i++, q += 4) Yl[i] = 0.299*li.data[q] + 0.587*li.data[q+1] + 0.114*li.data[q+2];
-    const Yb = P().boxBlur(Yl, bw, bh, 1), amt = clamp((eT/eU - 1)*0.9, 0, 1.4);
-    for(let i = 0, q = 0; i < bw*bh; i++, q += 4){ if(li.data[q+3] < 8) continue; const dd = (Yl[i] - Yb[i])*amt; li.data[q] = clamp(li.data[q] + dd, 0, 255); li.data[q+1] = clamp(li.data[q+1] + dd, 0, 255); li.data[q+2] = clamp(li.data[q+2] + dd, 0, 255); }
-    eU = lap(li.data, bw, bh, bxo.x0, bxo.y0, true);
-    if(eT > eU*1.1){ const sd = clamp((eT - eU)*0.45, 0, 6);
-      for(let q = 0; q < li.data.length; q += 4){ if(li.data[q+3] < 8) continue; const g = (Math.random() + Math.random() + Math.random() - 1.5)*sd*1.4;
-        li.data[q] = clamp(li.data[q] + g, 0, 255); li.data[q+1] = clamp(li.data[q+1] + g, 0, 255); li.data[q+2] = clamp(li.data[q+2] + g, 0, 255); } }
-    HP.lastDetail = { eT: +eT.toFixed(2), eU1: +eU.toFixed(2), amt: +amt.toFixed(2) };
-  }
-  lx.putImageData(li, bxo.x0, bxo.y0);
-  /* 4 · her face cut to the oval */
-  lx.globalCompositeOperation = 'destination-in'; lx.drawImage(mask, 0, 0); lx.globalCompositeOperation = 'source-over';
-  bx.drawImage(layer, 0, 0);
-  return base;
-}
-function hexLab(hex){ const n = parseInt(String(hex).replace('#', ''), 16); return rgb2lab(n >> 16 & 255, n >> 8 & 255, n & 255); }
-
-/* ---------------- the card in the look sheet ---------------- */
-const CX = {
-  h:{ar:'🧕 حجاب على صورة حقيقية',en:'🧕 A hijab on a real photo',id:'🧕 Hijab di foto asli'},
-  p:{ar:'صورة طبيعية لامرأة بحجاب تصير قالباً: نزيل وجهها ونضع وجهكِ مكانه بلونه وإضاءته. اختاري قالباً ثم صورتكِ.',en:'A natural photo of a woman in a hijab becomes a template: her face is removed and yours put in its place, in its colour and light. Pick a template, then your photo.',id:'Foto alami wanita berhijab menjadi template: wajahnya dihapus dan wajahmu diletakkan di sana, dengan warna dan cahayanya. Pilih template, lalu fotomu.'},
-  tpl:{ar:'القالب',en:'Template',id:'Template'}, own:{ar:'قالب من صوري',en:'A template of my own',id:'Template dari fotoku'},
-  ownHint:{ar:'صورة لكِ أو لصديقة موافقة بحجاب يظهر وجهها كاملاً من الأمام.',en:'A photo of you or a consenting friend in a hijab, face fully visible from the front.',id:'Foto kamu atau teman yang setuju, berhijab, wajah terlihat penuh dari depan.'},
-  me:{ar:'صورتي',en:'My face',id:'Wajahku'}, fromMirror:{ar:'من المرآة الآن',en:'From the mirror now',id:'Dari cermin sekarang'}, fromPhoto:{ar:'من صوري',en:'From my photos',id:'Dari fotoku'},
-  go:{ar:'ركّبي',en:'Compose',id:'Susun'}, working:{ar:'جارٍ التركيب…',en:'Composing…',id:'Menyusun…'},
-  col:{ar:'لوّني القماش',en:'Recolour the fabric',id:'Warnai kain'}, orig:{ar:'اللون الأصلي',en:'Original colour',id:'Warna asli'},
-  share:{ar:'مشاركة / حفظ',en:'Share / save',id:'Bagikan / simpan'}, credit:{ar:'الصورة',en:'Photo',id:'Foto'},
-  noFace:{ar:'لا أرى وجهكِ في المرآة الآن — انظري إلى الكاميرا أو اختاري صورة.',en:'I cannot see your face in the mirror now — look at the camera or pick a photo.',id:'Aku tak melihat wajahmu di cermin — lihat kamera atau pilih foto.'},
-  needBoth:{ar:'اختاري قالباً وصورتكِ أولاً.',en:'Pick a template and your photo first.',id:'Pilih template dan fotomu dulu.'},
-  frontal:{ar:'يعمل أفضل حين تكون صورتكِ من الأمام وبإضاءة موزّعة كما في القالب.',en:'Works best when your photo is frontal and evenly lit, like the template.',id:'Paling baik jika fotomu dari depan dan cahaya merata seperti template.'},
-  lic:{ar:'القوالب صور بترخيص مفتوح من ويكيميديا كومنز (CC BY / CC BY-SA / CC0)، تُجلب عند الطلب وتُعالج في هاتفكِ. اسم المصوّر يظهر تحت النتيجة.',en:'Templates are openly licensed photos from Wikimedia Commons (CC BY / CC BY-SA / CC0), fetched on demand and processed on your phone. The photographer’s credit shows under the result.',id:'Template adalah foto berlisensi terbuka dari Wikimedia Commons (CC BY / CC BY-SA / CC0), diambil saat diminta dan diproses di ponselmu. Kredit fotografer tampil di bawah hasil.'}
-};
-const c = k => (CX[k] || {})[lang()] || (CX[k] || {}).en || k;
-const PLAIN = [{ hex:'#1d1d1f', ar:'أسود', en:'Black', id:'Hitam' }, { hex:'#f1e9dc', ar:'عاجي', en:'Ivory', id:'Gading' }, { hex:'#c9a985', ar:'بيج', en:'Beige', id:'Krem' }, { hex:'#6b7a45', ar:'زيتي', en:'Olive', id:'Zaitun' },
-  { hex:'#1f6f73', ar:'أزرق مخضرّ', en:'Teal', id:'Teal' }, { hex:'#1f2f5c', ar:'كحلي', en:'Navy', id:'Navy' }, { hex:'#7a1f34', ar:'خمري', en:'Burgundy', id:'Marun' }, { hex:'#c98a90', ar:'وردي مغبرّ', en:'Dusty rose', id:'Mawar pudar' }];
-let busy = false;
-function colours(){
-  let cols = (window.LAMHA_LOOK && LAMHA_LOOK.last && LAMHA_LOOK.last.hijab && LAMHA_LOOK.last.hijab.swatches) || [];
-  /* no hijab colours rendered yet: her colours from the style guide (skin depth + undertone), else a plain set */
-  if(!cols.length){ try{ const sg = window.LAMHA_STYLE, lk = window.LAMHA_LOOK; const sk = sg && sg.herSkin && sg.herSkin(); if(sk && lk && lk.hijabColours) cols = sg.palette(lk.hijabColours(sk.depth, sk.under, (lk.sel && lk.sel.occ) || null).colors); }catch(e){ cols = []; } }
-  if(!cols.length) cols = PLAIN.map(x => ({ hex: x.hex, name: x[lang()] || x.en }));
-  return cols;
-}
-function cardHtml(){
-  const cols = colours();
-  let h = '<div class="lkCard hpCard"><h4>' + esc(c('h')) + '</h4><p>' + esc(c('p')) + '</p>';
-  h += '<div class="lkMeta">' + esc(c('tpl')) + '</div><div class="hpTpls">' + TEMPLATES.map((t, i) => '<button class="hpTpl' + (HP.tpl === i ? ' on' : '') + '" data-hp-tpl="' + i + '"><img loading="lazy" src="' + esc(t.thumb || t.url) + '" alt=""></button>').join('') +
-    HP.own.map((o, i) => '<button class="hpTpl' + (HP.tpl === 'o' + i ? ' on' : '') + '" data-hp-tpl="o' + i + '"><img src="' + esc(o.thumb) + '" alt=""></button>').join('') +
-    '<label class="hpTpl hpAdd">+<input type="file" accept="image/*" data-hp-own hidden></label></div><small>' + esc(c('ownHint')) + '</small>';
-  h += '<div class="lkMeta" style="margin-top:8px">' + esc(c('me')) + (HP.U ? ' ✓' : '') + '</div><div class="lkChips"><button data-hp-me="mirror">' + esc(c('fromMirror')) + '</button><label class="hpBtn"><span>' + esc(c('fromPhoto')) + '</span><input type="file" accept="image/*" data-hp-me-file hidden></label></div>';
-  h += '<div class="lkTools"><button class="pri" data-hp-go' + (busy ? ' disabled' : '') + '>' + esc(busy ? c('working') : c('go')) + '</button></div>';
-  if(HP.out){ h += '<div class="hpOut"><canvas id="hpCanvas"></canvas></div>';
-    if(cols.length) h += '<div class="lkMeta">' + esc(c('col')) + '</div><div class="lkSws"><button class="lkSw' + (!HP.col ? ' on' : '') + '" data-hp-col=""><i style="background:#ddd"></i>' + esc(c('orig')) + '</button>' + cols.map(x => '<button class="lkSw' + (HP.col === x.hex ? ' on' : '') + '" data-hp-col="' + esc(x.hex) + '"><i style="background:' + esc(x.hex) + '"></i>' + esc(x.name) + '</button>').join('') + '</div>';
-    h += '<div class="lkTools"><button data-hp-share>' + esc(c('share')) + '</button></div>';
-    if(HP.T && HP.T.credit) h += '<div class="lkMeta">' + esc(c('credit')) + ': ' + esc(HP.T.credit) + '</div>'; }
-  h += '<small>' + esc(c('frontal')) + '</small><small>' + esc(c('lic')) + '</small></div>';
-  return h;
-}
-function mount(){
-  const body = $q('#lk-body'); if(!body) return;
-  let box = $q('#hpBox'); if(!box){ box = document.createElement('div'); box.id = 'hpBox'; body.insertBefore(box, body.firstChild); }
-  box.innerHTML = cardHtml();
-  if(HP.out){ const cv2 = $q('#hpCanvas'); if(cv2){ cv2.width = HP.out.width; cv2.height = HP.out.height; cv2.getContext('2d').drawImage(HP.out, 0, 0); } }
-}
-async function pickTemplate(key){
-  try{ busy = true; mount();
-    if(String(key).startsWith('o')){ const o = HP.own[+String(key).slice(1)]; HP.T = await prepTemplate(o.url, L3('صورتكِ', 'your photo', 'fotomu')); }
-    else { const t = TEMPLATES[+key]; HP.T = await prepTemplate(t.url, t.credit + (t.lic ? ' · ' + t.lic : ''), { crop: t.crop }); }
-    HP.tpl = key; HP.out = null; }catch(e){ say2(String(e && e.message || e), 4000); HP.T = null; HP.tpl = null; }
-  busy = false; mount();
-}
-async function run(){
-  if(!HP.T || !HP.U){ say2(c('needBoth'), 3000); return; }
-  busy = true; mount();
-  try{ HP.out = await compose(HP.T, HP.U, { hex: HP.col }); }catch(e){ say2(String(e && e.message || e), 4000); }
-  busy = false; mount(); const cv2 = $q('#hpCanvas'); if(cv2) cv2.scrollIntoView({ block:'center', behavior:'smooth' });
-}
-async function share(){
-  if(!HP.out) return; const blob = await new Promise(r => HP.out.toBlob(r, 'image/jpeg', .92)); if(!blob) return;
-  const file = new File([blob], 'lamha-hijab-' + Date.now() + '.jpg', { type:'image/jpeg' });
-  if(navigator.canShare && navigator.canShare({ files:[file] })){ try{ await navigator.share({ files:[file], title:'LAMHA' }); return; }catch(e){} }
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
-}
-document.addEventListener('click', async e => {
-  const b = e.target.closest && e.target.closest('[data-hp-tpl],[data-hp-me],[data-hp-go],[data-hp-col],[data-hp-share]'); if(!b || !$q('#hpBox') || !$q('#hpBox').contains(b)) return;
-  if(b.dataset.hpTpl != null) return pickTemplate(b.dataset.hpTpl);
-  if(b.dataset.hpMe === 'mirror'){ const u = faceFromMirror(); if(!u){ say2(c('noFace'), 3500); return; } HP.U = u; mount(); return; }
-  if(b.hasAttribute('data-hp-go')) return run();
-  if(b.dataset.hpCol != null){ HP.col = b.dataset.hpCol || null; if(HP.T && HP.U) return run(); mount(); return; }
-  if(b.hasAttribute('data-hp-share')) return share();
-});
-document.addEventListener('change', async e => {
-  const el = e.target; if(!el || !$q('#hpBox') || !$q('#hpBox').contains(el)) return;
-  const f = el.files && el.files[0]; if(!f) return;
-  if(el.hasAttribute('data-hp-me-file')){ try{ HP.U = await faceFromFile(f); mount(); }catch(x){ say2(String(x && x.message || x), 4000); } }
-  else if(el.hasAttribute('data-hp-own')){ const url = URL.createObjectURL(f); const im = await loadImage(url); const th = toCanvas(im, 160).toDataURL('image/jpeg', .7); HP.own.push({ url, thumb: th }); await pickTemplate('o' + (HP.own.length - 1)); }
-  el.value = '';
-});
-/* the look sheet re-renders itself; the card is put back on top each time */
-function hook(){ const body = $q('#lk-body'); if(!body) return; new MutationObserver(() => { if(!$q('#hpBox') && body.children.length) mount(); }).observe(body, { childList:true }); if(body.children.length) mount(); }
-if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hook); else setTimeout(hook, 0);
-window.LAMHA_HP = { prepTemplate, compose, faceFromMirror, faceFromFile, similarity, state: HP, mount, colours, TEMPLATES };
-})();
-
+try{ window.LAMHA_LOOK.hijabOff = true; }catch(e){}
 </script>
 <script>
 /* ============================================================
@@ -26276,16 +25992,16 @@ function herSkin(){
 }
 function colourGuide(){
   const sk = herSkin(); const lk = window.LAMHA_LOOK;
-  if(!sk || !lk || !lk.hijabColours) return '<div class="sgCard"><h4>' + esc(L3('🎨 ألوان ثيابي وحجابي', '🎨 My clothes and hijab colours', '🎨 Warna baju dan hijabku')) + '</h4><p>' + esc(L3('أحتاج قراءة بشرتك أولاً: تحليل البشرة أو أسئلة «إطلالتي».', 'I need your skin reading first: the skin analysis or the "My look" questions.', 'Aku perlu pembacaan kulitmu dulu: analisis kulit atau pertanyaan "Tampilanku".')) + '</p></div>';
+  if(!sk || !lk || !lk.hijabColours) return '<div class="sgCard"><h4>' + esc(L3('🎨 ألوان ثيابي', '🎨 My clothes colours', '🎨 Warna bajuku')) + '</h4><p>' + esc(L3('أحتاج قراءة بشرتك أولاً — افتحي «التحليل» وامسحي بشرتك مرة واحدة.', 'I need your skin reading first — open "Analysis" and scan your skin once.', 'Aku perlu pembacaan kulitmu dulu — buka "Analisis" dan pindai kulitmu sekali.')) + '</p></div>';
   const occ = (lk.sel && lk.sel.occ) || null; const hc = lk.hijabColours(sk.depth, sk.under, occ); const mk = market(), shops = SHOPS[mk] || SHOPS.sa;
   const word = k => (COL[k] || {})[lang()] || k, hex = k => (COL[k] || {}).hex || '#999';
   const swatch = k => '<span class="sgSw"><i style="background:' + hex(k) + '"></i>' + esc(word(k)) + '</span>';
-  const kind = L3('حجاب', 'hijab', 'hijab'), kind2 = L3('بلوزة', 'blouse', 'blus');
-  let h = '<div class="sgCard"><h4>' + esc(L3('🎨 ألوان ثيابي وحجابي', '🎨 My clothes and hijab colours', '🎨 Warna baju dan hijabku')) + '</h4>';
+  const kind = L3('وشاح', 'scarf', 'selendang'), kind2 = L3('بلوزة', 'blouse', 'blus');   /* v83: this app no longer speaks of the hijab */
+  let h = '<div class="sgCard"><h4>' + esc(L3('🎨 ألوان ثيابي', '🎨 My clothes colours', '🎨 Warna bajuku')) + '</h4>';
   h += '<p>' + esc(L3('من درجة بشرتك (' + ({ fair:'فاتحة', wheat:'حنطية', dark:'سمراء' })[sk.depth] + ') ودرجتها الأساسية (' + ({ warm:'دافئة', cool:'باردة', neutral:'محايدة', olive:'زيتونية' })[sk.under] + '): الألوان القريبة من الوجه التي تصفّيه:', 'From your depth (' + sk.depth + ') and undertone (' + sk.under + '): the colours near the face that flatter it:', 'Dari kedalaman kulit (' + sk.depth + ') dan undertone (' + sk.under + '): warna dekat wajah yang menyanjung:')) + '</p>';
   h += '<div>' + hc.colors.map(swatch).join('') + '</div>';
   if(hc.avoid && hc.avoid.length) h += '<p class="sgNote">' + esc(L3('تجنّبي قرب الوجه: ', 'Avoid near the face: ', 'Hindari dekat wajah: ')) + esc(hc.avoid.map(word).join('، ')) + '</p>';
-  h += '<p class="sgNote">' + esc(L3('القاعدة: الألوان الدافئة (خوخي، كاميل، تراكوتا) للبشرة الدافئة؛ الباردة (وردي مغبر، لافندر، كحلي) للباردة؛ البشرة السمراء تحمل أشدّ الألوان إشراقاً؛ والحجاب أهمّ من البلوزة لأنه يلامس الوجه.', 'The rule: warm colours (peach, camel, terracotta) for warm undertones; cool ones (dusty rose, lavender, navy) for cool; deep skin carries the brightest colours; the hijab matters more than the blouse because it touches the face.', 'Aturannya: warna hangat untuk undertone hangat; warna sejuk untuk undertone sejuk; kulit gelap cocok warna paling cerah; hijab lebih penting daripada blus karena menyentuh wajah.')) + '</p>';
+  h += '<p class="sgNote">' + esc(L3('القاعدة: الألوان الدافئة (خوخي، كاميل، تراكوتا) للبشرة الدافئة؛ الباردة (وردي مغبر، لافندر، كحلي) للباردة؛ البشرة السمراء تحمل أشدّ الألوان إشراقاً؛ وما يلامس الوجه (الوشاح والياقة) أهمّ من باقي الثوب.', 'The rule: warm colours (peach, camel, terracotta) for warm undertones; cool ones (dusty rose, lavender, navy) for cool; deep skin carries the brightest colours; what touches the face (a scarf, a collar) matters more than the rest of the outfit.', 'Aturannya: warna hangat untuk undertone hangat; warna sejuk untuk undertone sejuk; kulit gelap cocok warna paling cerah; yang menyentuh wajah (selendang, kerah) lebih penting daripada sisa busana.')) + '</p>';
   h += '<div class="lkMeta">' + esc(L3('ابحثي عنها في متاجر ', 'Find them in shops in ', 'Cari di toko di ')) + esc(MKN[mk] || mk) + ' <select data-sg-mk style="font-size:11px;padding:2px 6px;border-radius:8px;border:1px solid var(--line)">' + Object.keys(SHOPS).map(k => '<option value="' + k + '"' + (k === mk ? ' selected' : '') + '>' + esc(MKN[k] || k) + '</option>').join('') + '</select></div>';
   h += hc.colors.slice(0, 4).map(k => '<div class="sgLinks"><span class="sgSw"><i style="background:' + hex(k) + '"></i>' + esc(word(k)) + '</span>' + shops.map(s => '<a href="' + esc(link(s, kind + ' ' + word(k))) + '" target="_blank" rel="noopener">' + esc(s.n) + ' · ' + esc(kind) + '</a>').join('') + '<a href="' + esc(link(shops[0], kind2 + ' ' + word(k))) + '" target="_blank" rel="noopener">' + esc(shops[0].n) + ' · ' + esc(kind2) + '</a></div>').join('');
   const aff = Object.keys(affiliate()).length;
@@ -26329,124 +26045,32 @@ function mode40(){
   h += '<p class="sgNote">' + esc(L3('المصدر: قواعد فنّاني المكياج للبشرة الناضجة (شارلوت تيلبوري، بوبي براون، Wayne Goss) كما في دراسة v64/v69 — لا ادّعاء طبي.', 'Source: makeup artists’ rules for mature skin (Charlotte Tilbury, Bobbi Brown, Wayne Goss) as in the v64/v69 study — no medical claim.', 'Sumber: aturan penata rias untuk kulit matang (Charlotte Tilbury, Bobbi Brown, Wayne Goss) — tanpa klaim medis.')) + '</p></div>';
   return h;
 }
-function shareCard(){ return '<div class="sgCard"><h4>' + esc(L3('📤 بطاقة إطلالتي', '📤 My look card', '📤 Kartu tampilanku')) + '</h4><p>' + esc(L3('بطاقة بصورتك من المرآة وألوانك وحجابك وقصّتك — للحفظ أو المشاركة. الصورة تُشارك بقرارك فقط.', 'A card with your mirror photo, your colours, hijab and cut — to save or share. The photo is shared only when you decide.', 'Kartu dengan foto cermin, warna, hijab, dan potongan — untuk disimpan atau dibagikan. Foto dibagikan hanya atas keputusanmu.')) + '</p><div class="lkTools"><button data-sg-share>' + esc(L3('اصنعي البطاقة', 'Make the card', 'Buat kartu')) + '</button></div></div>'; }
+function shareCard(){ return '<div class="sgCard"><h4>' + esc(L3('📤 بطاقة إطلالتي', '📤 My look card', '📤 Kartu tampilanku')) + '</h4><p>' + esc(L3('بطاقة بصورتك من المرآة وألوانك وقصّتك — للحفظ أو المشاركة. الصورة تُشارك بقرارك فقط.', 'A card with your mirror photo, your colours and your cut — to save or share. The photo is shared only when you decide.', 'Kartu dengan foto cermin, warna, dan potongan — untuk disimpan atau dibagikan. Foto dibagikan hanya atas keputusanmu.')) + '</p><div class="lkTools"><button data-sg-share>' + esc(L3('اصنعي البطاقة', 'Make the card', 'Buat kartu')) + '</button></div></div>'; }
 function html(){ return '<div id="sgBox">' + colourGuide() + occasions() + mode40() + shareCard() + '</div>'; }
-function mount(){ const body = $q('#lk-body'); if(!body) return; let box = $q('#sgBox'); const h = html(); if(box){ box.outerHTML = h; } else { body.insertAdjacentHTML('beforeend', h); } }
+/* v84: its home is «عنايتي» — the look sheet is gone from the first screen. It sits at the end of the care
+   sheet, under whichever tab is open, and is put back there whenever the care sheet redraws itself. */
+function mount(){
+  const sh = $q('#sh-care'); if(!sh) return;
+  let box = $q('#sgBox'); if(!box){ box = document.createElement('div'); box.id = 'sgBox'; }
+  box.innerHTML = html().replace(/^<div id="sgBox">/, '').replace(/<\/div>$/, '');
+  sh.appendChild(box);   /* appendChild also moves it back to the end after a redraw */
+}
 document.addEventListener('click', e => {
   const b = e.target.closest && e.target.closest('[data-sg-occ],[data-sg-40],[data-sg-share]'); if(!b || !$q('#sgBox') || !$q('#sgBox').contains(b)) return;
   if(b.dataset.sgOcc){ try{ const lk = window.LAMHA_LOOK; if(lk && lk.sel){ lk.sel.occ = b.dataset.sgOcc === 'eid' ? 'party' : 'wedding'; lk.render && lk.render(); } }catch(x){} try{ if(window.lamhaSuggest) window.lamhaSuggest(); }catch(x){} return; }
   if(b.dataset.sg40 === 'toggle'){ SG.m40 = !SG.m40; sav(KEY, SG); apply40(); mount(); if(SG.m40) style40(); return; }
   if(b.dataset.sg40 === 'apply'){ style40(); try{ say(L3('طُبّقت قواعد البشرة الناضجة — عدّليها كما تحبين', 'Mature-skin rules applied — adjust as you like', 'Aturan kulit matang diterapkan'), 3000); }catch(x){} return; }
-  if(b.hasAttribute('data-sg-share')){ try{ const cb = document.getElementById('lk-photo'); if(cb) cb.checked = true; const btn = document.querySelector('#lk-body [data-lkact="save"]'); if(btn) btn.click(); }catch(x){} }
+  if(b.hasAttribute('data-sg-share')){ try{ const lk = window.LAMHA_LOOK; if(lk && lk.render) lk.render();   /* v84: the look sheet is off the first screen; it is drawn only to build the card */
+    const cb = document.getElementById('lk-photo'); if(cb) cb.checked = true; const btn = document.querySelector('#lk-body [data-lkact="save"]'); if(btn) btn.click(); }catch(x){} }
 });
 document.addEventListener('change', e => { const el = e.target; if(el && el.hasAttribute && el.hasAttribute('data-sg-mk')){ SG.mk = el.value; sav(KEY, SG); mount(); } });
-function hook(){ const body = $q('#lk-body'); if(!body) return; new MutationObserver(() => { if(!$q('#sgBox') && body.children.length) setTimeout(mount, 0); }).observe(body, { childList:true }); if(body.children.length) mount(); }
+function hook(){
+  const sh = $q('#sh-care'), body = $q('#cr-body'); if(!sh || !body) return;
+  new MutationObserver(() => setTimeout(mount, 0)).observe(body, { childList:true });   /* the care sheet redraws per tab */
+  mount();
+}
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hook); else setTimeout(hook, 0);
 window.LAMHA_STYLE = { mount, nextDates, colourGuide, style40, herSkin, palette: keys => (keys || []).map(k => ({ hex: (COL[k] || {}).hex || '#999', name: (COL[k] || {})[lang()] || k })), state:() => SG };
-})();
-
-</script>
-<script>
-/* ============================================================
-   LAMHA · THE PHOTO TRY-ON (v82) — a tester sent a mirror frame with the drawn wrap: a flat green hood with a
-   straight cut across the forehead. The live drawing is gone. Choosing a wrap anywhere (the studio bar, the
-   look sheet, "the wrap for my face") now opens this sheet: her current mirror frame is fitted into a real
-   photograph of that wrap (LAMHA_HP.compose — face swapped, colour and light matched, fabric recoloured), and the
-   mirror behind stays her own. Colour and wrap can be changed here; a new frame is taken only when she asks.
-   ============================================================ */
-(function(){
-'use strict';
-const LK = window.LAMHA_LOOK, HPm = window.LAMHA_HP; if(!LK || !HPm) return;
-const lang = () => (typeof LANG !== 'undefined' && /^(ar|en|id)$/.test(LANG)) ? LANG : 'ar';
-const L3 = (ar, en, id) => ({ ar, en, id })[lang()];
-const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
-const $q = s => document.querySelector(s);
-const tx = o => (o && typeof o === 'object') ? (o[lang()] || o.en || o.ar || '') : String(o || '');
-LK.photoWrap = true;                                   /* the core's draw loop leaves the video alone while this is on */
-
-const TPL = HPm.TEMPLATES;
-const TR = { open:false, style:null, col:null, tpl:null, force:null, U:null, out:null, busy:false, msg:'', seq:0, orig:false };
-const prepared = {};
-function prep(i){ return prepared[i] || (prepared[i] = HPm.prepTemplate(TPL[i].url, TPL[i].credit + (TPL[i].lic ? ' · ' + TPL[i].lic : ''), { crop: TPL[i].crop }).catch(e => { delete prepared[i]; throw e; })); }
-/* the photograph for a wrap: its own template first, else the one on screen, else the first */
-function tplFor(style){
-  if(TR.tpl != null && (TPL[TR.tpl].styles || []).includes(style)) return TR.tpl;
-  const i = TPL.findIndex(t => (t.styles || []).includes(style)); return i >= 0 ? i : (TR.tpl != null ? TR.tpl : 0);
-}
-const wrapName = k => { try{ return tx(LK.WRAPS[k].n); }catch(e){ return k || ''; } };
-
-function freshFace(){ const u = HPm.faceFromMirror(); if(u){ TR.U = u; return true; } return false; }
-
-function html(){
-  const t = TR.tpl != null ? TPL[TR.tpl] : null, cols = HPm.colours ? HPm.colours() : [];
-  /* the sheet is named after the wrap in the photograph, never after one we have no photograph of */
-  const tst = t ? (t.styles || [])[0] : null;
-  const missing = TR.style && t && !(t.styles || []).includes(TR.style) ? TR.style : null;
-  let h = '<div class="hpTryIn"><div class="hpTryTop"><b>' + esc(L3('حجابكِ على صورة حقيقية', 'Your hijab on a real photo', 'Hijabmu di foto asli')) + (tst ? ' · ' + esc(wrapName(tst)) : '') + '</b>' +
-    '<button class="hpTryX" data-tr-close aria-label="' + esc(L3('رجوع إلى المرآة', 'Back to the mirror', 'Kembali ke cermin')) + '">✕</button></div>';
-  h += '<div class="hpTryStage">' + (TR.out ? '<canvas id="hpTryCv"></canvas>' : '') + (TR.busy || TR.msg ? '<div class="hpTryMsg">' + esc(TR.busy ? L3('جارٍ التركيب على الصورة…', 'Putting you in the photo…', 'Menyusun foto…') : TR.msg) + '</div>' : '') + '</div>';
-  if(missing) h += '<div class="hpTryLbl">' + esc(L3('اخترتِ «' + wrapName(missing) + '»: لا توجد صورة طبيعية لهذه اللفّة بعد، والمعروض «' + wrapName(tst) + '».', 'You picked "' + wrapName(missing) + '": there is no natural photo of that wrap yet, so "' + wrapName(tst) + '" is shown.', 'Kamu memilih "' + wrapName(missing) + '": belum ada foto asli gaya itu, yang tampil "' + wrapName(tst) + '".')) + '</div>';
-  h += '<div class="hpTryLbl">' + esc(L3('اللفّة', 'Wrap', 'Gaya')) + '</div><div class="hpTpls">' + TPL.map((x, i) => '<button class="hpTpl' + (TR.tpl === i ? ' on' : '') + '" data-tr-tpl="' + i + '" title="' + esc(wrapName((x.styles || [])[0])) + '"><img loading="lazy" src="' + esc(x.thumb || x.url) + '" alt=""><span>' + esc(wrapName((x.styles || [])[0])) + '</span></button>').join('') + '</div>';
-  if(cols.length) h += '<div class="hpTryLbl">' + esc(L3('لون القماش', 'Fabric colour', 'Warna kain')) + '</div><div class="hpTrySws"><button class="' + (TR.orig ? 'on' : '') + '" data-tr-col=""><i style="background:linear-gradient(135deg,#eee,#bbb)"></i>' + esc(L3('لون الصورة', 'As photographed', 'Warna asli')) + '</button>' +
-    cols.map(x => '<button class="' + (!TR.orig && TR.col && TR.col.toLowerCase() === String(x.hex).toLowerCase() ? 'on' : '') + '" data-tr-col="' + esc(x.hex) + '"><i style="background:' + esc(x.hex) + '"></i>' + esc(x.name) + '</button>').join('') + '</div>';
-  h += '<div class="hpTryAct"><button data-tr-again>' + esc(L3('📷 صورة جديدة من المرآة', '📷 New frame from the mirror', '📷 Foto baru dari cermin')) + '</button>' +
-    '<label class="hpBtn"><span>' + esc(L3('🖼 وجهي من صورة', '🖼 My face from a photo', '🖼 Wajahku dari foto')) + '</span><input type="file" accept="image/*" data-tr-file hidden></label>' +
-    (TR.out ? '<button class="pri" data-tr-share>' + esc(L3('مشاركة / حفظ', 'Share / save', 'Bagikan / simpan')) + '</button>' : '') + '</div>';
-  h += '<small class="hpTryNote">' + esc(L3('أفضل نتيجة: وجهكِ من الأمام، إضاءة أمامية هادئة، بلا نظارة. الصورة لا تغادر هاتفكِ إلا إن شاركتِها.', 'Best result: face the camera, soft light in front, no glasses. The picture stays on your phone unless you share it.', 'Hasil terbaik: menghadap kamera, cahaya lembut dari depan, tanpa kacamata. Foto tetap di ponselmu kecuali kamu bagikan.')) + '</small>';
-  if(t) h += '<small class="hpTryNote">' + esc(L3('الصورة الأصلية', 'Original photo', 'Foto asli')) + ': ' + esc(t.credit) + ' · ' + esc(t.lic) + ' — ' + esc(L3('وجه صاحبتها أُزيل ووُضع وجهكِ مكانه.', 'her face was removed and yours put in its place.', 'wajahnya dihapus dan diganti wajahmu.')) + '</small>';
-  return h + '</div>';
-}
-function render(){
-  let box = $q('#hpTry');
-  if(!TR.open){ if(box) box.hidden = true; document.body.classList.remove('hpTryOn'); return; }
-  if(!box){ box = document.createElement('div'); box.id = 'hpTry'; box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true'); document.body.appendChild(box); }
-  const sc = box.querySelector('.hpTpls') ? box.querySelector('.hpTpls').scrollLeft : 0;
-  box.innerHTML = html(); box.hidden = false; document.body.classList.add('hpTryOn');
-  const tp = box.querySelector('.hpTpls'); if(tp) tp.scrollLeft = sc;
-  if(TR.out){ const cv = $q('#hpTryCv'); if(cv){ cv.width = TR.out.width; cv.height = TR.out.height; cv.getContext('2d').drawImage(TR.out, 0, 0); } }
-}
-async function run(){
-  if(!TR.U){ TR.msg = L3('لا أرى وجهكِ في المرآة الآن — انظري إلى الكاميرا ثم «صورة جديدة من المرآة»، أو اختاري صورة لوجهكِ.', 'I cannot see your face in the mirror — look at the camera and tap "New frame from the mirror", or pick a photo of your face.', 'Aku tak melihat wajahmu — lihat kamera lalu "Foto baru dari cermin", atau pilih foto wajahmu.'); TR.busy = false; render(); return; }
-  const my = ++TR.seq; TR.busy = true; TR.msg = ''; render();
-  try{ const T = await prep(TR.tpl); const out = await HPm.compose(T, TR.U, { hex: TR.orig ? null : TR.col });
-    if(my !== TR.seq) return; TR.out = out; TR.msg = ''; }
-  catch(e){ if(my !== TR.seq) return; TR.msg = /image|fetch|network/i.test(String(e && e.message)) ? L3('تعذّر تحميل صورة اللفّة — تحتاج اتصالاً بالإنترنت أوّل مرة.', 'Could not load the wrap photo — it needs the internet the first time.', 'Gagal memuat foto — perlu internet pertama kali.') : String(e && e.message || e); }
-  if(my === TR.seq){ TR.busy = false; render(); }
-}
-/* the core calls this on every wrap choice (LK.wear) */
-LK.onWear = function(style, col){
-  if(!style){ if(TR.open){ TR.open = false; TR.seq++; render(); } return; }
-  const opening = !TR.open;
-  TR.style = style; if(col) { TR.col = col; TR.orig = false; }
-  TR.tpl = TR.force != null ? TR.force : tplFor(style); TR.force = null;
-  TR.open = true;
-  if(opening){ TR.out = null; freshFace(); }
-  run();
-  if(opening) setTimeout(() => { const x = $q('#hpTry .hpTryX'); if(x) try{ x.focus({ preventScroll:true }); }catch(e){} }, 60);
-};
-function close(){ TR.open = false; TR.seq++; render(); try{ LK.wear(null); }catch(e){} }
-async function share(){
-  if(!TR.out) return; const blob = await new Promise(r => TR.out.toBlob(r, 'image/jpeg', .92)); if(!blob) return;
-  const file = new File([blob], 'lamha-hijab-' + Date.now() + '.jpg', { type:'image/jpeg' });
-  if(navigator.canShare && navigator.canShare({ files:[file] })){ try{ await navigator.share({ files:[file], title:'LAMHA' }); return; }catch(e){ if(e && e.name === 'AbortError') return; } }
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
-}
-document.addEventListener('click', e => {
-  const box = $q('#hpTry'); if(!box || box.hidden) return;
-  const b = e.target.closest && e.target.closest('[data-tr-close],[data-tr-tpl],[data-tr-col],[data-tr-again],[data-tr-share]'); if(!b || !box.contains(b)) return;
-  if(b.hasAttribute('data-tr-close')) return close();
-  if(b.dataset.trTpl != null){ const i = +b.dataset.trTpl; TR.force = i; try{ LK.wear((TPL[i].styles || [])[0] || TR.style, TR.col); }catch(x){ TR.tpl = i; TR.force = null; run(); } return; }
-  if(b.dataset.trCol != null){ if(!b.dataset.trCol){ TR.orig = true; run(); return; } TR.orig = false; TR.force = TR.tpl; try{ LK.wear(TR.style, b.dataset.trCol); }catch(x){ TR.col = b.dataset.trCol; run(); } return; }
-  if(b.hasAttribute('data-tr-again')){ if(!freshFace()){ TR.msg = L3('لا أرى وجهكِ في المرآة الآن — انظري إلى الكاميرا.', 'I cannot see your face in the mirror now — look at the camera.', 'Aku tak melihat wajahmu — lihat kamera.'); render(); return; } run(); return; }
-  if(b.hasAttribute('data-tr-share')) return share();
-});
-document.addEventListener('change', async e => {
-  const el = e.target; const box = $q('#hpTry'); if(!el || !box || !box.contains(el) || !el.hasAttribute('data-tr-file')) return;
-  const f = el.files && el.files[0]; el.value = ''; if(!f) return;
-  try{ TR.U = await HPm.faceFromFile(f); run(); }catch(x){ TR.msg = String(x && x.message || x); render(); }
-});
-document.addEventListener('keydown', e => { if(e.key === 'Escape' && TR.open) close(); });
-window.LAMHA_TRY = { state: TR, open: (style, col) => LK.wear(style || 'satin', col), close, tplFor };
 })();
 
 </script>
