@@ -1788,7 +1788,7 @@ document.addEventListener('DOMContentLoaded', function(){
     </div>
 
     <div id="gate">
-      <div class="mark">LAMHA MOBILE · BUILD 1789034657</div>
+      <div class="mark">LAMHA MOBILE · v94 · BUILD 20260919</div>
       <h1 class="disp" data-i18n="gate_h">مرآة زين الذكية</h1>
       <p data-i18n="gate_p">مرآتك تحلّل بشرتك، ترسم خريطة وجهك، وتجرّب المكياج قبل أن تلمسي فرشاة واحدة.</p>
       <div class="feats">
@@ -4101,11 +4101,17 @@ const SHADES = {
     {c:'#2A1C15', n:{ar:'بني داكن',en:'Dark brown',id:'Cokelat tua'}},
     {c:'#463127', n:{ar:'بني دافئ',en:'Warm brown',id:'Cokelat hangat'}}
   ],
-  lens:[
+  lens:[   /* v94 · twelve, as coloured contacts are sold */
+    {c:'#6B4A2E', n:{ar:'بني شوكولا',en:'Chocolate',id:'Cokelat'}},
+    {c:'#A07046', n:{ar:'بني فاتح',en:'Light brown',id:'Cokelat muda'}},
     {c:'#B98A4F', n:{ar:'عسلي',en:'Honey',id:'Madu'}},
     {c:'#8A6B3F', n:{ar:'بندقي',en:'Hazel',id:'Hazel'}},
     {c:'#5E8A5A', n:{ar:'أخضر',en:'Green',id:'Hijau'}},
+    {c:'#2F7D5B', n:{ar:'زمردي',en:'Emerald',id:'Zamrud'}},
+    {c:'#4FA3A5', n:{ar:'فيروزي',en:'Turquoise',id:'Toska'}},
     {c:'#5C7FA8', n:{ar:'أزرق',en:'Blue',id:'Biru'}},
+    {c:'#3E5E9C', n:{ar:'ياقوتي أزرق',en:'Sapphire',id:'Safir'}},
+    {c:'#6E8398', n:{ar:'رمادي أزرق',en:'Blue grey',id:'Abu kebiruan'}},
     {c:'#8C9296', n:{ar:'رمادي',en:'Grey',id:'Abu-abu'}},
     {c:'#7A6795', n:{ar:'بنفسجي',en:'Violet',id:'Ungu'}}
   ],
@@ -4328,6 +4334,7 @@ function loop(){
       if(res?.faceLandmarks?.length){
         const nl = res.faceLandmarks[0];
         S.landmarks = euroSmooth(nl); S._lmSeen = now; S.trackHold = false;
+        try{ if(window.lamhaFrameTick) window.lamhaFrameTick(S.landmarks); }catch(e){}   /* v94: is the whole face in? */
         if(!S.trackOk){ S.trackOk=true; diag(4,'ok','468'); }
         if(window.LAMHA_PRO && LAMHA_PRO.onFrame){ try{ LAMHA_PRO.onFrame(res); }catch(e){} }
       } else if(S.landmarks && now - (S._lmSeen||0) < 350){
@@ -5082,10 +5089,10 @@ const ZORDER = ['base','concealer','contour','nose','highlight','blush','glow','
 const ZCFG = {
   lips:     {src:1,ch:0, gamma:1.00, a:1.00, chroma:1.00},
   blush:    {src:1,ch:1, gamma:0.90, a:0.86, chroma:0.92, grp:1},   /* v67: the pink must read */
-  concealer:{src:4,ch:0, gamma:0.96, a:0.74, chroma:0.78, grp:1},   /* v86: was .66/.72 — testers found it too light (with the ×RS blur fix below) */
-  contour:  {src:3,ch:0, gamma:0.94, a:0.76, chroma:0.82, grp:1},
+  concealer:{src:4,ch:0, gamma:0.96, a:0.88, chroma:0.78, grp:1},   /* v94: .74 — 64 % at 100 % (measured) */   /* v86: was .66/.72 — testers found it too light (with the ×RS blur fix below) */
+  contour:  {src:3,ch:0, gamma:0.94, a:0.88, chroma:0.82, grp:1},   /* v94: .76 */
   highlight:{src:3,ch:2, gamma:0.96, a:0.90, chroma:0.70, grp:1},   /* v57: glowCap keeps it light, never paint */
-  nose:     {src:3,ch:1, gamma:0.94, a:0.72, chroma:0.82, grp:1},
+  nose:     {src:3,ch:1, gamma:0.94, a:0.88, chroma:0.82, grp:1},   /* v94: .72 — 45 % at 100 % (measured) */
   eyeshadow:{src:1,ch:2, gamma:1.00, a:0.96, chroma:0.96, grp:1},
   crease:   {src:4,ch:1, gamma:1.00, a:0.94, chroma:0.94},
   corner:   {src:4,ch:2, gamma:1.00, a:0.98, chroma:0.96},
@@ -5609,7 +5616,11 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
   const gpuOwns = !window.__PT && S.showGL && window.glFaceActive;
   /* zones the GPU cannot represent as flat pigment stay with the CPU */
   const CPU_ONLY = { glow:1, base:1 };
-  const active = ZORDER.filter(k=>ZCFG[k] && M[k] && zoneVisible(k)
+  /* v94 · a zone whose landmarks leave the frame is not drawn cut in half — the mirror asks her to move back */
+  const FR94 = (!window.__PT && !window.__FINBAKE && !STILL && S._frame) ? S._frame : null;
+  const ZREG = { lips:'lips', nose:'nose', eyeshadow:'eyes', crease:'eyes', corner:'eyes', liner:'eyes', lashes:'eyes', lens:'eyes', brow:'brows' };
+  const frameOK = k => !FR94 || FR94.ok[ZREG[k] || 'full'] !== false;
+  const active = ZORDER.filter(k=>ZCFG[k] && M[k] && zoneVisible(k) && frameOK(k)
     && !(gpuOwns && !CPU_ONLY[k]));
   /* while a zone is being "applied", its colour rises from nothing to full
      behind the travelling tool — the reveal, not a different result */
@@ -5619,15 +5630,15 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
      it reads the live face and re-paints it softened. Baking it would
      sample the flat grey backdrop and print a grey wash over everything,
      so the CPU always owns it — even when the GPU owns the pigment zones. */
-  const showBase = !!M.base && zoneVisible('base') && !window.__PT;
+  const showBase = !!M.base && zoneVisible('base') && !window.__PT && frameOK('base');
   if(window.__PT){
     /* bake pass: pigment zones only */
   }
   /* lashes and lenses are strokes, not a mask channel: with nothing else on they
      must still be drawn (the early returns below used to skip them) */
   const eyesX = () => { if(window.__PT || window.__FINBAKE || gpuOwns) return;
-    if(M.lashes && zoneVisible('lashes')) drawLashes(tctx, lm, pt, fs);
-    if(M.lens && zoneVisible('lens')) drawLens(tctx, lm, pt, fs); };
+    if(M.lashes && zoneVisible('lashes') && frameOK('lashes')) drawLashes(tctx, lm, pt, fs);
+    if(M.lens && zoneVisible('lens') && frameOK('lens')) drawLens(tctx, lm, pt, fs); };
   if(!showBase && !active.length){ eyesX(); return; }
   const B = faceBBox(lm, fs*0.16);
   if(B.w<8||B.h<8) return;
@@ -5734,6 +5745,11 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
          a quarter of the face width; the old 0.20 radius read as a stain. */
       const G=blushGeom(lm, pt, fs, ci, ei), x=G.x, y=G.y, ang=G.ang;
       const ra=G.ra, rb=G.rb;
+      /* v94 · pigment bleeds into the skin round it: a wide faint halo (1.4×), so the patch has no edge */
+      { const gH=m1.createRadialGradient(0,0,0,0,0,ra*1.45);
+        [[0,.30],[.55,.22],[.80,.10],[1,0]].forEach(([o,v])=> gH.addColorStop(o,`rgba(0,255,0,${v})`));
+        m1.save(); m1.filter=`blur(${Math.max(2, fs*0.030).toFixed(1)}px)`; m1.translate(x,y); m1.rotate(ang); m1.scale(1, rb/ra);
+        m1.fillStyle=gH; m1.beginPath(); m1.arc(0,0,ra*1.45,0,7); m1.fill(); m1.restore(); }
       const g=m1.createRadialGradient(0,0,0,0,0,ra);
       /* v67: a fuller centre — the old core (30 % of the radius) left most of the patch as fade */
       [[0,1],[.42,.92],[.62,.66],[.80,.32],[.92,.10],[1,0]]
@@ -6256,6 +6272,20 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
   const A2 = on('liner')||on('brow')||on('glow')      ? m2.getImageData(0,0,PW,PH).data : null;
   const A3 = needs3 ? m3.getImageData(0,0,PW,PH).data : null;
   const A4 = needs4 ? m4.getImageData(0,0,PW,PH).data : null;
+  /* v94 · measured, not assumed: a thin zone's feathered mask lost most of its strength at the working resolution
+     (highlight peaked at 60/255, contour 131, nose 192 — "nothing at 100 %"). Each zone's mask is lifted until its own
+     peak reaches full; the lift is smoothed between frames and capped. Lips and liner (fine as they are) untouched. */
+  { S._mkGain = S._mkGain || {}; S._mkPeak = {};
+    for(const k of active){
+      const c = ZCFG[k]; if(!c || k === 'lips' || k === 'liner' || c.add) continue;
+      const arr = c.src===1?A1:c.src===2?A2:c.src===3?A3:A4; if(!arr) continue;
+      let pk = 0; for(let i=c.ch;i<arr.length;i+=4) if(arr[i]>pk) pk=arr[i];
+      if(pk < 6){ S._mkPeak[k] = pk; continue; }
+      const want = Math.min(4.5, 255/pk), g0 = S._mkGain[k] || want, g = window.__PT ? want : g0 + (want - g0)*0.35;
+      S._mkGain[k] = g; S._mkPeak[k] = Math.min(255, pk*g);
+      if(g > 1.01) for(let i=c.ch;i<arr.length;i+=4) arr[i] = arr[i]*g;
+    }
+  }
 
   /* skin-tone products (concealer, contour, nose, highlight) are sheer
      films: at the top of the slider they used to lose her own light and
@@ -6267,11 +6297,13 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
   const SHEER = { concealer:1, contour:1, nose:1, highlight:1 };
   /* v92 · texture kept at full application (swatch study medians; lips lower — creams fill lip lines) */
   const KTEX = { lips:0.55, blush:0.70, eyeshadow:0.77, crease:0.77, corner:0.77, liner:0.35, brow:0.55 };
+  const sheerI = (I, c) => I <= 0.7 ? I*(1 - c*I) : 0.7*(1 - 0.7*c) + (1 - 0.7*(1 - 0.7*c))*(I - 0.7)/0.3;   /* v94 */
+  window.__sheerI = sheerI;
   const Z = active.map(k=>{
     const c=ZCFG[k], [tr,tg,tb]=hex2rgb(M[k]), sh=!!SHEER[k] && !window.__PT;
     const lit0 = clamp(1 - Math.max(0, (IN(k)-0.55)/0.40), 0, 1);
     return {k, arr:c.src===1?A1:(c.src===2?A2:(c.src===3?A3:A4)), ch:c.ch, gamma:c.gamma, a:c.a, add:!!c.add,
-            I: (sh && k!=='highlight') ? IN(k)*(1 - (k==='concealer' ? 0.12 : 0.30)*IN(k)) : IN(k),   /* the highlight has its own cap (glowCap); v86: concealer eases off less */
+            I: (sh && k!=='highlight') ? sheerI(IN(k), k==='concealer' ? 0.12 : 0.30) : IN(k),   /* v94: the same to 70 %, full at 100 % */   /* the highlight has its own cap (glowCap); v86: concealer eases off less */
             chroma: clamp((c.chroma ?? 0.7) * (0.74 + 0.90*IN(k)) * (APP?APP(k):1), 0.05, sh ? 0.80 : 1),
     /* how much of the skin's own light survives: full at sheer coverage,
        fading toward the pure shade as she pushes the intensity up */
@@ -6306,6 +6338,13 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
       z.tr = br + (z.tr-br)*c;
       z.tg = bg + (z.tg-bg)*c;
       z.tb = bb + (z.tb-bb)*c;
+    }
+    /* v94 · blush never past a real pigment's saturation on HER skin: at most 24 a*b* units from her cheek */
+    if(z.k === 'blush' && z.wt && window.lamhaLab){
+      const sk = (window.__PT && S._glSkin) ? S._glSkin.map(v => v*255) : [z.sr/z.wt, z.sg/z.wt, z.sb/z.wt];
+      const s0 = lamhaLab(clamp(sk[0],0,255), clamp(sk[1],0,255), clamp(sk[2],0,255)), t0 = lamhaLab(clamp(z.tr,0,255), clamp(z.tg,0,255), clamp(z.tb,0,255));
+      const da = t0[1]-s0[1], db = t0[2]-s0[2], Dab = Math.hypot(da, db);
+      if(Dab > 24){ const f = 24/Dab, nw = lamhaRgb(t0[0], s0[1]+da*f, s0[2]+db*f); z.tr = nw[0]; z.tg = nw[1]; z.tb = nw[2]; }
     }
     /* The light ratio keeps pores and shadows alive under sheer colour, but
        at high intensity it also pulls the result away from the shade she
@@ -6599,9 +6638,9 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
   tctx.drawImage(pxC, 0,0,PW,PH, B.x, B.y, B.w, B.h);
 
   /* ---- false lashes: fanned strokes along the upper lash line ---- */
-  if(M.lashes && zoneVisible('lashes') && !(gpuOwns) && !window.__FINBAKE){ drawLashes(tctx, lm, pt, fs); }
+  if(M.lashes && zoneVisible('lashes') && frameOK('lashes') && !(gpuOwns) && !window.__FINBAKE){ drawLashes(tctx, lm, pt, fs); }
   /* ---- coloured lenses: tinted iris inside the open eye ---- */
-  if(M.lens && zoneVisible('lens') && !(gpuOwns) && !window.__FINBAKE){ drawLens(tctx, lm, pt, fs); }
+  if(M.lens && zoneVisible('lens') && frameOK('lens') && !(gpuOwns) && !window.__FINBAKE){ drawLens(tctx, lm, pt, fs); }
 }
 
 /* v85 lashes — testers: "the lashes are obvious, not natural". Rebuilt from a study of real eyes in frontal
@@ -6738,37 +6777,67 @@ function drawLashes(c, lm, pt, fs){
 }
 /* v72: lid gap ÷ eye width at which the lashes are fully lowered / fully open (calibrated on portraits) */
 const LASH_OPEN = [0.19, 0.27];
+/* v94 · a real coloured lens, not a painted disc (three of four testers: "anime eyes").
+   Found by the iris landmarks (468–477); read from the camera frame itself (so it works on the GPU overlay too);
+   only the iris fibres take the colour, their own light and dark kept — the pupil stays black, the dark limbal ring
+   stays, the white glint of light stays, the lids cover it as they cover the eye. */
+const lensC = document.createElement('canvas'), lensX = lensC.getContext('2d', { willReadFrequently:true });
+const lensM = document.createElement('canvas'), lensMX = lensM.getContext('2d', { willReadFrequently:true });
+const lensO = document.createElement('canvas'), lensOX = lensO.getContext('2d');
+function lensWeight(r, Y, Ymax, sat, Lm){               /* pure: how much of the lens colour a pixel of the iris takes */
+  const ss = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a)/(b - a))); return t*t*(3 - 2*t); };
+  let w = (1 - ss(0.95, 1.03, r))                      /* the iris edge, antialiased */
+        * ss(0.30, 0.47, r)                            /* the pupil keeps its black */
+        * (1 - 0.6*ss(0.80, 0.97, r));                 /* the limbal ring mostly kept */
+  if(Y > Math.max(0.72, Ymax*0.86) && sat < 0.22) w = 0; /* the glint of light */
+  if(Y < 0.07) w *= 0.25;                              /* very dark: pupil or lash shadow */
+  return w;
+}
+window.__lensWeight = lensWeight;
 function drawLens(c, lm, pt, fs){
-  const I = clamp(S.ints.lens ?? .55, 0, 1);
-  c.save();
-  [[L.eyeUpL, L.eyeLoL],[L.eyeUpR, L.eyeLoR]].forEach(([up, lo])=>{
-    const inner = pt(lm[up[up.length-1]]), outer = pt(lm[up[0]]);
-    const ex = (inner[0]+outer[0])/2, ey = (inner[1]+outer[1])/2;
-    const ew = Math.hypot(outer[0]-inner[0], outer[1]-inner[1]);
-    const r = ew*.30;
-    c.save();
-    c.beginPath();
-    up.forEach((i,k)=>{ const [x,y]=pt(lm[i]); k?c.lineTo(x,y):c.moveTo(x,y); });
-    [...lo].reverse().forEach(i=>{ const [x,y]=pt(lm[i]); c.lineTo(x,y); });
-    c.closePath(); c.clip();
-    const g = c.createRadialGradient(ex,ey,r*.15, ex,ey,r);
-    g.addColorStop(0,'rgba(0,0,0,0)');
-    g.addColorStop(.45, S.makeup.lens);
-    g.addColorStop(1, S.makeup.lens);
-    c.globalCompositeOperation='soft-light';
-    c.globalAlpha = .95*I;
-    c.fillStyle=g; c.beginPath(); c.arc(ex,ey,r,0,7); c.fill();
-    c.globalCompositeOperation='source-over';
-    c.globalAlpha = .30*I;
-    c.fill();
-    /* limbal ring for realism */
-    c.globalAlpha = .5*I;
-    c.strokeStyle='rgba(20,14,10,.9)';
-    c.lineWidth = Math.max(1, fs*.004);
-    c.beginPath(); c.arc(ex,ey,r*.98,0,7); c.stroke();
-    c.restore();
+  const col = S.makeup.lens; if(!col || !lm) return;
+  const I = clamp(S.ints.lens ?? .55, 0, 1); if(I <= 0.01) return;
+  const [lr, lg, lb] = hex2rgb(col), LL = lamhaLab(lr, lg, lb);
+  [[468, [469, 470, 471, 472], L.eyeUpL, L.eyeLoL], [473, [474, 475, 476, 477], L.eyeUpR, L.eyeLoR]].forEach(([ci, ring, up, lo]) => {
+    const a0 = pt(lm[up[0]]), a1 = pt(lm[up[up.length - 1]]), ew = Math.hypot(a0[0] - a1[0], a0[1] - a1[1]);
+    let C, R;
+    if(lm[ci] && lm[ring[0]]){ C = pt(lm[ci]); R = ring.reduce((s, i) => { const q = pt(lm[i]); return s + Math.hypot(q[0] - C[0], q[1] - C[1]); }, 0)/ring.length; }
+    if(!C || !(R > 1.5) || R > ew*0.45){ C = [(a0[0] + a1[0])/2, (a0[1] + a1[1])/2]; R = ew*0.21; }
+    const pad = Math.ceil(R*1.08), bx = Math.floor(C[0] - pad), by = Math.floor(C[1] - pad), bw = pad*2 + 1, bh = pad*2 + 1;
+    if(bw < 6 || bw > 400) return;
+    /* the camera pixels at this spot, exactly as the mirror shows them */
+    lensC.width = bw; lensC.height = bh; lensX.setTransform(1, 0, 0, 1, -bx, -by);
+    if(S.mirror){ lensX.translate(cv.width, 0); lensX.scale(-1, 1); lensX.drawImage(SRC, cv.width - map.ox - VW*map.sx, map.oy, VW*map.sx, VH*map.sy); }
+    else lensX.drawImage(SRC, map.ox, map.oy, VW*map.sx, VH*map.sy);
+    lensX.setTransform(1, 0, 0, 1, 0, 0);
+    const d = lensX.getImageData(0, 0, bw, bh).data;
+    /* the eye's opening: the lids cover the lens */
+    lensM.width = bw; lensM.height = bh; lensMX.setTransform(1, 0, 0, 1, -bx, -by); lensMX.fillStyle = '#fff'; lensMX.beginPath();
+    up.forEach((i, k) => { const [x, y] = pt(lm[i]); k ? lensMX.lineTo(x, y) : lensMX.moveTo(x, y); });
+    [...lo].reverse().forEach(i => { const [x, y] = pt(lm[i]); lensMX.lineTo(x, y); }); lensMX.closePath(); lensMX.fill();
+    const md = lensMX.getImageData(0, 0, bw, bh).data;
+    /* the iris' own mean lightness and brightest point (inside the opening, outside the pupil) */
+    let sL = 0, nL = 0, Ymax = 0;
+    for(let y = 0; y < bh; y++) for(let x = 0; x < bw; x++){ const q = (y*bw + x)*4, r = Math.hypot(x + bx + 0.5 - C[0], y + by + 0.5 - C[1])/R;
+      if(r > 0.95 || md[q + 3] < 128) continue; const Y = (0.299*d[q] + 0.587*d[q + 1] + 0.114*d[q + 2])/255; if(Y > Ymax) Ymax = Y;
+      if(r > 0.45 && r < 0.85){ sL += lamhaLab(d[q], d[q + 1], d[q + 2])[0]; nL++; } }
+    const Lm = nL ? sL/nL : 40;
+    /* lighter lenses lift a dark iris part of the way; the fibres' own light and dark ride on top */
+    const Lt = Lm + (LL[0] - Lm)*0.55, out = lensX.createImageData(bw, bh), o = out.data;
+    for(let y = 0; y < bh; y++) for(let x = 0; x < bw; x++){
+      const q = (y*bw + x)*4, r = Math.hypot(x + bx + 0.5 - C[0], y + by + 0.5 - C[1])/R; if(r > 1.03) continue;
+      const mk = md[q + 3]/255; if(mk < 0.02) continue;
+      const R0 = d[q], G0 = d[q + 1], B0 = d[q + 2], Y = (0.299*R0 + 0.587*G0 + 0.114*B0)/255;
+      const mx = Math.max(R0, G0, B0), mn = Math.min(R0, G0, B0), sat = mx ? (mx - mn)/mx : 0;
+      const w = lensWeight(r, Y, Ymax, sat, Lm)*mk*I; if(w < 0.01) continue;
+      const P0 = lamhaLab(R0, G0, B0), tex = (P0[0] - Lm);
+      const Lo = Math.max(2, Math.min(96, Lt + tex*1.05)), f = Math.max(0.35, Math.min(1.35, 1 + tex/60));
+      const [nr, ng, nb] = lamhaRgb(Lo, LL[1]*f, LL[2]*f);
+      o[q] = nr; o[q + 1] = ng; o[q + 2] = nb; o[q + 3] = Math.round(w*0.92*255);
+    }
+    lensO.width = bw; lensO.height = bh; lensOX.putImageData(out, 0, 0);
+    c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1; c.filter = 'none'; c.drawImage(lensO, bx, by); c.restore();
   });
-  c.restore();
 }
 
 function drawMesh(lm){
@@ -7892,14 +7961,15 @@ function euroSmooth(lm){
   }
   let dt = (now-EURO.t)/1000; EURO.t = now;
   dt = Math.min(0.1, Math.max(0.004, dt));
+  EURO.fps = EURO.fps ? EURO.fps*0.9 + 0.1/dt : 1/dt; const kF = window.LAMHA_V94 ? LAMHA_V94.smoothK(EURO.fps) : 1; EURO.kF = kF;   /* v94: low light → fewer frames → more smoothing */
   /* 1 · the pose: quick when she moves, calm when she is still */
   const aDr = 1/(1 + 1/(2*Math.PI*R_DC)/dt);
   for(let k=0;k<3;k++){
     let dv = pr[k] - RIG.p[k];
     if(k === 2){ while(dv > Math.PI) dv -= 2*Math.PI; while(dv < -Math.PI) dv += 2*Math.PI; }
     RIG.d[k] += aDr*(dv/dt - RIG.d[k]);
-    const a0 = 1/(1 + 1/(2*Math.PI*(R_MIN + (k === 2 ? R_BETA_ANG : R_BETA_POS)*Math.abs(RIG.d[k])))/dt);
-    const a = Math.max(a0, Math.min(0.9, dt*9));
+    const a0 = 1/(1 + 1/(2*Math.PI*(R_MIN*kF + (k === 2 ? R_BETA_ANG : R_BETA_POS)*Math.abs(RIG.d[k])))/dt);
+    const a = Math.max(a0, Math.min(0.9, dt*9*kF));
     RIG.p[k] += a*dv;
   }
   const c2 = Math.cos(RIG.p[2]), s2 = Math.sin(RIG.p[2]);
@@ -7913,8 +7983,8 @@ function euroSmooth(lm){
       const dx = (v-prev)/dt;
       const edx = EURO.dx[k] + aD*(dx-EURO.dx[k]);
       EURO.dx[k] = edx;
-      const a0 = 1/(1 + 1/(2*Math.PI*(E_MIN + E_BETA*Math.abs(edx)))/dt);
-      const a = Math.max(a0, Math.min(0.85, dt*7));
+      const a0 = 1/(1 + 1/(2*Math.PI*(E_MIN*kF + E_BETA*Math.abs(edx)))/dt);
+      const a = Math.max(a0, Math.min(0.85, dt*7*kF));
       EURO.x[k] = prev + a*(v-prev);
     }
     /* 3 · back to the picture with the filtered pose */
@@ -12417,6 +12487,7 @@ window.glFrame=function(lm){
   }
   gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
   if(S.compare){ window.glFaceActive=false; return; }   /* before/after: CPU owns both halves */
+  if(S._frame && S._frame.cut && !STILL){ window.glFaceActive=false; return; }   /* v94: a face cut by the frame — the CPU draws only the whole parts */
   if(!snap && !takeSnap()) return;
 
   const h=mkStateHash();
@@ -15403,6 +15474,7 @@ window.drawHairColour = function(tctx){
   if(!hs || !hs.bb || hs.n < 60) return;                           /* the model is on its way, or no hair (a hijab is clothes) */
   try{
     const lm = S.landmarks, sn = hs.snap, W = hs.W, H = hs.H, fs = faceScale(lm);
+    { const tN0 = performance.now(); if(tN0 - (HR.tLast || 0) > 600){ HR.prev = null; HR.pose = null; HR.pg = null; } HR.tLast = tN0; }   /* v94: a lost face, a pause — no stale mask */
     /* her move since the mask was read: a similarity on the outer eye corners, in source px */
     const P1 = [sn[33].x*VW, sn[33].y*VH], P2 = [sn[263].x*VW, sn[263].y*VH];
     const Q1 = [lm[33].x*VW, lm[33].y*VH], Q2 = [lm[263].x*VW, lm[263].y*VH];
@@ -15482,6 +15554,7 @@ window.drawHairColour = function(tctx){
     const ib = hrAX.createImageData(ww, wh);                        /* v77 hair: 'screen' layer (ia = 'multiply') */
     const GS = new Float32Array(N);                                 /* each cell's lift grey, laid after the loop */
     const tl0 = (() => { const n3 = parseInt(S.hairColour.slice(1), 16); return (0.299*(n3>>16&255) + 0.587*(n3>>8&255) + 0.114*(n3&255))/255; })();
+    const GF = !!window.lamhaGuided && !window.__hairNoGuide, DEF = GF ? new Uint8Array(N) : null, DEFI = GF ? new Uint8Array(N) : null;   /* v94 */
     /* v91 · steadier mask: her motion since the last frame decides how much of the last mask stays */
     const tN = performance.now(), e1 = P(lm[33]), e2 = P(lm[263]);
     const pose = { x:(e1[0] + e2[0])/2, y:(e1[1] + e2[1])/2, ang:Math.atan2(e2[1] - e1[1], e2[0] - e1[0]), d:Math.hypot(e2[0] - e1[0], e2[1] - e1[1]), t:tN };
@@ -15530,9 +15603,9 @@ window.drawHairColour = function(tctx){
       const rf = (pixL && yT > y && rr > 1 && y < m + HEp.hi) ? 1 : rr;   /* a lifted edge cell is mixed, not shine: full hue */
       const f = 0.50 + 0.50*Math.exp(-((rf - 1)*(rf - 1))/0.30);   /* depth: deep strands and shine less saturated */
       const [cr, cg, cb] = hrRgb(sh0, ss0*f, sl0);
-      if(yT < y){ const gM = Math.max(0.2, yT/Math.max(0.02, y)); ia.data[q] = ia.data[q+1] = ia.data[q+2] = gM*255; ia.data[q+3] = a*255; }
+      if(yT < y){ const gM = Math.max(0.2, yT/Math.max(0.02, y)); ia.data[q] = ia.data[q+1] = ia.data[q+2] = gM*255; ia.data[q+3] = a*255; if(DEFI) DEFI[i] = 1; }
       else if(yT > y){ GS[i] = Math.min(0.55, 1 - (1 - yT)/Math.max(0.03, 1 - y)); }
-      ic.data[q] = cr; ic.data[q+1] = cg; ic.data[q+2] = cb; ic.data[q+3] = a*255;
+      ic.data[q] = cr; ic.data[q+1] = cg; ic.data[q+2] = cb; ic.data[q+3] = a*255; if(DEF) DEF[i] = 1;
     }
     /* v77: the lift needs the cell and its neighbours to be hair — an edge cell holds skin too, and screen
        turns bright skin nearly white (the pale band at the hairline); edge cells take the hue only */
@@ -15544,6 +15617,35 @@ window.drawHairColour = function(tctx){
       if(!pixL){ td = (m + HEp.hi - Yc[i])/(HEp.hi - HEp.lo); td = td < 0 ? 0 : td > 1 ? 1 : td; if(td <= 0) continue; }   /* v77 edge: dark cells only — skin is far brighter */
       const q = i*4; ib.data[q] = ib.data[q+1] = ib.data[q+2] = GS[i]*255; ib.data[q+3] = tc*tc*(3 - 2*tc)*td*td*(3 - 2*td)*255;
     }
+    /* v94 · the edge led by her picture: the coarse mask (≤ 200 cells) upscaled and corrected by a guided filter on the
+       live frame's light, so the colour stops where her hair stops — not at a 4× blurry block. Capped, timed, reused. */
+    let GA = null, GAp = null;
+    if(GF){ try{
+      /* twice the model grid is enough to break the block (the grid is ≤ 200 cells); capped at 240 and lowered if slow */
+      const cap = Math.min(HR.gcap || 240, Math.max(ww, wh)*2), gw = Math.max(8, Math.min(rw, cap)), gh = Math.max(8, Math.round(rh*gw/rw));
+      HR.gF = (HR.gF | 0) + 1;
+      const fresh = !HR.gaC || HR.gVer !== hs.ver || HR.gF % 3 === 0 || Math.abs((HR.gRw || 0) - rw) > rw*0.08;
+      if(!fresh){ GA = HR.gaC; GAp = { dx:HR.gRx0 - rx0, dy:HR.gRy0 - ry0, w:HR.gRw, h:HR.gRh }; }   /* reused, moved with her head */
+      else {
+        const t0 = performance.now(), p = lamhaUpBilinear(A, ww, wh, gw, gh);
+        if(!HR.gC){ HR.gC = document.createElement('canvas'); HR.gX = HR.gC.getContext('2d', { willReadFrequently:true }); HR.gaC = document.createElement('canvas'); HR.gaX = HR.gaC.getContext('2d'); }
+        HR.gC.width = gw; HR.gC.height = gh; const gx = HR.gX, kk = gw/rw; gx.save(); gx.setTransform(kk, 0, 0, kk, -rx0*kk, -ry0*kk);
+        if(S.mirror){ gx.translate(cv.width, 0); gx.scale(-1, 1); gx.drawImage(SRC, cv.width - map.ox - VW*map.sx, map.oy, VW*map.sx, VH*map.sy); }
+        else gx.drawImage(SRC, map.ox, map.oy, VW*map.sx, VH*map.sy);
+        gx.restore();
+        const gd = gx.getImageData(0, 0, gw, gh).data, Ig = new Float32Array(gw*gh);
+        for(let j = 0, q = 0; j < gw*gh; j++, q += 4) Ig[j] = (0.299*gd[q] + 0.587*gd[q+1] + 0.114*gd[q+2])/255;
+        /* radius ≈ twice the upscale factor (the coarse mask's ramp), eps small; then a gentle curve drops the faint
+           tails the filter leaves on the wall (tuned in v94/gf_tune.js: edge error 2.65 → 0.62 px, soft band 10.4 → 3.9 px) */
+        const qq = lamhaGuided(Ig, p, gw, gh, Math.max(3, Math.round(2*gw/ww)), 5e-4), im = gx.createImageData(gw, gh);
+        for(let j = 0; j < gw*gh; j++){ let t = (qq[j] - 0.15)/0.70; t = t < 0 ? 0 : t > 1 ? 1 : t; im.data[j*4+3] = t*t*(3 - 2*t)*255; }
+        HR.gaC.width = gw; HR.gaC.height = gh; HR.gaX.putImageData(im, 0, 0);
+        GA = HR.gaC; GAp = { dx:0, dy:0, w:rw, h:rh }; HR.gVer = hs.ver; HR.gRx0 = rx0; HR.gRy0 = ry0; HR.gRw = rw; HR.gRh = rh;
+        HR.gms = performance.now() - t0; HR.gAvg = HR.gAvg ? HR.gAvg*0.8 + HR.gms/3*0.2 : HR.gms/3;   /* per-frame average (one run in three) */
+        if(HR.gms > 18) HR.gcap = Math.max(120, Math.round(Math.min(HR.gcap || 240, gw)*0.85));
+      }
+    }catch(e){ GA = null; HR.gErr = String(e && e.message || e); } }
+    if(GA){ for(let j = 0, q = 0; j < N; j++, q += 4){ if(DEF[j]) ic.data[q+3] = 255; if(DEFI[j]) ia.data[q+3] = 255; } }
     HR.prev = A; HR.pk = pk; HR.pg = { ww, wh, k, rx0, ry0 }; if(DB){ DB.A = A; HR.dbg = DB; }
     hrA.width = ww; hrA.height = wh; hrAX.putImageData(ia, 0, 0);
     if(!HR.bC){ HR.bC = document.createElement('canvas'); HR.bX = HR.bC.getContext('2d'); HR.bL = document.createElement('canvas'); HR.bLX = HR.bL.getContext('2d'); }
@@ -15553,6 +15655,7 @@ window.drawHairColour = function(tctx){
     const up = (dst, dX, src) => { dst.width = rw; dst.height = rh; dX.save(); dX.imageSmoothingEnabled = true;
       if(BLUR_OK) dX.filter = `blur(${Math.max(0.6, 0.5/k).toFixed(1)}px)`; dX.drawImage(src, 0, 0, ww, wh, 0, 0, rw, rh); dX.restore(); };
     up(hsL1, hsL1X, hrA); up(hsL2, hsL2X, hrC); up(HR.bL, HR.bLX, HR.bC);
+    if(GA) [[hsL1X], [hsL2X]].forEach(([xx]) => { xx.save(); xx.globalCompositeOperation = 'destination-in'; xx.imageSmoothingEnabled = true; xx.drawImage(GA, 0, 0, GA.width, GA.height, GAp.dx, GAp.dy, GAp.w, GAp.h); xx.restore(); });   /* v94 */
     /* v77 lift per pixel: the lift made opaque (screen with g at α = screen with α·g), times her darkness */
     let liftSrc = HR.bL;
     if(pixL){
@@ -15581,7 +15684,7 @@ window.drawHairColour = function(tctx){
     HR.last = { ww, wh, rat:+rat.toFixed(2), n:hs.n, grey:+(HR.grey || 0).toFixed(3) };
   }catch(e){ HR.err = String(e && e.message || e); }
 };
-window.__hairInfo = () => ({ last:HR.last, err:HR.err || null, ver:HS.ver, mv:HR.mv, keep:HR.keep });
+window.__hairInfo = () => ({ last:HR.last, err:HR.err || null, ver:HS.ver, mv:HR.mv, keep:HR.keep, guideMs:HR.gms, guideAvgMs:HR.gAvg, guideCap:HR.gcap || 240, guideErr:HR.gErr || null });
 window.__hairDbg = () => HR.dbg || null;
 window.lamhaHairSegInfo = () => ({ ver:HS.ver, n:HS.n, m:+HS.m.toFixed(3), bb:HS.bb, W:HS.W, H:HS.H });
 window.hairMaskQuality = ()=> maskQuality;
@@ -18440,7 +18543,7 @@ const sp = document.getElementById('sk-pro'); if(sp) sp.onclick = ()=>{ openShee
    ===================================================================== */
 (function(){
 'use strict';
-const VERSION = 'v93';
+const VERSION = 'v94';
 window.LAMHA_VERSION = VERSION;
 try{ if(!/ v\d+/.test(document.title)) document.title = document.title.replace('LAMHA MOBILE', 'LAMHA MOBILE '+VERSION); }catch(e){}
 const PRO = window.LAMHA_PRO;
@@ -18714,7 +18817,6 @@ function onMask(m){
 OCC.tick = function(){
   OCC._frames = (OCC._frames || 0) + 1;
   if(!OCC.on || !S.landmarks || window.__PT) return;
-  if(OCC.engine === 'init') startWorker();
   if(OCC.busy){
     /* a worker that never answers must not stall occlusion for good */
     if(WK.job && performance.now() - WK.job.t0 > 5000){
@@ -18724,6 +18826,7 @@ OCC.tick = function(){
   }
   /* makeup on — or hair colour, which takes its hair mask from these runs */
   if(!Object.keys(S.makeup).some(k=>S.makeup[k]) && !S.hairColour && !S.hijabColour && !S.wornHijab && !S.tryCut){ OCC.active = false; return; }
+  if(OCC.engine === 'init') startWorker();   /* v94: first real use (makeup or hair on) — not the first face */
   if(OCC.engine === 'init' && !STILL) return;          /* the worker is still loading */
   const now = performance.now();
   if(STILL){ if(OCC.stillKey === SRC) return; }
@@ -21533,7 +21636,7 @@ const MK = [
   { k:'lashes',    ic:'lashes',    n:T3('الرموش','Lashes','Bulu mata'),          zone:'lashes',    tabs:['sty','col'] },
   { k:'brow',      ic:'brows',     n:T3('الحواجب','Brows','Alis'),              zone:'brow',      tabs:['sty','col'] },
   { k:'lens',      ic:'lens',      n:T3('العدسات','Lenses','Lensa'),             zone:'lens',      tabs:['col'] },
-  { k:'glow',      ic:'glow',      n:T3('اللمعة','Glow','Kilau'),               zone:'glow',      tabs:['col'] },
+  { k:'glow',      ic:'glow',      n:T3('لمعة ندية','Dewy glow','Kilau lembap'), zone:'glow',      tabs:['col'] },
   { k:'hair',      ic:'hairCol',   n:T3('لون الشعر','Hair colour','Warna rambut'), zone:'hair',      tabs:['col'] }   /* v84: with the elements, not on the first screen */
 ];
 const LOOKC = [
@@ -21586,6 +21689,11 @@ const FINS = {
    a deep shade for the outer V (and the lower lash line / wing), all in one colour family so they melt together.
    A single colour still works: its trio is derived (lighter · itself · deeper). */
 const SHADOW_TRIOS = [
+  /* v94 · the palettes the testers' generation wears (soft pink, lilac, champagne, latte) */
+  { k:'softpink', n:T3('وردي ناعم','Soft pink','Pink lembut'),   c:['#F6D3DC','#E79AB3','#A64D72'] },
+  { k:'lilac',    n:T3('ليلكي','Lilac','Lilac'),                 c:['#E7DDF3','#B9A2D6','#6E4E93'] },
+  { k:'champ',    n:T3('شمبانيا ذهبي','Champagne gold','Champagne'), c:['#F4E3C3','#D6B06F','#6B4A2E'] },
+  { k:'latte',    n:T3('لاتيه','Latte','Latte'),                 c:['#EFDCCB','#C8A48A','#7A5A48'] },
   { k:'nude',     n:T3('نود دافئ','Warm nude','Nude hangat'),   c:['#EAD2BC','#C19274','#6E4A3A'] },
   { k:'rose',     n:T3('وردي موف','Rose mauve','Mawar mauve'),  c:['#F0CFCB','#C98A93','#7A4152'] },
   { k:'bronze',   n:T3('برونزي','Bronze','Perunggu'),          c:['#E9CF9E','#B98046','#5E3A22'] },
@@ -21700,12 +21808,15 @@ function colOpts(C){
   const fav = window.lamhaFav ? window.lamhaFav(zone) : null;   /* v87: her favourite first */
   if(fav){ const fi = list.findIndex(x => x.c && x.c.toLowerCase() === String(fav).toLowerCase()); if(fi > 0) list.unshift(list.splice(fi, 1)[0]); }
   let h = noneBtn('col', !cur);
+  { const nC = list.length + (C.k === 'shadow' && !S.ownedOnly ? SHADOW_TRIOS.length : 0), ar = /^ar/.test(document.documentElement.lang || 'ar');   /* v94: how many there are */
+    if(nC > 4) h += '<span class="swCount"><b>' + (ar ? nC.toLocaleString('ar-EG') : nC) + '</b>' + esc(tx(T3('ألوان · اسحبي','colours · swipe','warna · geser'))) + '</span>';
+    if(zone === 'glow') h += '<span class="stHint">' + esc(tx(T3('لمعة ندية على أعلى الوجنتين والأنف والجبهة والذقن — بشرة تبدو مرطّبة ومضيئة','A dewy sheen on the cheekbones, nose, forehead and chin — skin that looks fresh and lit','Kilau lembap di tulang pipi, hidung, dahi dan dagu'))) + '</span>'; }
   if(C.k === 'shadow' && !S.ownedOnly)   /* v86: the trios first — three shades in one chip */
     h += SHADOW_TRIOS.map(t => '<button class="stSw pan trio' + (S.shadowTrio && S.shadowTrio.join() === t.c.join() ? ' on' : '') + '" data-kind="trio" data-v="' + t.k + '" title="' + esc(tx(t.n)) +
-      '" style="background:linear-gradient(90deg,' + t.c[0] + ' 0 33%,' + t.c[1] + ' 33% 67%,' + t.c[2] + ' 67%)"></button>').join('');
+      '" style="background:linear-gradient(90deg,' + t.c[0] + ' 0 33%,' + t.c[1] + ' 33% 67%,' + t.c[2] + ' 67%)"><i class="swN">' + esc(tx(t.n)) + '</i></button>').join('');
   if(S.ownedOnly && !list.length) h += '<span class="stEmpty">' + esc(tx(T3('لا منتج من هذا النوع في خزانتك بعد — أضيفيه من «خزانتي»','Nothing of this kind in your kit yet — add it in "My kit"','Belum ada di kitmu'))) + '</span>';
   h += list.map((it, i) => '<button class="stSw' + (PANS[zone] ? ' pan' : '') + (it.own ? ' own' : '') + (fav && it.c && it.c.toLowerCase() === String(fav).toLowerCase() ? ' fav' : '') + (cur && it.c && cur.toLowerCase() === it.c.toLowerCase() ? ' on' : '') +
-    '" data-kind="col" data-i="' + i + '" style="' + swStyle(zone, it.c) + '" title="' + esc(it.n) + '"></button>').join('');
+    '" data-kind="col" data-i="' + i + '" style="' + swStyle(zone, it.c) + '" title="' + esc(it.n) + '"><i class="swN">' + esc(it.n) + '</i></button>').join('');   /* v94: the name, always */
   return h;
 }
 function styOpts(C){
@@ -21740,7 +21851,7 @@ function swatchRow(kind, recs, pal, cur, round){
   (recs || []).forEach(x => { const h = (x.hex || '').toUpperCase(); if(h && !seen[h]){ seen[h] = 1; items.push({ c:x.hex, n:x.name || x.hex, rec:1 }); } });
   (pal || []).forEach(c => { const h = c.toUpperCase(); if(!seen[h]){ seen[h] = 1; items.push({ c, n:c }); } });
   return items.map(it => '<button class="stSw' + (round ? '' : ' pan') + (it.rec ? ' rec' : '') + (cur && cur.toUpperCase() === it.c.toUpperCase() ? ' on' : '') +
-    '" data-kind="' + kind + '" data-v="' + esc(it.c) + '" title="' + esc(it.n) + '" style="background:' + it.c + '"></button>').join('');
+    '" data-kind="' + kind + '" data-v="' + esc(it.c) + '" title="' + esc(it.n) + '" style="background:' + it.c + '">' + (/^#/.test(it.n) ? '' : '<i class="swN">' + esc(it.n) + '</i>') + '</button>').join('');
 }
 function hijabColOpts(LK){
   const w = LK.wornInfo(), cur = w.style ? w.col : S.hijabColour;
@@ -22049,8 +22160,9 @@ window.drawApplyAnim = function(lm){
   if(window.lamhaTop()){
     ovDirty = true;
     try{ const fs0 = faceScale(lm);
-      if(S.makeup.lashes && zoneVisible('lashes')) drawLashes(ovx, lm, P, fs0);
-      if(S.makeup.lens && zoneVisible('lens')) drawLens(ovx, lm, P, fs0); }catch(e){}
+      const eyesIn = !(S._frame && S._frame.ok && S._frame.ok.eyes === false);   /* v94 */
+      if(S.makeup.lashes && zoneVisible('lashes') && eyesIn) drawLashes(ovx, lm, P, fs0);
+      if(S.makeup.lens && zoneVisible('lens') && eyesIn) drawLens(ovx, lm, P, fs0); }catch(e){}
   }
   return _daaPrev && _daaPrev.apply(this, arguments);
 };
@@ -23919,18 +24031,29 @@ const AI = {
   get url(){ try{ return String((window.LAMHA_PUBLISHER || {}).advisorUrl || '').trim(); }catch(e){ return ''; } },
   on(){ return /^https:\/\//.test(this.url) && (!this.failed || Date.now() - this.failed > 120000); }
 };
-function aiContext(){
-  const c = { face:!!S.landmarks };
-  try{ const sk = herSkin(); c.skin = { undertone:undertoneKey(), depth:sk ? (sk.deep ? 'deep' : sk.L > 65 ? 'light' : 'medium') : null, L:sk ? Math.round(sk.L) : null }; }catch(e){}
-  try{ const p = S.pro && S.pro.skin; if(p) c.skin = Object.assign(c.skin || {}, { type:p.skinType || null, darkCircles:p.darkType || null, darkGrade:p.darkGrade || null,
-    youthIndex:p.youth || null, monk:(S.engineSkin && S.engineSkin.monk) || null }); }catch(e){}
-  try{ c.faceShape = S.shapeKnown ? shapeName() : null; }catch(e){}
-  try{ const w = {}; Object.keys(S.makeup || {}).forEach(z => { if(S.makeup[z]) w[z] = { colour:S.makeup[z], strength:Math.round((S.ints[z] ?? .5)*100) + '%', finish:S.fins[z] || 'matte' }; }); c.wearing = w; }catch(e){}
-  try{ c.kit = (S.kit || []).slice(0, 25).map(it => ({ name:it.name, brand:it.brand || '', type:it.type, shade:it.shade || null, opened:it.opened || null, level:it.level || null, status:kitStatus(it) })); }catch(e){}
-  try{ if(S.landmarks && window.lamhaCoach){ const z = ctx.zone || S.zone; if(z) c.coach = { zone:z, note:lamhaCoach(z) || '' }; } }catch(e){}
-  try{ c.hairColour = S.hairColour || null; c.hijabColour = S.hijabColour || null; }catch(e){}
-  return c;
+/* v94 · an ALLOW-list, built field by field: nothing measured from her face, no brand she owns, no date, no id
+   leaves the phone. A field added to the app's state later cannot leak — it is simply not named here. */
+const AI_ALLOWED = ['lang', 'tone', 'wearingZones', 'kitCount', 'hasFace', 'coachZone'];
+function aiGuard(o, allowed){
+  allowed = allowed || AI_ALLOWED;
+  Object.keys(o).forEach(k => { if(allowed.indexOf(k) < 0) throw new Error('aiContext: field not allowed: ' + k); });
+  const rest = Object.assign({}, o); delete rest.kitCount;
+  if(/\d/.test(JSON.stringify(rest))) throw new Error('aiContext: a measured number');
+  if('kitCount' in o && !(Number.isInteger(o.kitCount) && o.kitCount >= 0 && o.kitCount < 1000)) throw new Error('aiContext: kitCount');
+  return o;
 }
+function aiContext(){
+  const out = {};
+  try{ out.lang = String(lang()).replace(/[^a-z]/g, ''); }catch(e){}
+  try{ const sk = herSkin(), d = sk ? (sk.deep ? 'deep' : sk.L > 65 ? 'light' : 'medium') : null, u = String(undertoneKey() || '').replace(/[^a-z]/gi, '');
+       if(d) out.tone = d + (u ? '-' + u : ''); }catch(e){}
+  try{ out.wearingZones = Object.keys(S.makeup || {}).filter(z => S.makeup[z] && /^[a-z]+$/i.test(z)); }catch(e){}
+  try{ out.kitCount = (S.kit || []).length | 0; }catch(e){}
+  out.hasFace = !!S.landmarks;
+  try{ if(S.landmarks){ const z = ctx.zone || S.zone; if(z && /^[a-z]+$/i.test(z)) out.coachZone = z; } }catch(e){}
+  return aiGuard(out);
+}
+window.__aiContext = aiContext; window.__aiGuard = aiGuard;
 async function askAI(hint){
   if(!AI.noted){ AI.noted = true; note(C('aiNote')); }
   typing(true);
@@ -27282,5 +27405,165 @@ root.LAMHA_MOMENTS.ask = ask; root.LAMHA_MOMENTS.show = showMoment; root.LAMHA_M
 
 </script>
 <!-- /LAMHA V88 DOCK -->
+<!-- LAMHA V94 -->
+<style id="lamha-v94-css">
+/* v94 · every colour carries its name; the row says how many there are; the frame guide; the phone upright */
+html .stOpts{padding-bottom:24px;align-items:flex-start}
+html .stSw{overflow:visible}
+html .stSw .swN{position:absolute;top:calc(100% + 5px);left:50%;transform:translateX(-50%);width:62px;text-align:center;
+  font:500 10px/1.2 "IBM Plex Sans Arabic",system-ui,sans-serif;font-style:normal;color:#6B4452;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+html .stSw.on .swN{color:var(--red,#C8324F);font-weight:700}
+html .stSw{box-shadow:0 0 0 3px #fff,0 0 0 4px rgba(94,16,39,.18),0 3px 8px rgba(94,16,39,.25)}
+html .swCount{flex:0 0 auto;align-self:center;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;min-width:46px;padding:4px 6px;
+  border-radius:12px;background:#FBE9ED;color:#7E1D3B;font:600 11px/1.25 "IBM Plex Sans Arabic",system-ui,sans-serif;text-align:center}
+html .swCount b{font:700 16px/1 "IBM Plex Sans Arabic",system-ui,sans-serif}
+html .stHint{flex:0 0 auto;align-self:center;max-width:210px;font-size:11.5px;line-height:1.5;color:#7A5563;white-space:normal;padding:0 4px}
+
+#frameOval{position:absolute;inset:0;z-index:5;pointer-events:none;opacity:0;transition:opacity .3s}
+#frameOval svg{width:100%;height:100%}
+#frameOval ellipse{fill:none;stroke-width:3;stroke:#FF8FA5;stroke-dasharray:10 8}
+#frameOval.bad{opacity:.95}
+#frameOval.good{opacity:.95}
+#frameOval.good ellipse{stroke:#E2B878;stroke-dasharray:none}
+#rotateNote{position:fixed;top:calc(env(safe-area-inset-top,0px) + 12px);left:50%;transform:translateX(-50%);z-index:99;display:none;
+  max-width:88vw;padding:9px 16px;border-radius:14px;background:#5E1027;color:#F2D3A0;font:600 13px/1.5 "IBM Plex Sans Arabic",system-ui,sans-serif;text-align:center;
+  box-shadow:0 8px 20px rgba(0,0,0,.3)}
+#rotateNote.on{display:block}
+@media (prefers-reduced-motion:reduce){ #frameOval{transition:none} }
+</style>
+<script>
+/* v94 · fixes from four testers (lamha-all-fixes.md): framing guard, guided hair edge, Lab helpers,
+   light honesty, the phone held upright. Pure functions first (tested in node), then the app glue. */
+(function(root){
+
+/* ---------- Lab ↔ sRGB (0..255), fast enough for per-pixel iris work ---------- */
+const LIN = new Float32Array(256);
+for(let i = 0; i < 256; i++){ const v = i/255; LIN[i] = v <= 0.04045 ? v/12.92 : Math.pow((v + 0.055)/1.055, 2.4); }
+function lab(r, g, b){
+  const R = LIN[r|0], G = LIN[g|0], B = LIN[b|0];
+  const X = (0.4124*R + 0.3576*G + 0.1805*B)/0.95047, Y = 0.2126*R + 0.7152*G + 0.0722*B, Z = (0.0193*R + 0.1192*G + 0.9505*B)/1.08883;
+  const f = t => t > 0.008856 ? Math.cbrt(t) : 7.787*t + 16/116, fx = f(X), fy = f(Y), fz = f(Z);
+  return [116*fy - 16, 500*(fx - fy), 200*(fy - fz)];
+}
+function rgb(L, a, b){
+  const fy = (L + 16)/116, fx = fy + a/500, fz = fy - b/200;
+  const g = t => t > 0.206893 ? t*t*t : (t - 16/116)/7.787;
+  const X = g(fx)*0.95047, Y = g(fy), Z = g(fz)*1.08883;
+  const e = v => { v = v <= 0.0031308 ? 12.92*v : 1.055*Math.pow(Math.max(0, v), 1/2.4) - 0.055; return v < 0 ? 0 : v > 1 ? 255 : v*255; };
+  return [e(3.2406*X - 1.5372*Y - 0.4986*Z), e(-0.9689*X + 1.8758*Y + 0.0415*Z), e(0.0557*X - 0.2040*Y + 1.0570*Z)];
+}
+
+/* ---------- 3 · is the whole face in the frame? (display pixels) ---------- */
+/* groups: { oval:[[x,y]…], eyes:[…], brows:[…], lips:[…], nose:[…] } in the canvas' own pixels */
+function faceFraming(groups, W, H){
+  const M = 0.02, inside = pts => pts.every(([x, y]) => x >= M*W && x <= (1 - M)*W && y >= M*H && y <= (1 - M)*H);
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  groups.oval.forEach(([x, y]) => { if(x < x0) x0 = x; if(x > x1) x1 = x; if(y < y0) y0 = y; if(y > y1) y1 = y; });
+  const cut = x0 < M*W || y0 < M*H || x1 > (1 - M)*W || y1 > (1 - M)*H;
+  const fw = (x1 - x0)/W, fh = (y1 - y0)/H;
+  const ok = { full: !cut, eyes: inside(groups.eyes), brows: inside(groups.brows), lips: inside(groups.lips), nose: inside(groups.nose) };
+  return { cut, side: x0 < M*W ? 'start' : x1 > (1 - M)*W ? 'end' : y0 < M*H ? 'top' : y1 > (1 - M)*H ? 'bottom' : null,
+           tooClose: fw > 0.80 || fh > 0.88, tooFar: fw < 0.28, ok, fw:+fw.toFixed(3), fh:+fh.toFixed(3) };
+}
+
+/* ---------- 4 · guided filter (He et al.): the camera picture leads, the coarse mask follows ---------- */
+/* separable running-sum box mean (edge windows divided by their true size); buffers reused between frames */
+const GB = { n:0 };
+function bufs(N, W, H){
+  if(GB.n !== N || GB.W !== W){ GB.n = N; GB.W = W; GB.H = H; ['t','mI','mp','mIp','mII','a','b','q'].forEach(k => GB[k] = new Float32Array(N)); }
+  return GB;
+}
+const INV = {};
+function invCounts(n, r){ const k = n + ':' + r; if(INV[k]) return INV[k]; const a = new Float32Array(n);
+  for(let i = 0; i < n; i++) a[i] = 1/(Math.min(n - 1, i + r) - Math.max(0, i - r) + 1); return (INV[k] = a); }
+function boxMean(src, W, H, r, out, tmp){
+  tmp = tmp || new Float32Array(W*H);
+  const ix = invCounts(W, r), iy = invCounts(H, r), e = Math.min(W - 1, r);
+  for(let y = 0; y < H; y++){ const o = y*W; let acc = 0;                      /* rows: a running sum */
+    for(let x = 0; x <= e; x++) acc += src[o + x];
+    for(let x = 0; x < W; x++){ tmp[o + x] = acc*ix[x]; if(x + r + 1 < W) acc += src[o + x + r + 1]; if(x - r >= 0) acc -= src[o + x - r]; } }
+  const col = (GB.col && GB.col.length === W) ? GB.col.fill(0) : (GB.col = new Float32Array(W));   /* columns: row-wise accumulators */
+  for(let y = 0; y <= Math.min(H - 1, r); y++){ const o = y*W; for(let x = 0; x < W; x++) col[x] += tmp[o + x]; }
+  for(let y = 0; y < H; y++){ const o = y*W, k = iy[y];
+    for(let x = 0; x < W; x++) out[o + x] = col[x]*k;
+    if(y + r + 1 < H){ const a = (y + r + 1)*W; for(let x = 0; x < W; x++) col[x] += tmp[a + x]; }
+    if(y - r >= 0){ const s = (y - r)*W; for(let x = 0; x < W; x++) col[x] -= tmp[s + x]; } }
+  return out;
+}
+function guidedFilter(I, p, W, H, r, eps){
+  const N = W*H, B = bufs(N, W, H), mI = B.mI, mp = B.mp, mIp = B.mIp, mII = B.mII, a = B.a, b = B.b, t = B.t;
+  for(let i = 0; i < N; i++){ a[i] = I[i]*p[i]; b[i] = I[i]*I[i]; }
+  boxMean(I, W, H, r, mI, t); boxMean(p, W, H, r, mp, t); boxMean(a, W, H, r, mIp, t); boxMean(b, W, H, r, mII, t);
+  for(let i = 0; i < N; i++){ const v = mII[i] - mI[i]*mI[i], c = mIp[i] - mI[i]*mp[i], ai = c/(v + eps); a[i] = ai; b[i] = mp[i] - ai*mI[i]; }
+  boxMean(a, W, H, r, mIp, t); boxMean(b, W, H, r, mII, t);
+  const q = new Float32Array(N);
+  for(let i = 0; i < N; i++){ const v = mIp[i]*I[i] + mII[i]; q[i] = v < 0 ? 0 : v > 1 ? 1 : v; }
+  return q;
+}
+/* bilinear upscale of a coarse grid (ww×wh) to W×H */
+function upBilinear(A, ww, wh, W, H){
+  const out = new Float32Array(W*H), sx = ww/W, sy = wh/H;
+  for(let y = 0; y < H; y++){ const fy = Math.max(0, Math.min(wh - 1, (y + 0.5)*sy - 0.5)), y0 = fy|0, y1 = Math.min(wh - 1, y0 + 1), ty = fy - y0;
+    for(let x = 0; x < W; x++){ const fx = Math.max(0, Math.min(ww - 1, (x + 0.5)*sx - 0.5)), x0 = fx|0, x1 = Math.min(ww - 1, x0 + 1), tx = fx - x0;
+      out[y*W + x] = (A[y0*ww + x0]*(1 - tx) + A[y0*ww + x1]*tx)*(1 - ty) + (A[y1*ww + x0]*(1 - tx) + A[y1*ww + x1]*tx)*ty; } }
+  return out;
+}
+
+/* ---------- 8 · smoothing that deepens when the camera slows (the filter's design untouched) ---------- */
+const smoothK = fps => Math.max(0.45, Math.min(1, fps/22));
+
+const V94 = { lab, rgb, faceFraming, guidedFilter, boxMean, upBilinear, smoothK };
+root.LAMHA_V94 = V94; root.lamhaLab = lab; root.lamhaRgb = rgb; root.lamhaGuided = guidedFilter; root.lamhaUpBilinear = upBilinear;
+if(typeof module !== 'undefined' && module.exports){ module.exports = V94; return; }
+if(typeof document === 'undefined') return;
+
+/* ================= app glue ================= */
+const T = (a, e, i) => { const L = (document.documentElement.lang || 'ar').slice(0, 2); return L === 'en' ? e : L === 'id' ? i : a; };
+const MSG = {
+  cut:      () => T('جزء من وجهكِ خارج الإطار — ابتعدي قليلاً', 'Part of your face is outside the frame — move back a little', 'Sebagian wajahmu di luar bingkai — mundur sedikit'),
+  tooClose: () => T('أنتِ قريبة جداً — ابتعدي قليلاً', 'You are very close — move back a little', 'Terlalu dekat — mundur sedikit'),
+  tooFar:   () => T('اقتربي أكثر من الكاميرا', 'Come a little closer to the camera', 'Mendekatlah ke kamera'),
+  rotate:   () => T('أديري الهاتف عمودياً — المرآة أدقّ هكذا', 'Turn the phone upright — the mirror is more precise that way', 'Putar ponsel tegak — cermin lebih tepat'),
+  dark:     () => T('الإضاءة ضعيفة، لذلك تهتزّ الصورة — ليس عطلاً في التطبيق. واجهي نافذة أو مصباحاً', 'The light is low, so the picture shakes — it is not a fault in the app. Face a window or a lamp', 'Cahaya redup, jadi gambar bergetar — bukan kesalahan aplikasi. Hadapkan wajah ke jendela atau lampu')
+};
+/* the oval that turns gold when the whole face is in */
+const ov = document.createElement('div'); ov.id = 'frameOval'; ov.setAttribute('aria-hidden', 'true');
+ov.innerHTML = '<svg viewBox="0 0 100 100" preserveAspectRatio="none"><ellipse cx="50" cy="46" rx="33" ry="36" vector-effect="non-scaling-stroke"/></svg>';
+(document.getElementById('stage') || document.body).appendChild(ov);
+const rot = document.createElement('div'); rot.id = 'rotateNote'; rot.setAttribute('role', 'status');
+document.body.appendChild(rot);
+const F = { bad:null, badT:0, sayT:0, okT:0, lightT:0, camT:0, lightShown:false };
+const live = () => typeof STILL !== 'undefined' && !STILL && typeof S !== 'undefined' && S.running;
+root.lamhaFrameTick = function(lm){
+  if(!lm || typeof P !== 'function' || typeof cv === 'undefined' || !cv.width) return;
+  const g = ix => ix.map(i => P(lm[i]));
+  const fr = faceFraming({ oval:g(L.faceOval), eyes:g(L.eyeUpL.concat(L.eyeLoL, L.eyeUpR, L.eyeLoR)), brows:g(L.browUpL.concat(L.browUpR)),
+    lips:g(L.lipsOuter), nose:g([1, 4, 5, 48, 278, 98, 327, 195, 6]) }, cv.width, cv.height);
+  S._frame = live() ? fr : null;
+  const now = performance.now(), bad = !S._frame ? null : fr.cut ? 'cut' : fr.tooClose ? 'tooClose' : fr.tooFar ? 'tooFar' : null;
+  if(bad !== F.bad){ F.bad = bad; F.badT = now; if(!bad) F.okT = now; }
+  const calm = !document.querySelector('.sheet.open') && !(S.tourOn) && !document.body.classList.contains('lmHome');
+  ov.classList.toggle('bad', !!bad && calm);
+  ov.classList.toggle('good', !bad && calm && now - F.okT < 1400 && F.okT > 0 && live());
+  if(bad && calm && now - F.badT > 700 && now - F.sayT > 5000 && typeof say === 'function'){ F.sayT = now; say(MSG[bad](), 3200); }
+  /* light: measured as soon as the mirror opens, and said honestly */
+  if(live()){
+    if(!F.camT) F.camT = now;
+    try{ if(typeof updateLight === 'function') updateLight(); }catch(e){}
+    const dark = S.light && S.light.state === 'dark';
+    if(dark && now - F.camT > 1200 && now - F.lightT > (F.lightShown ? 45000 : 0) && typeof say === 'function' && !bad){ F.lightT = now; F.lightShown = true; say(MSG.dark(), 7000); }
+  } else F.camT = 0;
+};
+/* the phone held sideways */
+function orient(){
+  const phone = typeof ON_PHONE !== 'undefined' ? ON_PHONE : /Android|iPhone|iPad/i.test(navigator.userAgent);
+  const side = phone && innerWidth > innerHeight;
+  rot.textContent = side ? MSG.rotate() : ''; rot.classList.toggle('on', side);
+}
+addEventListener('resize', orient); addEventListener('orientationchange', () => setTimeout(orient, 250)); orient();
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<!-- /LAMHA V94 -->
 </body>
 </html>
