@@ -68,6 +68,1339 @@ window.addEventListener('unhandledrejection', function(e){
   window.__errBox.push('[promise] ' + (e.reason && (e.reason.message||e.reason)));
 });
 </script>
+<script>/* === lamha-rules.js v1.0 (inlined) === */
+/* =============================================================================
+ * lamha-rules.js  —  v1.0
+ * محرك قواعد المكياج للمحة / Lamha makeup rules engine
+ *
+ * المصدر: تسع صفحات إرشادية لخبيرة مكياج (نهى جمال) — استُخرجت منها القواعد
+ * فقط (الحقائق غير محمية بحق المؤلف)، ولم يُنقل نص أو تصميم.
+ * كل انحراف عن المصدر موثّق في LAMHA_RULES.sourceReview مع السبب.
+ *
+ * يُضمَّن داخل ملف HTML واحد ككتلة سكربت، قبل الجسر.
+ * مثال نداء: LAMHA_RULES.pickCorrector مع اسم المشكلة وعمق البشرة.
+ * ============================================================================= */
+
+(function (root) {
+  'use strict';
+
+  /* ---------------------------------------------------------------------------
+   * 0) معايرة — كل عتبة قابلة للضبط على صور حقيقية قبل الإطلاق
+   * ------------------------------------------------------------------------- */
+  var CALIBRATION = {
+    // زاوية اللون في فضاء CIELAB لتصنيف الأندرتون (درجة)
+    undertoneHueCoolMax: 48,      // أقل من هذا = بارد
+    undertoneHueWarmMin: 58,      // أكثر من هذا = دافئ
+    undertoneConfidenceSpan: 10,  // مدى التدرج لحساب الثقة
+    // عتبات كشف مشكلة اللون في منطقة مقابل البشرة المحيطة
+    deltaARedness: 4.0,           // +a* = احمرار
+    deltaBCast: 3.5,              // -b* = ميل أزرق/بنفسجي، +b* = اصفرار
+    deltaLDarkCircle: -6.0,       // انخفاض الإضاءة = هالة
+    // فرق الإضاءة المسموح بين الوجه والرقبة قبل التنبيه على الدرجة
+    faceNeckDeltaL: 5.0,
+    // تصنيف عمق البشرة من L*
+    depthFairMinL: 62,
+    depthDeepMaxL: 45
+  };
+
+  /* ---------------------------------------------------------------------------
+   * 1) الأندرتون — بديل مُقاس لاختبار العروق (انظر sourceReview #1)
+   * ------------------------------------------------------------------------- */
+  var UNDERTONE = {
+    warm: {
+      label: { ar: 'دافئ', en: 'Warm', id: 'Hangat' },
+      lipShades: {
+        ar: ['خوخي', 'نود بيج', 'أحمر مائل للبرتقالي', 'بني دافئ'],
+        en: ['Peach', 'Beige nude', 'Orange-red', 'Warm brown'],
+        id: ['Peach', 'Nude beige', 'Merah oranye', 'Cokelat hangat']
+      },
+      metal: { ar: 'الذهبي', en: 'Gold', id: 'Emas' }
+    },
+    cool: {
+      label: { ar: 'بارد', en: 'Cool', id: 'Dingin' },
+      lipShades: {
+        ar: ['وردي', 'نود وردي', 'أحمر روبي', 'موف وتوتي'],
+        en: ['Pink', 'Pink nude', 'Ruby red', 'Mauve & berry'],
+        id: ['Pink', 'Nude pink', 'Merah ruby', 'Mauve & berry']
+      },
+      metal: { ar: 'الفضي', en: 'Silver', id: 'Perak' }
+    },
+    neutral: {
+      label: { ar: 'محايد', en: 'Neutral', id: 'Netral' },
+      lipShades: {
+        ar: ['الموف المتوازن', 'النود المتوازن', 'معظم الدرجات تليق'],
+        en: ['Balanced mauve', 'Balanced nude', 'Most shades work'],
+        id: ['Mauve seimbang', 'Nude seimbang', 'Hampir semua cocok']
+      },
+      metal: { ar: 'الاثنان', en: 'Both', id: 'Keduanya' }
+    }
+  };
+
+  var DEPTH = {
+    fair: {
+      label: { ar: 'فاتحة', en: 'Fair', id: 'Cerah' },
+      lipShades: {
+        ar: ['وردي فاتح', 'خوخي', 'كورال', 'نود فاتح'],
+        en: ['Soft pink', 'Peach', 'Coral', 'Light nude'],
+        id: ['Pink lembut', 'Peach', 'Coral', 'Nude terang']
+      }
+    },
+    medium: {
+      label: { ar: 'حنطية / زيتونية', en: 'Medium / olive', id: 'Sawo matang' },
+      lipShades: {
+        ar: ['كراميل', 'موف', 'روز جولد', 'أحمر دافئ'],
+        en: ['Caramel', 'Mauve', 'Rose gold', 'Warm red'],
+        id: ['Karamel', 'Mauve', 'Rose gold', 'Merah hangat']
+      }
+    },
+    deep: {
+      label: { ar: 'سمراء / داكنة', en: 'Deep', id: 'Gelap' },
+      lipShades: {
+        ar: ['توتي غامق', 'شوكولاتة', 'عنابي', 'أحمر مخملي'],
+        en: ['Deep berry', 'Chocolate', 'Wine', 'Velvet red'],
+        id: ['Berry pekat', 'Cokelat', 'Maroon', 'Merah beludru']
+      }
+    }
+  };
+
+  /* ---------------------------------------------------------------------------
+   * 2) مصححات الألوان — عجلة الألوان (القاعدة الأصح في كل المصدر)
+   * ------------------------------------------------------------------------- */
+  var CORRECTORS = [
+    {
+      key: 'green',
+      swatch: '#8FC07C',
+      name: { ar: 'المصحح الأخضر', en: 'Green corrector', id: 'Korektor hijau' },
+      targets: ['redness', 'acne_marks', 'rosacea', 'spider_veins'],
+      depth: ['fair', 'medium', 'deep'],
+      text: {
+        ar: 'يعادل الاحمرار الناتج عن حب الشباب والتهيج والأوردة الدقيقة.',
+        en: 'Neutralises redness from acne, irritation and visible capillaries.',
+        id: 'Menetralkan kemerahan akibat jerawat, iritasi dan pembuluh halus.'
+      }
+    },
+    {
+      key: 'peach',
+      swatch: '#F3A183',
+      name: { ar: 'المصحح الخوخي', en: 'Peach corrector', id: 'Korektor peach' },
+      targets: ['dark_circles'],
+      depth: ['fair', 'medium'],
+      text: {
+        ar: 'يخفف الهالات الزرقاء والبنفسجية على البشرة الفاتحة إلى المتوسطة.',
+        en: 'Softens blue/purple dark circles on fair to medium skin.',
+        id: 'Menyamarkan lingkaran hitam kebiruan pada kulit cerah hingga sedang.'
+      }
+    },
+    {
+      key: 'orange',
+      swatch: '#E4762C',
+      name: { ar: 'المصحح البرتقالي', en: 'Orange corrector', id: 'Korektor oranye' },
+      targets: ['dark_circles', 'hyperpigmentation'],
+      depth: ['medium', 'deep'],
+      text: {
+        ar: 'يعادل الدرجات الزرقاء والبنفسجية الداكنة على البشرة المتوسطة إلى الداكنة.',
+        en: 'Cancels deep blue/purple tones on medium to deep skin.',
+        id: 'Menetralkan warna biru/ungu pekat pada kulit sedang hingga gelap.'
+      }
+    },
+    {
+      key: 'yellow',
+      swatch: '#F0C24A',
+      name: { ar: 'المصحح الأصفر', en: 'Yellow corrector', id: 'Korektor kuning' },
+      targets: ['mild_purple', 'uneven_tone'],
+      depth: ['fair', 'medium', 'deep'],
+      text: {
+        ar: 'يعادل الدرجات الزرقاء والبنفسجية الخفيفة ويوازن بعض التصبغات.',
+        en: 'Balances mild blue/purple tones and light discolouration.',
+        id: 'Menyeimbangkan warna kebiruan ringan dan meratakan warna kulit.'
+      }
+    },
+    {
+      key: 'lavender',
+      swatch: '#B29AD6',
+      name: { ar: 'المصحح البنفسجي', en: 'Lavender corrector', id: 'Korektor lavender' },
+      targets: ['sallowness', 'dullness'],
+      depth: ['fair', 'medium'],
+      text: {
+        ar: 'يعادل الاصفرار ويعطي البشرة الباهتة إشراقًا.',
+        en: 'Neutralises sallow yellow tones and revives dull skin.',
+        id: 'Menetralkan warna kusam kekuningan dan mencerahkan kulit.'
+      }
+    }
+  ];
+
+  var CORRECTOR_USAGE = {
+    ar: [
+      'الترتيب الكلاسيكي: المصحح قبل الكونسيلر وكريم الأساس.',
+      'بديل محترف: طبقة خفيفة من الأساس أولًا، ثم المصحح على ما ظهر فقط — يقلل الكمية.',
+      'كمية صغيرة على المنطقة المستهدفة فقط، وإلا ثقلت طبقات المكياج.'
+    ],
+    en: [
+      'Classic order: corrector before concealer and foundation.',
+      'Pro alternative: thin foundation layer first, corrector only on what still shows.',
+      'Small amount, target area only — excess makes the whole face look heavy.'
+    ],
+    id: [
+      'Urutan klasik: korektor sebelum concealer dan foundation.',
+      'Alternatif pro: foundation tipis dulu, korektor hanya di area yang masih terlihat.',
+      'Pakai sedikit saja pada area target agar makeup tidak terasa berat.'
+    ]
+  };
+
+  /* ---------------------------------------------------------------------------
+   * 3) كريم الأساس — تحضير، اختبار الدرجة، التطبيق، التثبيت
+   * ------------------------------------------------------------------------- */
+  var FOUNDATION = {
+    prep: [
+      {
+        key: 'cleanse',
+        ar: 'اغسلي الوجه بغسول لطيف ونظّفي البشرة.',
+        en: 'Cleanse with a gentle wash.',
+        id: 'Bersihkan wajah dengan pembersih lembut.'
+      },
+      {
+        key: 'moisturize',
+        ar: 'مرطب مناسب لنوع بشرتك، وانتظري من دقيقة إلى ثلاث حتى يمتصه الجلد.',
+        en: 'Moisturiser suited to your skin type; wait 1–3 minutes for absorption.',
+        id: 'Pelembap sesuai jenis kulit; tunggu 1–3 menit sampai meresap.',
+        note: 'المصدر قال دقيقة واحدة — الصحيح 1–3 دقائق (انظر sourceReview #7).'
+      },
+      {
+        key: 'primer',
+        ar: 'برايمر عند الحاجة: مطفي للدهنية، مرطب للجافة.',
+        en: 'Primer if needed: mattifying for oily, hydrating for dry.',
+        id: 'Primer bila perlu: matte untuk berminyak, melembapkan untuk kering.'
+      }
+    ],
+    shadeTest: {
+      where: { ar: 'على خط الفك', en: 'Along the jawline', id: 'Di garis rahang' },
+      neverOn: { ar: 'ظهر اليد', en: 'Back of the hand', id: 'Punggung tangan' },
+      light: { ar: 'إضاءة طبيعية', en: 'Natural daylight', id: 'Cahaya alami' },
+      waitSeconds: 300,
+      ar: 'ضعي الدرجة على خط الفك في ضوء طبيعي، وانتظري 5–10 دقائق قبل الحكم: زيوت البشرة وحموضتها تغيّر لون الصبغة (الأوكسدة).',
+      en: 'Swatch on the jawline in daylight and wait 5–10 minutes before judging — skin oils and pH shift the pigment (oxidation).',
+      id: 'Coba di garis rahang dengan cahaya alami, tunggu 5–10 menit sebelum menilai — minyak dan pH kulit mengubah warna (oksidasi).'
+    },
+    application: [
+      {
+        key: 'build',
+        ar: 'ابدئي بكمية قليلة وزيدي تدريجيًا حسب التغطية المطلوبة.',
+        en: 'Start with a small amount and build gradually.',
+        id: 'Mulai sedikit lalu tambah bertahap.'
+      },
+      {
+        key: 'tap',
+        ar: 'ادمجي بإسفنجة مبللة أو فرشاة بحركات تربيت، لا سحب.',
+        en: 'Blend with a damp sponge or brush — tap, do not drag.',
+        id: 'Baurkan dengan spons lembap atau kuas — tepuk, jangan disapu.'
+      },
+      {
+        key: 'press_pores',
+        ar: 'على المسام الواسعة: اضغطي ولا تمسحي، خصوصًا بعد البودرة.',
+        en: 'Over large pores: press, do not sweep — especially after powder.',
+        id: 'Di area pori besar: tekan, jangan disapu — terutama setelah bedak.'
+      },
+      {
+        key: 'warm_product',
+        ar: 'دفّئي المنتج بين أصابعك ثوانٍ قبل وضعه؛ يندمج أفضل مع البشرة.',
+        en: 'Warm the product between your fingers first — it melts into skin better.',
+        id: 'Hangatkan produk di jari sebentar agar menyatu lebih baik.'
+      }
+    ],
+    setting: {
+      ar: 'بودرة خفيفة للتثبيت في المناطق التي تلمع فقط، ومن غير إفراط لو بشرتك جافة.',
+      en: 'Light setting powder on shine-prone areas only; go sparingly on dry skin.',
+      id: 'Bedak tipis hanya di area yang mudah berminyak; sedikit saja untuk kulit kering.'
+    }
+  };
+
+  /* ---------------------------------------------------------------------------
+   * 4) البودرة — سائبة مقابل مضغوطة
+   * ------------------------------------------------------------------------- */
+  var POWDER = {
+    loose: {
+      name: { ar: 'اللوس باودر', en: 'Loose powder', id: 'Bedak tabur' },
+      bestFor: ['setting', 'reduce_shine', 'under_eye', 'long_wear'],
+      skinTypes: ['oily', 'combination', 'dry_sparingly'],
+      pros: {
+        ar: ['تثبيت أقوى وأطول', 'ممتازة تحت العين', 'لمسة مات خفيفة'],
+        en: ['Stronger, longer hold', 'Excellent under the eye', 'Soft matte finish'],
+        id: ['Tahan lebih lama', 'Bagus untuk area bawah mata', 'Hasil matte lembut']
+      },
+      warning: {
+        ar: 'انتبهي للانعكاس الأبيض في التصوير بالفلاش مع التركيبات الغنية بالسيليكا أو التلك — مهم للأعراس والتصوير.',
+        en: 'Watch for white flashback in flash photography with silica/talc-heavy formulas — critical for weddings and shoots.',
+        id: 'Waspadai flashback putih saat difoto dengan flash pada formula kaya silika/talk — penting untuk pernikahan dan pemotretan.',
+        source: 'غائبة تمامًا عن المصدر (انظر sourceReview #3).'
+      }
+    },
+    compact: {
+      name: { ar: 'الكومباكت باودر', en: 'Compact powder', id: 'Bedak padat' },
+      bestFor: ['touch_up', 'portability', 'extra_coverage'],
+      skinTypes: ['oily', 'combination', 'dry', 'normal'],
+      pros: {
+        ar: ['للتعديلات السريعة خلال اليوم', 'عملية في الشنطة والسفر', 'تغطية خفيفة وحدها'],
+        en: ['Quick touch-ups through the day', 'Travel and handbag friendly', 'Light coverage on its own'],
+        id: ['Untuk retouch cepat', 'Praktis dibawa', 'Coverage ringan tanpa foundation']
+      },
+      formulaRule: {
+        ar: 'تركيبة مرطبة للبشرة الجافة، ومات للدهنية.',
+        en: 'Hydrating formula for dry skin, matte for oily.',
+        id: 'Formula melembapkan untuk kulit kering, matte untuk berminyak.'
+      }
+    }
+  };
+
+  /* ---------------------------------------------------------------------------
+   * 5) الحواجب — اللون، التركيبة، الكثافة، والوضوء
+   * ------------------------------------------------------------------------- */
+  var BROWS = {
+    byHairColor: {
+      light: {
+        ar: 'اختاري درجة أغمق قليلًا من لون شعرك.',
+        en: 'Go one shade darker than your hair.',
+        id: 'Pilih satu tingkat lebih gelap dari warna rambut.'
+      },
+      dark: {
+        ar: 'اختاري درجة إلى درجتين أفتح من شعرك حتى تبدو النتيجة طبيعية لا حادة.',
+        en: 'Go one to two shades lighter than your hair for a natural, non-harsh result.',
+        id: 'Pilih satu sampai dua tingkat lebih terang agar hasilnya natural.'
+      }
+    },
+    bySkinTone: {
+      fair: {
+        ar: 'البُني الفاتح والرمادي الهادئ.',
+        en: 'Soft taupe and ash tones.',
+        id: 'Taupe lembut dan abu-abu.'
+      },
+      medium: {
+        ar: 'البني الداكن أو الشوكولاتة.',
+        en: 'Dark brown or chocolate.',
+        id: 'Cokelat tua atau cokelat pekat.'
+      },
+      deep: {
+        ar: 'البني الداكن أو الشوكولاتة، وتجنّبي الأسود الصريح لأنه يعطي شكلًا قاسيًا.',
+        en: 'Dark brown or chocolate; avoid true black, which reads harsh.',
+        id: 'Cokelat tua atau cokelat pekat; hindari hitam pekat karena terlihat keras.'
+      }
+    },
+    bySkinType: {
+      oily: {
+        ar: 'الجل أو الأقلام المقاومة للماء — ثبات أعلى وسيلان أقل.',
+        en: 'Gel or waterproof pencils — better hold, less slipping.',
+        id: 'Gel atau pensil waterproof — lebih tahan lama.'
+      },
+      dry: {
+        ar: 'البودرة أو الماسكرا اللينة تعطي شكلًا أنعم.',
+        en: 'Powder or soft brow mascara gives a softer look.',
+        id: 'Bedak alis atau maskara alis memberi hasil lebih lembut.'
+      },
+      sensitive: {
+        ar: 'البودرة أو الماسكرا اللينة، وتجنّبي التركيبات الثقيلة.',
+        en: 'Powder or soft brow mascara; avoid heavy formulas.',
+        id: 'Bedak atau maskara alis; hindari formula berat.'
+      }
+    },
+    byDensity: {
+      sparse: {
+        ar: 'القلم يرسم شعيرات رفيعة ويملأ الفراغات بشكل طبيعي.',
+        en: 'A pencil draws fine hair-like strokes to fill gaps naturally.',
+        id: 'Pensil membuat goresan halus untuk mengisi celah secara alami.'
+      },
+      dense: {
+        ar: 'جل شفاف للتصفيف يكفي غالبًا؛ الاستخدام اليومي للجل غير ضروري.',
+        en: 'A clear grooming gel is usually enough; daily gel is not necessary.',
+        id: 'Gel bening untuk merapikan biasanya cukup; tidak perlu setiap hari.'
+      }
+    },
+    wudu: {
+      barrier: ['waterproof_pencil', 'brow_gel', 'long_wear_tint', 'film_forming'],
+      safe: ['powder', 'soft_brow_mascara', 'water_based_pencil'],
+      ar: 'أي طبقة عازلة تمنع وصول الماء إلى الشعر أو البشرة يلزم إزالتها قبل الوضوء. اختاري المنتجات سهلة الإزالة لو كنت تكررين الوضوء خلال اليوم.',
+      en: 'Any occlusive layer blocking water must be removed before ablution. Prefer easily removable products if you perform wudu through the day.',
+      id: 'Lapisan kedap air harus dibersihkan sebelum wudu. Pilih produk yang mudah dihapus bila sering berwudu.',
+      note: 'ميزة تنافسية: لا يملك أي منافس عالمي فلترًا كهذا — تُربط بوضع الاحتشام في لمحة.'
+    }
+  };
+
+  /* ---------------------------------------------------------------------------
+   * 6) الشفايف — تحديد ورسم
+   * ------------------------------------------------------------------------- */
+  var LIPS = {
+    steps: [
+      { key: 'hydrate', ar: 'مرطب شفايف وانتظري قليلًا قبل المكياج لمنع التشققات.', en: 'Lip balm first; wait before makeup to prevent flaking.', id: 'Pakai lip balm dulu agar bibir tidak pecah-pecah.' },
+      { key: 'pick_liner', ar: 'لون المحدد قريب من لون شفايفك الطبيعي أو أغمق بدرجة واحدة فقط.', en: 'Liner close to your natural lip colour, or one shade deeper at most.', id: 'Warna lip liner mirip bibir asli atau satu tingkat lebih gelap.' },
+      { key: 'draw', ar: 'ابدئي من قوس الشفاه في المنتصف بخطوط خفيفة متدرجة حتى الزوايا.', en: 'Start at the cupid\u2019s bow with light, graduated strokes out to the corners.', id: 'Mulai dari cupid\u2019s bow dengan goresan ringan ke arah sudut.' },
+      { key: 'overline', ar: 'للتكبير: 1–2 مم في المنتصف فقط، وخلّي الجوانب على حدودها الطبيعية.', en: 'To enlarge: 1–2 mm at the centre only; keep the corners at their natural edge.', id: 'Untuk memperbesar: 1–2 mm di tengah saja; sudut tetap alami.', maxMm: 2 },
+      { key: 'blend_in', ar: 'ادمجي المحدد للداخل بفرشاة صغيرة حتى لا يبدو الخط حادًا أو مصطنعًا.', en: 'Blend the liner inward with a small brush so no hard edge shows.', id: 'Baurkan liner ke dalam dengan kuas kecil agar tidak terlihat garis tegas.' },
+      { key: 'finish', ar: 'الروج ثم لمسة جلوس في منتصف الشفاه لمظهر أكثر امتلاءً.', en: 'Lipstick, then a touch of gloss at the centre for fullness.', id: 'Lipstik, lalu sedikit gloss di tengah agar terlihat penuh.' }
+    ],
+    eyeBalance: {
+      strong_eyes: {
+        ar: 'عيون سموكي أو مكياج عيون قوي ← روج هادئ ونود.',
+        en: 'Smoky or strong eyes ← keep the lip soft and nude.',
+        id: 'Mata smokey atau tegas ← bibir lembut dan nude.'
+      },
+      soft_eyes: {
+        ar: 'عيون خفيفة وطبيعية ← مساحة للألوان الجريئة: الأحمر والعنابي والفوشيا.',
+        en: 'Soft, natural eyes ← room for bold colour: red, wine, fuchsia.',
+        id: 'Mata natural ← bebas warna berani: merah, maroon, fuchsia.'
+      }
+    }
+  };
+
+  /* ---------------------------------------------------------------------------
+   * 7) ترتيب الطبقات — قاعدة تحقق، لا نصيحة
+   * ------------------------------------------------------------------------- */
+  var LAYER_ORDER = [
+    { key: 'skincare',  rank: 1, ar: 'العناية والترطيب' },
+    { key: 'primer',    rank: 2, ar: 'البرايمر' },
+    { key: 'corrector', rank: 3, ar: 'مصحح الألوان' },
+    { key: 'foundation',rank: 4, ar: 'كريم الأساس (سائل أو كريمي)' },
+    { key: 'concealer', rank: 5, ar: 'الكونسيلر — في الأماكن المحتاجة فقط' },
+    { key: 'cream_blush', rank: 6, ar: 'المنتجات الكريمية (بلاشر/كونتور كريمي)' },
+    { key: 'powder',    rank: 7, ar: 'البودرة' },
+    { key: 'powder_products', rank: 8, ar: 'المنتجات البودرية (بلاشر/برونزر/هايلايتر)' },
+    { key: 'setting_spray', rank: 9, ar: 'سبراي التثبيت' }
+  ];
+
+  /* ---------------------------------------------------------------------------
+   * 8) الأخطاء الشائعة — كل خطأ مربوط بإشارة قابلة للكشف في المرآة الحية
+   * ------------------------------------------------------------------------- */
+  var MISTAKES = [
+    {
+      key: 'skipped_prep',
+      detect: 'texture_flaking',
+      ar: 'المكياج على بشرة جافة أو غير نظيفة يسبب التقشر.',
+      en: 'Makeup over dry or unclean skin flakes and clings.',
+      id: 'Makeup di kulit kering atau kotor akan mengelupas.'
+    },
+    {
+      key: 'wrong_shade',
+      detect: 'face_neck_delta_L',
+      threshold: 'CALIBRATION.faceNeckDeltaL',
+      ar: 'درجة أفتح أو أغمق من بشرتك تخلق فرقًا واضحًا عن الرقبة.',
+      en: 'A shade lighter or deeper than your skin leaves a visible line at the neck.',
+      id: 'Warna yang terlalu terang/gelap membuat batas jelas dengan leher.'
+    },
+    {
+      key: 'dirty_tools',
+      detect: 'time_since_last_wash',
+      ar: 'الفرش تُغسل أسبوعيًا، والإسفنجة تُغسل بعد كل استخدام تقريبًا وتُستبدل كل شهر إلى ثلاثة.',
+      en: 'Wash brushes weekly; wash sponges after nearly every use and replace every 1–3 months.',
+      id: 'Cuci kuas mingguan; spons dicuci hampir setiap pakai, ganti tiap 1–3 bulan.',
+      note: 'المصدر دمج الفرش والإسفنجة في قاعدة واحدة (انظر sourceReview #5).'
+    },
+    {
+      key: 'too_much_product',
+      detect: 'layer_thickness',
+      ar: 'الطبقات السميكة تسد المسام وتبرز التجاعيد.',
+      en: 'Thick layers block pores and emphasise lines.',
+      id: 'Lapisan tebal menyumbat pori dan menonjolkan garis halus.'
+    },
+    {
+      key: 'unblended_shadow',
+      detect: 'edge_gradient_harshness',
+      ar: 'حواف ظلال العيون غير المدموجة تعطي مظهرًا غير احترافي.',
+      en: 'Unblended eyeshadow edges read as unprofessional.',
+      id: 'Tepi eyeshadow yang tidak dibaurkan terlihat tidak rapi.'
+    },
+    {
+      key: 'expired_product',
+      detect: 'user_prompt',
+      ar: 'أي منتج تغيّرت رائحته أو قوامه أو لونه يُستبعد حتى لو بقي منه الكثير.',
+      en: 'Discard any product whose smell, texture or colour has changed, however much is left.',
+      id: 'Buang produk yang berubah bau, tekstur atau warnanya, meski masih banyak.'
+    },
+    {
+      key: 'concealer_creasing',
+      detect: 'under_eye_texture',
+      ar: 'تجعّد الكونسيلر تحت العين: قلّلي الكمية ولا تتركيه يجف قبل الدمج لو بشرتك جافة.',
+      en: 'Concealer creasing: use less and blend before it sets if your under-eye is dry.',
+      id: 'Concealer menggaris: pakai lebih sedikit dan baurkan sebelum mengering.'
+    }
+  ];
+
+  /* ---------------------------------------------------------------------------
+   * 9) تريكات — بعضها مشروط، والشرط مُخزَّن معها
+   * ------------------------------------------------------------------------- */
+  var TRICKS = [
+    {
+      key: 'set_concealer_before_blending',
+      conditional: true,
+      appliesTo: { skinTypes: ['oily', 'combination'], coverage: ['high'] },
+      avoidFor: { skinTypes: ['dry'], zones: ['under_eye_dry'] },
+      ar: 'اتركي الكونسيلر 30–60 ثانية قبل الدمج للتغطية الأقوى — مناسب للبشرة الدهنية والتغطية العالية، ويُتجنّب مع تحت العين الجافة لأنه يسبب التجعّد.',
+      en: 'Let concealer sit 30–60 s before blending for stronger coverage — suits oily skin and high coverage; skip on dry under-eyes (creasing).',
+      id: 'Diamkan concealer 30–60 detik sebelum dibaurkan untuk coverage lebih kuat — cocok untuk kulit berminyak; hindari di bawah mata kering.',
+      note: 'المصدر قدّمها كقاعدة مطلقة (انظر sourceReview #2).'
+    },
+    {
+      key: 'setting_spray_not_universal',
+      conditional: true,
+      avoidFor: { skinTypes: ['dry', 'sensitive'], formula: ['alcohol_based'] },
+      ar: 'سبراي التثبيت ليس لكل بشرة: التركيبات الكحولية تجفف البشرة الجافة والحساسة، ولا داعي للإكثار منه.',
+      en: 'Setting spray is not for everyone: alcohol-based formulas dry out dry/sensitive skin.',
+      id: 'Setting spray tidak untuk semua: formula beralkohol membuat kulit kering makin kering.'
+    },
+    {
+      key: 'inner_corner_highlight',
+      conditional: false,
+      ar: 'لمسة هايلايتر في دمعة العين تفتح شكل العين وتعطي إشراقة.',
+      en: 'A touch of highlighter at the inner corner opens up the eye.',
+      id: 'Sedikit highlighter di sudut dalam mata membuat mata tampak lebih terbuka.'
+    }
+  ];
+
+  /* ---------------------------------------------------------------------------
+   * 10) مراجعة المصدر — أين انحرفنا ولماذا
+   * ------------------------------------------------------------------------- */
+  var SOURCE_REVIEW = [
+    { n: 1, topic: 'اختبار العروق للأندرتون', verdict: 'غير موثوق', why: 'لا يصلح للبشرة المتوسطة والداكنة، ويتأثر بسمك الجلد والإضاءة.', action: 'استُبدل بقياس زاوية اللون في CIELAB مع درجة ثقة.' },
+    { n: 2, topic: 'ترك الكونسيلر قبل الدمج', verdict: 'صحيح بشرط', why: 'يسبب التجعّد على تحت العين الجافة.', action: 'خُزِّنت كقاعدة مشروطة بنوع البشرة والتركيبة.' },
+    { n: 3, topic: 'البودرة السائبة', verdict: 'ناقص', why: 'لم يُذكر الانعكاس الأبيض في التصوير بالفلاش.', action: 'أُضيف تحذير مرتبط بحالات التصوير والأعراس.' },
+    { n: 4, topic: 'الأوكسدة', verdict: 'ناقص', why: 'العنوان يعد بمنعها والمحتوى لا يشرح السبب ولا الاختبار.', action: 'أُضيف انتظار 5–10 دقائق في اختبار الدرجة.' },
+    { n: 5, topic: 'غسل الفرش أسبوعيًا', verdict: 'ناقص', why: 'الإسفنجة تحتاج تكرارًا أعلى واستبدالًا دوريًا.', action: 'فُصلت قاعدة الإسفنجة عن الفرش.' },
+    { n: 6, topic: 'المصحح قبل الأساس دائمًا', verdict: 'تبسيط', why: 'الوضع فوق طبقة أساس خفيفة أسلوب محترف يقلل الكمية.', action: 'سُجّل الأسلوبان معًا.' },
+    { n: 7, topic: 'انتظار دقيقة بعد المرطب', verdict: 'قصير', why: 'الامتصاص يحتاج 1–3 دقائق عادةً.', action: 'عُدّلت المدة.' },
+    { n: 8, topic: 'الفرش المتسخة تسبب الحبوب', verdict: 'تبسيط', why: 'العلاقة سببية جزئية لا مطلقة.', action: 'أُعيدت الصياغة إلى نقل البكتيريا والزيوت.' }
+  ];
+
+  /* ===========================================================================
+   * الدوال
+   * ========================================================================= */
+
+  function labHueAngle(a, b) {
+    var deg = Math.atan2(b, a) * 180 / Math.PI;
+    return deg < 0 ? deg + 360 : deg;
+  }
+
+  /** تصنيف الأندرتون من قيم CIELAB لرقعة بشرة — بديل اختبار العروق */
+  function undertoneFromLab(lab) {
+    var hue = labHueAngle(lab.a, lab.b);
+    var cls, distance;
+    if (hue < CALIBRATION.undertoneHueCoolMax) {
+      cls = 'cool';
+      distance = CALIBRATION.undertoneHueCoolMax - hue;
+    } else if (hue > CALIBRATION.undertoneHueWarmMin) {
+      cls = 'warm';
+      distance = hue - CALIBRATION.undertoneHueWarmMin;
+    } else {
+      cls = 'neutral';
+      distance = Math.min(hue - CALIBRATION.undertoneHueCoolMax,
+                          CALIBRATION.undertoneHueWarmMin - hue);
+    }
+    var confidence = Math.max(0.35, Math.min(1, distance / CALIBRATION.undertoneConfidenceSpan));
+    return { undertone: cls, hue: hue, confidence: Math.round(confidence * 100) / 100, data: UNDERTONE[cls] };
+  }
+
+  /** تصنيف عمق البشرة من L* */
+  function depthFromL(L) {
+    if (L >= CALIBRATION.depthFairMinL) return 'fair';
+    if (L <= CALIBRATION.depthDeepMaxL) return 'deep';
+    return 'medium';
+  }
+
+  /** اختيار المصحح من اسم المشكلة */
+  function pickCorrector(problem, depth) {
+    var matches = CORRECTORS.filter(function (c) {
+      return c.targets.indexOf(problem) !== -1 &&
+             (!depth || c.depth.indexOf(depth) !== -1);
+    });
+    return matches.length ? matches[0] : null;
+  }
+
+  /**
+   * محرك المصححات: يقارن لون منطقة المشكلة بالبشرة المحيطة ويعيد التوصية.
+   * patchLab / skinLab = {L,a,b}
+   */
+  function suggestCorrectorFromPatch(patchLab, skinLab, depth) {
+    var dL = patchLab.L - skinLab.L;
+    var da = patchLab.a - skinLab.a;
+    var db = patchLab.b - skinLab.b;
+    var result = { dL: dL, da: da, db: db, problem: null, corrector: null };
+
+    if (da >= CALIBRATION.deltaARedness && db > -CALIBRATION.deltaBCast) {
+      result.problem = 'redness';
+    } else if (db <= -CALIBRATION.deltaBCast) {
+      result.problem = (dL <= CALIBRATION.deltaLDarkCircle) ? 'dark_circles' : 'mild_purple';
+    } else if (db >= CALIBRATION.deltaBCast) {
+      result.problem = 'sallowness';
+    } else if (dL <= CALIBRATION.deltaLDarkCircle) {
+      result.problem = 'hyperpigmentation';
+    }
+
+    if (result.problem) {
+      var d = depth || 'medium';
+      result.corrector = pickCorrector(result.problem, d) || pickCorrector(result.problem, null);
+    }
+    return result;
+  }
+
+  /** توصية الروج: أندرتون + عمق + قوة مكياج العيون */
+  function pickLipstick(opts) {
+    opts = opts || {};
+    var u = UNDERTONE[opts.undertone] || UNDERTONE.neutral;
+    var d = DEPTH[opts.depth] || DEPTH.medium;
+    var balance = (opts.eyeIntensity === 'strong')
+      ? LIPS.eyeBalance.strong_eyes
+      : LIPS.eyeBalance.soft_eyes;
+    return { undertone: u, depth: d, balance: balance };
+  }
+
+  /** اختيار نوع البودرة */
+  function pickPowder(opts) {
+    opts = opts || {};
+    var goal = opts.goal || 'setting';
+    var choice = (goal === 'touch_up' || goal === 'portability' || goal === 'extra_coverage')
+      ? 'compact' : 'loose';
+    var out = { type: choice, data: POWDER[choice] };
+    if (choice === 'loose' && opts.flashPhotography) out.warning = POWDER.loose.warning;
+    if (choice === 'compact') out.formula = (opts.skinType === 'dry') ? 'hydrating' : 'matte';
+    return out;
+  }
+
+  /** اختيار منتج الحواجب، مع فلتر الوضوء */
+  function pickBrow(opts) {
+    opts = opts || {};
+    var out = {
+      color: [],
+      formula: null,
+      density: null,
+      wuduSafe: !!opts.wuduSafe
+    };
+    if (opts.hairColor && BROWS.byHairColor[opts.hairColor]) out.color.push(BROWS.byHairColor[opts.hairColor]);
+    if (opts.skinTone && BROWS.bySkinTone[opts.skinTone]) out.color.push(BROWS.bySkinTone[opts.skinTone]);
+
+    var skinType = opts.skinType || 'normal';
+    if (out.wuduSafe) {
+      out.formula = BROWS.bySkinType.dry;            // بودرة أو ماسكرا لينة
+      out.allowed = BROWS.wudu.safe.slice();
+      out.blocked = BROWS.wudu.barrier.slice();
+      out.wuduNote = BROWS.wudu;
+    } else {
+      out.formula = BROWS.bySkinType[skinType] || BROWS.bySkinType.dry;
+    }
+    if (opts.density && BROWS.byDensity[opts.density]) out.density = BROWS.byDensity[opts.density];
+    return out;
+  }
+
+  /** تحقق من ترتيب الخطوات — يعيد قائمة المخالفات */
+  function validateOrder(steps) {
+    var rankOf = {};
+    LAYER_ORDER.forEach(function (s) { rankOf[s.key] = s.rank; });
+    var violations = [];
+    var known = steps.filter(function (s) { return rankOf[s] !== undefined; });
+    for (var i = 1; i < known.length; i++) {
+      if (rankOf[known[i]] < rankOf[known[i - 1]]) {
+        violations.push({
+          before: known[i - 1],
+          after: known[i],
+          ar: 'الترتيب الصحيح: ' + known[i] + ' قبل ' + known[i - 1] + '.',
+          en: 'Correct order: ' + known[i] + ' before ' + known[i - 1] + '.'
+        });
+      }
+    }
+    return { valid: violations.length === 0, violations: violations };
+  }
+
+  /** تنبيه فرق الدرجة بين الوجه والرقبة */
+  function checkShadeMatch(faceLab, neckLab) {
+    var dL = faceLab.L - neckLab.L;
+    var mismatch = Math.abs(dL) > CALIBRATION.faceNeckDeltaL;
+    return {
+      deltaL: Math.round(dL * 10) / 10,
+      mismatch: mismatch,
+      direction: dL > 0 ? 'lighter' : 'darker',
+      message: mismatch
+        ? { ar: 'درجة الأساس ' + (dL > 0 ? 'أفتح' : 'أغمق') + ' من رقبتك — اختبري الدرجة على خط الفك.',
+            en: 'Your foundation is ' + (dL > 0 ? 'lighter' : 'darker') + ' than your neck — test on the jawline.' }
+        : null
+    };
+  }
+
+  var LAMHA_RULES = {
+    version: '1.0',
+    calibration: CALIBRATION,
+    undertone: UNDERTONE,
+    depth: DEPTH,
+    correctors: CORRECTORS,
+    correctorUsage: CORRECTOR_USAGE,
+    foundation: FOUNDATION,
+    powder: POWDER,
+    brows: BROWS,
+    lips: LIPS,
+    layerOrder: LAYER_ORDER,
+    mistakes: MISTAKES,
+    tricks: TRICKS,
+    sourceReview: SOURCE_REVIEW,
+    // الدوال
+    labHueAngle: labHueAngle,
+    undertoneFromLab: undertoneFromLab,
+    depthFromL: depthFromL,
+    pickCorrector: pickCorrector,
+    suggestCorrectorFromPatch: suggestCorrectorFromPatch,
+    pickLipstick: pickLipstick,
+    pickPowder: pickPowder,
+    pickBrow: pickBrow,
+    validateOrder: validateOrder,
+    checkShadeMatch: checkShadeMatch
+  };
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = LAMHA_RULES;
+  if (root) root.LAMHA_RULES = LAMHA_RULES;
+
+})(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this));
+
+</script>
+<script>/* === lamha-bridge.js v1.0 (inlined) === */
+/* =============================================================================
+ * lamha-bridge.js  —  v1.0
+ * جسر الدمج بين lamha-rules.js والبناء الحالي (zeen-mirror / lamha-mobile)
+ *
+ * يستعمل ما هو موجود أصلًا في البناء إن وُجد: rgb2lab, stats, region, boxAround,
+ * S.skin, toneIndex, undertone — وإلا يستعمل نسخه الداخلية المطابقة.
+ *
+ * الترتيب في الصفحة: كتلة القواعد أولًا ثم كتلة الجسر.
+ * ثم يُستدعى الجسر داخل renderSkin — التفاصيل في INTEGRATION.md.
+ * ============================================================================= */
+
+(function (root) {
+  'use strict';
+
+  var R = (root && root.LAMHA_RULES) ||
+          (typeof require !== 'undefined' ? require('./lamha-rules.js') : null);
+  if (!R) throw new Error('lamha-rules.js must load before lamha-bridge.js');
+
+  /* ---------------------------------------------------------------------------
+   * مجموعات نقاط MediaPipe (468) لكل منطقة قياس
+   * ------------------------------------------------------------------------- */
+  var LM = {
+    cheekL:     [205, 50, 101, 118],
+    cheekR:     [425, 280, 330, 347],
+    underEyeL:  [230, 229, 228, 231],
+    underEyeR:  [450, 449, 448, 451],
+    noseSideL:  [115, 131, 49],
+    noseSideR:  [344, 360, 279],
+    forehead:   [10, 151, 9, 107, 336],
+    chin:       [152, 175, 199],
+    jawL:       [172, 136],
+    jawR:       [397, 365]
+  };
+
+  /* المناطق التي تُفحص بحثًا عن مشكلة لون، ومرجع البشرة السليمة لكل منها */
+  var PROBLEM_ZONES = [
+    { zone: 'underEyeL', ref: 'cheekL', label: { ar: 'تحت العين اليسرى', en: 'Left under-eye', id: 'Bawah mata kiri' } },
+    { zone: 'underEyeR', ref: 'cheekR', label: { ar: 'تحت العين اليمنى', en: 'Right under-eye', id: 'Bawah mata kanan' } },
+    { zone: 'noseSideL', ref: 'cheekL', label: { ar: 'جانب الأنف الأيسر', en: 'Left nose side', id: 'Sisi hidung kiri' } },
+    { zone: 'noseSideR', ref: 'cheekR', label: { ar: 'جانب الأنف الأيمن', en: 'Right nose side', id: 'Sisi hidung kanan' } },
+    { zone: 'chin',      ref: 'cheekL', label: { ar: 'الذقن', en: 'Chin', id: 'Dagu' } },
+    { zone: 'forehead',  ref: 'cheekR', label: { ar: 'الجبهة', en: 'Forehead', id: 'Dahi' } }
+  ];
+
+  var GUARD = {
+    maxPatchSd: 14,      // تباين عالٍ = شعر/حجاب/ظل ← تُهمل القراءة
+    minPixels: 40,
+    neckOffsets: [0.12, 0.08, 0.05], // نسب من ارتفاع الوجه تحت الذقن — تُجرَّب بالترتيب
+    neckMaxSd: 12
+  };
+
+  /* ---------------------------------------------------------------------------
+   * بدائل داخلية — تُستعمل فقط إذا لم توجد دوال البناء
+   * ------------------------------------------------------------------------- */
+  function _rgb2lab(r, g, b) {
+    var Rl = r / 255, Gl = g / 255, Bl = b / 255;
+    var f1 = function (v) { return v > 0.04045 ? Math.pow((v + 0.055) / 1.055, 2.4) : v / 12.92; };
+    Rl = f1(Rl); Gl = f1(Gl); Bl = f1(Bl);
+    var X = (Rl * 0.4124 + Gl * 0.3576 + Bl * 0.1805) / 0.95047,
+        Y = (Rl * 0.2126 + Gl * 0.7152 + Bl * 0.0722),
+        Z = (Rl * 0.0193 + Gl * 0.1192 + Bl * 0.9505) / 1.08883;
+    var f = function (v) { return v > 0.008856 ? Math.cbrt(v) : (7.787 * v + 16 / 116); };
+    var fx = f(X), fy = f(Y), fz = f(Z);
+    return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+  }
+
+  function _region(img, lm, idxs, pad) {
+    pad = pad || 0;
+    var xs = [], ys = [];
+    for (var i = 0; i < idxs.length; i++) {
+      var p = lm[idxs[i]];
+      if (!p) return null;
+      xs.push(p.x * img.width); ys.push(p.y * img.height);
+    }
+    return {
+      x0: Math.round(Math.max(0, Math.min.apply(null, xs) - pad)),
+      x1: Math.round(Math.min(img.width - 1, Math.max.apply(null, xs) + pad)),
+      y0: Math.round(Math.max(0, Math.min.apply(null, ys) - pad)),
+      y1: Math.round(Math.min(img.height - 1, Math.max.apply(null, ys) + pad))
+    };
+  }
+
+  function _stats(img, b) {
+    var d = img.data, n = 0, L = [], A = [], Bb = [];
+    for (var y = b.y0; y <= b.y1; y++) {
+      for (var x = b.x0; x <= b.x1; x++) {
+        var o = (y * img.width + x) * 4;
+        var lab = (root && root.rgb2lab) ? root.rgb2lab(d[o], d[o + 1], d[o + 2])
+                                         : _rgb2lab(d[o], d[o + 1], d[o + 2]);
+        L.push(lab[0]); A.push(lab[1]); Bb.push(lab[2]); n++;
+      }
+    }
+    if (!n) return null;
+    var mean = function (a) { var s = 0; for (var i = 0; i < a.length; i++) s += a[i]; return s / a.length; };
+    var mL = mean(L);
+    var sd = Math.sqrt(mean(L.map(function (v) { return (v - mL) * (v - mL); })));
+    return { n: n, L: mL, a: mean(A), B: mean(Bb), sd: sd };
+  }
+
+  var HOST = { region: null, stats: null };
+
+  function configure(fns) {
+    fns = fns || {};
+    HOST.region = fns.region || null;
+    HOST.stats = fns.stats || null;
+    return HOST;
+  }
+
+  function useRegion() { return HOST.region || (root && root.region) || _region; }
+  function useStats()  { return HOST.stats  || (root && root.stats)  || _stats; }
+
+  /** قراءة رقعة بلون CIELAB بصيغة {L,a,b} مع علم صلاحية */
+  function patchLab(img, lm, idxs, pad) {
+    var box = useRegion()(img, lm, idxs, pad || 0);
+    if (!box) return null;
+    var s = useStats()(img, box);
+    if (!s || s.n < GUARD.minPixels) return null;
+    return { L: s.L, a: s.a, b: (s.B !== undefined ? s.B : s.b), sd: s.sd, n: s.n, box: box,
+             valid: s.sd <= GUARD.maxPatchSd };
+  }
+
+  /* ---------------------------------------------------------------------------
+   * 1) الأندرتون — توفيق بين مصنّف البناء الحالي والقياس بزاوية اللون
+   * ------------------------------------------------------------------------- */
+  function reconcileUndertone(existing, lab) {
+    var measured = R.undertoneFromLab(lab);
+    if (!existing) return { undertone: measured.undertone, confidence: measured.confidence, agree: null, measured: measured.undertone };
+    if (existing === measured.undertone) {
+      return { undertone: existing, confidence: Math.max(measured.confidence, 0.6), agree: true, measured: measured.undertone };
+    }
+    return {
+      undertone: 'neutral',
+      confidence: Math.min(0.5, measured.confidence),
+      agree: false,
+      existing: existing,
+      measured: measured.undertone
+    };
+  }
+
+  /** عمق البشرة من مؤشر الدرجة السباعي الموجود في البناء (toneIndex) */
+  function depthFromToneIndex(ti) {
+    if (ti === undefined || ti === null) return null;
+    return ti <= 1 ? 'fair' : (ti <= 4 ? 'medium' : 'deep');
+  }
+
+  /* ---------------------------------------------------------------------------
+   * 2) خطة المصححات — المحرك الفعلي
+   * ------------------------------------------------------------------------- */
+  function correctorPlan(img, lm, depth) {
+    var out = [];
+    for (var i = 0; i < PROBLEM_ZONES.length; i++) {
+      var z = PROBLEM_ZONES[i];
+      var patch = patchLab(img, lm, LM[z.zone], 2);
+      var ref = patchLab(img, lm, LM[z.ref], 2);
+      if (!patch || !ref || !patch.valid || !ref.valid) continue;
+      var res = R.suggestCorrectorFromPatch(
+        { L: patch.L, a: patch.a, b: patch.b },
+        { L: ref.L, a: ref.a, b: ref.b },
+        depth || 'medium'
+      );
+      if (res.problem && res.corrector) {
+        out.push({
+          zone: z.zone,
+          label: z.label,
+          problem: res.problem,
+          corrector: res.corrector,
+          delta: { L: Math.round(res.dL * 10) / 10, a: Math.round(res.da * 10) / 10, b: Math.round(res.db * 10) / 10 },
+          box: patch.box
+        });
+      }
+    }
+    return out;
+  }
+
+  /* ---------------------------------------------------------------------------
+   * 3) فحص درجة الأساس مقابل الرقبة
+   * ------------------------------------------------------------------------- */
+  function neckCheck(img, lm) {
+    if (!lm || !lm[152] || !lm[10]) return { available: false };
+    var chinY = lm[152].y, topY = lm[10].y;
+    var faceH = Math.abs(chinY - topY);
+    var ny = null;
+    for (var k = 0; k < GUARD.neckOffsets.length; k++) {
+      var cand = chinY + faceH * GUARD.neckOffsets[k];
+      if (cand < 0.995) { ny = cand; break; }
+    }
+    if (ny === null) return { available: false, reason: 'neck_out_of_frame' };
+
+    var cx = lm[152].x * img.width, cy = ny * img.height;
+    var rx = Math.max(6, faceH * img.height * 0.10), ry = Math.max(5, faceH * img.height * 0.06);
+    var box = {
+      x0: Math.max(0, Math.round(cx - rx)), x1: Math.min(img.width - 1, Math.round(cx + rx)),
+      y0: Math.max(0, Math.round(cy - ry)), y1: Math.min(img.height - 1, Math.round(cy + ry))
+    };
+    var s = useStats()(img, box);
+    if (!s || s.n < GUARD.minPixels) return { available: false, reason: 'no_pixels' };
+    if (s.sd > GUARD.neckMaxSd) return { available: false, reason: 'covered_or_shadowed' }; // حجاب/ياقة/ظل
+
+    var face = patchLab(img, lm, LM.jawL.concat(LM.jawR), 2) || patchLab(img, lm, LM.cheekL, 2);
+    if (!face) return { available: false, reason: 'no_face_patch' };
+
+    var r = R.checkShadeMatch({ L: face.L }, { L: s.L });
+    r.available = true;
+    r.neckBox = box;
+    return r;
+  }
+
+  /* ---------------------------------------------------------------------------
+   * 4) مدقق ترتيب الخطوات — يُستدعى مع كل خطوة تنفّذها المستخدمة
+   * ------------------------------------------------------------------------- */
+  var session = [];
+  function trackStep(stepKey) {
+    session.push(stepKey);
+    return R.validateOrder(session);
+  }
+  function resetSession() { session = []; return session; }
+
+  /* ---------------------------------------------------------------------------
+   * 5) التجميع
+   * ------------------------------------------------------------------------- */
+  function run(opts) {
+    opts = opts || {};
+    var img = opts.img ||
+              (root && root.S && root.S.skinFrame) ||   // إطار لحظة القياس إن خُزِّن
+              (root && root.grabRaw && root.grabRaw());
+    if (img && (!img.data || !img.width || !img.height)) img = null; // ليس ImageData صالحًا
+    var lm = opts.lm || (root && root.S && (root.S.skinLm || root.S.landmarks || root.S.lm)) || null;
+    var skin = opts.skin || (root && root.S && root.S.skin) || null;
+
+    var res = { ok: false, undertone: null, depth: null, lip: null, correctors: [], neck: null, wuduSafe: !!opts.wuduSafe };
+    if (!skin) return res;
+
+    var lab = { L: skin.L, a: skin.a, b: (skin.B !== undefined ? skin.B : skin.b) };
+    if (lab.L === undefined && skin.rgb) lab.L = _rgb2lab(skin.rgb[0], skin.rgb[1], skin.rgb[2])[0];
+    var existing = opts.existingUndertone ||
+                   (root && root.undertone ? root.undertone(lab.a, lab.b) : null);
+
+    res.undertone = reconcileUndertone(existing, lab);
+    var ti = (opts.toneIndex !== undefined) ? opts.toneIndex
+           : (root && root.toneIndex && skin.ITA !== undefined ? root.toneIndex(skin.ITA) : null);
+    res.depth = depthFromToneIndex(ti) || R.depthFromL(lab.L);
+
+    res.lip = R.pickLipstick({
+      undertone: res.undertone.undertone,
+      depth: res.depth,
+      eyeIntensity: opts.eyeIntensity || 'soft'
+    });
+
+    if (img && lm) {
+      res.correctors = correctorPlan(img, lm, res.depth);
+      res.neck = neckCheck(img, lm);
+    }
+    res.powder = R.pickPowder({
+      goal: opts.powderGoal || 'setting',
+      skinType: opts.skinType,
+      flashPhotography: !!opts.flashPhotography
+    });
+    res.brow = R.pickBrow({
+      hairColor: opts.hairColor || 'dark',
+      skinTone: res.depth,
+      skinType: opts.skinType || 'normal',
+      density: opts.browDensity,
+      wuduSafe: res.wuduSafe
+    });
+    res.ok = true;
+    return res;
+  }
+
+  /* ---------------------------------------------------------------------------
+   * 6) عرض جاهز — يُدرج داخل أي عنصر في لوحة تحليل البشرة
+   * ------------------------------------------------------------------------- */
+  function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+
+  function render(res, lang) {
+    lang = lang || (root && root.LANG) || 'ar';
+    var L = function (o) { return o && (o[lang] || o.ar || o.en); };
+    if (!res || !res.ok) return '';
+    var h = [];
+
+    h.push('<div class="lamha-advice">');
+
+    // الأندرتون + الروج
+    var u = res.undertone;
+    h.push('<div class="la-row"><b>' + esc(L(R.undertone[u.undertone].label)) + '</b> · ' +
+           Math.round(u.confidence * 100) + '%' +
+           (u.agree === false ? ' <small>(قراءتان مختلفتان — النتيجة محايدة احتياطًا)</small>' : '') +
+           '</div>');
+    h.push('<div class="la-row">' + esc(L(R.depth[res.depth].label)) + ' — ' +
+           esc(L(res.lip.depth.lipShades).join(' · ')) + '</div>');
+
+    // المصححات
+    if (res.correctors.length) {
+      h.push('<div class="la-block"><h4>مصححات الألوان</h4>');
+      res.correctors.forEach(function (c) {
+        h.push('<div class="la-corr"><i style="background:' + c.corrector.swatch + '"></i>' +
+               '<b>' + esc(L(c.corrector.name)) + '</b> — ' + esc(L(c.label)) +
+               '<small>' + esc(L(c.corrector.text)) + '</small></div>');
+      });
+      h.push('</div>');
+    }
+
+    // الرقبة
+    if (res.neck && res.neck.available && res.neck.mismatch) {
+      h.push('<div class="la-warn">' + esc(res.neck.message[lang === 'ar' ? 'ar' : 'en']) + '</div>');
+    }
+
+    // الوضوء
+    if (res.wuduSafe && res.brow.wuduNote) {
+      h.push('<div class="la-note">' + esc(L(res.brow.wuduNote)) + '</div>');
+    }
+
+    // البودرة
+    if (res.powder && res.powder.warning) {
+      h.push('<div class="la-warn">' + esc(L(res.powder.warning)) + '</div>');
+    }
+
+    h.push('</div>');
+    return h.join('');
+  }
+
+  function renderInto(selector, res, lang) {
+    if (typeof document === 'undefined') return '';
+    var el = document.querySelector(selector);
+    if (!el) {
+      // فشل صامت محتمل: نجح الاستدعاء وفشلت خطوة إنشاء الحاوية
+      if (typeof console !== 'undefined' && console.warn) {
+        console.warn('[lamha-advice] container ' + selector + ' not found — nothing rendered');
+      }
+      return '';
+    }
+    var html = render(res, lang);
+    if (!html && typeof console !== 'undefined' && console.warn) {
+      console.warn('[lamha-advice] nothing to render (run() returned ok:false)');
+    }
+    el.innerHTML = html;
+    return el.innerHTML;
+  }
+
+  var LamhaAdvice = {
+    version: '1.0',
+    LM: LM,
+    GUARD: GUARD,
+    problemZones: PROBLEM_ZONES,
+    configure: configure,
+    patchLab: patchLab,
+    reconcileUndertone: reconcileUndertone,
+    depthFromToneIndex: depthFromToneIndex,
+    correctorPlan: correctorPlan,
+    neckCheck: neckCheck,
+    trackStep: trackStep,
+    resetSession: resetSession,
+    run: run,
+    render: render,
+    renderInto: renderInto,
+    _rgb2lab: _rgb2lab,
+    _stats: _stats,
+    _region: _region
+  };
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = LamhaAdvice;
+  if (root) root.LamhaAdvice = LamhaAdvice;
+
+})(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this));
+
+</script>
+<script>/* === lamha-envelope.js v1.0 (inlined) === */
+/* =============================================================================
+ * lamha-envelope.js — v1.0
+ * غلاف الوجه: أين ينتهي الوجه فعلًا، لا أين نفترض أنه ينتهي.
+ *
+ * المشكلة التي يعالجها: الرفع الحالي إلى خط الشعر ثابت (fs × 0.10 أو 0.20)،
+ * فهو يغطي جبهة متوسطة ويقصّ الجبهة الطويلة نصفين. وارتفاع الجبهة يختلف
+ * بين شخص وآخر بأكثر من الضعف، فلا يصلح فيه ثابت.
+ *
+ * مصدران فقط، ولا ثالث:
+ *   1) قناع التقسيم (جلد/شعر) إن كان متاحًا → قياس فعلي لخط الشعر
+ *   2) بلا قناع: ثابت سخي يميل إلى الزيادة  → لا يمكن معرفة خط الشعر بلا رؤيته
+ *
+ * جرّبتُ قاعدة الأثلاث الوجهية بديلًا هندسيًا وأسقطتها: النقطة 10 تقع أصلًا
+ * فوق منتصف الجبهة، فتقدير الأثلاث يعطي رفعًا أقل من الثابت القديم ولا يحسّن
+ * شيئًا. دقّة زائفة، والأسوأ أنها تبدو علمية.
+ *
+ * ولماذا "يميل إلى الزيادة": تجاوز خط الشعر قليلًا يُقصّه قناع الجلد أو تخفيف
+ * الحافة فلا يراه أحد. أما التقصير فيُقرأ تعليقًا على شكل الوجه — والكلفتان
+ * غير متساويتين، فيجب أن يكون الانحياز إلى الزيادة.
+ *
+ * وحارس إطار: إن كان الوجه مقصوصًا في الكاميرا، لا يُرسم نصف وجه — يُطلب
+ * من المستخدمة أن تتراجع قليلًا. نصف تغطية يُقرأ كتعليق على شكل الوجه.
+ * ========================================================================= */
+
+(function (root) {
+  'use strict';
+
+  var FACE_OVAL = [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,
+                   400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
+
+  var LMK = {
+    chin: 152,
+    top: 10,           // منتصف الجبهة في شبكة 468 — ليس خط الشعر
+    browL: 105, browR: 334,
+    browInL: 107, browInR: 336,
+    noseBase: 2,
+    sideL: 234, sideR: 454
+  };
+
+  var CFG = {
+    liftMin: 0.06,      // حد أدنى للرفع (نسبة من fs)
+    liftMax: 0.60,      // حد أقصى — يمنع الانفلات عند قراءة فاسدة
+    walkStep: 0.02,     // خطوة المسح صعودًا (نسبة من fs)
+    walkMax: 0.85,      // أقصى مسافة مسح فوق الحاجب
+    columns: [-0.26, -0.13, 0, 0.13, 0.26], // أعمدة القياس عبر عرض الجبهة
+    columnAgree: 0.14,  // تشتت مقبول بين الأعمدة (نسبة من fs)
+    fallbackLiftK: 0.22, // الرفع حين لا يوجد قناع — سخي عمدًا (انظر رأس الملف)
+    frameMargin: 0.012, // هامش أمان من حافة الإطار (نسبة)
+    sidePad: 0.0        // توسعة جانبية — تُعايَر على صور حقيقية، صفر افتراضًا
+  };
+
+  function getter(lm, pt) {
+    return function (i) {
+      var l = lm[i];
+      if (!l) return null;
+      try { var r = pt(l); if (r && isFinite(r[0]) && isFinite(r[1])) return r; } catch (e) {}
+      try { var r2 = pt(i); if (r2 && isFinite(r2[0]) && isFinite(r2[1])) return r2; } catch (e) {}
+      return null;
+    };
+  }
+
+  function mid(a, b) { return (a && b) ? [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] : (a || b); }
+  function dist(a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1]); }
+  function median(a) {
+    var s = a.slice().sort(function (x, y) { return x - y; });
+    var n = s.length;
+    return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null;
+  }
+
+  /** المحور الصاعد من الذقن إلى الجبهة — مقاوم لميلان الرأس */
+  function upVector(G) {
+    var chin = G(LMK.chin), top = G(LMK.top);
+    if (!chin || !top) return null;
+    var ux = top[0] - chin[0], uy = top[1] - chin[1];
+    var ul = Math.hypot(ux, uy) || 1;
+    return { ux: ux / ul, uy: uy / ul, len: ul, chin: chin, top: top };
+  }
+
+  function browLine(G) {
+    var b = mid(G(LMK.browL), G(LMK.browR));
+    if (!b) b = mid(G(LMK.browInL), G(LMK.browInR));
+    return b;
+  }
+
+  /* ---------------------------------------------------------------------------
+   * 1) خط الشعر من قناع التقسيم — القياس الفعلي
+   * sample(x, y) يعيد 'skin' | 'hair' | 'bg' | null
+   * ------------------------------------------------------------------------- */
+  function hairlineFromMask(sample, lm, pt, fs, cfg) {
+    cfg = cfg || CFG;
+    var G = getter(lm, pt), u = upVector(G), brow = browLine(G);
+    if (!u || !brow || typeof sample !== 'function') return null;
+
+    var perp = { x: -u.uy, y: u.ux };           // عمودي على المحور الصاعد
+    var step = fs * cfg.walkStep, maxUp = fs * cfg.walkMax;
+    var hits = [];
+
+    for (var c = 0; c < cfg.columns.length; c++) {
+      var off = cfg.columns[c] * fs;
+      var sx = brow[0] + perp.x * off, sy = brow[1] + perp.y * off;
+      var lastSkin = null, d = step;
+      for (; d <= maxUp; d += step) {
+        var x = sx + u.ux * d, y = sy + u.uy * d;
+        var v = null;
+        try { v = sample(x, y); } catch (e) { v = null; }
+        if (v === 'skin') { lastSkin = d; continue; }
+        if (v === 'hair' || v === 'bg') break;   // أول انتقال = الحافة
+      }
+      if (lastSkin !== null) hits.push(lastSkin);
+    }
+    if (hits.length < 3) return null;            // قراءة هشّة — لا تُستعمل
+
+    var med = median(hits);
+    var spread = Math.max.apply(null, hits) - Math.min.apply(null, hits);
+    var agree = spread <= fs * cfg.columnAgree;
+    return {
+      foreheadHeight: med,
+      confidence: agree ? 0.9 : 0.55,
+      columns: hits.length,
+      spread: spread,
+      source: 'mask'
+    };
+  }
+
+  /* ---------------------------------------------------------------------------
+   * 2) الرفع المطلوب فوق النقطة 10
+   * ------------------------------------------------------------------------- */
+  function foreheadLift(lm, pt, fs, opts) {
+    opts = opts || {};
+    var cfg = opts.cfg || CFG;
+    var G = getter(lm, pt), u = upVector(G), brow = browLine(G);
+    var legacy = (opts.legacyLiftK != null ? opts.legacyLiftK : 0.10);
+    if (!u || !brow || !fs) return { liftK: legacy, confidence: 0.2, source: 'default' };
+
+    var m = opts.sample ? hairlineFromMask(opts.sample, lm, pt, fs, cfg) : null;
+    if (!m) {
+      // بلا قناع لا سبيل إلى معرفة خط الشعر — ثابت سخي بدل تقدير يتظاهر بالدقة
+      return {
+        liftK: Math.max(legacy, cfg.fallbackLiftK),
+        confidence: 0.4,
+        source: 'fallback'
+      };
+    }
+
+    // المسافة الحالية من الحاجب إلى النقطة 10 على المحور الصاعد
+    var have = (u.top[0] - brow[0]) * u.ux + (u.top[1] - brow[1]) * u.uy;
+    var need = m.foreheadHeight - have;          // ما ينقص للوصول إلى خط الشعر
+    var liftK = need / fs;
+
+    if (!isFinite(liftK)) return { liftK: legacy, confidence: 0.2, source: 'default' };
+    liftK = Math.max(legacy, liftK);             // الثابت القديم صار حدًّا أدنى لا قيمة
+    liftK = Math.min(cfg.liftMax, Math.max(cfg.liftMin, liftK));
+
+    return {
+      liftK: liftK,
+      confidence: m.confidence,
+      source: m.source,
+      foreheadHeight: m.foreheadHeight,
+      alreadyCovered: have
+    };
+  }
+
+  /* ---------------------------------------------------------------------------
+   * 4) الغلاف — بديل faceOvalToHairline بنفس التوقيع
+   * ------------------------------------------------------------------------- */
+  function outline(lm, pt, fs, opts) {
+    opts = opts || {};
+    var cfg = opts.cfg || CFG;
+    var oval = opts.oval || FACE_OVAL;
+    var G = getter(lm, pt), u = upVector(G);
+    var pts = oval.map(G).filter(Boolean);
+    if (!u || pts.length < 3) return pts;
+
+    var lf = foreheadLift(lm, pt, fs, opts);
+    var lift = fs * lf.liftK;
+    var perp = { x: -u.uy, y: u.ux };
+    var pad = fs * (opts.sidePad != null ? opts.sidePad : cfg.sidePad);
+
+    var out = oval.map(function (i) {
+      var p = G(i); if (!p) return null;
+      var x = p[0], y = p[1];
+      // 1 عند القمة، 0 عند مستوى العين — تدرّج ناعم
+      var along = ((x - u.chin[0]) * u.ux + (y - u.chin[1]) * u.uy) / u.len;
+      var w = Math.max(0, Math.min(1, (along - 0.62) / 0.38));
+      var e = w * w * (3 - 2 * w);
+      x += u.ux * lift * e; y += u.uy * lift * e;
+      if (pad) {                                   // توسعة جانبية اختيارية
+        var lat = (x - u.chin[0]) * perp.x + (y - u.chin[1]) * perp.y;
+        var s = lat >= 0 ? 1 : -1;
+        x += perp.x * pad * s; y += perp.y * pad * s;
+      }
+      return [x, y];
+    }).filter(Boolean);
+
+    out.meta = lf;
+    return out;
+  }
+
+  /* ---------------------------------------------------------------------------
+   * 5) حارس الإطار — لا نصف وجه أبدًا
+   * ------------------------------------------------------------------------- */
+  function frameGuard(lm, pt, fs, W, H, opts) {
+    opts = opts || {};
+    var cfg = opts.cfg || CFG;
+    var mx = W * cfg.frameMargin, my = H * cfg.frameMargin;
+    var pts = outline(lm, pt, fs, opts);
+    if (!pts || pts.length < 3) return { ok: false, reason: 'no_face' };
+
+    var G = getter(lm, pt);
+    var topOut = 0, botOut = 0, sideOut = 0;
+    pts.forEach(function (p) {
+      if (p[1] < my) topOut++;
+      if (p[1] > H - my) botOut++;
+      if (p[0] < mx || p[0] > W - mx) sideOut++;
+    });
+
+    var res = { ok: true, reason: null, topOut: topOut, botOut: botOut, sideOut: sideOut, meta: pts.meta };
+    if (topOut) { res.ok = false; res.reason = 'forehead_out_of_frame'; }
+    else if (sideOut) { res.ok = false; res.reason = 'face_too_wide_for_frame'; }
+    else if (botOut) { res.ok = false; res.reason = 'chin_out_of_frame'; }
+
+    if (!res.ok) {
+      res.message = {
+        ar: 'تراجعي قليلًا حتى يظهر الوجه كاملًا',
+        en: 'Move back a little so the whole face fits',
+        id: 'Mundur sedikit agar seluruh wajah terlihat'
+      };
+    }
+    return res;
+  }
+
+  /* ---------------------------------------------------------------------------
+   * 6) تقرير التغطية — للمعايرة والاختبار
+   * ------------------------------------------------------------------------- */
+  function coverageReport(lm, pt, fs, opts) {
+    opts = opts || {};
+    var G = getter(lm, pt), u = upVector(G), brow = browLine(G);
+    if (!u || !brow) return null;
+    var truth = opts.sample ? hairlineFromMask(opts.sample, lm, pt, fs, opts.cfg || CFG) : null;
+    var lf = foreheadLift(lm, pt, fs, opts);
+    if (!truth) return { foreheadHeight: null, ratio: null, liftK: lf.liftK, source: lf.source, confidence: lf.confidence };
+    var have = (u.top[0] - brow[0]) * u.ux + (u.top[1] - brow[1]) * u.uy;
+    var covered = have + fs * lf.liftK;
+    return {
+      foreheadHeight: truth.foreheadHeight,
+      covered: covered,
+      ratio: covered / truth.foreheadHeight,
+      liftK: lf.liftK,
+      source: lf.source,
+      confidence: lf.confidence
+    };
+  }
+
+  /** تغطية أي رفع مقابل خط شعر معلوم — للمقارنة والمعايرة */
+  function coverageOfLift(lm, pt, fs, liftK, trueForeheadHeight) {
+    var G = getter(lm, pt), u = upVector(G), brow = browLine(G);
+    if (!u || !brow || !trueForeheadHeight) return null;
+    var have = (u.top[0] - brow[0]) * u.ux + (u.top[1] - brow[1]) * u.uy;
+    return (have + fs * liftK) / trueForeheadHeight;
+  }
+
+  var LamhaEnvelope = {
+    version: '1.0',
+    FACE_OVAL: FACE_OVAL,
+    LMK: LMK,
+    CFG: CFG,
+    upVector: function (lm, pt) { return upVector(getter(lm, pt)); },
+    browLine: function (lm, pt) { return browLine(getter(lm, pt)); },
+    hairlineFromMask: hairlineFromMask,
+    foreheadLift: foreheadLift,
+    outline: outline,
+    frameGuard: frameGuard,
+    coverageReport: coverageReport,
+    coverageOfLift: coverageOfLift
+  };
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = LamhaEnvelope;
+  if (root) root.LamhaEnvelope = LamhaEnvelope;
+
+})(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this));
+</script>
 
 <script>
 /* ============================================================
@@ -368,6 +1701,7 @@ window.addEventListener('unhandledrejection', function(e){
 
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="color-scheme" content="only light">
 <meta name="theme-color" content="#5E1027">
 <title>LAMHA MOBILE — لمحة موبايل</title>
 <meta name="description" content="لمحة مرآة مكياج ذكية تعمل على جهازك: تقرأ ملامح وجهك وبشرتك، وتجرّبين المكياج والشعر والحجاب مباشرة، وتتعلّمين كل خطوة. LAMHA — an on-device smart makeup mirror.">
@@ -1354,6 +2688,7 @@ body.lamha40 .dbtn span{font-size:11.5px}
 .stSw.fav::after{content:'★';position:absolute;top:-5px;inset-inline-end:-4px;font-size:11px;line-height:1;color:#A67C52;text-shadow:0 0 2px #fff,0 0 2px #fff}
 .stUnhide b{display:grid;place-items:center;width:30px;height:30px;margin:0 auto 2px;border-radius:50%;border:1px dashed #B08A66;color:#8A6A4A;font-size:17px;font-weight:500}</style><!-- /lamha-v81-css -->
 <style id="lamha-v88-ruby">
+:root{color-scheme:only light}html,body{forced-color-adjust:none}   /* never darkened by the browser */
 /* ============================================================
    v88 · ياقوت (Ruby) — the house colours: deep ruby, rose red, soft gold, blush ivory.
    Chrome (splash, consent, dock) is ruby; reading surfaces stay light blush so text keeps its contrast.
@@ -1788,7 +3123,7 @@ document.addEventListener('DOMContentLoaded', function(){
     </div>
 
     <div id="gate">
-      <div class="mark">LAMHA MOBILE · v94 · BUILD 20260919</div>
+      <div class="mark">LAMHA MOBILE · v94 · BUILD 20260921r</div>
       <h1 class="disp" data-i18n="gate_h">مرآة زين الذكية</h1>
       <p data-i18n="gate_p">مرآتك تحلّل بشرتك، ترسم خريطة وجهك، وتجرّب المكياج قبل أن تلمسي فرشاة واحدة.</p>
       <div class="feats">
@@ -1932,6 +3267,7 @@ document.addEventListener('DOMContentLoaded', function(){
       <div id="sk-list"></div>
       <label class="fld" data-i18n="sk_regions">مناطق الوجه</label>
       <div id="sk-regions"></div>
+<div id="sk-advice"></div>
       <label class="fld" data-i18n="sk_box">صندوق الجمال — مقترحات لبشرتك</label>
       <div class="cards" id="sk-cards"></div>
       <div class="note" data-lx="sk_med"></div>
@@ -3717,6 +5053,7 @@ async function openCamera(){
   for(const c of tries){
     try{
       const st = await navigator.mediaDevices.getUserMedia(c);
+      S._autoScanDone = false;                 /* v95: one silent reading per camera */
       const v = $('#vid'); v.srcObject = st;
       await new Promise(r=>{ v.onloadedmetadata = ()=>{ v.play().then(r).catch(r); }; });
       diag(1,'ok', v.videoWidth+'×'+v.videoHeight);
@@ -4335,6 +5672,7 @@ function loop(){
         const nl = res.faceLandmarks[0];
         S.landmarks = euroSmooth(nl); S._lmSeen = now; S.trackHold = false;
         try{ if(window.lamhaFrameTick) window.lamhaFrameTick(S.landmarks); }catch(e){}   /* v94: is the whole face in? */
+        try{ if(window.lamhaAutoScan) window.lamhaAutoScan(); }catch(e){}                /* v95: the silent first reading */
         if(!S.trackOk){ S.trackOk=true; diag(4,'ok','468'); }
         if(window.LAMHA_PRO && LAMHA_PRO.onFrame){ try{ LAMHA_PRO.onFrame(res); }catch(e){} }
       } else if(S.landmarks && now - (S._lmSeen||0) < 350){
@@ -4365,8 +5703,10 @@ function loop(){
   if(S.compare){ cmpC.width=cv.width; cmpC.height=cv.height;
     cmpX.setTransform(1,0,0,1,0,0); cmpX.clearRect(0,0,cv.width,cv.height); cmpX.drawImage(cv,0,0); }
   if(S.landmarks){
+    /* v95 · the whole face or none of it — never a partial covering */
+    let envOK = true; try{ envOK = lamhaEnvGuard(S.landmarks); }catch(e){}
     /* one bad frame must never take the whole overlay stack down with it */
-    try{ drawMakeup(S.landmarks); }
+    try{ if(envOK) drawMakeup(S.landmarks); }
     catch(err){
       if(!S._mkErr){ S._mkErr = 1; console.error('[makeup]', err); say('makeup: '+(err && err.message || err), 6000); }
     }
@@ -4387,7 +5727,7 @@ function loop(){
     try{ window.__edgeOnly=true; drawFaceMap(S.landmarks, false); }
     catch(e){} finally{ window.__edgeOnly=false; }
   }
-  if(S.showGL && S.landmarks && typeof glFrame==='function'){
+  if(S.showGL && S.landmarks && S._envOK !== false && typeof glFrame==='function'){
     try{ glFrame(S.landmarks); }
     catch(err){ if(!S._glErr){ S._glErr=1; fatalLog('[webgl frame] '+(err && (err.stack||err.message||err))); } }
   }
@@ -4427,6 +5767,7 @@ function loop(){
   if(S.calibMode && typeof __calibDraw==='function'){ try{ __calibDraw(); }catch(e){} }
   if(S.scanning) drawScanBeam();
   if(window.LAMHA_OCC){ try{ LAMHA_OCC.tick(); }catch(e){} }
+  if(window.LAMHA_HAND){ try{ LAMHA_HAND.tick(); }catch(e){} }   /* v94 · the stroke phase */
 
   frames++;
   if(now - fpsT > 700){ S.fps = Math.round(frames*1000/(now-fpsT)); frames=0; fpsT=now; $('#fpsChip').textContent = S.fps+' fps'; }
@@ -4685,6 +6026,172 @@ function browStyleKey(){
 }
 /* cor = her measured corrections, in pixels: tail (draw the short tail on
    along the brow), top (lift the upper edge around the arch — the lower brow) */
+/* === v94 · BROW: hairs, not a slab === */
+var BROW = {
+  /* growth angle away from the brow's own spine, in degrees, along its length.
+     Every brow tutorial says the same three things — brush the head UP, the
+     body out, the tail along — and this is that in numbers. */
+  ANG: [[0.00, 76], [0.16, 54], [0.40, 26], [0.68, 8], [1.00, -10]],
+  N_BASE: 44,              /* strokes per brow at normal density */
+  DENS: { sparse: 1.45, normal: 1.0, dense: 0.70 },
+  LEN: [0.80, 1.45],       /* × the local thickness */
+  JIT: 9,                  /* degrees of scatter, so it is not a comb */
+  BOW: 0.22,               /* how much each hair curves */
+
+  /** deterministic per side: a brow that re-randomises every frame shimmers */
+  rng: function (seed) {
+    var s = (seed | 0) || 1;
+    return function () { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+  },
+
+  angleAt: function (t) {
+    var A = this.ANG, i;
+    if (t <= A[0][0]) return A[0][1];
+    for (i = 1; i < A.length; i++) if (t <= A[i][0]) {
+      var f = (t - A[i-1][0]) / (A[i][0] - A[i-1][0]);
+      return A[i-1][1] + (A[i][1] - A[i-1][1]) * f;
+    }
+    return A[A.length-1][1];
+  },
+
+  /** the brow's spine: upper and lower chains (head→tail) become a centre line
+      with a local thickness and direction at each step */
+  spine: function (up, lo, n) {
+    n = n || 24;
+    var out = [], i, t, a, b, k, q;
+    var pick = function (arr, tt) {
+      var x = tt * (arr.length - 1), j = Math.min(arr.length - 2, Math.floor(x)), f = x - j;
+      return [arr[j][0] + (arr[j+1][0] - arr[j][0]) * f, arr[j][1] + (arr[j+1][1] - arr[j][1]) * f];
+    };
+    for (i = 0; i < n; i++) {
+      t = i / (n - 1);
+      a = pick(up, t); b = pick(lo, t);
+      out.push({ t: t, c: [(a[0]+b[0])/2, (a[1]+b[1])/2], up: a, lo: b,
+                 th: Math.hypot(a[0]-b[0], a[1]-b[1]) });
+    }
+    for (i = 0; i < n; i++) {                      /* direction along the spine */
+      k = out[Math.min(n-1, i+1)].c; q = out[Math.max(0, i-1)].c;
+      var dx = k[0]-q[0], dy = k[1]-q[1], m = Math.hypot(dx, dy) || 1;
+      out[i].dir = [dx/m, dy/m];
+      out[i].nrm = [(out[i].up[0]-out[i].lo[0]) / (out[i].th || 1),
+                    (out[i].up[1]-out[i].lo[1]) / (out[i].th || 1)];
+    }
+    return out;
+  },
+
+  /** the hairs themselves. Roots sit low (hair grows out of skin, upward), the
+      tip leans by the growth angle, and each one bows a little. */
+  strokes: function (up, lo, opts) {
+    opts = opts || {};
+    if (!up || !lo || up.length < 2 || lo.length < 2) return [];
+    var sp = this.spine(up, lo, 26), rnd = this.rng(opts.seed || 7);
+    var dens = this.DENS[opts.density] || 1, gain = opts.gain == null ? 1 : opts.gain;
+    var n = Math.max(8, Math.round(this.N_BASE * dens * gain)), out = [], i;
+    for (i = 0; i < n; i++) {
+      var t = (i + rnd() * 0.85) / n;                 /* spread, not a grid */
+      if (t > 1) t = 1;
+      var s = sp[Math.min(sp.length - 1, Math.round(t * (sp.length - 1)))];
+      var th = s.th || 1;
+      /* root: low in the brow near the head, mid-height toward the tail */
+      var lowBias = 0.12 + 0.45 * t + rnd() * 0.35;
+      var root = [s.lo[0] + s.nrm[0] * th * lowBias, s.lo[1] + s.nrm[1] * th * lowBias];
+      /* direction: the spine turned toward the normal by the growth angle */
+      var ang = (this.angleAt(t) + (rnd() - 0.5) * 2 * this.JIT) * Math.PI / 180;
+      var ca = Math.cos(ang), sa = Math.sin(ang);
+      var dx = s.dir[0] * ca + s.nrm[0] * sa, dy = s.dir[1] * ca + s.nrm[1] * sa;
+      var m = Math.hypot(dx, dy) || 1; dx /= m; dy /= m;
+      var len = th * (this.LEN[0] + rnd() * (this.LEN[1] - this.LEN[0]));
+      var tip = [root[0] + dx * len, root[1] + dy * len];
+      /* the bow: a control point pushed sideways so the hair is not a stick */
+      var px = -dy, py = dx, bow = (rnd() - 0.5) * 2 * this.BOW * len;
+      out.push({
+        a: root,
+        ctrl: [(root[0]+tip[0])/2 + px*bow, (root[1]+tip[1])/2 + py*bow],
+        b: tip,
+        w: Math.max(0.6, th * (0.075 + rnd() * 0.055)),
+        alpha: 0.45 + rnd() * 0.5,
+        t: t
+      });
+    }
+    return out;
+  },
+
+  /* ---- measurement helpers, so the result is judged not admired ---------- */
+  /** rasterise strokes or a slab into a coarse grid and report how much
+      structure is inside: a filled polygon has none, hair has a lot */
+  texture: function (marks, box, n) {
+    n = n || 24;
+    var g = new Float64Array(n * n), i, j, k, s, t, x, y, gx, gy;
+    var w = box.x1 - box.x0, h = box.y1 - box.y0;
+    for (k = 0; k < marks.length; k++) {
+      s = marks[k];
+      for (j = 0; j <= 12; j++) {
+        t = j / 12;
+        x = (1-t)*(1-t)*s.a[0] + 2*(1-t)*t*s.ctrl[0] + t*t*s.b[0];
+        y = (1-t)*(1-t)*s.a[1] + 2*(1-t)*t*s.ctrl[1] + t*t*s.b[1];
+        gx = Math.floor((x - box.x0) / w * n); gy = Math.floor((y - box.y0) / h * n);
+        if (gx < 0 || gy < 0 || gx >= n || gy >= n) continue;
+        g[gy * n + gx] += s.alpha;
+      }
+    }
+    var sum = 0, cnt = 0;
+    for (i = 0; i < g.length; i++) if (g[i] > 0) { sum += g[i]; cnt++; }
+    var mean = cnt ? sum / cnt : 0, v = 0;
+    for (i = 0; i < g.length; i++) if (g[i] > 0) v += (g[i]-mean)*(g[i]-mean);
+    return { filled: cnt / (n*n), mean: mean, sd: cnt ? Math.sqrt(v/cnt) : 0 };
+  },
+
+  /** is a point inside the polygon made of the two chains? */
+  inside: function (p, up, lo) {
+    var poly = up.concat(lo.slice().reverse()), c = false, i, j;
+    for (i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      if (((poly[i][1] > p[1]) !== (poly[j][1] > p[1])) &&
+          (p[0] < (poly[j][0]-poly[i][0]) * (p[1]-poly[i][1]) / (poly[j][1]-poly[i][1]) + poly[i][0]))
+        c = !c;
+    }
+    return c;
+  }
+};
+if (typeof module !== 'undefined' && module.exports) module.exports = BROW;
+/* the chains as the shape sees them: head first, her corrections applied, so
+   the hairs land where the corrected brow is — including the drawn-on tail */
+function browHairs(m2, lm, up, lo, cor, seed, fs){
+  const br = P(lm[168]);
+  const d2b = i => { const q = P(lm[i]); return (q[0]-br[0])**2 + (q[1]-br[1])**2; };
+  const U = (d2b(up[0]) < d2b(up[up.length-1]) ? up : [...up].reverse()).map(i=>P(lm[i]));
+  const D = (d2b(lo[0]) < d2b(lo[lo.length-1]) ? lo : [...lo].reverse()).map(i=>P(lm[i]));
+  const mean = a => a.reduce((s,q)=>[s[0]+q[0]/a.length, s[1]+q[1]/a.length],[0,0]);
+  const mu = mean(U), ml = mean(D);
+  let nx = mu[0]-ml[0], ny = mu[1]-ml[1]; const nl = Math.hypot(nx,ny)||1; nx/=nl; ny/=nl;
+  const top = (cor && cor.top > 0) ? cor.top : 0, ext = (cor && cor.tail > 0) ? cor.tail : 0;
+  const U2 = U.map((q,k)=>{ const t=k/(U.length-1), b=top*Math.exp(-Math.pow((t-.62)/.28,2));
+    return [q[0]+nx*b, q[1]+ny*b]; });
+  const D2 = D.slice();
+  if(ext){                                   /* the tail she is missing */
+    const hx=(U[0][0]+D[0][0])/2, hy=(U[0][1]+D[0][1])/2;
+    const tu=U2[U2.length-1], td=D2[D2.length-1];
+    let dx=(tu[0]+td[0])/2-hx, dy=(tu[1]+td[1])/2-hy; const dl=Math.hypot(dx,dy)||1; dx/=dl; dy/=dl;
+    U2.push([tu[0]+dx*ext-nx*ext*0.10, tu[1]+dy*ext-ny*ext*0.10]);
+    D2.push([td[0]+dx*ext-nx*ext*0.18, td[1]+dy*ext-ny*ext*0.18]);
+  }
+  const gain = Math.max(0.6, Math.min(1.8, (S.ints.brow ?? 0.5) * 2));
+  const dens = S.browDensity || 'normal';
+  const hairs = BROW.strokes(U2, D2, { seed, density: dens, gain });
+  m2.save();
+  m2.filter = `blur(${Math.max(0.6, fs*0.0035).toFixed(2)}px)`;
+  m2.strokeStyle = '#00ff00'; m2.lineCap = 'round';
+  hairs.forEach(h => {
+    m2.globalAlpha = h.alpha;
+    m2.lineWidth = h.w;
+    m2.beginPath(); m2.moveTo(h.a[0], h.a[1]);
+    m2.quadraticCurveTo(h.ctrl[0], h.ctrl[1], h.b[0], h.b[1]);
+    m2.stroke();
+  });
+  m2.globalAlpha = 1;
+  m2.restore();
+  return hairs.length;
+}
+
 function browShape(c, lm, up, lo, cor){
   const prm = BROW_PARAMS[browStyleKey()];
   const ext = cor && cor.tail > 0 ? cor.tail : 0, top = cor && cor.top > 0 ? cor.top : 0;
@@ -5182,9 +6689,124 @@ function softenMask(c2, W, H, r){
   }catch(e){}
 }
 
+/* v95 · the segmenter's own mask, read as skin / hair / background.
+   The mask lives in the source frame's normalised space, but this function's
+   callers hand us three different coordinate spaces (display, normalised, raw),
+   so the caller's own mapping is inverted from three landmarks instead of
+   assuming one. No new inference pass: this only reads what OCC already built. */
+function lamhaSkinSampler(lm, pt){
+  const O = window.LAMHA_OCC;
+  if(!O || !O._cat || !O.W || !O.H || O._cat.length !== O.W*O.H) return null;
+  /* the mask must belong to THIS frame: a stale one from the previous photo or
+     camera would place her hairline somewhere she never was */
+  if(O._catSrc && typeof SRC !== 'undefined' && O._catSrc !== SRC) return null;
+  if(!lm || typeof pt !== 'function') return null;
+  const SEG = (window.PRO && PRO.SEG) || { BG:0, HAIR:1, BODY:2, FACE:3, CLOTH:4, OTHER:5 };
+  const at = i => { const l = lm[i]; if(!l) return null;
+    try{ const r = pt(l); if(r && isFinite(r[0]) && isFinite(r[1])) return r; }catch(e){}
+    try{ const r2 = pt(i); if(r2 && isFinite(r2[0]) && isFinite(r2[1])) return r2; }catch(e){}
+    return null; };
+  const idx = [152, 10, 234], N = [], Pp = [];
+  for(const i2 of idx){ const l = lm[i2], p = at(i2); if(!l || !p) return null;
+    N.push([l.x, l.y]); Pp.push(p); }
+  /* p = A·n + b, fitted on three landmarks, then inverted */
+  const n11 = N[1][0]-N[0][0], n12 = N[2][0]-N[0][0];
+  const n21 = N[1][1]-N[0][1], n22 = N[2][1]-N[0][1];
+  const det = n11*n22 - n12*n21; if(!isFinite(det) || Math.abs(det) < 1e-12) return null;
+  const p11 = Pp[1][0]-Pp[0][0], p12 = Pp[2][0]-Pp[0][0];
+  const p21 = Pp[1][1]-Pp[0][1], p22 = Pp[2][1]-Pp[0][1];
+  const a11 = ( p11*n22 - p12*n21)/det, a12 = (-p11*n12 + p12*n11)/det;
+  const a21 = ( p21*n22 - p22*n21)/det, a22 = (-p21*n12 + p22*n11)/det;
+  const dA = a11*a22 - a12*a21; if(!isFinite(dA) || Math.abs(dA) < 1e-12) return null;
+  const bx = Pp[0][0] - (a11*N[0][0] + a12*N[0][1]);
+  const by = Pp[0][1] - (a21*N[0][0] + a22*N[0][1]);
+  const cat = O._cat, W = O.W, H = O.H;
+  return function(x, y){
+    const dx = x - bx, dy = y - by;
+    const nx = ( a22*dx - a12*dy)/dA, ny = (-a21*dx + a11*dy)/dA;
+    const mx = Math.floor(nx*W), my = Math.floor(ny*H);
+    if(mx < 0 || my < 0 || mx >= W || my >= H) return null;
+    const c = cat[my*W + mx];
+    if(c === SEG.FACE || c === SEG.BODY) return 'skin';
+    if(c === SEG.HAIR) return 'hair';
+    if(c === SEG.BG || c === SEG.CLOTH) return 'bg';
+    return null;
+  };
+}
+
+/* v95 · a hijab changes the arithmetic of the guess. Over hair, overshooting
+   the hairline is invisible: the strands and the soft edge swallow it. Over
+   fabric it is a stripe of foundation on her scarf. So when she wears one and
+   we have no mask to measure with, the guess becomes cautious instead of
+   generous — the asymmetry of the two mistakes is reversed. */
+function lamhaEnvCfg(){
+  if(typeof LamhaEnvelope === 'undefined') return null;
+  let hijab = false;
+  try{ hijab = !!(S.hijabColour || (window.__ocSel && window.__ocSel.hijab) ||
+                 (S.pro && S.pro.hair && S.pro.hair.hijab)); }catch(e){}
+  if(!hijab) return null;
+  return Object.assign({}, LamhaEnvelope.CFG, { fallbackLiftK: 0.06, liftMax: 0.34 });
+}
+
+/* v95 · the whole face, or none of it. Half a face reads as a remark about
+   her face, never as a bug — two testers stopped using the app over it. */
+function lamhaEnvGuard(lm){
+  const now = performance.now();
+  if(!lm || typeof LamhaEnvelope === 'undefined' || STILL){ S._envOK = true; return true; }
+  if(S._envT && now - S._envT < 280) return S._envOK !== false;
+  S._envT = now;
+  let g = null;
+  try{
+    const fs = faceScale(lm), pf = l => P(l);
+    g = LamhaEnvelope.frameGuard(lm, pf, fs, cv.width, cv.height,
+      { oval: L.faceOval, legacyLiftK: 0.10, sample: lamhaSkinSampler(lm, pf), cfg: lamhaEnvCfg() });
+  }catch(e){ S._envOK = true; return true; }
+  S._envOK = !g || g.ok !== false;
+  if(!S._envOK && g && g.message && now - (S._envSaid || 0) > 4000){
+    S._envSaid = now;
+    try{ say(g.message[(typeof LANG === 'string' && g.message[LANG]) ? LANG : 'ar'], 3000); }catch(e){}
+  }
+  return S._envOK;
+}
+
 /* the mesh's face oval stops short of the hairline; foundation must not.
    Push the forehead arc up along the face's own vertical axis. */
 function faceOvalToHairline(lm, pt, fs, liftK){
+  /* v95 · measured, not assumed: the passed liftK is now a FLOOR, and the
+     hairline itself is read off the segmenter mask whenever there is one */
+  if(typeof LamhaEnvelope !== 'undefined'){
+    try{
+      const smp = lamhaSkinSampler(lm, pt);
+      let legacy = (liftK != null ? liftK : 0.20), cfg = lamhaEnvCfg();
+      /* lowered by a confident mask: a hijab or a heavy fringe ends her skin
+         close to the brow, and the old constant would paint past it onto the
+         fabric (measured 2.5x coverage on a real photograph). A measurement
+         outranks a constant — but only when the five columns agree. */
+      if(smp){
+        const base = cfg || LamhaEnvelope.CFG;
+        const hl = LamhaEnvelope.hairlineFromMask(smp, lm, pt, fs, base);
+        const u = LamhaEnvelope.upVector(lm, pt), br = LamhaEnvelope.browLine(lm, pt);
+        if(hl && hl.confidence >= 0.9 && u && br && fs > 0){
+          const have = (u.top[0]-br[0])*u.ux + (u.top[1]-br[1])*u.uy;
+          const need = (hl.foreheadHeight - have) / fs;
+          if(need < legacy){
+            /* a scarf can sit BELOW the mesh's own forehead point, so the arc
+               must be allowed to come down, not merely to stop rising. Bounded
+               at -0.30 fs so a single bad mask reading cannot collapse it. */
+            legacy = Math.max(-0.30, need);
+            cfg = Object.assign({}, base, { liftMin: Math.min(0, legacy) });
+          }
+        }
+      }
+      const o = LamhaEnvelope.outline(lm, pt, fs, {
+        oval: L.faceOval,
+        legacyLiftK: legacy,
+        sample: smp,
+        cfg: cfg
+      });
+      if(o && o.length >= 3) return o;
+    }catch(e){}
+  }
   /* tolerate both calling styles: pt(landmarkObject) and pt(index) */
   const G = i => { const l = lm[i]; if(!l) return null;
     try{ const r = pt(l); if(r && isFinite(r[0])) return r; }catch(e){}
@@ -5888,10 +7510,16 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
        browShape draws through P, so millimetres are measured through P too */
     const PB = personalPlan().brow, mmPx = pxPerMm(lm, P);
     const cor = k => ({ tail: PB[k].tail*mmPx, top: PB[k].top*mmPx });
-    m2.save(); m2.filter=`blur(${Math.max(.8, fs*0.008).toFixed(1)}px)`; m2.fillStyle='#00ff00';
+    /* v94 · a brow is hair: a faint wash where the skin shows through it,
+       then individual strokes along the real growth direction. The filled
+       polygon that used to be here is what four testers called unnatural. */
+    m2.save(); m2.filter=`blur(${Math.max(.8, fs*0.010).toFixed(1)}px)`;
+    m2.fillStyle='rgba(0,255,0,0.30)';
     browShape(m2,lm,L.browUpL,L.browLoL,cor(70)); m2.fill();
     browShape(m2,lm,L.browUpR,L.browLoR,cor(300)); m2.fill();
     m2.restore();
+    browHairs(m2, lm, L.browUpL, L.browLoL, cor(70),  701,  fs);
+    browHairs(m2, lm, L.browUpR, L.browLoR, cor(300), 3001, fs);
   }
   if(on('glow')){
     m2.save();
@@ -7380,6 +9008,632 @@ function drawCaps(caps){
    just WHERE the product goes, but the DIRECTION to blend.
    ============================================================ */
 const BRUSH = { t:0, last:0 };
+/* === v94 · PERFORM: the brush performs the motion === */
+var PERFORM = {
+  /* one cycle of each motion, in milliseconds, and how the time is spent.
+     hold = the share of a step's time spent stationary (the pause IS the tap),
+     ease = slow-in/slow-out (a sweep) vs steady (a rhythm you copy).          */
+  T: {
+    sweep:      { cycle: 1600, hold: 0.00, ease: 1, press: 0.35 },
+    circle:     { cycle: 2200, hold: 0.00, ease: 0, press: 0.30 },
+    spiral:     { cycle: 2600, hold: 0.00, ease: 0, press: 0.30 },
+    halfCircle: { cycle: 1800, hold: 0.00, ease: 1, press: 0.30 },
+    tap:        { cycle: 0,    hold: 0.55, ease: 0, press: 0.95, per: 260 },
+    press:      { cycle: 0,    hold: 0.80, ease: 0, press: 1.00, per: 900 }
+  },
+
+  /** build the time table once per template: every point gets a duration, a
+      held point gets many, and the totals let us seek by milliseconds */
+  plan: function (tpl) {
+    if (!tpl || !tpl.pts || tpl.pts.length < 2) return null;
+    var k = this.T[tpl.kind] || this.T.sweep, n = tpl.pts.length;
+    var dur = [], total = 0, i, w, holds = 0, d, mean = 0, cnt = 0;
+    /* time is spent by DISTANCE, not by index: sampling a loop uniformly in t
+       gives uneven spacing, and equal time per point then makes the brush
+       lurch — which reads as a different technique than the one taught */
+    for (i = 0; i < n - 1; i++) {
+      d = Math.hypot(tpl.pts[i+1].x - tpl.pts[i].x, tpl.pts[i+1].y - tpl.pts[i].y);
+      if (d > 1e-6) { mean += d; cnt++; }
+    }
+    mean = cnt ? mean / cnt : 1;
+    for (i = 0; i < n; i++) {
+      if (tpl.pts[i].hold) { w = mean * (1 + k.hold * 8); holds++; }
+      else {
+        d = i < n - 1 ? Math.hypot(tpl.pts[i+1].x - tpl.pts[i].x, tpl.pts[i+1].y - tpl.pts[i].y) : mean;
+        w = Math.max(mean * 0.15, d);
+      }
+      dur.push(w); total += w;
+    }
+    /* a demonstration longer than about three seconds stops being watched */
+    var cycle = k.cycle > 0 ? k.cycle
+              : Math.min(3200, Math.max(700, (k.per || 260) * Math.max(1, holds / 3)));
+    var acc = [0], s = 0;
+    for (i = 0; i < n; i++) { s += dur[i] / total; acc.push(s); }
+    return { tpl: tpl, kind: tpl.kind, acc: acc, cycle: cycle, k: k, holdShare: holds ? (holds / n) : 0 };
+  },
+
+  ease: function (u) { return u * u * (3 - 2 * u); },   /* smoothstep */
+
+  /** where the brush is, and what it is doing, at a moment of the cycle */
+  at: function (plan, ms) {
+    if (!plan) return null;
+    var u = (ms % plan.cycle) / plan.cycle;
+    if (plan.k.ease) u = this.ease(u);
+    var acc = plan.acc, pts = plan.tpl.pts, n = pts.length, lo = 0, hi = n - 1, mid;
+    while (lo < hi) { mid = (lo + hi) >> 1; if (acc[mid + 1] < u) lo = mid + 1; else hi = mid; }
+    var span = acc[lo + 1] - acc[lo] || 1e-6, f = (u - acc[lo]) / span;
+    var a = pts[lo], b = pts[Math.min(n - 1, lo + 1)];
+    var held = !!a.hold;
+    /* a held point does not slide: it stays, and the press pulses */
+    var x = held ? a.x : a.x + (b.x - a.x) * f;
+    var y = held ? a.y : a.y + (b.y - a.y) * f;
+    /* heading: keep the last real direction through a hold */
+    var j = lo, dx = 0, dy = 0;
+    while (j > 0 && Math.abs(pts[j].x - pts[j-1].x) + Math.abs(pts[j].y - pts[j-1].y) < 1e-6) j--;
+    if (j > 0) { dx = pts[j].x - pts[j-1].x; dy = pts[j].y - pts[j-1].y; }
+    else if (n > 1) { dx = pts[1].x - pts[0].x; dy = pts[1].y - pts[0].y; }
+    var ang = Math.atan2(dy, dx);
+    /* pressure: full on a hold's strike, speed-shaped otherwise */
+    var press;
+    if (held) press = plan.k.press * (0.55 + 0.45 * Math.sin(Math.min(1, f) * Math.PI));
+    else press = plan.k.press * (0.6 + 0.4 * Math.sin(u * Math.PI));
+    /* she lifts her hand between passes — so does the demonstration. Without
+       this the brush teleports from the end of the path back to its start,
+       which teaches a stroke that does not exist. */
+    var raw = (ms % plan.cycle) / plan.cycle, alpha = 1;
+    if (plan.kind !== 'tap' && plan.kind !== 'press') {
+      if (raw > 0.90) alpha = Math.max(0, (1 - raw) / 0.10);
+      else if (raw < 0.06) alpha = raw / 0.06;
+    }
+    return { x: x, y: y, ang: ang, press: press, splay: 1 + press * 0.9,
+             held: held, u: u, i: lo, alpha: alpha, lifting: alpha < 0.999 };
+  },
+
+  /** the trail behind the head: shorter when she should be pausing */
+  trail: function (plan, ms, n, stepMs) {
+    var out = [], i, p;
+    n = n || 12; stepMs = stepMs || 26;
+    for (i = 0; i < n; i++) {
+      p = this.at(plan, ms - i * stepMs);
+      if (p) out.push(p);
+    }
+    return out;
+  },
+
+  /** how much of one cycle is spent standing still — the number that separates
+      a tap from a drag when you watch the demonstration */
+  stillShare: function (plan, samples) {
+    samples = samples || 120;
+    var i, still = 0, p, q = null;
+    for (i = 0; i < samples; i++) {
+      p = this.at(plan, plan.cycle * i / samples);
+      if (q && Math.hypot(p.x - q.x, p.y - q.y) < 0.35) still++;
+      q = p;
+    }
+    return still / samples;
+  }
+};
+if (typeof module !== 'undefined' && module.exports) module.exports = PERFORM;
+
+/* === v94 · TEACH: the motion vocabulary (circles, spiral, taps, half circle) === */
+var TECH = {
+  /* the vocabulary. `key` is what the lesson stores, the rest is how it is drawn
+     and how it is recognised in her own hand                                    */
+  P: {
+    sweep:      { ar:'مسحة مستقيمة',  en:'Straight sweep',  id:'Sapuan lurus'   },
+    circle:     { ar:'دوائر صغيرة',   en:'Small circles',   id:'Putaran kecil'  },
+    spiral:     { ar:'حلزوني للخارج', en:'Outward spiral',  id:'Spiral ke luar' },
+    tap:        { ar:'تربيت',         en:'Tapping',         id:'Tepukan'        },
+    halfCircle: { ar:'نصف دائرة',     en:'Half circle',     id:'Setengah lingkaran' },
+    press:      { ar:'ضغط وثبات',     en:'Press and hold',  id:'Tekan dan tahan' }
+  },
+
+  /* geometry knobs, all relative to the stroke's own width so they follow her
+     face size instead of the screen */
+  K: {
+    loopR: 0.55,      /* circle radius, × stroke half-width                      */
+    loopsPerW: 0.85,  /* loops per one stroke-width of travel                    */
+    spiralTurns: 2.6,
+    tapGap: 1.15,     /* distance between taps, × stroke width                   */
+    tapDwell: 3,      /* samples held at each tap (the pause IS the technique)   */
+    arcSpan: Math.PI, /* half circle                                             */
+    minPts: 24
+  },
+
+  /* ---- 1 · the template she should trace ---------------------------------- */
+  resample: function (spine, n) {
+    var segs = [], total = 0, i, d, out = [], want, k, r;
+    for (i = 0; i < spine.length - 1; i++) {
+      d = Math.sqrt(Math.pow(spine[i+1][0]-spine[i][0], 2) + Math.pow(spine[i+1][1]-spine[i][1], 2));
+      segs.push(d); total += d;
+    }
+    if (total <= 0) return spine.slice();
+    for (k = 0; k < n; k++) {
+      want = total * k / (n - 1); i = 0;
+      while (i < segs.length && want > segs[i]) { want -= segs[i]; i++; }
+      if (i >= segs.length) { out.push(spine[spine.length-1].slice()); continue; }
+      r = segs[i] ? want / segs[i] : 0;
+      out.push([spine[i][0] + (spine[i+1][0]-spine[i][0])*r,
+                spine[i][1] + (spine[i+1][1]-spine[i][1])*r]);
+    }
+    return out;
+  },
+  length: function (p) {
+    var s = 0, i;
+    for (i = 1; i < p.length; i++) s += Math.hypot(p[i][0]-p[i-1][0], p[i][1]-p[i-1][1]);
+    return s;
+  },
+
+  /** spine = the 2–5 points the build already gives, w = stroke width in px.
+      Returns the full motion path, each point tagged so the drawing can pause
+      on a tap and the scorer knows what a correct pass looks like. */
+  template: function (spine, w, kind, shape) {
+    var K = this.K, out = [], i, j, t, n, L, base, nx, ny, tx, ty, ang, rad, steps;
+    if (!spine || spine.length < 2 || !(w > 0)) return null;
+    kind = this.P[kind] ? kind : 'sweep';
+    /* her face shape: the same motion carried at a different angle and size */
+    var S = this.tune(shape), bias = S.bias * Math.PI / 180;
+    K = { loopR: K.loopR * S.loop, loopsPerW: K.loopsPerW, spiralTurns: K.spiralTurns,
+          tapGap: K.tapGap * S.gap, tapDwell: K.tapDwell, arcSpan: K.arcSpan, minPts: K.minPts };
+    L = this.length(spine);
+    if (!(L > 0)) return null;
+
+    if (kind === 'sweep') {
+      base = this.resample(spine, Math.max(K.minPts, Math.round(L / (w*0.35))));
+      for (i = 0; i < base.length; i++) out.push({ x: base[i][0], y: base[i][1], hold: 0 });
+      return { kind: kind, pts: out, w: w };
+    }
+
+    if (kind === 'tap' || kind === 'press') {
+      n = Math.max(2, Math.round(L / (w * K.tapGap)) + 1);
+      base = this.resample(spine, n);
+      for (i = 0; i < base.length; i++)
+        for (j = 0; j < (kind === 'press' ? K.tapDwell * 2 : K.tapDwell); j++)
+          out.push({ x: base[i][0], y: base[i][1], hold: 1 });
+      return { kind: kind, pts: out, w: w };
+    }
+
+    if (kind === 'spiral') {
+      /* a real spiral, not a widening wave: it opens outward from the middle of
+         the area, which is how foundation is buffed out from where it was laid */
+      var sx = 0, sy = 0, m;
+      base = this.resample(spine, 24);
+      for (i = 0; i < base.length; i++) { sx += base[i][0]; sy += base[i][1]; }
+      sx /= base.length; sy /= base.length;
+      var reach = 0;
+      for (i = 0; i < base.length; i++) reach = Math.max(reach, Math.hypot(base[i][0]-sx, base[i][1]-sy));
+      reach = Math.max(reach, w * 1.2);
+      steps = Math.max(K.minPts * 2, Math.round(2*Math.PI*K.spiralTurns*reach / (w*0.5)));
+      for (i = 0; i < steps; i++) {
+        t = i / (steps - 1);
+        ang = 2 * Math.PI * K.spiralTurns * t;
+        rad = reach * (0.12 + 0.88 * t);
+        out.push({ x: sx + Math.cos(ang)*rad, y: sy + Math.sin(ang)*rad * 0.62, hold: 0 });
+      }
+      return { kind: kind, pts: out, w: w };
+    }
+
+    if (kind === 'halfCircle') {
+      /* a true half circle on the chord from the first point to the last — the
+         motion she is actually told to make under the eye or round the apple */
+      var A = spine[0], B = spine[spine.length-1];
+      var mx = (A[0]+B[0])/2, my = (A[1]+B[1])/2;
+      var ch = Math.hypot(B[0]-A[0], B[1]-A[1]);
+      if (!(ch > 0)) return null;
+      var a0 = Math.atan2(A[1]-my, A[0]-mx);
+      steps = Math.max(K.minPts, Math.round(Math.PI * (ch/2) / (w*0.35)));
+      for (i = 0; i < steps; i++) {
+        t = i / (steps - 1);
+        ang = a0 - Math.PI * t;           /* sweeping the bow, not the chord */
+        out.push({ x: mx + Math.cos(ang)*(ch/2), y: my + Math.sin(ang)*(ch/2), hold: 0 });
+      }
+      return { kind: kind, pts: out, w: w };
+    }
+
+    /* the looping families ride along the spine: a travelling centre plus a
+       rotating offset, so the hand both moves along and works the edge */
+    steps = Math.max(K.minPts * 2, Math.round(L / (w * 0.16)));
+    base = this.resample(spine, steps);
+    for (i = 0; i < steps; i++) {
+      t = i / (steps - 1);
+      /* local direction, and its normal */
+      j = Math.min(steps - 2, i);
+      tx = base[j+1][0] - base[j][0]; ty = base[j+1][1] - base[j][1];
+      n = Math.hypot(tx, ty) || 1; tx /= n; ty /= n; nx = -ty; ny = tx;
+      if (kind === 'circle') {
+        ang = 2 * Math.PI * (L / w) * K.loopsPerW * t;
+        rad = w * K.loopR;
+      } else if (kind === 'spiral') {
+        ang = 2 * Math.PI * K.spiralTurns * t;
+        rad = w * K.loopR * (0.25 + 1.35 * t);          /* opens outward */
+      } else {                                            /* halfCircle */
+        ang = -K.arcSpan * (t - 0.5);
+        rad = w * 0.9;
+      }
+      ang += bias;                     /* lifted on a round face, flat on a long one */
+      out.push({ x: base[i][0] + (tx*Math.cos(ang) + nx*Math.sin(ang)) * rad,
+                 y: base[i][1] + (ty*Math.cos(ang) + ny*Math.sin(ang)) * rad,
+                 hold: 0 });
+    }
+    return { kind: kind, pts: out, w: w };
+  },
+
+  /* ---- 1b · which motion, for which product, right now --------------------
+     Two phases the build already teaches: ① lay the product down ② blend it.
+     The motion is not the same: you lay foundation by tapping and blend it in a
+     spiral; you lay contour as a line and blend it in small circles. A tap that
+     turns into a drag is the single commonest way a woman ruins coverage.     */
+  FOR: {
+    base:      { lay:'tap',   blend:'spiral' },
+    correct:   { lay:'tap',   blend:'tap' },
+    concealer: { lay:'tap',   blend:'halfCircle' },
+    powder:    { lay:'press', blend:'press' },
+    contour:   { lay:'sweep', blend:'circle' },
+    nose:      { lay:'sweep', blend:'circle' },
+    blush:     { lay:'sweep', blend:'circle' },
+    highlight: { lay:'tap',   blend:'circle' },
+    eyeshadow: { lay:'press', blend:'circle' },
+    crease:    { lay:'sweep', blend:'circle' },
+    corner:    { lay:'press', blend:'circle' },
+    brow:      { lay:'sweep', blend:'sweep' },
+    liner:     { lay:'sweep', blend:'sweep' },
+    lashes:    { lay:'press', blend:'press' },
+    lips:      { lay:'sweep', blend:'sweep' }
+  },
+  /* the tool in her hand decides the motion more than the zone does. A damp
+     sponge is never dragged; a dense brush is never tapped; the product's own
+     wand draws. These are the build's own tool keys, read from her kit. */
+  TOOL: {
+    sponge:        { lay:'tap',   blend:'tap' },
+    brush_base:    { lay:'sweep', blend:'spiral' },
+    brush_blend:   { lay:'sweep', blend:'circle' },
+    brush_contour: { lay:'sweep', blend:'circle' },
+    brush_eye:     { lay:'press', blend:'circle' },
+    finger:        { lay:'tap',   blend:'circle' },
+    ring:          { lay:'tap',   blend:'halfCircle' },
+    own:           { lay:'sweep', blend:'sweep' }
+  },
+  /* zones where the product's own shape rules, whatever she holds */
+  FIXED: { liner:1, lips:1, lashes:1, brow:1 },
+
+  /* her face shape does not change WHICH motion — it changes where the motion
+     carries the colour. Round and triangle lift it; a long face must not gain
+     height, so the blend stays flat and tight; square and diamond want it
+     softer, i.e. rounder and wider. Angles are degrees added to the motion. */
+  SHAPE: {
+    oval:        { bias:  0, loop: 1.00, gap: 1.00 },
+    round:       { bias:-14, loop: 1.10, gap: 1.00 },
+    square:      { bias: -6, loop: 1.25, gap: 1.05 },
+    oblong:      { bias:  0, loop: 0.80, gap: 0.90 },
+    rectangle:   { bias:  0, loop: 0.85, gap: 0.90 },
+    heart:       { bias:  8, loop: 1.05, gap: 1.00 },
+    invTriangle: { bias: 10, loop: 1.05, gap: 1.00 },
+    diamond:     { bias: -4, loop: 1.20, gap: 1.05 },
+    triangle:    { bias:-12, loop: 1.10, gap: 1.00 }
+  },
+  tune: function (shape) { return this.SHAPE[shape] || this.SHAPE.oval; },
+
+  PHASE_AT: 0.6,     /* past 60 % of the target pigment, laying is over        */
+  phaseOf: function (applied, target) {
+    return (applied != null && target > 0 && applied >= target * this.PHASE_AT) ? 'blend' : 'lay';
+  },
+  /** the motion for this zone, this phase, and the tool she actually owns.
+      The zone's default only stands in when the tool is unknown, and the four
+      product-shaped zones ignore the tool entirely. */
+  kindFor: function (zone, phase, toolKey) {
+    var e = this.FOR[zone];
+    if (!e) return null;
+    var z = phase === 'blend' ? e.blend : e.lay;
+    if (this.FIXED[zone]) return z;
+    var t = toolKey && this.TOOL[toolKey];
+    if (!t) return z;
+    return phase === 'blend' ? t.blend : t.lay;
+  },
+
+  /** the drawn path: a held point becomes a tiny dab loop, so the demo brush
+      visibly PAUSES and pats instead of sliding through the tap */
+  dabify: function (tpl) {
+    if (!tpl || !tpl.pts) return null;
+    var out = [], i, j, p, r = tpl.w * 0.10, a;
+    for (i = 0; i < tpl.pts.length; i++) {
+      p = tpl.pts[i];
+      if (!p.hold) { out.push([p.x, p.y]); continue; }
+      for (j = 0; j < 4; j++) { a = j / 4 * 2 * Math.PI; out.push([p.x + Math.cos(a)*r, p.y + Math.sin(a)*r]); }
+    }
+    return out;
+  },
+
+  /** the step is finished when the coach has said "good" for long enough —
+      not on one lucky frame */
+  HOLD_MS: 1500,
+  holdDone: function (st, kind, now) {
+    var s = st || { since: 0, done: false };
+    if (kind === 'good') { if (!s.since) s.since = now; s.done = (now - s.since) >= this.HOLD_MS; }
+    else { s.since = 0; s.done = false; }
+    return s;
+  },
+
+  /* ---- 1c · WHEN to speak, and how loud the drawn path is -------------------
+     Four findings from the motor-learning literature, with their numbers:
+     · bandwidth feedback — stay silent while she is inside tolerance; the silence
+       itself says "that was good enough", and it beats withholding at random
+       (Sherwood 1988 measured 10 % of target as better than 5 % and than always
+       speaking; the tested useful range is 5–15 %).
+     · KR delay — speaking the instant the stroke ends degraded learning against
+       an 8 s delay, at 10 min AND 2 days (Swinnen et al. 1990). The silence
+       before the verdict is the expensive one: it is when she judges herself.
+     · a ghost that fades on PERFORMANCE keeps what a fixed ghost loses
+       (Hsieh et al. CHI'26: +0.2 vs −9.0 points at retention); fast fade-out,
+       cautious fade-in, opacity clamped to [0.08, 0.80].
+     · one cue at a time: five at once made half the learners WORSE (Buszard 2017).
+     These are starting points measured on other tasks, not law for this one.  */
+  BAND: { base: 0.10, floor: 0.05, cap: 0.20 },
+  /** tolerance around the target: 10 % of it, widened to her own spread when she
+      is still all over the place, floored and capped by the tested range */
+  band: function (target, sd) {
+    if (!(target > 0)) return 0;
+    var t = target * this.BAND.base;
+    if (sd > 0) t = Math.max(t, sd);
+    return Math.min(target * this.BAND.cap, Math.max(target * this.BAND.floor, t));
+  },
+  inBand: function (applied, target, sd) {
+    if (applied == null || !(target > 0)) return false;
+    return Math.abs(applied - target) <= this.band(target, sd);
+  },
+  /** spread of her own last attempts — the adaptive half of the band */
+  sd: function (arr) {
+    if (!arr || arr.length < 2) return 0;
+    var m = 0, i, s = 0;
+    for (i = 0; i < arr.length; i++) m += arr[i];
+    m /= arr.length;
+    for (i = 0; i < arr.length; i++) s += (arr[i]-m)*(arr[i]-m);
+    return Math.sqrt(s / (arr.length - 1));
+  },
+
+  KR_DELAY: 3000,          /* ms of silence after the hand lifts, before the verdict */
+  maySpeak: function (liftedAt, now) { return !liftedAt || (now - liftedAt) >= this.KR_DELAY; },
+
+  A_MIN: 0.08, A_MAX: 0.80, A_FALL: 0.35, A_RISE: 0.08,
+  /** err 0..1 (0 = she has it). Falls fast when she is right, returns slowly. */
+  ghostAlpha: function (prev, err) {
+    var want = this.A_MIN + (this.A_MAX - this.A_MIN) * Math.max(0, Math.min(1, err));
+    if (prev == null) return want;
+    var k = want < prev ? this.A_FALL : this.A_RISE;
+    return prev + (want - prev) * k;
+  },
+  /** the moving head leads her hand, so she is not chasing a dot she can't catch */
+  LEAD_MS: 200,
+
+  /* ---- 2 · reading HER motion back ---------------------------------------- */
+  /** features of a tracked tip path. scale = her face width in the same pixels. */
+  features: function (tr, scale) {
+    if (!tr || tr.length < 4 || !(scale > 0)) return null;
+    var i, d, len = 0, turn = 0, stops = 0, ax, ay, bx, by, a, spd = [], cx = 0, cy = 0, amp = 0;
+    for (i = 1; i < tr.length; i++) {
+      d = Math.hypot(tr[i][0]-tr[i-1][0], tr[i][1]-tr[i-1][1]);
+      len += d; spd.push(d);
+      if (d < scale * 0.004) stops++;
+      if (i >= 2) {
+        ax = tr[i-1][0]-tr[i-2][0]; ay = tr[i-1][1]-tr[i-2][1];
+        bx = tr[i][0]-tr[i-1][0];   by = tr[i][1]-tr[i-1][1];
+        if ((ax || ay) && (bx || by)) {
+          a = Math.atan2(by, bx) - Math.atan2(ay, ax);
+          while (a > Math.PI) a -= 2*Math.PI;
+          while (a < -Math.PI) a += 2*Math.PI;
+          turn += Math.abs(a);
+        }
+      }
+      cx += tr[i][0]; cy += tr[i][1];
+    }
+    cx /= (tr.length - 1); cy /= (tr.length - 1);
+    for (i = 0; i < tr.length; i++) amp = Math.max(amp, Math.hypot(tr[i][0]-cx, tr[i][1]-cy));
+    var net = Math.hypot(tr[tr.length-1][0]-tr[0][0], tr[tr.length-1][1]-tr[0][1]);
+    var mean = spd.reduce(function(s,v){return s+v;}, 0) / (spd.length || 1);
+    var sd = Math.sqrt(spd.reduce(function(s,v){return s + (v-mean)*(v-mean);}, 0) / (spd.length || 1));
+    /* does the loop OPEN as she goes? a spiral's radius climbs with time, a
+       travelling circle's does not — Pearson of (t, radius from the centre) */
+    var n2 = tr.length, st = 0, sr = 0, stt = 0, srr = 0, str = 0, tt, rr;
+    for (i = 0; i < n2; i++) {
+      tt = i / (n2 - 1); rr = Math.hypot(tr[i][0]-cx, tr[i][1]-cy);
+      st += tt; sr += rr; stt += tt*tt; srr += rr*rr; str += tt*rr;
+    }
+    var den = Math.sqrt((n2*stt - st*st) * (n2*srr - sr*sr));
+    return {
+      len: len / scale,                 /* travel, in face widths               */
+      net: net / scale,
+      straight: len > 0 ? net / len : 0,
+      turn: turn,                       /* TOTAL turning, radians               */
+      loops: turn / (2*Math.PI),
+      turnPerLen: len > 0 ? turn / (len / scale) : 0,   /* rad per face width   */
+      stopShare: stops / (tr.length - 1),
+      amp: amp / scale,
+      growth: den > 1e-9 ? (n2*str - st*sr) / den : 0,  /* +1 = opening outward */
+      speedCV: mean > 0 ? sd / mean : 0
+    };
+  },
+
+  /* the cut points below are MEASURED on synthetic motions of each kind
+     (test-tech.js prints the table and re-derives them); they are not guesses:
+       sweep   turn 0.0   loops 0.00  straight 1.00  stops 0%
+       halfC   turn 3.1   loops 0.49  straight 0.64  stops 0%
+       spiral  turn 18.8  loops 3.00  straight 0.08  growth +0.97
+       circle  turn 31.1  loops 4.95  straight 0.33  growth −0.06
+       tap     stops 85%  len 0.55
+       press   stops 100% len 0.01                                            */
+  T: { stop: 0.45, pressLen: 0.10, loopMin: 1.5, growth: 0.55, arcMin: 1.6, arcMax: 5.0 },
+
+  /** which of the six she is actually doing */
+  classify: function (tr, scale) {
+    var f = this.features(tr, scale), T = this.T, kind;
+    if (!f) return null;
+    if (f.stopShare >= T.stop) kind = f.len < T.pressLen ? 'press' : 'tap';
+    else if (f.loops >= T.loopMin) kind = f.growth >= T.growth ? 'spiral' : 'circle';
+    else if (f.turn >= T.arcMin && f.turn <= T.arcMax && f.straight < 0.9) kind = 'halfCircle';
+    else kind = 'sweep';
+    return { kind: kind, f: f };
+  },
+
+  /** how well her pass matches the template she was shown */
+  match: function (tr, tpl, scale) {
+    if (!tr || !tpl || !tpl.pts || !tpl.pts.length) return null;
+    var pts = tpl.pts.map(function (p) { return [p.x, p.y]; });
+    var i, j, d, best, hit = 0, over = 0;
+    for (i = 0; i < pts.length; i++) {
+      best = Infinity;
+      for (j = 0; j < tr.length; j++) {
+        d = Math.hypot(pts[i][0]-tr[j][0], pts[i][1]-tr[j][1]);
+        if (d < best) best = d;
+      }
+      if (best <= tpl.w * 0.5) hit++;   /* half a stroke width: a sweep down the
+                                           middle must NOT count as circles */
+    }
+    for (j = 0; j < tr.length; j++) {
+      best = Infinity;
+      for (i = 0; i < pts.length; i++) {
+        d = Math.hypot(pts[i][0]-tr[j][0], pts[i][1]-tr[j][1]);
+        if (d < best) best = d;
+      }
+      if (best > over) over = best;
+    }
+    var mine = this.classify(tr, scale);
+    return {
+      coverage: hit / pts.length,
+      overshoot: over / scale,
+      kind: mine ? mine.kind : null,
+      techOK: !!mine && mine.kind === tpl.kind
+    };
+  }
+};
+if (typeof module !== 'undefined' && module.exports) module.exports = TECH;
+/* v94 · TEACH: the technique layer. The build knew WHERE the product goes and,
+   since the pigment map, WHETHER it landed. This teaches HOW the hand moves —
+   it draws the real motion on her face (circles, a spiral, taps, a half circle),
+   reads her own hand back against it, and carries the step to its end. */
+const TSAY = {
+  now:   { ar:'الآن: {m}', en:'Now: {m}', id:'Sekarang: {m}' },
+  withTool: { ar:'ب{tool}: {m}', en:'With {tool}: {m}', id:'Dengan {tool}: {m}' },
+  wrong: { ar:'ليست {mine} — المطلوب {want}', en:'Not {mine} — it should be {want}', id:'Bukan {mine} — seharusnya {want}' },
+  drag:  { ar:'لا تسحبي — ربّتي بالإسفنجة فوق المكان', en:'Do not drag — tap it in with the sponge', id:'Jangan digeser — tepuk dengan spons' },
+  done:  { ar:'تمّت هذه الخطوة ✓ ننتقل للتالية', en:'This step is done ✓ moving on', id:'Langkah ini selesai ✓ lanjut' },
+  follow:{ ar:'اتبعي الخطّ المرسوم على وجهك', en:'Follow the path drawn on your face', id:'Ikuti jalur di wajahmu' }
+};
+const tSay = (o, v) => {
+  let s = o[(typeof LANG === 'string' && o[LANG]) ? LANG : 'ar'];
+  if (v) Object.keys(v).forEach(k => { s = s.replace('{' + k + '}', v[k]); });
+  return s;
+};
+const techName = k => { const p = TECH.P[k]; return p ? (p[(typeof LANG === 'string' && p[LANG]) ? LANG : 'ar']) : ''; };
+
+const LAMHA_TEACH = window.LAMHA_TEACH = {
+  T: TECH, _c: null, _z: null, _k: null, _h: null, _said: 0,
+
+  /* laying or blending — decided by how much pigment is already on her face,
+     not by a timer */
+  phase(){ const pl = S.plan; return pl ? TECH.phaseOf(pl._applied, pl._target) : 'lay'; },
+  tool(zone){ try{ return PRO.toolFor(zone); }catch(e){ return null; } },
+  shape(){ try{ return (PRO.SHAPE_KEYS || [])[S.shape || 0] || 'oval'; }catch(e){ return 'oval'; } },
+  kind(zone){ return TECH.kindFor(zone, this.phase(), this.tool(zone)); },
+  width(lm, zone){
+    const fs = faceScale(lm);
+    const f = (zone === 'liner' || zone === 'lashes') ? 0.018
+            : (zone === 'lips' || zone === 'brow' || zone === 'corner') ? 0.030
+            : (zone === 'eyeshadow' || zone === 'crease' || zone === 'nose') ? 0.040 : 0.055;
+    return Math.max(6, fs * f);
+  },
+
+  /* the motion itself, cached while her head is still */
+  tpl(lm, zone){
+    const kind = this.kind(zone); if(!kind) return null;
+    let spine = null;
+    try{ spine = brushPath(lm, zone); }catch(e){ return null; }
+    if(!spine || spine.length < 2) return null;
+    const w = this.width(lm, zone);
+    const shp = this.shape();
+    const key = zone + '|' + kind + '|' + shp + '|' + Math.round(spine[0][0]/2) + ',' + Math.round(spine[0][1]/2)
+              + ',' + Math.round(spine[spine.length-1][0]/2) + ',' + Math.round(w);
+    if(this._c && this._c.key === key) return this._c.t;
+    const t = TECH.template(spine, w, kind, shp);
+    if(!t) return null;
+    this._c = { key, t, path: TECH.dabify(t) };
+    /* say the motion's name once per zone/phase change — one cue, not a stream */
+    if(this._z !== zone || this._k !== kind){
+      this._z = zone; this._k = kind; this._h = null;
+      const now = performance.now();
+      if(now - this._said > 2500){
+        this._said = now;
+        let tn = ''; try{ tn = PRO.toolSay(zone) || ''; }catch(e){}
+        try{ say(tn ? tSay(TSAY.withTool, { tool: tn, m: techName(kind) })
+                    : tSay(TSAY.now, { m: techName(kind) }), 2600); }catch(e){}
+      }
+    }
+    return t;
+  },
+  /** what drawBrushStroke draws: the motion, not the bare spine */
+  pathFor(lm, zone){ return this.tpl(lm, zone) ? this._c.path : null; },
+
+  /** her own hand against the motion she was shown */
+  check(zone, track, scale){
+    const t = this._c && this._c.t; if(!t || !track || track.length < 8) return null;
+    const m = TECH.match(track, t, scale);
+    if(!m || m.techOK) return null;
+    if(t.kind === 'tap' && (m.kind === 'sweep' || m.kind === 'halfCircle')) return tSay(TSAY.drag);
+    return tSay(TSAY.wrong, { mine: techName(m.kind), want: techName(t.kind) });
+  },
+
+  /* the demonstration clock — replay() starts the motion again from its top */
+  t0: 0, _plan: null, _planKey: '',
+  replay(){
+    this.t0 = performance.now();
+    this._said = 0;
+    const k = this._k, z = this._z;
+    if(k){ let tn = ''; try{ tn = z ? (PRO.toolSay(z) || '') : ''; }catch(e){}
+      try{ say(tn ? tSay(TSAY.withTool, { tool: tn, m: techName(k) })
+                  : tSay(TSAY.now, { m: techName(k) }), 2400); }catch(e){} }
+  },
+  clock(){ return performance.now() - (this.t0 || 0); },
+  plan(){
+    const t = this._c && this._c.t; if(!t) return null;
+    const key = t.kind + '|' + t.pts.length + '|' + Math.round(t.w);
+    if(this._planKey !== key){ this._planKey = key; this._plan = PERFORM.plan(t); }
+    return this._plan;
+  },
+
+  /* the ghost's opacity, and the silence after her hand lifts */
+  alpha: TECH.A_MAX, _lift: 0,
+  lift(){ this._lift = performance.now(); },
+  maySpeak(){ return TECH.maySpeak(this._lift, performance.now()); },
+  note(kind){
+    const err = kind === 'good' ? 0
+              : (kind === 'place' || kind === 'patchy') ? 1
+              : (kind === 'start' ? 0.9 : 0.5);
+    this.alpha = TECH.ghostAlpha(this.alpha, err);
+  },
+  /** where the demo head should be: a step AHEAD of her own hand, never on it */
+  headT(n){
+    const H = window.LAMHA_HAND;
+    if(!H || !H.track || !H.track.length || !this._c || !this._c.path) return null;
+    const tip = H.track[H.track.length-1], p = this._c.path;
+    let bi = 0, bd = Infinity;
+    for(let i=0;i<p.length;i++){
+      const d = (p[i][0]-tip[0])*(p[i][0]-tip[0]) + (p[i][1]-tip[1])*(p[i][1]-tip[1]);
+      if(d < bd){ bd = d; bi = i; }
+    }
+    return Math.min(1, (bi + p.length * 0.08) / Math.max(1, p.length - 1));
+  },
+
+  /** carried to the end: the coach's own verdict, held, then the next step */
+  step(zone, kind){
+    const pl = S.plan; if(!pl || !pl.lesson) return;
+    if(this._sz !== zone){ this._sz = zone; this._h = null; }
+    this._h = TECH.holdDone(this._h, kind, performance.now());
+    if(this._h.done && !this._h.fired){
+      this._h.fired = true;
+      try{ say(tSay(TSAY.done), 2600); }catch(e){}
+      setTimeout(()=>{ try{ const b = document.getElementById('pl-next'); if(b && b.onclick) b.onclick(); }catch(e){} }, 1600);
+    }
+  }
+};
+
 function brushPath(lm, zone){
   const V = i => P(lm[i]);
   const fs = faceScale(lm);
@@ -7704,19 +9958,65 @@ function drawApplyAnim(lm){
 }
 
 function drawBrushStroke(lm, zone){
-  const pts = brushPath(lm, zone);
+  /* v94 · the technique path when there is one for this zone and phase */
+  const pts = (window.LAMHA_TEACH && LAMHA_TEACH.pathFor(lm, zone)) || brushPath(lm, zone);
   if(!pts || pts.length<2) return;
   const fs = faceScale(lm);
   const now = performance.now();
-  BRUSH.t = (now/1600) % 1;                    /* one full pass every 1.6s */
+  /* v94 · the ghost fades as she gets it right and returns slowly when she
+     loses it, instead of sitting at one opacity for ever */
+  const gA = (window.LAMHA_TEACH && LAMHA_TEACH.alpha != null) ? LAMHA_TEACH.alpha : 0.30;
 
-  /* resample the path so the brush moves at a steady speed */
+  ctx.save();
+  /* the full path, faint — the road map */
+  ctx.strokeStyle='rgba(246,217,206,' + (gA*0.42).toFixed(3) + ')';
+  ctx.lineWidth=Math.max(1.4, fs*0.008); ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.beginPath(); pts.forEach(([x,y],k)=> k?ctx.lineTo(x,y):ctx.moveTo(x,y)); ctx.stroke();
+
+  /* v94 · the demonstration: timed by distance so the rhythm is the real one,
+     pressing on every tap, lifting between passes like a hand does */
+  const plan = (window.LAMHA_TEACH && LAMHA_TEACH.plan) ? LAMHA_TEACH.plan() : null;
+  if(plan){
+    const ms = LAMHA_TEACH.clock();
+    const tr = PERFORM.trail(plan, ms, 10, 30);
+    for(let k=tr.length-1;k>=1;k--){
+      const q = tr[k], a = (1 - k/tr.length) * 0.5 * q.alpha * (gA/0.8);
+      if(a <= 0.004) continue;
+      ctx.fillStyle=`rgba(226,169,160,${a.toFixed(3)})`;
+      ctx.beginPath(); ctx.arc(q.x, q.y, fs*0.018*(1-k/tr.length*0.5), 0, 7); ctx.fill();
+    }
+    const h = PERFORM.at(plan, ms);
+    if(h && h.alpha > 0.02){
+      ctx.globalAlpha = h.alpha;
+      if(h.press > 0.5){                       /* the skin under a pressed brush */
+        ctx.fillStyle=`rgba(246,217,206,${(0.16*h.press*gA/0.8).toFixed(3)})`;
+        ctx.beginPath(); ctx.arc(h.x, h.y, fs*0.030*h.splay, 0, 7); ctx.fill();
+      }
+      ctx.translate(h.x, h.y); ctx.rotate(h.ang);
+      const L1=fs*0.075, W1=fs*0.020*h.splay;
+      ctx.fillStyle='rgba(20,12,16,.55)';
+      ctx.beginPath(); ctx.ellipse(0,0,W1*1.1,W1*0.62,0,0,7); ctx.fill();
+      ctx.fillStyle='#F6D9CE';
+      ctx.beginPath();
+      ctx.moveTo(W1*0.5,-W1*0.5); ctx.lineTo(-L1,-W1*0.30);
+      ctx.lineTo(-L1, W1*0.30);   ctx.lineTo(W1*0.5, W1*0.5);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle='#E2A9A0';
+      ctx.beginPath(); ctx.arc(W1*0.55,0,W1*0.55,0,7); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+    return;
+  }
+
+  /* no technique for this zone: the old steady pass */
+  BRUSH.t = (now/1600) % 1;
   const segs=[]; let total=0;
   for(let i=0;i<pts.length-1;i++){
     const d=Math.hypot(pts[i+1][0]-pts[i][0], pts[i+1][1]-pts[i][1]);
     segs.push(d); total+=d;
   }
-  if(total<1) return;
+  if(total<1){ ctx.restore(); return; }
   const at = f => {
     let want = f*total, i=0;
     while(i<segs.length && want>segs[i]){ want-=segs[i]; i++; }
@@ -7724,31 +10024,20 @@ function drawBrushStroke(lm, zone){
     const r = segs[i]? want/segs[i] : 0;
     return [pts[i][0]+(pts[i+1][0]-pts[i][0])*r, pts[i][1]+(pts[i+1][1]-pts[i][1])*r];
   };
-
-  ctx.save();
-  /* the full path, faint — the road map */
-  ctx.strokeStyle='rgba(246,217,206,.30)';
-  ctx.lineWidth=Math.max(1.4, fs*0.008); ctx.lineCap='round'; ctx.lineJoin='round';
-  ctx.beginPath(); pts.forEach(([x,y],k)=> k?ctx.lineTo(x,y):ctx.moveTo(x,y)); ctx.stroke();
-
-  /* the trail: a comet tail behind the brush head */
   const TRAIL=14;
   for(let k=0;k<TRAIL;k++){
     const f = BRUSH.t - k*0.022;
     if(f<0) continue;
     const [x,y]=at(f);
-    const a = (1 - k/TRAIL)*0.5;
+    const a = (1 - k/TRAIL)*0.5*(gA/0.8);
     ctx.fillStyle=`rgba(226,169,160,${a.toFixed(3)})`;
     ctx.beginPath(); ctx.arc(x,y, fs*0.020*(1-k/TRAIL*0.55), 0, 7); ctx.fill();
   }
-
-  /* the brush head itself */
   const [hx,hy]=at(BRUSH.t);
   const [px,py]=at(Math.max(0, BRUSH.t-0.04));
   const ang=Math.atan2(hy-py, hx-px);
   ctx.translate(hx,hy); ctx.rotate(ang);
   const L1=fs*0.075, W1=fs*0.020;
-  /* ferrule + bristles, drawn as a simple brush silhouette */
   ctx.fillStyle='rgba(20,12,16,.55)';
   ctx.beginPath(); ctx.ellipse(0,0,W1*1.1,W1*0.62,0,0,7); ctx.fill();
   ctx.fillStyle='#F6D9CE';
@@ -8500,6 +10789,67 @@ function waitPose(pose){
   });
 }
 
+/* v95 · the silent first reading. The detailed scan keeps its button; this one
+   simply happens, because a woman who never presses a button still deserves an
+   answer. One per camera session, never while she is in a lesson. */
+const AUTOSCAN = { need: 1000, move: 0.006, hist: [], said: 0 };
+function autoScanReady(){
+  if(S._autoScanDone || S._autoScanBusy || S.scanning || STILL) return false;
+  if(!S.landmarks || S._envOK === false) return false;
+  if(S.plan && S.plan.on) return false;
+  if(S.guide) return false;                       /* the manual scan is running */
+  const lm = S.landmarks, now = performance.now();
+  if(!lm[234] || !lm[454] || !lm[10] || !lm[152]) return false;
+  const fw = Math.hypot(lm[454].x - lm[234].x, lm[454].y - lm[234].y) || 1;
+  AUTOSCAN.hist.push({ t: now, fw,
+    x: (lm[234].x + lm[454].x + lm[10].x + lm[152].x)/4,
+    y: (lm[234].y + lm[454].y + lm[10].y + lm[152].y)/4 });
+  while(AUTOSCAN.hist.length && now - AUTOSCAN.hist[0].t > AUTOSCAN.need + 500) AUTOSCAN.hist.shift();
+  if(AUTOSCAN.hist.length < 8 || now - AUTOSCAN.hist[0].t < AUTOSCAN.need) return false;
+  let mx = 0;
+  for(let i=1;i<AUTOSCAN.hist.length;i++){
+    const a = AUTOSCAN.hist[i-1], b = AUTOSCAN.hist[i];
+    mx = Math.max(mx, Math.hypot(b.x-a.x, b.y-a.y)/fw, Math.abs(b.fw-a.fw)/fw);
+  }
+  return mx <= AUTOSCAN.move;
+}
+/* a lamp with a colour cast gives a false undertone, and a false undertone is
+   worse than none: she tries the lipstick it recommends, it does not suit her,
+   and she stops believing the whole app. The plausible skin hue window is the
+   one measured on 948 faces in the world-skin study (v69). */
+function autoLightOK(){
+  if(S.light && S.light.state && S.light.state !== 'ok') return false;
+  try{
+    const lab = skinRefLab(true);
+    if(lab && isFinite(lab[1]) && isFinite(lab[2])){
+      const hue = Math.atan2(lab[2], lab[1]) * 180 / Math.PI;
+      /* the 948-face study puts real skin between 33 and 78 degrees. A single
+         patch cannot separate a warm lamp from warm skin, and refusing to
+         measure a golden-skinned woman would leave her with no advice at all
+         — so this rejects only hues no skin can have: a green or blue cast. */
+      if(!(hue > 20 && hue < 95)) return false;
+    }
+  }catch(e){}
+  return true;
+}
+window.lamhaAutoScan = async function(){
+  if(!autoScanReady()) return;
+  if(!autoLightOK()){
+    const now = performance.now();
+    if(now - AUTOSCAN.said > 15000){
+      AUTOSCAN.said = now;
+      try{ say(LANG === 'en' ? 'The light is not good enough to measure'
+             : LANG === 'id' ? 'Cahaya belum cukup untuk mengukur'
+             : 'الإضاءة غير كافية للقياس', 3200); }catch(e){}
+    }
+    return;
+  }
+  S._autoScanBusy = true; S._autoFront = true;
+  try{ await runScanInner(); S._autoScanDone = true; }
+  catch(e){ if(!S._autoErr){ S._autoErr = 1; console.warn('[auto scan]', e); } }
+  finally{ S._autoFront = false; S._autoScanBusy = false; }
+};
+
 async function runScan(){
   try{ await runScanInner(); }
   catch(err){
@@ -8510,16 +10860,17 @@ async function runScan(){
 async function runScanInner(){
   if(!S.landmarks){ say(t('st_noface')); return; }
   S.scanAbort=false; S.poseDone={}; S.regionAcc={}; S.frontX=null; S.p0=null;
-  S.guide=true;
-  $('#sk-run').disabled=true;
-  $('#sk-poses').classList.remove('hidden');
-  $('#sk-hint').classList.remove('hidden');
-  $('#sk-cap').classList.remove('hidden');
-  S.guide = true;
+  S.guide = !S._autoFront;                       /* v95: the silent reading shows no panel */
+  if(!S._autoFront){
+    $('#sk-run').disabled=true;
+    $('#sk-poses').classList.remove('hidden');
+    $('#sk-hint').classList.remove('hidden');
+    $('#sk-cap').classList.remove('hidden');
+  }
 
-  for(const pose of (STILL ? ['front'] : POSE_ORDER)){
-    S.curPose=pose; renderPoses();
-    await waitPose(pose);
+  for(const pose of ((STILL || S._autoFront) ? ['front'] : POSE_ORDER)){
+    S.curPose=pose; if(!S._autoFront) renderPoses();
+    if(!S._autoFront) await waitPose(pose);   /* v95: she is already still and facing us */
     if(S.scanAbort) break;
     S.scanning=true;
     const packs=[];
@@ -8627,6 +10978,8 @@ async function finishScan(){
 
   m.blemishes = S.frontPack ? detectBlemishes(S.frontPack.img, S.frontPack.lm) : [];
   S.skin=m;
+  S.skinFrame = (S.frontPack && S.frontPack.img) || null;
+  S.skinLm    = (S.frontPack && S.frontPack.lm)  || null;
   S.history.push({ts:m.ts, score:m.score, m:MET_KEYS.reduce((o,k)=>(o[k]=m[k],o),{}),
     /* what progress tracking needs: where the spots are, how big, and the
        millimetre scale of that scan if she has calibrated with a card */
@@ -8636,7 +10989,8 @@ async function finishScan(){
     cam:m.camera||null, conf:m.confidence||null, light:m.light||null });
   if(S.history.length>60) S.history=S.history.slice(-60);
   await store.set('m_zeen_mirror_history', S.history);
-  renderSkin(); renderHistory(); say(t('st_done'));
+  renderSkin(); renderHistory();
+  if(!S._autoFront) say(t('st_done'));        /* v95: the silent reading stays silent */
 }
 
 function toneIndex(ITA){
@@ -8650,6 +11004,7 @@ function undertone(a,B){
 const skinTypeIdx = sh => sh > .085 ? 0 : sh > .032 ? 1 : 2;
 function metColor(v){ return v>=75?'#7FBFA8': v>=55?'#D9B26F': v>=40?'#E8A9A0':'#E8776B'; }
 
+LamhaAdvice.configure({ region, stats });
 function renderSkin(){
   const s = S.skin; if(!s) return;
   $('#sk-res').classList.remove('hidden');
@@ -8666,6 +11021,22 @@ function renderSkin(){
     `${t('tone')}: <b>${t('tones')[ti]}</b> · ${t('under')}: <b>${t('unds')[un]}</b> · ITA ${Math.round(s.ITA)}°`
     + (s.shine!=null ? `<br>${t('sk_type')}: <b>${t('skType')[skinTypeIdx(s.shine)]}</b> — ${t('skTypeAdv')[skinTypeIdx(s.shine)]}` : '');
 
+  try {
+    const _img = (typeof grabRaw === 'function') ? grabRaw() : null;
+    if (!_img) console.warn('[lamha-advice] no frame \u2014 advice skipped');
+    const advice = LamhaAdvice.run({
+      img: (S.skinFrame || _img),
+      lm: (S.skinLm || S.landmarks),
+      skin: s,
+      toneIndex: (typeof toneIndex === 'function') ? toneIndex(s.ITA) : undefined,
+      existingUndertone: (typeof undertone === 'function') ? undertone(s.a, s.B) : null,
+      skinType: (typeof skinTypeIdx === 'function' && s.shine != null)
+        ? ['oily','combination','dry'][skinTypeIdx(s.shine)] : 'normal',
+      wuduSafe: false, flashPhotography: false
+    });
+    if (!advice.ok) console.warn('[lamha-advice] run() returned ok:false');
+    LamhaAdvice.renderInto('#sk-advice', advice, (typeof LANG === 'string') ? LANG : 'ar');
+  } catch(e){ console.warn('[lamha-advice]', e); }
   $('#sk-list').innerHTML = MET_KEYS.map(k=>{
     const v=s[k], nm=t('met.'+k);
     return `<div class="metric"><div class="nm">${nm[0]}<small>${nm[1]}</small></div>
@@ -17784,7 +20155,13 @@ const tool = (tl, kind) => {
     brush_blend:L3('فرشاة الدمج','the blending brush','kuas blending'), brush_contour:L3('فرشاة النحت','the contour brush','kuas kontur'),
     brush_eye:L3('فرشاة الظلال','the eye brush','kuas mata'), finger:L3('أطراف أصابعك','your fingertips','ujung jari'),
     ring:L3('إصبع البنصر','your ring finger','jari manis'), own:L3('أداة المنتج نفسه','the product\'s own applicator','aplikator produk') };
-  const pick = {
+  const pick = toolPick(tl);
+  return T2[pick[kind] || 'finger'];
+};
+/* v94 · the same choice, as a key the teacher can read */
+function toolPick(tl){
+  tl = tl || {};
+  return {
     base: tl.sponge ? 'sponge' : tl.brush_base ? 'brush_base' : 'finger',
     concealer: tl.sponge ? 'sponge' : 'ring',
     powder: tl.brush_blend ? 'brush_blend' : tl.sponge ? 'sponge' : 'finger',
@@ -17793,9 +20170,10 @@ const tool = (tl, kind) => {
     highlight: tl.brush_eye ? 'brush_eye' : 'finger', glow:'finger',
     eyeshadow: tl.brush_eye ? 'brush_eye' : 'finger', crease: tl.brush_blend ? 'brush_blend' : tl.brush_eye ? 'brush_eye' : 'finger',
     corner: tl.brush_eye ? 'brush_eye' : 'finger', brow: tl.brush_eye ? 'brush_eye' : 'own', liner:'own', mascara:'own', lips:'own'
-  }[kind] || 'finger';
-  return T2[pick];
-};
+  };
+}
+PRO.toolFor = zone => toolPick((S._kitPlan && S._kitPlan.tools) || {})[zone] || 'finger';
+PRO.toolSay = zone => { try{ return eT(tool((S._kitPlan && S._kitPlan.tools) || {}, zone)); }catch(e){ return ''; } };
 const face = () => S.pro && S.pro.face, skin = () => S.pro && S.pro.skin;
 function howFor(key, plan, kp, st){
   const f = face(), sk = skin(), parts = [];
@@ -17990,8 +20368,232 @@ function patchLab(i, rf){
 const PATCH = { blush:[[205,425],.035], contour:[[137,366],.03], highlight:[[117,346],.025],
   lips:[[13,14],.012], eyeshadow:[[27,257],.012], crease:[[28,258],.012], corner:[[130,359],.014],
   brow:[[105,334],.012], nose:[[193,417],.01], concealer:[[230,450],.022], base:[[205,425],.035] };
+/* === v94 · pigment map (1-placement.md): where her makeup landed === */
+/* === v94 · PLACE: pigment-map core (1-placement.md) — pure, no DOM, testable ===
+   The coach used to read two points per zone: it knew how much pigment she added,
+   never where it landed. These are the numbers behind "where".                  */
+var PLACE = {
+  N: 7,            /* grid is N×N                                                */
+  SPAN: 1.9,       /* the grid reaches 1.9× the zone radius: zone + overspill     */
+  MIN: 12,         /* fewer clean points than this and we refuse to judge         */
+  FACE_MM: 140,    /* the build's own scale, as used elsewhere: faceWidth / 140   */
+  LIMIT_MM: 4,     /* above this the placement is wrong, not merely imperfect     */
+  FLOOR: 1.0,      /* ΔE below this is camera noise, not pigment                  */
+  INNER_N: 7,      /* patchiness reads its own finer grid over the zone itself:
+                      the 1.9× grid drops only 9 points inside the zone, under the
+                      12 we refuse to judge below — a 7×7 zone grid gives 25       */
+  EPS: 0.3,        /* ΔE floor before the log, so a bare pixel can't blow it up    */
+  PATCHY_T: 0.153, /* MEASURED, not invented: twice the worst residual spread of a
+                      smooth synthetic application (amounts 2–18, shifts 0–10 px —
+                      past 10 px the placement rule speaks first, so patchiness is
+                      never consulted there). calib-patchiness.js prints it and the
+                      test re-derives it, so drift fails the suite instead of
+                      silently moving the line.                                    */
+
+  /* grid offsets in HER frame: u along her eye line, v down her face, so the
+     whole grid turns with her head instead of sitting on fixed screen axes */
+  offsets: function (R) {
+    var out = [], n = this.N, i, j;
+    for (j = 0; j < n; j++) for (i = 0; i < n; i++)
+      out.push({ u: (i / (n - 1) * 2 - 1) * R, v: (j / (n - 1) * 2 - 1) * R });
+    return out;
+  },
+
+  /* centre of pigment mass, in the same frame. null = not enough clean points */
+  centroid: function (pts) {
+    var sw = 0, su = 0, sv = 0, n = 0, i, w;
+    for (i = 0; i < pts.length; i++) {
+      if (!pts[i] || pts[i].dE == null || !isFinite(pts[i].dE)) continue;
+      n++;
+      w = pts[i].dE - this.FLOOR;
+      if (w <= 0) continue;
+      sw += w; su += w * pts[i].u; sv += w * pts[i].v;
+    }
+    if (n < this.MIN) return null;
+    if (sw <= 0) return { u: 0, v: 0, n: n, sum: 0 };
+    return { u: su / sw, v: sv / sw, n: n, sum: sw };
+  },
+
+  /* how much landed, measured inside the zone proper — the margin exists only
+     so the centroid can see pigment that fell outside it */
+  amount: function (pts, R) {
+    var lim = R / this.SPAN, s = 0, n = 0, i, p;
+    for (i = 0; i < pts.length; i++) {
+      p = pts[i];
+      if (!p || p.dE == null || !isFinite(p.dE)) continue;
+      if (Math.sqrt(p.u * p.u + p.v * p.v) > lim) continue;
+      s += p.dE; n++;
+    }
+    return n ? s / n : null;
+  },
+
+  /* the zone itself, sampled finely — patchiness is judged inside it only */
+  innerOffsets: function (R) {
+    var z = R / this.SPAN, out = [], n = this.INNER_N, i, j, u, v;
+    for (j = 0; j < n; j++) for (i = 0; i < n; i++) {
+      u = (i / (n - 1) * 2 - 1) * z; v = (j / (n - 1) * 2 - 1) * z;
+      if (Math.sqrt(u * u + v * v) <= z) out.push({ u: u, v: v });
+    }
+    return out;
+  },
+
+  /* Patchiness is the spread of what the fade CANNOT explain. Raw variance would
+     punish a perfect application, because pigment always thins toward the edge —
+     that would confuse blotchiness with the natural gradient. So fit
+     ln(ΔE) ≈ a + b·d² around the measured centre, then measure what is left over:
+     a smooth layer fits it even when badly placed; a blotchy one never does. */
+  patchiness: function (pts, c) {
+    var X = [], Y = [], n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0, i, p, d2, y, a, b, den, ss = 0, e;
+    for (i = 0; i < pts.length; i++) {
+      p = pts[i];
+      if (!p || p.dE == null || !isFinite(p.dE)) continue;
+      d2 = (p.u - c.u) * (p.u - c.u) + (p.v - c.v) * (p.v - c.v);
+      y = Math.log(Math.max(p.dE, this.EPS));
+      X.push(d2); Y.push(y); n++; sx += d2; sy += y; sxx += d2 * d2; sxy += d2 * y;
+    }
+    if (n < this.MIN) return null;      /* too few clean points inside: don't judge */
+    den = n * sxx - sx * sx;
+    b = Math.abs(den) < 1e-9 ? 0 : (n * sxy - sx * sy) / den;
+    a = (sy - b * sx) / n;
+    for (i = 0; i < n; i++) { e = Y[i] - (a + b * X[i]); ss += e * e; }
+    return { sd: Math.sqrt(ss / Math.max(1, n - 2)), n: n };
+  },
+
+  mm: function (px, fwPx) { return fwPx > 0 ? px * this.FACE_MM / fwPx : 0; },
+
+  /* both cheeks drifting outward cancel out in raw u, so the side facing −u is
+     mirrored first: then "outward on both" stays outward instead of zero */
+  combine: function (right, left, fwPx) {
+    var o = [], d = [], i, mo = 0, md = 0;
+    if (right) { o.push(right.u * (right.side || 1)); d.push(right.v); }
+    if (left) { o.push(left.u * (left.side || -1)); d.push(left.v); }
+    if (!o.length) return null;
+    for (i = 0; i < o.length; i++) { mo += o[i]; md += d[i]; }
+    mo = this.mm(mo / o.length, fwPx); md = this.mm(md / d.length, fwPx);
+    return { out: mo, down: md, mm: Math.sqrt(mo * mo + md * md), dir: this.dir(mo, md) };
+  },
+
+  dir: function (outMM, downMM) {
+    if (Math.abs(downMM) >= Math.abs(outMM)) return downMM > 0 ? 'down' : 'up';
+    return outMM > 0 ? 'out' : 'in';
+  },
+
+  /* the rule this whole fix exists for: position first, then amount, then balance.
+     "build another layer" to a woman who put it in the wrong place makes it worse */
+  verdict: function (o) {
+    if (o.place && o.place.mm > this.LIMIT_MM)
+      return { kind: 'place', mm: Math.round(o.place.mm), dir: o.place.dir };
+    /* patchiness before amount: one more layer over a blotchy one only makes it
+       blotchier, so "build another layer" is harmful advice here too. Below 1.2
+       there is no pigment to judge yet — that case belongs to 'start'. */
+    if (o.patch != null && o.patch > this.PATCHY_T && o.applied != null && o.applied >= 1.2)
+      return { kind: 'patchy', sd: Math.round(o.patch * 100) / 100 };
+    if (o.applied == null) return null;
+    /* bandwidth feedback: inside her tolerance the right answer is SILENCE —
+       the quiet itself tells her that was good enough (Sherwood 1988;
+       Lee & Carnahan 1990). The band comes from TECH.band(target, herSpread). */
+    if (o.applied < 1.2) return { kind: 'start' };
+    if (o.band > 0) {
+      /* the band GOVERNS the talking: inside it, silence; outside it, one cue.
+         The old fixed 0.35×/1.8× gates left a dead zone from 35 % to 180 % of
+         target in which she was told nothing at all. */
+      if (Math.abs(o.applied - o.target) <= o.band) return { kind: 'good' };
+      if (o.applied < o.target) return { kind: 'more' };
+      return { kind: 'less' };
+    }
+    if (o.applied < o.target * 0.35) return { kind: 'more' };   /* no band: as before */
+    if (o.applied > o.target * 1.8) return { kind: 'less' };
+    if (Math.abs(o.aR - o.aL) > Math.max(3, 0.4 * o.applied))
+      return { kind: 'uneven', side: o.aR < o.aL ? 'right' : 'left' };
+    return { kind: 'good' };
+  }
+};
+if (typeof module !== 'undefined' && module.exports) module.exports = PLACE;
+/* one canvas for the whole coach cycle: reading 98 separate patches kills the
+   frame rate, and "heavy" was the first thing the testers said */
+const _gcv = document.createElement('canvas');
+function gridFrame(){
+  const lm = S.landmarks; if(!lm || !lm[234] || !lm[454]) return null;
+  const W = srcW(), H = srcH();
+  const ax = (lm[454].x-lm[234].x)*W, ay = (lm[454].y-lm[234].y)*H;
+  const fw = Math.hypot(ax, ay); if(!(fw > 20)) return null;
+  return { W, H, fw, ex:[ax/fw, ay/fw], ey:[-ay/fw, ax/fw],
+           mid:[(lm[454].x+lm[234].x)/2*W, (lm[454].y+lm[234].y)/2*H] };
+}
+/* the grid hangs off her landmarks, so it turns with her head */
+function gridFor(i, rf, F){
+  const lm = S.landmarks; if(!lm || !lm[i]) return null;
+  const R = Math.max(4, F.fw*rf*PLACE.SPAN), cx = lm[i].x*F.W, cy = lm[i].y*F.H;
+  const side = ((cx-F.mid[0])*F.ex[0] + (cy-F.mid[1])*F.ex[1]) >= 0 ? 1 : -1;
+  const put = o => ({ u:o.u, v:o.v,
+    x: cx + F.ex[0]*o.u + F.ey[0]*o.v, y: cy + F.ex[1]*o.u + F.ey[1]*o.v });
+  /* v94 · inner: the zone sampled finely, where patchiness is judged */
+  return { cx, cy, R, side, pts: PLACE.offsets(R).map(put), inner: PLACE.innerOffsets(R).map(put) };
+}
+function gridBox(grids, F){
+  let x0=1e9, y0=1e9, x1=-1e9, y1=-1e9;
+  grids.forEach(g=> g && g.pts.forEach(p=>{
+    if(p.x<x0) x0=p.x; if(p.y<y0) y0=p.y; if(p.x>x1) x1=p.x; if(p.y>y1) y1=p.y; }));
+  if(x0>x1) return null;
+  x0=Math.max(0,Math.floor(x0)-2); y0=Math.max(0,Math.floor(y0)-2);
+  x1=Math.min(F.W-1,Math.ceil(x1)+2); y1=Math.min(F.H-1,Math.ceil(y1)+2);
+  const bw=x1-x0+1, bh=y1-y0+1; if(bw<8 || bh<8) return null;
+  const s = Math.min(1, 240/Math.max(bw,bh));
+  const cw=Math.max(8,Math.round(bw*s)), ch=Math.max(8,Math.round(bh*s));
+  _gcv.width=cw; _gcv.height=ch;
+  try{
+    const g=_gcv.getContext('2d',{willReadFrequently:true});
+    g.drawImage(SRC, x0,y0,bw,bh, 0,0,cw,ch);
+    return { x0,y0,cw,ch, kx:cw/bw, ky:ch/bh, d:g.getImageData(0,0,cw,ch).data };
+  }catch(e){ return null; }
+}
+function gridLab(B, x, y){
+  const px = Math.round((x-B.x0)*B.kx), py = Math.round((y-B.y0)*B.ky);
+  if(px<1 || py<1 || px>=B.cw-1 || py>=B.ch-1) return null;
+  let R=0,G=0,Bl=0,n=0;
+  for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+    const o=((py+dy)*B.cw+(px+dx))*4; R+=B.d[o]; G+=B.d[o+1]; Bl+=B.d[o+2]; n++;
+  }
+  return PRO.lab(R/n, G/n, Bl/n);
+}
+const CPL = {
+  down: L3('المكياج أنزل بـ{n} مم من موضعه — ارفعيه قليلاً نحو أعلى الوجه',
+           'It sits {n} mm below the spot — lift it a little',
+           'Riasan {n} mm terlalu rendah — naikkan sedikit'),
+  blush_down: L3('الخدود أنزل بـ{n} مم من الموضع — ارفعيها نحو الصدغ',
+           'Your blush sits {n} mm low — lift it toward the temple',
+           'Blush {n} mm terlalu rendah — naikkan ke arah pelipis'),
+  up: L3('المكياج أعلى بـ{n} مم من موضعه — أنزليه قليلاً',
+         'It sits {n} mm above the spot — bring it down a little',
+         'Riasan {n} mm terlalu tinggi — turunkan sedikit'),
+  out: L3('المكياج أبعد بـ{n} مم نحو الخارج — قرّبيه من منتصف الوجه',
+          'It sits {n} mm too far out — bring it toward the centre',
+          'Riasan {n} mm terlalu ke luar — geser ke tengah'),
+  'in': L3('المكياج أقرب بـ{n} مم إلى منتصف الوجه — أبعديه قليلاً',
+           'It sits {n} mm too far in — move it outward a little',
+           'Riasan {n} mm terlalu ke dalam — geser ke luar')
+};
+const CPT = L3('الكمية جيدة لكن فيها بقع — وحّدي بحركات دائرية خفيفة',
+  'The amount is right but it went on blotchy — even it out with small circles',
+  'Takarannya pas tapi belang — ratakan dengan gerakan memutar kecil');
+function placeMsg(zone, v){
+  const k = (zone === 'blush' && v.dir === 'down') ? 'blush_down' : v.dir;
+  return eT(CPL[k] || CPL.down).replace('{n}', v.mm);
+}
 PRO.captureBaseline = function(){
-  const b = {}; Object.entries(PATCH).forEach(([z,[pair,rf]])=>{ b[z] = pair.map(i=>patchLab(i,rf)); });
+  const b = {}; const F = gridFrame();
+  Object.entries(PATCH).forEach(([z,[pair,rf]])=>{
+    b[z] = pair.map(i=>patchLab(i,rf));
+    /* v94 · the bare-face grid as well: without it there is nothing to subtract
+       a pigment map from, and the coach is back to two points */
+    if(F){
+      const gs = pair.map(i=>gridFor(i, rf, F)), B = gridBox(gs, F);
+      if(B){
+        b[z+'_g'] = gs.map(g=> g ? g.pts.map(p=>gridLab(B, p.x, p.y)) : null);
+        b[z+'_i'] = gs.map(g=> g ? g.inner.map(p=>gridLab(B, p.x, p.y)) : null);
+      }
+    }
+  });
   b._light = S.light ? S.light.mean : null; return b;
 };
 const CT = {
@@ -18013,18 +20615,79 @@ PRO.coachCheck = function(zone){
   const [pair, rf] = PATCH[st.zone];
   /* her hand or the brush covers the zone: measure it afterwards, not the hand */
   const OC = window.LAMHA_OCC, lm0 = S.landmarks;
-  if(OC && OC.isOccluded && lm0 && pair.some(i=> lm0[i] && OC.isOccluded(lm0[i].x, lm0[i].y)))
-    return (pl._cm = eT(CT.hand));
-  const cur = pair.map(i=>patchLab(i, rf)); if(!cur[0] || !cur[1]) return null;
-  const aR = dE00(cur[0], base[0]), aL = dE00(cur[1], base[1]), applied = (aR+aL)/2;
+  if(OC && OC.isOccluded && lm0 && pair.some(i=> lm0[i] && OC.isOccluded(lm0[i].x, lm0[i].y))){
+    /* v94 · phase one: her hand is over the zone, so guide the stroke now and
+       measure the result the moment she lifts it — the coach below is untouched */
+    let live = null;
+    try{ live = window.LAMHA_HAND && window.LAMHA_HAND.message(st.zone); }catch(e){}
+    return (pl._cm = live || eT(CT.hand));
+  }
+  /* v94 · pigment map: one read of the zone box, then 98 samples out of memory.
+     Two points told us how much she put on; the map tells us where it landed. */
+  const F = gridFrame(), bg = pl.baseline[st.zone+'_g'], bgi = pl.baseline[st.zone+'_i'] || [];
+  let place = null, aR = null, aL = null, applied = null, patch = null;
+  if(F && bg){
+    const gs = pair.map(i=>gridFor(i, rf, F)), B = gridBox(gs, F);
+    if(B){
+      const sides = gs.map((g,k)=>{
+        if(!g || !bg[k]) return null;
+        const pts = g.pts.map((p,q)=>{
+          const b0 = bg[k][q]; if(!b0) return null;
+          /* the occlusion guard, per point instead of per zone */
+          if(OC && OC.isOccluded && OC.isOccluded(p.x/F.W, p.y/F.H)) return null;
+          const lab = gridLab(B, p.x, p.y); if(!lab) return null;
+          return { u:p.u, v:p.v, dE: dE00(lab, b0) };
+        });
+        const c = PLACE.centroid(pts); if(!c) return null;   /* under 12 clean points */
+        c.side = g.side;
+        /* v94 · patchiness: the same box read again, over the zone itself */
+        const ip = g.inner.map((p,qi)=>{
+          const b1 = bgi[k] && bgi[k][qi]; if(!b1) return null;
+          if(OC && OC.isOccluded && OC.isOccluded(p.x/F.W, p.y/F.H)) return null;
+          const lab = gridLab(B, p.x, p.y); if(!lab) return null;
+          return { u:p.u, v:p.v, dE: dE00(lab, b1) };
+        });
+        const pa = bgi[k] ? PLACE.patchiness(ip, c) : null;
+        return { c, amount: PLACE.amount(pts, g.R), patch: pa ? pa.sd : null };
+      });
+      if(!sides[0] && !sides[1]) return null;   /* don't judge on a broken sample */
+      place = PLACE.combine(sides[0] && sides[0].c, sides[1] && sides[1].c, F.fw);
+      aR = sides[0] ? sides[0].amount : null;
+      aL = sides[1] ? sides[1].amount : null;
+      applied = (aR!=null && aL!=null) ? (aR+aL)/2 : (aR!=null ? aR : aL);
+      const pv = [sides[0] && sides[0].patch, sides[1] && sides[1].patch].filter(x=>x!=null);
+      patch = pv.length ? Math.max.apply(null, pv) : null;   /* the worse cheek rules */
+    }
+  }
+  if(applied == null){        /* a baseline from before this build: the old reading */
+    const cur = pair.map(i=>patchLab(i, rf)); if(!cur[0] || !cur[1]) return null;
+    aR = dE00(cur[0], base[0]); aL = dE00(cur[1], base[1]); applied = (aR+aL)/2;
+  }
   const prod = st.pick && st.pick.item && st.pick.item.lab ? st.pick.item.lab : (S.makeup[st.zone] ? hexLab(S.makeup[st.zone]) : null);
   const full = prod ? dE00(prod, base[0]) : 20;
   const target = Math.max(2.5, full * (S.ints[st.zone] ?? 0.5) * 0.55);
+  /* position before amount, always: "build another layer" is harmful advice to a
+     woman who put it in the wrong place */
+  pl._applied = applied; pl._target = target;   /* v94: the teacher reads the phase from these */
+  if(applied != null){ (pl._hist = pl._hist || []).push(applied); if(pl._hist.length > 8) pl._hist.shift(); }
+  const band = (window.LAMHA_TEACH && applied != null) ? TECH.band(target, TECH.sd(pl._hist)) : 0;
+  const v = PLACE.verdict({ place, patch, applied, target, band, aR: aR==null?applied:aR, aL: aL==null?applied:aL });
+  if(!v) return null;
+  try{ if(window.LAMHA_TEACH) LAMHA_TEACH.note(v.kind); }catch(e){}
+  /* the quiet after her hand lifts belongs to her, not to me */
+  try{ if(window.LAMHA_TEACH && !LAMHA_TEACH.maySpeak()) return (pl._cm = ''); }catch(e){}
+  /* inside her own band there is nothing to say: the silence is the approval,
+     and the step's completion line comes from the teacher */
+  if(v.kind === 'good'){
+    try{ if(window.LAMHA_TEACH) LAMHA_TEACH.step(st.zone, 'good'); }catch(e){}
+    return (pl._cm = '');
+  }
   let msg;
-  if(applied < target*0.35) msg = applied < 1.2 ? eT(CT.start) : eT(CT.more);
-  else if(applied > target*1.8) msg = eT(CT.less);
-  else if(Math.abs(aR-aL) > Math.max(3, 0.4*applied)) msg = eT(CT.uneven) + eT(aR < aL ? CT.right : CT.left);
-  else msg = eT(CT.good);
+  if(v.kind === 'place') msg = placeMsg(st.zone, v);
+  else if(v.kind === 'patchy') msg = eT(CPT);
+  else if(v.kind === 'uneven') msg = eT(CT.uneven) + eT(v.side === 'right' ? CT.right : CT.left);
+  else msg = eT(CT[v.kind]);
+  try{ if(window.LAMHA_TEACH) LAMHA_TEACH.step(st.zone, v.kind); }catch(e){}   /* carried to the end */
   return (pl._cm = msg);
 };
 (function(){
@@ -18318,6 +20981,7 @@ function propagate(){
         regions:{}, score: Math.round(keys.reduce((s,k)=>s+(c[k]||0),0)/keys.length), ts:p.ts,
         confidence: sa.conf, light:p.light, camera:(typeof lamhaRearIsOn==='function' && lamhaRearIsOn())?'rear':'front',
         wb:p.wb, blemishes:[], _pro:true });
+      S.skinFrame = null; S.skinLm = null;
     }
     S.engineSkin = null;
     try{ if(typeof ensureEngineSkin==='function') ensureEngineSkin(); }catch(e){}
@@ -19111,6 +21775,441 @@ function alongPt(pts, f){                              /* point + unit tangent a
   const a = pts[i], b = pts[i+1] || pts[i], r = seg[i] ? want/seg[i] : 0;
   return { p:[a[0]+(b[0]-a[0])*r, a[1]+(b[1]-a[1])*r], t:unit(b[0]-a[0], b[1]-a[1]), len:tot };
 }
+/* === v94 · hand motion (3-hand-motion.md): the stroke, not only its result === */
+var HANDC = {
+  BODY: 2,          /* PRO.SEG.BODY — the class the build already produces       */
+  MIN_PX: 40,       /* a smaller blob is noise, not a hand                       */
+  V_ON: 0.05,       /* face-widths per second before a still hand counts as work */
+  V_OFF: 0.02,
+  MSG_MS: 2000,     /* at most one spoken line every two seconds                 */
+  TRACK_MAX: 120,
+  TURN_CIRCLE: 3.0, /* radians of total turning that mean "she is circling"      */
+  E_MIN: 1.3, E_BETA: 50.0, E_DC: 1.5,   /* the build's own one-euro constants   */
+
+  /* 1 · where the arm enters: the centroid of BODY pixels touching the frame edge.
+        An arm always comes in from outside; the tip is the far end of it. */
+  entry: function (cat, W, H) {
+    var sx = 0, sy = 0, n = 0, x, y;
+    for (x = 0; x < W; x++) {
+      if (cat[x] === this.BODY) { sx += x; sy += 0; n++; }
+      if (cat[(H - 1) * W + x] === this.BODY) { sx += x; sy += H - 1; n++; }
+    }
+    for (y = 0; y < H; y++) {
+      if (cat[y * W] === this.BODY) { sx += 0; sy += y; n++; }
+      if (cat[y * W + W - 1] === this.BODY) { sx += W - 1; sy += y; n++; }
+    }
+    return n ? { x: sx / n, y: sy / n, n: n } : null;
+  },
+
+  TOOL: 5,          /* the segmenter's "other" class — measured to be the brush   */
+  MIN_TOOL: 12,
+  ELONG: 2.0,       /* a brush is long and thin; measured ratios 3.2–12.4 : 1      */
+
+  /* 1b · WHERE to look. Measured on 78 real photographs of a woman applying
+     makeup: in 7 of 8 the hand's box did not overlap the face's box AT ALL —
+     the hand sits beside or below the face and only the tool crosses in. So the
+     search area is the face box opened outward and downward, not the face box. */
+  region: function (box, W, H) {
+    var w = box.x1 - box.x0, h = box.y1 - box.y0;
+    return {
+      x0: Math.max(0, Math.round(box.x0 - w * 0.75)),
+      x1: Math.min(W - 1, Math.round(box.x1 + w * 0.75)),
+      y0: Math.max(0, Math.round(box.y0 - h * 0.20)),
+      y1: H - 1                                   /* the arm comes from below */
+    };
+  },
+
+  /* 1c · the TOOL, not the hand: elongated "other" pixels touching her hand.
+     It is present in 9 of 12 real application photographs — including two where
+     a hand detector found nothing at all — and its tip is the far end of its
+     long axis. The hand blob is the gate: an elongated thing that does not touch
+     her hand is a mirror frame, an earring, a comb on the table. */
+  tool: function (cat, W, H, reg, hand) {
+    if (!hand || hand.cx == null) return null;
+    /* only the elongated thing she is HOLDING: grow it out of the pixels that
+       touch her hand. A mirror frame or a comb on the table never touches it. */
+    var rw = reg.x1 - reg.x0 + 1, rh = reg.y1 - reg.y0 + 1;
+    var seen = new Uint8Array(rw * rh), q = [], px = [], x, y, i, j, k, dx, dy;
+    var at = function (xx, yy) { return cat[yy * W + xx]; };
+    for (y = reg.y0; y <= reg.y1; y++) for (x = reg.x0; x <= reg.x1; x++) {
+      if (at(x, y) !== this.TOOL) continue;
+      var touch = false;
+      for (dy = -2; dy <= 2 && !touch; dy++) for (dx = -2; dx <= 2; dx++) {
+        var nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        if (at(nx, ny) === this.BODY) { touch = true; break; }
+      }
+      if (touch) { i = (y - reg.y0) * rw + (x - reg.x0); if (!seen[i]) { seen[i] = 1; q.push(x, y); } }
+    }
+    if (!q.length) return null;
+    for (k = 0; k < q.length; k += 2) {
+      x = q[k]; y = q[k+1]; px.push(x, y);
+      for (j = 0; j < 4; j++) {
+        var ax2 = x + (j === 0 ? 1 : j === 1 ? -1 : 0), ay2 = y + (j === 2 ? 1 : j === 3 ? -1 : 0);
+        if (ax2 < reg.x0 || ay2 < reg.y0 || ax2 > reg.x1 || ay2 > reg.y1) continue;
+        if (at(ax2, ay2) !== this.TOOL) continue;
+        i = (ay2 - reg.y0) * rw + (ax2 - reg.x0);
+        if (seen[i]) continue;
+        seen[i] = 1; q.push(ax2, ay2);
+      }
+    }
+    var n = px.length / 2, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+    if (n < this.MIN_TOOL) return null;
+    for (k = 0; k < px.length; k += 2) { sx += px[k]; sy += px[k+1]; }
+    var cx = sx / n, cy = sy / n;
+    for (k = 0; k < px.length; k += 2) {
+      dx = px[k] - cx; dy = px[k+1] - cy;
+      sxx += dx*dx; syy += dy*dy; sxy += dx*dy;
+    }
+    sxx /= n; syy /= n; sxy /= n;
+    /* the long axis, and how long against how thin */
+    var tr = sxx + syy, det = sxx*syy - sxy*sxy;
+    var l1 = tr/2 + Math.sqrt(Math.max(0, tr*tr/4 - det));
+    var l2 = tr/2 - Math.sqrt(Math.max(0, tr*tr/4 - det));
+    if (!(l2 > 1e-6) || Math.sqrt(l1/l2) < this.ELONG) return null;
+    var ax, ay;
+    if (Math.abs(sxy) > 1e-9) { ax = l1 - syy; ay = sxy; }
+    else { ax = sxx >= syy ? 1 : 0; ay = sxx >= syy ? 0 : 1; }
+    var m = Math.hypot(ax, ay) || 1; ax /= m; ay /= m;
+    /* The end of that axis furthest from her hand is the working tip — but NOT
+       the single furthest pixel. Geometric tip extraction is the weak family
+       (28.1 px RMSE against 3.7 px for a trained model on the same masks,
+       ToolTipNet 2025), and one stray pixel moves it by its whole error. So:
+       project every pixel on the long axis, take the far 12 % of that spread,
+       and use their centre. A speck of noise cannot carry it any more. */
+    var far = 0, t, ts = [];
+    for (k = 0; k < px.length; k += 2) {
+      t = (px[k] - cx) * ax + (px[k+1] - cy) * ay;
+      ts.push(t);
+    }
+    var t0 = Math.min.apply(null, ts), t1 = Math.max.apply(null, ts);
+    var dHi = Math.hypot((cx + ax*t1) - hand.cx, (cy + ay*t1) - hand.cy);
+    var dLo = Math.hypot((cx + ax*t0) - hand.cx, (cy + ay*t0) - hand.cy);
+    var toward = dHi >= dLo ? 1 : -1;
+    var cut = toward > 0 ? t1 - (t1 - t0) * 0.12 : t0 + (t1 - t0) * 0.12;
+    var sxT = 0, syT = 0, nT = 0;
+    for (k = 0; k < px.length; k += 2) {
+      t = ts[k / 2];
+      if (toward > 0 ? t >= cut : t <= cut) { sxT += px[k]; syT += px[k+1]; nT++; }
+    }
+    var best = nT ? [sxT / nT, syT / nT] : null;
+    return best ? { tip: best, n: n, elong: Math.sqrt(l1 / l2), c: [cx, cy] } : null;
+  },
+
+  /* 1d · is this frame worth reading at all? Blur was the dominant failure in
+     the measurement: past ~10 % of the hand's width smeared, a quarter of frames
+     are lost, and at 20 % two thirds. Better to stay silent than to guide from a
+     tip that is wrong. Variance of the Laplacian, against her own running level. */
+  focus: function (img, box) {
+    if (!img || !img.data) return 0;
+    var W = img.width, d = img.data, x, y, i, s = 0, s2 = 0, n = 0, v,
+        x0 = Math.max(1, box.x0|0), x1 = Math.min(W-2, box.x1|0),
+        y0 = Math.max(1, box.y0|0), y1 = Math.min(img.height-2, box.y1|0),
+        step = Math.max(1, Math.round((x1-x0)/64));
+    for (y = y0; y <= y1; y += step) for (x = x0; x <= x1; x += step) {
+      i = (y*W + x) * 4;
+      v = 4*d[i] - d[i-4] - d[i+4] - d[i-W*4] - d[i+W*4];
+      s += v; s2 += v*v; n++;
+    }
+    if (n < 16) return 0;
+    return s2/n - (s/n)*(s/n);
+  },
+  FOCUS_DROP: 0.45,       /* below this share of her own recent level: don't judge */
+  focusOK: function (now, ref) { return !(ref > 0) || now >= ref * this.FOCUS_DROP; },
+  /* Speed × light is the dominant interaction, not resolution: a brush is
+     recognised >95 % of the time below 2 cm/s at any light from 2 to 183 LUX,
+     but only 60–65 % above 10 cm/s in 2 LUX — and recovers to 96 % at 183 LUX
+     (the one published study that varied both). So a fast stroke in a dim room
+     is the one case to refuse outright. Speed here is face-widths per second. */
+  V_FAST: 0.55,
+  readable: function (focusNow, focusRef, speed) {
+    if (!this.focusOK(focusNow, focusRef)) return false;
+    if (speed > this.V_FAST && focusRef > 0 && focusNow < focusRef * 0.75) return false;
+    return true;
+  },
+
+  /* 2 · the brush tip: the BODY pixel inside the face box furthest from that entry.
+        The estimate is biased by a few pixels — but the bias is CONSTANT, so it
+        cancels the moment we subtract two positions. Direction survives; the tip
+        itself is never claimed to be millimetre-accurate. */
+  tip: function (cat, W, H, box, ent) {
+    if (!ent) return null;
+    var best = -1, bx = 0, by = 0, n = 0, x, y, d, sx = 0, sy = 0,
+        x0 = Math.max(0, box.x0 | 0), x1 = Math.min(W - 1, box.x1 | 0),
+        y0 = Math.max(0, box.y0 | 0), y1 = Math.min(H - 1, box.y1 | 0);
+    for (y = y0; y <= y1; y++) for (x = x0; x <= x1; x++) {
+      if (cat[y * W + x] !== this.BODY) continue;
+      n++; sx += x; sy += y;
+      d = (x - ent.x) * (x - ent.x) + (y - ent.y) * (y - ent.y);
+      if (d > best) { best = d; bx = x; by = y; }
+    }
+    return n < this.MIN_PX ? { n: n, tip: null }
+      : { n: n, tip: [bx, by], cx: sx / n, cy: sy / n };
+  },
+
+  /* 3 · the one-euro filter, but tuned for THIS signal.
+     The landmark filter's β = 50 is for coordinates in the 0–1 range. Feeding it
+     raw mask pixels makes the adaptive cutoff explode — at 200 px/s it asks for
+     10 kHz, i.e. α ≈ 1, i.e. no filtering at all exactly while she is moving.
+     So the tip is filtered in FACE WIDTHS: the units are then scale-free, the
+     cutoff stays in the few-Hz range the CHI'12 paper tunes for, and the same
+     constants hold whether her face fills the frame or sits far away.
+     Budget from the same paper: under 10–20 ms of filter lag on top of 40–50 ms
+     of system lag; anything slower costs her more than the jitter does. */
+  TIP_MIN: 1.3, TIP_BETA: 1.0, TIP_DC: 1.0,
+  filter: function (scale) {
+    var self = this, k = scale > 0 ? 1 / scale : 1;
+    var s = { x: 0, y: 0, dx: 0, dy: 0, t: 0, on: false };
+    return {
+      setScale: function (v) { if (v > 0) k = 1 / v; },
+      reset: function () { s.on = false; },
+      push: function (x, y, t) {
+        var X = x * k, Y = y * k;                 /* face widths, not pixels */
+        if (!s.on) { s.on = true; s.x = X; s.y = Y; s.dx = s.dy = 0; s.t = t; return [x, y]; }
+        var dt = Math.min(0.1, Math.max(0.004, (t - s.t) / 1000)); s.t = t;
+        var aD = 1 / (1 + 1 / (2 * Math.PI * self.TIP_DC) / dt);
+        s.dx += aD * ((X - s.x) / dt - s.dx);
+        s.dy += aD * ((Y - s.y) / dt - s.dy);
+        var ax = 1 / (1 + 1 / (2 * Math.PI * (self.TIP_MIN + self.TIP_BETA * Math.abs(s.dx))) / dt);
+        var ay = 1 / (1 + 1 / (2 * Math.PI * (self.TIP_MIN + self.TIP_BETA * Math.abs(s.dy))) / dt);
+        s.x += ax * (X - s.x); s.y += ay * (Y - s.y);
+        return [s.x / k, s.y / k];
+      }
+    };
+  },
+
+  /* 4 · the shape of what she did */
+  netAngle: function (tr) {
+    if (!tr || tr.length < 2) return null;
+    var a = tr[0], b = tr[tr.length - 1];
+    return Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI;
+  },
+  netLen: function (tr) {
+    if (!tr || tr.length < 2) return 0;
+    var a = tr[0], b = tr[tr.length - 1];
+    return Math.sqrt((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]));
+  },
+  /* a circle ends where it began, so net displacement says nothing about it —
+     total turning does */
+  turning: function (tr) {
+    if (!tr || tr.length < 3) return 0;
+    var sum = 0, i, ax, ay, bx, by, d;
+    for (i = 2; i < tr.length; i++) {
+      ax = tr[i - 1][0] - tr[i - 2][0]; ay = tr[i - 1][1] - tr[i - 2][1];
+      bx = tr[i][0] - tr[i - 1][0];     by = tr[i][1] - tr[i - 1][1];
+      if ((ax || ay) && (bx || by)) {
+        d = Math.atan2(by, bx) - Math.atan2(ay, ax);
+        while (d > Math.PI) d -= 2 * Math.PI;
+        while (d < -Math.PI) d += 2 * Math.PI;
+        sum += Math.abs(d);
+      }
+    }
+    return sum;
+  },
+  isCircular: function (tr, scale) {
+    var t = this.turning(tr), net = this.netLen(tr);
+    return t > this.TURN_CIRCLE && net < (scale || 1) * 0.25;
+  },
+
+  /* 5 · against the lesson's own path: heading, how much of it she covered,
+        and how far outside it she strayed */
+  dirCos: function (tr, ref) {
+    if (!tr || tr.length < 2 || !ref) return null;
+    var a = tr[tr.length - 2], b = tr[tr.length - 1];
+    var vx = b[0] - a[0], vy = b[1] - a[1], m = Math.sqrt(vx * vx + vy * vy);
+    if (m < 1e-6) return null;
+    var rm = Math.sqrt(ref[0] * ref[0] + ref[1] * ref[1]); if (rm < 1e-6) return null;
+    return (vx * ref[0] + vy * ref[1]) / (m * rm);
+  },
+  nearest: function (p, pts) {
+    var best = Infinity, i, d;
+    for (i = 0; i < pts.length; i++) {
+      d = (p[0] - pts[i][0]) * (p[0] - pts[i][0]) + (p[1] - pts[i][1]) * (p[1] - pts[i][1]);
+      if (d < best) best = d;
+    }
+    return Math.sqrt(best);
+  },
+  coverage: function (tr, pts, tol) {
+    if (!tr || !tr.length || !pts || !pts.length) return 0;
+    var hit = 0, i;
+    for (i = 0; i < pts.length; i++) if (this.nearest(pts[i], tr) <= tol) hit++;
+    return hit / pts.length;
+  },
+  overshoot: function (tr, pts) {
+    if (!tr || !tr.length || !pts || !pts.length) return 0;
+    var mx = 0, i, d;
+    for (i = 0; i < tr.length; i++) { d = this.nearest(tr[i], pts); if (d > mx) mx = d; }
+    return mx;
+  },
+
+  /* 6 · idle → stroke → measure. A hand resting on her cheek is not a stroke,
+        and the measuring phase is exactly where the existing coach takes over. */
+  step: function (st, f) {
+    var s = st || { phase: 'idle', gone: 0 };
+    var has = f.n >= this.MIN_PX && !!f.tip;
+    if (s.phase === 'idle') {
+      if (has && f.speed > this.V_ON) { s.phase = 'stroke'; s.gone = 0; s.event = 'start'; }
+      else s.event = null;
+    } else if (s.phase === 'stroke') {
+      if (!has) { s.gone++; if (s.gone >= 2) { s.phase = 'measure'; s.event = 'lift'; } else s.event = null; }
+      else { s.gone = 0; s.event = null; }
+    } else {                       /* measure: the old coach reads the result */
+      s.phase = 'idle'; s.event = null;
+    }
+    return s;
+  }
+};
+if (typeof module !== 'undefined' && module.exports) module.exports = HANDC;
+/* v94 · the stroke phase. The segmenter already labels her hand BODY every frame,
+   so this costs one sweep of a mask that exists — no new model, no new download. */
+const HSAY = {
+  up:     { ar:'للأعلى نحو الصدغ — أنتِ تسحبين للأسفل', en:'Up toward the temple — you are pulling down', id:'Ke atas ke arah pelipis — kamu menarik ke bawah' },
+  down:   { ar:'للأسفل مع المسار — أنتِ تسحبين للأعلى', en:'Down along the path — you are pulling up', id:'Ke bawah mengikuti jalur — kamu menarik ke atas' },
+  back:   { ar:'عكس الاتجاه — ادمجي مع المسار لا ضدّه', en:'Wrong way — blend along the path, not against it', id:'Arah terbalik — baurkan mengikuti jalur' },
+  out:    { ar:'خرجتِ عن حدّ المنطقة — ارجعي إلى داخلها', en:'You have gone outside the zone — come back inside', id:'Kamu keluar dari area — kembali ke dalam' },
+  circle: { ar:'حركات دائرية أصغر', en:'Smaller circles', id:'Gerakan memutar lebih kecil' }
+};
+const hSay = o => o[(typeof LANG === 'string' && o[LANG]) ? LANG : 'ar'];
+
+const LAMHA_HAND = window.LAMHA_HAND = {
+  C: HANDC, st: null, track: [], fil: HANDC.filter(0), prev: null, tp: 0,
+  ver: -1, ms: 0, msg: null, msgT: 0, lifted: 0, skip: 0,
+
+  /* her face box in mask pixels, widened so an arm coming in is inside it */
+  box(O){
+    const lm = O._snap || S.landmarks;
+    if(!lm || !lm[234] || !lm[454] || !lm[10] || !lm[152]) return null;
+    const W = O.W, H = O.H;
+    const xa = lm[234].x*W, xb = lm[454].x*W, ya = lm[10].y*H, yb = lm[152].y*H;
+    const cx = (xa+xb)/2, cy = (ya+yb)/2, fw = Math.abs(xb-xa);
+    const rx = Math.max(4, fw/2*1.35), ry = Math.max(4, Math.abs(yb-ya)/2*1.25);
+    return { x0: Math.round(cx-rx), y0: Math.round(cy-ry),
+             x1: Math.round(cx+rx), y1: Math.round(cy+ry), fw: fw };
+  },
+
+  /* one pass per new mask — the segmenter's own rate, not the render loop's */
+  tick(){
+    const pl = S.plan; if(!pl || !pl.lesson) return;
+    const O = window.LAMHA_OCC;
+    if(!O || !O._cat || O._catSrc !== SRC || !O.W || O._cat.length !== O.W*O.H) return;
+    if(O.version === this.ver) return;
+    this.ver = O.version;
+    if(this.ms > 6 && (this.skip = 1 - this.skip)) return;   /* over budget: every other mask */
+    const t0 = performance.now(), b = this.box(O); if(!b) return;
+    /* measured on 78 real photographs: in 7 of 8 her hand does not overlap her
+       face box at all — it sits beside or below it, and only the tool comes in */
+    const reg = HANDC.region(b, O.W, O.H);
+    const ent = HANDC.entry(O._cat, O.W, O.H);
+    const r = HANDC.tip(O._cat, O.W, O.H, reg, ent) || { n:0, tip:null };
+    /* the brush itself, when the segmenter sees it: the end furthest from her
+       hand is the working tip, and it survives frames where the hand does not */
+    let tp = r.tip;
+    if(r.tip){
+      const tl = HANDC.tool(O._cat, O.W, O.H, reg, r);
+      this.tool = tl || null;
+      if(tl) tp = tl.tip;
+    } else this.tool = null;
+    /* blur was the dominant failure in the study: past ~10 % of the hand's width
+       smeared, a quarter of frames give a wrong tip. Refuse them. */
+    const fq = this.focusNow(reg, O);
+    if(fq != null) this.fRef = this.fRef ? Math.max(this.fRef * 0.97, fq) : fq;
+    const now = performance.now();
+    let sm = null, speed = 0;
+    this.fil.setScale(b.fw);   /* filter in face widths, not pixels */
+    if(tp){
+      sm = this.fil.push(tp[0], tp[1], now);
+      if(this.prev && this.tp)
+        speed = Math.hypot(sm[0]-this.prev[0], sm[1]-this.prev[1]) /
+                Math.max(0.016, (now-this.tp)/1000) / (b.fw || 1);
+      this.prev = sm; this.tp = now;
+    } else { this.fil.reset(); this.prev = null; this.tp = 0; }
+    /* a fast stroke in a dim room is the one case the measurements say to
+       refuse outright: >95 % recognition below 2 cm/s at any light, 60–65 %
+       above 10 cm/s in the dark. Silence beats a wrong tip. */
+    if(fq != null && !HANDC.readable(fq, this.fRef, speed)){
+      this.blur = (this.blur || 0) + 1; this.ms = this.ms*0.8 + (performance.now()-t0)*0.2; return;
+    }
+    this.st = HANDC.step(this.st, { n:r.n, tip:r.tip, speed });
+    if(this.st.event === 'start'){ this.track = []; this.msg = null; this.msgT = 0; }
+    if(this.st.phase === 'stroke' && sm){
+      this.track.push(sm);
+      if(this.track.length > HANDC.TRACK_MAX) this.track.shift();
+    }
+    if(this.st.event === 'lift'){ this.lifted++; this.fil.reset(); this.prev = null;
+      try{ if(window.LAMHA_TEACH) LAMHA_TEACH.lift(); }catch(e){} }
+    const el = performance.now() - t0;
+    this.ms = this.ms ? this.ms*0.8 + el*0.2 : el;
+  },
+
+  /* is this frame sharp enough to read a tip from? */
+  _fc: null, fRef: 0, tool: null, blur: 0,
+  focusNow(reg, O){
+    try{
+      const w = Math.max(24, Math.min(96, reg.x1 - reg.x0)), h = Math.max(24, Math.round(w * (reg.y1-reg.y0) / Math.max(1, reg.x1-reg.x0)));
+      if(!this._fc) this._fc = document.createElement('canvas');
+      this._fc.width = w; this._fc.height = h;
+      const g = this._fc.getContext('2d', {willReadFrequently:true});
+      const kx = srcW()/O.W, ky = srcH()/O.H;
+      g.drawImage(SRC, reg.x0*kx, reg.y0*ky, (reg.x1-reg.x0)*kx, (reg.y1-reg.y0)*ky, 0, 0, w, h);
+      return HANDC.focus(g.getImageData(0, 0, w, h), { x0:1, y0:1, x1:w-2, y1:h-2 });
+    }catch(e){ return null; }
+  },
+
+  /* the lesson's own blending path for this zone, in mask pixels */
+  ref(zone){
+    const lm = S.landmarks, O = window.LAMHA_OCC;
+    if(!lm || !O || typeof build !== 'function' || !this.track.length) return null;
+    const key = ({ blush:'blush', contour:'contour', nose:'nose', highlight:'highlight',
+                   concealer:'concealer', base:'base' })[zone];
+    if(!key) return null;                       /* eyes and lips have no path: stay silent */
+    let G = null; try{ G = build(lm, key); }catch(e){ return null; }
+    if(!G || !G.strokes || !G.strokes.length) return null;
+    const kx = O.W/srcW(), ky = O.H/srcH(), tip = this.track[this.track.length-1];
+    let best = null, bd = Infinity;
+    G.strokes.forEach(s=>{
+      const raw = s.t === 'patch' ? [s.c] : s.pts; if(!raw || !raw.length) return;
+      const pts = raw.map(p=>[p[0]*kx, p[1]*ky]);
+      const d = HANDC.nearest(tip, pts);
+      if(d < bd){ bd = d; best = { pts, blend: s.blend ? [s.blend[0]*kx, s.blend[1]*ky] : null,
+                                   tag: s.tag, w: (s.w || 0)*kx }; }
+    });
+    if(best && !best.blend && best.pts.length > 1){
+      const a = best.pts[0], z = best.pts[best.pts.length-1];
+      best.blend = [z[0]-a[0], z[1]-a[1]];
+    }
+    return best;
+  },
+
+  /* one short line at a time, never more often than every two seconds */
+  message(zone){
+    if(!this.st || this.st.phase !== 'stroke' || this.track.length < 4) return null;
+    const now = performance.now();
+    if(this.msg && now - this.msgT < HANDC.MSG_MS) return this.msg;
+    const O = window.LAMHA_OCC, b = O ? this.box(O) : null, fw = b ? b.fw : 0;
+    const ref = this.ref(zone);
+    let out = null;
+    /* the technique comes before the direction: a drag instead of a tap ruins
+       the coverage no matter how well aimed it is */
+    try{ if(window.LAMHA_TEACH) out = LAMHA_TEACH.check(zone, this.track, fw) || null; }catch(e){}
+    if(ref && ref.blend){
+      const c = HANDC.dirCos(this.track, ref.blend);
+      if(c != null && c < -0.35) out = hSay(ref.blend[1] < 0 ? HSAY.up : (ref.blend[1] > 0 ? HSAY.down : HSAY.back));
+      if(!out){
+        const over = HANDC.overshoot(this.track, ref.pts);
+        if(fw && over > Math.max(fw*0.10, (ref.w || 0)*1.2)) out = hSay(HSAY.out);
+      }
+    }
+    if(!out && fw && HANDC.isCircular(this.track, fw)){
+      const cx = this.track.reduce((s,p)=>s+p[0],0)/this.track.length;
+      const cy = this.track.reduce((s,p)=>s+p[1],0)/this.track.length;
+      let rad = 0; this.track.forEach(p=>{ const d = Math.hypot(p[0]-cx, p[1]-cy); if(d > rad) rad = d; });
+      if(rad > fw*0.12) out = hSay(HSAY.circle);
+    }
+    if(out){ this.msg = out; this.msgT = now; }
+    return out;
+  }
+};
+
 function build(lm, key){
   const V = i => P(lm[i]), fs = faceScale(lm), out = [];
   if(!(fs > 20)) return null;
@@ -19546,7 +22645,9 @@ function bar(){
     row = document.createElement('div'); row.id = 'plbPhase';
     row.innerHTML = '<button type="button" data-ph="lines"></button><button type="button" data-ph="blend"></button><button type="button" data-ph="replay">▶</button>';
     top.parentNode.insertBefore(row, top.nextSibling);
-    row.addEventListener('click', ev => { const b = ev.target.closest('button'); if(b) BL.setPhase(b.dataset.ph === 'lines' ? 'lines' : 'blend'); });
+    row.addEventListener('click', ev => { const b = ev.target.closest('button'); if(!b) return;
+      if(b.dataset.ph === 'replay'){ try{ window.LAMHA_TEACH && LAMHA_TEACH.replay(); }catch(e){} }
+      BL.setPhase(b.dataset.ph === 'lines' ? 'lines' : 'blend'); });
   }
   const cs = curStep();
   if(!cs || !BL.key || BL.id !== cs.idx + '|' + cs.key){ row.classList.add('off'); return; }
@@ -19555,7 +22656,8 @@ function bar(){
   bA.textContent = (BL.phase === 'blend' ? '✓ ' : '') + tx(TXT.chipA);
   bB.textContent = (BL.phase === 'blend' && BL.ok ? '✓ ' : '') + tx(TXT.chipB);
   bA.classList.toggle('on', BL.phase === 'lines'); bB.classList.toggle('on', BL.phase === 'blend');
-  bR.style.display = BL.phase === 'blend' ? '' : 'none'; bR.title = tx(TXT.replay);
+  /* v94: she can ask for the motion again at any moment, not only while blending */
+  bR.style.display = ''; bR.title = tx(TXT.replay);
   const tEl = document.getElementById('plbText');
   if(tEl){ const orig = tEl.textContent || '', ph = TXT[BL.key === 'correct' ? 'concealer' : BL.key];
     tEl.textContent = tx(ph[BL.phase === 'lines' ? 'a' : 'b']) + (orig ? '\n' + orig : ''); tEl.style.whiteSpace = 'pre-line'; }
@@ -26207,7 +29309,7 @@ async function scan(){
   if(prev && cs.ts - prev.ts < 15*60000 && protoKey(prev.proto) === protoKey(cs.proto)){ if(learnPair(prev, cs)) cs.repeatOf = prev.ts; }
   ST.sessions.push(cs); save(); last = cs;
   /* feed the makeup engine what it needs (tone), without the old scores */
-  try{ if(cs.r.ITA.v != null){ S.skin = Object.assign(S.skin || {}, { ITA: cs.r.ITA.v, a: cs.r.a.v, B: cs.r.b.v, rgb: cs.rgb, ts: cs.ts, camera: cs.proto.cam, confidence: cs.proto.card ? 'high' : 'medium', _skt:true }); if(typeof ensureEngineSkin === 'function'){ S.engineSkin = null; ensureEngineSkin(); } } }catch(e){}
+  try{ if(cs.r.ITA.v != null){ S.skin = Object.assign(S.skin || {}, { ITA: cs.r.ITA.v, a: cs.r.a.v, B: cs.r.b.v, rgb: cs.rgb, ts: cs.ts, camera: cs.proto.cam, confidence: cs.proto.card ? 'high' : 'medium', _skt:true }); S.skinFrame = null; S.skinLm = null; if(typeof ensureEngineSkin === 'function'){ S.engineSkin = null; ensureEngineSkin(); } } }catch(e){}
   render(cs);
 }
 /* ---------------- render ---------------- */
@@ -27430,6 +30532,14 @@ html .stHint{flex:0 0 auto;align-self:center;max-width:210px;font-size:11.5px;li
   box-shadow:0 8px 20px rgba(0,0,0,.3)}
 #rotateNote.on{display:block}
 @media (prefers-reduced-motion:reduce){ #frameOval{transition:none} }
+.lamha-advice{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+.lamha-advice .la-row{font-size:13px;opacity:.9}
+.lamha-advice .la-block h4{margin:6px 0 4px;font-size:13px;opacity:.75}
+.lamha-advice .la-corr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;padding:6px 8px;border-radius:10px;background:rgba(255,255,255,.04)}
+.lamha-advice .la-corr i{width:14px;height:14px;border-radius:50%;flex:0 0 auto;border:1px solid rgba(255,255,255,.25)}
+.lamha-advice .la-corr small{flex:1 1 100%;opacity:.7}
+.lamha-advice .la-warn{font-size:13px;padding:8px 10px;border-radius:10px;background:rgba(232,119,107,.14);border:1px solid rgba(232,119,107,.3)}
+.lamha-advice .la-note{font-size:12px;opacity:.75}
 </style>
 <script>
 /* v94 · fixes from four testers (lamha-all-fixes.md): framing guard, guided hair edge, Lab helpers,
