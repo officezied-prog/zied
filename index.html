@@ -704,12 +704,53 @@ window.addEventListener('unhandledrejection', function(e){
     return { valid: violations.length === 0, violations: violations };
   }
 
+  /* CIEDE2000 — نسخة مطابقة لِـ PRO.dE00 في البناء، مكتوبة هنا كي تعمل الوحدة وحدها
+     (اختبارات node تحمّل هذا الملف بلا LAMHA_PRO). القيمة تُسجَّل فقط ولا تغيّر أي حكم. */
+  function _dE00(l1, l2, kL) {
+    var L1 = l1[0], a1 = l1[1], b1 = l1[2], L2 = l2[0], a2 = l2[1], b2 = l2[2];
+    var RAD = Math.PI / 180, P7 = Math.pow(25, 7);
+    var Cb = (Math.hypot(a1, b1) + Math.hypot(a2, b2)) / 2;
+    var G = 0.5 * (1 - Math.sqrt(Math.pow(Cb, 7) / (Math.pow(Cb, 7) + P7)));
+    var a1p = (1 + G) * a1, a2p = (1 + G) * a2;
+    var C1p = Math.hypot(a1p, b1), C2p = Math.hypot(a2p, b2);
+    var hp = function (b, a) { return (a === 0 && b === 0) ? 0 : ((Math.atan2(b, a) / RAD) + 360) % 360; };
+    var h1p = hp(b1, a1p), h2p = hp(b2, a2p);
+    var dLp = L2 - L1, dCp = C2p - C1p, dhp = 0;
+    if (C1p * C2p !== 0) { dhp = h2p - h1p; if (dhp > 180) dhp -= 360; else if (dhp < -180) dhp += 360; }
+    var dHp = 2 * Math.sqrt(C1p * C2p) * Math.sin(dhp * RAD / 2);
+    var Lbp = (L1 + L2) / 2, Cbp = (C1p + C2p) / 2, hbp = h1p + h2p;
+    if (C1p * C2p !== 0) { if (Math.abs(h1p - h2p) > 180) hbp += (h1p + h2p < 360) ? 360 : -360; hbp /= 2; }
+    var T = 1 - 0.17 * Math.cos((hbp - 30) * RAD) + 0.24 * Math.cos(2 * hbp * RAD)
+              + 0.32 * Math.cos((3 * hbp + 6) * RAD) - 0.20 * Math.cos((4 * hbp - 63) * RAD);
+    var dTh = 30 * Math.exp(-Math.pow((hbp - 275) / 25, 2));
+    var Rc = 2 * Math.sqrt(Math.pow(Cbp, 7) / (Math.pow(Cbp, 7) + P7));
+    var Sl = 1 + 0.015 * Math.pow(Lbp - 50, 2) / Math.sqrt(20 + Math.pow(Lbp - 50, 2));
+    var Sc = 1 + 0.045 * Cbp, Sh = 1 + 0.015 * Cbp * T;
+    var Rt = -Math.sin(2 * dTh * RAD) * Rc;
+    var x = dLp / (Sl * (kL || 1)), y = dCp / Sc, z = dHp / Sh;
+    return Math.sqrt(Math.max(0, x * x + y * y + z * z + Rt * y * z));
+  }
+
+  /** مسافة اللون الكاملة بين رقعتين — تُفضَّل دالة البناء إن وُجدت، وإلا النسخة الداخلية */
+  function labDist00(p, q) {
+    if (!p || !q) return null;
+    var pa = p.a, pb = p.b, qa = q.a, qb = q.b;
+    if (!isFinite(p.L) || !isFinite(q.L) || !isFinite(pa) || !isFinite(pb) || !isFinite(qa) || !isFinite(qb)) return null;
+    var host = root && root.LAMHA_PRO && root.LAMHA_PRO.dE00;
+    var d;
+    try { d = (typeof host === 'function') ? host([p.L, pa, pb], [q.L, qa, qb], 1) : _dE00([p.L, pa, pb], [q.L, qa, qb], 1); }
+    catch (e) { d = _dE00([p.L, pa, pb], [q.L, qa, qb], 1); }
+    return isFinite(d) ? Math.round(d * 100) / 100 : null;
+  }
+
   /** تنبيه فرق الدرجة بين الوجه والرقبة */
   function checkShadeMatch(faceLab, neckLab) {
     var dL = faceLab.L - neckLab.L;
     var mismatch = Math.abs(dL) > CALIBRATION.faceNeckDeltaL;
     return {
       deltaL: Math.round(dL * 10) / 10,
+      /* مسجَّلة فقط في هذه الخطوة: لا عتبة عليها ولا جملة منها */
+      dE00: labDist00(faceLab, neckLab),
       mismatch: mismatch,
       direction: dL > 0 ? 'lighter' : 'darker',
       message: mismatch
@@ -931,19 +972,111 @@ window.addEventListener('unhandledrejection', function(e){
   /* ---------------------------------------------------------------------------
    * 3) فحص درجة الأساس مقابل الرقبة
    * ------------------------------------------------------------------------- */
-  function neckCheck(img, lm) {
-    if (!lm || !lm[152] || !lm[10]) return { available: false };
+  /* أسباب الامتناع — جملة واحدة صريحة لكل سبب، بثلاث لغات، تصل إلى الشاشة كما هي */
+  var NECK_REASONS = {
+    no_landmarks: {
+      ar: 'لم أستطع مقارنة درجة الأساس بالرقبة: لم يظهر الوجه بما يكفي في هذه اللقطة.',
+      en: 'I could not compare the foundation shade with the neck: the face was not detected well enough in this shot.',
+      id: 'Saya belum bisa membandingkan warna alas bedak dengan leher: wajah belum terdeteksi cukup jelas pada foto ini.'
+    },
+    pose_unknown: {
+      ar: 'لم أستطع مقارنة درجة الأساس بالرقبة: وضع الرأس غير معروف في هذه اللقطة.',
+      en: 'I could not compare the foundation shade with the neck: the head position is not known in this shot.',
+      id: 'Saya belum bisa membandingkan warna alas bedak dengan leher: posisi kepala tidak diketahui pada foto ini.'
+    },
+    face_turned: {
+      ar: 'لم أستطع مقارنة درجة الأساس بالرقبة: انظري إلى الكاميرا مباشرة وأعيدي القياس.',
+      en: 'I could not compare the foundation shade with the neck: look straight at the camera and measure again.',
+      id: 'Saya belum bisa membandingkan warna alas bedak dengan leher: hadapkan wajah lurus ke kamera lalu ukur lagi.'
+    },
+    light_unknown: {
+      ar: 'لم أستطع مقارنة درجة الأساس بالرقبة: حالة الإضاءة غير معروفة في هذه اللقطة.',
+      en: 'I could not compare the foundation shade with the neck: the state of the light is not known in this shot.',
+      id: 'Saya belum bisa membandingkan warna alas bedak dengan leher: keadaan cahaya tidak diketahui pada foto ini.'
+    },
+    light_unsteady: {
+      ar: 'لم أستطع مقارنة درجة الأساس بالرقبة: الإضاءة في هذه اللقطة لا تسمح بمقارنة موثوقة.',
+      en: 'I could not compare the foundation shade with the neck: the light in this shot does not allow a reliable comparison.',
+      id: 'Saya belum bisa membandingkan warna alas bedak dengan leher: cahaya pada foto ini belum memungkinkan perbandingan yang dapat dipercaya.'
+    },
+    neck_out_of_frame: {
+      ar: 'لم أستطع مقارنة درجة الأساس بالرقبة: الرقبة خارج الصورة.',
+      en: 'I could not compare the foundation shade with the neck: the neck is outside the picture.',
+      id: 'Saya belum bisa membandingkan warna alas bedak dengan leher: leher berada di luar foto.'
+    },
+    no_pixels: {
+      ar: 'لم أستطع مقارنة درجة الأساس بالرقبة: ما ظهر من الرقبة لا يكفي للقياس.',
+      en: 'I could not compare the foundation shade with the neck: too little of the neck is visible to measure.',
+      id: 'Saya belum bisa membandingkan warna alas bedak dengan leher: bagian leher yang terlihat belum cukup untuk diukur.'
+    },
+    covered_or_shadowed: {
+      ar: 'لم أستطع مقارنة درجة الأساس بالرقبة: الرقبة مغطّاة أو عليها ظل.',
+      en: 'I could not compare the foundation shade with the neck: the neck is covered or in shadow.',
+      id: 'Saya belum bisa membandingkan warna alas bedak dengan leher: leher tertutup atau berada dalam bayangan.'
+    },
+    no_face_patch: {
+      ar: 'لم أستطع مقارنة درجة الأساس بالرقبة: تعذّرت قراءة اللون عند خط الفك.',
+      en: 'I could not compare the foundation shade with the neck: the colour at the jawline could not be read.',
+      id: 'Saya belum bisa membandingkan warna alas bedak dengan leher: warna di garis rahang tidak terbaca.'
+    },
+    face_patch_unreliable: {
+      ar: 'لم أستطع مقارنة درجة الأساس بالرقبة: اللون عند خط الفك غير مستقر في هذه اللقطة.',
+      en: 'I could not compare the foundation shade with the neck: the colour at the jawline is not steady in this shot.',
+      id: 'Saya belum bisa membandingkan warna alas bedak dengan leher: warna di garis rahang tidak stabil pada foto ini.'
+    },
+    unknown_reason: {
+      ar: 'لم أستطع مقارنة درجة الأساس بالرقبة في هذه اللقطة.',
+      en: 'I could not compare the foundation shade with the neck in this shot.',
+      id: 'Saya belum bisa membandingkan warna alas bedak dengan leher pada foto ini.'
+    }
+  };
+
+  /* وضع الرأس: هل هو معروف فعلًا؟ PRO.isFrontal تُرجع true حين لا يوجد وضع أصلًا،
+     فلا تكفي وحدها — لا بدّ من مصدر وضع قائم (S.headPose أو هندسة النقاط). */
+  function neckPose(ctx) {
+    var p = ctx && ctx.pose;
+    if (p && typeof p === 'object') return { known: !!p.known, frontal: !!p.known && !!p.frontal };
+    var PR = root && root.LAMHA_PRO;
+    if (!PR || typeof PR.isFrontal !== 'function' || typeof PR.poseKnown !== 'function') return { known: false, frontal: false };
+    var known = false;
+    try { known = !!PR.poseKnown(); } catch (e) { known = false; }
+    if (!known) return { known: false, frontal: false };
+    var front = false;
+    try { front = !!PR.isFrontal(10, 15); } catch (e) { front = false; }
+    return { known: true, frontal: front };
+  }
+
+  /* الضوء: «ok» وحدها تكفي للمقارنة، ولون ضوء مائل (دافئ أو بارد) يمنعها */
+  function neckLight(ctx) {
+    var lt = ctx && ctx.light, cast = ctx && ctx.lightCast;
+    if (lt === undefined || lt === null || lt === '') return 'light_unknown';
+    if (lt !== 'ok') return 'light_unsteady';
+    if (cast === 'warm' || cast === 'cool') return 'light_unsteady';
+    return null;
+  }
+
+  function neckCheck(img, lm, ctx) {
+    ctx = ctx || {};
+    if (!lm || !lm[152] || !lm[10]) return { available: false, reason: 'no_landmarks' };
+    var pose = neckPose(ctx);
+    if (!pose.known) return { available: false, reason: 'pose_unknown' };
+    if (!pose.frontal) return { available: false, reason: 'face_turned' };
+    var lightBad = neckLight(ctx);
+    if (lightBad) return { available: false, reason: lightBad };
     var chinY = lm[152].y, topY = lm[10].y;
     var faceH = Math.abs(chinY - topY);
+    var cx = lm[152].x * img.width;
+    var rx = Math.max(6, faceH * img.height * 0.10), ry = Math.max(5, faceH * img.height * 0.06);
+    if (cx - rx < 0 || cx + rx > img.width - 1) return { available: false, reason: 'neck_out_of_frame' };
     var ny = null;
     for (var k = 0; k < GUARD.neckOffsets.length; k++) {
-      var cand = chinY + faceH * GUARD.neckOffsets[k];
-      if (cand < 0.995) { ny = cand; break; }
+      var cand = chinY + faceH * GUARD.neckOffsets[k], cyc = cand * img.height;
+      /* الحافتان لا المركز: أعلى الصندوق وأسفله داخل الصورة، وإلا تُجرَّب إزاحة أقرب */
+      if (cand < 0.995 && cyc - ry >= 0 && cyc + ry <= img.height - 1) { ny = cand; break; }
     }
     if (ny === null) return { available: false, reason: 'neck_out_of_frame' };
 
-    var cx = lm[152].x * img.width, cy = ny * img.height;
-    var rx = Math.max(6, faceH * img.height * 0.10), ry = Math.max(5, faceH * img.height * 0.06);
+    var cy = ny * img.height;
     var box = {
       x0: Math.max(0, Math.round(cx - rx)), x1: Math.min(img.width - 1, Math.round(cx + rx)),
       y0: Math.max(0, Math.round(cy - ry)), y1: Math.min(img.height - 1, Math.round(cy + ry))
@@ -952,10 +1085,24 @@ window.addEventListener('unhandledrejection', function(e){
     if (!s || s.n < GUARD.minPixels) return { available: false, reason: 'no_pixels' };
     if (s.sd > GUARD.neckMaxSd) return { available: false, reason: 'covered_or_shadowed' }; // حجاب/ياقة/ظل
 
-    var face = patchLab(img, lm, LM.jawL.concat(LM.jawR), 2) || patchLab(img, lm, LM.cheekL, 2);
-    if (!face) return { available: false, reason: 'no_face_patch' };
+    /* جانبا الفك رقعتان منفصلتان يُؤخذ متوسطهما: صندوق واحد فوقهما يبتلع الذقن وما بينهما */
+    var sides = [patchLab(img, lm, LM.jawL, 2), patchLab(img, lm, LM.jawR, 2)];
+    var good = [], seen = 0, i2;
+    for (i2 = 0; i2 < sides.length; i2++) { if (sides[i2]) { seen++; if (sides[i2].valid) good.push(sides[i2]); } }
+    if (!good.length) { var ck = patchLab(img, lm, LM.cheekL, 2); if (ck) { seen++; if (ck.valid) good.push(ck); } }
+    if (!good.length) return { available: false, reason: seen ? 'face_patch_unreliable' : 'no_face_patch' };
+    var face = { L: 0, a: 0, b: 0, n: 0, sd: 0, sides: good.length };
+    for (i2 = 0; i2 < good.length; i2++) {
+      face.L += good[i2].L / good.length; face.a += good[i2].a / good.length; face.b += good[i2].b / good.length;
+      face.n += good[i2].n; face.sd = Math.max(face.sd, good[i2].sd);
+    }
 
-    var r = R.checkShadeMatch({ L: face.L }, { L: s.L });
+    /* s من stats البناء: s.b متوسط قناة الأزرق، وb* في CIELAB هو s.B */
+    var neckLab = { L: s.L, a: s.a, b: (s.B !== undefined ? s.B : s.b) };
+    var r = R.checkShadeMatch({ L: face.L, a: face.a, b: face.b }, neckLab);
+    r.facePatch = { L: Math.round(face.L * 10) / 10, a: Math.round(face.a * 10) / 10, b: Math.round(face.b * 10) / 10,
+                    n: face.n, sd: Math.round(face.sd * 100) / 100, sides: face.sides };
+    r.neckLab = { L: Math.round(neckLab.L * 10) / 10, a: Math.round(neckLab.a * 10) / 10, b: Math.round(neckLab.b * 10) / 10 };
     r.available = true;
     r.neckBox = box;
     return r;
@@ -1004,7 +1151,7 @@ window.addEventListener('unhandledrejection', function(e){
 
     if (img && lm) {
       res.correctors = correctorPlan(img, lm, res.depth);
-      res.neck = neckCheck(img, lm);
+      res.neck = neckCheck(img, lm, { pose: opts.pose, light: opts.light, lightCast: opts.lightCast });
     }
     res.powder = R.pickPowder({
       goal: opts.powderGoal || 'setting',
@@ -1055,9 +1202,11 @@ window.addEventListener('unhandledrejection', function(e){
       h.push('</div>');
     }
 
-    // الرقبة
+    // الرقبة — الحكم حين تتوفر شروطه، وإلا جملة صريحة تقول لماذا امتنعت القراءة
     if (res.neck && res.neck.available && res.neck.mismatch) {
       h.push('<div class="la-warn">' + esc(res.neck.message[lang === 'ar' ? 'ar' : 'en']) + '</div>');
+    } else if (res.neck && !res.neck.available) {
+      h.push('<div class="la-note">' + esc(L(NECK_REASONS[res.neck.reason] || NECK_REASONS.unknown_reason)) + '</div>');
     }
 
     // الوضوء
@@ -1974,9 +2123,13 @@ html[dir="ltr"] .sheet h2{font-family:"Marcellus",serif}
 #plbCoach{display:none;font-size:11.5px;line-height:1.5;font-weight:600;
   padding:7px 10px;border-radius:12px;background:rgba(176,138,102,.10)}
 #plbCoach.on{display:block}
-#plbRow{display:flex;gap:7px}
+#plbRow{display:flex;gap:7px;flex-wrap:wrap}
 #plbRow .btn{flex:1;padding:9px 6px;font-size:12px}
 #plbRow #plbNext{flex:1.4}
+/* v102 · «كيف هذه المرحلة؟» — its own full-width line, one tap, still at the bottom of the frame */
+#plbRow #plbAsk{display:none;flex:1 0 100%;padding:11px 8px;font-size:13px;font-weight:600;
+  border-color:var(--gold);color:var(--gold-soft);background:rgba(226,169,160,.14)}
+#plbRow #plbAsk.on{display:block}
 #plbBA.on{border-color:var(--gold);color:var(--gold-soft);background:rgba(226,169,160,.18)}
 body.guideCompact #dock{opacity:.55}
 
@@ -3123,7 +3276,7 @@ document.addEventListener('DOMContentLoaded', function(){
     </div>
 
     <div id="gate">
-      <div class="mark">LAMHA MOBILE · v100b · BUILD 20260921af</div>
+      <div class="mark">LAMHA MOBILE · v107 · BUILD 20260925e</div>
       <h1 class="disp" data-i18n="gate_h">مرآة زين الذكية</h1>
       <p data-i18n="gate_p">مرآتك تحلّل بشرتك، ترسم خريطة وجهك، وتجرّب المكياج قبل أن تلمسي فرشاة واحدة.</p>
       <div class="feats">
@@ -3446,6 +3599,7 @@ document.addEventListener('DOMContentLoaded', function(){
     <div id="plbText"></div>
     <div id="plbCoach"></div>
     <div id="plbRow">
+      <button class="btn" id="plbAsk" data-i18n="pl_ask">كيف هذه المرحلة؟</button>
       <button class="btn" id="plbPrev" data-i18n="rt_prev">السابقة</button>
       <button class="btn" id="plbBA"><span data-i18n="ba_btn">قبل / بعد</span></button>
       <button class="btn pri" id="plbNext" data-i18n="rt_next">التالية</button>
@@ -4520,7 +4674,7 @@ ar:{
  gs_hint:"افردي منتجاتك على سطح فاتح وموحّد، بإضاءة جيدة وبلا ظلال، وصوّريها من فوق.",
  ow_short:"خزانتي", ow_on:"تعرضين ما تملكينه فعلاً", ow_off:"تعرضين كل الدرجات",
  ow_none:"لا يوجد في خزانتك منتج لهذا العنصر",
- ba_btn:"قبل / بعد", ba_on:"تعرضين: قبل هذه الخطوة", ba_off:"تعرضين: بعد هذه الخطوة", pl_target:"صورة الهدف", pl_steps:"الخطوات", pl_refresh:"حدّثي الصورة من وجهي الآن", ph_target:"الإطلالة", ph_step:"هذه الخطوة",
+ pl_ask:"كيف هذه المرحلة؟", ba_btn:"قبل / بعد", ba_on:"تعرضين: قبل هذه الخطوة", ba_off:"تعرضين: بعد هذه الخطوة", pl_target:"صورة الهدف", pl_steps:"الخطوات", pl_refresh:"حدّثي الصورة من وجهي الآن", ph_target:"الإطلالة", ph_step:"هذه الخطوة",
  pv_target:"الإطلالة النهائية كما يبنيها التطبيق", pv_step:"هذه الخطوة وحدها",
  pl_note:"الصورة تُبنى على وجهك كما هو الآن، مضافاً إليه ما تبقّى من خطوات فقط. تُعاد كل خطوة وتُمحى القديمة.",
  pl_none:"اختاري ألوان الإطلالة أولاً من تبويب المكياج",
@@ -4729,7 +4883,7 @@ en:{
  gs_hint:"Lay your products on a plain light surface, good light, no shadows, and shoot from above.",
  ow_short:"My kit", ow_on:"Showing only what you own", ow_off:"Showing every shade",
  ow_none:"Nothing in your kit for this zone",
- ba_btn:"Before / after", ba_on:"Showing: before this step", ba_off:"Showing: after this step", pl_target:"Target photo", pl_steps:"Steps", pl_refresh:"Refresh from my face now", ph_target:"The look", ph_step:"This step",
+ pl_ask:"How is this stage?", ba_btn:"Before / after", ba_on:"Showing: before this step", ba_off:"Showing: after this step", pl_target:"Target photo", pl_steps:"Steps", pl_refresh:"Refresh from my face now", ph_target:"The look", ph_step:"This step",
  pv_target:"The finished look as the app builds it", pv_step:"This step on its own",
  pl_note:"The photo is built on your face as it is right now, plus only the steps still ahead. It is redone at every step and the old one is dropped.",
  pl_none:"Pick the shades for your look in the makeup tab first",
@@ -4938,7 +5092,7 @@ id:{
  gs_hint:"Bentangkan produkmu di permukaan polos terang, cahaya baik, tanpa bayangan, foto dari atas.",
  ow_short:"Koleksiku", ow_on:"Menampilkan yang kamu miliki", ow_off:"Menampilkan semua warna",
  ow_none:"Tidak ada di koleksimu untuk area ini",
- ba_btn:"Sebelum / sesudah", ba_on:"Menampilkan: sebelum langkah ini", ba_off:"Menampilkan: sesudah langkah ini", pl_target:"Foto target", pl_steps:"Langkah", pl_refresh:"Perbarui dari wajahku sekarang", ph_target:"Tampilan", ph_step:"Langkah ini",
+ pl_ask:"Bagaimana tahap ini?", ba_btn:"Sebelum / sesudah", ba_on:"Menampilkan: sebelum langkah ini", ba_off:"Menampilkan: sesudah langkah ini", pl_target:"Foto target", pl_steps:"Langkah", pl_refresh:"Perbarui dari wajahku sekarang", ph_target:"Tampilan", ph_step:"Langkah ini",
  pv_target:"Tampilan akhir seperti yang dibangun aplikasi", pv_step:"Langkah ini saja",
  pl_note:"Foto dibangun dari wajahmu saat ini, ditambah hanya langkah yang tersisa. Diperbarui tiap langkah dan yang lama dihapus.",
  pl_none:"Pilih warna tampilanmu dulu di tab riasan",
@@ -5019,7 +5173,7 @@ const S = {
   mirror:true, showMap:false, showMesh:false,
   bri:14, tmp:50, preset:'day',
   zone:'base',
-  ints:{lips:.62, blush:.42, crease:.46, corner:.52, concealer:.55, contour:.42, highlight:.36, nose:.36, eyeshadow:.50, liner:.70, brow:.50, base:.45, glow:.45, lashes:.6, lens:.55},
+  ints:{lips:.62, blush:.42, crease:.46, corner:.52, concealer:.55, contour:.42, highlight:.36, nose:.36, eyeshadow:.50, liner:.70, brow:.50, base:.45, glow:.45, lashes:.6, lens:.55, hair:.6},   /* v105: شدة الشعر كانت غائبة فيسقط المحرّك إلى 0.85 والشريط يكتب 60٪ */
   browStyle:'auto', lashStyle:'natural',
   fins:{lashes:'matte', lens:'matte', lips:'matte', blush:'matte', crease:'satin', corner:'matte', concealer:'matte', contour:'matte', highlight:'satin', nose:'matte', eyeshadow:'satin', liner:'matte', brow:'matte', base:'satin', glow:'satin'},
   makeup:{ lips:null, blush:null, crease:null, corner:null, concealer:null, contour:null, highlight:null, nose:null, eyeshadow:null, liner:null, brow:null, base:null, glow:null, lashes:null, lens:null },
@@ -5695,6 +5849,7 @@ function loop(){
     if(!STILL && VFC_OK){ if(!S._vfNew && since < 250) return; if(since < 24) return; }
     else if(since < 31) return;
     S._vfNew = false; S._lastProc = nowG; }
+  { const _P = window.__PERF; if(_P) _P.a(); }                  /* v103 · diagnostics panel · off = one property read */
   const frOK = !STILL && grabFrame(); if(frOK) SRC = FRM;       /* v73 one frame */
   if(frOK && S.showGL && window.glUploadVideo) window.glUploadVideo();   /* v74: the same frame, from the <video> */
   computeMap();
@@ -5708,7 +5863,7 @@ function loop(){
         S.landmarks = euroSmooth(nl); S._lmSeen = now; S.trackHold = false;
         try{ if(window.lamhaFrameTick) window.lamhaFrameTick(S.landmarks); }catch(e){}   /* v94: is the whole face in? */
         try{ if(window.lamhaAutoScan) window.lamhaAutoScan(); }catch(e){}                /* v95: the silent first reading */
-        if(!S.trackOk){ S.trackOk=true; diag(4,'ok','468'); }
+        if(!S.trackOk){ S.trackOk=true; diag(4,'ok','468'); S._tFace = now; }   /* v103 · first face, once per session */
         if(window.LAMHA_PRO && LAMHA_PRO.onFrame){ try{ LAMHA_PRO.onFrame(res); }catch(e){} }
       } else if(S.landmarks && now - (S._lmSeen||0) < 350){
         /* a hand sweeping across can hide the face for a few frames: keep the
@@ -5790,7 +5945,7 @@ function loop(){
     S._coachTick = (S._coachTick|0)+1;
     if(S._coachTick % 45 === 0){ try{ renderPlanBar(); }catch(e){} }
   }
-  if(S.hairColour && S.landmarks && typeof drawHairColour==='function'){
+  if(S.hairColour && typeof drawHairColour==='function'){          /* v107 · الشعر لا يحتاج وجهًا مرئيًّا */
     try{ drawHairColour(ctx); }
     catch(e){ if(!S._hcErr){ S._hcErr=1; fatalLog('[hair colour] '+(e&&(e.stack||e.message||e))); } }
   }
@@ -5805,6 +5960,7 @@ function loop(){
   if(window.LAMHA_OCC){ try{ LAMHA_OCC.tick(); }catch(e){} }
   if(window.LAMHA_HAND){ try{ LAMHA_HAND.tick(); }catch(e){} }   /* v94 · the stroke phase */
 
+  { const _P = window.__PERF; if(_P) _P.b(); }                  /* v103 · diagnostics panel */
   frames++;
   if(now - fpsT > 700){ S.fps = Math.round(frames*1000/(now-fpsT)); frames=0; fpsT=now; $('#fpsChip').textContent = S.fps+' fps'; }
 }
@@ -5843,6 +5999,10 @@ const mk1=document.createElement('canvas'), m1=mk1.getContext('2d',{willReadFreq
 const mk2=document.createElement('canvas'), m2=mk2.getContext('2d',{willReadFrequently:true});
 const mk3=document.createElement('canvas'), m3=mk3.getContext('2d',{willReadFrequently:true});
 const mk4=document.createElement('canvas'), m4=mk4.getContext('2d',{willReadFrequently:true});
+/* v104 · شريط واحد يحمل الأقنعة الأربعة فوق بعضها، ليُقرأ بنداء واحد.
+   الكلفة المقيسة لقراءة البكسلات هي كلفة النداء لا كلفة البكسل (24×24 تكلّف 6.3 مللي)،
+   فأربع قراءات = أربع مزامنات قسرية بين الرسوميات والمعالج. */
+const mkA=document.createElement('canvas'), mA=mkA.getContext('2d',{willReadFrequently:true});
 const pxC=document.createElement('canvas'), pxX=pxC.getContext('2d',{willReadFrequently:true});
 const blC=document.createElement('canvas'), blX=blC.getContext('2d');
 
@@ -6343,11 +6503,21 @@ function browCoverCore(px, w, h, sides, opt){
     const at = (c, s) => { if(!c.length) return null; if(s <= c[0][0]) return c[0][1];
       for(let k = 1; k < c.length; k++) if(s <= c[k][0]){ const f = (s - c[k-1][0])/((c[k][0] - c[k-1][0]) || 1); return c[k-1][1] + (c[k][1] - c[k-1][1])*f; }
       return c[c.length-1][1]; };
-    const s0 = Math.min(Uc[0][0], Dc[0][0]) - g, s1 = Math.max(Uc[Uc.length-1][0], Dc[Dc.length-1][0]) + g;
-    const K = Math.max(8, Math.min(64, Math.round((s1 - s0)/2))), bw = (s1 - s0)/K;
+    /* v100c · past the chain's ends the brow runs on along its last stretch (a tail droops toward the eye's corner) */
+    const atX = (c, s) => { if(c.length < 2) return at(c, s);
+      const e = s > c[c.length-1][0] ? [c[c.length-2], c[c.length-1]] : s < c[0][0] ? [c[0], c[1]] : null; if(!e) return at(c, s);
+      const sl = Math.max(-0.6, Math.min(0.6, (e[1][1] - e[0][1])/((e[1][0] - e[0][0]) || 1))), b = s > c[c.length-1][0] ? e[1] : e[0];
+      return b[1] + sl*(s - b[0]); };
+    /* v100c · her real brow often runs on past the last landmarks, above all at the tail (the owner's photo: the old
+       tail stayed at the corners of the eyes under every style). The work reaches 40 % of the brow's length beyond
+       the tail (at most three thicknesses) and a little beyond the head; there, only where brow hair is found */
+    const s0L = Math.min(Uc[0][0], Dc[0][0]), s1L = Math.max(Uc[Uc.length-1][0], Dc[Dc.length-1][0]), lenL = Math.max(th, s1L - s0L);
+    const s0 = s0L - g - th*0.6, s1 = s1L + g + Math.min(lenL*0.4, th*3);
+    const K = Math.max(8, Math.min(80, Math.round((s1 - s0)/2))), bw = (s1 - s0)/K;
     const binOf = s => { const k = Math.floor((s - s0)/bw); return k < 0 ? 0 : k > K - 1 ? K - 1 : k; };
-    const vUpB = new Float32Array(K), vLoB = new Float32Array(K), vLid = new Array(K);
-    for(let k = 0; k < K; k++){ const s = s0 + (k + 0.5)*bw; vUpB[k] = at(Uc, s); vLoB[k] = at(Dc, s); vLid[k] = at(Lc, s); }
+    const vUpB = new Float32Array(K), vLoB = new Float32Array(K), vLid = new Array(K), outL = new Uint8Array(K), tailK = new Uint8Array(K);
+    for(let k = 0; k < K; k++){ const s = s0 + (k + 0.5)*bw; vUpB[k] = atX(Uc, s); vLoB[k] = atX(Dc, s); vLid[k] = at(Lc, s);
+      outL[k] = (s < s0L || s > s1L) ? 1 : 0; tailK[k] = s > s1L - 0.3*lenL ? 1 : 0; }
     /* pass 0 · each column's light profile, 1 px slices from below the brow to well above it.
        v100b: a window wide enough for a dense brow two to three times the landmarks' thickness, and the skin beyond it */
     const V0 = th*1.6, V1 = th*3.2, NS = Math.max(4, Math.ceil(V0 + V1 + th) + 2);
@@ -6362,13 +6532,13 @@ function browCoverCore(px, w, h, sides, opt){
       if(s < s0 || s > s1) continue;
       const k = binOf(s), j = Math.floor(v - (vLoB[k] - V0)); if(j < 0 || j >= NS) continue;
       sumL[k*NS + j] += Ls; sumQ[k*NS + j] += Ls*Ls; cnt[k*NS + j]++;
-      if(s >= s0 + g && s <= s1 - g && v >= vLoB[k] && v <= vUpB[k]) brow.push(Ls);
+      if(s >= s0L && s <= s1L && v >= vLoB[k] && v <= vUpB[k]) brow.push(Ls);   /* the brow's own light: its landmark span only */
     }
     const sl = (k, v) => { const j = Math.floor(v - (vLoB[k] - V0)); if(j < 0 || j >= NS) return NaN; const c = cnt[k*NS + j]; return c ? sumL[k*NS + j]/c : NaN; };
     brow.sort((a, b) => a - b);
     const browDark = brow.length ? brow[Math.floor(brow.length*0.175)] : NaN;   /* its hairs: the walk thresholds */
     const browMid = brow.length ? brow[brow.length >> 1] : NaN;                /* the brow as it reads: the light gate */
-    const refs = [], vUpR = new Float32Array(K), vLoR = new Float32Array(K);
+    const refs = [], vUpR = new Float32Array(K), vLoR = new Float32Array(K), darkK = new Float32Array(K);
     const p80 = a => { if(!a.length) return NaN; const b2 = a.slice().sort((p, q) => p - q); return b2[Math.floor(b2.length*0.8)]; };
     /* v100b · a hairy brow alternates dark hair and skin from one 1-px slice to the next: the walks read the
        profile smoothed over three slices, and the brow's own level is its median there */
@@ -6385,30 +6555,42 @@ function browCoverCore(px, w, h, sides, opt){
       for(let v = vUpB[k] + th*0.3; v <= vUpB[k] + V1; v += 1){ const L2 = sl(k, v); if(isFinite(L2)) up.push(L2); }
       for(let v = vLoB[k] - th*0.2; v >= lidTop; v -= 1){ const L2 = sl(k, v); if(isFinite(L2)) dn.push(L2); }
       for(let v = vLoB[k]; v <= vUpB[k]; v += 1){ const L2 = sm(k, v); if(isFinite(L2)) core.push(L2); }
-      const ru = p80(up), rd = p80(dn), cc = core.length ? core.slice().sort((p, q) => p - q)[core.length >> 1] : browDark;
+      const ru = p80(up), rd = p80(dn);
+      let cc = core.length ? core.slice().sort((p, q) => p - q)[core.length >> 1] : browDark, vStart = null;
       refs[k] = isFinite(ru) && isFinite(rd) ? (ru + rd)/2 : isFinite(ru) ? ru : rd;
+      /* v100c · beyond the landmarks the brow is found, not assumed: the darkest slice in a window around the
+         extended line (a drooping tail sits below it); the walks start there */
+      if(outL[k]){ let best = Infinity;
+        for(let v = Math.max(vLoB[k] - th*1.2, lidTop); v <= vUpB[k] + th*0.8; v += 1){ const L2 = sm(k, v); if(isFinite(L2) && L2 < best){ best = L2; vStart = v; } }
+        if(isFinite(best)) cc = best; }
+      darkK[k] = isFinite(refs[k]) && isFinite(cc) ? refs[k] - cc : 0;
       /* each walk against the skin on ITS side: a shaded forehead is not brow, a bright lid is not the reference above */
       /* below the brow lies the eye socket, often in shadow nearly as dark: downward only what is close to the
          brow's own darkness counts (0.35 of the way to the skin), and at most 0.8 of its thickness */
       const thrU = isFinite(ru) && isFinite(cc) ? cc + 0.5*(ru - cc) : -1, thrD = isFinite(rd) && isFinite(cc) ? cc + 0.35*(rd - cc) : -1;
       /* walk out while the slice is still brow-dark (two light slices in a row end it) — as far as a dense brow goes */
-      let vu = vUpB[k], miss = 0;
-      for(let v = vUpB[k]; v <= vUpB[k] + th*2.2; v += 1){ const L2 = sm(k, v); if(isFinite(L2) && L2 < thrU){ vu = v + 1; miss = 0; } else if(++miss >= 2) break; }
-      let vl = vLoB[k]; miss = 0;
-      /* downward, a smooth shadow is not hair: a slice counts only when it is truly dark or has the texture of hair */
-      for(let v = vLoB[k]; v >= Math.max(vLoB[k] - th*0.8, lidTop); v -= 1){ const L2 = sm(k, v);
+      const uS = vStart != null ? vStart : vUpB[k], lS = vStart != null ? vStart : vLoB[k];
+      let vu = vStart != null ? vStart + 1 : vUpB[k], miss = 0;
+      for(let v = uS; v <= vUpB[k] + th*2.2; v += 1){ const L2 = sm(k, v); if(isFinite(L2) && L2 < thrU){ vu = v + 1; miss = 0; } else if(++miss >= 2) break; }
+      let vl = vStart != null ? vStart : vLoB[k]; miss = 0;
+      /* downward, a smooth shadow is not hair: a slice counts only when it is truly dark or has the texture of hair.
+         v100c: at the tail (its last 30 % and beyond) a drooping brow may reach further down */
+      for(let v = lS; v >= Math.max(vLoB[k] - th*(tailK[k] ? 1.2 : 0.8), lidTop); v -= 1){ const L2 = sm(k, v);
         if(isFinite(L2) && L2 < thrD && (L2 < cc + 0.1*(rd - cc) || sdS(k, v) > 6)){ vl = v; miss = 0; } else if(++miss >= 2) break; }
+      if(outL[k] && darkK[k] < 10){ vu = vUpB[k]; vl = vLoB[k]; }                /* no brow found out there */
       vUpR[k] = vu; vLoR[k] = vl;
     }
     { const u2 = Float32Array.from(vUpR), l2 = Float32Array.from(vLoR);     /* one noisy column must not carve a notch */
-      for(let k = 0; k < K; k++){ const a = [u2[k-1], u2[k], u2[k+1]].filter(v => v != null && isFinite(v)).sort((p, q) => p - q), b = [l2[k-1], l2[k], l2[k+1]].filter(v => v != null && isFinite(v)).sort((p, q) => p - q);
+      /* v100c · over five columns: two dark columns at the tail (the shadow at the eye's corner) pulled the cover down
+         toward the eye as a leg with a hard edge; a real droop spans more than two columns and stays */
+      for(let k = 0; k < K; k++){ const a = [u2[k-2], u2[k-1], u2[k], u2[k+1], u2[k+2]].filter(v => v != null && isFinite(v)).sort((p, q) => p - q), b = [l2[k-2], l2[k-1], l2[k], l2[k+1], l2[k+2]].filter(v => v != null && isFinite(v)).sort((p, q) => p - q);
         vUpR[k] = a[a.length >> 1]; vLoR[k] = b[b.length >> 1]; } }
     /* v100b · a brow's edges run smoothly: no column reaches far past the brow's typical extent (a shadowed eye
        socket pulled single columns down and left a pale step below the brow) */
     { const mu = med(Array.from(vUpR, (v, k) => v - vUpB[k])), ml = med(Array.from(vLoR, (v, k) => vLoB[k] - v));
-      for(let k = 0; k < K; k++){ vUpR[k] = Math.min(vUpR[k], vUpB[k] + mu + th*0.8); vLoR[k] = Math.max(vLoR[k], vLoB[k] - ml - th*0.2); } }   /* a brow is often fuller at its head: the top may reach further */
+      for(let k = 0; k < K; k++){ vUpR[k] = Math.min(vUpR[k], vUpB[k] + mu + th*0.8); vLoR[k] = Math.max(vLoR[k], vLoB[k] - ml - th*(tailK[k] ? 0.9 : 0.2)); } }   /* a brow is often fuller at its head: the top may reach further; its tail droops */
     /* the light gate: her brow as it reads (its median) against her skin around it (the mean of the two sides) */
-    const skinL = med(refs.filter(isFinite)), dL = skinL - browMid;
+    const skinL = med(refs.filter((v, k) => isFinite(v) && !outL[k])), dL = skinL - browMid;   /* v100c: her brow's own span (past it may lie hair) */
     const rec = { dL:+(isFinite(dL) ? dL.toFixed(1) : NaN), covered:0, skipped:null, blocked:0, grew:0 };
     for(let k = 0; k < K; k++) rec.grew += Math.max(0, vUpR[k] - vUpB[k]) + Math.max(0, vLoB[k] - vLoR[k]);
     rec.grew = +(rec.grew/K/th).toFixed(2);
@@ -6480,12 +6662,22 @@ function browCoverCore(px, w, h, sides, opt){
     /* v100b · her REAL brow's edges, beyond the landmarks, in units of their thickness (the geometry uses them:
        every style sits on her real lower edge, "natural" and "thick" cover her real brow). Only open columns,
        only the brow's body (not its thin ends) */
-    { const kk = []; for(let k = Math.floor(K*0.15); k < Math.ceil(K*0.85); k++) if(!blocked[k]) kk.push(k);
+    { const kk = []; for(let k = 0; k < K; k++){ const s = s0 + (k + 0.5)*bw; if(s >= s0L + 0.15*lenL && s <= s1L - 0.15*lenL && !blocked[k]) kk.push(k); }
       if(kk.length >= 3){ rec.kUp = +Math.max(0, med(kk.map(k => (vUpR[k] - vUpB[k])/th))).toFixed(2); rec.kLo = +Math.max(0, med(kk.map(k => (vLoB[k] - vLoR[k])/th))).toFixed(2); } }
     if(opt.measure) continue;                                          /* measuring only ("natural" hides nothing) */
     const fill = arr => { for(let k = 0; k < K; k++) if(!arr[k]){ for(let d = 1; d < K; d++){ const c = arr[k-d] || arr[k+d]; if(c){ arr[k] = c; break; } } } };
     fill(A); fill(Bv);
     if(!A.some(Boolean)){ rec.skipped = 'nodata'; continue; }
+    /* v100c · the skin colours run smoothly along the brow (a triangle over about a thickness each way): each column
+       painted with its own band showed as a pale block with vertical edges where one band sat a little higher, on a
+       brighter forehead. Only open columns lend their colour (not hair, not the empty stretch past her brow) */
+    const offK = k => outL[k] && darkK[k] < 10;
+    const smoothB = arr => { const R = Math.max(2, Math.round(th*0.8/bw));
+      return arr.map((q, k) => { if(!q) return q; let W2 = 0, r = 0, gg = 0, bb2 = 0, L2 = 0, gr = 0, sd2 = 0;
+        for(let d = -R; d <= R; d++){ const j = k + d, p = arr[j]; if(!p || (d && (blocked[j] || offK(j)))) continue; const wt = R + 1 - Math.abs(d);
+          W2 += wt; r += p.c[0]*wt; gg += p.c[1]*wt; bb2 += p.c[2]*wt; L2 += p.L*wt; gr += (p.grain || 0)*wt; sd2 += (p.sd || 0)*wt; }
+        return W2 ? { L:L2/W2, c:[r/W2, gg/W2, bb2/W2], sd:sd2/W2, grain:gr/W2 } : q; }); };
+    const A2 = smoothB(A), B2 = smoothB(Bv);
     /* the new shape (soft), when not given as a mask */
     const P2 = sd.poly || [], E = P2.map((p, i) => [p, P2[(i + 1) % P2.length]]);
     const inPoly = (x, y) => { let c = false; for(let i = 0, j = P2.length - 1; i < P2.length; j = i++)
@@ -6504,15 +6696,18 @@ function browCoverCore(px, w, h, sides, opt){
     for(let y = y0; y <= y1; y++) for(let x = x0; x <= x1; x++){
       const i = y*w + x, s = Sp[i], v = Vp[i];
       const k = binOf(s);
+      if(offK(k)) continue;                                                    /* v100c: beyond the landmarks, only where brow hair was found */
       const dist = Math.min(s - s0, s1 - s, v - (vLoR[k] - g), (vUpR[k] + g) - v);
       let a = dist/fe + 0.5; if(a <= 0) continue; if(a > 1) a = 1;              /* her real brow grown ~15 %, edge feathered over ~30 % of its thickness */
       if(sd.gmask){ a *= 1 - sd.gmask[i]/255; }                                /* the new shape, drawn soft by the caller */
       else if(P2.length){ const e = edgeD(x + 0.5, y + 0.5), sdv = inPoly(x + 0.5, y + 0.5) ? e : -e;
         let gcov = sdv/gFe + 0.5; gcov = gcov < 0 ? 0 : gcov > 1 ? 1 : gcov; a *= 1 - gcov; }   /* not under the new shape */
-      a *= 1 - soft[k]; if(a < 0.01) continue;
+      a *= 1 - soft[k];
+      if(outL[k] && (offK(k - 1) || offK(k + 1))) a *= 0.5;                    /* v100c: past her brow, the last found column fades out */
+      if(a < 0.01) continue;
       /* a strand lying over the brow itself: hair here AND one thickness toward the forehead */
       if(sd.cls){ const c1 = sd.cls(x + 0.5, y + 0.5); if(c1 === 1 || c1 === 4){ const c2 = sd.cls(x + 0.5 + nx*th, y + 0.5 + ny*th); if(c2 === 1 || c2 === 4) continue; } }
-      const ca = A[k], cb = Bv[k] || ca;
+      const ca = A2[k], cb = B2[k] || ca;
       const vA = (aboveLo[k] + aboveHi[k])/2, vB = Bv[k] ? (belowLo[k] + belowHi[k])/2 : vLoR[k];
       let f = (v - vB)/((vA - vB) || 1); f = f < 0 ? 0 : f > 1 ? 1 : f;
       if(isFinite(nLo[k])){ if(v < nLo[k]){ if(nLo[k] <= vUpR[k] + g) f = Math.min(f, Math.max(0, 1 - (nLo[k] - v)/Math.max(1, th*0.3))*0.3); }   /* below a new shape that starts inside her brow: the skin below */
@@ -6580,7 +6775,10 @@ function browCoverWork(lm, tctx, tcv, styled){
   let X0 = 1e9, Y0 = 1e9, X1 = -1e9, Y1 = -1e9;
   sides.forEach(({ g, nat, lid }) => {
     const n = g.n, th = nat.th0;
-    nat.up.concat(nat.lo, g.up, g.lo).forEach(q => [[0, 0], [n[0]*th*3.4, n[1]*th*3.4]].forEach(([dx, dy]) => {
+    /* v100c · and three thicknesses on past both ends of her brow, where its real tail may run on */
+    const a0 = nat.lo[0], a1 = nat.lo[nat.lo.length - 1]; let dx0 = a1[0] - a0[0], dy0 = a1[1] - a0[1]; const dl0 = Math.hypot(dx0, dy0) || 1; dx0 /= dl0; dy0 /= dl0;
+    const ends = [nat.up[0], nat.lo[0]].map(q => [q[0] - dx0*th*1.2, q[1] - dy0*th*1.2]).concat([nat.up[nat.up.length - 1], nat.lo[nat.lo.length - 1]].map(q => [q[0] + dx0*th*3.4, q[1] + dy0*th*3.4]));
+    nat.up.concat(nat.lo, g.up, g.lo, ends).forEach(q => [[0, 0], [n[0]*th*3.4, n[1]*th*3.4]].forEach(([dx, dy]) => {
       X0 = Math.min(X0, q[0] + dx - th*0.5); X1 = Math.max(X1, q[0] + dx + th*0.5); Y0 = Math.min(Y0, q[1] + dy - th*0.5); Y1 = Math.max(Y1, q[1] + dy + th*0.5); }));
     lid.forEach(q => { Y0 = Math.min(Y0, q[1]); Y1 = Math.max(Y1, q[1]); X0 = Math.min(X0, q[0]); X1 = Math.max(X1, q[0]); });
   });
@@ -6606,7 +6804,9 @@ function browCoverWork(lm, tctx, tcv, styled){
   const core = sides.map(({ g, nat, lid }, i) => ({
     U: nat.up.map(toR), D: nat.lo.map(toR), lid: lid.map(toR),
     poly: (g.poly || g.up.concat([...g.lo].reverse())).map(toR),
-    n: g.n, u: g.u || [1, 0], th: nat.th0*sc, cls, prev: !!prev[i] }));
+    n: g.n, u: g.u || (() => { const a = nat.lo[0], b = nat.lo[nat.lo.length - 1], t = [-g.n[1], g.n[0]];   /* v100c: along the eye line, head → tail, also for "natural" */
+      return ((b[0] - a[0])*t[0] + (b[1] - a[1])*t[1]) >= 0 ? t : [-t[0], -t[1]]; })(),
+    th: nat.th0*sc, cls, prev: !!prev[i] }));
   /* the new shapes, soft-edged, as one coverage mask (so the core need not measure edges per pixel) */
   if(styled){ const mk = BCV.dst; mk.c.width = w; mk.c.height = h; mk.x.clearRect(0, 0, w, h); mk.x.save();
     mk.x.filter = `blur(${Math.max(0.5, sides[0].nat.th0*sc*0.12).toFixed(2)}px)`; mk.x.fillStyle = '#fff';
@@ -7834,7 +8034,7 @@ function normalAt(lm, i){
 }
 function updateLightDir(lm){
   const now = performance.now(), same = _ldSrc === SRC;
-  if(!lm || (now - _ldT < 140 && same)) return S.lightDir || null;
+  if(!lm || (now - _ldT < 420 && same)) return S.lightDir || null;
   _ldT = now; _ldSrc = SRC;
   try{
     const vw = srcW(), vh = srcH();
@@ -8622,16 +8822,32 @@ function drawMakeup(lm, tctx, tcv, pt, fsOverride){
   const needFeather = !BLUR_OK && featherKey !== S._featherKey;
   if(needFeather){ S._featherKey = featherKey;
     softenMask(m1, PW, PH, Math.max(2, Math.round(PW*0.022))); }
-  const A1 = on('lips')||on('blush')||on('eyeshadow') ? m1.getImageData(0,0,PW,PH).data : null;
   if(needFeather){
     const R2 = Math.max(2, Math.round(PW*0.022));
     softenMask(m2, PW, PH, R2);
     if(needs3) softenMask(m3, PW, PH, R2);   /* contour · highlight  */
     if(needs4) softenMask(m4, PW, PH, R2);   /* concealer · crease   */
   }
-  const A2 = on('liner')||on('brow')||on('glow')      ? m2.getImageData(0,0,PW,PH).data : null;
-  const A3 = needs3 ? m3.getImageData(0,0,PW,PH).data : null;
-  const A4 = needs4 ? m4.getImageData(0,0,PW,PH).data : null;
+  /* v104 · قراءة واحدة بدل أربع (البند ١ في الخطوة ٥). الأقنعة الأربعة تُنسخ نسخًا
+     حرفيًا إلى شريط واحد (بلا أي مرشّح، وفوق لوحة ممسوحة، فالنسخ مطابق)، ثم تُقرأ
+     مرة واحدة، وتُشتق A1..A4 منها كنوافذ — فلا يتغيّر فهرس واحد في الكود المستهلك. */
+  const nA1 = on('lips')||on('blush')||on('eyeshadow'), nA2 = on('liner')||on('brow')||on('glow');
+  let A1 = null, A2 = null, A3 = null, A4 = null;
+  if(nA1 || nA2 || needs3 || needs4){
+    if(mkA.width !== PW || mkA.height !== PH*4){ mkA.width = PW; mkA.height = PH*4; }
+    mA.setTransform(1,0,0,1,0,0); mA.filter = 'none'; mA.globalAlpha = 1;
+    mA.globalCompositeOperation = 'source-over';
+    mA.clearRect(0, 0, PW, PH*4);   /* فوق لوحة شفافة تمامًا، فالرسم نسخ حرفي */
+    if(nA1) mA.drawImage(mk1, 0, 0);
+    if(nA2) mA.drawImage(mk2, 0, PH);
+    if(needs3) mA.drawImage(mk3, 0, PH*2);
+    if(needs4) mA.drawImage(mk4, 0, PH*3);
+    const AB = mA.getImageData(0, 0, PW, PH*4).data, SP = PW*PH*4;
+    if(nA1) A1 = AB.subarray(0, SP);
+    if(nA2) A2 = AB.subarray(SP, SP*2);
+    if(needs3) A3 = AB.subarray(SP*2, SP*3);
+    if(needs4) A4 = AB.subarray(SP*3, SP*4);
+  }
   /* v94 · measured, not assumed: a thin zone's feathered mask lost most of its strength at the working resolution
      (highlight peaked at 60/255, contour 131, nose 192 — "nothing at 100 %"). Each zone's mask is lifted until its own
      peak reaches full; the lift is smoothed between frames and capped. Lips and liner (fine as they are) untouched. */
@@ -9442,7 +9658,7 @@ const _litC = document.createElement('canvas'); _litC.width=24; _litC.height=24;
 let _litT = 0;
 function updateLight(){
   const now = performance.now();
-  if(now - _litT < 260) return; _litT = now;
+  if(now - _litT < 700) return; _litT = now;
   try{
     const lm = S.landmarks; if(!lm){ S.light = null; return; }
     const c = _litC.getContext('2d',{willReadFrequently:true});
@@ -9484,7 +9700,7 @@ const _skC = document.createElement('canvas'); _skC.width = _skC.height = 32;
 let _skT = 0;
 function sampleSkinTone(force){
   const now = performance.now();
-  if(!force && now - _skT < 500 && S._liveSkinSrc === SRC) return S._liveSkinLab || null;
+  if(!force && now - _skT < 1200 && S._liveSkinSrc === SRC) return S._liveSkinLab || null;
   _skT = now;
   try{
     const lm = S.landmarks; if(!lm) return null;
@@ -10472,6 +10688,10 @@ const LAMHA_TEACH = window.LAMHA_TEACH = {
         /* v95b: she may have pressed Next herself in these 1.6 s — moving on
            again would skip a step she never saw */
         if(S.plan !== pl || pl.idx !== idx) return;
+        /* v101: and if the coach lost the zone in these 1.6 s the step is not
+           finished — «لا أستطيع أن أتأكّد» never advances the lesson. `fired` is
+           cleared so a later real 1.5 s of «good» can still earn the advance. */
+        if(S._coachWhy){ if(this._h) this._h.fired = false; return; }
         const b = document.getElementById('pl-next'); if(b && b.onclick) b.onclick(); }catch(e){} }, 1600);
     }
   }
@@ -11843,6 +12063,11 @@ async function finishScan(){
   S.skin=m;
   S.skinFrame = (S.frontPack && S.frontPack.img) || null;
   S.skinLm    = (S.frontPack && S.frontPack.lm)  || null;
+  /* وضع الرأس لحظة التقاط هذا الإطار — يُحفظ معه كي لا يُحكم لاحقًا بوضع لحظة أخرى */
+  try{ const _P = window.LAMHA_PRO;
+       S.skinPose = (_P && typeof _P.poseKnown === 'function' && _P.poseKnown())
+         ? { known:true, frontal: !!_P.isFrontal(10, 15) } : { known:false, frontal:false }; }
+  catch(e){ S.skinPose = { known:false, frontal:false }; }
   S.history.push({ts:m.ts, score:m.score, m:MET_KEYS.reduce((o,k)=>(o[k]=m[k],o),{}),
     /* what progress tracking needs: where the spots are, how big, and the
        millimetre scale of that scan if she has calibrated with a card */
@@ -11895,6 +12120,15 @@ window.lamhaUndertoneTrust = lamhaUndertoneTrust;
 const skinTypeIdx = sh => sh > .085 ? 0 : sh > .032 ? 1 : 2;
 function metColor(v){ return v>=75?'#7FBFA8': v>=55?'#D9B26F': v>=40?'#E8A9A0':'#E8776B'; }
 
+/* وضع الرأس الذي يُحكم به على درجة الأساس: المحفوظ مع الإطار إن وُجد، وإلا الوضع الآن.
+   PRO.isFrontal وحدها تقول «نعم» حين لا يوجد وضع أصلًا، فتُسأل poseKnown أولًا. */
+function lamhaNeckPose(){
+  if(S.skinFrame && S.skinPose) return S.skinPose;
+  try{ const P = window.LAMHA_PRO;
+       if(P && typeof P.poseKnown === 'function' && P.poseKnown()) return { known:true, frontal: !!P.isFrontal(10, 15) };
+  }catch(e){}
+  return { known:false, frontal:false };
+}
 LamhaAdvice.configure({ region, stats });
 function renderSkin(){
   const s = S.skin; if(!s) return;
@@ -11923,6 +12157,7 @@ function renderSkin(){
       existingUndertone: (typeof undertone === 'function') ? undertone(s.a, s.B) : null,
       skinType: (typeof skinTypeIdx === 'function' && s.shine != null)
         ? ['oily','combination','dry'][skinTypeIdx(s.shine)] : 'normal',
+      pose: lamhaNeckPose(), light: (s.light || (S.pro && S.pro.light) || (S.light && S.light.state) || null), lightCast: (s.lightCast || 'unknown'),
       wuduSafe: false, flashPhotography: false
     });
     if (!advice.ok) console.warn('[lamha-advice] run() returned ok:false');
@@ -12598,14 +12833,19 @@ $('#pl-steps').onclick = e => { const st=e.target.closest('.step');
   if(st && S.plan){ S.plan.idx=+st.dataset.i; renderPlan(); planRecapture(); } };
 $('#pl-refresh').onclick = planRecapture;
 
+/* v102 · كل تغيير خطوة يطلب لقطة بداية جديدة لمنطقتها (انظر PRO.rebase) */
+function lamhaStepChanged(){
+  const pl = S.plan; if(!pl) return;
+  try{ const st = pl.lesson && pl.lesson[pl.idx]; if(st && st.zone){ pl._need = st.zone; pl._ct = 0; pl._cm = null; pl._cv = null; } }catch(e){}
+}
 $('#plbNext') && ($('#plbNext').onclick = ()=>{
   const pl=S.plan; if(!pl) return; baRestore();
   if(pl.idx >= pl.order.length-1){ $('#pl-exit').onclick && $('#pl-exit').onclick(); return; }
-  pl.idx++; renderPlan(); planRecapture();
+  pl.idx++; lamhaStepChanged(); renderPlan(); planRecapture();
 });
 $('#plbPrev') && ($('#plbPrev').onclick = ()=>{
   const pl=S.plan; if(!pl) return; baRestore();
-  pl.idx = Math.max(0, pl.idx-1); renderPlan(); planRecapture();
+  pl.idx = Math.max(0, pl.idx-1); lamhaStepChanged(); renderPlan(); planRecapture();
 });
 $('#plbBA') && ($('#plbBA').onclick = ()=>{ try{ toggleStepBA(); }
   catch(e){ fatalLog('[step ba] '+(e&&(e.stack||e.message||e))); } });
@@ -15964,6 +16204,11 @@ function start(){
       'service-not-allowed':'This browser blocks the speech service — try Chrome',
       'audio-capture':'No microphone, or another app is holding it',
       'network':'Speech recognition needs internet — check the connection'
+    },id:{
+      'not-allowed':'Izin mikrofon ditolak: ikon gembok → Izin → Mikrofon → Izinkan',
+      'service-not-allowed':'Browser ini memblokir layanan pengenalan suara — coba Chrome',
+      'audio-capture':'Tidak ada mikrofon, atau aplikasi lain sedang memakainya',
+      'network':'Pengenalan suara butuh internet — periksa koneksimu'
     }};
     const t2=(M[LANG]||M.en)[E] || ((LANG==='ar'?'خطأ ميكروفون: ':'Mic error: ')+E);
     say(t2, 7000);
@@ -18623,7 +18868,7 @@ const drawHairFlood = function(tctx){
     const g=HC2.getContext('2d',{willReadFrequently:true});
     const img=g.createImageData(W,H), D=img.data;
     D.set(srcPix);
-    const strength = (S.ints && S.ints.hair!=null) ? S.ints.hair : 0.85;
+    const strength = (S.ints && S.ints.hair!=null) ? S.ints.hair : 0.6;   /* v106: آخر موضع بقي فيه 0.85 */
     for(let i=0,q=0;i<W*H;i++,q+=4){
       const a=mask[i]/255;
       if(a<0.02){ D[q+3]=0; continue; }
@@ -18669,29 +18914,47 @@ const hsMask = document.createElement('canvas'), hsX = hsMask.getContext('2d');
 const hsTmp = document.createElement('canvas'), hsTX = hsTmp.getContext('2d', {willReadFrequently:true});
 const hsL1 = document.createElement('canvas'), hsL1X = hsL1.getContext('2d');
 const hsL2 = document.createElement('canvas'), hsL2X = hsL2.getContext('2d');
+const hsFace = document.createElement('canvas'), hsFX = hsFace.getContext('2d');   /* v107 · بشرتها كما يراها المقسّم — حارسٌ لا يحتاج علامات وجه */
 function hairFromSeg(){
   const O = window.LAMHA_OCC;
-  if(!O || !O._cat || O._catSrc !== SRC || !O._snap) return null;
+  /* v107 · لقطةُ العلامات لم تعد شرطًا. هي تلزم لحمل القناع من لحظة قراءته إلى الآن،
+     ولا تلزم لوجوده: المقسّم يجد الشعر في الصورة نفسها بلا وجه إطلاقًا. */
+  if(!O || !O._cat || O._catSrc !== SRC) return null;
   if(HS.ver === O.version) return HS;
   const W = O.W, H = O.H, cat = O._cat;
-  const HAIR = (window.LAMHA_PRO && LAMHA_PRO.SEG) ? LAMHA_PRO.SEG.HAIR : 1;
+  const SG = (window.LAMHA_PRO && LAMHA_PRO.SEG) ? LAMHA_PRO.SEG : { HAIR:1, FACE:3 };
+  const HAIR = SG.HAIR, FACEC = SG.FACE;
   /* her hair's own mean lightness, from the source at the model's size */
   hsTmp.width = W; hsTmp.height = H;
   hsTX.drawImage(SRC, 0, 0, W, H);
   const d = hsTX.getImageData(0, 0, W, H).data;
-  hsMask.width = W; hsMask.height = H;
+  /* لا نمسّ لوحتَي القناع قبل أن نعرف أن القراءة جيّدة: إسنادُ العرض يمحوهما،
+     وقد نحتاج القناع السابق كما هو (انظر «القراءة الفقيرة» أدناه). */
   const img = hsX.createImageData(W, H), a = img.data;
+  const fim = hsFX.createImageData(W, H), fa = fim.data;
   let n = 0, sY = 0, u0 = W, v0 = H, u1 = -1, v1 = -1;
   for(let i=0, q=0; i<W*H; i++, q+=4){
+    if(cat[i] === FACEC){ fa[q] = 255; fa[q+3] = 255; }      /* v107: أحمر = بشرة، كقناع العلامات تمامًا */
     if(cat[i] !== HAIR) continue;
     a[q+3] = 255; n++;
     sY += (0.299*d[q] + 0.587*d[q+1] + 0.114*d[q+2]) / 255;
     const u = i % W, v = (i / W) | 0;
     if(u<u0) u0=u; if(u>u1) u1=u; if(v<v0) v0=v; if(v>v1) v1=v;
   }
+  /* v107 · قراءةٌ فقيرة لا تُتلف قراءةً جيّدة. كان كلُّ قناعٍ يُكتب فوق سابقه بلا شرط:
+     فإن عاد المقسّم بقناعٍ شبه فارغ — ويحدث هذا على تاجٍ أصلع أو إضاءةٍ صعبة أو
+     إطارٍ مهزوز — اختفت الصبغة كلُّها (الشرط hs.n < 60 أسفلُ يوقف الرسم) حتى القناع
+     التالي، أي نصف ثانية إلى ثانية. الآن يُهمَل القناعُ الفقير ويبقى الجيّد، بشرطين:
+     أن يكون السابق وافيًا، وألّا يتجاوز عمرُه ثانيةً ونصفًا — فلا نتشبّث بقديمٍ كاذب. */
+  const poor = n < 60 || (HS.bb && HS.n >= 240 && n < HS.n*0.25);
+  const fresh = performance.now() - (HS.t || 0) < 1500;
+  if(poor && HS.bb && fresh){ HS.ver = O.version; return HS; }     /* نُعلّم النسخة كمقروءة كي لا نُعيد الحساب عليها */
+  hsMask.width = W; hsMask.height = H;
+  hsFace.width = W; hsFace.height = H;
   hsX.putImageData(img, 0, 0);
+  hsFX.putImageData(fim, 0, 0);
   HS.ver = O.version; HS.n = n; HS.m = n ? sY/n : 0.2; HS.t = performance.now();   /* v77 hair: the reading's age widens the band */
-  HS.bb = n ? [u0, v0, u1+1, v1+1] : null; HS.W = W; HS.H = H; HS.snap = O._snap;
+  HS.bb = n ? [u0, v0, u1+1, v1+1] : null; HS.W = W; HS.H = H; HS.snap = O._snap || null;
   return HS;
 }
 /* v76 hair colour — see the patch notes: the hair model's mask refined on the live picture, and a
@@ -18707,7 +18970,7 @@ const hrA = document.createElement('canvas'), hrAX = hrA.getContext('2d');
 const hrC = document.createElement('canvas'), hrCX = hrC.getContext('2d');
 /* v91 · how much of the last hair mask to keep: mv = her motion in face units per 33 ms; dt = ms since the last frame */
 function hrKeep(mv, dt){
-  const k30 = Math.max(0.15, Math.min(0.75, 0.75 - 12*Math.max(0, mv - 0.004)));   /* still 0.75 · ≥ 5 % of a face per frame 0.15 */
+  const k30 = Math.max(0.05, Math.min(0.75, 0.75 - 20*Math.max(0, mv - 0.003)));   /* still 0.75 · v106: ≥ 3.8 % of a face per frame → 0.05 (كانت أرضيّة 0.15 تُبقي سُبع القناع القديم أثناء الحركة) */
   return Math.pow(k30, Math.max(0.25, Math.min(4, dt/33.3)));                      /* same feel at 30 and 60 fps */
 }
 window.__hrKeep = hrKeep;
@@ -18741,27 +19004,88 @@ function hairNote(){
     : 'Hair colour needs the hair model, which has not loaded on this device — reopen the app online', 5000); }catch(e){}
 }
 window.drawHairColour = function(tctx){
-  if(!S.hairColour || !S.landmarks) return;
+  /* v107 · شرط «وجهٌ مرئي» أُسقِط. صاحبة الشعر تُميل رأسها كي ترى شعرها،
+     وهي بالضبط اللحظة التي يفقد فيها كاشفُ الوجه وجهها — فكانت الصبغة تنطفئ
+     تمامًا. والشعر لا يحتاج وجهًا: المقسّم يجده في الصورة. */
+  if(!S.hairColour) return;
   const O = window.LAMHA_OCC;
   if(!(O && O.on && !O.unavailable)){ hairNote(); return; }        /* never the colour-flood guess */
   const hs = hairFromSeg();
   if(!hs || !hs.bb || hs.n < 60) return;                           /* the model is on its way, or no hair (a hijab is clothes) */
   try{
-    const lm = S.landmarks, sn = hs.snap, W = hs.W, H = hs.H, fs = faceScale(lm);
+    const lm = S.landmarks, sn = hs.snap, W = hs.W, H = hs.H;
+    /* «الحمل» — نقل القناع من لحظة قراءته إلى الآن — يحتاج وجهين: وجهًا وقتها
+       ووجهًا الآن. فإن غاب أحدهما فلا حمل: يُرسم القناع حيث وجده المقسّم في هذه
+       الصورة بعينها، وهو الموضع الصحيح تمامًا لا تقريبًا. */
+    const carry = !!(lm && sn);
+    const fs = carry ? faceScale(lm)
+                     : Math.max(24, (hs.bb[2] - hs.bb[0])/W*VW*map.sx*0.85);
     { const tN0 = performance.now(); if(tN0 - (HR.tLast || 0) > 600){ HR.prev = null; HR.pose = null; HR.pg = null; } HR.tLast = tN0; }   /* v94: a lost face, a pause — no stale mask */
+    let hfA = 1, hfB = 0, hfC = 0, hfD = 1, hfE = 0, hfF = 0, hTrust = 1;
+    if(carry){
     /* her move since the mask was read: a similarity on the outer eye corners, in source px */
     const P1 = [sn[33].x*VW, sn[33].y*VH], P2 = [sn[263].x*VW, sn[263].y*VH];
     const Q1 = [lm[33].x*VW, lm[33].y*VH], Q2 = [lm[263].x*VW, lm[263].y*VH];
     const ax = P2[0]-P1[0], ay = P2[1]-P1[1], bx = Q2[0]-Q1[0], by = Q2[1]-Q1[1], den = ax*ax + ay*ay || 1;
     const ca = (ax*bx + ay*by)/den, sa = (ax*by - ay*bx)/den;
     const ex = Q1[0] - (ca*P1[0] - sa*P1[1]), ey = Q1[1] - (sa*P1[0] + ca*P1[1]);
+    hfA = ca; hfB = sa; hfC = -sa; hfD = ca; hfE = ex; hfF = ey;
+    /* v106 · القناع يتبع رأسها بتحويل أفيني (٦ درجات) لا بتشابه (٤).
+       رفعُ الرأس وخفضُه لا يغيّر المسافة بين زاويتي العينين، فالتشابه أعلاه
+       لا يرى هذه الحركة أصلًا ويترك الشعر واقفًا حتى يصل القناع التالي —
+       وهي الصورة التي أرسلها المالك: الصبغة على جبهته. الأفيني يقرأ الحركة
+       مقياسًا رأسيًا وميلًا، من ثلاث عشرة علامة في أعلى الوجه (لا الذقن:
+       التاج يتبع الجبهة لا الفك)، بأصغر المربّعات كي لا تقودَه علامة واحدة.
+       وبقايا المطابقة (rms) تقول بصدق كم يمكن الوثوق بحمل القناع أصلًا. */
+    {
+      const FIT = [33, 263, 133, 362, 168, 6, 9, 151, 10, 234, 454, 127, 356];
+      const fsS = Math.hypot(bx, by) || 1;                          /* مقياسٌ ببكسل المصدر: ما بين زاويتي العينين */
+      let px0 = 0, py0 = 0, qx0 = 0, qy0 = 0, nF = 0;
+      for(const i of FIT){ const sp = sn[i], lp = lm[i]; if(!sp || !lp) continue;
+        px0 += sp.x; py0 += sp.y; qx0 += lp.x; qy0 += lp.y; nF++; }
+      if(nF >= 8){
+        px0 = px0/nF*VW; py0 = py0/nF*VH; qx0 = qx0/nF*VW; qy0 = qy0/nF*VH;
+        let Suu = 0, Suv = 0, Svv = 0, Sxu = 0, Sxv = 0, Syu = 0, Syv = 0;
+        for(const i of FIT){ const sp = sn[i], lp = lm[i]; if(!sp || !lp) continue;
+          const ux = sp.x*VW - px0, uy = sp.y*VH - py0, vx = lp.x*VW - qx0, vy = lp.y*VH - qy0;
+          Suu += ux*ux; Suv += ux*uy; Svv += uy*uy;
+          Sxu += vx*ux; Sxv += vx*uy; Syu += vy*ux; Syv += vy*uy; }
+        const dt2 = Suu*Svv - Suv*Suv;
+        if(dt2 > 1e-6*(Suu*Svv + 1)){
+          const A11 = (Sxu*Svv - Sxv*Suv)/dt2, A12 = (Sxv*Suu - Sxu*Suv)/dt2;
+          const A21 = (Syu*Svv - Syv*Suv)/dt2, A22 = (Syv*Suu - Syu*Suv)/dt2;
+          const sc = Math.hypot(ca, sa) || 1;
+          const dev = Math.max(Math.abs(A11 - ca), Math.abs(A12 + sa), Math.abs(A21 - sa), Math.abs(A22 - ca))/sc;
+          const g = Math.max(0, Math.min(1, 1 - (dev - 0.25)/0.25));   /* مطابقةٌ جامحة (علامة سيّئة) تعود إلى التشابه */
+          if(g > 0){
+            hfA = ca + (A11 - ca)*g;  hfC = -sa + (A12 + sa)*g;
+            hfB = sa + (A21 - sa)*g;  hfD = ca + (A22 - ca)*g;
+            hfE = qx0 - (hfA*px0 + hfC*py0); hfF = qy0 - (hfB*px0 + hfD*py0);
+          }
+          let r2 = 0, nR = 0;
+          for(const i of FIT){ const sp = sn[i], lp = lm[i]; if(!sp || !lp) continue;
+            const mx2 = hfA*sp.x*VW + hfC*sp.y*VH + hfE, my2 = hfB*sp.x*VW + hfD*sp.y*VH + hfF;
+            const dx2 = mx2 - lp.x*VW, dy2 = my2 - lp.y*VH; r2 += dx2*dx2 + dy2*dy2; nR++; }
+          const rms = Math.sqrt(r2/Math.max(1, nR))/fsS;
+          HR.fit = +rms.toFixed(4); HR.dev = +dev.toFixed(3);
+          /* دورانٌ خارج المستوى لا يمثّله أي تحويل مستوٍ: تُخفَّف الصبغة قليلًا.
+             v107: كانت تهبط إلى 0.35 مع كل حركة عادية فتبدو الصبغة كأنها «ترتفع».
+             صارت صمّام أمانٍ للحالات المستحيلة وحدها: لا تنزل تحت 0.72، ولا تبدأ
+             قبل أن تتجاوز البقايا 5٪ من المسافة بين زاويتي العينين. */
+          hTrust = Math.max(0.72, Math.min(1, 1 - (rms - 0.050)/0.220));
+        }
+      }
+    }
+    } else { HR.fit = 0; HR.dev = 0; }                              /* v107 · بلا حمل: القناع في موضعه الأصلي، فلا بقايا ولا شكّ */
+    HR.trust = +hTrust.toFixed(3); HR.carry = carry;
+    O._hairFit = HR.fit; O._hairCarry = carry;                      /* v107 · المجدوِل في كتلة سكربت أخرى: الرقم يعبر على الكائن العام */
     const place = (c, ox, oy, k) => {                               /* model grid → her move → the mirror, at scale k */
       c.setTransform(k, 0, 0, k, -ox*k, -oy*k);
       if(S.mirror){ c.translate(map.ox + VW*map.sx, map.oy); c.scale(-map.sx, map.sy); } else { c.translate(map.ox, map.oy); c.scale(map.sx, map.sy); }
-      c.transform(ca, sa, -sa, ca, ex, ey); c.scale(VW/W, VH/H);
+      c.transform(hfA, hfB, hfC, hfD, hfE, hfF); c.scale(VW/W, VH/H);     /* v106: أفيني */
     };
     const corners = [[hs.bb[0],hs.bb[1]],[hs.bb[2],hs.bb[1]],[hs.bb[0],hs.bb[3]],[hs.bb[2],hs.bb[3]]].map(([u,v])=>{
-      const sx = u*VW/W, sy = v*VH/H, mx = ca*sx - sa*sy + ex, my = sa*sx + ca*sy + ey;
+      const sx = u*VW/W, sy = v*VH/H, mx = hfA*sx + hfC*sy + hfE, my = hfB*sx + hfD*sy + hfF;
       return [S.mirror ? map.ox + (VW - mx)*map.sx : map.ox + mx*map.sx, map.oy + my*map.sy]; });
     const cell = Math.max(2, VW*map.sx/W), margin = cell*3 + fs*0.10;   /* room for hair that moved since */
     const rx0 = Math.max(0, Math.floor(Math.min(...corners.map(p=>p[0])) - margin));
@@ -18783,6 +19107,7 @@ window.drawHairColour = function(tctx){
     const fd = hrFX.getImageData(0, 0, ww, wh).data;
     /* 3 · her face (red) and her eyes, brows, lips (green) */
     hrM.width = ww; hrM.height = wh; hrMX.setTransform(k, 0, 0, k, -rx0*k, -ry0*k);
+    if(carry){
     const poly = (idx, g) => { const pts = idx.map(i => P(lm[i])); let cx = 0, cy = 0; pts.forEach(p => { cx += p[0]; cy += p[1]; }); cx /= pts.length; cy /= pts.length;
       hrMX.beginPath(); pts.forEach(([x, y], j) => { const px = cx + (x-cx)*g, py = cy + (y-cy)*g; j ? hrMX.lineTo(px, py) : hrMX.moveTo(px, py); }); hrMX.closePath(); hrMX.fill(); };
     hrMX.fillStyle = '#ff0000'; poly(L.faceOval, 0.98);
@@ -18790,6 +19115,14 @@ window.drawHairColour = function(tctx){
     poly(L.eyeUpL.concat([...L.eyeLoL].reverse()), 1.6); poly(L.eyeUpR.concat([...L.eyeLoR].reverse()), 1.6); poly(L.lipsOuter, 1.1);
     hrMX.fillStyle = '#0000ff';                                   /* the brows: bare unless a fringe over the brows */
     poly(L.browUpL.concat([...L.browLoL].reverse()), 1.35); poly(L.browUpR.concat([...L.browLoR].reverse()), 1.35);
+    } else {
+      /* v107 · بلا علامات وجه، حارسُ البشرة يأتي من المقسّم نفسه: صنف FACE أحمرَ
+         في الشبكة نفسها. العينان والشفتان والحاجبان لا تُعرف مواضعها بلا علامات،
+         فتُترك خاليةً — وهي تحسينات، لا حارس البشرة. */
+      hrMX.save(); place(hrMX, rx0, ry0, k);
+      hrMX.imageSmoothingEnabled = true; hrMX.drawImage(hsFace, 0, 0); hrMX.restore();
+      hrMX.setTransform(k, 0, 0, k, -rx0*k, -ry0*k);
+    }
     hrMX.globalCompositeOperation = 'source-over';
     const md = hrMX.getImageData(0, 0, ww, wh).data;
     const P0 = new Float32Array(N); for(let i = 0; i < N; i++) P0[i] = pd[i*4+3]/255;
@@ -18830,13 +19163,16 @@ window.drawHairColour = function(tctx){
     const tl0 = (() => { const n3 = parseInt(S.hairColour.slice(1), 16); return (0.299*(n3>>16&255) + 0.587*(n3>>8&255) + 0.114*(n3&255))/255; })();
     const GF = !!window.lamhaGuided && !window.__hairNoGuide, DEF = GF ? new Uint8Array(N) : null, DEFI = GF ? new Uint8Array(N) : null;   /* v94 */
     /* v91 · steadier mask: her motion since the last frame decides how much of the last mask stays */
-    const tN = performance.now(), e1 = P(lm[33]), e2 = P(lm[263]);
-    const pose = { x:(e1[0] + e2[0])/2, y:(e1[1] + e2[1])/2, ang:Math.atan2(e2[1] - e1[1], e2[0] - e1[0]), d:Math.hypot(e2[0] - e1[0], e2[1] - e1[1]), t:tN };
-    let keep = 0;
-    if(HR.pose){ const pp = HR.pose, dt = Math.max(8, Math.min(250, tN - pp.t));
-      let da = Math.abs(pose.ang - pp.ang); if(da > Math.PI) da = 2*Math.PI - da;
-      const mv = (Math.hypot(pose.x - pp.x, pose.y - pp.y)/Math.max(1, fs) + da + Math.abs(pose.d - pp.d)/Math.max(1, pp.d))*(33.3/dt);
-      keep = hrKeep(mv, dt); HR.mv = mv; HR.keep = keep; }
+    const tN = performance.now();
+    let keep = 0, pose = null;
+    if(carry){
+      const e1 = P(lm[33]), e2 = P(lm[263]);
+      pose = { x:(e1[0] + e2[0])/2, y:(e1[1] + e2[1])/2, ang:Math.atan2(e2[1] - e1[1], e2[0] - e1[0]), d:Math.hypot(e2[0] - e1[0], e2[1] - e1[1]), t:tN };
+      if(HR.pose){ const pp = HR.pose, dt = Math.max(8, Math.min(250, tN - pp.t));
+        let da = Math.abs(pose.ang - pp.ang); if(da > Math.PI) da = 2*Math.PI - da;
+        const mv = (Math.hypot(pose.x - pp.x, pose.y - pp.y)/Math.max(1, fs) + da + Math.abs(pose.d - pp.d)/Math.max(1, pp.d))*(33.3/dt);
+        keep = hrKeep(mv, dt); HR.mv = mv; HR.keep = keep; }
+    } else { HR.prev = null; HR.pg = null; HR.mv = null; HR.keep = 0; }   /* v107 · بلا وجه: لا وضعية تُقاس ولا مزجَ زمنيًّا — القناع طازج من هذه الصورة */
     HR.pose = pose;
     let PV = null, sdx = 0, sdy = 0;                               /* the grid follows her hair: read the last mask where it was on screen */
     if(keep > 0 && HR.prev && HR.pg && HR.pg.ww === ww && HR.pg.wh === wh && Math.abs(HR.pg.k - k) < 1e-3){
@@ -18858,7 +19194,7 @@ window.drawHairColour = function(tctx){
         if(ps > HEp.ps){ let g = (ps - HEp.ps)/HEp.pw; g = g > 1 ? 1 : g;
           let gl = (Math.abs(Yc[i] - m) - HEp.g0)/(HEp.g1 - HEp.g0); gl = gl < 0 ? 0 : gl > 1 ? 1 : gl;   /* lightness apart from her hair's: skin, not a mixed edge */
           const cut = g*g*(3 - 2*g)*gl*gl*(3 - 2*gl)*(face ? 1 : 1 - 0.5*P0[i]*P0[i]); a *= 1 - cut; if(DB) DB.cut[i] = cut; } }
-      let t = (a - 0.30)/0.32; t = t < 0 ? 0 : t > 1 ? 1 : t; a = t*t*(3 - 2*t);
+      let t = (a - 0.22)/0.56; t = t < 0 ? 0 : t > 1 ? 1 : t; a = t*t*(3 - 2*t);   /* v105: نافذة أوسع — 0.32 كانت درجة لا تدرّجًا */
       const y = (0.299*fd[q] + 0.587*fd[q+1] + 0.114*fd[q+2])/255, rr = y/(m + 0.03);
       const nearW = Pw[i] > 0.10, nearG = Pg !== null && Pg[i] > 0.05;
       if(!face && P0s < 0.5 && (nearW || nearG)){                 /* v77 wisps: fine white/grey strands the model left out */
@@ -18873,9 +19209,15 @@ window.drawHairColour = function(tctx){
       A[i] = a;
       /* her lightness toward the shade's, 60 % of her own light and shade kept: white and grey strands
          deepen to the shade, dark ones lift a little (capped) */
-      const yT = Math.max(0.02, Math.min(0.97, tl0 + (y - m)*0.6));
+      /* v105 · الصبغة تنقل المستوى وتُبقي الفروق. القياس قبل هذا السطر: تفاوت الخصلات
+         13.9 ← 5.5 (39٪ باقية) على درجة ذهبية. الحد الأول يحفظ 90٪ من تفاوتها وينقل
+         متوسطها 75٪ نحو الدرجة؛ والحد الثاني سقف رفعٍ لكل بكسل (55٪ من ضوئه أو 0.22)،
+         وهو نفسه مبدأ سقف الإضاءة على بشرتها. أصغرهما متزايد، فلا انقلاب في الترتيب. */
+      const yT = Math.max(0.02, Math.min(0.97, Math.min(
+        m + (tl0 - m)*0.75 + (y - m)*0.90,
+        y + Math.min(0.55*y, 0.22) + 0.06)));
       const rf = (pixL && yT > y && rr > 1 && y < m + HEp.hi) ? 1 : rr;   /* a lifted edge cell is mixed, not shine: full hue */
-      const f = 0.50 + 0.50*Math.exp(-((rf - 1)*(rf - 1))/0.30);   /* depth: deep strands and shine less saturated */
+      const f = (0.50 + 0.50*Math.exp(-((rf - 1)*(rf - 1))/0.30))*(0.45 + 0.55*Math.min(1, y/0.45));   /* depth: deep strands and shine less saturated */   /* v105: وتشبّع أقل على الخصلة الغامقة — هناك تُقرأ الصبغة شبه محايدة */
       const [cr, cg, cb] = hrRgb(sh0, ss0*f, sl0);
       if(yT < y){ const gM = Math.max(0.2, yT/Math.max(0.02, y)); ia.data[q] = ia.data[q+1] = ia.data[q+2] = gM*255; ia.data[q+3] = a*255; if(DEFI) DEFI[i] = 1; }
       else if(yT > y){ GS[i] = Math.min(0.55, 1 - (1 - yT)/Math.max(0.03, 1 - y)); }
@@ -18898,7 +19240,9 @@ window.drawHairColour = function(tctx){
       /* twice the model grid is enough to break the block (the grid is ≤ 200 cells); capped at 240 and lowered if slow */
       const cap = Math.min(HR.gcap || 240, Math.max(ww, wh)*2), gw = Math.max(8, Math.min(rw, cap)), gh = Math.max(8, Math.round(rh*gw/rw));
       HR.gF = (HR.gF | 0) + 1;
-      const fresh = !HR.gaC || HR.gVer !== hs.ver || HR.gF % 3 === 0 || Math.abs((HR.gRw || 0) - rw) > rw*0.08;
+      /* v106 · الحافة كانت تُحسب كل إطار ثالث فقط وتُزاح بين ذلك إزاحةً صمّاء، فتتأخّر
+         إطارين كاملين كلّما تحرّكت. الآن: أي حركةٍ حقيقية تُعيد حسابها في حينها. */
+      const fresh = !HR.gaC || HR.gVer !== hs.ver || HR.gF % 3 === 0 || Math.abs((HR.gRw || 0) - rw) > rw*0.08 || (HR.mv || 0) > 0.010;
       if(!fresh){ GA = HR.gaC; GAp = { dx:HR.gRx0 - rx0, dy:HR.gRy0 - ry0, w:HR.gRw, h:HR.gRh }; }   /* reused, moved with her head */
       else {
         const t0 = performance.now(), p = lamhaUpBilinear(A, ww, wh, gw, gh);
@@ -18919,7 +19263,8 @@ window.drawHairColour = function(tctx){
         if(HR.gms > 18) HR.gcap = Math.max(120, Math.round(Math.min(HR.gcap || 240, gw)*0.85));
       }
     }catch(e){ GA = null; HR.gErr = String(e && e.message || e); } }
-    if(GA){ for(let j = 0, q = 0; j < N; j++, q += 4){ if(DEF[j]) ic.data[q+3] = 255; if(DEFI[j]) ia.data[q+3] = 255; } }
+    /* v105 · المرشّح الموجَّه يعطي الحافة (destination-in أدناه) — وكل خلية تحتفظ بثقتها.
+       كان هذا السطر يفرض 255 على كل خلية، فيُطلى الشعر كصفيحة واحدة. */
     HR.prev = A; HR.pk = pk; HR.pg = { ww, wh, k, rx0, ry0 }; if(DB){ DB.A = A; HR.dbg = DB; }
     hrA.width = ww; hrA.height = wh; hrAX.putImageData(ia, 0, 0);
     if(!HR.bC){ HR.bC = document.createElement('canvas'); HR.bX = HR.bC.getContext('2d'); HR.bL = document.createElement('canvas'); HR.bLX = HR.bL.getContext('2d'); }
@@ -18948,7 +19293,7 @@ window.drawHairColour = function(tctx){
     }
     const n2 = parseInt(S.hairColour.slice(1), 16), tr = n2>>16&255, tg = n2>>8&255, tb = n2&255;
     const tl = (0.299*tr + 0.587*tg + 0.114*tb)/255;
-    const strength = (S.ints && S.ints.hair != null) ? S.ints.hair : 0.85;
+    const strength = ((S.ints && S.ints.hair != null) ? S.ints.hair : 0.6) * hTrust;   /* v105 · ×v106: ثقة حمل القناع */
     /* v77 hair: each cell carries its own grey — deepen where she is lighter than the shade, lift where darker */
     tctx.save(); tctx.setTransform(1, 0, 0, 1, 0, 0); tctx.globalAlpha = strength;
     tctx.globalCompositeOperation = 'multiply'; tctx.drawImage(hsL1, rx0, ry0);
@@ -18958,7 +19303,7 @@ window.drawHairColour = function(tctx){
     HR.last = { ww, wh, rat:+rat.toFixed(2), n:hs.n, grey:+(HR.grey || 0).toFixed(3) };
   }catch(e){ HR.err = String(e && e.message || e); }
 };
-window.__hairInfo = () => ({ last:HR.last, err:HR.err || null, ver:HS.ver, mv:HR.mv, keep:HR.keep, guideMs:HR.gms, guideAvgMs:HR.gAvg, guideCap:HR.gcap || 240, guideErr:HR.gErr || null });
+window.__hairInfo = () => ({ last:HR.last, err:HR.err || null, ver:HS.ver, mv:HR.mv, keep:HR.keep, fit:HR.fit, dev:HR.dev, trust:HR.trust, age:HS.t ? +(performance.now() - HS.t).toFixed(0) : null, guideMs:HR.gms, guideAvgMs:HR.gAvg, guideCap:HR.gcap || 240, guideErr:HR.gErr || null });
 window.__hairDbg = () => HR.dbg || null;
 window.lamhaHairSegInfo = () => ({ ver:HS.ver, n:HS.n, m:+HS.m.toFixed(3), bb:HS.bb, W:HS.W, H:HS.H });
 window.hairMaskQuality = ()=> maskQuality;
@@ -19060,7 +19405,7 @@ window.lamhaHairColourRender = function(){
   h += `<button class="btn wide" id="hc-train" style="margin-top:12px">${
         LANG==='ar'?'✎ درّبي التحديد على شعرك':'✎ Train it on your hair'}</button>`;
   h += `<label class="fld" style="margin-top:12px">${LANG==='ar'?'القوة':'Strength'}</label>
-        <input type="range" id="hc-int" min="20" max="100" value="${Math.round((S.ints.hair??0.85)*100)}">`;
+        <input type="range" id="hc-int" min="20" max="100" value="${Math.round((S.ints.hair??0.6)*100)}">`;
   box.innerHTML=h;
   box.querySelectorAll('[data-hc]').forEach(b=> b.onclick=()=> hairSet(b.dataset.hc));
   box.querySelectorAll('[data-hsw]').forEach(b=> b.onclick=()=>{
@@ -19379,6 +19724,14 @@ PRO.isFrontal = function(maxYaw, maxPitch){
   const p = S.headPose;
   if(!p){ const g = (typeof poseGeom==='function') ? poseGeom() : null; return g ? Math.abs(g.turn) < 0.06 : true; }
   return Math.abs(p.yaw) < (maxYaw||10) && Math.abs(p.pitch) < (maxPitch||15);
+};
+/* isFrontal answers "true" when there is no pose at all. Anything that must not
+   speak on a guess asks this first: is a head pose actually known right now? */
+PRO.poseKnown = function(){
+  const p = S.headPose;
+  if(p && isFinite(p.yaw) && isFinite(p.pitch)) return true;
+  const g = (typeof poseGeom==='function') ? poseGeom() : null;
+  return !!(g && isFinite(g.turn));
 };
 
 /* =====================================================================
@@ -21517,6 +21870,17 @@ var PLACE = {
                       the 1.9× grid drops only 9 points inside the zone, under the
                       12 we refuse to judge below — a 7×7 zone grid gives 25       */
   EPS: 0.3,        /* ΔE floor before the log, so a bare pixel can't blow it up    */
+  BARE_T: 1.2,     /* v102 · mean ΔE00 over the INNER points below which the zone
+                      reads as bare — the floor behind «لم تضعيها بعد».
+                      UNVERIFIED: it is the literal v94 used inline for 'start',
+                      i.e. 1.2×FLOOR and 3× the 0.4 synthetic per-point noise of
+                      test-placement.js. It is kept only so behaviour does not
+                      move. It must be replaced by a measured number: calib-bare.js
+                      takes the bare-face inner grid TWICE ~1 s apart, per zone, on
+                      ≥5 phones × 3 light levels; BARE_T is the 95th percentile of
+                      the mean of those inner points (the MDC-from-repeats method
+                      v79 already uses). Until it exists, any reading that cannot
+                      produce nIn falls to «لا أستطيع أن أتأكّد», never to «صحيحة».*/
   PATCHY_T: 0.153, /* MEASURED, not invented: twice the worst residual spread of a
                       smooth synthetic application (amounts 2–18, shifts 0–10 px —
                       past 10 px the placement rule speaks first, so patchiness is
@@ -21593,6 +21957,22 @@ var PLACE = {
     return { sd: Math.sqrt(ss / Math.max(1, n - 2)), n: n };
   },
 
+  /* v102 · how many clean points the amount was actually averaged over. amount()
+     returns a mean and discards the count, so a reading over 9 good points and a
+     reading over 1 noisy point are indistinguishable — and that is precisely the
+     difference between «لم تضعيها بعد» and «لا أستطيع أن أتأكّد». Same loop,
+     counting only, so the two can never disagree about which points they used. */
+  count: function (pts, R) {
+    var lim = R / this.SPAN, n = 0, i, p;
+    for (i = 0; i < pts.length; i++) {
+      p = pts[i];
+      if (!p || p.dE == null || !isFinite(p.dE)) continue;
+      if (Math.sqrt(p.u * p.u + p.v * p.v) > lim) continue;
+      n++;
+    }
+    return n;
+  },
+
   mm: function (px, fwPx) { return fwPx > 0 ? px * this.FACE_MM / fwPx : 0; },
 
   /* both cheeks drifting outward cancel out in raw u, so the side facing −u is
@@ -21615,18 +21995,31 @@ var PLACE = {
   /* the rule this whole fix exists for: position first, then amount, then balance.
      "build another layer" to a woman who put it in the wrong place makes it worse */
   verdict: function (o) {
+    /* v102 · the not-started tests come FIRST, before placement. Two reasons:
+       «لم تضعيها بعد» has to be reachable at all, and on a bare face a handful of
+       noise points above FLOOR give centroid a non-zero sum, so the placement
+       rule could otherwise claim «أبعد بـN مم» about makeup that is not there.
+       nIn = clean points behind the inner reading, bare = their mean ΔE00.
+       'thin' is NOT a judgement of her work: it means the reading did not carry
+       enough points to tell «nothing is there» from «I could not read it», and
+       the caller sends it out through the refusal door.                        */
+    if (o.nIn != null && o.nIn < this.MIN) return { kind: 'thin' };
+    if (o.nIn != null && o.bare != null && o.bare < this.BARE_T) return { kind: 'start' };
+    if (o.nIn == null && o.applied != null && o.applied < this.BARE_T) return { kind: 'thin' };
     if (o.place && o.place.mm > this.LIMIT_MM)
       return { kind: 'place', mm: Math.round(o.place.mm), dir: o.place.dir };
     /* patchiness before amount: one more layer over a blotchy one only makes it
        blotchier, so "build another layer" is harmful advice here too. Below 1.2
        there is no pigment to judge yet — that case belongs to 'start'. */
-    if (o.patch != null && o.patch > this.PATCHY_T && o.applied != null && o.applied >= 1.2)
+    if (o.patch != null && o.patch > this.PATCHY_T && o.applied != null && o.applied >= this.BARE_T)
       return { kind: 'patchy', sd: Math.round(o.patch * 100) / 100 };
     if (o.applied == null) return null;
     /* bandwidth feedback: inside her tolerance the right answer is SILENCE —
        the quiet itself tells her that was good enough (Sherwood 1988;
        Lee & Carnahan 1990). The band comes from TECH.band(target, herSpread). */
-    if (o.applied < 1.2) return { kind: 'start' };
+    /* v102 · reached only when the inner grid said «there is something» and the
+       outer amount says «there is not». Mixed evidence is not «لم تضعيها بعد». */
+    if (o.applied < this.BARE_T) return { kind: 'thin' };
     if (o.band > 0) {
       /* the band GOVERNS the talking: inside it, silence; outside it, one cue.
          The old fixed 0.35×/1.8× gates left a dead zone from 35 % to 180 % of
@@ -21637,8 +22030,6 @@ var PLACE = {
     }
     if (o.applied < o.target * 0.35) return { kind: 'more' };   /* no band: as before */
     if (o.applied > o.target * 1.8) return { kind: 'less' };
-    if (Math.abs(o.aR - o.aL) > Math.max(3, 0.4 * o.applied))
-      return { kind: 'uneven', side: o.aR < o.aL ? 'right' : 'left' };
     return { kind: 'good' };
   }
 };
@@ -21714,38 +22105,160 @@ function placeMsg(zone, v){
   const k = (zone === 'blush' && v.dir === 'down') ? 'blush_down' : v.dir;
   return eT(CPL[k] || CPL.down).replace('{n}', v.mm);
 }
+/* v102 · لقطة البداية لمنطقة واحدة — شيفرة واحدة يستعملها الالتقاط الكامل والتجديد */
+PRO.capZone = function(b, z, pair, rf, F){
+  b[z] = pair.map(i=>patchLab(i,rf));
+  /* v94 · the bare-face grid as well: without it there is nothing to subtract
+     a pigment map from, and the coach is back to two points */
+  if(F){
+    const gs = pair.map(i=>gridFor(i, rf, F)), B = gridBox(gs, F);
+    if(B){
+      b[z+'_g'] = gs.map(g=> g ? g.pts.map(p=>gridLab(B, p.x, p.y)) : null);
+      b[z+'_i'] = gs.map(g=> g ? g.inner.map(p=>gridLab(B, p.x, p.y)) : null);
+    }
+  }
+  return !!(b[z] && b[z][0] && b[z][1]);
+};
+/* v102 · أهم إصلاح في هذه الخطوة. كانت لقطة البداية تُلتقط مرة واحدة عند بدء الدرس،
+   وPATCH يعطي البلاشر نقطتَي كريم الأساس ونصف قطره نفسيهما — فبعد خطوة الأساس يقيس
+   المحرّك صبغة الأساس نفسها ويحكم «صحيحة» على بلاشر لم تضعه. تُجدَّد لقطة البداية
+   للمنطقة عند بداية خطوتها، فيُقاس منتج هذه الخطوة وحده لا ما سبقه. */
+PRO.rebase = function(zone){
+  const pl = S.plan;
+  if(!pl || !pl.baseline || !PATCH[zone] || !S.landmarks) return false;
+  const F = gridFrame(); if(!F) return false;
+  const ok = PRO.capZone(pl.baseline, zone, PATCH[zone][0], PATCH[zone][1], F);
+  if(ok) pl.baseline._light = S.light ? S.light.mean : pl.baseline._light;
+  return ok;
+};
 PRO.captureBaseline = function(){
   const b = {}; const F = gridFrame();
-  Object.entries(PATCH).forEach(([z,[pair,rf]])=>{
-    b[z] = pair.map(i=>patchLab(i,rf));
-    /* v94 · the bare-face grid as well: without it there is nothing to subtract
-       a pigment map from, and the coach is back to two points */
-    if(F){
-      const gs = pair.map(i=>gridFor(i, rf, F)), B = gridBox(gs, F);
-      if(B){
-        b[z+'_g'] = gs.map(g=> g ? g.pts.map(p=>gridLab(B, p.x, p.y)) : null);
-        b[z+'_i'] = gs.map(g=> g ? g.inner.map(p=>gridLab(B, p.x, p.y)) : null);
-      }
-    }
-  });
+  Object.entries(PATCH).forEach(([z,[pair,rf]])=>{ PRO.capZone(b, z, pair, rf, F); });
   b._light = S.light ? S.light.mean : null; return b;
 };
 const CT = {
   more:L3('اللون ما زال خفيفاً — ابني طبقة أخرى','Still very light — build one more layer','Masih tipis — tambah satu lapis'),
   less:L3('أكثر من المطلوب — خفّفي بإسفنجة نظيفة','More than needed — lift some off with a clean sponge','Terlalu banyak — angkat dengan spons'),
-  uneven:L3('الجانبان غير متساويين — زيدي على الجانب ','The sides differ — add a little to the ','Sisi berbeda — tambah di sisi '),
-  right:L3('الأقلّ لوناً','side with less colour','yang lebih tipis'), left:L3('الأقلّ لوناً','side with less colour','yang lebih tipis'),
   good:L3('ممتاز — الكمية والتوازن مضبوطان','Well done — amount and balance are right','Bagus — takaran dan seimbang'),
   light:L3('تغيّرت الإضاءة — لا أستطيع الحكم بدقة الآن','The light changed — I can\'t judge accurately right now','Cahaya berubah — tidak bisa menilai'),
   start:L3('ابدئي — سأراقب ما تضعينه','Go ahead — I\'m watching what you apply','Silakan — saya memantau'),
   hand:L3('يدكِ أمام المنطقة — سأقيس حين تبعدينها','Your hand is over the zone — I\'ll measure when you move it','Tanganmu menutupi area — saya ukur setelah kamu singkirkan')
 };
+/* v101 · «لا أستطيع أن أتأكّد» — a named refusal, never a silence.
+   Every place the coach gives up now leaves its reason key on S._coachWhy, so
+   the lesson bar and the friend advisor can SAY it instead of printing nothing
+   (an empty line reads as «كل شيء تمام»), and the step's 1.5 s «good» hold is
+   reset, so an unmeasured moment can never add up to a finished step.
+   light and hand already have their own sentences; the other four get theirs
+   here. No blame, no description of her face, no side named.                 */
+const CWHY = {
+  base: L3('لا أستطيع أن أتأكّد: لم أحفظ لقطة البداية — أعيدي بدء الدرس لألتقطها',
+           'I can\'t be sure: I never saved the starting shot — restart the lesson so I can take it',
+           'Saya tidak bisa memastikan: foto awal belum tersimpan — mulai ulang pelajaran agar saya bisa mengambilnya'),
+  zone: L3('لا أستطيع أن أتأكّد: هذه الخطوة خارج ما أقيسه — أكمليها بنفسكِ وسأعود في التالية',
+           'I can\'t be sure: this step is outside what I measure — carry on yourself and I\'ll be back on the next one',
+           'Saya tidak bisa memastikan: langkah ini di luar yang saya ukur — lanjutkan sendiri, saya kembali di langkah berikutnya'),
+  turn: L3('لا أستطيع أن أتأكّد: الكاميرا لا ترى المنطقة من الأمام — واجهيها لحظة وسأقيس',
+           'I can\'t be sure: the camera isn\'t seeing the zone straight on — face it for a moment and I\'ll measure',
+           'Saya tidak bisa memastikan: kamera tidak melihat area itu dari depan — hadap kamera sejenak dan saya ukur'),
+  few:  L3('لا أستطيع أن أتأكّد: النقاط الواضحة قليلة في هذه اللقطة — ثبّتي لحظة وسأعيد القياس',
+           'I can\'t be sure: too few clear points in this shot — hold still a moment and I\'ll measure again',
+           'Saya tidak bisa memastikan: titik yang jelas terlalu sedikit — diam sejenak dan saya ukur lagi'),
+  /* v102 · she asked about a zone the lesson is not standing on. coachCheck only
+     ever measures pl.lesson[pl.idx].zone, so any answer about another zone would
+     be a guess dressed as a measurement. */
+  other: L3('لا أستطيع أن أتأكّد: أقيس خطوة الدرس الحالية فقط — انتقلي إلى تلك الخطوة وسأجيبكِ عنها',
+            'I can\'t be sure: I only measure the step the lesson is on — move to that step and I\'ll answer for it',
+            'Saya tidak bisa memastikan: saya hanya mengukur langkah pelajaran saat ini — pindah ke langkah itu dan saya akan menjawabnya'),
+  /* v102 · لحظة انتقالها إلى خطوة جديدة: تُلتقط لقطة البداية لهذه المنطقة، وهذا
+     الإطار ليس حكمًا. جملة قصيرة كي لا تُقرأ كعطل. */
+  newstep: L3('لحظة — ألتقط لقطة البداية لهذه الخطوة',
+              'One moment — taking the starting shot for this step',
+              'Sebentar — mengambil foto awal untuk langkah ini'),
+  light: CT.light, hand: CT.hand
+};
+/* the reason key → one sentence in her language; '' when there is no reason */
+PRO.coachWhy = function(k){ const o = CWHY[k]; return o ? eT(o) : ''; };
+/* v102 · the five answers to «كيف هذه المرحلة؟». Same register as CT/CPL/CWHY:
+   a number with its unit where there is one, a direction only from up/down/in/out,
+   no side named, no word about her face, no blame. The «what to change» half of
+   answers 2 and 3 is the existing sentence, so there is one wording, not two. */
+const ANS = {
+  right:  L3('صحيحة ✓','Yes — it is right ✓','Ya — sudah benar ✓'),
+  wrong:  L3('ليست صحيحة — {m}','Not right — {m}','Belum benar — {m}'),
+  adjust: L3('تحتاج تعديلاً — {m}','It needs adjusting — {m}','Perlu disesuaikan — {m}'),
+  notyet: L3('لم تضعيها بعد — لا أقرأ أي منتج هنا. ابدئي وسأراقب.',
+             'You have not done it yet — I read no product here. Go ahead and I\'ll watch.',
+             'Belum kamu pakai — saya tidak membaca produk di sini. Silakan mulai, saya memantau.')
+};
+/* v102 · ONE answer object for every consumer. The order below IS the order of
+   truth and may not be reshuffled:
+     wrong step (5) → refusal (5) → not started (4) → placement (2) → amount (3)
+     → right (1).
+   `ask` is true only when SHE asked. Unasked, the band's own silence stays
+   silence — that silence is the approval (TECH.BAND, Sherwood 1988). Asked, the
+   same state is finally said out loud as «صحيحة»; that is the only place answer 1
+   is ever produced, and it is unreachable from any refusal above it.
+   kind: 'unsure' | 'notyet' | 'wrong' | 'adjust' | 'right'
+   out:  { kind, reason, zone, n, unit, dir, say, spoken }                      */
+PRO.stageAnswer = function(zone, ask){
+  const pl0 = S.plan, st0 = pl0 && pl0.lesson && pl0.lesson[pl0.idx], zj = st0 ? st0.zone : null;
+  const wrap = (kind, reason, n, unit, dir, s) =>
+    ({ kind, reason: reason || null, zone: zj, n: (n == null ? null : n),
+       unit: unit || null, dir: dir || null, say: s, spoken: s });
+  const no = k => wrap('unsure', k, null, null, null, PRO.coachWhy(k));
+  /* she asked about another zone: coachCheck would answer about this one */
+  if(zone && zj && zone !== zj) return no('other');
+  const m = PRO.coachCheck(zone);
+  if(S._coachWhy) return wrap('unsure', S._coachWhy, null, null, null,
+                              m || PRO.coachWhy(S._coachWhy));
+  const v = pl0 && pl0._cv;
+  if(!v) return no('few');
+  if(v.kind === 'start')  return wrap('notyet', null, null, null, null, eT(ANS.notyet));
+  if(v.kind === 'place')  return wrap('wrong', null, v.mm, 'mm', v.dir,
+                                      eT(ANS.wrong).replace('{m}', placeMsg(zj, v)));
+  if(v.kind === 'patchy') return wrap('adjust', null, v.sd, null, null,
+                                      eT(ANS.adjust).replace('{m}', eT(CPT)));
+  if(v.kind === 'more' || v.kind === 'less')
+                          return wrap('adjust', null, null, null, null,
+                                      eT(ANS.adjust).replace('{m}', eT(CT[v.kind])));
+  if(v.kind === 'good')   return wrap('right', null, null, null, null, ask ? eT(ANS.right) : '');
+  return no('few');
+};
+/* v102 · نداء واحد للسؤال: يضيف على جواب PRO.stageAnswer الحقول التي تعرضها الواجهة */
+window.lamhaStageAnswer = function(zone){
+  let a = null; try{ a = PRO.stageAnswer(zone, true); }catch(e){ a = null; }
+  if(!a) return null;
+  const pl = S.plan, st = pl && pl.lesson && pl.lesson[pl.idx];
+  let nm = ''; try{ nm = st ? (eT(STEP_N[st.key]) || '') : ''; }catch(e){}
+  a.text = a.say || '';
+  a.step = nm;
+  a.mark = a.kind === 'right' ? '✓' : a.kind === 'notyet' ? '◎' : a.kind === 'unsure' ? '◌' : '✎';
+  return a;
+};
+/* the one door out of coachCheck whenever it cannot judge: the reason is kept
+   for whoever prints it, and the step's hold is zeroed (TECH.holdDone treats
+   any kind other than 'good' as a reset) so the lesson cannot advance on it */
+function coachUnsure(pl, zone, key, msg){
+  S._coachWhy = key;
+  /* v102 · _cv is the raw verdict PRO.stageAnswer reads. A refusal erases it, or
+     the answer object could still say «صحيحة» from a reading we have disowned. */
+  if(pl){ pl._cw = key; pl._cm = (msg == null ? null : msg); pl._cv = null; }
+  try{ if(zone && window.LAMHA_TEACH) LAMHA_TEACH.step(zone, 'unsure'); }catch(e){}
+  return msg == null ? null : msg;
+}
 PRO.coachCheck = function(zone){
-  const pl = S.plan; if(!pl || !pl.lesson || !pl.baseline) return null;
-  const st = pl.lesson[pl.idx]; if(!st || !st.zone || !PATCH[st.zone]) return null;
-  const now = performance.now(); if(pl._ct && now - pl._ct < 1200) return pl._cm; pl._ct = now;
-  const base = pl.baseline[st.zone]; if(!base || !base[0] || !base[1]) return null;
-  if(pl.baseline._light!=null && S.light && Math.abs(S.light.mean - pl.baseline._light) > 0.09) return (pl._cm = eT(CT.light));
+  const pl = S.plan; if(!pl || !pl.lesson || !pl.baseline) return coachUnsure(pl, null, 'base');
+  const st = pl.lesson[pl.idx]; if(!st || !st.zone || !PATCH[st.zone]) return coachUnsure(pl, st && st.zone, 'zone');
+  /* v101 · the 1200 ms cache must carry the refusal too, or the reason blinks
+     out between two evaluations and the bar goes quiet again */
+  const now = performance.now();
+  /* v102 · the cache is keyed on the STEP as well as the clock: pressing Next used
+     to carry the previous step's verdict for up to 1.2 s into the new step. */
+  if(pl._ct && now - pl._ct < 1200 && pl._ci === pl.idx){ S._coachWhy = pl._cw || null; return pl._cm; }
+  pl._ct = now; pl._ci = pl.idx; S._coachWhy = null; pl._cw = null;
+  const base = pl.baseline[st.zone]; if(!base || !base[0] || !base[1]) return coachUnsure(pl, st.zone, 'base');
+  if(pl.baseline._light!=null && S.light && Math.abs(S.light.mean - pl.baseline._light) > 0.09) return coachUnsure(pl, st.zone, 'light', eT(CT.light));
   const [pair, rf] = PATCH[st.zone];
   /* her hand or the brush covers the zone: measure it afterwards, not the hand */
   const OC = window.LAMHA_OCC, lm0 = S.landmarks;
@@ -21754,12 +22267,29 @@ PRO.coachCheck = function(zone){
        measure the result the moment she lifts it — the coach below is untouched */
     let live = null;
     try{ live = window.LAMHA_HAND && window.LAMHA_HAND.message(st.zone); }catch(e){}
-    return (pl._cm = live || eT(CT.hand));
+    /* v101 · a guided stroke is still not a measurement: the reason is recorded
+       and the hold is zeroed, so a covered zone can never finish a step */
+    return coachUnsure(pl, st.zone, 'hand', live || eT(CT.hand));
+  }
+  /* v101 · a turned head foreshortens the zone, so the grid lands on pixels the
+     baseline never saw. Same frontal test the measurement pass uses (the two
+     halves of the nose must read equal, 0.075 of the face width). */
+  try{ const lmY = S.landmarks, WY = srcW(), HY = srcH();
+    if(lmY && lmY[33] && lmY[263] && lmY[168] && lmY[234] && lmY[454]){
+      const dY = (a,b)=>Math.hypot((a.x-b.x)*WY, (a.y-b.y)*HY), fwY = dY(lmY[234], lmY[454]);
+      if(fwY > 20 && Math.abs(dY(lmY[33],lmY[168]) - dY(lmY[263],lmY[168]))/fwY > 0.075)
+        return coachUnsure(pl, st.zone, 'turn');
+    } }catch(e){}
+  /* v102 · بداية خطوة جديدة: تُجدَّد لقطة البداية لهذه المنطقة الآن، والإطار الذي
+     تُلتقط فيه ليس حكمًا. بدونها يُقاس منتج الخطوة السابقة كأنه منتج هذه الخطوة. */
+  if(pl._need === st.zone){
+    if(PRO.rebase(st.zone)){ pl._need = null; pl._ct = 0; }
+    return coachUnsure(pl, st.zone, 'newstep');
   }
   /* v94 · pigment map: one read of the zone box, then 98 samples out of memory.
      Two points told us how much she put on; the map tells us where it landed. */
   const F = gridFrame(), bg = pl.baseline[st.zone+'_g'], bgi = pl.baseline[st.zone+'_i'] || [];
-  let place = null, aR = null, aL = null, applied = null, patch = null;
+  let place = null, aR = null, aL = null, applied = null, patch = null, nIn = null, bare = null;
   if(F && bg){
     const gs = pair.map(i=>gridFor(i, rf, F)), B = gridBox(gs, F);
     if(B){
@@ -21782,19 +22312,33 @@ PRO.coachCheck = function(zone){
           return { u:p.u, v:p.v, dE: dE00(lab, b1) };
         });
         const pa = bgi[k] ? PLACE.patchiness(ip, c) : null;
-        return { c, amount: PLACE.amount(pts, g.R), patch: pa ? pa.sd : null };
+        /* v102 · the same inner points, counted and averaged: how much is there,
+           and how many clean points say so. Null when this baseline carries no
+           inner grid (a plan restored from before v94) — then «لم تضعيها بعد»
+           is not claimed, and the honest answer is the refusal instead. */
+        return { c, amount: PLACE.amount(pts, g.R), patch: pa ? pa.sd : null,
+                 nIn: bgi[k] ? PLACE.count(ip, g.R) : null,
+                 bare: bgi[k] ? PLACE.amount(ip, g.R) : null };
       });
-      if(!sides[0] && !sides[1]) return null;   /* don't judge on a broken sample */
+      if(!sides[0] && !sides[1]) return coachUnsure(pl, st.zone, 'few');   /* don't judge on a broken sample */
       place = PLACE.combine(sides[0] && sides[0].c, sides[1] && sides[1].c, F.fw);
       aR = sides[0] ? sides[0].amount : null;
       aL = sides[1] ? sides[1].amount : null;
       applied = (aR!=null && aL!=null) ? (aR+aL)/2 : (aR!=null ? aR : aL);
       const pv = [sides[0] && sides[0].patch, sides[1] && sides[1].patch].filter(x=>x!=null);
       patch = pv.length ? Math.max.apply(null, pv) : null;   /* the worse cheek rules */
+      /* v102 · for «did she start?» the BETTER side rules, both times: the side
+         with more clean points decides whether there is a reading at all, and the
+         larger amount decides whether the zone is bare. One finished side is
+         never «nothing», and one blocked side never forces an invitation. */
+      const nv = [sides[0] && sides[0].nIn, sides[1] && sides[1].nIn].filter(x=>x!=null);
+      nIn = nv.length ? Math.max.apply(null, nv) : null;
+      const bv = [sides[0] && sides[0].bare, sides[1] && sides[1].bare].filter(x=>x!=null);
+      bare = bv.length ? Math.max.apply(null, bv) : null;
     }
   }
   if(applied == null){        /* a baseline from before this build: the old reading */
-    const cur = pair.map(i=>patchLab(i, rf)); if(!cur[0] || !cur[1]) return null;
+    const cur = pair.map(i=>patchLab(i, rf)); if(!cur[0] || !cur[1]) return coachUnsure(pl, st.zone, 'few');
     aR = dE00(cur[0], base[0]); aL = dE00(cur[1], base[1]); applied = (aR+aL)/2;
   }
   const prod = st.pick && st.pick.item && st.pick.item.lab ? st.pick.item.lab : (S.makeup[st.zone] ? hexLab(S.makeup[st.zone]) : null);
@@ -21805,8 +22349,16 @@ PRO.coachCheck = function(zone){
   pl._applied = applied; pl._target = target;   /* v94: the teacher reads the phase from these */
   if(applied != null){ (pl._hist = pl._hist || []).push(applied); if(pl._hist.length > 8) pl._hist.shift(); }
   const band = (window.LAMHA_TEACH && applied != null) ? TECH.band(target, TECH.sd(pl._hist)) : 0;
-  const v = PLACE.verdict({ place, patch, applied, target, band, aR: aR==null?applied:aR, aL: aL==null?applied:aL });
-  if(!v) return null;
+  const v = PLACE.verdict({ place, patch, applied, target, band, nIn, bare, aR: aR==null?applied:aR, aL: aL==null?applied:aL });
+  if(!v) return coachUnsure(pl, st.zone, 'few');
+  /* v102 · 'thin' is not a verdict about her work: too few clean points to tell
+     «nothing is there» from «I could not read it». It leaves by the same door as
+     every other refusal, so it can never be printed or spoken as «تمام». */
+  if(v.kind === 'thin') return coachUnsure(pl, st.zone, 'few');
+  /* v102 · the raw verdict, kept for PRO.stageAnswer. Without it the 3 s KR-delay
+     silence below is indistinguishable from her own band, and the friend advisor
+     answers «لا أرى ما يحتاج تعديلاً ✓» over a verdict that just said otherwise. */
+  pl._cv = v;
   try{ if(window.LAMHA_TEACH) LAMHA_TEACH.note(v.kind); }catch(e){}
   /* the quiet after her hand lifts belongs to her, not to me */
   try{ if(window.LAMHA_TEACH && !LAMHA_TEACH.maySpeak()) return (pl._cm = ''); }catch(e){}
@@ -21819,7 +22371,6 @@ PRO.coachCheck = function(zone){
   let msg;
   if(v.kind === 'place') msg = placeMsg(st.zone, v);
   else if(v.kind === 'patchy') msg = eT(CPT);
-  else if(v.kind === 'uneven') msg = eT(CT.uneven) + eT(v.side === 'right' ? CT.right : CT.left);
   else msg = eT(CT[v.kind]);
   try{ if(window.LAMHA_TEACH) LAMHA_TEACH.step(st.zone, v.kind); }catch(e){}   /* carried to the end */
   return (pl._cm = msg);
@@ -21827,10 +22378,19 @@ PRO.coachCheck = function(zone){
 (function(){
   const orig = window.lamhaCoach;
   window.lamhaCoach = function(z){
-    if(S.plan && S.plan.lesson){ const m = PRO.coachCheck(z); return m == null ? '' : m; }
+    if(S.plan && S.plan.lesson){
+      const m = PRO.coachCheck(z);
+      /* v101 · null is «لا أستطيع أن أتأكّد» and it is SAID; '' is the band's
+         own silence, which is the approval, and it stays silent. */
+      if(m == null) return PRO.coachWhy(S._coachWhy);
+      return m;
+    }
+    S._coachWhy = null;
     return orig ? orig(z) : '';
   };
 })();
+/* v102 · «كيف هذه المرحلة؟» — الأجوبة الخمسة في PRO.stageAnswer (فوق)، والجسر
+   window.lamhaStageAnswer معها؛ لا مصنِّف ثانٍ كي لا يفترق الجوابان يومًا. */
 
 PRO.startLesson = function(plan){
   plan = plan || (window.__ocLastPlan && window.__ocLastPlan());
@@ -21885,6 +22445,7 @@ renderPlanBar = function(){
     /* v96b: after the lesson (or in the plain step plan) the chip and the tips
        have no step to belong to — hide the chip, drop the tips */
     const tb0 = document.getElementById('plbTool'); if(tb0){ tb0.style.display = 'none'; tb0.dataset.h = ''; }
+    { const ab0 = document.getElementById('plbAsk'); if(ab0) ab0.classList.remove('on'); }   /* v102: no lesson, no verdict */
     document.querySelectorAll('#plbKit em.tip').forEach(e => e.remove());
     return _renderPlanBar.apply(this, arguments);
   }
@@ -21930,13 +22491,31 @@ renderPlanBar = function(){
     msg = (done ? '✓ ' : '◎ ') + eT(CUES[st.cue].t); good = done;
   }
   const cm = st.zone ? window.lamhaCoach(st.zone) : '';
+  /* v102 · the step is SPOKEN, not only printed. LAMHA_FC.speak already holds the
+     same line for 4 s and any line for 1.4 s, and uses the voice she chose, so
+     this adds no new speech engine. A refusal is spoken as a refusal — it is the
+     one thing v101 exists to make audible — and the band's own silence (cm === '')
+     stays silent, because that silence is the approval. */
+  /* v102 · ثلاث بوابات قبل أي نطق: مفتاح الكتم الذي اختارته، وصفحة ظاهرة (لا
+     كلام لهاتف في جيبها)، وميكروفون المرآة غير مستمع — وإلا سمع التطبيق نفسه
+     ونفّذ أمر نفسه، لأن ذلك المستمع مستمرّ ويعيد تشغيل نفسه. */
+  try{
+    const micOn = !!(document.getElementById('mkVoice') && document.getElementById('mkVoice').classList.contains('rec'));
+    const muted = (typeof window.lamhaChatVoiceOn === 'function') && !window.lamhaChatVoiceOn();
+    if(cm && !muted && !micOn && !document.hidden && window.LAMHA_FC && LAMHA_FC.speak) LAMHA_FC.speak(cm);
+  }catch(e){}
+  /* v101 · a refusal is neither a correction nor a pass: it never turns the
+     line green, it cancels a cue's own ✓, and it is printed in the quiet tone */
+  const unsure = !!(st.zone && S._coachWhy);
   if(cm){ msg = msg ? msg + ' · ' + cm : cm; good = good || /ممتاز|Well done|Bagus/.test(cm); }
-  if(msg){ box.textContent = msg; box.style.color = good ? 'var(--jade)' : 'var(--coral)'; box.classList.add('on'); }
+  if(unsure){ good = false; if(msg) msg = msg.replace(/^✓ /, '◌ '); }
+  if(msg){ box.textContent = msg; box.style.color = unsure ? 'var(--dim)' : good ? 'var(--jade)' : 'var(--coral)'; box.classList.add('on'); }
   else box.classList.remove('on');
   document.getElementById('plbPrev').disabled = pl.idx===0;
   document.getElementById('plbNext').textContent = pl.idx===pl.lesson.length-1 ? (LANG==='ar'?'إنهاء':LANG==='id'?'Selesai':'Finish') : t('rt_next');
   document.getElementById('plbBA').classList.toggle('on', !!S.baBefore);
   document.getElementById('plbBA').disabled = !st.zone;
+  { const ab = document.getElementById('plbAsk'); if(ab) ab.classList.add('on'); }   /* v102 */
   bar.classList.add('on'); document.body.classList.add('guideCompact');
 };
 (function(){
@@ -22379,7 +22958,7 @@ const sp = document.getElementById('sk-pro'); if(sp) sp.onclick = ()=>{ openShee
    ===================================================================== */
 (function(){
 'use strict';
-const VERSION = 'v94';
+const VERSION = 'v107';
 window.LAMHA_VERSION = VERSION;
 try{ if(!/ v\d+/.test(document.title)) document.title = document.title.replace('LAMHA MOBILE', 'LAMHA MOBILE '+VERSION); }catch(e){}
 const PRO = window.LAMHA_PRO;
@@ -22436,7 +23015,24 @@ function grownPoly(lm, idx, g, W, H){
 }
 
 /* category mask → occluder alpha (255 = something in front of the face) */
+/* v107 · القناع في طبقتين: طبقةٌ تحتاج وجهها (حجبُ اليد، إذ لا معنى لـ«داخل الوجه»
+   بلا وجه) وطبقةٌ لا تحتاجه (تصنيفُ المقسّم، ومنه يقرأ لونُ الشعر). فإن غاب وجهها
+   بُنيت الثانية وحدها وعُطِّل الحجب — ويبقى التصنيفُ وعمرُه مكتوبين في موضعٍ واحد
+   لا غير، كما كانا. */
 function build(cat, W, H, lm){
+  const g = lm ? buildFace(cat, W, H, lm) : noFaceMask(W, H);
+  OCC.W=W; OCC.H=H; OCC.bytes=g; OCC._cat=cat; OCC._catT=performance.now(); OCC.version++;   /* v97: the mask's own age */
+  OCC._snap=lm; OCC._catSrc=SRC;                    /* the hair colour reads its mask from here too */
+  mC.width=W; mC.height=H;
+  const img = mX.createImageData(W, H);
+  for(let i=0, q=3; i<W*H; i++, q+=4) img.data[q] = g[i];
+  mX.putImageData(img, 0, 0);
+}
+function noFaceMask(W, H){
+  OCC.cover = 0; OCC.inner = 0; OCC.hand = 0; OCC.active = false;   /* لا وجهَ يُحجب */
+  return new Uint8Array(W*H);
+}
+function buildFace(cat, W, H, lm){
   const SEG = PRO.SEG;
   let fx0=1e9, fx1=-1e9, fy0=1e9, fy1=-1e9;
   L.faceOval.forEach(i=>{ const x=lm[i].x*W, y=lm[i].y*H;
@@ -22490,12 +23086,7 @@ function build(cat, W, H, lm){
   OCC.hand = areaIn ? nHand/areaIn : 0;               /* the hand alone, for the notice */
   OCC.active = OCC.on && (STILL || OCC.mode !== 'off') && OCC.cover > 0.004;
   if(OCC.active) handNotice();
-  OCC.W=W; OCC.H=H; OCC.bytes=g; OCC._cat=cat; OCC._catT=performance.now(); OCC.version++;   /* v97: the mask's own age */
-  OCC._snap=lm; OCC._catSrc=SRC;                    /* the hair colour reads its mask from here too */
-  mC.width=W; mC.height=H;
-  const img = mX.createImageData(W, H);
-  for(let i=0, q=3; i<W*H; i++, q+=4) img.data[q] = g[i];
-  mX.putImageData(img, 0, 0);
+  return g;                                         /* v107 · الكتابة صارت في build وحده */
 }
 
 /* first sight of a hand over the face: say so, so she knows the makeup is
@@ -22523,6 +23114,22 @@ function grab(){
   segC.width = Math.max(8, Math.round(vw*sc)); segC.height = Math.max(8, Math.round(vh*sc));
   segX.drawImage(SRC, 0, 0, segC.width, segC.height);
   return { snap: lm.map(p=>({ x:p.x, y:p.y })), src: SRC };
+}
+/* v107 · مهمّةٌ للشعر وحده، بلا لقطة علامات. الشرط أعلاه («لقطةٌ من هذا الإطار
+   بعينه أو لا مهمّة») يحرس قناعَ حجب اليد، وهو حقٌّ يجب أن يبقى: قناعُ يدٍ مبنيٌّ
+   على علاماتٍ من إطارٍ آخر يُخفي المكياج عن موضعٍ خاطئ. أمّا لونُ الشعر فلا يحتاج
+   العلاماتِ أصلًا — المقسّم يجد الشعر في الصورة — فيمضي بلقطةٍ فارغة، وبناءُ القناع
+   يعرف من فراغها أن لا يبني حجبًا. بهذا لا تنطفئ الصبغة حين تُميل رأسها لتراها. */
+function grabHair(){
+  if(STILL) return null;                       /* صورةٌ ثابتة: قناعها مربوطٌ بعلاماتها */
+  const vw = srcW(), vh = srcH(), sc = Math.min(1, 256/Math.max(vw, vh));
+  segC.width = Math.max(8, Math.round(vw*sc)); segC.height = Math.max(8, Math.round(vh*sc));
+  segX.drawImage(SRC, 0, 0, segC.width, segC.height);
+  return { snap: null, src: SRC, hairOnly: true };
+}
+function grabAny(){
+  const j = grab(); if(j) return j;
+  return (S.hairColour || S.tryCut || S.wornHijab) ? grabHair() : null;
 }
 function slowToast(){
   say(LANG==='ar' ? 'هذا الجهاز بطيء على كشف اليد — أوقفتُه كي تبقى المرآة سلسة'
@@ -22556,7 +23163,7 @@ async function runMain(){
     if(!PRO || !PRO.ensureSegmenter){ OCC.on = false; return; }
     const seg = await PRO.ensureSegmenter();
     if(!seg){ OCC.unavailable = true; return; }
-    const job = grab(); if(!job) return;
+    const job = grabAny(); if(!job) return;                        /* v107 */
     let cat = null, W = 0, H = 0;
     const take = r => { const m = r && r.categoryMask; if(m){ W=m.width; H=m.height; cat=m.getAsUint8Array().slice(); } };
     const t0 = performance.now();
@@ -22645,7 +23252,7 @@ function startWorker(){
   }catch(e){ toMain(e && e.message); }
 }
 function runWorker(){
-  const job = grab(); if(!job){ OCC.busy = false; return; }
+  const job = grabAny(); if(!job){ OCC.busy = false; return; }     /* v107 */
   job.id = ++WK.id; job.t0 = performance.now();
   WK.job = job;
   /* the bitmap is a copy of segC taken now, so segC is free again at once */
@@ -22660,7 +23267,9 @@ function onMask(m){
   WK.job = null; WK.stalls = 0; OCC.busy = false; OCC.lastRun = performance.now();
   if(m.type !== 'mask') return;
   took(performance.now() - job.t0);
-  if(job.src !== SRC || !S.landmarks) return;          /* a new photo, or the face left */
+  if(job.src !== SRC) return;                          /* a new photo */
+  /* v107 · وجهٌ غادر أثناء عمل العامل لا يُلقي قناعًا صالحًا: القناع ولقطتُه
+     متوافقان معًا، وصبغةُ الشعر تنتفع به سواء عاد الوجه أم لا. */
   build(m.data, m.w, m.h, job.snap);
   if(STILL) OCC.stillKey = job.src;
 }
@@ -22668,7 +23277,11 @@ function onMask(m){
 /* called once per frame by the loop: decides, never blocks the frame */
 OCC.tick = function(){
   OCC._frames = (OCC._frames || 0) + 1;
-  if(!OCC.on || !S.landmarks || window.__PT) return;
+  if(OCC._frames === 1) OCC._t1 = performance.now();            /* v103 · first painted frame, once per session */
+  /* v107 · بلا وجه كان المقسّم يتوقّف تمامًا، فيتجمّد قناع الشعر عند آخر وضعية
+     رآها فيها وجهٌ — وهو سبب «ارتفاع اللون» حين تُميل رأسها لترى شعرها. */
+  const hairOn = !!(S.hairColour || S.tryCut || S.wornHijab);
+  if(!OCC.on || window.__PT || (!S.landmarks && !hairOn)) return;
   if(OCC.busy){
     /* a worker that never answers must not stall occlusion for good */
     if(WK.job && performance.now() - WK.job.t0 > 5000){
@@ -22692,10 +23305,20 @@ OCC.tick = function(){
     const lessonOnly = OCC.mode === 'lesson' && OCC.engine === 'main';
     const blocked = OCC.mode === 'off' || (lessonOnly && !(S.plan && S.plan.on));
     if(blocked && !hairNeed){ OCC.active = false; return; }
-    const gapNow = blocked ? Math.max(OCC.engine === 'main' ? 700 : 400, OCC.gap) : OCC.gap;
+    /* v106 · حين تجلس صبغةٌ على شعرها فالقناع هو الصورة نفسها، لا فحصُ أمانٍ لليد:
+       إيقاعه يتبع كلفته هو، ولا تحكمه سياسةُ كشف اليد التي كانت تفرض 700/400 مللي. */
+    const hairGap = OCC.engine === 'worker' ? Math.max(70, Math.min(400, OCC.ms*1.1))
+                                            : Math.max(150, Math.min(700, OCC.ms*2.2));
+    const gapNow = hairNeed ? hairGap
+                 : blocked ? Math.max(OCC.engine === 'main' ? 700 : 400, OCC.gap) : OCC.gap;
     if(now - OCC.lastRun < gapNow) return;
-    const moved = motion() > 5, stale = now - OCC.lastRun > (hairNeed ? 600 : 1100), holding = OCC.inner > 0.01;
-    if(!(moved || stale || holding)) return;
+    const moved = motion() > 5, stale = now - OCC.lastRun > (hairNeed ? 450 : 1100), holding = OCC.inner > 0.01;
+    /* v107 · سببان جديدان لطلب قناعٍ الآن:
+       (١) لا وجه — فلا شيء يحمل القناع، والقراءة الطازجة هي كل ما يبقى صحيحًا؛
+       (٢) الحملُ لم يعد ينطبق (بقايا المطابقة كبيرة) — أي أن القناع لم يعد يصف رأسها. */
+    const noFace = hairNeed && !S.landmarks;
+    const misfit = hairNeed && (OCC._hairFit || 0) > 0.05;
+    if(!(moved || stale || holding || noFace || misfit)) return;
   }
   OCC.busy = true;
   if(OCC.engine === 'worker') runWorker();
@@ -22764,9 +23387,208 @@ if(/[?&]debug=1/.test(location.search)){
       ' · ' + OCC.mode : 'off') + ' · ' + Math.round(OCC.ms) + ' ms · cover ' + Math.round(OCC.cover*100) +
       '% · hand ' + Math.round(OCC.hand*100) + '%' + (OCC.active ? ' ✓' : '') +
       (S.lightDir ? '\nlight x' + S.lightDir.x.toFixed(2) + ' y' + S.lightDir.y.toFixed(2) +
-        ' z' + S.lightDir.z.toFixed(2) + ' · k ' + S.lightDir.k.toFixed(2) : '');
+        ' z' + S.lightDir.z.toFixed(2) + ' · k ' + S.lightDir.k.toFixed(2) : '') +
+      /* v106 · حمل قناع الشعر: عمر القناع، وبقايا المطابقة، والثقة التي تضرب الشدّة.
+         هذه هي الأرقام التي تقول إن كان التأخّر قد زال على هاتفها هي. */
+      (S.hairColour && window.__hairInfo ? (()=>{ const h = window.__hairInfo();
+        const q = window.lamhaHairSegInfo ? window.lamhaHairSegInfo() : null;
+        return '\nhair age ' + (h.age == null ? '?' : h.age) + ' ms · fit ' +
+          (h.fit == null ? '?' : h.fit) + ' · trust ' + (h.trust == null ? '?' : h.trust) +
+          '\nmask ' + (q ? q.n : '?') + ' px · ' + (OCC._hairCarry === false ? 'no-carry' : 'carry') +
+          ' · masks/s ' + (OCC.ms ? (1000/Math.max(1, OCC.ms + (OCC.gap||0))).toFixed(1) : '?'); })() : '');
   }, 500);
 }
+})();
+</script>
+<script>
+/* =====================================================================
+   LAMHA PERF PANEL (v103) — LAMHA-MASTER-TASKS item 9
+   A diagnostics readout any tester can switch on and copy to us.
+   · switch: ?perf=1 in the address bar, or a 1.2 s press on the clock in
+     the top bar (#clock). The fps chip cannot be used — it is display:none.
+     The top bar fades after 4.5 s and is then pointer-events:none, so she
+     taps the mirror once to bring it back, then presses the clock.
+   · nothing leaves the device: the copy control writes to the clipboard
+     only, the same two-step the Settings report uses. No fetch is added.
+   · off costs nothing: no timer, no DOM node, the canvas prototype is
+     untouched (and restored on close), and window.__PERF is deleted, so
+     the two hooks in loop() are a single property read each.
+   · it reads state. It never writes any drawing state.
+   ===================================================================== */
+(function(){
+'use strict';
+var N = 120;                                     /* frames kept for the mean and the 95% */
+var ring = new Float32Array(N), srt = new Float32Array(N);
+var idx = 0, have = 0, t0 = 0;
+var gSum = 0, fSum = 0, fCnt = 0, wT = 0, lFps = 0, lG = 0, lF = 0;
+var box = null, out = null, timer = null, cvEl = null;
+var C = { gid:0, flt:0 };
+var CP = window.CanvasRenderingContext2D && window.CanvasRenderingContext2D.prototype;
+var oGID = null, oFLT = null;
+
+/* ---- the two counters. Installed only while the panel is open. ---- */
+function hook(){
+  if(!CP || oGID) return;
+  oGID = CP.getImageData;
+  CP.getImageData = function(x, y, w, h, s){          /* named args, not arguments+apply: no allocation */
+    C.gid++;
+    return s === undefined ? oGID.call(this, x, y, w, h) : oGID.call(this, x, y, w, h, s);
+  };
+  var d = Object.getOwnPropertyDescriptor(CP, 'filter');   /* the native one, or the blur shim's */
+  if(d && typeof d.set === 'function' && d.configurable){
+    oFLT = d;
+    Object.defineProperty(CP, 'filter', { configurable:true, enumerable:d.enumerable,
+      get:d.get, set:function(v){ C.flt++; return d.set.call(this, v); } });
+  }
+}
+function unhook(){
+  if(!CP) return;
+  if(oGID){ CP.getImageData = oGID; oGID = null; }
+  if(oFLT){ try{ Object.defineProperty(CP, 'filter', oFLT); }catch(e){} oFLT = null; }
+}
+
+/* ---- what loop() calls: arithmetic and typed-array stores, nothing allocated ---- */
+var API = {
+  a:function(){ t0 = performance.now(); C.gid = 0; C.flt = 0; },
+  b:function(){
+    ring[idx] = performance.now() - t0; idx = (idx + 1) % N; if(have < N) have++;
+    gSum += C.gid; fSum += C.flt; fCnt++;
+  }
+};
+
+function mean(){ var s = 0; for(var i = 0; i < have; i++) s += ring[i]; return have ? s / have : 0; }
+function p95(){
+  if(!have) return 0;
+  for(var i = 0; i < have; i++) srt[i] = ring[i];
+  var v = srt.subarray(0, have); v.sort();
+  return v[Math.min(have - 1, Math.floor(have * 0.95))];
+}
+
+/* ---- twice a second, one textContent write ---- */
+function render(){
+  if(!out) return;
+  try{
+    var now = performance.now(), dt = now - wT;
+    lFps = dt > 0 ? fCnt * 1000 / dt : 0;
+    lG = fCnt ? gSum / fCnt : 0;
+    lF = fCnt ? fSum / fCnt : 0;
+    fCnt = 0; gSum = 0; fSum = 0; wT = now;
+    var O = window.LAMHA_OCC || {}, V = window.__vision || {};
+    var c = cvEl || (cvEl = document.getElementById('cv'));
+    out.textContent =
+      (window.LAMHA_VERSION || '?') + '  ' + (c ? c.width + '×' + c.height : '?') +
+        '  GL ' + (S.showGL ? 1 : 0) + '/' + (window.glFaceActive ? 1 : 0) +
+        '  LP ' + (S._lowPower ? 1 : 0) + '\n' +
+      'fps ' + lFps.toFixed(1) + '    n ' + have + '\n' +
+      'ms  x̄ ' + mean().toFixed(0) + '   95% ' + p95().toFixed(0) + '\n' +
+      'getImageData ' + lG.toFixed(1) + '/f   filter ' + lF.toFixed(1) + '/f\n' +
+      'OCC ' + Math.round(O.ms || 0) + ' / ' + Math.round(O.gap || 0) + ' ms  ' +
+        (O.engine || '?') + '·' + (O.mode || '?') + '  lm ' + (V.delegate || '?') + '\n' +
+      '▣ ' + Math.round(O._t1 || 0) + ' ms   ☻ ' + Math.round(S._tFace || 0) + ' ms';
+  }catch(e){}
+}
+
+/* ---- copy: clipboard only, the same two-step as the Settings report ---- */
+function put(s, btn){
+  var done = function(ok){
+    btn.textContent = ok ? '✓' : '✕';
+    setTimeout(function(){ btn.textContent = '⧉'; }, 1500);
+  };
+  var fb = function(){
+    var ok = false;
+    try{
+      var ta = document.createElement('textarea');
+      ta.value = s; ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      document.body.appendChild(ta); ta.select();
+      ok = document.execCommand('copy'); ta.remove();
+    }catch(e){}
+    done(ok);
+  };
+  try{
+    var p = navigator.clipboard && navigator.clipboard.writeText(s);
+    if(p && p.then){ p.then(function(){ done(true); }, fb); return; }   /* handled, so never an unhandledrejection */
+  }catch(e){}
+  fb();
+}
+function copy(btn){
+  try{
+    var c = cvEl || (cvEl = document.getElementById('cv'));
+    var O = window.LAMHA_OCC || {}, V = window.__vision || {};
+    put(JSON.stringify({
+      app:'LAMHA perf', version:window.LAMHA_VERSION || '?', at:new Date().toISOString(),
+      ua:navigator.userAgent,
+      screen:screen.width + 'x' + screen.height + ' @' + (window.devicePixelRatio || 1),
+      canvas:c ? c.width + 'x' + c.height : null,
+      frames_in_window:have,
+      frame_ms_mean:+mean().toFixed(1), frame_ms_p95:+p95().toFixed(1), fps:+lFps.toFixed(1),
+      getImageData_per_frame:+lG.toFixed(2), ctx_filter_sets_per_frame:+lF.toFixed(2),
+      occ_ms:Math.round(O.ms || 0), occ_gap_ms:Math.round(O.gap || 0),
+      occ_engine:O.engine || null, occ_mode:O.mode || null,
+      landmark_delegate:V.delegate || null,
+      gpu_layer_on:!!S.showGL, gpu_owns_face:!!window.glFaceActive, low_power:!!S._lowPower,
+      canvas_filter:window.__lamhaBlurShim ? 'emulated' : 'native',
+      first_painted_frame_ms:Math.round(O._t1 || 0), first_face_ms:Math.round(S._tFace || 0)
+    }, null, 1), btn);
+  }catch(e){}
+}
+
+/* ---- open / close ---- */
+function on(){
+  if(box) return;
+  hook();
+  idx = 0; have = 0; C.gid = 0; C.flt = 0; gSum = 0; fSum = 0; fCnt = 0; wT = performance.now();
+  box = document.createElement('div');
+  box.id = 'lamhaPerf';
+  box.style.cssText = 'position:fixed;left:6px;bottom:calc(var(--dock, 86px) + var(--safe-b, 0px) + 8px);' +
+    'z-index:99998;direction:ltr;text-align:left;display:flex;align-items:flex-start;gap:6px;' +
+    'font:10.5px/1.45 ui-monospace,Menlo,Consolas,monospace;color:#fff;' +
+    'background:rgba(0,0,0,.68);padding:5px 7px;border-radius:7px;max-width:92vw';
+  out = document.createElement('pre');
+  out.style.cssText = 'margin:0;white-space:pre;font:inherit;color:inherit';
+  var bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;flex-direction:column;gap:4px';
+  var bs = 'font:13px/1 ui-monospace,Menlo,Consolas,monospace;color:#fff;' +
+    'background:rgba(255,255,255,.16);border:0;border-radius:5px;width:28px;height:24px;padding:0';
+  var bC = document.createElement('button'); bC.style.cssText = bs; bC.textContent = '⧉';
+  var bX = document.createElement('button'); bX.style.cssText = bs; bX.textContent = '✕';
+  bC.onclick = function(){ copy(bC); };
+  bX.onclick = function(){ off(); };
+  bar.appendChild(bC); bar.appendChild(bX);
+  box.appendChild(out); box.appendChild(bar);
+  document.body.appendChild(box);
+  window.__PERF = API;
+  timer = setInterval(render, 500);
+  render();
+}
+function off(){
+  if(!box) return;
+  clearInterval(timer); timer = null;
+  try{ delete window.__PERF; }catch(e){ window.__PERF = null; }
+  unhook();
+  try{ box.remove(); }catch(e){}
+  box = null; out = null;
+}
+window.lamhaPerfPanel = function(v){ if(v === false || (v === undefined && box)) off(); else on(); };
+
+/* ---- the switch: ?perf=1, or a 1.2 s press on the clock ---- */
+if(/[?&]perf=1/.test(location.search)) on();
+(function(){
+  var el = document.getElementById('clock'); if(!el) return;
+  var tm = 0, clear = function(){ if(tm){ clearTimeout(tm); tm = 0; } };
+  el.style.touchAction = 'manipulation';
+  el.style.webkitUserSelect = 'none'; el.style.userSelect = 'none';
+  el.addEventListener('pointerdown', function(e){
+    e.stopPropagation();                                   /* the #stage handler must not fade the bar mid-press */
+    try{ if(typeof wake === 'function') wake(); }catch(e2){}
+    try{ el.setPointerCapture(e.pointerId); }catch(e2){}
+    clear();
+    tm = setTimeout(function(){ tm = 0; window.lamhaPerfPanel(); }, 1200);
+  });
+  el.addEventListener('pointerup', clear);
+  el.addEventListener('pointercancel', clear);
+  el.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+})();
 })();
 </script>
 <script>
@@ -22935,7 +23757,7 @@ const TXT = {
   faded: T3('مزجتِ {l} حتى خفّ كثيراً — أضيفي قليلاً في الوسط وامزجي بلطف','{l} has been blended almost away — add a little at the centre and blend gently','{l} terlalu tipis — tambah sedikit di tengah'),
   down: T3('لا تسحبي الكونتور للأسفل — امزجيه للأعلى نحو الصدغ','Don\'t drag the contour down — blend it up toward the temple','Jangan tarik kontur ke bawah — baurkan ke atas'),
   good: T3('ممتاز — مزج ناعم بلا خطوط ظاهرة ✓','Well done — a soft blend, no visible lines ✓','Bagus — baur halus tanpa garis ✓'),
-  R: T3('على اليمين','on the right','di kanan'), L: T3('على اليسار','on the left','di kiri'),
+  mark: T3('المُعلَّم {n} على الشاشة','marked {n} on screen','yang ditandai {n} di layar'),
   higher: T3('أعلى','higher','lebih tinggi'), lower: T3('أسفل','lower','lebih rendah'),
   outer: T3('نحو الأذن','toward the ear','ke arah telinga'), inner: T3('نحو الأنف','toward the nose','ke arah hidung'),
   lbl: { cheek:T3('خط الخد','the cheek line','garis pipi'), temple:T3('خط الصدغ','the temple line','garis pelipis'),
@@ -23906,7 +24728,7 @@ BL.tick = function(force){
   const res = analyse(G, secs, prof, skip); BL.res = res;
   const R = res.strokes.filter(Boolean);
   if(!R.length){ setMsg(tx(BL.phase === 'lines' ? TXT.goA : TXT.goB), false); return res; }
-  const lbl = r => tx(TXT.lbl[r.s.tag] || TXT.lbl.dot), sd = r => tx(TXT[r.s.side]);
+  const lbl = r => tx(TXT.lbl[r.s.tag] || TXT.lbl.dot), sd = r => r.s.num ? fmt(TXT.mark, { n: r.s.num }) : '';
   if(BL.phase === 'lines'){
     R.forEach(r => { if(r.frac >= 0.5 && r.pk > (BL.pkA[r.si] || 0)) BL.pkA[r.si] = r.pk; });
     const bad = R.find(r => r.frac >= 0.5 && Math.abs(r.off) > 0.9);
@@ -23920,7 +24742,7 @@ BL.tick = function(force){
       if(now - BL.placedT > 1200){ BL.setPhase('blend'); setMsg(tx(TXT.goB), false); }
     } else if(done > 0){
       const next = R.find(r => r.frac < 0.5); BL.placedT = 0;
-      setMsg(fmt(TXT.placed, { n:done, N:R.length, l:lbl(next) + ' ' + sd(next) }), false);
+      setMsg(fmt(TXT.placed, { n:done, N:R.length, l:(lbl(next) + ' ' + sd(next)).trim() }), false);
     } else { BL.placedT = 0; setMsg(tx(TXT.goA), false); }
   } else {
     const faded = r => (BL.pkA[r.si] || 0) > 0 && r.pkAll < 0.22*BL.pkA[r.si];
@@ -23990,10 +24812,14 @@ function bar(){
     tEl.textContent = tx(ph[BL.phase === 'lines' ? 'a' : 'b']) + (orig ? '\n' + orig : ''); tEl.style.whiteSpace = 'pre-line'; }
   const box = document.getElementById('plbCoach');
   if(box && BL.msg){
-    const was = box.classList.contains('on') ? box.textContent : '', cue = /^[◎✓] /.test(was) ? was.split(' · ')[0] : '';
-    box.textContent = (cue ? cue + ' · ' : '') + BL.msg;
-    box.style.color = BL.ok ? 'var(--jade)' : 'var(--coral)'; box.classList.add('on');
+    const was = box.classList.contains('on') ? box.textContent : '', cue = /^[◎✓◌] /.test(was) ? was.split(' · ')[0] : '';
+    /* v101 · the blend coach owns this line, so it must carry the coach's
+       «لا أستطيع أن أتأكّد» too — dropping it would leave only its own green ✓ */
+    let why = ''; try{ why = (S._coachWhy && window.LAMHA_PRO && LAMHA_PRO.coachWhy) ? LAMHA_PRO.coachWhy(S._coachWhy) : ''; }catch(e){}
+    box.textContent = (cue ? cue + ' · ' : '') + BL.msg + (why ? ' · ' + why : '');
+    box.style.color = why ? 'var(--dim)' : BL.ok ? 'var(--jade)' : 'var(--coral)'; box.classList.add('on');
   }
+
 }
 if(typeof _rpb === 'function') window.renderPlanBar = function(){ const r = _rpb.apply(this, arguments); try{ bar(); }catch(e){} return r; };
 BL.build = (key, src) => { const lm = S.landmarks; return lm ? (src ? inSrc(() => build(lm, key)) : build(lm, key)) : null; };
@@ -27480,6 +28306,8 @@ const CX = {
   lookCam:'انظري إلى الكاميرا أولاً حتى أرى وجهكِ 👀', needFace:'أحتاج أن أرى وجهكِ: افتحي المرآة أو حلّلي صورة.',
   fixZone:'أي منطقة نعتني بها؟', fixProb:'ما الذي نعدّله في {z}؟',
   watch:'راقبيني وأنا أضعه', watchStart:'سأراقب {z} لدقيقة ونصف وأنبّهكِ بصوتي 👀', watchStop:'توقّفي عن المراقبة', watchEnd:'انتهت المراقبة. أحسنتِ 👏',
+  stageChip:'كيف هذه المرحلة؟', stageNoLesson:'لا درس مفتوح الآن — ابدئي الدرس وسأحكم على كل مرحلة وأنتِ تضعينها.',
+  watchEndUnsure:'انتهت المراقبة — ولم أستطع أن أتأكّد، فلم أحكم على شيء.',
   checkNone:'لا أرى ما يحتاج تعديلاً في {z} الآن ✓', howFix:'كيف أصلحه؟', another:'لمسة أخرى',
   teachQ:'ماذا تريدين أن تتعلّمي؟', teachHead:'طريقة وضع {z}:', forShape:'لوجهكِ ({s}):', tryOn:'جرّبيه على وجهي',
   sugHead:'هذا ما أقترحه لوجهكِ:', apply:'طبّقيه على وجهي', applied:'تمّ! إطلالتكِ على وجهكِ الآن ✨', occ:'حسب المناسبة',
@@ -27540,6 +28368,8 @@ const CX = {
   lookCam:'Look at the camera first so I can see your face 👀', needFace:'I need to see your face: open the mirror or analyse a photo.',
   fixZone:'Which area shall we work on?', fixProb:'What\'s happening with your {z}?',
   watch:'Watch me apply it', watchStart:'I\'ll watch your {z} for a minute and a half and tell you out loud 👀', watchStop:'Stop watching', watchEnd:'Done watching. Well done 👏',
+  stageChip:'How is this stage?', stageNoLesson:'No lesson is open right now — start the lesson and I will judge every stage as you do it.',
+  watchEndUnsure:'Done watching — I couldn\'t be sure, so I didn\'t judge anything.',
   checkNone:'Nothing about your {z} needs a touch-up right now ✓', howFix:'How do I fix it?', another:'Another touch-up',
   teachQ:'What would you like to learn?', teachHead:'How to apply {z}:', forShape:'For your face ({s}):', tryOn:'Try it on my face',
   sugHead:'Here is what I suggest for your face:', apply:'Put it on my face', applied:'Done! Your look is on ✨', occ:'By occasion',
@@ -27600,6 +28430,8 @@ const CX = {
   lookCam:'Lihat ke kamera dulu agar aku bisa melihat wajahmu 👀', needFace:'Aku perlu melihat wajahmu: buka cermin atau analisis foto.',
   fixZone:'Area mana yang ingin kita rapikan?', fixProb:'Apa yang perlu dirapikan pada {z}?',
   watch:'Awasi aku memakainya', watchStart:'Aku akan mengawasi {z}-mu satu setengah menit dan memberi tahu dengan suara 👀', watchStop:'Berhenti mengawasi', watchEnd:'Selesai. Bagus sekali 👏',
+  stageChip:'Bagaimana tahap ini?', stageNoLesson:'Tidak ada pelajaran yang terbuka — mulai pelajaran dan aku menilai setiap tahap saat kamu mengerjakannya.',
+  watchEndUnsure:'Selesai mengawasi — aku tidak bisa memastikan, jadi aku tidak menilai apa pun.',
   checkNone:'Belum ada yang perlu dirapikan pada {z} sekarang ✓', howFix:'Bagaimana memperbaikinya?', another:'Rapikan yang lain',
   teachQ:'Mau belajar apa?', teachHead:'Cara memakai {z}:', forShape:'Untuk wajahmu ({s}):', tryOn:'Coba di wajahku',
   sugHead:'Ini saranku untuk wajahmu:', apply:'Pakaikan di wajahku', applied:'Selesai! Tampilanmu sudah terpasang ✨', occ:'Sesuai acara',
@@ -27654,6 +28486,8 @@ const IK = {
   scan:['المحل','المتجر','السوق','المول','صوري المنتج','صور المنتج','صورت','سكان','in the store','in store','in the shop','at the shop','scan','toko','foto produk'],
   buy:['اشتري','اشتريه','اشتريها','شراء','يستاهل','يستحق','هل اخذ','ابغى اشتري','بدي اشتري','ناوي اشتري','should i buy','buy','worth it','purchase','beli','layak'],
   fix:['اصلح','صلح','صلحي','تصليح','خربت','خربان','مشكله','غلط','ثقيل','متكتل','مكتل','مبقع','برتقالي','رمادي','ملطخ','يسيح','ساح','يتشقق','متشقق','سميك','حاد','فاتح جدا','غامق جدا','fix','mistake','wrong','cakey','patchy','ashy','orange','smudg','creas','flaky','clump','bleed','perbaiki','salah','belang','gumpal'],
+  /* v102 · «كيف هذه المرحلة؟» — a question about the step she is on, not about the whole face */
+  stage:['كيف هذه المرحلة','كيف هذي المرحلة','كيف المرحلة','هذه المرحلة','كيف هذه الخطوة','كيف الخطوة','هذه الخطوة صحيحة','هل هذا صحيح','هل هذه صحيحة','هل صحيح','هل ضبطت','ضبطتها','كيف صارت','كيف صار','كيف طلعت','كيف خرجت','how is this stage','how is this step','is this right','is this correct','did i get it right','did i do it right','how did it come out','how does this look now','is this step right','bagaimana ini','bagaimana tahap ini','bagaimana langkah ini','tahap ini','langkah ini','apakah sudah benar','apakah ini benar','sudah pas belum','sudah benar belum','sudah betul'],
   check:['شوفي','شوف مكياجي','قيمي','قيم','كيف مكياجي','كيف طالع','راقبي','راقبني','انظري','check','look at my','how do i look','how does it look','review','cek','nilai','lihat riasanku'],
   teach:['علميني','علمني','كيف اضع','كيف احط','كيف ارسم','كيف اعمل','طريقه','خطوه','درس','teach','how to','how do i','step by step','tutorial','ajari','cara','langkah'],
   suggest:['اقترحي','اقترح','ماذا اضع','شو احط','ايش احط','لوك','اطلاله','ماذا البس','suggest','what should i wear','recommend','a look','sarankan','tampilan'],
@@ -27721,7 +28555,7 @@ const PK = {
 const idx = o => { const out = {}; for(const k in o) out[k] = o[k].map(norm).filter(Boolean); return out; };
 const I_ = idx(IK), Z_ = idx(ZK), P_ = idx(PK);
 const has = (n, w) => w.length <= 3 ? (' ' + n + ' ').includes(' ' + w + ' ') : n.includes(w);
-const PRIO = ['scan','buy','fix','check','teach','harmony','suggest','expiry','kit','skin','undertone','shape','voice','stop','help','who','howru','thanks','compliment','greet','bye'];
+const PRIO = ['scan','buy','fix','stage','check','teach','harmony','suggest','expiry','kit','skin','undertone','shape','voice','stop','help','who','howru','thanks','compliment','greet','bye'];
 function classify(n){
   let best = null, bs = 0;
   for(const k of PRIO){ let s = 0; for(const w of (I_[k] || [])) if(has(n, w)) s += w.length > 4 ? 1.25 : 1; if(s > bs){ bs = s; best = k; } }
@@ -27953,17 +28787,51 @@ function startWatch(z){
   watchT = setInterval(() => {
     if(Date.now() - t0 > 90000 || count >= 8){ stopWatch(); return; }
     let m = ''; try{ m = window.lamhaCoach ? window.lamhaCoach(z) : ''; }catch(e){}
-    if(m && m !== last){ last = m; count++; bot('👀 ' + esc(m), null, { now:true }); }
+    /* v101 · «لا أستطيع أن أتأكّد» is not an observation: it gets its own mark */
+    if(m && m !== last){ last = m; count++; bot((S._coachWhy ? '◌ ' : '👀 ') + esc(m), null, { now:true }); }
   }, 2600);
 }
-function stopWatch(quiet){ if(watchT){ clearInterval(watchT); watchT = 0; if(!quiet) bot(C('watchEnd')); } }
+/* v101 · a watch that never managed to measure must not end on «أحسنتِ» */
+function stopWatch(quiet){ if(watchT){ clearInterval(watchT); watchT = 0; if(!quiet) bot(C(S._coachWhy ? 'watchEndUnsure' : 'watchEnd')); } }
 
+/* v102 · «كيف هذه المرحلة؟» — the five answers, spoken and printed */
+H.stage = (n) => {
+  let a = null; try{ a = window.lamhaStageAnswer ? window.lamhaStageAnswer() : null; }catch(e){}
+  if(!a) return bot(C('stageNoLesson'), [{ t:C('m_teach'), a:() => H.teach(''), pri:true }, { t:C('m_check'), a:() => H.check(n || '') }]);
+  const z = a.zone || ctx.zone || S.zone;
+  return bot(esc(a.mark + ' ' + (a.step ? a.step + ' — ' : '') + a.text),
+    (a.kind === 'wrong' || a.kind === 'adjust')
+      ? [{ t:C('howFix'), a:() => H.fix('', '', z), pri:true }, { t:C('watch'), a:() => startWatch(z) }]
+      : [{ t:C('watch'), a:() => startWatch(z), pri:true }, { t:C('m_fix'), a:() => H.fix('', '', z) }]);
+};
 H.check = (n) => {
   const z = findZone(n || '') || ctx.zone || S.zone || 'contour';
   if(!S.landmarks) return bot(C('lookCam'));
+  /* v102 · while a lesson is open, «شوفي» is a question about THIS step */
+  try{ if(S.plan && S.plan.lesson && window.lamhaStageAnswer) return H.stage(n); }catch(e){}
   let m = ''; try{ m = window.lamhaCoach ? window.lamhaCoach(z) : ''; }catch(e){}
   ctx.zone = z;
-  if(!m) return bot(C('checkNone').replace('{z}', zoneName(z)), [{ t:C('watch'), a:() => startWatch(z), pri:true }, { t:C('m_fix'), a:() => H.fix('', '', z) }]);
+  /* v101 · «لا أستطيع أن أتأكّد» must never come out as «لا أرى ما يحتاج تعديلاً ✓»:
+     the refusal and its cause are said, and no «كيف أصلحه؟» is offered for it */
+  if(S._coachWhy){
+    let w = m; try{ if(!w && window.LAMHA_PRO && LAMHA_PRO.coachWhy) w = LAMHA_PRO.coachWhy(S._coachWhy); }catch(e){}
+    if(w) return bot('◌ ' + esc(w), [{ t:C('watch'), a:() => startWatch(z), pri:true }, { t:C('m_fix'), a:() => H.fix('', '', z) }]);
+  }
+  /* v102 · «» is not «✓». An empty coach line means one of three things: her own
+     band (answer 1), the 3 s pause after her hand lifts, or a step that was never
+     judged. Only the first may be said as «صحيحة» — the answer object knows which,
+     and it is asked with ask=true because SHE asked. */
+  if(!m){
+    let ans = null;
+    try{ ans = window.LAMHA_PRO && LAMHA_PRO.stageAnswer ? LAMHA_PRO.stageAnswer(z, true) : null; }catch(e){}
+    if(ans && ans.kind === 'unsure')
+      return bot('◌ ' + esc(ans.say), [{ t:C('watch'), a:() => startWatch(z), pri:true }, { t:C('m_fix'), a:() => H.fix('', '', z) }]);
+    if(ans && ans.kind === 'notyet')
+      return bot('◌ ' + esc(ans.say), [{ t:C('m_teach'), a:() => H.teach('', '', z), pri:true }, { t:C('watch'), a:() => startWatch(z) }]);
+    if(ans && ans.say)
+      return bot('✓ ' + esc(ans.say), [{ t:C('watch'), a:() => startWatch(z), pri:true }, { t:C('m_fix'), a:() => H.fix('', '', z) }]);
+    return bot(C('checkNone').replace('{z}', zoneName(z)), [{ t:C('watch'), a:() => startWatch(z), pri:true }, { t:C('m_fix'), a:() => H.fix('', '', z) }]);
+  }
   bot('👀 ' + esc(m), [{ t:C('howFix'), a:() => H.fix(norm(m), m, z), pri:true }, { t:C('watch'), a:() => startWatch(z) }]);
 };
 
@@ -28257,6 +29125,8 @@ function renderHead(){
   const dn = $c('#chDockName'); if(dn) dn.textContent = ST.persona ? pname() : C('dock');
   document.querySelectorAll('[data-cx]').forEach(el => { el.textContent = C(el.dataset.cx); });
 }
+/* v102 · مفتاح الكتم الوحيد في التطبيق. كان محبوسًا هنا فكان صوت الدرس يتجاوزه. */
+window.lamhaChatVoiceOn = function(){ return !!ST.voice; };
 function toggleVoice(){
   ST.voice = !ST.voice; save(); renderHead();
   if(ST.voice) speakRaw(forSpeech(C('voiceOn'))); else { try{ speechSynthesis.cancel(); }catch(e){} }
@@ -28585,7 +29455,7 @@ function hintFor(L){
   }catch(e){}
   return '';
 }
-const ALWAYS_LOCAL = { scan:1, stop:1, voice:1, kit:1, expiry:1, harmony:1, suggest:1, shape:1, undertone:1, buy:1, check:1 };
+const ALWAYS_LOCAL = { stage:1, scan:1, stop:1, voice:1, kit:1, expiry:1, harmony:1, suggest:1, shape:1, undertone:1, buy:1, check:1 };
 function route(n, raw, T){
   const it = classify(n);
   const zone = findZone(n);
