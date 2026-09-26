@@ -3276,7 +3276,7 @@ document.addEventListener('DOMContentLoaded', function(){
     </div>
 
     <div id="gate">
-      <div class="mark">LAMHA MOBILE · v107 · BUILD 20260925e</div>
+      <div class="mark">LAMHA MOBILE · v111 · BUILD 20260926b</div>
       <h1 class="disp" data-i18n="gate_h">مرآة زين الذكية</h1>
       <p data-i18n="gate_p">مرآتك تحلّل بشرتك، ترسم خريطة وجهك، وتجرّب المكياج قبل أن تلمسي فرشاة واحدة.</p>
       <div class="feats">
@@ -18943,12 +18943,12 @@ function hairFromSeg(){
   }
   /* v107 · قراءةٌ فقيرة لا تُتلف قراءةً جيّدة. كان كلُّ قناعٍ يُكتب فوق سابقه بلا شرط:
      فإن عاد المقسّم بقناعٍ شبه فارغ — ويحدث هذا على تاجٍ أصلع أو إضاءةٍ صعبة أو
-     إطارٍ مهزوز — اختفت الصبغة كلُّها (الشرط hs.n < 60 أسفلُ يوقف الرسم) حتى القناع
+     إطارٍ مهزوز — اختفت الصبغة كلُّها (الشرط hs.n < 60 يوقف الرسم) حتى القناع
      التالي، أي نصف ثانية إلى ثانية. الآن يُهمَل القناعُ الفقير ويبقى الجيّد، بشرطين:
      أن يكون السابق وافيًا، وألّا يتجاوز عمرُه ثانيةً ونصفًا — فلا نتشبّث بقديمٍ كاذب. */
   const poor = n < 60 || (HS.bb && HS.n >= 240 && n < HS.n*0.25);
-  const fresh = performance.now() - (HS.t || 0) < 1500;
-  if(poor && HS.bb && fresh){ HS.ver = O.version; return HS; }     /* نُعلّم النسخة كمقروءة كي لا نُعيد الحساب عليها */
+  const freshEnough = performance.now() - (HS.t || 0) < 1500;
+  if(poor && HS.bb && freshEnough){ HS.ver = O.version; return HS; }   /* نُعلّم النسخة كمقروءة كي لا نُعيد الحساب عليها */
   hsMask.width = W; hsMask.height = H;
   hsFace.width = W; hsFace.height = H;
   hsX.putImageData(img, 0, 0);
@@ -19209,15 +19209,41 @@ window.drawHairColour = function(tctx){
       A[i] = a;
       /* her lightness toward the shade's, 60 % of her own light and shade kept: white and grey strands
          deepen to the shade, dark ones lift a little (capped) */
-      /* v105 · الصبغة تنقل المستوى وتُبقي الفروق. القياس قبل هذا السطر: تفاوت الخصلات
-         13.9 ← 5.5 (39٪ باقية) على درجة ذهبية. الحد الأول يحفظ 90٪ من تفاوتها وينقل
-         متوسطها 75٪ نحو الدرجة؛ والحد الثاني سقف رفعٍ لكل بكسل (55٪ من ضوئه أو 0.22)،
-         وهو نفسه مبدأ سقف الإضاءة على بشرتها. أصغرهما متزايد، فلا انقلاب في الترتيب. */
-      const yT = Math.max(0.02, Math.min(0.97, Math.min(
-        m + (tl0 - m)*0.75 + (y - m)*0.90,
-        y + Math.min(0.55*y, 0.22) + 0.06)));
+      /* v110 · الصبغةُ صبغةٌ لا طلاء — نموذجٌ فيزيائي بدل النقل الجمعي.
+         المالك أرسل مرجعًا من تطبيقٍ آخر يتبع فيه اللونُ الخصلاتِ وتفاصيلها، وقِستُه:
+         التشبّع فيه **يهبط** مع الإضاءة (0.471 في أغمق عُشر ← 0.386 في أفتحه)، والظلال
+         بين الخصلات تبقى داكنة. ومعادلتي كانت تفعل العكس: تضرب التشبّع في عاملٍ يرتفع
+         مع الإضاءة (0.45 ← 1.0)، وتنقل النصوع جمعًا بسقفٍ ثابت. فيخرج طلاءٌ مصمت.
+
+         الصواب أنّ ما تراه العين ضوءان لا ضوء واحد:
+           • ضوءٌ نفَذ في الشعرة وعاد — هذا وحده يحمل الصبغة، وتغييرُ الصبغة له **ضربٌ**
+             في انعكاسيّة جديدة، لا جمعُ مقدارٍ ثابت. والضربُ يحفظ التباين النسبي بحكم
+             تعريفه، فتبقى الخصلة الغامقة غامقةً والفاتحة فاتحة.
+           • ضوءٌ ارتدّ عن سطح الشعرة (اللمعان) — هذا لا يمرّ بالصبغة أصلًا فيبقى كما هو،
+             شبه أبيض. وهو ما يجعل الشعر يبدو شعرًا. (المرجع نفسه يفصل «Shine» عن «Color».)
+         فنفصل الضوءين، ونصبغ النافذ وحده، ونترك اللمعان. */
+      /* v111 · عتبة اللمعان. كانت 1.25×المتوسّط، وعلى شعرٍ داكن جدًّا (متوسّط المالك
+         0.097) تنزل إلى 0.12 — فتُصنَّف الخصلةُ المضاءة نفسها لمعانًا: عند نصوع 0.30
+         كان 60٪ من البكسل يمرّ بلا صبغة. واللمعان الحقيقي بقعةٌ ضيّقة ساطعة لا ثُلثا
+         الشعرة. فصار للعتبة حدٌّ مطلق أيضًا: لا تقلّ عن المتوسّط زائد 0.10. */
+      const spec = Math.max(0, y - Math.max(1.6*m, m + 0.10));   /* لمعان السطح: بقعةٌ ساطعة لا تُصبَغ */
+      const diff = y - spec;                                /* الجزء الذي يحمل الصبغة */
+      const gain = Math.min(2.2, (tl0 + 0.02)/(m + 0.02));  /* انعكاسيّة الصبغة الجديدة — بلا سحبٍ فوق ما يعطيه صبغٌ بلا تفتيح */
+      const yT = Math.max(0.02, Math.min(0.97, diff*gain + spec));
+      const specShare = spec/Math.max(1e-4, y);             /* كم من هذا البكسل لمعانٌ لا صبغة له */
       const rf = (pixL && yT > y && rr > 1 && y < m + HEp.hi) ? 1 : rr;   /* a lifted edge cell is mixed, not shine: full hue */
-      const f = (0.50 + 0.50*Math.exp(-((rf - 1)*(rf - 1))/0.30))*(0.45 + 0.55*Math.min(1, y/0.45));   /* depth: deep strands and shine less saturated */   /* v105: وتشبّع أقل على الخصلة الغامقة — هناك تُقرأ الصبغة شبه محايدة */
+      /* v111 · مُعايَرٌ على **طرفَي** المرجع لا على طرفٍ واحد.
+         المرجع: تشبّع أغمق ثلاثة أعشار 0.459، وأفتحِها 0.402. وv110 طابق الأغمق
+         (0.456) لكنه هبط إلى 0.30 في الأفتح — أي ربعٌ أقلّ من المرجع في المكان
+         الوحيد الذي تراه العين، فبدت الصبغة غائبة وهو ما أبلغ عنه المالك.
+         السببُ أرضيّةُ الجرس 0.50 مع حدٍّ ثانٍ يخصم اللمعان مرّةً أخرى (حسابٌ
+         مزدوج). فرُفعت الأرضيّة إلى 0.54 وحُذف الحدّ الثاني وضُبط المقياس 0.76،
+         فيخرج الطرفان معًا: العامل 0.588 في الأغمق و0.410 في الأفتح. */
+      /* والمقياس 0.95 لا 0.76: قِيست الكرومة المطلقة على نفس الصورة فكانت 68.4 عند
+         0.76 مقابل 73.2 في v109 — أي أقلّ ممّا كان يراه، وقد أبلغ أن «اللون غير
+         واضح». والتباين هو مكسبُ هذا المحرّك، ولا يُدفع ثمنُه من وضوح اللون:
+         فرُفع المقياس حتى تعلو الكرومة ما كان عليه، ويبقى التباين فوق 93٪. */
+      const f = (0.54 + 0.46*Math.exp(-((rf - 1)*(rf - 1))/0.30))*0.95;   /* v111 · معايَر على طرفَي المرجع */
       const [cr, cg, cb] = hrRgb(sh0, ss0*f, sl0);
       if(yT < y){ const gM = Math.max(0.2, yT/Math.max(0.02, y)); ia.data[q] = ia.data[q+1] = ia.data[q+2] = gM*255; ia.data[q+3] = a*255; if(DEFI) DEFI[i] = 1; }
       else if(yT > y){ GS[i] = Math.min(0.55, 1 - (1 - yT)/Math.max(0.03, 1 - y)); }
@@ -19303,7 +19329,7 @@ window.drawHairColour = function(tctx){
     HR.last = { ww, wh, rat:+rat.toFixed(2), n:hs.n, grey:+(HR.grey || 0).toFixed(3) };
   }catch(e){ HR.err = String(e && e.message || e); }
 };
-window.__hairInfo = () => ({ last:HR.last, err:HR.err || null, ver:HS.ver, mv:HR.mv, keep:HR.keep, fit:HR.fit, dev:HR.dev, trust:HR.trust, age:HS.t ? +(performance.now() - HS.t).toFixed(0) : null, guideMs:HR.gms, guideAvgMs:HR.gAvg, guideCap:HR.gcap || 240, guideErr:HR.gErr || null });
+window.__hairInfo = () => ({ last:HR.last, err:HR.err || null, ver:HS.ver, mv:HR.mv, keep:HR.keep, fit:HR.fit, dev:HR.dev, trust:HR.trust, carry:HR.carry, age:HS.t ? +(performance.now() - HS.t).toFixed(0) : null, guideMs:HR.gms, guideAvgMs:HR.gAvg, guideCap:HR.gcap || 240, guideErr:HR.gErr || null });
 window.__hairDbg = () => HR.dbg || null;
 window.lamhaHairSegInfo = () => ({ ver:HS.ver, n:HS.n, m:+HS.m.toFixed(3), bb:HS.bb, W:HS.W, H:HS.H });
 window.hairMaskQuality = ()=> maskQuality;
@@ -22958,7 +22984,7 @@ const sp = document.getElementById('sk-pro'); if(sp) sp.onclick = ()=>{ openShee
    ===================================================================== */
 (function(){
 'use strict';
-const VERSION = 'v107';
+const VERSION = 'v111';
 window.LAMHA_VERSION = VERSION;
 try{ if(!/ v\d+/.test(document.title)) document.title = document.title.replace('LAMHA MOBILE', 'LAMHA MOBILE '+VERSION); }catch(e){}
 const PRO = window.LAMHA_PRO;
@@ -23020,7 +23046,9 @@ function grownPoly(lm, idx, g, W, H){
    بُنيت الثانية وحدها وعُطِّل الحجب — ويبقى التصنيفُ وعمرُه مكتوبين في موضعٍ واحد
    لا غير، كما كانا. */
 function build(cat, W, H, lm){
-  const g = lm ? buildFace(cat, W, H, lm) : noFaceMask(W, H);
+  /* v108 · اللقطة تُحفظ دائمًا (منها يُحمَل قناع الشعر)، أمّا قناعُ اليد فلا يُبنى
+     من مهمّةٍ للشعر وحده: علاماتها هناك قد تكون محجوزة من إطارٍ سابق. */
+  const g = (lm && !OCC._jobHairOnly) ? buildFace(cat, W, H, lm) : noFaceMask(W, H);
   OCC.W=W; OCC.H=H; OCC.bytes=g; OCC._cat=cat; OCC._catT=performance.now(); OCC.version++;   /* v97: the mask's own age */
   OCC._snap=lm; OCC._catSrc=SRC;                    /* the hair colour reads its mask from here too */
   mC.width=W; mC.height=H;
@@ -23115,17 +23143,23 @@ function grab(){
   segX.drawImage(SRC, 0, 0, segC.width, segC.height);
   return { snap: lm.map(p=>({ x:p.x, y:p.y })), src: SRC };
 }
-/* v107 · مهمّةٌ للشعر وحده، بلا لقطة علامات. الشرط أعلاه («لقطةٌ من هذا الإطار
-   بعينه أو لا مهمّة») يحرس قناعَ حجب اليد، وهو حقٌّ يجب أن يبقى: قناعُ يدٍ مبنيٌّ
-   على علاماتٍ من إطارٍ آخر يُخفي المكياج عن موضعٍ خاطئ. أمّا لونُ الشعر فلا يحتاج
-   العلاماتِ أصلًا — المقسّم يجد الشعر في الصورة — فيمضي بلقطةٍ فارغة، وبناءُ القناع
-   يعرف من فراغها أن لا يبني حجبًا. بهذا لا تنطفئ الصبغة حين تُميل رأسها لتراها. */
+/* v107 · مهمّةٌ للشعر وحده. الشرط أعلاه («لقطةٌ من هذا الإطار بعينه أو لا مهمّة»)
+   يحرس قناعَ حجب اليد، وهو حقٌّ يجب أن يبقى: قناعُ يدٍ مبنيٌّ على علاماتٍ من إطارٍ
+   آخر يُخفي المكياج عن موضعٍ خاطئ. أمّا لونُ الشعر فلا يحتاج العلاماتِ لوجوده.
+
+   v108 · تصحيحُ خطأٍ أدخلتُه في v107: كنتُ أُفرغ اللقطة هنا دائمًا، فيصير القناعُ
+   بلا مرجعٍ يُحمَل عليه ويُعطَّل التعويضُ طوال عمره — حتى بعد عودة وجهها. وهذا يقع
+   بالضبط أثناء الحركة السريعة، حيث تُحجَز العلامات لحظةً: أي في عين اللحظة التي
+   يشكو منها المالك. والصواب أن الأمرين مختلفان: علاماتٌ محجوزة لا تصلح لقناع اليد
+   (قد تتأخّر ثُلث ثانية عن يدها) لكنها مرجعٌ ممتاز لحمل قناع الشعر. فاللقطة تُؤخذ
+   كلّما وُجدت علامات، والمُلغى هو بناء قناع اليد وحده. */
 function grabHair(){
   if(STILL) return null;                       /* صورةٌ ثابتة: قناعها مربوطٌ بعلاماتها */
+  const lm = S.landmarks;
   const vw = srcW(), vh = srcH(), sc = Math.min(1, 256/Math.max(vw, vh));
   segC.width = Math.max(8, Math.round(vw*sc)); segC.height = Math.max(8, Math.round(vh*sc));
   segX.drawImage(SRC, 0, 0, segC.width, segC.height);
-  return { snap: null, src: SRC, hairOnly: true };
+  return { snap: lm ? lm.map(p=>({ x:p.x, y:p.y })) : null, src: SRC, hairOnly: true };
 }
 function grabAny(){
   const j = grab(); if(j) return j;
@@ -23147,6 +23181,7 @@ function took(dt){
     /* the mirror never waits on the worker: only a mask too late to follow
        a hand is useless */
     if(OCC.ms > 1500 && OCC.mode !== 'off'){ OCC.mode = 'off'; OCC.active = false; slowToast(); }
+    if(OCC.runs >= 6 && OCC.ms > 330) segDemote();     /* v109 · رسومياتٌ أبطأ من المعالج: نعود إليه مرّةً */
     OCC.gap = Math.max(90, Math.min(3000, OCC.ms*1.2));
     return;
   }
@@ -23170,6 +23205,7 @@ async function runMain(){
     try{ seg.segment(segC, take); }
     catch(e){ try{ const r = seg.segment(segC); take(r); if(r && r.close) r.close(); }catch(e2){} }
     took(performance.now() - t0);
+    OCC._jobHairOnly = !!job.hairOnly;                             /* v108 */
     if(cat) build(cat, W, H, job.snap);
     if(STILL) OCC.stillKey = job.src;
   }catch(e){ console.warn('[occlusion]', e); }
@@ -23227,8 +23263,16 @@ function toMain(why){
   OCC.runs = 0; OCC.ms = 0; OCC.gap = 160; OCC.busy = false;
   if(coarse && OCC.mode === 'always') OCC.mode = 'lesson';
 }
-function startWorker(){
-  if(WK.w || OCC.engine !== 'init') return;
+/* v109 · أيّ مُسرِّعٍ يُجرَّب أوّلًا داخل العامل.
+   قياسٌ من جهاز المالك (العدّاد في فيديوه): المقسّم على المعالج 427–477 مللي،
+   أي قناعٌ واحد في الثانية، وعمرُ القناع على الشاشة يبلغ 900 مللي. وعلى بطاقة
+   الرسوميات — نفس الجهاز ونفس النموذج — 56 مللي، أي 95 قناعًا في المقطع بدل 18.
+   وكان العامل يجرّب المعالجَ أوّلًا دائمًا (إلا مع ?seg=gpu)، فينجح فلا تُجرَّب
+   الرسومياتُ أصلًا. وهذا هو التأخّر الذي يشكو منه: لا عيبَ في الحساب بل في أن
+   القناع يصل مرّةً كل ثانية. فصار الترتيب: الرسوميات أوّلًا، والمعالج شبكةَ أمان
+   (تُستعمل تلقائيًّا إن فشل الإنشاء، أو إن تبيّن بالقياس أن الرسوميات أبطأ). */
+function startWorker(order){
+  if(WK.w || (OCC.engine !== 'init' && !order)) return;
   const V = window.__vision;
   if(!V || !V.base) return;                            /* the library is still loading */
   if(typeof Worker === 'undefined' || typeof createImageBitmap !== 'function'){ toMain('no Worker'); return; }
@@ -23248,8 +23292,18 @@ function startWorker(){
     };
     w.onerror = e => { clearTimeout(to); toMain((e && e.message) || 'worker error'); };
     w.postMessage({ type:'init', base:V.base, model:PRO.SEG_MODEL,
-      order: /[?&]seg=gpu/.test(location.search) ? ['GPU','CPU'] : ['CPU','GPU'] });
+      order: order || (/[?&]seg=cpu/.test(location.search) ? ['CPU','GPU'] : ['GPU','CPU']) });
   }catch(e){ toMain(e && e.message); }
+}
+/* الرسومياتُ ليست أسرعَ على كل جهاز. فإن قاسَت خمسُ تشغيلاتٍ أنها أبطأ من ثلث
+   ثانية، نُعيد تشغيل العامل على المعالج مرّةً واحدة ولا نعود. */
+function segDemote(){
+  if(WK._demoted || WK.delegate !== 'GPU' || OCC.engine !== 'worker') return;
+  WK._demoted = true;
+  try{ if(WK.w) WK.w.terminate(); }catch(e){}
+  WK.w = null; WK.ready = false; WK.job = null; OCC.busy = false;
+  OCC.runs = 0; OCC.ms = 0; OCC.gap = 160; OCC.why = 'gpu slower than cpu';
+  startWorker(['CPU','GPU']);
 }
 function runWorker(){
   const job = grabAny(); if(!job){ OCC.busy = false; return; }     /* v107 */
@@ -23270,6 +23324,7 @@ function onMask(m){
   if(job.src !== SRC) return;                          /* a new photo */
   /* v107 · وجهٌ غادر أثناء عمل العامل لا يُلقي قناعًا صالحًا: القناع ولقطتُه
      متوافقان معًا، وصبغةُ الشعر تنتفع به سواء عاد الوجه أم لا. */
+  OCC._jobHairOnly = !!job.hairOnly;                               /* v108 */
   build(m.data, m.w, m.h, job.snap);
   if(STILL) OCC.stillKey = job.src;
 }
@@ -23368,16 +23423,24 @@ window.lamhaOcclude = function(ctx2){
   ctx2.drawImage(tmp, 0, 0);
 };
 
-/* ?debug=1 — one small status line to screenshot when something looks wrong */
-if(/[?&]debug=1/.test(location.search)){
+/* ?debug=1 — one small status line to screenshot when something looks wrong.
+   v108 · ويظهر من تلقاء نفسه كلّما كان على شعرها لون. السبب صريح: لون الشعر هو
+   الموضع الذي لا أستطيع إعادة إنتاجه على حاسوبي (المقسّم عندي أبطأ، والكاميرا
+   مصطنعة)، وصاحبة الجهاز تُصوّر المرآة بالفيديو. فليقل التطبيقُ أرقامَه بنفسه في
+   الصورة: نسخته، وحال وجهها، والمحرّك وإيقاعه، وعمر القناع وحجمه، وهل حُمِل. */
+{
+  const dbgQ = /[?&]debug=1/.test(location.search);
   const chip = document.createElement('div');
   chip.id = 'lamhaDbg';
   chip.style.cssText = 'position:fixed;left:6px;top:calc(env(safe-area-inset-top, 0px) + 40px);z-index:99999;pointer-events:none;'+
-    'font:11px/1.35 ui-monospace,Menlo,Consolas,monospace;color:#fff;background:rgba(0,0,0,.62);'+
-    'padding:4px 7px;border-radius:6px;direction:ltr;text-align:left;white-space:pre';
+    'font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;color:#fff;background:rgba(0,0,0,.62);'+
+    'padding:4px 7px;border-radius:6px;direction:ltr;text-align:left;white-space:pre;display:none';
   document.body.appendChild(chip);
   let f0 = 0, t0 = performance.now();
   setInterval(()=>{
+    const want = dbgQ || !!S.hairColour;
+    chip.style.display = want ? 'block' : 'none';
+    if(!want) return;
     const now = performance.now(), fr = OCC._frames || 0;
     const fps = Math.round((fr - f0) * 1000 / Math.max(1, now - t0)); f0 = fr; t0 = now;
     const V = window.__vision || {};
