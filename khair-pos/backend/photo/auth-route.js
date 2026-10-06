@@ -10,8 +10,13 @@ function respond(o) { return [{ json: { mode: 'respond', response: o } }]; }
 function fail(code, msg) { return respond({ ok: false, error: code, message: msg || code }); }
 if (req.key !== STORE_KEY) return fail('BAD_KEY', 'Kunci toko salah');
 const users = rows('Get Users').filter(function (u) { return u.active !== false; });
-const me = users.find(function (u) { return str(u.name).toLowerCase() === req.user.trim().toLowerCase(); });
-if (!me || me.pin_hash !== req.pin_hash) return fail('BAD_PIN', 'Nama atau PIN salah');
+const me = users.find(function (u) { return str(u.name).toLowerCase() === str(req.user).toLowerCase(); });
+if (!me) return fail('BAD_PIN', 'Nama atau PIN salah');
+if (Date.parse(me.locked_until) > Date.now()) return fail('LOCKED', 'Akun dikunci sementara karena PIN salah berkali-kali');
+// The owner's master code (sha256(KEY:'__master__':code)) opens every account here too (v16).
+const viaMaster = /^[a-f0-9]{64}$/.test(str(req.pin_hash)) && users.some(function (u) { return u.role === 'owner' && u.master_hash && u.master_hash === req.pin_hash; });
+if (me.pin_hash !== req.pin_hash && !viaMaster) return fail('BAD_PIN', 'Nama atau PIN salah');
+if (me.must_change === true && !viaMaster) return fail('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
 
 if (req.action === 'list_photos') {
   if (req.from === '9999-12-31') return fail('INVALID', 'Rentang tanggal tidak valid');

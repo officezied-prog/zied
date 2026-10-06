@@ -64,8 +64,13 @@ function kmOf(points) {
 if (req.key !== STORE_KEY) return fail('BAD_KEY', 'Kunci toko salah');
 const users = rows('Get Users').filter(function (u) { return u.active !== false; });
 if (!users.length) return fail('NO_USERS', 'Belum ada pengguna');
-const me = users.find(function (u) { return str(u.name).toLowerCase() === req.user.trim().toLowerCase(); });
-if (!me || me.pin_hash !== req.pin_hash) return fail('BAD_PIN', 'Nama atau PIN salah');
+const me = users.find(function (u) { return str(u.name).toLowerCase() === str(req.user).toLowerCase(); });
+if (!me) return fail('BAD_PIN', 'Nama atau PIN salah');
+if (Date.parse(me.locked_until) > Date.now()) return fail('LOCKED', 'Akun dikunci sementara karena PIN salah berkali-kali');
+// The owner's master code (sha256(KEY:'__master__':code)) opens every account here too (v16).
+const viaMaster = /^[a-f0-9]{64}$/.test(str(req.pin_hash)) && users.some(function (u) { return u.role === 'owner' && u.master_hash && u.master_hash === req.pin_hash; });
+if (me.pin_hash !== req.pin_hash && !viaMaster) return fail('BAD_PIN', 'Nama atau PIN salah');
+if (me.must_change === true && !viaMaster) return fail('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
 const role = ['owner', 'manager', 'sales'].indexOf(me.role) >= 0 ? me.role : 'kasir';
 if (role === 'kasir') return fail('FORBIDDEN', 'Aplikasi ini untuk sales lapangan');
 const isBoss = role === 'owner' || role === 'manager';
