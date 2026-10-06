@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, login, nav, addBySearch, closeModals, photoFile } = require('./helpers');
+const { SHOTS, login, nav, addBySearch, closeModals, photoFile, loginKasirRedirect } = require('./helpers');
 const shot = (page, name, full = false) => page.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: full });
 
 async function fillCart(page, phone) {
@@ -69,16 +69,36 @@ for (const [label, vp] of [['desktop', { width: 1366, height: 768 }], ['phone', 
       await shot(page, `${label}-purchase-photo`);
       await nav(page, 'kas');
       await shot(page, `${label}-kas-owner`);
+      await nav(page, 'orders');
+      await page.waitForTimeout(300);
+      await shot(page, `${label}-field-orders`);
+      await page.route(/cdnjs\.cloudflare\.com|tile\.openstreetmap\.org/, r => r.abort());
+      await nav(page, 'field');
+      await page.fill('#fd-date', (await page.evaluate(() => JSON.parse(localStorage.getItem('kmock.db')).field_days.slice(-1)[0].day_date)));
+      await page.waitForSelector('#fd-map[data-mode="svg"]');
+      await shot(page, `${label}-field`);
     });
 
-    test(`screenshots ${label}: kasir shift prompt and blind kas`, async ({ page }) => {
-      await login(page, 'Siti', '1111', '', { openShift: false });
+    test(`screenshots ${label}: manager shift prompt, kas, dark mode, kasir redirect`, async ({ page }) => {
+      await login(page, 'Jihan', '2222', '', { openShift: false });
       await page.waitForTimeout(250);
       await shot(page, `${label}-shift-open`);
       await page.fill('#so-cash', '500000');
       await page.click('#so-ok');
       await nav(page, 'kas');
-      await shot(page, `${label}-kas-kasir`);
+      await shot(page, `${label}-kas-manager`);
+      await page.emulateMedia({ colorScheme: 'dark' });
+      await nav(page, 'home');
+      await page.waitForTimeout(400);
+      await shot(page, `${label}-home-dark`);
+      await nav(page, 'pos');
+      await addBySearch(page, 'ajwa');
+      await shot(page, `${label}-pos-dark`);
+      await page.emulateMedia({ colorScheme: 'light' });
+      const p2 = await page.context().newPage();
+      await loginKasirRedirect(p2);
+      await p2.screenshot({ path: path.join(SHOTS, `${label}-kasir-redirect.png`) });
+      await p2.close();
     });
   });
 }

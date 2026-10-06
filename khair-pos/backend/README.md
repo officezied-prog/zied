@@ -29,3 +29,13 @@ products for goods in, decides cocok / tidak_cocok / perlu_cek for goods out) �
 If the AI call fails, the photo is still saved with status `perlu_cek`, so a person checks it.
 The image itself is not stored yet; `drive_url` stays empty until a Google Drive credential
 is connected in n8n and an upload node is added after `Image To File`.
+
+## Field workflow
+
+**"Khair Mart POS – Field (sales lapangan)"** (`POST .../webhook/khair-field`), sources in `field/`:
+`Field API` → `Parse Field` → load users, products, shops, customers, today's days/tracks/visits/orders,
+idempotency lookups, range rows for `list_field`, product images → `Process Field` → one upsert per table
+(pos_shops, pos_visits, pos_tracks, pos_field_days, pos_field_orders, pos_product_images) plus an update of
+`pos_products.image_updated` → `Respond`.
+
+Distance (km) skips GPS points that imply more than 120 km/h. Field order prices are always set by the server.

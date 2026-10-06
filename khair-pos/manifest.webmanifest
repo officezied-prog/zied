@@ -6,10 +6,15 @@
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#F4F6F5",
-  "theme_color": "#0F7B5F",
+  "background_color": "#F4F6FA",
+  "theme_color": "#1E40AF",
   "lang": "id",
   "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
   ]
 }

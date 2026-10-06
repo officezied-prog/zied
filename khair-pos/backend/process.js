@@ -58,7 +58,8 @@ if (req.action === 'setup') {
 if (users.length === 0) return fail('NO_USERS', 'Belum ada pengguna');
 const me = activeUsers.find(function (u) { return str(u.name).toLowerCase() === req.user.trim().toLowerCase(); });
 if (!me || me.pin_hash !== req.pin_hash) return fail('BAD_PIN', 'Nama atau PIN salah');
-const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' : 'kasir');
+const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' : (me.role === 'sales' ? 'sales' : 'kasir'));
+if (role === 'sales' && ['login', 'bootstrap'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
 const isApprover = role === 'owner' || role === 'manager';
 function findApprover(name, hash) {
   const u = activeUsers.find(function (x) { return str(x.name).toLowerCase() === str(name).toLowerCase(); });
@@ -635,7 +636,7 @@ switch (req.action) {
   case 'save_user': {
     const name = str(data.name);
     if (!name) return fail('INVALID', 'Nama wajib');
-    const newRole = data.role === 'owner' ? 'owner' : (data.role === 'manager' ? 'manager' : 'kasir');
+    const newRole = ['owner', 'manager', 'sales'].indexOf(data.role) >= 0 ? data.role : 'kasir';
     const ex = users.find(function (u) { return str(u.name).toLowerCase() === name.toLowerCase(); });
     const active = data.active !== false;
     if (data.pin_hash !== undefined && data.pin_hash !== '' && !isHash(data.pin_hash)) return fail('INVALID', 'PIN tidak valid');

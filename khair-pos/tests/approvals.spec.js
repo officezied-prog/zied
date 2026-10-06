@@ -1,119 +1,82 @@
-// Credit (hutang) approval: kasir needs owner/manager approval, on-site PIN or remote request.
-// The mock backend lives in each browser context's localStorage; copyDb() plays the role of the
-// shared server between the cashier's device and the owner's device.
+// Credit (hutang) approval. Since v7 cashiers use the separate cashier app, so the kasir side is
+// driven through the API as Siti (exactly what the cashier app sends) and the owner/manager side
+// through this app's Persetujuan inbox.
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { rp, SHOTS, login, getDb, nav, addBySearch, closeModals } = require('./helpers');
+const { SHOTS, login, getDb, nav, addBySearch, closeModals, asUser } = require('./helpers');
 
-const copyDb = async (from, to) => { const raw = await from.evaluate(() => localStorage.getItem('kmock.db')); await to.evaluate(r => localStorage.setItem('kmock.db', r), raw); };
-
-async function debtCart(page, customer = 'Warung Bu Halimah') {
-  await addBySearch(page, 'kismis hijau');
-  await page.click('#cart-cust');
-  await page.locator('#cp-list [data-pick]').filter({ hasText: customer }).click();
-  await page.click('[data-act="method"][data-m="hutang"]');
-  await page.click('#btn-checkout');
-  await page.click('#sv-skip');
-  await expect(page.locator('#apr-step')).toBeVisible();
+async function sitiDebtSale(page, extra = {}) {
+  const db = await getDb(page);
+  const cust = db.customers.find(c => c.name === 'Warung Bu Halimah');
+  const p = db.products.find(x => /Kismis Hijau/.test(x.name));
+  return { cust, p, sale: Object.assign({ client_id: 'test-' + Math.random().toString(36).slice(2), sale_date: new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10), customer_id: cust.id, customer_name: cust.name, customer_type: cust.type, items: [{ product_id: p.id, qty: 1, unit_price: p.wholesale_price, price_type: 'grosir' }], discount: 0, payment_method: 'hutang', paid_amount: 0 }, extra) };
 }
 
-test('kasir: a debt sale is refused without approval', async ({ page }) => {
-  await login(page, 'Siti', '1111');
-  const before = (await getDb(page)).sales.length;
-  await debtCart(page);
-  await expect(page.locator('#apr-step')).toContainText('Butuh persetujuan hutang');
-  await page.screenshot({ path: path.join(SHOTS, 'desktop-approval-step.png') });
-  await closeModals(page);
-  expect((await getDb(page)).sales.length).toBe(before);
-  await expect(page.locator('.cline')).toHaveCount(1);
-  const code = await page.evaluate(async () => {
-    try { await api('save_sale', { client_id: 'x-' + Date.now(), customer_id: 2, items: [{ product_id: 7, qty: 1, unit_price: 86000, price_type: 'grosir' }], payment_method: 'hutang', paid_amount: 0 }); return 'saved'; }
-    catch (e) { return e.code; }
-  });
-  expect(code).toBe('APPROVAL_REQUIRED');
-});
-
-test('kasir: on-site approval with the manager PIN (Jihan) saves the debt sale', async ({ page }) => {
-  await login(page, 'Siti', '1111');
-  const db0 = await getDb(page);
-  const cust = db0.customers.find(c => c.name === 'Warung Bu Halimah');
-  await debtCart(page);
-  await page.click('#ap-here');
-  await page.click('#ap-users [data-n="Jihan"]');
-  await page.fill('#ap-pin', '9999');
-  await page.click('#ap-ok');
-  await expect(page.locator('#ap-err')).toContainText('PIN penyetuju salah');
-  await page.fill('#ap-pin', '2222');
-  await page.click('#ap-ok');
-  const rc = page.locator('.modal #receipt');
-  await expect(rc).toBeVisible();
-  await expect(rc).toContainText('Disetujui');
-  await expect(rc).toContainText('Jihan');
-  await expect(page.locator('#apr-step')).toHaveCount(0);
+test('kasir debt sale is refused without approval; on-site approval needs a valid owner/manager PIN', async ({ page }) => {
+  await login(page);
+  expect((await asUser(page, 'Siti', '1111', 'open_shift', { opening_cash: 500000 })).shift.cashier).toBe('Siti');
+  const { cust, sale } = await sitiDebtSale(page);
+  expect((await asUser(page, 'Siti', '1111', 'save_sale', sale)).error).toBe('APPROVAL_REQUIRED');
+  const badPin = await page.evaluate(() => KPOS.pinHash('demo', 'Jihan', '9999'));
+  expect((await asUser(page, 'Siti', '1111', 'save_sale', Object.assign({}, sale, { approver: { user: 'Jihan', pin_hash: badPin } }))).error).toBe('APPROVAL_REQUIRED');
+  const notApprover = await page.evaluate(() => KPOS.pinHash('demo', 'Rina', '3333'));
+  expect((await asUser(page, 'Siti', '1111', 'save_sale', Object.assign({}, sale, { approver: { user: 'Rina', pin_hash: notApprover } }))).error).toBe('APPROVAL_REQUIRED');
+  const okPin = await page.evaluate(() => KPOS.pinHash('demo', 'Jihan', '2222'));
+  const r = await asUser(page, 'Siti', '1111', 'save_sale', Object.assign({}, sale, { approver: { user: 'Jihan', pin_hash: okPin } }));
+  expect(r.sale).toMatchObject({ cashier: 'Siti', approved_by: 'Jihan', payment_method: 'hutang' });
   const db = await getDb(page);
-  const sale = db.sales.slice(-1)[0];
-  expect(sale).toMatchObject({ cashier: 'Siti', approved_by: 'Jihan', payment_method: 'hutang', customer_id: cust.id });
-  expect(db.customers.find(c => c.id === cust.id).debt_balance).toBe(cust.debt_balance + sale.debt_amount);
+  expect(db.customers.find(c => c.id === cust.id).debt_balance).toBe(cust.debt_balance + r.sale.debt_amount);
 });
 
-test('kasir: remote approval request → owner approves on another device → sale completes', async ({ page, browser }) => {
-  await login(page, 'Siti', '1111');
-  await debtCart(page);
-  await page.click('#ap-remote');
-  await expect(page.locator('#apr-wait')).toBeVisible();
-  const rid = (await page.locator('#aw-id').innerText()).trim();
-  expect(rid).toMatch(/^APR-\d+/);
-  await page.screenshot({ path: path.join(SHOTS, 'desktop-approval-waiting.png') });
-  const clientId = await page.evaluate(() => KPOS.S.cart.client_id);
+test('remote request → owner approves in the inbox → kasir saves with approval_id; receipt/history show the approver', async ({ page }) => {
+  await login(page);
+  await asUser(page, 'Siti', '1111', 'open_shift', { opening_cash: 500000 });
+  const { sale } = await sitiDebtSale(page);
+  const req = await asUser(page, 'Siti', '1111', 'request_credit', sale);
+  expect(req.request_id).toMatch(/^APR-\d+/);
+  expect((await asUser(page, 'Siti', '1111', 'check_approval', { request_id: req.request_id })).approval.status).toBe('pending');
 
-  const ownerCtx = await browser.newContext({ viewport: { width: 1366, height: 768 }, serviceWorkers: 'block' });
-  const owner = await ownerCtx.newPage();
-  await login(owner);
-  await copyDb(page, owner);
-  await nav(owner, 'approvals');
-  await owner.click('[data-act="apr-refresh"]');
-  const card = owner.locator(`.apr-card[data-req="${rid}"]`);
+  await nav(page, 'approvals');
+  await page.click('[data-act="apr-refresh"]');
+  const card = page.locator(`.apr-card[data-req="${req.request_id}"]`);
   await expect(card).toContainText('Warung Bu Halimah');
   await expect(card).toContainText('Siti');
-  await expect(owner.locator('#tb-appr b')).toHaveText('1');
-  await owner.screenshot({ path: path.join(SHOTS, 'desktop-approvals-inbox.png') });
+  await expect(page.locator('#tb-appr b')).toHaveText('1');
+  await page.screenshot({ path: path.join(SHOTS, 'desktop-approvals-inbox.png') });
   await card.locator('[data-d="approved"]').click();
-  await expect(owner.locator('.toast.ok')).toContainText(rid);
-  await copyDb(owner, page);
-  await ownerCtx.close();
+  await expect(page.locator('.toast.ok').filter({ hasText: req.request_id })).toBeVisible();
 
-  await expect(page.locator('.modal #receipt')).toBeVisible({ timeout: 15000 });
+  const chk = await asUser(page, 'Siti', '1111', 'check_approval', { request_id: req.request_id });
+  expect(chk.approval).toMatchObject({ status: 'approved', decided_by: 'Pemilik' });
+  // a different client_id may not reuse the approval
+  expect((await asUser(page, 'Siti', '1111', 'save_sale', Object.assign({}, sale, { client_id: 'other', approval_id: req.request_id }))).error).toBe('APPROVAL_REQUIRED');
+  const r = await asUser(page, 'Siti', '1111', 'save_sale', Object.assign({}, sale, { approval_id: req.request_id }));
+  expect(r.sale.approved_by).toBe('Pemilik');
+  expect((await getDb(page)).approvals.find(a => a.request_id === req.request_id).status).toBe('used');
+
+  await nav(page, 'history');
+  await page.click('[data-act="hist-load"]');
+  await page.locator(`[data-act="hist-open"][data-inv="${r.invoice_no}"]`).first().click();
+  await expect(page.locator('.modal #receipt')).toContainText('Disetujui');
   await expect(page.locator('.modal #receipt')).toContainText('Pemilik');
-  const db = await getDb(page);
-  const sale = db.sales.find(s => s.client_id === clientId);
-  expect(sale).toMatchObject({ approved_by: 'Pemilik', cashier: 'Siti' });
-  expect(db.approvals.find(a => a.request_id === rid).status).toBe('used');
 });
 
-test('kasir: remote approval rejected → note shown, cart kept, nothing saved', async ({ page, browser }) => {
-  await login(page, 'Siti', '1111');
+test('manager rejects a remote request with a note; the kasir sees it and nothing is saved', async ({ page }) => {
+  await login(page, 'Jihan', '2222', '', { stay: true });
+  await asUser(page, 'Siti', '1111', 'open_shift', { opening_cash: 500000 });
   const before = (await getDb(page)).sales.length;
-  await debtCart(page, 'Toko Berkah Condet');
-  await page.click('#ap-remote');
-  const rid = (await page.locator('#aw-id').innerText()).trim();
-
-  const ctx = await browser.newContext({ serviceWorkers: 'block' });
-  const mgr = await ctx.newPage();
-  await login(mgr, 'Jihan', '2222');
-  await copyDb(page, mgr);
-  await nav(mgr, 'approvals');
-  await mgr.click('[data-act="apr-refresh"]');
-  const card = mgr.locator(`.apr-card[data-req="${rid}"]`);
+  const { sale } = await sitiDebtSale(page);
+  const req = await asUser(page, 'Siti', '1111', 'request_credit', sale);
+  await nav(page, 'approvals');
+  await page.click('[data-act="apr-refresh"]');
+  const card = page.locator(`.apr-card[data-req="${req.request_id}"]`);
   await card.locator('[data-note]').fill('Hutang lama belum lunas');
+  await page.waitForTimeout(300);
   await card.locator('[data-d="rejected"]').click();
-  await expect(mgr.locator('.toast.warn').filter({ hasText: 'ditolak' })).toContainText(rid);
-  await copyDb(mgr, page);
-  await ctx.close();
-
-  await expect(page.locator('#aw-note')).toContainText('Hutang lama belum lunas', { timeout: 15000 });
-  await expect(page.locator('#apr-wait')).toContainText('Ditolak oleh Jihan');
-  await page.click('#aw-back');
-  await expect(page.locator('.cline')).toHaveCount(1);
+  await expect(page.locator('.toast.warn').filter({ hasText: 'ditolak' })).toContainText(req.request_id);
+  const chk = await asUser(page, 'Siti', '1111', 'check_approval', { request_id: req.request_id });
+  expect(chk.approval).toMatchObject({ status: 'rejected', decided_by: 'Jihan', note: 'Hutang lama belum lunas' });
+  expect((await asUser(page, 'Siti', '1111', 'save_sale', Object.assign({}, sale, { approval_id: req.request_id }))).error).toBe('APPROVAL_REQUIRED');
   expect((await getDb(page)).sales.length).toBe(before);
 });
 

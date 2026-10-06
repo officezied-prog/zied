@@ -6,14 +6,15 @@ const { rp, pct, SHOTS, jktToday, login, getDb, productByName, nav, addBySearch,
 const copyDb = async (from, to) => { const raw = await from.evaluate(() => localStorage.getItem('kmock.db')); await to.evaluate(r => localStorage.setItem('kmock.db', r), raw); };
 const ctxOpts = { viewport: { width: 1366, height: 768 }, serviceWorkers: 'block', permissions: ['clipboard-read', 'clipboard-write'] };
 
-test('kasir requests a void → manager cannot decide (owner only) → owner approves → sale void, re-make offered', async ({ page, browser }) => {
-  await login(page, 'Siti', '1111');
+test('manager requests a void → cannot decide it (owner only) → owner approves → sale void, re-make offered', async ({ page, browser }) => {
+  await login(page, 'Jihan', '2222');
   const p = productByName(await getDb(page), /Kacang Almond/);
   await addBySearch(page, 'almond');
   await checkoutSkip(page);
   const inv = (await page.locator('.modal #receipt').innerText()).match(/KM\d{6}-\d{4}/)[0];
   await closeModals(page);
   await nav(page, 'history');
+  await page.click('[data-act="hist-load"]');
   await page.locator(`[data-act="hist-open"][data-inv="${inv}"]`).first().click();
   await expect(page.locator('[data-act="void-sale"]')).toHaveCount(0);
   await page.click('[data-act="void-request"]');
@@ -22,24 +23,20 @@ test('kasir requests a void → manager cannot decide (owner only) → owner app
   await expect(page.locator('.toast.ok').filter({ hasText: 'Permintaan pembatalan' })).toContainText('Permintaan pembatalan APR-');
   let db = await getDb(page);
   const ap = db.approvals.slice(-1)[0];
-  expect(ap).toMatchObject({ kind: 'void', ref: inv, approver_role: 'owner', status: 'pending', cashier: 'Siti' });
+  expect(ap).toMatchObject({ kind: 'void', ref: inv, approver_role: 'owner', status: 'pending', cashier: 'Jihan' });
   expect(db.sales.find(s => s.invoice_no === inv).status).toBe('ok');
 
-  // manager sees it but cannot decide
-  const mctx = await browser.newContext(ctxOpts);
-  const mgr = await mctx.newPage();
-  await login(mgr, 'Jihan', '2222');
-  await copyDb(page, mgr);
-  await nav(mgr, 'approvals');
-  await mgr.click('[data-act="apr-refresh"]');
-  const mcard = mgr.locator(`.apr-card[data-req="${ap.request_id}"]`);
+  // the manager sees it in the inbox but cannot decide
+  await closeModals(page);
+  await nav(page, 'approvals');
+  await page.click('[data-act="apr-refresh"]');
+  const mcard = page.locator(`.apr-card[data-req="${ap.request_id}"]`);
   await expect(mcard.locator('[data-owner-only]')).toHaveText(/Hanya pemilik/);
   await expect(mcard.locator('[data-d="approved"]')).toBeDisabled();
-  const code = await mgr.evaluate(async id => { try { await api('decide_approval', { request_id: id, decision: 'approved', invoice_no: 'x' }); return 'ok'; } catch (e) { return e.code; } }, ap.request_id);
+  const code = await page.evaluate(async id => { try { await api('decide_approval', { request_id: id, decision: 'approved', invoice_no: 'x' }); return 'ok'; } catch (e) { return e.code; } }, ap.request_id);
   expect(code).toBe('NEEDS_OWNER');
-  await mctx.close();
 
-  // owner approves → sale void, stock restored, re-make loads the cart
+  // owner approves on another device → sale void, stock restored, re-make loads the cart
   const octx = await browser.newContext(ctxOpts);
   const owner = await octx.newPage();
   await login(owner);
@@ -52,8 +49,7 @@ test('kasir requests a void → manager cannot decide (owner only) → owner app
   await card.locator('[data-d="approved"]').click();
   await expect(owner.locator('.modal')).toContainText('Buat ulang transaksi');
   db = await getDb(owner);
-  const sale = db.sales.find(s => s.invoice_no === inv);
-  expect(sale.status).toBe('void');
+  expect(db.sales.find(s => s.invoice_no === inv).status).toBe('void');
   expect(productByName(db, /Kacang Almond/).stock).toBe(p.stock);
   await owner.click('#cf-ok');
   await expect(owner.locator('#view-pos')).toBeVisible();
@@ -107,8 +103,8 @@ test('manager changes the wholesale price directly; a cost change waits for the 
   await octx.close();
 });
 
-test('kasir saves an expense; it appears in the month list and in the owner report', async ({ page }) => {
-  await login(page, 'Siti', '1111');
+test('manager saves an expense; it appears in the month list', async ({ page }) => {
+  await login(page, 'Jihan', '2222');
   await nav(page, 'expenses');
   await page.selectOption('#ex-cat', 'transport');
   await page.fill('#ex-amt', '250.000');
@@ -116,7 +112,7 @@ test('kasir saves an expense; it appears in the month list and in the owner repo
   await page.click('#ex-save');
   await expect(page.locator('.toast.ok').filter({ hasText: 'Pengeluaran' })).toContainText(rp(250000));
   const db = await getDb(page);
-  expect(db.expenses.slice(-1)[0]).toMatchObject({ category: 'transport', amount: 250000, note: 'Ongkir ambil kurma', user: 'Siti', expense_date: jktToday() });
+  expect(db.expenses.slice(-1)[0]).toMatchObject({ category: 'transport', amount: 250000, note: 'Ongkir ambil kurma', user: 'Jihan', expense_date: jktToday(), paid_from: 'kas' });
   const month = db.expenses.filter(x => x.expense_date.slice(0, 7) === jktToday().slice(0, 7));
   await expect(page.locator('[data-kpi="ex-total"] .v')).toHaveText(rp(month.reduce((a, x) => a + x.amount, 0)));
   await expect(page.locator('#ex-table tbody tr').first()).toContainText('Ongkir ambil kurma');

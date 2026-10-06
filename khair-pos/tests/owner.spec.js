@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { rp, pct, jktToday, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, photoFile } = require('./helpers');
+const { rp, pct, jktToday, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect } = require('./helpers');
 
 test('owner voids a sale from history: status void, stock restored, debt reversed', async ({ page }) => {
   await login(page);
@@ -81,43 +81,25 @@ test('purchase (barang masuk) updates stock and weighted average cost; stock adj
   await expect(page.locator('[data-kpi="purchases"] .s')).toContainText('1 penyesuaian stok');
 });
 
-test('kasir never receives or sees cost / profit', async ({ page }) => {
-  await login(page, 'Siti', '1111');
-  expect(await page.evaluate(() => KPOS.S.products.some(p => 'cost_price' in p))).toBe(false);
+test('kasir never receives cost / profit (API as Siti) and is sent to the cashier app', async ({ page }) => {
+  await login(page);
+  const T = new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
+  const bad = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
+  const boot = await asUser(page, 'Siti', '1111', 'bootstrap');
+  expect(boot.products.some(p => 'cost_price' in p)).toBe(false);
+  const r = await asUser(page, 'Siti', '1111', 'get_sales', { from: '2000-01-01', to: T });
+  const rows = [...r.sales, ...r.items, ...r.purchases];
+  expect(rows.length).toBeGreaterThan(100);
+  expect(rows.filter(x => bad.some(k => k in x)).length).toBe(0);
+  const ph = await asUser(page, 'Siti', '1111', 'scan_purchase', { image_base64: 'AAAA', mime: 'image/jpeg' });
+  expect(JSON.stringify(ph)).not.toContain('cost_price');
+  const pr = await asUser(page, 'Siti', '1111', 'save_purchase', { purchase_date: T, supplier: 'x', photo_id: ph.photo_id, items: [{ product_id: 1, qty: 1, cost_price: 100 }] });
+  expect(pr.stock.some(x => 'cost_price' in x)).toBe(false);
+  expect((await asUser(page, 'Siti', '1111', 'void_sale', { invoice_no: r.sales[0].invoice_no, reason: 'x' })).error).toBe('FORBIDDEN');
 
-  await nav(page, 'products');
-  await expect(page.locator('#prod-table')).toBeVisible();
-  await expect(page.locator('#prod-table th[data-col="cost"]')).toHaveCount(0);
-  await expect(page.locator('#prod-table thead')).not.toContainText('Modal');
-  await expect(page.locator('[data-act="prod-new"]')).toHaveCount(0);
-  await expect(page.locator('[data-act="import-csv"]')).toHaveCount(0);
-
-  const leaked = await page.evaluate(async () => {
-    const T = new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
-    const r = await api('get_sales', { from: '2000-01-01', to: T });
-    const bad = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
-    const rows = [...r.sales, ...r.items, ...r.purchases];
-    const ph = await apiPhoto('scan_purchase', { image_base64: 'AAAA', mime: 'image/jpeg' });
-    const scanLeak = JSON.stringify(ph).includes('cost_price');
-    const pr = await api('save_purchase', { purchase_date: T, supplier: 'x', photo_id: ph.photo_id, items: [{ product_id: 1, qty: 1, cost_price: 100 }] });
-    let forbidden = '';
-    try { await api('void_sale', { invoice_no: r.sales[0].invoice_no, reason: 'x' }); } catch (e) { forbidden = e.code; }
-    return { n: rows.length, leaked: rows.filter(x => bad.some(k => k in x)).length, purchaseLeak: pr.stock.some(s => 'cost_price' in s) || scanLeak, forbidden };
-  });
-  expect(leaked.n).toBeGreaterThan(100);
-  expect(leaked.leaked).toBe(0);
-  expect(leaked.purchaseLeak).toBe(false);
-  expect(leaked.forbidden).toBe('FORBIDDEN');
-
-  await nav(page, 'reports');
-  await expect(page.locator('[data-kpi="omzet"]')).toBeVisible();
-  await expect(page.locator('[data-kpi="laba"]')).toHaveCount(0);
-  await expect(page.locator('[data-kpi="margin"]')).toHaveCount(0);
-  await expect(page.locator('#view-reports')).not.toContainText('Laba');
-  const db = await getDb(page);
-  const ok = db.sales.filter(s => s.sale_date === jktToday() && s.status !== 'void');
-  await expect(page.locator('[data-kpi="omzet"] .v')).toHaveText(rp(ok.reduce((a, s) => a + s.total, 0)));
-  await expect(page.locator('[data-kpi="count"] .v')).toHaveText(String(ok.length));
+  const p2 = await page.context().newPage();
+  await loginKasirRedirect(p2, 'Siti', '1111');
+  await p2.close();
 });
 
 async function expectReportMatches(page, from, to) {
