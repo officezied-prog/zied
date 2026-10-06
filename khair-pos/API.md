@@ -36,9 +36,10 @@ never receives `cost_price`, `total_cost`, `profit`, `line_profit`, `cost` field
 | `save_product` | owner | Product (with `id` to update; `stock` only used on create) | `product` |
 | `import_products` | owner | `{rows: [Product without id]}` upsert by `sku`, else by exact `name` | `created, updated` |
 | `stock_adjust` | owner | `{product_id, new_stock, reason}` | `product` |
-| `save_customer` | any | Customer (with `id` to update; `debt_balance` ignored) | `customer` |
+| `save_customer` | any | Customer (with `id` to update; `debt_balance` ignored). `name` is optional when a phone is given (default "Pelanggan " + last 4 digits). Without `id`, a customer with the same normalised phone (62…) is updated instead of duplicated. `wa_optin`, `source` (≤ 20) | `customer`, `existed` |
+| `stock_count` | any except sales | `{counts: [{product_id, counted}], note}` (stock count / opname, ≤ 500 lines) | `applied, lines: [{product_id, name, unit, system, counted, diff}]`. Owner: applied now, `stock`. Others: `request_id, approval` (kind `opname`, owner decides); on approval each `diff` is added to the stock at that moment, so sales made meanwhile are kept. Every change is logged as a purchase row with supplier `STOK OPNAME` |
 | `receive_payment` | any | `{customer_id, amount, method, note, pay_date}` | `payment, customer` |
-| `save_purchase` | any | `{purchase_date, supplier, note, items:[{product_id, qty, cost_price}]}` | `stock: [{product_id, stock, cost_price}]` |
+| `save_purchase` | any | `{purchase_date, supplier, note, items:[{product_id, qty, cost_price, exp_date? (YYYY-MM-DD, expiry of this batch)}]}` | `stock: [{product_id, stock, cost_price}]` |
 | `get_sales` | any (kasir: cost/profit stripped) | `{from: "YYYY-MM-DD", to: "YYYY-MM-DD"}` inclusive | `sales[], items[], payments[], purchases[]` |
 | `save_settings` | owner | `{settings: {...}}` (merged) | `settings` |
 | `save_user` | owner | `{name, role, pin_hash?, active}` (create or update by name) | `user` |
@@ -47,9 +48,9 @@ never receives `cost_price`, `total_cost`, `profit`, `line_profit`, `cost` field
 
 **Product**: `id, sku, name, category, unit, cost_price, retail_price, wholesale_price, wholesale_min_qty, stock, min_stock, active (bool), notes`
 
-**Customer**: `id, name, phone, type ("grosir"|"eceran"), address, notes, debt_balance`
+**Customer**: `id, name, phone, type ("grosir"|"eceran"), address, notes, debt_balance, wa_optin (bool), source`
 
-**Settings**: `store_name, address, phone, receipt_footer, paper ("58"|"80"), survey_questions: [string]`
+**Settings**: `store_name, address, phone, receipt_footer, paper ("58"|"80"), survey_questions: [string], wa_shop_number (shop WhatsApp to notify about new numbers), survey_voice (bool, default true)`
 
 **Sale (request)**:
 ```json
@@ -64,6 +65,7 @@ never receives `cost_price`, `total_cost`, `profit`, `line_profit`, `cost` field
   "paid_amount": 90000,
   "survey": [{"q": "Tahu Khair Mart dari mana?", "a": "dari TikTok"}],
   "survey_consent": true,
+  "survey_transcript": "…text of the recorded survey conversation (≤ 4000 chars, stored only with survey_consent)…",
   "notes": ""
 }
 ```
@@ -150,7 +152,7 @@ by someone allowed to).
 |---|---|---|---|
 | `request_void` | any | `{invoice_no, reason}` | `request_id, approval` (kind `void`, approver_role `owner`) |
 | `change_price` | any | `{product_id, retail_price?, wholesale_price?, cost_price?, reason}` (only the fields that change) | applied directly if the caller may: `applied: true, product`; else `applied: false, request_id, approval` |
-| `decide_approval` | owner/manager (`approver_role` respected) | `{request_id, decision, note, invoice_no?}` — for kind `void` send `invoice_no: approval.ref` | `approval` (+ `sale` when a void was executed, + `product` when a price was applied) |
+| `decide_approval` | owner/manager (`approver_role` respected) | `{request_id, decision, note, invoice_no?}` — for kind `void` send `invoice_no: approval.ref` | `approval` (+ `sale` when a void was executed, + `product` when a price was applied, + `stock` when an `opname` count was applied) |
 | `list_approvals` | owner/manager | – | `approvals: [pending...]`, each with `can_decide: bool` |
 
 `void_sale` stays owner-only (owner can cancel directly). `save_product` stays owner-only; when it
