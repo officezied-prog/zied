@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { rp, pct, jktToday, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals } = require('./helpers');
+const { rp, pct, jktToday, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, photoFile } = require('./helpers');
 
 test('owner voids a sale from history: status void, stock restored, debt reversed', async ({ page }) => {
   await login(page);
@@ -42,6 +42,9 @@ test('purchase (barang masuk) updates stock and weighted average cost; stock adj
   await login(page);
   const p = productByName(await getDb(page), /Medjool/);
   await nav(page, 'purchases');
+  await page.setInputFiles('#pu-photo', await photoFile(page));
+  await expect(page.locator('#pu-photo-card')).toHaveClass(/done/);
+  await page.click('[data-act="pu-clear"]'); // keep the photo, enter the lines by hand
   await page.fill('#pu-sup', 'PT Kurma Nusantara');
   await page.fill('#pu-q', 'medjool');
   await page.locator('[data-act="pu-add"]').first().click();
@@ -94,10 +97,12 @@ test('kasir never receives or sees cost / profit', async ({ page }) => {
     const r = await api('get_sales', { from: '2000-01-01', to: T });
     const bad = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
     const rows = [...r.sales, ...r.items, ...r.purchases];
-    const pr = await api('save_purchase', { purchase_date: T, supplier: 'x', items: [{ product_id: 1, qty: 1, cost_price: 100 }] });
+    const ph = await apiPhoto('scan_purchase', { image_base64: 'AAAA', mime: 'image/jpeg' });
+    const scanLeak = JSON.stringify(ph).includes('cost_price');
+    const pr = await api('save_purchase', { purchase_date: T, supplier: 'x', photo_id: ph.photo_id, items: [{ product_id: 1, qty: 1, cost_price: 100 }] });
     let forbidden = '';
     try { await api('void_sale', { invoice_no: r.sales[0].invoice_no, reason: 'x' }); } catch (e) { forbidden = e.code; }
-    return { n: rows.length, leaked: rows.filter(x => bad.some(k => k in x)).length, purchaseLeak: pr.stock.some(s => 'cost_price' in s), forbidden };
+    return { n: rows.length, leaked: rows.filter(x => bad.some(k => k in x)).length, purchaseLeak: pr.stock.some(s => 'cost_price' in s) || scanLeak, forbidden };
   });
   expect(leaked.n).toBeGreaterThan(100);
   expect(leaked.leaked).toBe(0);

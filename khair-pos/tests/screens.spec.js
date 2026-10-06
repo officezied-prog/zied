@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, login, nav, addBySearch, closeModals } = require('./helpers');
+const { SHOTS, login, nav, addBySearch, closeModals, photoFile } = require('./helpers');
 const shot = (page, name, full = false) => page.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: full });
 
 async function fillCart(page, phone) {
@@ -54,6 +54,31 @@ for (const [label, vp] of [['desktop', { width: 1366, height: 768 }], ['phone', 
       await shot(page, `${label}-reports-ar`);
       await nav(page, 'pos');
       await shot(page, `${label}-pos-ar`);
+    });
+
+    test(`screenshots ${label}: Beranda, menu, kas, approvals, purchase photo`, async ({ page }) => {
+      await login(page, 'Pemilik', '1234', '', { stay: true });
+      await page.click('[data-act="home-preset"][data-p="7d"]');
+      await page.waitForTimeout(400);
+      await shot(page, `${label}-home`);
+      await shot(page, `${label}-home-full`, true);
+      if (label === 'phone') { await page.click('#nav-more'); await page.waitForTimeout(250); await shot(page, 'phone-more-menu'); await closeModals(page); }
+      await nav(page, 'purchases');
+      await page.setInputFiles('#pu-photo', await photoFile(page));
+      await page.waitForSelector('#pu-photo-card.done');
+      await shot(page, `${label}-purchase-photo`);
+      await nav(page, 'kas');
+      await shot(page, `${label}-kas-owner`);
+    });
+
+    test(`screenshots ${label}: kasir shift prompt and blind kas`, async ({ page }) => {
+      await login(page, 'Siti', '1111', '', { openShift: false });
+      await page.waitForTimeout(250);
+      await shot(page, `${label}-shift-open`);
+      await page.fill('#so-cash', '500000');
+      await page.click('#so-ok');
+      await nav(page, 'kas');
+      await shot(page, `${label}-kas-kasir`);
     });
   });
 }

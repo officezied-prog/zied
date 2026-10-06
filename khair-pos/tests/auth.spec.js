@@ -52,6 +52,7 @@ test('login: wrong PIN is rejected, keyboard PIN entry works, bad store key is r
   await page.keyboard.press('Enter');
   await expect(page.locator('#app')).toBeVisible();
   await expect(page.locator('#tb-role')).toHaveText('Kasir');
+  await page.click('#shift-later');
   // kasir has no owner-only panels
   await page.click('#nav [data-view="settings"]');
   await expect(page.locator('#st-users')).toHaveCount(0);
