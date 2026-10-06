@@ -769,7 +769,8 @@ function sessGet() {
     store.set('session', { user: loc.user, role: loc.role });
     try { sessionStorage.setItem(SESS_KEY, JSON.stringify(ss)); } catch (e) { }
   }
-  const user = (loc && loc.user) || (ss && ss.user) || '';
+  if (!loc || !loc.user) { try { sessionStorage.removeItem(SESS_KEY); } catch (e) { } return null; } // storage was wiped: no session
+  const user = loc.user;
   return user ? { user, role: (loc && loc.role) || (ss && ss.role) || '', pin_hash: ss && ss.user && ss.user.toLowerCase() === user.toLowerCase() ? ss.pin_hash || '' : '' } : null;
 }
 function sessDel() { store.del('session'); try { sessionStorage.removeItem(SESS_KEY); } catch (e) { } }
