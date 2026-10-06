@@ -685,6 +685,7 @@ const MockServer = (() => {
     if (!db.users.length) throw E('NO_USERS', 'Run setup first');
     const u = db.users.find(x => x.active && x.name.toLowerCase() === String(user || '').toLowerCase());
     if (!u || u.pin_hash !== pin_hash) throw E('BAD_PIN', 'Wrong user or PIN');
+    if (u.role === 'sales' && !['login', 'bootstrap'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
     const owner = u.role === 'owner';
     const needOwner = () => { if (!owner) throw E('FORBIDDEN', 'Owner only'); };
     const prodById = id => db.products.find(p => p.id === Number(id));
@@ -1379,7 +1380,7 @@ async function loadUsersForLogin() {
   if (cached.length) { L.users = cached; renderLogin(); }
   try {
     const r = await apiRaw('users', {}, { key: S.key });
-    L.users = r.users || [];
+    L.users = (r.users || []).filter(u => u.role !== 'sales');
     store.set('users_' + S.key, L.users);
     if (!L.users.length) L.err = t('login.no_users');
     renderLogin();
@@ -1429,6 +1430,7 @@ async function submitPin() {
   const user = L.sel, hash = await pinHash(S.key, user, L.pin);
   try {
     const r = await apiRaw('login', {}, { key: S.key, user, pin_hash: hash });
+    if (r.user.role === 'sales') { const e = new Error('sales'); e.code = 'FORBIDDEN'; throw e; }
     const pins = store.get('pins', {}); pins[user.toLowerCase()] = { h: hash, role: r.user.role }; store.set('pins', pins);
     startSession(r.user.name, r.user.role, hash, false);
   } catch (e) {
@@ -2801,7 +2803,7 @@ const ACT = {
       const r = await apiRaw('users', {}, { key });
       if (S.key !== key) { KS.del('cache'); S.products = []; S.customers = []; }
       S.key = key; store.set('key', key);
-      L.users = r.users || []; store.set('users_' + key, L.users);
+      L.users = (r.users || []).filter(u => u.role !== 'sales'); store.set('users_' + key, L.users);
       L.busy = false; L.step = 'users'; L.pin = '';
       if (!L.users.length) L.err = t('login.no_users');
       renderLogin();

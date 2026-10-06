@@ -338,6 +338,29 @@ tr.diff td{background:var(--danger-l)}
 .receipt .rc-rule{height:3px;background:#DC2626;border-radius:2px;margin:4px auto 6px;width:40%}
 .cart-bar .go{color:#1E3A8A}
 
+.pthumb{width:40px;height:40px;border-radius:8px;object-fit:cover;flex:none;background:var(--surface-2);border:1px solid var(--border);display:inline-block}
+.prod-photo{max-width:100%;max-height:260px;border-radius:12px;border:1px solid var(--border)}
+.vthumb{width:48px;height:48px;border-radius:8px;object-fit:cover;flex:none;background:var(--surface-2);display:grid;place-items:center;color:var(--muted);cursor:zoom-in}
+.vnum{display:inline-grid;place-items:center;min-width:26px;height:26px;border-radius:13px;background:var(--brand);color:#fff;font-weight:800;font-size:13px;flex:none}
+.vnum.far{background:var(--accent)}
+.vnum.map{box-shadow:0 0 0 2px #fff}
+.fd-map{height:380px;border-radius:10px;overflow:hidden;background:var(--surface-2)}
+.fd-map[data-mode="svg"]{height:auto;overflow:visible;background:none}
+.fd-svg{width:100%;height:auto;display:block}
+.c-mapbg{fill:var(--surface)} .c-route{fill:none;stroke:var(--brand);stroke-width:3.5;stroke-linejoin:round;stroke-linecap:round;opacity:.85}
+.c-shop{fill:var(--card);stroke:var(--muted);stroke-width:2} .c-start{fill:var(--ok)} .c-last{fill:var(--brand);stroke:#fff;stroke-width:3}
+.c-visit circle{fill:var(--brand);stroke:#fff;stroke-width:2} .c-visit text{fill:#fff} .c-visit.far circle{fill:var(--accent)}
+.rep-card{border:1px solid var(--border);font:inherit;color:inherit} .rep-card.sel{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-l)}
+.fo-banner{margin:8px 14px 0;padding:6px 10px;border-radius:8px;background:var(--brand-l);color:var(--brand-text);font-weight:700;font-size:13px;display:flex;gap:6px;align-items:center}
+.vpop{font:13px/1.4 var(--font)}
+
+@media (min-width:760px) and (max-height:860px){
+  .rail{gap:2px;padding:6px 6px}
+  .rail .nav-btn{min-height:48px;padding:4px 2px;font-size:11.5px}
+  .rail .nav-btn .l-long{display:none} .rail .nav-btn .l-short{display:block}
+  .rail .nav-btn svg.i{width:22px;height:22px}
+}
+
 /* ========== Busy bar ========== */
 body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-index:300;background:linear-gradient(90deg,transparent,var(--accent),transparent);background-size:40% 100%;background-repeat:no-repeat;animation:busy 1s linear infinite}
 @keyframes busy{from{background-position:-40% 0}to{background-position:140% 0}}
@@ -431,6 +454,8 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
     <section class="view" id="view-expenses" hidden></section>
     <section class="view" id="view-reports" hidden></section>
     <section class="view" id="view-approvals" hidden></section>
+    <section class="view" id="view-orders" hidden></section>
+    <section class="view" id="view-field" hidden></section>
     <section class="view" id="view-settings" hidden></section>
   </main>
 </div>
@@ -475,6 +500,8 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
   <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></symbol>
   <symbol id="i-speaker" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
   <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="m17 9 5 6M22 9l-5 6"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6M9 18h4"/></symbol>
   <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></symbol>
 </svg>
 
@@ -482,6 +509,7 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
 'use strict';
 const CONFIG = { API_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-pos', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-pos-photo';
+CONFIG.FIELD_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-field';
 const APP_VERSION = '2.0.0';
 const MOCK = /[?&]mock=1\b/.test(location.search);
 const PREFIX = MOCK ? 'kpos.mock.' : 'kpos.';
@@ -640,13 +668,13 @@ async function apiRawInner(action, data, cred, opts) {
   body.data = data || {};
   let res;
   if (MOCK) {
-    res = await MockServer.request(clone(body));
+    res = await MockServer.request(clone(body), opts);
   } else {
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = setTimeout(() => ctrl && ctrl.abort(), opts.timeout || 20000);
     let r, txt;
     try {
-      r = await fetch(opts.photo ? CONFIG.PHOTO_URL : CONFIG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined, cache: 'no-store' });
+      r = await fetch(opts.field ? CONFIG.FIELD_URL : opts.photo ? CONFIG.PHOTO_URL : CONFIG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined, cache: 'no-store' });
       txt = await r.text();
     } catch (e) { throw new NetError(e && e.message); } finally { clearTimeout(timer); }
     try { res = JSON.parse(txt); } catch (e) {
@@ -681,7 +709,7 @@ const MockServer = (() => {
   const DBKEY = 'kmock.db';
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
-  const READ_ONLY = ['users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos'];
+  const READ_ONLY = ['users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos', 'field_bootstrap', 'list_field', 'product_images'];
   class MockErr extends Error { constructor(code, message) { super(message || code); this.code = code; } }
   const E = (code, msg) => new MockErr(code, msg);
   let ready = null;
@@ -1125,7 +1153,7 @@ const MockServer = (() => {
         needOwner();
         const name = String(data.name || '').trim();
         if (!name) throw E('INVALID', 'name required');
-        const role = ['owner', 'manager'].includes(data.role) ? data.role : 'kasir';
+        const role = ['owner', 'manager', 'sales'].includes(data.role) ? data.role : 'kasir';
         if (data.pin_hash && !/^[0-9a-f]{64}$/.test(data.pin_hash)) throw E('INVALID', 'pin_hash');
         let x = db.users.find(v => v.name.toLowerCase() === name.toLowerCase());
         const active = data.active === undefined ? true : !!data.active;
@@ -1142,17 +1170,46 @@ const MockServer = (() => {
     }
   }
 
-  async function request(body) {
+  /* ---- Field sales (v8): handled by shared/field-mock.js (loaded in mock mode only) ---- */
+  const FIELD_ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop'];
+  const ext = () => (window.KhairFieldMock && typeof window.KhairFieldMock.handle === 'function') ? window.KhairFieldMock : null;
+  /** Seeds the field tables (and demo rep Ahmad) — synchronous and idempotent; skipped until the store has users. */
+  function ensureField(db) {
+    const X = ext();
+    if (!X || typeof X.seed !== 'function' || !db.users.length) return false;
+    return !!X.seed(db);
+  }
+  function fieldHandle(db, body) {
+    if (body.key !== 'demo') throw E('BAD_KEY', 'Store key not found');
+    const u = db.users.find(x => x.active && x.name.toLowerCase() === String(body.user || '').toLowerCase());
+    if (!u || u.pin_hash !== body.pin_hash) throw E('BAD_PIN', 'Wrong user or PIN');
+    const X = ext();
+    if (!X || (Array.isArray(X.actions) && !X.actions.includes(body.action))) throw E('SERVER', 'Field mock (shared/field-mock.js) not loaded');
+    return X.handle(body.action, body.data || {}, { name: u.name, role: u.role }, db, { now: () => new Date(), jktDate, jktISO });
+  }
+  function loadExtFieldMock() {
+    return new Promise(res => {
+      if (ext()) return res();
+      const sc = document.createElement('script'); sc.src = 'shared/field-mock.js';
+      const done = () => res(); sc.onload = done; sc.onerror = done; setTimeout(done, 3000);
+      document.head.appendChild(sc);
+    });
+  }
+  let extLoad = null;
+  async function request(body, opts = {}) {
     await ensure();
+    if (!extLoad) extLoad = loadExtFieldMock();
+    await extLoad;
     await sleep(30 + Math.random() * 50);
     let forced = false; try { forced = localStorage.getItem('kmock.offline') === '1'; } catch (e) { }
     if (!navigator.onLine || forced) throw new NetError('offline (mock)');
     const db = load();
     db.approvals = db.approvals || []; db.photos = db.photos || []; db.expenses = db.expenses || []; db.shifts = db.shifts || []; db.cash_moves = db.cash_moves || [];
+    if (ensureField(db)) save(db);
     let res;
     try {
       const role = (db.users.find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase() && x.pin_hash === body.pin_hash) || {}).role;
-      res = handle(db, body);
+      res = opts.field || FIELD_ACTIONS.includes(body.action) ? fieldHandle(db, body) : handle(db, body);
       if (!READ_ONLY.includes(body.action)) save(db);
       res = Object.assign({ ok: true }, role === 'owner' || ['users', 'setup'].includes(body.action) ? res : strip(res));
     } catch (e) {
@@ -1452,13 +1509,15 @@ const VIEWS = [
   { id: 'history', icon: 'clock', label: 'nav.history' },
   { id: 'reports', icon: 'chart', label: 'nav.reports' },
   { id: 'approvals', icon: 'check', label: 'nav.approvals', approver: true },
+  { id: 'orders', icon: 'clip', label: 'nav.orders', approver: true },
+  { id: 'field', icon: 'pin', label: 'nav.field', approver: true },
   { id: 'settings', icon: 'gear', label: 'nav.settings' }
 ];
 /** Bottom tab bar on phones: 4 main views + "Lainnya". */
 const phoneViews = () => isApprover() ? ['home', 'pos', 'history', 'customers'] : ['pos', 'products', 'customers', 'history'];
 const RENDER = {};
 function renderShell() {
-  $('#nav').innerHTML = VIEWS.filter(v => !v.approver || isApprover()).map(v => `<button class="nav-btn ${S.view === v.id ? 'on' : ''} ${phoneViews().includes(v.id) ? '' : 'hide-phone'}" data-act="go" data-view="${v.id}" ${S.view === v.id ? 'aria-current="page"' : ''}>${ic(v.icon)}<span class="l-long">${esc(t(v.label))}</span><span class="l-short" aria-hidden="true">${esc(t(v.label.replace('nav.', 'navs.')))}</span></button>`).join('') + `<button class="nav-btn show-phone ${phoneViews().includes(S.view) ? '' : 'on'}" id="nav-more" data-act="nav-more">${ic('menu')}<span>${esc(t('nav.more'))}</span>${isApprover() && AP.count ? `<b class="dot">${AP.count}</b>` : ''}</button>`;
+  $('#nav').innerHTML = VIEWS.filter(v => !v.approver || isApprover()).map(v => `<button class="nav-btn ${S.view === v.id ? 'on' : ''} ${phoneViews().includes(v.id) ? '' : 'hide-phone'}" data-act="go" data-view="${v.id}" ${S.view === v.id ? 'aria-current="page"' : ''}>${ic(v.icon)}<span class="l-long">${esc(t(v.label))}</span><span class="l-short" aria-hidden="true">${esc(t(v.label.replace('nav.', 'navs.')))}</span>${v.id === 'orders' && FO.newCount ? `<b class="dot" data-orders-new>${FO.newCount}</b>` : ''}</button>`).join('') + `<button class="nav-btn show-phone ${phoneViews().includes(S.view) ? '' : 'on'}" id="nav-more" data-act="nav-more">${ic('menu')}<span>${esc(t('nav.more'))}</span>${isApprover() && AP.count ? `<b class="dot">${AP.count}</b>` : ''}</button>`;
   $('#tb-store').textContent = settings().store_name || 'Khair Mart';
   $('#tb-sub').textContent = 'POS · ' + (MOCK ? 'demo' : S.key);
   $('#tb-user').textContent = S.user;
@@ -1470,7 +1529,7 @@ function renderShell() {
   updateOutboxBadge();
 }
 function go(view, force) {
-  if (!VIEWS.some(v => v.id === view) || ((view === 'approvals' || view === 'home') && !isApprover())) view = 'pos';
+  if (!VIEWS.some(v => v.id === view) || (['approvals', 'home', 'orders', 'field'].includes(view) && !isApprover())) view = 'pos';
   const changed = S.view !== view;
   S.view = view;
   VIEWS.forEach(v => { $('#view-' + v.id).hidden = v.id !== view; });
@@ -1564,19 +1623,22 @@ async function submitPin() {
 }
 /* ========== Kasir accounts use the separate cashier app (./kasir/) ========== */
 const KASIR_APP_URL = './kasir/' + (MOCK ? '?mock=1' : '');
-function showKasirRedirect(user) {
+const SALES_APP_URL = './sales/' + (MOCK ? '?mock=1' : '');
+const OTHER_APP = { kasir: { url: KASIR_APP_URL, k: 'kasirapp' }, sales: { url: SALES_APP_URL, k: 'salesapp' } };
+function showKasirRedirect(user, role = 'kasir') {
+  const A = OTHER_APP[role] || OTHER_APP.kasir;
   S.pin_hash = ''; S.inApp = false; store.del('session');
   closeModal(true);
   $('#app').hidden = true; $('#login').hidden = false;
   $('#login').innerHTML = `<div class="login-card center" id="kasir-redirect"><div class="brand"><div class="logo">خ</div><div>${esc(settings().store_name || 'Khair Mart')}</div></div>
-    <h2>${esc(t('kasirapp.title'))}</h2><p class="muted">${esc(t('kasirapp.hint', { name: user || '' }))}</p>
-    <a class="btn primary big block" id="kasir-go" href="${esc(KASIR_APP_URL)}">${esc(t('kasirapp.open'))} →</a>
+    <h2>${esc(t('kasirapp.title'))}</h2><p class="muted">${esc(t(A.k + '.hint', { name: user || '' }))}</p>
+    <a class="btn primary big block" id="kasir-go" href="${esc(A.url)}">${esc(t(A.k + '.open'))} →</a>
     <p class="small muted" style="margin-bottom:0">${esc(t('kasirapp.auto'))}</p></div>`;
   clearTimeout(showKasirRedirect.timer);
-  showKasirRedirect.timer = setTimeout(() => { location.href = KASIR_APP_URL; }, 2000);
+  showKasirRedirect.timer = setTimeout(() => { location.href = A.url; }, 2000);
 }
 function startSession(user, role, hash, offline) {
-  if (role === 'kasir') { store.set('last_user', user); showKasirRedirect(user); return; }
+  if (role === 'kasir' || role === 'sales') { store.set('last_user', user); showKasirRedirect(user, role); return; }
   const sameUser = S.user === user;
   S.user = user; S.role = role; S.pin_hash = hash; S.lastActivity = Date.now();
   store.set('session', { user, role, pin_hash: hash }); store.set('last_user', user);
@@ -1628,7 +1690,7 @@ function applyData(d) {
   if (Array.isArray(d.users)) S.users = d.users;
   if (d.approvals_pending != null && typeof AP !== 'undefined') AP.count = int(d.approvals_pending);
   if ('shift' in d) { S.shift = d.shift || null; S.shiftsSupported = true; }
-  if (Array.isArray(d.users) && S.inApp && S.user) { const me = d.users.find(u => u.name.toLowerCase() === S.user.toLowerCase()); if (me && me.role === 'kasir' && S.role !== 'kasir') setTimeout(() => showKasirRedirect(S.user), 0); }
+  if (Array.isArray(d.users) && S.inApp && S.user) { const me = d.users.find(u => u.name.toLowerCase() === S.user.toLowerCase()); if (me && (me.role === 'kasir' || me.role === 'sales') && S.role !== me.role) setTimeout(() => showKasirRedirect(S.user, me.role), 0); }
   if (Array.isArray(d.open_shifts)) S.openShifts = d.open_shifts;
   S.products.forEach(p => { p.id = isNaN(Number(p.id)) ? p.id : Number(p.id); ['retail_price', 'wholesale_price', 'cost_price'].forEach(k => { if (k in p) p[k] = int(p[k]); }); p.stock = num(p.stock); p.min_stock = num(p.min_stock); p.wholesale_min_qty = num(p.wholesale_min_qty); p.active = !(p.active === false || p.active === 'false' || p.active === 0 || p.active === '0'); });
   S.customers.forEach(c => { c.id = isNaN(Number(c.id)) ? c.id : Number(c.id); c.debt_balance = int(c.debt_balance); });
@@ -1846,6 +1908,7 @@ function renderCart(flashId) {
       ${cust ? `<button class="icon-btn ghost sm" data-act="clear-customer" aria-label="${esc(t('pos.walkin'))}">${ic('x')}</button>` : ''}
       ${VOICE.on ? `<button class="icon-btn ghost sm mute-btn ${c.muted ? 'on' : ''}" id="cart-mute" data-act="sale-mute" aria-pressed="${c.muted ? 'true' : 'false'}" title="${esc(t(c.muted ? 'voice.unmute' : 'voice.mute'))}" aria-label="${esc(t('voice.mute'))}">${ic(c.muted ? 'mute' : 'speaker')}</button>` : ''}
     </div>
+    ${c.field_order ? `<div class="fo-banner" id="cart-fo">${ic('clip')} ${esc(t('fo.in_cart', { id: c.field_order.order_id, shop: c.field_order.shop_name }))}</div>` : ''}
     <div class="cart-lines" id="cart-lines">${v.lines.length ? v.lines.map((l, i) => `
       <div class="cline" data-line="${i}">
         <div class="top"><div class="nm">${esc(l.p.name)}</div><div class="lt num" data-ref="lt">${fmtRp(l.total)}</div>
@@ -2097,6 +2160,8 @@ function applyStock(list) {
   saveCache();
 }
 function finishSale(rc) {
+  const fo = S.cart && S.cart.field_order;
+  if (fo && !rc.pending && rc.invoice_no) markOrderProcessed(fo, rc.invoice_no);
   rememberReceipt(rc);
   Object.keys(salesCache).forEach(k => delete salesCache[k]);
   S.cart = newCart(); saveCart();
@@ -2113,7 +2178,7 @@ let syncing = false;
 function saveOutbox() { store.set('outbox', S.outbox); updateOutboxBadge(); }
 function queueSale(req, rc) {
   if (S.outbox.some(e => e.client_id === req.client_id)) return;
-  S.outbox.push({ client_id: req.client_id, req, rc, key: S.key, user: S.user, pin_hash: S.pin_hash, queued_at: new Date().toISOString(), tries: 0, error: '' });
+  S.outbox.push({ client_id: req.client_id, req, rc, key: S.key, user: S.user, pin_hash: S.pin_hash, queued_at: new Date().toISOString(), tries: 0, error: '', field_order: S.cart && S.cart.field_order || null });
   for (const it of req.items) { const p = prodById(it.product_id); if (p) p.stock = roundQty(p.stock - it.qty); }
   const c = custById(req.customer_id); if (c) { c.debt_balance += rc.debt; rc.debt_after = c.debt_balance; }
   saveOutbox(); saveCache();
@@ -2137,6 +2202,7 @@ async function syncOutbox(manual) {
         applyStock(r.stock);
         const rc = Object.assign({}, e.rc, { pending: false, invoice_no: r.invoice_no || (r.sale && r.sale.invoice_no) || e.rc.invoice_no });
         rememberReceipt(rc);
+        if (e.field_order && rc.invoice_no) markOrderProcessed(e.field_order, rc.invoice_no);
         sent++;
       } catch (err) {
         e.tries++; e.error = err.code || 'SERVER'; e.message = err.message || '';
@@ -2504,7 +2570,7 @@ function openMoreMenu() {
   const items = VIEWS.filter(v => !phoneViews().includes(v.id) && (!v.approver || isApprover()));
   openModal({
     title: t('nav.more'), cls: 'narrow',
-    body: `<div class="list" id="more-list">${items.map(v => `<button class="li" data-act="go" data-view="${v.id}">${ic(v.icon)}<div class="grow t">${esc(t(v.label))}</div>${v.id === 'approvals' && AP.count ? `<span class="badge accent">${AP.count}</span>` : ''}</button>`).join('')}</div>
+    body: `<div class="list" id="more-list">${items.map(v => `<button class="li" data-act="go" data-view="${v.id}">${ic(v.icon)}<div class="grow t">${esc(t(v.label))}</div>${v.id === 'approvals' && AP.count ? `<span class="badge accent">${AP.count}</span>` : ''}${v.id === 'orders' && FO.newCount ? `<span class="badge accent">${FO.newCount}</span>` : ''}</button>`).join('')}</div>
       <a class="btn ghost block" style="margin-top:10px" id="more-kasir-app" href="${esc(KASIR_APP_URL)}">${esc(t('kasirapp.link'))}</a>`
   });
 }
@@ -2689,6 +2755,7 @@ function drawAnnual() {
   body.style.opacity = '';
   if (!YR.cur) { body.innerHTML = `<div class="empty red">${esc(YR.err || t('err.SERVER'))}</div>`; return; }
   const A = computeAnnual(YR.cur, YR.prev, YR.year); YR.last = A;
+  setTimeout(() => loadFieldPanel(`${YR.year}-01-01`, `${YR.year}-12-31` < today() ? `${YR.year}-12-31` : today()), 0);
   const T = A.T, PT = A.PT;
   const dcls = p => p == null ? 'muted' : p >= 0 ? 'green' : 'red';
   body.innerHTML = `
@@ -2707,6 +2774,7 @@ function drawAnnual() {
       <div class="panel" id="yr-pl"><h3>${esc(t('yr.pl'))} ${A.year}</h3><div class="pb">${plRows(A).map(([k, v, cls]) => `<div class="sumrow ${cls || ''}"><span>${esc(k)}</span><span class="num">${v}</span></div>`).join('')}</div></div>
       <div class="panel"><h3>${esc(t('yr.exp_by_cat'))}</h3><div class="pb" id="yr-exp">${A.byCat.length ? barRows(A.byCat.map(x => [t('excat.' + x.cat), x.amount]), T.exp, true) : `<div class="muted">${esc(t('no_data'))}</div>`}</div></div>
     </div>
+    <div class="panel" style="margin-bottom:14px"><h3>${ic('pin')} ${esc(t('field.report'))}</h3><div id="rp-field"><div class="pb muted">${esc(t('loading'))}</div></div></div>
     <div class="panel"><h3>${esc(t('yr.products'))}</h3><div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl" id="yr-products"><thead><tr><th>#</th><th>${esc(t('product'))}</th><th class="r">${esc(t('qty'))}</th><th class="r">${esc(t('rep.omzet'))}</th><th class="r">${esc(t('rep.profit'))}</th><th class="r">${esc(t('margin'))}</th><th class="r">${esc(t('yr.share'))}</th></tr></thead><tbody>
       ${A.products.slice(0, 40).map((p, i) => `<tr><td class="muted">${i + 1}</td><td>${esc(p.name)}</td><td class="r num">${fmtQty(p.qty)} <span class="muted small">${esc(p.unit)}</span></td><td class="r num">${fmtRp(p.omzet)}</td><td class="r num"><b>${fmtRp(p.laba)}</b></td><td class="r num">${fmtPct(p.margin)}</td><td class="r num">${fmtPct(p.share)}</td></tr>`).join('') || `<tr><td colspan="7" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div></div>`;
 }
@@ -2922,17 +2990,23 @@ function computeAttention(d) {
   if (low.length) items.push({ key: 'low', level: 'warn', icon: 'box', text: t('att.low', { n: low.length }), go: 'products', low: true });
   return items;
 }
-async function refreshAttention() {
+async function refreshAttention(force) {
   if (!S.inApp || !S.pin_hash) return;
+  if (force) { clearFieldCache(); Object.keys(salesCache).forEach(k => delete salesCache[k]); }
   let d = null;
   try { d = await loadSales(addDays(today(), -30), today(), true); } catch (e) { }
-  ATT.items = computeAttention(d);
-  updateBell();
+  ATT.items = computeAttention(d).concat(await loadFieldAttention());
+  updateBell(); renderNavDots();
   if (S.view === 'home') drawAttention();
 }
 function attentionHTML(items, limit) {
   if (!items.length) return `<div class="muted" style="padding:6px 2px">${ic('check')} ${esc(t('att.none'))}</div>`;
   return `<div class="list">${items.slice(0, limit || items.length).map(x => `<button class="li att ${x.level}" data-act="att-go" data-go="${x.go}" ${x.low ? 'data-low="1"' : ''} style="min-height:48px;padding:8px 12px">${ic(x.icon)}<div class="grow t" style="font-weight:600">${esc(x.text)}</div><span class="muted">›</span></button>`).join('')}</div>`;
+}
+function renderNavDots() {
+  const b = $('#nav [data-view="orders"]'); if (!b) return;
+  let dot = $('[data-orders-new]', b);
+  if (FO.newCount) { if (!dot) { dot = document.createElement('b'); dot.className = 'dot'; dot.setAttribute('data-orders-new', ''); b.appendChild(dot); } dot.textContent = FO.newCount; } else if (dot) dot.remove();
 }
 function updateBell() {
   const b = $('#tb-bell'); if (!b) return;
@@ -2950,7 +3024,7 @@ function openBell() {
   });
   if (unread.length) { ATT.notifs.forEach(x => x.read = true); store.set('notifs', ATT.notifs); updateBell(); }
 }
-setInterval(() => { refreshAttention(); checkMyRequests(); }, 120000);
+setInterval(() => { refreshAttention(); checkMyRequests(); if (store.get('order_updates', []).length) flushOrderUpdates(); }, 120000);
 setInterval(() => checkMyRequests(), 30000);
 
 /* ========== Dashboard (Beranda) — calm, one screen, 1 tap to details ========== */
@@ -3039,7 +3113,13 @@ function drawHome() {
       ${blockHTML('home-methods', t('rep.methods'), barRows(['tunai', 'transfer', 'qris', 'hutang'].map(m => [t('pm.' + m), H.methods[m] || 0]), H.omzet))}
       ${blockHTML('home-channels', t('home.channels'), barRows(Object.entries(H.channels).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([c, v]) => [t('ch.' + c), v]), chTotal, true), Object.keys(H.channels).length > 5)}
       ${blockHTML('home-cashiers', t('home.cashiers'), homeCashierRows(H.cashiers, 5), H.cashiers.length > 5)}
+      <div class="panel" id="home-field"><h3>${ic('pin')} ${esc(t('field.today'))}<button class="btn xs" style="margin-inline-start:auto" data-act="go" data-view="field">${esc(t('field.open'))}</button></h3><div class="pb" id="home-field-body"><div class="muted">${esc(t('loading'))}</div></div></div>
     </div>`;
+  loadField(today(), today(), '', true).then(d => {
+    const b = $('#home-field-body'); if (!b) return;
+    const users = [...new Set(reps().map(u => u.name).concat(d.days.map(x => x.user)))];
+    b.innerHTML = users.length ? `<table class="tbl"><tbody>${users.map(u => { const r = repDay(d, u, today()); return `<tr data-rep="${esc(u)}"><td><b>${esc(u)}</b></td><td><span class="badge ${{ working: 'green', ended: 'blue', off: 'gray' }[r.status]}">${esc(t('field.st_' + r.status))}</span></td><td class="r num">${r.vis.length} ${esc(t('field.visits'))}</td><td class="r num">${r.ords.length} ${esc(t('field.orders'))}</td><td class="r small muted">${r.lastT ? esc(ago(r.lastT)) : '—'}</td></tr>`; }).join('')}</tbody></table>` : `<div class="muted">${esc(t('field.no_reps'))}</div>`;
+  }).catch(() => { const b = $('#home-field-body'); if (b) b.innerHTML = `<div class="muted">${esc(t('field.unavailable'))}</div>`; });
 }
 function homeAll(block) {
   const H = HM.last; if (!H) return;
@@ -3052,6 +3132,409 @@ function homeAll(block) {
   const [title, html] = map[block] || [];
   if (title) openModal({ title, body: `<div id="home-all-body">${html}</div>` });
 }
+
+/* ========== Field sales (v8): images, Lapangan, field orders ========== */
+const apiField = (action, data, opts) => api(action, data, Object.assign({ field: true, timeout: 30000 }, opts || {}));
+const reps = () => S.users.filter(u => u.role === 'sales' && u.active !== false);
+
+/* ---- Product images: resize ≤ 400 px JPEG, cache per product by image_updated (IndexedDB + memory) ---- */
+const IMG = { mem: new Map(), db: null };
+function imgDb() {
+  if (IMG.db) return IMG.db;
+  IMG.db = new Promise(res => {
+    try { const r = indexedDB.open('khair-img', 1); r.onupgradeneeded = () => r.result.createObjectStore('img'); r.onsuccess = () => res(r.result); r.onerror = () => res(null); } catch (e) { res(null); }
+  });
+  return IMG.db;
+}
+async function imgGet(k) { const d = await imgDb(); if (!d) return null; return new Promise(res => { try { const q = d.transaction('img').objectStore('img').get(k); q.onsuccess = () => res(q.result || null); q.onerror = () => res(null); } catch (e) { res(null); } }); }
+async function imgPut(k, v) { const d = await imgDb(); if (!d) return; try { d.transaction('img', 'readwrite').objectStore('img').put(v, k); } catch (e) { } }
+const imgKey = id => PREFIX + 'p' + id;
+/** base64 without prefix → data URL (seeded demo images are SVG, uploads are JPEG). */
+const b64Img = b => !b ? '' : 'data:' + (b.startsWith('PHN2Zy') || b.startsWith('PD94') ? 'image/svg+xml' : b.startsWith('iVBOR') ? 'image/png' : 'image/jpeg') + ';base64,' + b;
+const productImg = p => { const c = p && p.image_updated && IMG.mem.get(imgKey(p.id)); return c && c.updated === p.image_updated ? b64Img(c.b64) : ''; };
+async function loadProductImages(list) {
+  const missing = [];
+  for (const p of list.filter(x => x.image_updated)) {
+    let c = IMG.mem.get(imgKey(p.id));
+    if (!c || c.updated !== p.image_updated) { c = await imgGet(imgKey(p.id)); if (c) IMG.mem.set(imgKey(p.id), c); }
+    if (!c || c.updated !== p.image_updated) missing.push(p.id);
+  }
+  if (!missing.length) return false;
+  try {
+    const r = await apiField('product_images', { ids: missing });
+    for (const im of r.images || []) {
+      const p = prodById(im.product_id); if (!p || !im.image_base64) continue;
+      const v = { updated: p.image_updated || im.image_updated, b64: im.image_base64 };
+      IMG.mem.set(imgKey(p.id), v); imgPut(imgKey(p.id), v);
+    }
+    return true;
+  } catch (e) { return false; }
+}
+async function productJpeg(file) {
+  for (const [max, q] of [[400, 0.65], [400, 0.55], [360, 0.5], [320, 0.45], [280, 0.4]]) {
+    const r = await imageToJpeg(file, max, q);
+    if (r.base64.length <= 60000) return r;
+  }
+  throw new ApiError('INVALID', t('img.too_big'));
+}
+function openProductPhoto(p) {
+  if (!p) return;
+  const cur = productImg(p);
+  const el = openModal({
+    title: t('img.title'), cls: 'narrow',
+    body: `<p style="margin-top:0"><b>${esc(p.name)}</b></p>
+      <div class="center" id="pp-prev">${cur ? `<img class="prod-photo" src="${esc(cur)}" alt="${esc(p.name)}">` : `<div class="thumb" style="width:160px;height:160px;margin:auto">${ic('camera')}</div>`}</div>
+      <p class="small muted center">${esc(t('img.hint'))}</p>
+      <label class="btn primary block big" for="pp-file">${ic('camera')} ${esc(cur ? t('img.replace') : t('img.take'))}</label><input type="file" id="pp-file" accept="image/*" class="sr-only">
+      <div class="red" id="pp-err" role="alert"></div>`
+  });
+  $('#pp-file', el).onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    const err = $('#pp-err', el); err.textContent = '';
+    $('#pp-prev', el).innerHTML = '<div class="spinner"></div>';
+    try {
+      const img = await productJpeg(f);
+      $('#pp-prev', el).innerHTML = `<img class="prod-photo" src="data:image/jpeg;base64,${img.base64}" alt="">`;
+      const r = await apiField('set_product_image', { product_id: p.id, image_base64: img.base64 });
+      p.image_updated = (r && r.image_updated) || jktISO();
+      const v = { updated: p.image_updated, b64: img.base64 };
+      IMG.mem.set(imgKey(p.id), v); imgPut(imgKey(p.id), v); saveCache();
+      toast(t('img.saved'), 'ok');
+      closeModal();
+      if (S.view === 'products') drawProducts();
+    } catch (x) { err.textContent = errMsg(x); $('#pp-prev', el).innerHTML = cur ? `<img class="prod-photo" src="${esc(cur)}" alt="">` : ''; }
+  };
+}
+
+/* ---- Field data (list_field), cached briefly ---- */
+const FD = { date: today(), user: '', data: null, err: '', map: null, cache: {} };
+const FO = { list: [], newCount: 0, status: 'baru', loaded: false, data: null };
+/** list_field. Server limits: tracks only for ranges ≤ 7 days, photo_thumb only ≤ 31 days; noTracks for long ranges. */
+async function loadField(from, to, user, useCache, noTracks) {
+  const k = `${from}|${to}|${user || ''}|${noTracks ? 'nt' : ''}`;
+  if (useCache && FD.cache[k] && Date.now() - FD.cache[k].at < 60000) return FD.cache[k].data;
+  const r = await apiField('list_field', Object.assign({ from, to }, user ? { user } : {}, noTracks ? { include_tracks: false } : {}));
+  const d = { tracks: r.tracks || [], visits: r.visits || [], shops: r.shops || [], orders: r.orders || [], days: r.days || [] };
+  d.orders.forEach(o => { o.total = int(o.total); o.itemsList = parseItems(o.items); });
+  d.visits.forEach(v => { v.distance_m = v.distance_m == null || v.distance_m === '' ? null : num(v.distance_m); });
+  d.tracks.sort((a, b) => String(a.t).localeCompare(String(b.t)));
+  FD.cache[k] = { at: Date.now(), data: d };
+  return d;
+}
+const clearFieldCache = () => { FD.cache = {}; };
+function parseItems(x) { if (Array.isArray(x)) return x; try { const v = JSON.parse(x || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+const shopLinks = () => store.get('shop_links', {});
+function shopCustomer(sh) {
+  if (!sh) return null;
+  return custById(sh.customer_id) || custById(shopLinks()[sh.shop_id]) || S.customers.find(c => norm(c.name) === norm(sh.name)) || null;
+}
+/** save_customer (if needed) + link_shop. The device-only link is kept only as an offline fallback. */
+async function linkShopToCustomer(sh) {
+  let c = custById(sh.customer_id);
+  if (c) return c;
+  c = shopCustomer(sh);
+  if (!c) {
+    const r = await api('save_customer', { name: sh.name, phone: sh.phone || '', type: 'grosir', address: [sh.address, sh.area].filter(Boolean).join(', '), notes: `Khair Sales · ${sh.shop_id}${sh.owner_name ? ' · ' + sh.owner_name : ''}` });
+    c = upsertLocal(S.customers, r.customer); c.debt_balance = int(c.debt_balance); saveCache();
+  }
+  try {
+    const r = await apiField('link_shop', { shop_id: sh.shop_id, customer_id: c.id });
+    Object.assign(sh, r.shop || { customer_id: c.id, status: 'pelanggan' });
+    const links = shopLinks(); if (links[sh.shop_id]) { delete links[sh.shop_id]; store.set('shop_links', links); }
+  } catch (e) {
+    if (!(e instanceof NetError)) throw e;
+    const links = shopLinks(); links[sh.shop_id] = c.id; store.set('shop_links', links);
+    sh.customer_id = c.id; sh.status = 'pelanggan';
+  }
+  clearFieldCache();
+  return c;
+}
+const ago = iso => { const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? t('ago.now') : m < 60 ? t('ago.min', { n: m }) : m < 1440 ? t('ago.hour', { n: Math.floor(m / 60) }) : t('ago.day', { n: Math.floor(m / 1440) }); };
+const OUTCOME_CLS = { order: 'green', tertarik: 'blue', tidak: 'gray', tutup: 'gray', sudah_pelanggan: 'gold' };
+const FAR_M = 200;
+
+/* ---- Lapangan screen ---- */
+RENDER.field = function () {
+  if (!isApprover()) { go('pos'); return; }
+  const rs = reps();
+  $('#view-field').innerHTML = `<div class="view-head"><h1>${esc(t('nav.field'))}</h1><button class="btn sm" data-act="field-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
+    <div class="toolbar"><label class="f" style="margin:0">${esc(t('date'))} <input class="input" type="date" id="fd-date" value="${esc(FD.date)}" style="width:auto"></label>
+      <select class="input" id="fd-user" aria-label="${esc(t('field.rep'))}"><option value="">${esc(t('field.all_reps'))}</option>${rs.map(u => `<option ${FD.user === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></div>
+    <div id="fd-body"><div class="empty">${esc(t('loading'))}</div></div>`;
+  $('#fd-date').onchange = e => { FD.date = e.target.value || today(); loadFieldView(); };
+  $('#fd-user').onchange = e => { FD.user = e.target.value; loadFieldView(); };
+  loadFieldView();
+};
+async function loadFieldView() {
+  const b = $('#fd-body'); if (b) b.style.opacity = '.55';
+  try { FD.data = await loadField(FD.date, FD.date, '', false); FD.err = ''; } catch (e) { FD.data = null; FD.err = errMsg(e); }
+  drawFieldView();
+}
+function repDay(d, user, date) {
+  const day = d.days.find(x => x.user === user && x.day_date === date);
+  const pts = d.tracks.filter(x => x.user === user && x.track_date === date);
+  const vis = d.visits.filter(x => x.user === user && x.visit_date === date);
+  const ords = d.orders.filter(x => x.user === user && x.order_date === date);
+  const lastT = [pts.length ? pts[pts.length - 1].t : '', vis.length ? vis.map(v => v.visit_time).sort().slice(-1)[0] : ''].filter(Boolean).sort().slice(-1)[0] || '';
+  const status = !day || !day.started_at ? 'off' : day.ended_at ? 'ended' : 'working';
+  return { user, day, pts, vis, ords, status, lastT, km: day ? num(day.km) : 0 };
+}
+function drawFieldView() {
+  const body = $('#fd-body'); if (!body) return;
+  body.style.opacity = '';
+  if (FD.map) { try { FD.map.remove(); } catch (e) { } FD.map = null; }
+  if (!FD.data) { body.innerHTML = `<div class="empty red">${esc(FD.err || t('err.SERVER'))}</div>`; return; }
+  const d = FD.data;
+  const users = [...new Set(reps().map(u => u.name).concat(d.days.map(x => x.user)))].filter(u => !FD.user || u === FD.user);
+  const R = users.map(u => repDay(d, u, FD.date));
+  const sel = FD.user || (R.find(r => r.pts.length || r.vis.length) || R[0] || {}).user || '';
+  const cur = R.find(r => r.user === sel);
+  const statusCls = { working: 'green', ended: 'blue', off: 'gray' };
+  const from = addDays(FD.date, -13);
+  const leads = d.shops.filter(s => String(s.created_at).slice(0, 10) >= from && String(s.created_at).slice(0, 10) <= FD.date).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  body.innerHTML = `<div class="kpis" id="fd-reps">${R.map(r => `<button class="kpi rep-card ${r.user === sel ? 'sel' : ''}" data-act="field-rep" data-u="${esc(r.user)}" data-rep="${esc(r.user)}" style="text-align:start;cursor:pointer">
+        <div class="row"><b class="grow" style="font-size:16px">${esc(r.user)}</b><span class="badge ${statusCls[r.status]}" data-status="${r.status}">${esc(t('field.st_' + r.status))}</span></div>
+        <div class="s">${r.day && r.day.started_at ? esc(jktTime(r.day.started_at)) + '–' + (r.day.ended_at ? esc(jktTime(r.day.ended_at)) : '…') : '—'} · <b data-km>${esc(NF1.format(r.km))}</b> km</div>
+        <div class="s"><b data-visits>${r.vis.length}</b> ${esc(t('field.visits'))} · <b data-orders>${r.ords.length}</b> ${esc(t('field.orders'))}</div>
+        <div class="s" data-last>${r.lastT ? esc(t('field.last_loc')) + ' ' + esc(ago(r.lastT)) : esc(t('field.no_loc'))}</div></button>`).join('') || `<div class="muted">${esc(t('field.no_reps'))}</div>`}</div>
+    <div class="panel" style="margin-bottom:14px"><h3>${ic('pin')} ${esc(t('field.map'))} ${cur ? `· ${esc(cur.user)} · ${esc(fmtDate(FD.date))}` : ''}</h3><div class="pb"><div id="fd-map" class="fd-map"></div><div id="map-detail" class="small" style="margin-top:8px"></div></div></div>
+    <div class="rgrid">
+      <div class="panel"><h3>${esc(t('field.visit_list'))} <span class="badge gray">${cur ? cur.vis.length : 0}</span></h3><div class="pb list" id="fd-visits">${cur && cur.vis.length ? cur.vis.slice().sort((a, b) => String(a.visit_time).localeCompare(String(b.visit_time))).map((v, i) => visitRowHTML(v, i + 1)).join('') : `<div class="muted">${esc(t('no_data'))}</div>`}</div></div>
+      <div class="panel"><h3>${esc(t('field.leads'))} <span class="small muted">(${esc(t('last_n_days', { n: 14 }))})</span> <span class="badge gray">${leads.length}</span></h3><div class="pb list" id="fd-leads">${leads.map(s => leadRowHTML(s)).join('') || `<div class="muted">${esc(t('no_data'))}</div>`}</div></div>
+    </div>`;
+  if (cur) drawFieldMap(cur, d.shops);
+}
+function visitRowHTML(v, n) {
+  const far = v.distance_m != null && v.distance_m > FAR_M;
+  return `<div class="li visit-row" data-visit="${esc(v.visit_id)}" style="min-height:0;padding:8px 10px">
+    <span class="vnum ${far ? 'far' : ''}">${n}</span>
+    ${v.photo_thumb ? `<img class="vthumb" data-act="photo-zoom" data-src="${esc(b64Img(v.photo_thumb))}" src="${esc(b64Img(v.photo_thumb))}" alt="${esc(v.shop_name)}">` : `<div class="vthumb">${ic('camera')}</div>`}
+    <div class="grow"><div class="t">${esc(v.shop_name)}</div><div class="s">${esc(jktTime(v.visit_time))} · ${esc(v.user)}${v.notes ? ' · ' + esc(v.notes) : ''}</div></div>
+    <div class="right"><span class="badge ${OUTCOME_CLS[v.outcome] || 'gray'}">${esc(t('out.' + v.outcome))}</span>${v.distance_m != null ? `<div class="small ${far ? 'red' : 'muted'}" style="margin-top:3px">${far ? '⚠ ' : ''}${fmtNum(v.distance_m)} m</div>` : ''}</div></div>`;
+}
+function leadRowHTML(s) {
+  const c = shopCustomer(s);
+  return `<div class="li lead-row" data-shop="${esc(s.shop_id)}" style="min-height:0;padding:8px 12px"><div class="grow"><div class="t">${esc(s.name)} <span class="badge gray">${esc(t('stype.' + s.type))}</span></div>
+    <div class="s">${esc([s.area, s.owner_name, s.phone].filter(Boolean).join(' · '))} · ${esc(fmtDate(String(s.created_at).slice(0, 10)))} · ${esc(s.created_by || '')}</div></div>
+    ${c ? `<span class="badge green" data-linked>${esc(t('field.linked', { name: c.name }))}</span>` : `<button class="btn xs primary" data-act="lead-convert" data-shop="${esc(s.shop_id)}">${ic('plus')} ${esc(t('field.make_customer'))}</button>`}</div>`;
+}
+function visitPopupHTML(v, n) {
+  const far = v.distance_m != null && v.distance_m > FAR_M;
+  return `<div class="vpop"><b>${n}. ${esc(v.shop_name)}</b><br>${esc(t('out.' + v.outcome))} · ${esc(jktTime(v.visit_time))}${v.distance_m != null ? ` · ${fmtNum(v.distance_m)} m` : ''}
+    ${far ? `<div class="badge red" data-far style="margin-top:4px">⚠ ${esc(t('field.far'))}</div>` : ''}
+    ${v.photo_thumb ? `<div><img src="${esc(b64Img(v.photo_thumb))}" alt="" style="width:120px;border-radius:6px;margin-top:6px"></div>` : ''}</div>`;
+}
+
+/* ---- Map: Leaflet (cdnjs + OSM) with an SVG fallback ---- */
+const LEAFLET = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
+let leafletP = null;
+function loadLeaflet() {
+  if (window.L && window.L.map) return Promise.resolve(true);
+  if (leafletP) return leafletP;
+  leafletP = new Promise(res => {
+    let done = false; const fin = ok => { if (!done) { done = true; res(ok && !!(window.L && window.L.map)); } };
+    try {
+      const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = LEAFLET + 'leaflet.min.css'; document.head.appendChild(css);
+      const sc = document.createElement('script'); sc.src = LEAFLET + 'leaflet.min.js'; sc.onload = () => fin(true); sc.onerror = () => fin(false);
+      document.head.appendChild(sc);
+    } catch (e) { fin(false); }
+    setTimeout(() => fin(false), 5000);
+  });
+  leafletP.then(ok => { if (!ok) leafletP = null; });
+  return leafletP;
+}
+async function drawFieldMap(r, shops) {
+  const el = $('#fd-map'); if (!el) return;
+  const vis = r.vis.slice().sort((a, b) => String(a.visit_time).localeCompare(String(b.visit_time)));
+  const pts = r.pts.filter(p => p.lat != null && p.lng != null);
+  const shopIds = new Set(vis.map(v => v.shop_id));
+  const sh = shops.filter(s => s.lat != null && (shopIds.has(s.shop_id) || !FD.user));
+  if (!pts.length && !vis.length) { el.innerHTML = `<div class="empty">${esc(t('field.no_route'))}</div>`; el.dataset.mode = 'empty'; return; }
+  const ok = navigator.onLine && await loadLeaflet();
+  if (!$('#fd-map') || $('#fd-map') !== el) return;
+  if (ok) {
+    try {
+      el.innerHTML = ''; el.dataset.mode = 'leaflet';
+      const L = window.L, m = L.map(el, { zoomControl: true, attributionControl: true });
+      FD.map = m;
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(m);
+      const bounds = [];
+      if (pts.length) { const ll = pts.map(p => [num(p.lat), num(p.lng)]); L.polyline(ll, { color: getComputedStyle(document.documentElement).getPropertyValue('--brand').trim() || '#1E40AF', weight: 4, opacity: .8 }).addTo(m); bounds.push(...ll); }
+      sh.forEach(s => { L.circleMarker([num(s.lat), num(s.lng)], { radius: 5, color: '#526075', weight: 2, fillOpacity: .3 }).addTo(m).bindTooltip(s.name); bounds.push([num(s.lat), num(s.lng)]); });
+      vis.forEach((v, i) => {
+        const far = v.distance_m > FAR_M;
+        L.marker([num(v.lat), num(v.lng)], { icon: L.divIcon({ className: '', html: `<span class="vnum map ${far ? 'far' : ''}">${i + 1}</span>`, iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(m).bindPopup(visitPopupHTML(v, i + 1));
+        bounds.push([num(v.lat), num(v.lng)]);
+      });
+      if (bounds.length) m.fitBounds(bounds, { padding: [24, 24] });
+      return;
+    } catch (e) { if (FD.map) { try { FD.map.remove(); } catch (x) { } FD.map = null; } }
+  }
+  el.dataset.mode = 'svg';
+  el.innerHTML = fieldSVG(pts, vis, sh, Math.max(320, Math.round(el.clientWidth || 800)));
+  el.onclick = e => { const c = e.target.closest('[data-vi]'); if (!c) return; const i = +c.dataset.vi; $('#map-detail').innerHTML = visitPopupHTML(vis[i], i + 1); };
+}
+function fieldSVG(pts, vis, shops, Wpx) {
+  const all = pts.concat(vis, shops).map(p => ({ lat: num(p.lat), lng: num(p.lng) })).filter(p => p.lat || p.lng);
+  let minLa = Math.min(...all.map(p => p.lat)), maxLa = Math.max(...all.map(p => p.lat)), minLo = Math.min(...all.map(p => p.lng)), maxLo = Math.max(...all.map(p => p.lng));
+  const k = Math.cos((minLa + maxLa) / 2 * Math.PI / 180);
+  let w = (maxLo - minLo) * k || 0.002, h = (maxLa - minLa) || 0.002;
+  const W = Wpx || 800, H = Math.round(W * (W < 560 ? 0.95 : 0.52)), pad = 30, sc = Math.min((W - 2 * pad) / w, (H - 2 * pad) / h);
+  const ox = (W - w * sc) / 2, oy = (H - h * sc) / 2;
+  const X = lo => ox + (lo - minLo) * k * sc, Y = la => oy + (maxLa - la) * sc;
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(t('field.map'))}" class="fd-svg"><rect width="${W}" height="${H}" class="c-mapbg" rx="10"/>`;
+  for (let i = 1; i < 6; i++) s += `<line x1="${W * i / 6}" x2="${W * i / 6}" y1="0" y2="${H}" class="c-grid"/><line y1="${H * i / 6}" y2="${H * i / 6}" x1="0" x2="${W}" class="c-grid"/>`;
+  shops.forEach(p => { s += `<rect x="${X(num(p.lng)) - 5}" y="${Y(num(p.lat)) - 5}" width="10" height="10" rx="2" class="c-shop" data-shop="${esc(p.shop_id)}"><title>${esc(p.name)}</title></rect>`; });
+  if (pts.length) s += `<polyline class="c-route" data-route points="${pts.map(p => `${X(num(p.lng)).toFixed(1)},${Y(num(p.lat)).toFixed(1)}`).join(' ')}"/>`;
+  if (pts.length) { const a = pts[0], b = pts[pts.length - 1]; s += `<circle cx="${X(num(a.lng))}" cy="${Y(num(a.lat))}" r="6" class="c-start"><title>${esc(t('field.start'))} ${esc(jktTime(a.t))}</title></circle><circle cx="${X(num(b.lng))}" cy="${Y(num(b.lat))}" r="7" class="c-last"><title>${esc(t('field.last_loc'))} ${esc(jktTime(b.t))}</title></circle>`; }
+  vis.forEach((v, i) => { const far = v.distance_m > FAR_M, x = X(num(v.lng)), y = Y(num(v.lat)); s += `<g data-vi="${i}" class="c-visit ${far ? 'far' : ''}" style="cursor:pointer"><circle cx="${x}" cy="${y}" r="13"/><text x="${x}" y="${y + 4.5}" text-anchor="middle" font-size="13" font-weight="700">${i + 1}</text><title>${esc(`${i + 1}. ${v.shop_name} · ${t('out.' + v.outcome)} · ${jktTime(v.visit_time)}${v.distance_m != null ? ' · ' + v.distance_m + ' m' : ''}`)}</title></g>`; });
+  return s + `</svg><div class="small muted">${esc(t('field.svg_note'))}</div>`;
+}
+
+/* ---- Field orders inbox ---- */
+async function loadOrders(useCache) {
+  try {
+    const d = await loadField(addDays(today(), -30), today(), '', useCache, true);
+    FO.data = d; FO.list = d.orders.slice().sort((a, b) => String(b.order_time || b.order_date).localeCompare(String(a.order_time || a.order_date)) || String(b.order_id).localeCompare(String(a.order_id)));
+    FO.newCount = FO.list.filter(o => o.status === 'baru').length; FO.loaded = true; FO.err = '';
+  } catch (e) { FO.err = errMsg(e); }
+  renderShell();
+  if (S.view === 'orders') drawOrders();
+}
+RENDER.orders = function () {
+  if (!isApprover()) { go('pos'); return; }
+  $('#view-orders').innerHTML = `<div class="view-head"><h1>${esc(t('nav.orders'))}</h1><button class="btn sm" data-act="orders-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
+    <div class="chips" style="margin-bottom:10px">${['baru', 'diproses', 'dikirim', 'batal', 'all'].map(st => `<button class="chip ${FO.status === st ? 'on' : ''}" data-act="orders-status" data-s="${st}">${esc(t('ost.' + st))}</button>`).join('')}</div>
+    <div id="fo-list"><div class="empty">${esc(t('loading'))}</div></div>`;
+  if (FO.loaded) drawOrders();
+  loadOrders(false);
+};
+function drawOrders() {
+  const box = $('#fo-list'); if (!box) return;
+  if (FO.err && !FO.loaded) { box.innerHTML = `<div class="empty red">${esc(FO.err)}</div>`; return; }
+  const list = FO.list.filter(o => FO.status === 'all' || o.status === FO.status);
+  const cls = { baru: 'accent', diproses: 'blue', dikirim: 'green', batal: 'gray' };
+  box.innerHTML = list.length ? `<div class="list">${list.map(o => `<button class="li fo-row" data-act="order-open" data-id="${esc(o.order_id)}"><div class="grow"><div class="t">${esc(o.shop_name)} <span class="small muted">${esc(o.order_id)}</span></div><div class="s">${esc(fmtDate(o.order_date))} · ${esc(o.user)} · ${o.itemsList.length} ${esc(t('items'))}${o.invoice_no ? ' · ' + esc(o.invoice_no) : ''}</div></div>
+      <div class="right"><span class="badge ${cls[o.status] || 'gray'}" data-ost="${esc(o.status)}">${esc(t('ost.' + o.status))}</span><div class="num" style="font-weight:800;margin-top:3px">${fmtRp(o.total)}</div></div></button>`).join('')}</div>` : `<div class="empty">${esc(t('no_data'))}</div>`;
+}
+function openFieldOrder(o) {
+  if (!o) return;
+  const sh = (FO.data ? FO.data.shops : []).find(s => s.shop_id === o.shop_id);
+  const c = shopCustomer(sh || { name: o.shop_name });
+  const its = o.itemsList;
+  const el = openModal({
+    title: `${t('nav.orders')} · ${o.order_id}`, id: 'fo-modal',
+    body: `<div class="row wrap" style="margin-bottom:8px"><b class="grow" style="font-size:17px">${esc(o.shop_name)}</b><span class="badge">${esc(t('ost.' + o.status))}</span></div>
+      <div class="small muted">${esc(t('field.rep'))}: <b>${esc(o.user)}</b> · ${esc(fmtDate(o.order_date))}${o.delivery_date ? ` · ${esc(t('fo.delivery'))} ${esc(fmtDate(o.delivery_date))}` : ''}</div>
+      <div class="small" style="margin:4px 0 10px">${c ? `${esc(t('rc.customer'))}: <b>${esc(c.name)}</b>` : `<span class="muted">${esc(t('fo.no_customer'))}</span>`}${sh ? ` · ${esc([sh.address, sh.area, sh.phone].filter(Boolean).join(' · '))}` : ''}</div>
+      <div class="tbl-wrap"><table class="tbl" id="fo-items"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('qty'))}</th><th class="r">${esc(t('price.now'))}</th><th class="r">${esc(t('total'))}</th></tr></thead><tbody>
+        ${its.map(i => { const p = prodById(i.product_id); return `<tr><td>${esc(i.name || (p && p.name) || i.product_id)} ${i.price_type === 'grosir' ? `<span class="badge blue">${esc(t('grosir'))}</span>` : ''}</td><td class="r num">${fmtQty(i.qty)}</td><td class="r num">${fmtRp(i.unit_price)}</td><td class="r num">${fmtRp(i.line_total != null ? i.line_total : Math.round(num(i.qty) * int(i.unit_price)))}</td></tr>`; }).join('')}</tbody>
+        <tfoot><tr style="font-weight:800"><td colspan="3">${esc(t('total'))}</td><td class="r num" id="fo-total">${fmtRp(o.total)}</td></tr></tfoot></table></div>
+      ${o.notes ? `<p class="small">${esc(t('notes'))}: ${esc(o.notes)}</p>` : ''}${o.status_note || o.note ? `<p class="small muted">${esc(o.status_note || o.note)}</p>` : ''}
+      <div class="field" style="margin-top:10px"><label class="f" for="fo-note">${esc(t('notes'))}</label><input class="input" id="fo-note"></div><div class="red" id="fo-err" role="alert"></div>`,
+    foot: `${o.status !== 'batal' && o.status !== 'dikirim' ? `<button class="btn danger" id="fo-cancel">${esc(t('fo.cancel'))}</button>` : ''}
+      ${['baru', 'diproses'].includes(o.status) ? `<button class="btn" id="fo-ship">${ic('truck')} ${esc(t('fo.ship'))}</button>` : ''}
+      ${o.status === 'baru' ? `<button class="btn primary" id="fo-process">${ic('cart')} ${esc(t('fo.process'))}</button>` : ''}`
+  });
+  const upd = async (status, confirmText) => {
+    const note = $('#fo-note', el).value.trim();
+    if (confirmText) { const r = await confirmBox(confirmText, { danger: true }); if (!r.ok) return; }
+    try {
+      await apiField('update_order', { order_id: o.order_id, status, note });
+      o.status = status; clearFieldCache(); closeModal(); toast(t('fo.updated', { id: o.order_id, st: t('ost.' + status) }), 'ok');
+      loadOrders(false); refreshAttention();
+    } catch (e) { $('#fo-err', el).textContent = errMsg(e); }
+  };
+  const c1 = $('#fo-cancel', el); if (c1) c1.onclick = () => upd('batal', t('fo.cancel_q', { id: o.order_id }));
+  const c2 = $('#fo-ship', el); if (c2) c2.onclick = () => upd('dikirim');
+  const c3 = $('#fo-process', el); if (c3) c3.onclick = () => processFieldOrder(o, sh);
+}
+async function processFieldOrder(o, sh) {
+  let c = null;
+  try { c = sh ? await linkShopToCustomer(sh) : shopCustomer({ name: o.shop_name }); }
+  catch (e) { toast(errMsg(e), 'err'); return; }
+  if (S.cart.lines.length) { const r = await confirmBox(t('void.replace_cart'), { danger: true }); if (!r.ok) return; }
+  const cart = newCart();
+  cart.customer_id = c ? c.id : null;
+  cart.notes = t('fo.cart_note', { id: o.order_id, user: o.user });
+  cart.field_order = { order_id: o.order_id, shop_name: o.shop_name };
+  cart.channel = 'lainnya';
+  for (const it of o.itemsList) {
+    const p = prodById(it.product_id); if (!p) continue;
+    const line = { product_id: p.id, name: p.name, qty: num(it.qty), override: null };
+    const auto = lineCalc(line, c).auto;
+    if (it.price_type && auto !== it.price_type) line.override = it.price_type;
+    cart.lines.push(line);
+  }
+  if (!cart.lines.length) { toast(t('void.remake_fail'), 'err'); return; }
+  S.cart = cart; saveCart();
+  closeModal(true); go('pos');
+  toast(t('fo.loaded', { id: o.order_id }), 'ok', 4000);
+}
+/** After a sale from a field order is saved: mark the order "diproses" with the invoice number (retried later if offline). */
+async function markOrderProcessed(fo, invoice_no) {
+  const q = store.get('order_updates', []).filter(x => x.order_id !== fo.order_id);
+  q.push({ order_id: fo.order_id, invoice_no });
+  store.set('order_updates', q);
+  await flushOrderUpdates();
+}
+async function flushOrderUpdates() {
+  let q = store.get('order_updates', []);
+  for (const u of q.slice()) {
+    try {
+      await apiField('update_order', { order_id: u.order_id, status: 'diproses', invoice_no: u.invoice_no, note: t('fo.processed_note', { inv: u.invoice_no }) });
+      q = q.filter(x => x.order_id !== u.order_id); store.set('order_updates', q);
+      clearFieldCache(); toast(t('fo.updated', { id: u.order_id, st: t('ost.diproses') }), 'ok');
+    } catch (e) { if (e instanceof NetError) break; q = q.filter(x => x.order_id !== u.order_id); store.set('order_updates', q); toast(errMsg(e), 'err'); }
+  }
+  if (isApprover()) loadOrders(false);
+}
+
+/* ---- Attention items from the field ---- */
+function fieldAttention(d) {
+  const items = [], T = today();
+  if (!d) return items;
+  const nNew = d.orders.filter(o => o.status === 'baru').length;
+  if (nNew) items.push({ key: 'fo', level: 'warn', icon: 'clip', text: t('att.field_orders', { n: nNew }), go: 'orders' });
+  const silent = [...new Set(d.days.filter(x => x.day_date === T && x.started_at && !x.ended_at).map(x => x.user))].map(u => repDay(d, u, T)).filter(r => !r.lastT || Date.now() - new Date(r.lastT).getTime() > 30 * 60000);
+  silent.forEach(r => items.push({ key: 'silent-' + r.user, level: 'err', icon: 'pin', text: t('att.rep_silent', { name: r.user, ago: r.lastT ? ago(r.lastT) : '—' }), go: 'field' }));
+  const far = d.visits.filter(v => v.distance_m > FAR_M && daysBetween(v.visit_date, T) <= 7);
+  if (far.length) items.push({ key: 'far', level: 'warn', icon: 'pin', text: t('att.far', { n: far.length }), go: 'field' });
+  const latest = {};
+  d.visits.forEach(v => { if (!latest[v.shop_id] || String(v.visit_time) > String(latest[v.shop_id].visit_time)) latest[v.shop_id] = v; });
+  const due = new Map();
+  Object.values(latest).forEach(v => { if (v.next_visit && v.next_visit < T) due.set(v.shop_id, v.next_visit); });
+  d.shops.forEach(sh => { const lv = latest[sh.shop_id]; if (sh.next_visit && sh.next_visit < T && !(lv && lv.visit_date >= sh.next_visit)) due.set(sh.shop_id, sh.next_visit); });
+  const overdue = [...due.keys()];
+  if (overdue.length) items.push({ key: 'nextvisit', level: 'warn', icon: 'pin', text: t('att.next_visit', { n: overdue.length }), go: 'field' });
+  return items;
+}
+async function loadFieldAttention() {
+  if (!isApprover()) return [];
+  try {
+    const [d, td] = await Promise.all([loadField(addDays(today(), -30), today(), '', true, true), loadField(today(), today(), '', true)]);
+    FO.newCount = d.orders.filter(o => o.status === 'baru').length;
+    return fieldAttention(Object.assign({}, d, { tracks: td.tracks, days: d.days.filter(x => x.day_date !== today()).concat(td.days) }));
+  } catch (e) { return []; }
+}
+
+/* ---- Lapangan panel in reports ---- */
+function fieldPanelHTML(d, from, to) {
+  const users = [...new Set(reps().map(u => u.name).concat(d.visits.map(v => v.user), d.orders.map(o => o.user)))];
+  const rows = users.map(u => {
+    const v = d.visits.filter(x => x.user === u), o = d.orders.filter(x => x.user === u && x.status !== 'batal');
+    const shops = d.shops.filter(s => s.created_by === u && String(s.created_at).slice(0, 10) >= from && String(s.created_at).slice(0, 10) <= to);
+    return { u, v: v.length, shops: shops.length, o: o.length, total: sum(o, x => x.total), conv: v.length ? o.length / v.length * 100 : 0 };
+  }).filter(r => r.v || r.o || r.shops);
+  return `<div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl" id="rp-field-table"><thead><tr><th>${esc(t('field.rep'))}</th><th class="r">${esc(t('field.visits'))}</th><th class="r">${esc(t('field.new_shops'))}</th><th class="r">${esc(t('field.orders'))}</th><th class="r">${esc(t('total'))}</th><th class="r">${esc(t('field.conversion'))}</th></tr></thead><tbody>
+    ${rows.map(r => `<tr data-rep="${esc(r.u)}"><td>${esc(r.u)}</td><td class="r num" data-c="visits">${fmtNum(r.v)}</td><td class="r num" data-c="shops">${fmtNum(r.shops)}</td><td class="r num" data-c="orders">${fmtNum(r.o)}</td><td class="r num">${fmtRp(r.total)}</td><td class="r num" data-c="conv">${fmtPct(r.conv)}</td></tr>`).join('') || `<tr><td colspan="6" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div>`;
+}
+async function loadFieldPanel(from, to) {
+  const box = $('#rp-field'); if (!box || !isApprover()) return;
+  try { const d = await loadField(from, to, '', true, true); const b = $('#rp-field'); if (b) b.innerHTML = fieldPanelHTML(d, from, to); }
+  catch (e) { const b = $('#rp-field'); if (b) b.innerHTML = `<div class="pb muted">${esc(t('field.unavailable'))}</div>`; }
+}
+function photoZoom(src) { openModal({ title: t('field.photo'), cls: 'narrow', body: `<img src="${esc(src)}" alt="" style="width:100%;border-radius:10px">` }); }
 
 /* ========== Products ========== */
 const PR = { q: '', cat: '', low: false, inactive: false };
@@ -3073,6 +3556,7 @@ RENDER.products = function () {
   $('#pr-low').onchange = e => { PR.low = e.target.checked; drawProducts(); };
   if (own) $('#pr-inact').onchange = e => { PR.inactive = e.target.checked; drawProducts(); };
   drawProducts();
+  loadProductImages(S.products).then(ch => { if (ch && S.view === 'products') drawProducts(); });
 };
 function drawProducts() {
   const own = isOwner();
@@ -3084,14 +3568,14 @@ function drawProducts() {
       <th>${esc(t('product'))}</th><th class="hide-phone">${esc(t('category'))}</th>
       ${own ? `<th class="r" data-col="cost">${esc(t('cost'))}</th>` : ''}
       <th class="r">${esc(t('eceran'))}</th><th class="r">${esc(t('grosir'))}</th><th class="r">${esc(t('stock'))}</th><th></th></tr></thead>
-    <tbody>${shown.map(p => `<tr class="${own ? 'click' : ''}" ${own ? `data-act="prod-edit" data-id="${esc(p.id)}"` : ''}>
-      <td><b>${esc(p.name)}</b>${p.active === false ? ` <span class="badge gray">${esc(t('inactive'))}</span>` : ''}<div class="small muted">${esc(p.sku || '—')} · ${esc(p.unit || '')}</div></td>
+    <tbody>${shown.map(p => `<tr class="${own ? 'click' : ''}" ${own ? `data-act="prod-edit" data-id="${esc(p.id)}"` : ''} data-pid="${esc(p.id)}">
+      <td><div class="row" style="align-items:flex-start">${productImg(p) ? `<img class="pthumb" src="${esc(productImg(p))}" alt="">` : (p.image_updated ? '<span class="pthumb"></span>' : '')}<div><b>${esc(p.name)}</b>${p.active === false ? ` <span class="badge gray">${esc(t('inactive'))}</span>` : ''}<div class="small muted">${esc(p.sku || '—')} · ${esc(p.unit || '')}</div></div></div></td>
       <td class="hide-phone">${esc(p.category || '')}</td>
       ${own ? `<td class="r num">${fmtRp(p.cost_price)}${p.retail_price ? `<div class="small muted">${fmtPct((p.retail_price - p.cost_price) / p.retail_price * 100)}</div>` : ''}</td>` : ''}
       <td class="r num">${fmtRp(p.retail_price)}</td>
       <td class="r num">${int(p.wholesale_price) ? fmtRp(p.wholesale_price) + `<div class="small muted">≥ ${fmtQty(p.wholesale_min_qty)}</div>` : '—'}</td>
       <td class="r num"><b class="${isLow(p) ? 'red' : ''}">${fmtQty(p.stock)}</b><div class="small muted">min ${fmtQty(p.min_stock)}</div></td>
-      <td class="r">${own ? `<button class="btn xs" data-act="stock-adj" data-id="${esc(p.id)}">${esc(t('prod.adjust'))}</button>` : `<button class="btn xs" data-act="price-change" data-id="${esc(p.id)}">${ic('tag')} ${esc(t('price.title'))}</button>`}</td>
+      <td class="r" style="white-space:nowrap">${isApprover() ? `<button class="icon-btn sm" data-act="prod-photo" data-id="${esc(p.id)}" title="${esc(t('img.title'))}" aria-label="${esc(t('img.title'))}">${ic('camera')}</button> ` : ''}${own ? `<button class="btn xs" data-act="stock-adj" data-id="${esc(p.id)}">${esc(t('prod.adjust'))}</button>` : `<button class="btn xs" data-act="price-change" data-id="${esc(p.id)}">${ic('tag')} ${esc(t('price.title'))}</button>`}</td>
     </tr>`).join('') || `<tr><td colspan="7" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div>`;
 }
 function productForm(p) {
@@ -3800,6 +4284,7 @@ function photoControlStats(d) {
   };
 }
 function photoControlHTML(d) {
+  setTimeout(() => loadFieldPanel(RP.mode === 'year' ? `${YR.year}-01-01` : RP.from, RP.mode === 'year' ? `${YR.year}-12-31` : RP.to), 0);
   const P = photoControlStats(d);
   const cell = (id, label, val, cls = '') => `<div><div class="k">${esc(label)}</div><div class="v num ${cls}" data-pc="${id}">${fmtNum(val)}</div></div>`;
   setTimeout(loadPhotoList, 0);
@@ -3874,6 +4359,7 @@ function drawReport() {
       <div class="panel"><h3>${esc(t('home.channels'))}</h3><div class="pb" id="rp-channels">${barRows(Object.entries(R.channels).sort((a, b) => b[1].omzet - a[1].omzet).map(([c, x]) => [`${t('ch.' + c)} (${x.n})`, x.omzet]), R.omzet, true) || `<div class="muted">${esc(t('no_data'))}</div>`}</div></div>
       <div class="panel"><h3>${esc(t('promo.report'))}</h3><div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl" id="rp-promos"><thead><tr><th>${esc(t('promo.title'))}</th><th class="r">${esc(t('rep.tx_count'))}</th><th class="r">${esc(t('rep.omzet'))}</th><th class="r">${esc(t('rep.avg'))}</th></tr></thead><tbody>${R.promos.map(x => `<tr><td><b>${esc(x.code)}</b></td><td class="r num">${fmtNum(x.n)}</td><td class="r num">${fmtRp(x.omzet)}</td><td class="r num">${fmtRp(Math.round(x.omzet / x.n))}</td></tr>`).join('') || `<tr><td colspan="4" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div></div>
     </div>
+    <div class="panel" style="margin-bottom:14px"><h3>${ic('pin')} ${esc(t('field.report'))}</h3><div id="rp-field"><div class="pb muted">${esc(t('loading'))}</div></div></div>
     ${photoControlHTML(RP.data)}
     <div class="rgrid">
       <div class="panel"><h3>${esc(t('rep.survey_sources'))} <span class="muted small">(${fmtNum(R.surveyCount)})</span></h3><div class="pb" id="rp-sources">${surveyRows.length ? surveyRows.map(([k, n]) => `<div class="bar-row"><span>${esc(t('src.' + k))}</span><div class="bar"><i class="g" style="width:${n / R.surveyCount * 100}%"></i></div><span class="num small"><b>${n}</b> <span class="muted">${fmtPct(n / R.surveyCount * 100)}</span></span></div>`).join('') : `<div class="muted">${esc(t('no_data'))}</div>`}</div></div>
@@ -4208,6 +4694,46 @@ Object.assign(I18N.id, { 'set.theme': 'Tampilan', 'theme.auto': 'Otomatis (ikut 
 Object.assign(I18N.ar, { 'set.theme': 'المظهر', 'theme.auto': 'تلقائي (حسب الجهاز)', 'theme.light': 'فاتح', 'theme.dark': 'داكن' });
 Object.assign(I18N.id, { 'kasirapp.title': 'Aplikasi ini untuk pemilik', 'kasirapp.hint': 'Kasir memakai aplikasi Khair Kasir. {name}, silakan masuk di sana.', 'kasirapp.open': 'Buka Khair Kasir', 'kasirapp.auto': 'Pindah otomatis dalam 2 detik…', 'kasirapp.link': 'Aplikasi Kasir →', 'kasirapp.link_hint': '(untuk perangkat kasir)' });
 Object.assign(I18N.ar, { 'kasirapp.title': 'هذا التطبيق للمالك', 'kasirapp.hint': 'يستخدم الكاشير تطبيق Khair Kasir. {name}، تفضّل بالدخول هناك.', 'kasirapp.open': 'فتح Khair Kasir', 'kasirapp.auto': 'تحويل تلقائي خلال ثانيتين…', 'kasirapp.link': 'تطبيق الكاشير ←', 'kasirapp.link_hint': '(لأجهزة الكاشير)' });
+/* i18n v8: field sales */
+Object.assign(I18N.id, {
+  'role.sales': 'Sales (lapangan)', 'salesapp.hint': 'Sales lapangan memakai aplikasi Khair Sales. {name}, silakan masuk di sana.', 'salesapp.open': 'Buka Khair Sales',
+  'nav.field': 'Lapangan', 'navs.field': 'Lapangan', 'nav.orders': 'Pesanan sales', 'navs.orders': 'Pesanan',
+  'img.title': 'Foto produk', 'img.hint': 'Foto diperkecil otomatis (maks. 400 px) sebelum dikirim.', 'img.take': 'Ambil / pilih foto', 'img.replace': 'Ganti foto', 'img.saved': 'Foto produk tersimpan', 'img.too_big': 'Foto terlalu besar setelah diperkecil. Coba foto lain.',
+  'ago.now': 'baru saja', 'ago.min': '{n} mnt lalu', 'ago.hour': '{n} jam lalu', 'ago.day': '{n} hari lalu',
+  'field.rep': 'Sales', 'field.all_reps': 'Semua sales', 'field.st_working': 'bekerja', 'field.st_ended': 'selesai', 'field.st_off': 'belum mulai', 'field.visits': 'kunjungan', 'field.orders': 'pesanan',
+  'field.last_loc': 'Lokasi terakhir', 'field.no_loc': 'Belum ada lokasi', 'field.no_reps': 'Belum ada sales lapangan. Tambahkan di Pengaturan → Pengguna (peran Sales).',
+  'field.map': 'Rute & kunjungan', 'field.no_route': 'Tidak ada rute di tanggal ini.', 'field.start': 'Mulai', 'field.svg_note': 'Peta sederhana (offline). Ketuk nomor kunjungan untuk detail.',
+  'field.visit_list': 'Kunjungan', 'field.leads': 'Toko baru', 'field.linked': 'Pelanggan: {name}', 'field.make_customer': 'Jadikan pelanggan', 'field.convert_q': 'Jadikan "{name}" pelanggan grosir?', 'field.converted': '{name} sekarang pelanggan grosir',
+  'field.far': 'lokasi jauh dari toko', 'field.photo': 'Foto kunjungan', 'field.today': 'Lapangan hari ini', 'field.open': 'Buka Lapangan', 'field.unavailable': 'Data lapangan belum tersedia.',
+  'field.report': 'Lapangan (sales)', 'field.new_shops': 'Toko baru', 'field.conversion': 'Konversi',
+  'out.order': 'Pesan', 'out.tertarik': 'Tertarik', 'out.tidak': 'Tidak', 'out.tutup': 'Tutup', 'out.sudah_pelanggan': 'Sudah pelanggan',
+  'stype.warung': 'Warung', 'stype.toko': 'Toko', 'stype.minimarket': 'Minimarket', 'stype.bakery': 'Bakery', 'stype.katering': 'Katering', 'stype.restoran': 'Restoran', 'stype.masjid': 'Masjid', 'stype.lainnya': 'Lainnya',
+  'ost.baru': 'Baru', 'ost.diproses': 'Diproses', 'ost.dikirim': 'Dikirim', 'ost.batal': 'Batal', 'ost.all': 'Semua',
+  'fo.delivery': 'kirim', 'fo.no_customer': 'Toko belum jadi pelanggan — akan dibuat saat diproses.', 'fo.cancel': 'Batal', 'fo.ship': 'Dikirim', 'fo.process': 'Proses ke kasir',
+  'fo.updated': 'Pesanan {id}: {st}', 'fo.cancel_q': 'Batalkan pesanan {id}?', 'fo.cart_note': 'Pesanan sales {id} ({user})', 'fo.loaded': 'Pesanan {id} dimuat ke keranjang — periksa lalu simpan.',
+  'fo.processed_note': 'Jadi nota {inv}', 'fo.in_cart': 'Pesanan sales {id} · {shop}',
+  'att.field_orders': '{n} pesanan sales baru', 'att.rep_silent': 'Sales {name} bekerja tapi tidak mengirim lokasi > 30 menit (terakhir {ago})', 'att.far': '{n} kunjungan jauh dari lokasi toko (> 200 m)', 'att.next_visit': '{n} toko lewat jadwal kunjungan ulang'
+});
+Object.assign(I18N.ar, {
+  'role.sales': 'مندوب مبيعات', 'salesapp.hint': 'المندوبون يستخدمون تطبيق Khair Sales. {name}، تفضّل بالدخول هناك.', 'salesapp.open': 'فتح Khair Sales',
+  'nav.field': 'الميدان', 'navs.field': 'الميدان', 'nav.orders': 'طلبات المندوبين', 'navs.orders': 'الطلبات',
+  'img.title': 'صورة المنتج', 'img.hint': 'تُصغَّر الصورة تلقائيًا (حتى 400 بكسل) قبل الإرسال.', 'img.take': 'التقاط / اختيار صورة', 'img.replace': 'تغيير الصورة', 'img.saved': 'حُفظت صورة المنتج', 'img.too_big': 'الصورة كبيرة جدًا بعد التصغير. جرّب صورة أخرى.',
+  'ago.now': 'الآن', 'ago.min': 'قبل {n} دقيقة', 'ago.hour': 'قبل {n} ساعة', 'ago.day': 'قبل {n} يوم',
+  'field.rep': 'المندوب', 'field.all_reps': 'كل المندوبين', 'field.st_working': 'يعمل', 'field.st_ended': 'أنهى', 'field.st_off': 'لم يبدأ', 'field.visits': 'زيارات', 'field.orders': 'طلبات',
+  'field.last_loc': 'آخر موقع', 'field.no_loc': 'لا موقع بعد', 'field.no_reps': 'لا يوجد مندوبون. أضفهم من الإعدادات ← المستخدمون (دور مندوب).',
+  'field.map': 'المسار والزيارات', 'field.no_route': 'لا يوجد مسار في هذا التاريخ.', 'field.start': 'البداية', 'field.svg_note': 'خريطة مبسطة (بدون إنترنت). اضغط رقم الزيارة للتفاصيل.',
+  'field.visit_list': 'الزيارات', 'field.leads': 'متاجر جديدة', 'field.linked': 'عميل: {name}', 'field.make_customer': 'تحويل إلى عميل', 'field.convert_q': 'تحويل "{name}" إلى عميل جملة؟', 'field.converted': '{name} أصبح عميل جملة',
+  'field.far': 'الموقع بعيد عن المتجر', 'field.photo': 'صورة الزيارة', 'field.today': 'الميدان اليوم', 'field.open': 'فتح الميدان', 'field.unavailable': 'بيانات الميدان غير متاحة بعد.',
+  'field.report': 'الميدان (المندوبون)', 'field.new_shops': 'متاجر جديدة', 'field.conversion': 'نسبة التحويل',
+  'out.order': 'طلب', 'out.tertarik': 'مهتم', 'out.tidak': 'غير مهتم', 'out.tutup': 'مغلق', 'out.sudah_pelanggan': 'عميل حالي',
+  'stype.warung': 'كشك', 'stype.toko': 'متجر', 'stype.minimarket': 'ميني ماركت', 'stype.bakery': 'مخبز', 'stype.katering': 'تموين', 'stype.restoran': 'مطعم', 'stype.masjid': 'مسجد', 'stype.lainnya': 'أخرى',
+  'ost.baru': 'جديد', 'ost.diproses': 'قيد التنفيذ', 'ost.dikirim': 'أُرسل', 'ost.batal': 'ملغى', 'ost.all': 'الكل',
+  'fo.delivery': 'التسليم', 'fo.no_customer': 'المتجر ليس عميلًا بعد — سيُنشأ عند التنفيذ.', 'fo.cancel': 'إلغاء', 'fo.ship': 'أُرسل', 'fo.process': 'تنفيذ في الكاشير',
+  'fo.updated': 'الطلب {id}: {st}', 'fo.cancel_q': 'إلغاء الطلب {id}؟', 'fo.cart_note': 'طلب مندوب {id} ({user})', 'fo.loaded': 'حُمّل الطلب {id} في السلة — راجعه ثم احفظ.',
+  'fo.processed_note': 'فاتورة {inv}', 'fo.in_cart': 'طلب مندوب {id} · {shop}',
+  'att.field_orders': '{n} طلبات مندوبين جديدة', 'att.rep_silent': 'المندوب {name} يعمل ولم يرسل موقعه منذ أكثر من 30 دقيقة (آخر مرة {ago})', 'att.far': '{n} زيارات بعيدة عن موقع المتجر (> 200 م)', 'att.next_visit': '{n} متاجر تجاوزت موعد الزيارة التالية'
+});
+
 /* ========== Settings (Pengaturan) ========== */
 const ST = { qs: null };
 RENDER.settings = function () {
@@ -4242,11 +4768,11 @@ RENDER.settings = function () {
       <div class="red" id="st-ph-err"></div><button class="btn primary" data-act="set-save-photo">${esc(t('save'))}</button></div></div>
 
     <div class="panel"><h3>${esc(t('set.users'))}</h3><div class="pb">
-      <div class="tbl-wrap" style="margin-bottom:12px"><table class="tbl" id="st-users"><tbody>${S.users.map(u => `<tr><td><b>${esc(u.name)}</b> <span class="badge ${u.role === 'owner' ? 'gold' : u.role === 'manager' ? 'blue' : 'gray'}">${esc(t('role.' + u.role))}</span> ${u.active === false ? `<span class="badge red">${esc(t('inactive'))}</span>` : ''}<br><select class="input" style="width:auto;min-height:32px;padding:2px 6px;margin-top:4px" data-user-role="${esc(u.name)}" aria-label="${esc(t('set.role'))}">${['kasir', 'manager', 'owner'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${esc(t('role.' + r))}</option>`).join('')}</select></td>
+      <div class="tbl-wrap" style="margin-bottom:12px"><table class="tbl" id="st-users"><tbody>${S.users.map(u => `<tr><td><b>${esc(u.name)}</b> <span class="badge ${u.role === 'owner' ? 'gold' : u.role === 'manager' ? 'blue' : 'gray'}">${esc(t('role.' + u.role))}</span> ${u.active === false ? `<span class="badge red">${esc(t('inactive'))}</span>` : ''}<br><select class="input" style="width:auto;min-height:32px;padding:2px 6px;margin-top:4px" data-user-role="${esc(u.name)}" aria-label="${esc(t('set.role'))}">${['kasir', 'sales', 'manager', 'owner'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${esc(t('role.' + r))}</option>`).join('')}</select></td>
         <td class="r"><button class="btn xs" data-act="user-pin" data-name="${esc(u.name)}">${esc(t('set.reset_pin'))}</button> <button class="btn xs ${u.active === false ? '' : 'danger'}" data-act="user-toggle" data-name="${esc(u.name)}">${esc(u.active === false ? t('set.activate') : t('set.deactivate'))}</button></td></tr>`).join('')}</tbody></table></div>
       <h4 style="margin:0 0 8px">${esc(t('set.add_user'))}</h4>
       <div class="grid2"><div class="field"><label class="f" for="nu-name">${esc(t('name'))}</label><input class="input" id="nu-name" autocomplete="off"></div>
-        <div class="field"><label class="f" for="nu-role">${esc(t('set.role'))}</label><select class="input" id="nu-role"><option value="kasir">${esc(t('role.kasir'))}</option><option value="manager">${esc(t('role.manager'))}</option><option value="owner">${esc(t('role.owner'))}</option></select></div></div>
+        <div class="field"><label class="f" for="nu-role">${esc(t('set.role'))}</label><select class="input" id="nu-role"><option value="kasir">${esc(t('role.kasir'))}</option><option value="sales">${esc(t('role.sales'))}</option><option value="manager">${esc(t('role.manager'))}</option><option value="owner">${esc(t('role.owner'))}</option></select></div></div>
       <div class="grid2"><div class="field"><label class="f" for="nu-pin">${esc(t('pin'))}</label><input class="input" id="nu-pin" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password"></div>
         <div class="field"><label class="f" for="nu-pin2">${esc(t('pin_again'))}</label><input class="input" id="nu-pin2" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password"></div></div>
       <div class="red" id="nu-err"></div><button class="btn primary" data-act="user-add">${ic('plus')} ${esc(t('set.add_user'))}</button></div></div>` : ''}
@@ -4313,6 +4839,18 @@ function pinError(a, b) { if (!/^\d{4,6}$/.test(a)) return t('login.pin_len'); i
 const ACT = {
   'go': el => { if (el.closest('.modal-bg')) closeModal(); go(el.dataset.view); },
   'nav-more': () => openMoreMenu(),
+  'field-refresh': () => { clearFieldCache(); loadFieldView(); },
+  'field-rep': el => { FD.user = el.dataset.u === FD.user ? '' : el.dataset.u; const s2 = $('#fd-user'); if (s2) s2.value = FD.user; drawFieldView(); },
+  'lead-convert': async el => {
+    const sh = FD.data && FD.data.shops.find(x => x.shop_id === el.dataset.shop); if (!sh) return;
+    const r = await confirmBox(t('field.convert_q', { name: sh.name })); if (!r.ok) return;
+    try { const c = await linkShopToCustomer(sh); toast(t('field.converted', { name: c.name }), 'ok'); drawFieldView(); } catch (e) { toast(errMsg(e), 'err'); }
+  },
+  'photo-zoom': el => photoZoom(el.dataset.src),
+  'orders-refresh': () => { clearFieldCache(); loadOrders(false); },
+  'orders-status': el => { FO.status = el.dataset.s; $$('[data-act="orders-status"]').forEach(c => c.classList.toggle('on', c === el)); drawOrders(); },
+  'order-open': el => openFieldOrder(FO.list.find(o => o.order_id === el.dataset.id)),
+  'prod-photo': el => openProductPhoto(prodById(el.dataset.id)),
   'bell': () => openBell(),
   'att-go': el => { if (el.closest('.modal-bg')) closeModal(true); if (el.dataset.low) PR.low = true; go(el.dataset.go); },
   'shift-open': () => promptOpenShift(),
@@ -4412,7 +4950,7 @@ const ACT = {
   /* products */
   'import-csv': () => openImport(),
   'prod-new': () => openProductEditor(null),
-  'prod-edit': (el, e) => { if (e.target.closest('[data-act="stock-adj"]')) return; openProductEditor(prodById(el.dataset.id)); },
+  'prod-edit': (el, e) => { if (e.target.closest('[data-act="stock-adj"],[data-act="prod-photo"]')) return; openProductEditor(prodById(el.dataset.id)); },
   'stock-adj': el => openStockAdjust(prodById(el.dataset.id)),
 
   /* purchases */
@@ -4529,7 +5067,7 @@ async function init() {
   if (MOCK) { try { await MockServer.ensure(); } catch (e) { console.error(e); } }
   const sess = store.get('session');
   if (S.key && sess && sess.user && sess.pin_hash) {
-    if (sess.role === 'kasir') { showKasirRedirect(sess.user); return; }
+    if (sess.role === 'kasir' || sess.role === 'sales') { showKasirRedirect(sess.user, sess.role); return; }
     S.user = sess.user; S.role = sess.role; S.pin_hash = sess.pin_hash; enterApp(false); return;
   }
   if (S.key) { if (sess && sess.user) { L.sel = sess.user; } showLogin('pin'); return; }

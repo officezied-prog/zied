@@ -225,10 +225,10 @@ Tracking rules (privacy, UU PDP):
 | action | who | data | response |
 |---|---|---|---|
 | `field_bootstrap` | sales, owner, manager | – | `user, products[] (no cost fields), images_version, shops[] (mine for sales, all for owner/manager), customers[] (grosir only), day: {status: "off"|"working"|"ended", started_at, ended_at, visits_today, km_today}, orders[] (sales only: own orders of the last 30 days, with status + status_note; empty for owner/manager), settings` |
-| `day_start` | sales | `{lat, lng, acc}` | `day` |
-| `day_end` | sales | `{lat, lng, acc, note}` | `day` (with `km_today`, `visits_today`, `orders_today`) |
-| `track` | sales | `{points: [{lat, lng, acc, t (ISO), speed?, battery?}]}` max 200 per call; ignored when the day is not started | `saved` |
-| `check_in` | sales | `{client_id, lat, lng, acc, shop_id?, shop: {name, owner_name, phone, address, area, type (warung/toko/minimarket/bakery/katering/restoran/masjid/lainnya)}, photo_base64? (JPEG ≤ 400 px, ≤ 45 KB of base64, stored as `photo_thumb` until Google Drive is connected), photo_consent: true, outcome (order/tertarik/tidak/tutup/sudah_pelanggan), notes, next_visit? (YYYY-MM-DD)}` | `visit, shop` (new shop created when `shop_id` is missing) |
+| `day_start` | sales | `{lat, lng, acc, at?}` | `day` |
+| `day_end` | sales | `{lat, lng, acc, note, at?}` | `day` (with `km_today`, `visits_today`, `orders_today`) |
+| `track` | sales | `{points: [{lat, lng, acc, t (ISO), speed?, battery?}]}` max 200 per call; ignored when the day is not started; a point already stored today (same `t` + position) is skipped, so a resent batch is safe | `saved, ignored` |
+| `check_in` | sales | `{client_id, lat, lng, acc, shop_id?, shop: {name, owner_name, phone, address, area, type (warung/toko/minimarket/bakery/katering/restoran/masjid/lainnya)}, photo_base64? (JPEG ≤ 400 px, ≤ 45 KB of base64, stored as `photo_thumb` until Google Drive is connected), photo_consent: true, outcome (order/tertarik/tidak/tutup/sudah_pelanggan), notes, next_visit? (YYYY-MM-DD), at?}` | `visit, shop` (new shop created when `shop_id` is missing) |
 | `field_order` | sales | `{client_id, shop_id, visit_id?, items: [{product_id, qty, unit_price, price_type}], notes, delivery_date?}` | `order` (status `baru`) |
 | `list_field` | owner, manager | `{from, to (≤ 1 year), user?, include_tracks? (default true; tracks only for ranges ≤ 7 days), photo thumbnails only for ranges ≤ 31 days}` | `tracks[], visits[], shops[], orders[], days[]` |
 | `update_order` | owner, manager | `{order_id, status: "diproses"|"dikirim"|"batal", note, invoice_no?}` | `order` |
@@ -237,6 +237,8 @@ Tracking rules (privacy, UU PDP):
 | `link_shop` | owner, manager | `{shop_id, customer_id}` | `shop` (status `pelanggan`, linked to the customer; create the customer first with `save_customer`) |
 
 `client_id` makes `check_in` and `field_order` idempotent: a resend returns the stored row.
+
+`at` (ISO, optional) is when the rep actually tapped the button on the phone. The app sends it so that an action queued offline keeps its real time when it syncs later. The server uses it for `started_at`, `ended_at` and `visit_time` only if it is on the same Jakarta day, at most 36 h old and not in the future; otherwise it uses server time.
 
 **Objects**:
 - **Shop** (`pos_shops`): `shop_id, name, owner_name, phone, address, area, type, lat, lng, created_by, created_at, last_visit_at, visits, status (prospek/pelanggan), customer_id, next_visit`

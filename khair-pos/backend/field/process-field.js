@@ -31,6 +31,13 @@ function rand(n) {
   for (let i = 0; i < n; i++) s += a[Math.floor(Math.random() * a.length)];
   return s;
 }
+// When the action really happened on the phone (data.at, kept while it waited offline); server time if missing or implausible.
+function clientAt() {
+  const a = Date.parse(str(data.at)), n = Date.now();
+  if (!isFinite(a) || a > n + 300000 || a < n - 36 * 3600000) return new Date(n).toISOString();
+  if (new Date(a + 7 * 3600000).toISOString().slice(0, 10) !== req.today) return new Date(n).toISOString();
+  return new Date(a).toISOString();
+}
 function isCoord(lat, lng) { return isFinite(Number(lat)) && isFinite(Number(lng)) && Math.abs(Number(lat)) <= 90 && Math.abs(Number(lng)) <= 180 && !(Number(lat) === 0 && Number(lng) === 0); }
 function dist(aLat, aLng, bLat, bLng) {
   const R = 6371000, toR = Math.PI / 180;
@@ -113,27 +120,29 @@ switch (req.action) {
   }
 
   case 'day_start': {
+    const at = clientAt();
     if (myDay && !myDay.ended_at) return done({ ok: true, already: true, day: dayOut(myDay) });
     const d = myDay ? Object.assign({}, myDay, { ended_at: '', note: (str(myDay.note) + ' [lanjut ' + new Date().toISOString().slice(11, 16) + ' UTC]').trim() }) : {
-      user: me.name, day_date: req.today, started_at: new Date().toISOString(), ended_at: '',
+      user: me.name, day_date: req.today, started_at: at, ended_at: '',
       start_lat: isCoord(data.lat, data.lng) ? num(data.lat) : 0, start_lng: isCoord(data.lat, data.lng) ? num(data.lng) : 0,
       end_lat: 0, end_lng: 0, km: 0, visits: 0, orders: 0, note: ''
     };
     ops.days.push(forWrite(d, myDay ? myDay.id : -1));
-    if (isCoord(data.lat, data.lng)) ops.tracks.push(forWrite({ user: me.name, track_date: req.today, t: new Date().toISOString(), lat: num(data.lat), lng: num(data.lng), acc: num(data.acc), speed: 0, battery: 0 }, -1));
+    if (isCoord(data.lat, data.lng)) ops.tracks.push(forWrite({ user: me.name, track_date: req.today, t: at, lat: num(data.lat), lng: num(data.lng), acc: num(data.acc), speed: 0, battery: 0 }, -1));
     return done({ ok: true, already: false, day: dayOut(d) });
   }
 
   case 'day_end': {
     if (!myDay) return fail('INVALID', 'Hari kerja belum dimulai');
     const pts = todayTracks.slice();
+    const at = clientAt();
     if (isCoord(data.lat, data.lng)) {
-      const p = { user: me.name, track_date: req.today, t: new Date().toISOString(), lat: num(data.lat), lng: num(data.lng), acc: num(data.acc), speed: 0, battery: 0 };
+      const p = { user: me.name, track_date: req.today, t: at, lat: num(data.lat), lng: num(data.lng), acc: num(data.acc), speed: 0, battery: 0 };
       pts.push(p);
       ops.tracks.push(forWrite(p, -1));
     }
     const d = Object.assign({}, myDay, {
-      ended_at: new Date().toISOString(), end_lat: isCoord(data.lat, data.lng) ? num(data.lat) : 0, end_lng: isCoord(data.lat, data.lng) ? num(data.lng) : 0,
+      ended_at: at, end_lat: isCoord(data.lat, data.lng) ? num(data.lat) : 0, end_lng: isCoord(data.lat, data.lng) ? num(data.lng) : 0,
       km: kmOf(pts), visits: todayVisits.length, orders: todayOrders.length,
       note: (str(myDay.note) + (str(data.note) ? ' | ' + str(data.note).slice(0, 300) : '')).trim()
     });
@@ -144,10 +153,16 @@ switch (req.action) {
   case 'track': {
     if (!myDay || myDay.ended_at) return done({ ok: true, saved: 0, ignored: true });
     const pts = Array.isArray(data.points) ? data.points.slice(0, 200) : [];
-    let saved = 0;
+    let saved = 0, ignored = 0;
+    // a resent batch (lost reply, outbox retry) must not be stored twice
+    const seen = {};
+    todayTracks.forEach(function (x) { if (!isNaN(Date.parse(x.t))) seen[new Date(x.t).toISOString() + '|' + num(x.lat).toFixed(6) + '|' + num(x.lng).toFixed(6)] = 1; });
     pts.forEach(function (p) {
-      if (!p || !isCoord(p.lat, p.lng)) return;
+      if (!p || !isCoord(p.lat, p.lng)) { ignored++; return; }
       const t = str(p.t) && !isNaN(Date.parse(p.t)) ? new Date(p.t).toISOString() : new Date().toISOString();
+      const k = t + '|' + num(p.lat).toFixed(6) + '|' + num(p.lng).toFixed(6);
+      if (seen[k]) { ignored++; return; }
+      seen[k] = 1;
       ops.tracks.push(forWrite({
         user: me.name, track_date: new Date(Date.parse(t) + 7 * 3600000).toISOString().slice(0, 10), t: t,
         lat: Math.round(num(p.lat) * 1e6) / 1e6, lng: Math.round(num(p.lng) * 1e6) / 1e6, acc: Math.round(num(p.acc)),
@@ -155,7 +170,7 @@ switch (req.action) {
       }, -1));
       saved++;
     });
-    return done({ ok: true, saved: saved });
+    return done({ ok: true, saved: saved, ignored: ignored });
   }
 
   case 'check_in': {
@@ -166,7 +181,7 @@ switch (req.action) {
     const sd = data.shop && typeof data.shop === 'object' ? data.shop : {};
     let shop = data.shop_id ? shopById[String(data.shop_id)] : null;
     if (data.shop_id && !shop) return fail('NOT_FOUND', 'Toko tidak ditemukan');
-    const now = new Date().toISOString();
+    const now = clientAt();
     let distance = -1;
     let shopId;
     if (shop) {

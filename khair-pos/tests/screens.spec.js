@@ -69,6 +69,14 @@ for (const [label, vp] of [['desktop', { width: 1366, height: 768 }], ['phone', 
       await shot(page, `${label}-purchase-photo`);
       await nav(page, 'kas');
       await shot(page, `${label}-kas-owner`);
+      await nav(page, 'orders');
+      await page.waitForTimeout(300);
+      await shot(page, `${label}-field-orders`);
+      await page.route(/cdnjs\.cloudflare\.com|tile\.openstreetmap\.org/, r => r.abort());
+      await nav(page, 'field');
+      await page.fill('#fd-date', (await page.evaluate(() => JSON.parse(localStorage.getItem('kmock.db')).field_days.slice(-1)[0].day_date)));
+      await page.waitForSelector('#fd-map[data-mode="svg"]');
+      await shot(page, `${label}-field`);
     });
 
     test(`screenshots ${label}: manager shift prompt, kas, dark mode, kasir redirect`, async ({ page }) => {

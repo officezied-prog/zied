@@ -47,3 +47,14 @@ test('auto-lock after settings.auto_lock_minutes idle → PIN pad, cart kept', a
   await expect(page.locator('#paybar-total')).toHaveText(H.rp(175000));
   await expect(page.locator('#gate')).toBeHidden();
 });
+
+test('sales reps (Khair Sales accounts) are hidden here and cannot use the cashier app', async ({ page }) => {
+  await H.openKasir(page);
+  await H.setDb(page, `db.users.push({ name: 'Ahmad', role: 'sales', pin_hash: arg, active: true });`, H.sha('demo:ahmad:4444'));
+  await page.reload();
+  await H.enterKey(page);
+  await expect(page.locator('[data-act="login-user"][data-name="Siti"]')).toBeVisible();
+  await expect(page.locator('[data-act="login-user"][data-name="Ahmad"]')).toHaveCount(0);
+  const r = await page.evaluate(async h => { try { await apiRaw('bootstrap', {}, { key: 'demo', user: 'Ahmad', pin_hash: h }); await apiRaw('save_sale', { items: [] }, { key: 'demo', user: 'Ahmad', pin_hash: h }); return 'ok'; } catch (e) { return e.code; } }, H.sha('demo:ahmad:4444'));
+  expect(r).toBe('FORBIDDEN');
+});

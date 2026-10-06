@@ -88,9 +88,10 @@ function asUser(page, user, pin, action, data = {}) {
     try { return await apiRaw(action, data, { key: 'demo', user, pin_hash }); } catch (e) { return { error: e.code, message: e.message }; }
   }, { user, pin, action, data });
 }
-/** Kasir accounts are sent to the cashier app: log in and assert the redirect screen. */
+/** Kasir / sales accounts are sent to their own app: log in and assert the redirect screen (target apps stubbed). */
 async function loginKasirRedirect(page, user = 'Siti', pin = '1111') {
   await page.route('**/kasir/**', r => r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>Khair Kasir (stub)</title><p>kasir app</p>' }));
+  await page.route('**/sales/**', r => r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>Khair Sales (stub)</title><p>sales app</p>' }));
   await page.addInitScript(() => { try { if (!sessionStorage.getItem('kr')) { sessionStorage.setItem('kr', '1'); localStorage.removeItem('kpos.mock.session'); } } catch (e) { } });
   await openApp(page);
   if (await page.locator('#lg-key').count()) await enterKey(page);
@@ -99,10 +100,18 @@ async function loginKasirRedirect(page, user = 'Siti', pin = '1111') {
   await expect(page.locator('#kasir-redirect')).toBeVisible();
 }
 
+/** Read-modify-write of the mock database (stands in for server-side changes). */
+const editDb = (page, fn, arg) => page.evaluate(([src, a]) => { const db = JSON.parse(localStorage.getItem('kmock.db')); new Function('db', 'arg', src)(db, a); localStorage.setItem('kmock.db', JSON.stringify(db)); }, [fn, arg]);
+/** Block Leaflet (cdnjs) and OSM tiles so the map must use its SVG fallback. */
+async function blockMapNetwork(page) {
+  await page.route(/cdnjs\.cloudflare\.com/, r => r.abort());
+  await page.route(/tile\.openstreetmap\.org/, r => r.abort());
+}
+
 async function closeModals(page) {
   while (await page.locator('.modal-bg').count()) {
     await page.locator('.modal-bg').last().locator('[data-act="modal-close"]').first().click();
   }
 }
 
-module.exports = { rp, pct, sha, SHOTS, jktToday, openApp, enterKey, typePin, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect };
+module.exports = { rp, pct, sha, SHOTS, jktToday, openApp, enterKey, typePin, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect, editDb, blockMapNetwork };

@@ -133,10 +133,19 @@ Nama penyetuju tercetak di struk ("Disetujui").
 
 Setiap barang yang masuk keranjang diucapkan (nama + jumlah, mis. "Kurma Ajwa 1 kilo, 1"), perubahan jumlah diucapkan "jumlah 3". **Harga, total, nama pelanggan, hutang dan cara bayar tidak pernah diucapkan.** Tombol **speaker** di keranjang membisukan transaksi ini saja; matikan total di *Pengaturan → Suara kasir* (per perangkat).
 
+## 18. Sales lapangan (Khair Sales)
+
+- Sales lapangan (peran **Sales (lapangan)**, dibuat di *Pengaturan → Pengguna*) memakai aplikasi **Khair Sales** (`/khair-pos/sales/`). Jika masuk ke aplikasi ini, mereka otomatis dipindahkan ke sana.
+- **Lapangan** (pemilik & manajer, di menu *Lainnya* dan di Beranda): pilih tanggal & sales → status hari ini (bekerja / selesai / belum mulai), jam mulai–selesai, km, jumlah kunjungan & pesanan, lokasi terakhir. Peta rute dengan nomor kunjungan (tanpa internet tampil peta sederhana); kunjungan yang **jauh dari lokasi toko (> 200 m)** ditandai merah. Daftar kunjungan dengan foto (ketuk untuk memperbesar) dan **Toko baru** → *Jadikan pelanggan* (grosir).
+- **Pesanan sales**: pesanan dari sales (lencana merah = baru). Buka → **Proses ke kasir** memuat barang ke keranjang dengan pelanggan toko tersebut; setelah disimpan, pesanan otomatis berstatus *Diproses* dengan nomor nota. Bisa juga *Dikirim* atau *Batal* (dengan catatan).
+- **Foto produk** (tombol kamera di daftar Produk): foto diperkecil otomatis dan dipakai juga di aplikasi sales.
+- *Perlu perhatian* juga menampilkan pesanan sales baru, sales yang tidak mengirim lokasi > 30 menit, kunjungan jauh dari toko, dan toko yang lewat jadwal kunjungan ulang. Laporan bulanan/tahunan memuat panel **Lapangan** (kunjungan, toko baru, pesanan, konversi per sales).
+- Privasi: lokasi hanya direkam antara "Mulai kerja" dan "Selesai kerja" yang ditekan sales sendiri, dengan persetujuan.
+
 ## Mode DEMO (latihan)
 
 Buka `…/khair-pos/?mock=1` — data contoh tersimpan hanya di browser itu, tidak menyentuh data toko.
-Kode toko demo: `demo` · Pemilik PIN `1234` · Jihan (manajer) PIN `2222` · Siti (kasir) PIN `1111` · Rina (kasir, lupa tutup kasir kemarin) PIN `3333`. Reset di *Pengaturan → Reset data demo*.
+Kode toko demo: `demo` · Pemilik PIN `1234` · Jihan (manajer) PIN `2222` · Siti (kasir) PIN `1111` · Rina (kasir, lupa tutup kasir kemarin) PIN `3333` · Ahmad (sales lapangan) PIN `4444`. Reset di *Pengaturan → Reset data demo*.
 
 ## Untuk pengembang
 
