@@ -259,3 +259,90 @@ clients cache images per product and re-fetch only the changed ones.
 Mock mode: demo field rep **Ahmad** (role `sales`, PIN 4444) with about 14 days of seeded days, tracks around
 Condet/Kramat Jati/Cililitan, visits, shops (prospek and pelanggan) and orders. Mock mode keeps these tables inside `kmock.db` under the keys `shops`, `visits`, `tracks`, `field_days`,
 `field_orders` and `product_images`, with the shapes above.
+
+## Devices: where each app is open (v11)
+
+Every request may carry `data.device = {id, app: "owner"|"kasir"|"sales", label, lat, lng, acc, loc_status: "granted"|"denied"|"unavailable"|"prompt"|"off", battery?}`.
+`id` is a random id the app keeps per browser (8–64 chars `[A-Za-z0-9_-]`); `label` is a short device description made on the
+phone (e.g. "Android · Chrome", "Windows · Edge"). The server writes the row (`pos_devices`) only when something changed
+(new device, another user, status changed, moved more than 100 m) or every 10 minutes, so location costs no extra executions.
+The server also stores the request IP and user agent. A first-time device is written to the activity log.
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `device_ping` | any (also sales) | `{device}` — on app open/login and every 30 min while idle | `require_location` (bool), `server_time` |
+| `list_devices` | owner | – | `devices: [{device_id, user, role, app, label, ua, ip, lat, lng, acc, loc_status, loc_at, first_seen, last_seen, pings, battery}]` (newest first), `store: {lat, lng}` |
+
+Settings: `store_lat`, `store_lng` (shop location; "use my location" button), `require_device_location` (default false: when true the
+kasir/manager apps do not open until location is allowed). Location is asked only after a consent notice
+("Lokasi perangkat ini dibagikan ke pemilik toko selama aplikasi dibuka"); a computer's location is approximate (Wi-Fi/IP).
+
+## Repacking in the shop, supplier per product (v12)
+
+Products gain `supplier` (default supplier, ≤ 80), `repack_from` (id of the bulk product it is packed from, 0 = none) and
+`repack_qty` (how much of the bulk product's unit goes into one piece, e.g. 0.5 kg). `save_product` (owner) accepts them;
+`import_products` accepts `supplier`.
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `repack` | owner, manager | `{to_product_id, to_qty (pieces made), from_qty? (bulk used; default to_qty × repack_qty), packaging_cost?, exp_date?, note, date?}` | `repack: {repack_id, repack_date, from_*, to_*, pack_size, expected_qty, yield_pct, loss_qty, exp_date, note, (owner: packaging_cost, unit_cost)}`, `stock` |
+
+Bulk stock goes down, pack stock goes up; the pack's cost price becomes the weighted average with
+`unit_cost = (from_qty × bulk cost + packaging_cost) / to_qty`. Two purchase rows with supplier `KEMAS ULANG` are logged
+(−from_qty on the bulk product, +to_qty on the pack). `get_sales` also returns `repacks` for the range (cost fields owner only).
+Fails if the bulk stock is not enough.
+
+## Goods-in checked against the supplier note, locked after saving (v12)
+
+`save_purchase` items may carry `photo_index` (the line of the photographed note they came from). With a `photo_id`, the server
+compares every typed line with the note read by the photo workflow (`scan_purchase`): same product, same quantity.
+- `match.status`: `cocok` (all equal), `tidak_cocok` (differences), `perlu_cek` (note unreadable or a quantity missing on the note),
+  `tanpa_foto`. `match.diffs: [{name, recorded_qty, photo_qty}]` (`null` = missing on that side).
+- `tidak_cocok` without `mismatch_reason` → `{ok: false, error: "MISMATCH", message, match}` and nothing is saved; the app shows the
+  differences, the user corrects the quantities or writes the reason (e.g. "2 dus bonus") and sends again.
+- Saved rows get `purchase_no` (one per note, `PB…`), `match_status`, `match_notes`. Response: `stock, purchase_no, match`.
+
+After saving, quantities and prices can no longer be edited directly:
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `request_purchase_fix` | any (sales excluded) | `{purchase_no, lines: [{product_id, qty, cost_price?}] (the corrected values), reason}` | owner/manager: `applied: true, changes, stock`; others: `applied: false, request_id, approval` (kind `purchase_fix`, decided by manager or owner) |
+
+`decide_approval` for a `purchase_fix` must send `purchase_no: approval.ref`. Applying adds correction rows (same `purchase_no`,
+`match_status: koreksi`, qty/total = the difference) and moves stock and cost price accordingly.
+
+## Activity log for the owner (v12)
+
+Every change, correction and decision is written to `pos_activity`: `{act_id, at (ISO), act_date, user, role, kind, summary, ref, amount, level: "info"|"warn"}`.
+Kinds: `masuk`, `minta_koreksi`, `koreksi_masuk`, `harga`, `minta_harga`, `keputusan`, `batal`, `minta_batal`, `stok`, `opname`,
+`minta_opname`, `kemas_ulang`, `biaya`, `kas`, `tutup_kas`, `hutang`, `produk`, `produk_baru`, `impor`, `pengaturan`, `pengguna`,
+`perangkat_baru`, `bayar_masuk`, `bayar_keluar`, `alokasi`.
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `list_activity` | owner | `{from, to}` | `activity` (newest first) |
+
+`bootstrap` for the owner also returns `activity_recent` (last 7 days, newest first, max 100) so the app can show an unread badge.
+
+## Payments: customers and suppliers, matched with the transfer slip (v13)
+
+Every payment in or out is a row in `pos_payments`: `{pay_id, pay_date, direction: "in"|"out", party_type: "customer"|"supplier",
+customer_id, customer_name, supplier, amount, method: "tunai"|"transfer"|"qris", bank, transfer_ref, proof_photo_id,
+alloc (JSON [{ref, amount}] — ref = invoice_no for customers, purchase_no for suppliers), match_status, note, cashier}`.
+
+The transfer slip photo goes through the photo workflow with kind `bayar` (`scan_payment {image_base64, mime}` →
+`photo_id, extracted: {date, amount, sender_name, receiver_name, bank, transfer_ref, readable, notes}`). The app pre-fills
+amount, bank, reference and date from it. With a `photo_id`, an amount that differs from the slip →
+`{ok: false, error: "MISMATCH"}` unless `mismatch_reason` is sent.
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `receive_payment` | any | existing fields + `{transfer_ref?, bank?, photo_id?, alloc?: [{ref: invoice_no, amount}], mismatch_reason?}` | `payment, customer` |
+| `pay_supplier` | owner, manager | `{supplier, amount, method, bank?, transfer_ref?, photo_id?, pay_date?, alloc?: [{ref: purchase_no, amount}], note, paid_from?: "kas"|"lain", mismatch_reason?}` | `payment` |
+| `allocate_payment` | owner, manager | `{pay_id, alloc: [{ref, amount}], note}` — set or change which invoices a payment covers (partial allowed) | `payment` |
+| `party_ledger` | owner, manager (kasir: customers only, no cost) | `{party_type, customer_id? / supplier?}` | `docs: [{ref, date, total, paid, remaining}]` (customer: sales with debt; supplier: purchase notes), `payments: [...]`, `balance` |
+
+Rules: allocation amounts must be > 0, each `ref` must belong to that customer/supplier, and an invoice cannot be allocated more than its
+remaining amount; the sum of allocations cannot exceed the payment. `match_status`: `lunas` (allocations = payment and every invoice fully
+paid), `sebagian` (an invoice is only partly paid), `belum_dialokasi` (no allocation yet), `lebih` (payment > allocations).
+Cash supplier payments from the drawer count as cash out of the open shift. Every payment and allocation goes to the activity log.
