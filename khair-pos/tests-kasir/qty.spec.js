@@ -86,8 +86,9 @@ test.describe('phone', () => {
     // weight unit → decimal keypad; a stock shortage is shown in the sheet
     await tapCard(page, 'ajwa');
     await expect(page.locator('#qs-qty')).toHaveAttribute('inputmode', 'decimal');
-    await page.fill('#qs-qty', '41');
-    await expect(page.locator('#qs-warn')).toContainText('Stok');
+    await page.fill('#qs-qty', '41'); // above the shelf (v16: only what is on the shelf can be sold)
+    await expect(page.locator('#qs-warn')).toContainText('belum ada barang masuk dengan nota');
+    await expect(page.locator('#qs-ok')).toBeDisabled();
     await page.fill('#qs-qty', '0');
     await expect(page.locator('#qs-ok')).toBeDisabled();
     await page.fill('#qs-qty', '1,5');

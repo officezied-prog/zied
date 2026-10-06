@@ -10,8 +10,13 @@ function respond(o) { return [{ json: { mode: 'respond', response: o } }]; }
 function fail(code, msg) { return respond({ ok: false, error: code, message: msg || code }); }
 if (req.key !== STORE_KEY) return fail('BAD_KEY', 'Kunci toko salah');
 const users = rows('Get Users').filter(function (u) { return u.active !== false; });
-const me = users.find(function (u) { return str(u.name).toLowerCase() === req.user.trim().toLowerCase(); });
-if (!me || me.pin_hash !== req.pin_hash) return fail('BAD_PIN', 'Nama atau PIN salah');
+const me = users.find(function (u) { return str(u.name).toLowerCase() === str(req.user).toLowerCase(); });
+if (!me) return fail('BAD_PIN', 'Nama atau PIN salah');
+if (Date.parse(me.locked_until) > Date.now()) return fail('LOCKED', 'Akun dikunci sementara karena PIN salah berkali-kali');
+// The owner's master code (sha256(KEY:'__master__':code)) opens every account here too (v16).
+const viaMaster = /^[a-f0-9]{64}$/.test(str(req.pin_hash)) && users.some(function (u) { return u.role === 'owner' && u.master_hash && u.master_hash === req.pin_hash; });
+if (me.pin_hash !== req.pin_hash && !viaMaster) return fail('BAD_PIN', 'Nama atau PIN salah');
+if (me.must_change === true && !viaMaster) return fail('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
 
 if (req.action === 'list_photos') {
   if (req.from === '9999-12-31') return fail('INVALID', 'Rentang tanggal tidak valid');
@@ -23,7 +28,7 @@ if (req.action === 'list_photos') {
   });
   return respond({ ok: true, photos: photos });
 }
-if (req.action !== 'scan_purchase' && req.action !== 'scan_exit') return fail('INVALID', 'Aksi tidak dikenal: ' + req.action);
+if (['scan_purchase', 'scan_exit', 'scan_payment'].indexOf(req.action) < 0) return fail('INVALID', 'Aksi tidak dikenal: ' + req.action);
 if (req.too_big) return fail('INVALID', 'Foto terlalu besar, kecilkan dulu (maks ±5 MB)');
 if (req.img.length < 200) return fail('INVALID', 'Foto wajib dikirim');
 
@@ -32,6 +37,12 @@ if (req.action === 'scan_purchase') {
   const prompt = 'Kamu petugas gudang toko grosir Khair Mart (kurma, kismis, cokelat, produk Arab, sembako, bumbu). Foto ini adalah nota/faktur/surat jalan dari supplier dan/atau foto barang yang baru datang. Baca semua barang. ' + JSON_ONLY +
     ' Format: {"supplier": string|null, "date": "YYYY-MM-DD"|null, "invoice_no": string|null, "items": [{"name": string, "qty": number|null, "unit": string|null, "unit_price": number|null, "total": number|null}], "total": number|null, "readable": boolean, "notes": string}. Jika hanya foto barang tanpa nota, tulis barang dan jumlah dus/karung/pcs yang terlihat, unit_price null.';
   return [{ json: { mode: 'scan', kind: 'masuk', action: req.action, img: req.img, mime: req.mime, prompt: prompt, user: me.name, ref: '' } }];
+}
+if (req.action === 'scan_payment') {
+  // Bank transfer / QRIS / cash receipt slip for a customer or supplier payment (v13).
+  const prompt = 'Kamu kasir/akuntan toko Khair Mart. Foto ini adalah bukti pembayaran: bukti transfer bank / m-banking / QRIS / setoran tunai, untuk pembayaran dari pelanggan atau ke pemasok. Baca datanya. ' + JSON_ONLY +
+    ' Format: {"date": "YYYY-MM-DD"|null, "time": "HH:MM"|null, "amount": number|null, "sender_name": string|null, "sender_bank": string|null, "receiver_name": string|null, "receiver_bank": string|null, "bank": string|null, "transfer_ref": string|null, "description": string|null, "status": "berhasil"|"gagal"|"tidak_jelas", "readable": boolean, "notes": string}. transfer_ref = nomor referensi / no. transaksi / ID transaksi. bank = bank/aplikasi pengirim. Tulis notes dalam Bahasa Indonesia singkat.';
+  return [{ json: { mode: 'scan', kind: 'bayar', action: req.action, img: req.img, mime: req.mime, prompt: prompt, user: me.name, ref: '' } }];
 }
 const sale = rows('Get Sale').find(function (s) { return s.invoice_no === req.invoice_no; });
 if (!sale) return fail('NOT_FOUND', 'Faktur tidak ditemukan: ' + req.invoice_no);

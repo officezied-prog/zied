@@ -259,3 +259,270 @@ clients cache images per product and re-fetch only the changed ones.
 Mock mode: demo field rep **Ahmad** (role `sales`, PIN 4444) with about 14 days of seeded days, tracks around
 Condet/Kramat Jati/Cililitan, visits, shops (prospek and pelanggan) and orders. Mock mode keeps these tables inside `kmock.db` under the keys `shops`, `visits`, `tracks`, `field_days`,
 `field_orders` and `product_images`, with the shapes above.
+
+## Devices: where each app is open (v11)
+
+Every request may carry `data.device = {id, app: "owner"|"kasir"|"sales", label, lat, lng, acc, loc_status: "granted"|"denied"|"unavailable"|"prompt"|"off", battery?}`.
+`id` is a random id the app keeps per browser (8–64 chars `[A-Za-z0-9_-]`); `label` is a short device description made on the
+phone (e.g. "Android · Chrome", "Windows · Edge"). The server writes the row (`pos_devices`) only when something changed
+(new device, another user, status changed, moved more than 100 m) or every 10 minutes, so location costs no extra executions.
+The server also stores the request IP and user agent. A first-time device is written to the activity log.
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `device_ping` | any (also sales) | `{device}` — on app open/login and every 30 min while idle | `require_location` (bool), `server_time` |
+| `list_devices` | owner | – | `devices: [{device_id, user, role, app, label, ua, ip, lat, lng, acc, loc_status, loc_at, first_seen, last_seen, pings, battery}]` (newest first), `store: {lat, lng}` |
+
+Settings: `store_lat`, `store_lng` (shop location; "use my location" button), `require_device_location` (default false: when true the
+kasir/manager apps do not open until location is allowed). Location is asked only after a consent notice
+("Lokasi perangkat ini dibagikan ke pemilik toko selama aplikasi dibuka"); a computer's location is approximate (Wi-Fi/IP).
+
+## Repacking in the shop, supplier per product (v12)
+
+Products gain `supplier` (default supplier, ≤ 80), `repack_from` (id of the bulk product it is packed from, 0 = none) and
+`repack_qty` (how much of the bulk product's unit goes into one piece, e.g. 0.5 kg). `save_product` (owner) accepts them;
+`import_products` accepts `supplier`.
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `repack` | owner, manager | `{to_product_id, to_qty (pieces made), from_qty? (bulk used; default to_qty × repack_qty), packaging_cost?, exp_date?, note, date?}` | `repack: {repack_id, repack_date, from_*, to_*, pack_size, expected_qty, yield_pct, loss_qty, exp_date, note, (owner: packaging_cost, unit_cost)}`, `stock` |
+
+Bulk stock goes down, pack stock goes up; the pack's cost price becomes the weighted average with
+`unit_cost = (from_qty × bulk cost + packaging_cost) / to_qty`. Two purchase rows with supplier `KEMAS ULANG` are logged
+(−from_qty on the bulk product, +to_qty on the pack). `get_sales` also returns `repacks` for the range (cost fields owner only).
+Fails if the bulk stock is not enough.
+
+## Goods-in checked against the supplier note, locked after saving (v12)
+
+`save_purchase` items may carry `photo_index` (the line of the photographed note they came from). With a `photo_id`, the server
+compares every typed line with the note read by the photo workflow (`scan_purchase`): same product, same quantity.
+- `match.status`: `cocok` (all equal), `tidak_cocok` (differences), `perlu_cek` (note unreadable or a quantity missing on the note),
+  `tanpa_foto`. `match.diffs: [{name, recorded_qty, photo_qty}]` (`null` = missing on that side).
+- `tidak_cocok` without `mismatch_reason` → `{ok: false, error: "MISMATCH", message, match}` and nothing is saved; the app shows the
+  differences, the user corrects the quantities or writes the reason (e.g. "2 dus bonus") and sends again.
+- Saved rows get `purchase_no` (one per note, `PB…`), `match_status`, `match_notes`. Response: `stock, purchase_no, match`.
+
+After saving, quantities and prices can no longer be edited directly:
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `request_purchase_fix` | any (sales excluded) | `{purchase_no, lines: [{product_id, qty, cost_price?}] (the corrected values), reason}` | owner/manager: `applied: true, changes, stock`; others: `applied: false, request_id, approval` (kind `purchase_fix`, decided by manager or owner) |
+
+`decide_approval` for a `purchase_fix` must send `purchase_no: approval.ref`. Applying adds correction rows (same `purchase_no`,
+`match_status: koreksi`, qty/total = the difference) and moves stock and cost price accordingly.
+
+## Activity log for the owner (v12)
+
+Every change, correction and decision is written to `pos_activity`: `{act_id, at (ISO), act_date, user, role, kind, summary, ref, amount, level: "info"|"warn"}`.
+Kinds: `masuk`, `minta_koreksi`, `koreksi_masuk`, `harga`, `minta_harga`, `keputusan`, `batal`, `minta_batal`, `stok`, `opname`,
+`minta_opname`, `kemas_ulang`, `biaya`, `kas`, `tutup_kas`, `hutang`, `produk`, `produk_baru`, `impor`, `pengaturan`, `pengguna`,
+`perangkat_baru`, `bayar_masuk`, `bayar_keluar`, `alokasi`.
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `list_activity` | owner | `{from, to}` | `activity` (newest first) |
+
+`bootstrap` for the owner also returns `activity_recent` (last 7 days, newest first, max 100) so the app can show an unread badge.
+
+## Payments: customers and suppliers, matched with the transfer slip (v13)
+
+Every payment in or out is a row in `pos_payments`: `{pay_id, pay_date, direction: "in"|"out", party_type: "customer"|"supplier",
+customer_id, customer_name, supplier, amount, method: "tunai"|"transfer"|"qris", bank, transfer_ref, proof_photo_id,
+alloc (JSON [{ref, amount}] — ref = invoice_no for customers, purchase_no for suppliers), match_status, note, cashier}`.
+
+The transfer slip photo goes through the photo workflow with kind `bayar` (`scan_payment {image_base64, mime}` →
+`photo_id, extracted: {date, amount, sender_name, receiver_name, bank, transfer_ref, readable, notes}`). The app pre-fills
+amount, bank, reference and date from it. With a `photo_id`, an amount that differs from the slip →
+`{ok: false, error: "MISMATCH"}` unless `mismatch_reason` is sent.
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `receive_payment` | any | existing fields + `{transfer_ref?, bank?, photo_id?, alloc?: [{ref: invoice_no, amount}], mismatch_reason?}` | `payment, customer` |
+| `pay_supplier` | owner, manager | `{supplier, amount, method, bank?, transfer_ref?, photo_id?, pay_date?, alloc?: [{ref: purchase_no, amount}], note, paid_from?: "kas"|"lain", mismatch_reason?}` | `payment` |
+| `allocate_payment` | owner, manager | `{pay_id, alloc: [{ref, amount}], note}` — set or change which invoices a payment covers (partial allowed) | `payment` |
+| `party_ledger` | owner, manager (kasir: customers only, no cost) | `{party_type, customer_id? / supplier?}` | `docs: [{ref, date, total, paid, remaining}]` (customer: sales with debt; supplier: purchase notes), `payments: [...]`, `balance` |
+
+Rules: allocation amounts must be > 0, each `ref` must belong to that customer/supplier, and an invoice cannot be allocated more than its
+remaining amount; the sum of allocations cannot exceed the payment. `match_status`: `lunas` (allocations = payment and every invoice fully
+paid), `sebagian` (an invoice is only partly paid), `belum_dialokasi` (no allocation yet), `lebih` (payment > allocations).
+Cash supplier payments from the drawer count as cash out of the open shift. Every payment and allocation goes to the activity log.
+
+## Company bank account: monthly statement vs recorded payments (v14)
+
+Settings `bank_accounts: [{id, bank, account_no, holder, active}]` (owner edits; e.g. `{id: "BA1", bank: "BCA", account_no: "1234567890", holder: "Khair Mart"}`).
+Transfer / QRIS payments (`receive_payment`, `pay_supplier`) may send `account_id`; without it the first active account is used.
+They also store `slip_date` (the date read from the slip). A slip date different from `pay_date` is flagged in the activity log (warn).
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `import_statement` | owner, manager | `{account_id, period: "YYYY-MM", lines: [{date, description, amount (+in / −out) or credit/debit, ref?, balance?}]}` (≤ 1500 lines, dates inside the month; re-importing replaces the month) | reconciliation report (below) |
+| `bank_recon` | owner, manager | `{account_id, period}` | `imported` (bool) + report, recomputed, no writes |
+| `match_bank_line` | owner, manager | `{account_id, period, line_id, pay_id? \| ignore: true, note}` — link a line to a payment by hand (`manual`), mark it ignored (bank fee, interest: `diabaikan`, note required), or reopen it (no pay_id, no ignore) | `line` |
+
+Report: `lines: [{line_id, seq, line_date, description, amount, ref, status, pay_id, diff_days, pay_amount?, pay_date?, party?, note}]`,
+`missing` (transfer/QRIS payments recorded in the app for that account and month that are not on the statement),
+`counts` per status, `totals: {statement_in, statement_out, recorded_in, recorded_out}`.
+Line status: `cocok` (same amount and direction, date within 1 day), `beda_tanggal` (2–3 days apart), `beda_jumlah` (the payment's transfer
+reference appears in the line but the amount differs), `tidak_tercatat` (no payment in the app), `manual`, `diabaikan`.
+Matching uses payments of the month ± 3 days; a reference match wins over a date match. Each import / manual match goes to the activity log.
+
+## Cash drawer only for cashiers, morning approval, daily report (v15)
+
+- `open_shift` is for **kasir** accounts only (owner / manager → `FORBIDDEN`). Only kasir sales need an open shift (`SHIFT_REQUIRED`);
+  owner and manager sell without one.
+- Every `open_shift` creates an approval `kind: "buka_kas"` (`approver_role: "manager"`, `ref: shift_id`, `total: opening_cash`,
+  `payload: {shift_id, opening_cash, last_counted, last_cashier}`) with a summary comparing the opening count with the last closed drawer
+  (counted cash). Manager or owner approves / rejects it like any approval; selling is not blocked. It is also logged (`buka_kas`, warn when
+  the opening differs from the last count).
+- Shifts track sales per method: `transfer_sales`, `qris_sales`, `debt_sales`, `items_qty` (plus the existing `cash_sales`, `sales_count`,
+  `sales_total`), returned by `close_shift` so the cashier's end-of-day message can show them.
+- Settings: `wa_shop_number` (company), `wa_manager_number`, `wa_owner_number`, `report_time` ("21:00", when the app reminds to send the report).
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `daily_report` | owner, manager | `{date}` | `report: {date, sales: {count, total, discount, items_qty, by_method: {tunai, transfer, qris}, debt, voids: {count, total}}, top_items (10, by value), payments_in / payments_out: {count, total, tunai, transfer, qris}, expenses: {count, total, from_kas}, shifts: [{cashier, status, opening_cash, cash_sales, cash_payments, cash_in, cash_out, expected_cash, counted_cash, difference, sales_count, sales_total}], bank: {sales_transfer, sales_qris, payments_transfer, payments_qris, in_total, out_transfer}, cash: {sales, payments_in, payments_out, expenses_from_kas, expected_total, counted_total, difference_total}, profit (owner only)}`, `send_to: {company, manager, owner}` (WhatsApp numbers) |
+
+Sending: the apps build the message text and open `https://wa.me/<number>?text=…` — one tap per number (company, manager, owner); the
+user presses Send in WhatsApp (no automatic sending without the WhatsApp Business API).
+
+## Discount limit, members, receipts, owner master code, own PINs (v16)
+
+### Discount limit (default 3 %)
+- `computeSale` compares the sale with its **list total**: retail price per line, or the wholesale price when the customer is `grosir`
+  or the line reaches `wholesale_min_qty`. `discount % = (list total − total) / list total` (both the discount field and lower unit
+  prices count).
+- Allowed without approval: `max_discount_pct` (setting, default 3) **plus the member discount** (below). Owner and manager may give
+  more (note `[diskon X% disetujui <name>]`). A kasir above the limit gets `DISCOUNT_APPROVAL_REQUIRED` and sends `request_discount`.
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `request_discount` | any (kasir) | same as `save_sale` (+ `reason`) — payment fields not needed | `request_id`, `approval` (`kind: "discount"`, `approver_role: "manager"`, `total` = total after discount, `debt_amount` = discount amount) |
+
+- The approval `payload`: `{list_total, total, discount, pct, max_pct, reason, lines: [{name, qty, unit_price}]}` and, **owner only**,
+  `profit_before, profit_after, margin_before, margin_after` (%). The summary ends with ` | laba 18.9% → 14.7% (Rp a → Rp b)` for the
+  owner only; manager and kasir never see profit.
+- `save_sale` with `data.discount_approval_id` = an approved `discount` request of the same `client_id` whose amount is ≥ this
+  discount → the sale goes through and the approval becomes `used`. Pending → `Diskon belum disetujui`; rejected →
+  `Diskon ditolak: <note>`; bigger discount or other sale → `Transaksi berubah…`.
+
+### Members (pelanggan member)
+- Customer fields: `email`, `member` (bool), `member_no` (server, `M` + 6 chars), `member_since` (date), `visits` (purchases counted
+  by the server), `last_visit` (date).
+- `save_customer` accepts `email` (lower-cased, checked) and `member: true|false`. Any user may register a member (logged
+  `member_baru`); only owner / manager may remove membership (kasir → `FORBIDDEN`).
+- Setting `member_tiers` (default `[{"from":2,"pct":2},{"from":5,"pct":3},{"from":10,"pct":5}]`): this sale's purchase number is
+  `visits + 1`; the member gets the `pct` of the highest tier whose `from` ≤ that number (first purchase → 0 %). Setting
+  `member_enabled` (default true).
+- The app applies the member discount itself (put it in `discount`, show it as "Diskon member X%"); the server allows it on top of
+  `max_discount_pct` and answers `member: {pct, purchase_no, member_no}`; the sale note gets `[member X% · pembelian ke-N]`.
+- Every `save_sale` with a customer adds 1 to `visits` and sets `last_visit`; `void_sale` takes 1 off.
+
+### Receipts by WhatsApp or e-mail
+- No server action: the kasir app sends the receipt text with `https://wa.me/<customer phone>?text=…` or `mailto:<email>?subject=…&body=…`
+  (shown when the customer has a phone / e-mail). Automatic e-mail from the server needs a Gmail credential in n8n (not connected yet).
+
+### Owner master code and own PINs
+- **Master code** (8 digits): the owner sets it with `set_master` `{master_hash}` where `master_hash = sha256(KEY + ':__master__:' + code)`
+  (must be logged in with the real PIN, not via the master code). Stored as `master_hash` on the owner's user row.
+- **Logging in to any account with it:** send the target `user` and `pin_hash = master_hash`. The server accepts it for every active
+  user, the response has `via_master: true`, and `login` is logged `masuk_master` (warn). The apps keep using that hash for the session.
+  `set_master` and `change_pin` of the owner's own row are refused via the master code.
+- **Own PIN at first login:** `save_user` with a (new or reset) `pin_hash` marks the user `must_change: true` (except the owner's own
+  row). `login` answers `must_change: true`; every other action → `PIN_CHANGE_REQUIRED` until `change_pin` `{new_pin_hash}`
+  (`sha256(KEY:user:newpin)`, must differ from the current one). Owner / manager PINs: 6 digits; kasir / sales: 4–6 (apps enforce).
+- **Lock after wrong PINs:** 5 wrong PINs in a row for a user → `LOCKED` for 15 minutes (`message` gives the time). Users fields
+  `fail_count`, `locked_until`.
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `change_pin` | any | `{new_pin_hash}` | `ok` |
+| `set_master` | owner (real PIN) | `{master_hash}` | `ok` |
+
+### Other v16 changes
+- `open_shift` also returns `request_id` and `approval` (the `buka_kas` request).
+- Cost never reaches kasir / manager: `request_purchase_fix` and `purchase_fix` approvals keep quantities only; `get_sales` purchases
+  have no `total` for them.
+- `party_ledger`: payments without allocation are applied to the oldest open invoices first (`auto: true` on those amounts).
+
+### Warehouse (gudang) and shop shelf (toko) — sell only what came in with a note (v16)
+- Products carry `stock` (total, as before) and `shop_stock` (on the shelf); the apps get `gudang_stock = stock − shop_stock` too.
+  A product without `shop_stock` yet (rows from before v16) counts all its stock as on the shelf, so nothing is blocked at go-live.
+- **Goods-in** (`save_purchase`, with the supplier-note photo) adds to the **warehouse** only. Repacking, goods-in corrections,
+  stock counts and owner adjustments also change the warehouse; the shelf is capped at the total. A new product's opening stock
+  (owner) is on the shelf.
+- **`move_stock`** `{to: "toko" | "gudang", lines: [{product_id, qty}], note}` (any app user except sales): moves goods from the
+  warehouse to the shelf (or back). Moving to the shelf needs that much in the warehouse → else `NOT_IN_GUDANG`, with
+  "belum ada barang masuk dengan nota" when the warehouse is empty. Logged `pindah_stok`. Response `stock: [{product_id, stock,
+  shop_stock, gudang_stock}]`.
+- **`save_sale`** sells from the shelf only: a line above `shop_stock` → `NOT_ON_SHELF` with `items: [{product_id, name, need,
+  shop, gudang}]` and a message telling the cashier to move the goods first (or that no goods-in exists). Setting
+  `sell_from_shop_only` (default true) turns it off. Sales the app queued offline send `queued: true`: never refused (the customer
+  already paid), logged `jual_tanpa_rak` (warn) for the owner. Sales and voids change the shelf; `save_sale.stock[]` has `shop_stock`.
+
+### Who brought the goods (goods-in) (v16)
+`save_purchase` needs `data.carrier` (setting `require_carrier`, default true → `CARRIER_REQUIRED`):
+`{type: "umum" | "teman" | "pemasok" | "karyawan", kind, name, vehicle, phone}`.
+- `umum` = public transport: `vehicle` (plate / angkot number) required, `kind` = ojek / angkot / taksi / truk… (free word).
+- `teman` = a friend, `karyawan` = our staff: `name` required. `pemasok` = the supplier's own driver (name / plate optional).
+- Names: letters (any language), digits, space, `. , ' -`; vehicle numbers: letters, digits, space, `/ - .`; phone: digits.
+Stored on each goods-in row (`carrier_type, carrier_name, carrier_vehicle, carrier_phone`) and in the activity log.
+
+### Returns (retur) — customers and suppliers (v16)
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `request_return` | kasir, manager, owner | customer: `{kind:"pelanggan", invoice_no, lines:[{product_id, qty, condition:"baik"\|"rusak"}], reason_code, reason_note, returned_by, returned_by_phone, refund_method:"tunai"\|"transfer"\|"potong_hutang"\|"tukar"}`; supplier: `{kind:"pemasok", purchase_no, lines:[{product_id, qty}], reason_code, reason_note, out_doc_no, photo_id, carrier}` | `request_id, return_id, approver_role, approval` |
+| `list_returns` | owner, manager (kasir: customer returns only) | `{from, to}` | `returns: [...]` — pending requests first, then decided returns in the range |
+
+- `reason_code`: `tidak_sesuai` (not to spec), `rusak`, `kadaluarsa`, `salah_kirim`, `kualitas_buruk`, `berubah_pikiran`, `lainnya`
+  (`reason_note` required for `lainnya`).
+- **Customer return:** the server reads the purchase invoice (who bought it, when, at what price after the sale discount) and refuses
+  more than was bought minus what was already returned or is pending. `returned_by` = who brought it back (default the buyer).
+  Refund = value of the returned lines; setting `return_fee_pct` (default 0) is a deduction for returned goods (`fee`).
+  On approval: good items (`baik`) go back to the **warehouse** (they are checked before going back on the shelf), damaged ones (`rusak`) are
+  not stock; `tunai` → cash out of the cashier's open drawer + payment row out; `transfer` → payment row out; `potong_hutang` → less debt.
+  The return id (`RT…`) is the entry note for the returned goods.
+- **Supplier return:** from a goods-in note (`purchase_no`): not more than came in minus earlier returns, and not more than in stock;
+  needs the outgoing note number `out_doc_no` and a photo of the goods-exit receipt `photo_id` (setting `require_return_photo`, default
+  true) and the carrier. On approval: stock goes down, and negative goods-in rows (`purchase_no` = return id, `match_status: "retur"`)
+  lower what we owe the supplier. Values are purchase cost: owner only.
+- **Approval:** every return is an approval `kind: "retur"`. The manager approves; when value ≥ `return_owner_min_value`
+  (default Rp 1,000,000) or qty ≥ `return_owner_min_qty` (0 = off) only the owner may (`approver_role: "owner"`). The owner is always told
+  (activity `minta_retur` on request, `retur` on the decision). Decided returns are kept in `pos_returns` with every detail.
+- `daily_report.report.returns = {customer: {count, refund, tunai}, supplier: {count, value (owner)}}`.
+
+### Plain-text input everywhere (v16)
+Before any action the server cleans `data`: control and direction-override characters and HTML tags / `< >` are removed, the keys
+`__proto__`, `constructor`, `prototype` are dropped, strings are cut at 4000 characters. Then each field is checked: person names,
+product / customer / supplier names (letters, digits, `. , ' & ( ) / % + # -`), SKU / barcode (`A-Z 0-9 . _ -`), units, phone (digits),
+e-mail, dates (`YYYY-MM-DD`), document and vehicle numbers. A field that does not fit is refused with a message saying what is allowed.
+The apps must use the same rules in their inputs (`maxlength`, `inputmode`, `pattern`) and show the server message.
+
+### Small v16 additions
+- `get_sale` `{invoice_no}` (any app user except sales): `sale`, `items`, `returned` (qty per product already returned or pending),
+  `customer_debt` — used to start a customer return at the counter.
+- `LOCKED` answers carry `locked_until` (ISO time). Sales accounts may call `change_pin` (forced new PIN).
+- Field and photo workflows accept the owner master code, refuse locked accounts and `must_change` users (PIN_CHANGE_REQUIRED),
+  and the field workflow cleans its input the same way (photos as `data:` URLs are left alone).
+
+### Owner decisions (07 Oct): manager sees profit on discounts; return limit agreed by owner and manager
+- `discount` approvals: owner **and manager** see `profit_before/after`, `margin_before/after` and the ` | laba …` summary; kasir never.
+- `return_owner_min_value` default **Rp 2,000,000**. `return_owner_min_value` and `return_owner_min_qty` cannot be changed with
+  `save_settings` (`AGREEMENT_REQUIRED`); they change only by agreement:
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `propose_agreement` | owner, manager | `{key: "return_owner_min_value" \| "return_owner_min_qty", value, note}` | `request_id`, `approval` (`kind: "kesepakatan"`, `approver_role` = the other party) |
+
+  The other party confirms it with `decide_approval` (the proposer cannot; the owner cannot confirm a request meant for the manager).
+  On approval the setting changes and setting `limit_agreements` keeps the history `[{key, value, from, proposed_by, confirmed_by, at, note}]`
+  (newest first, 50 kept); logged `usul_kesepakatan` / `kesepakatan`.
+- **Manager as cashier (07 Oct):** the manager may also `open_shift` (her own drawer, when everyone else is busy); her opening-count
+  approval goes to the **owner** (`approver_role: "owner"`). Her cash sales then go into her drawer and she closes it like a kasir.
+  Without an open drawer she can still sell (as before). Owner accounts still have no drawer.
+- **Receipt sending fee (07 Oct):** `save_sale` with `send_receipt: true` (the app sends the receipt by WhatsApp / e-mail) needs a
+  saved customer. The first receipt for a customer is free (that is how we collect the number); later ones add
+  `receipt_send_fee` (setting, default Rp 500) to the bill: sale field `send_fee`, included in `total` (not counted against the discount
+  limit). Customers keep `receipts_sent`. A customer who does not want it sent gets the printed / on-screen receipt as before.
+- **Change the person in a role (07 Oct):** `save_user` `{name: <current>, new_name, role, pin_hash}` renames the account (another
+  person takes the role); the PIN hash must be made with the new name, the new person must change it at first login; refused while
+  that user has an open drawer. Logged "Ganti orang: A → B".

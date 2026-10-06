@@ -112,7 +112,7 @@ test('manager saves an expense; it appears in the month list', async ({ page }) 
   await page.click('#ex-save');
   await expect(page.locator('.toast.ok').filter({ hasText: 'Pengeluaran' })).toContainText(rp(250000));
   const db = await getDb(page);
-  expect(db.expenses.slice(-1)[0]).toMatchObject({ category: 'transport', amount: 250000, note: 'Ongkir ambil kurma', user: 'Jihan', expense_date: jktToday(), paid_from: 'kas' });
+  expect(db.expenses.slice(-1)[0]).toMatchObject({ category: 'transport', amount: 250000, note: 'Ongkir ambil kurma', user: 'Jihan', expense_date: jktToday(), paid_from: 'lain' }); // v15: no drawer for the manager
   const month = db.expenses.filter(x => x.expense_date.slice(0, 7) === jktToday().slice(0, 7));
   await expect(page.locator('[data-kpi="ex-total"] .v')).toHaveText(rp(month.reduce((a, x) => a + x.amount, 0)));
   await expect(page.locator('#ex-table tbody tr').first()).toContainText('Ongkir ambil kurma');

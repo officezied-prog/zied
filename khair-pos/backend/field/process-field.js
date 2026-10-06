@@ -1,6 +1,17 @@
 const STORE_KEY = '__STORE_KEY__';
 const req = $('Parse Field').first().json;
-const data = req.data || {};
+const data = req.data && typeof req.data === 'object' ? req.data : {};
+// Plain text only (v16): control / direction characters and HTML tags are removed and keys that reach JavaScript
+// internals are dropped. Photos (data: URLs) are left as they are; their size is checked where they are used.
+(function cleanInput(o, depth) {
+  if (!o || typeof o !== 'object' || depth > 6) return;
+  Object.keys(o).forEach(function (k) {
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { delete o[k]; return; }
+    const v = o[k];
+    if (typeof v === 'string' && v.indexOf('data:') !== 0) o[k] = v.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g, '').replace(/<[^>]*>/g, '').replace(/[<>]/g, '');
+    else if (v && typeof v === 'object') cleanInput(v, depth + 1);
+  });
+})(data, 0);
 const ops = { shops: [], visits: [], tracks: [], days: [], orders: [], images: [], product_flags: [] };
 
 function rows(name) {
@@ -64,8 +75,13 @@ function kmOf(points) {
 if (req.key !== STORE_KEY) return fail('BAD_KEY', 'Kunci toko salah');
 const users = rows('Get Users').filter(function (u) { return u.active !== false; });
 if (!users.length) return fail('NO_USERS', 'Belum ada pengguna');
-const me = users.find(function (u) { return str(u.name).toLowerCase() === req.user.trim().toLowerCase(); });
-if (!me || me.pin_hash !== req.pin_hash) return fail('BAD_PIN', 'Nama atau PIN salah');
+const me = users.find(function (u) { return str(u.name).toLowerCase() === str(req.user).toLowerCase(); });
+if (!me) return fail('BAD_PIN', 'Nama atau PIN salah');
+if (Date.parse(me.locked_until) > Date.now()) return fail('LOCKED', 'Akun dikunci sementara karena PIN salah berkali-kali');
+// The owner's master code (sha256(KEY:'__master__':code)) opens every account here too (v16).
+const viaMaster = /^[a-f0-9]{64}$/.test(str(req.pin_hash)) && users.some(function (u) { return u.role === 'owner' && u.master_hash && u.master_hash === req.pin_hash; });
+if (me.pin_hash !== req.pin_hash && !viaMaster) return fail('BAD_PIN', 'Nama atau PIN salah');
+if (me.must_change === true && !viaMaster) return fail('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
 const role = ['owner', 'manager', 'sales'].indexOf(me.role) >= 0 ? me.role : 'kasir';
 if (role === 'kasir') return fail('FORBIDDEN', 'Aplikasi ini untuk sales lapangan');
 const isBoss = role === 'owner' || role === 'manager';
