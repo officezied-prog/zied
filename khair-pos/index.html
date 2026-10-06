@@ -319,6 +319,39 @@ button.li:hover{border-color:var(--brand)}
 .mic.on{background:var(--accent);border-color:var(--accent);color:#fff;animation:pulse 1.2s infinite}
 .interim{font-size:13px;color:var(--muted);font-style:italic;min-height:0;margin-top:4px}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.45)}70%{box-shadow:0 0 0 10px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}
+/* Voice survey in the POS payment panel (consent tap → recording); shrinks (scrolls) before the payment part does */
+.vs-area{padding:4px 10px 0;flex:0 1 auto;min-height:0;overflow-y:auto}
+.vs{border:2px solid var(--brand);background:var(--brand-ll);border-radius:var(--radius);padding:4px 8px}
+.vs-h{display:flex;align-items:center;gap:8px;font-weight:800;font-size:14px;min-height:24px}
+.vs-row{display:flex;align-items:center;gap:10px;margin-top:4px}
+.vs-go{flex:1;min-height:36px;padding:0 10px;font-size:14px;white-space:normal;line-height:1.15}
+.vs .linkbtn{min-height:24px}
+.vs.rec{border-color:var(--accent);background:var(--accent-l)}
+.vs.rec .vs-h{color:var(--accent-text)}
+.vs.done{border-color:var(--ok);background:var(--ok-l)}
+.vs.done .vs-h{color:var(--ok);font-size:13.5px}
+.rec-dot{width:12px;height:12px;border-radius:50%;background:var(--accent);flex:none;animation:pulse 1.2s infinite}
+.vs-q{display:flex;align-items:center;gap:6px;margin-top:4px;padding:2px 2px 2px 8px;border-radius:6px;background:var(--card);font-size:13px;line-height:1.25;min-height:30px}
+.vs-q .n{font-weight:800;color:var(--muted)}
+.vs-q button{width:32px;height:26px;flex:none;border:1px solid var(--border-d);border-radius:6px;background:var(--surface);color:var(--brand-text);font-size:17px;font-weight:800;line-height:1;padding:0}
+.vs-q button:disabled{opacity:.35}
+.vs-tx{font-size:12.5px;color:var(--muted);margin-top:4px;max-height:2.6em;line-height:1.3;overflow-y:auto;overflow-wrap:anywhere}
+.vs-tx:empty{display:none}
+.vs-tx i{opacity:.75}
+.vs-links{display:flex;gap:2px 12px;flex-wrap:wrap;align-items:center}
+.vs .vs-links{margin-top:0}
+.linkbtn{display:inline-flex;align-items:center;gap:5px;min-height:28px;padding:0 2px;border:0;background:none;color:var(--brand-text);font-weight:700;font-size:13.5px;text-decoration:underline;text-underline-offset:3px}
+.linkbtn svg.i{width:16px;height:16px}
+/* After payment: the customer's WhatsApp number; customers list */
+.wa-card{border:1px solid var(--border-d);border-radius:var(--radius);padding:12px;margin-bottom:12px;background:var(--surface)}
+.wa-card .wa-h{display:flex;align-items:center;gap:8px;font-weight:800;margin-bottom:8px;flex-wrap:wrap}
+.wa-card .wa-h svg.i{color:var(--ok)}
+.wa-remind{font-size:13.5px;font-weight:700;color:var(--warn);background:var(--warn-l);border-radius:8px;padding:6px 10px;margin-bottom:8px}
+.wa-card .check{margin-bottom:8px}
+.wa-done{font-weight:700;color:var(--ok);margin-bottom:8px;overflow-wrap:anywhere}
+.wa-send{background:#15803D;border-color:#15803D;color:#fff}
+.wa-send:hover{background:#166534}
+.wa-badge svg.i{width:13px;height:13px}
 .cam video{width:100%;border-radius:var(--radius-s);background:#000;max-height:60vh}
 
 /* ========== Approvals & photos ========== */
@@ -533,6 +566,8 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
   <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></symbol>
   <symbol id="i-hash" viewBox="0 0 24 24"><path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16"/></symbol>
   <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M4 20h16"/></symbol>
 </svg>
 
 <script>
@@ -674,6 +709,13 @@ function waNumber(phone) {
   return d.length >= 9 ? d : '';
 }
 function waLink(phone, text) { const n = waNumber(phone); return `https://wa.me/${n}?text=${encodeURIComponent(text)}`; }
+/** Customer / shop WhatsApp number: digits only, 0… → 62…, 8… → 628…; '' unless 9–15 digits. */
+function normPhone(v) {
+  let d = String(v == null ? '' : v).replace(/\D/g, '');
+  if (d.startsWith('0')) d = '62' + d.slice(1);
+  else if (d.startsWith('8')) d = '62' + d;
+  return d.length >= 9 && d.length <= 15 ? d : '';
+}
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch (e) { }
   try {
@@ -898,6 +940,7 @@ const MockServer = (() => {
           customer_type: cust ? cust.type : 'eceran', subtotal, discount, total, total_cost, profit: total - total_cost,
           payment_method: data.payment_method, paid_amount: paid, debt_amount: debt, status: 'ok',
           survey: JSON.stringify(data.survey_consent && Array.isArray(data.survey) ? data.survey.filter(x => x && String(x.a || '').trim()).map(x => ({ q: String(x.q), a: String(x.a) })) : []),
+          survey_transcript: data.survey_consent === true ? String(data.survey_transcript || '').trim().slice(0, 4000) : '',
           notes: String(data.notes || ''), client_id: cid, approved_by, exit_photo: exitReq ? 'required' : '', exit_match: '',
           channel: CHANNELS.includes(data.channel) ? data.channel : 'toko', promo_code: String(data.promo_code || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, ''), shift_id: shift ? shift.shift_id : ''
         };
@@ -1125,11 +1168,29 @@ const MockServer = (() => {
         return { product: p };
       }
       case 'save_customer': {
+        // name is optional with a phone ("Pelanggan 1234"); without an id, the same normalised phone updates that customer
+        const phone = String(data.phone || '').trim(), pn = normPhone(phone);
         const name = String(data.name || '').trim();
-        if (!name) throw E('INVALID', 'name required');
-        const fields = { name, phone: String(data.phone || '').trim(), type: data.type === 'grosir' ? 'grosir' : 'eceran', address: String(data.address || ''), notes: String(data.notes || '') };
-        if (data.id) { const c = custById(data.id); if (!c) throw E('NOT_FOUND', 'customer'); Object.assign(c, fields); return { customer: c }; }
-        const c = Object.assign({ id: nextId(db, 'customer') }, fields, { debt_balance: 0 });
+        if (!name && !pn) throw E('INVALID', 'name required');
+        const defName = pn ? 'Pelanggan ' + pn.slice(-4) : '';
+        const optin = data.wa_optin === undefined || data.wa_optin === null ? undefined : (data.wa_optin === true || data.wa_optin === 'true');
+        const source = String(data.source || '').trim().slice(0, 20);
+        const fields = { name: name || defName, phone, type: data.type === 'grosir' ? 'grosir' : 'eceran', address: String(data.address || ''), notes: String(data.notes || '') };
+        if (data.id) {
+          const c = custById(data.id); if (!c) throw E('NOT_FOUND', 'customer');
+          Object.assign(c, fields, { name: name || c.name || defName });
+          if (optin !== undefined) c.wa_optin = optin;
+          if (source) c.source = source;
+          return { customer: c };
+        }
+        const same = pn ? db.customers.find(c => normPhone(c.phone) === pn) : null;
+        if (same) {
+          if (name && name !== defName) same.name = name;
+          if (optin) same.wa_optin = true;
+          if (source && !same.source) same.source = source;
+          return { customer: same, existed: true };
+        }
+        const c = Object.assign({ id: nextId(db, 'customer') }, fields, { debt_balance: 0, wa_optin: !!optin, source });
         db.customers.push(c);
         return { customer: c };
       }
@@ -1179,6 +1240,8 @@ const MockServer = (() => {
         if (s.paper !== undefined && !['58', '80'].includes(String(s.paper))) throw E('INVALID', 'paper');
         if (s.exit_photo_min_total !== undefined) s.exit_photo_min_total = Math.max(0, int(s.exit_photo_min_total));
         if (s.exit_photo_min_qty !== undefined) s.exit_photo_min_qty = Math.max(0, num(s.exit_photo_min_qty));
+        if (s.wa_shop_number !== undefined) s.wa_shop_number = String(s.wa_shop_number || '').replace(/[^\d+]/g, '').slice(0, 20);
+        if (s.survey_voice !== undefined) s.survey_voice = !(s.survey_voice === false || s.survey_voice === 'false');
         Object.assign(db.settings, s);
         return { settings: db.settings };
       }
@@ -1296,7 +1359,7 @@ const MockServer = (() => {
       ['Ibu Fatimah', '0812-4444-5566', 'eceran', 'Balekambang'],
       ['Pak Hasan Alatas', '0811-5555-6677', 'eceran', 'Cililitan'],
       ['Ustadzah Aisyah', '0819-6666-7788', 'eceran', 'Kampung Tengah']
-    ].map((c, i) => ({ id: i + 1, name: c[0], phone: c[1], type: c[2], address: c[3], notes: '', debt_balance: 0 }));
+    ].map((c, i) => ({ id: i + 1, name: c[0], phone: c[1], type: c[2], address: c[3], notes: '', debt_balance: 0, wa_optin: i === 3 || i === 5, source: '' }));
     const debt = {};
     const sales = [], items = [], payments = [], purchases = [];
     const sources = ['dari TikTok', 'lihat video di TikTok', 'Instagram', 'dari IG', 'Facebook', 'cari di Google Maps', 'Google', 'dikasih tahu teman', 'saudara / keluarga', 'lewat depan toko', 'kebetulan lewat', 'sudah langganan lama', 'pelanggan lama', 'dari pengajian'];
@@ -1362,7 +1425,7 @@ const MockServer = (() => {
         const chRoll = R();
         const channel = chRoll < 0.8 ? 'toko' : chRoll < 0.9 ? 'whatsapp' : chRoll < 0.94 ? 'shopee' : chRoll < 0.97 ? 'tiktok' : chRoll < 0.99 ? 'tokopedia' : 'web';
         const promo_code = d < 45 && R() < 0.07 ? pick(['KHAIR1111', 'KHAIR1111', 'KURMAHEMAT', 'JUMAT10']) : '';
-        sales.push({ channel, promo_code, shift_id: '', id: ++seqSale, invoice_no, sale_date: date, sale_time: iso, cashier: R() < 0.7 ? 'Siti' : 'Pemilik', customer_id: cust ? cust.id : null, customer_name: cust ? cust.name : 'Umum', customer_type: cust ? cust.type : 'eceran', subtotal, discount, total, total_cost: totalCost, profit: total - totalCost, payment_method: method, paid_amount: paid, debt_amount, status: 'ok', survey: JSON.stringify(survey), notes: '', client_id: 'seed-' + seqSale });
+        sales.push({ channel, promo_code, shift_id: '', id: ++seqSale, invoice_no, sale_date: date, sale_time: iso, cashier: R() < 0.7 ? 'Siti' : 'Pemilik', customer_id: cust ? cust.id : null, customer_name: cust ? cust.name : 'Umum', customer_type: cust ? cust.type : 'eceran', subtotal, discount, total, total_cost: totalCost, profit: total - totalCost, payment_method: method, paid_amount: paid, debt_amount, status: 'ok', survey: JSON.stringify(survey), survey_transcript: '', notes: '', client_id: 'seed-' + seqSale });
         items.push(...lines);
         if (cust && debt_amount) debt[cust.id] = (debt[cust.id] || 0) + debt_amount;
       }
@@ -1435,7 +1498,7 @@ const MockServer = (() => {
     ];
     return {
       users, products, customers, sales, items, payments, purchases, approvals: [], photos, expenses, shifts, cash_moves,
-      settings: { store_name: 'Khair Mart', address: 'Jl. Raya Condet No. 27, Balekambang, Kramat Jati, Jakarta Timur', phone: '0812-8000-2700', receipt_footer: 'Terima kasih, semoga berkah!\nBarang yang sudah dibeli tidak dapat ditukar.', paper: '58', survey_questions: DEFAULT_SURVEY.slice(), survey_auto: true, exit_photo_min_total: 1000000, exit_photo_min_qty: 20, require_purchase_photo: true, require_shift: true },
+      settings: { store_name: 'Khair Mart', address: 'Jl. Raya Condet No. 27, Balekambang, Kramat Jati, Jakarta Timur', phone: '0812-8000-2700', receipt_footer: 'Terima kasih, semoga berkah!\nBarang yang sudah dibeli tidak dapat ditukar.', paper: '58', survey_questions: DEFAULT_SURVEY.slice(), survey_auto: true, survey_voice: true, wa_shop_number: '', exit_photo_min_total: 1000000, exit_photo_min_qty: 20, require_purchase_photo: true, require_shift: true },
       seq: { product: products.length, customer: customers.length, sale: seqSale, payment: seqPay, purchase: seqPur, photo: seqPh, approval: 0, expense: seqExp, shift: seqSh, move: seqMv }
     };
   }
@@ -1444,7 +1507,7 @@ const MockServer = (() => {
 
 /* ========== State ========== */
 const DEFAULT_SURVEY = ['Apakah ini pertama kali belanja di Khair Mart?', 'Tahu Khair Mart dari mana?', 'Apa yang paling Kakak suka di toko kami?', 'Ada barang yang Kakak cari tapi tidak ada?', 'Boleh kami kabari promo lewat WhatsApp?'];
-const DEFAULT_SETTINGS = { store_name: 'Khair Mart', address: 'Condet, Jakarta Timur', phone: '', receipt_footer: 'Terima kasih, semoga berkah!', paper: '58', survey_questions: DEFAULT_SURVEY, survey_auto: true, exit_photo_min_total: 1000000, exit_photo_min_qty: 20, require_purchase_photo: true };
+const DEFAULT_SETTINGS = { store_name: 'Khair Mart', address: 'Condet, Jakarta Timur', phone: '', receipt_footer: 'Terima kasih, semoga berkah!', paper: '58', survey_questions: DEFAULT_SURVEY, survey_auto: true, survey_voice: true, wa_shop_number: '', exit_photo_min_total: 1000000, exit_photo_min_qty: 20, require_purchase_photo: true };
 const S = {
   lang: store.get('lang', 'id') === 'ar' ? 'ar' : 'id',
   key: store.get('key', ''), user: '', role: '', pin_hash: '',
@@ -1568,7 +1631,7 @@ function go(view, force) {
   VIEWS.forEach(v => { $('#view-' + v.id).hidden = v.id !== view; });
   const more = $('#nav-more'); if (more) more.classList.toggle('on', !phoneViews().includes(view));
   $$('#nav .nav-btn[data-view]').forEach(b => { const on = b.dataset.view === view; b.classList.toggle('on', on); on ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'); });
-  if (view !== 'pos') closeCartSheet();
+  if (view !== 'pos') { closeCartSheet(); stopVoice(); }
   if (changed || force || view !== 'pos') (RENDER[view] || (() => { }))();
   if (view === 'pos') { renderGrid(); renderCart(); focusSearch(); }
   if (changed) $('#view-' + view).scrollTop = 0;
@@ -1577,7 +1640,7 @@ function go(view, force) {
 /* ========== Session, login, setup, lock ========== */
 const L = { step: 'key', users: [], sel: '', pin: '', err: '', busy: false };
 function showLogin(step, err) {
-  stopSpeech();
+  stopSpeech(); stopVoice();
   closeModal(true);
   L.step = step; L.err = err || ''; L.pin = ''; L.busy = false;
   if (step === 'pin' && !L.sel) L.sel = store.get('last_user', '');
@@ -1777,7 +1840,7 @@ setInterval(() => {
 }, 15000);
 
 /* ========== POS: cart model ========== */
-function newCart() { return { client_id: uuid(), lines: [], customer_id: null, discount: 0, method: 'tunai', paid: '', survey: null, notes: '', channel: 'toko', promo: '' }; }
+function newCart() { return { client_id: uuid(), lines: [], customer_id: null, discount: 0, method: 'tunai', paid: '', survey: null, voice: null, notes: '', channel: 'toko', promo: '' }; }
 const cleanPromo = v => String(v || '').toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 30);
 function loadCart() { const c = store.get('cart'); return c && Array.isArray(c.lines) && c.client_id ? c : newCart(); }
 const saveCart = () => store.set('cart', S.cart);
@@ -1853,7 +1916,7 @@ function pickVoice(ss) {
   try { const vs = ss.getVoices() || []; if (!vs.length) return undefined; const pre = VOICE.lang.slice(0, 2); return vs.find(v => v.lang === VOICE.lang) || vs.find(v => String(v.lang).toLowerCase().startsWith(pre)) || null; } catch (e) { return undefined; }
 }
 function speak(text) {
-  if (!VOICE.on || !text || (S.cart && S.cart.muted)) return;
+  if (!VOICE.on || !text || (S.cart && S.cart.muted) || VS.on) return; // never talk over the voice survey
   try {
     const ss = window.speechSynthesis, U = window.SpeechSynthesisUtterance;
     if (!ss || !U) return;
@@ -2015,7 +2078,7 @@ function renderCart(flashId) {
   const cust = v.cust;
   const methods = ['tunai', 'transfer', 'qris', 'hutang'];
   const quick = quickAmounts(v.total);
-  const sv = c.survey;
+  if (VS.on && VS.cart !== c) stopVoice(); // the sale changed under a running recording (held, resumed, cleared)
   el.innerHTML = `
     <div class="cart-head">
       <button class="icon-btn ghost cart-close" data-act="cart-close" aria-label="${esc(t('close'))}">${ic('back')}</button>
@@ -2028,6 +2091,7 @@ function renderCart(flashId) {
       ${c.lines.length ? `<button class="icon-btn ghost sm" style="color:var(--danger)" data-act="cart-clear" title="${esc(t('pos.clear'))}" aria-label="${esc(t('pos.clear'))}">${ic('trash')}</button>` : ''}
     </div>
     ${c.field_order ? `<div class="fo-banner" id="cart-fo">${ic('clip')} ${esc(t('fo.in_cart', { id: c.field_order.order_id, shop: c.field_order.shop_name }))}</div>` : ''}
+    ${v.lines.length ? `<div class="vs-area" id="vs-wrap">${voiceHTML()}</div>` : ''}
     <div class="cart-lines" id="cart-lines">${v.lines.length ? v.lines.map((l, i) => `
       <div class="cline" data-line="${i}">
         <div class="top"><div class="nm">${esc(l.p.name)}</div><div class="lt num" data-ref="lt">${fmtRp(l.total)}</div>
@@ -2054,13 +2118,13 @@ function renderCart(flashId) {
         <div class="chips" style="margin-top:6px">${CHANNELS.map(ch => `<button type="button" class="chip ${(c.channel || 'toko') === ch ? 'on' : ''}" style="min-height:30px;padding:0 10px;font-size:13px" data-act="channel" data-c="${ch}">${esc(t('ch.' + ch))}</button>`).join('')}</div>
         <input class="input" id="cart-promo" style="min-height:36px;text-transform:uppercase" placeholder="${esc(t('promo.ph'))}" aria-label="${esc(t('promo.title'))}" value="${esc(c.promo || '')}"></details>
       <div class="row" style="margin-top:8px">
-        <button class="btn sm" data-act="survey-open" title="${esc(t('survey.title'))}">${ic('mic')}<span>${esc(t('survey.short'))}</span>${sv ? `<span class="badge ${sv.skipped ? 'gray' : 'green'} survey-tag">${esc(sv.skipped ? t('survey.skipped') : t('survey.done'))}</span>` : ''}</button>
         <button class="btn big hold-btn" style="padding:0 12px" data-act="hold" id="btn-hold" ${canHold() ? '' : 'hidden'}>${ic('pause')}${esc(t('hold.btn'))}</button>
         <button class="btn primary big grow" style="padding:0 12px" data-act="checkout" id="btn-checkout" title="F9" ${v.lines.length ? '' : 'disabled'}>${esc(t('pos.pay_save'))}</button>
       </div>
     </div>`;
   bindCartInputs();
   refreshCartNumbers();
+  vsShowText(); vsTick();
   if (flashId != null) {
     const i = S.cart.lines.findIndex(l => l.product_id == flashId);
     const row = $(`.cline[data-line="${i}"]`), box = $('#cart-lines');
@@ -2268,12 +2332,13 @@ function openCustomerPicker(onPick, opts = {}) {
 }
 function upsertLocal(arr, obj) { const i = arr.findIndex(x => x.id == obj.id); if (i >= 0) arr[i] = Object.assign(arr[i], obj); else arr.push(obj); return obj; }
 
-/* ========== POS: survey (consent + speech-to-text, text only) ========== */
+/* ========== POS: survey (consent + speech-to-text, text only) ==========
+   Manual form, optional: opened only from the "Isi survei manual" link in the payment panel. */
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 const SP = { rec: null, idx: -1, want: false, base: '', fin: '' };
 function stopSpeech() { SP.want = false; if (SP.rec) { try { SP.rec.stop(); } catch (e) { } } SP.rec = null; SP.idx = -1; $$('.mic.on').forEach(b => b.classList.remove('on')); }
 function startSpeech(i, root) {
-  stopSpeech();
+  stopSpeech(); stopVoice();
   const ta = $(`[data-sq="${i}"]`, root), intEl = $(`#sv-int-${i}`, root), btn = $(`.mic[data-i="${i}"]`, root);
   const rec = new SpeechRec();
   rec.lang = 'id-ID'; rec.continuous = true; rec.interimResults = true;
@@ -2291,30 +2356,141 @@ function startSpeech(i, root) {
   };
   try { rec.start(); btn.classList.add('on'); } catch (e) { toast(t('survey.mic_denied'), 'err'); }
 }
-function openSurvey(atCheckout) {
+function openSurvey() {
   const qs = surveyQuestions();
   const prev = S.cart.survey && !S.cart.survey.skipped ? S.cart.survey : { consent: false, answers: [] };
   const ans = q => (prev.answers.find(a => a.q === q) || {}).a || '';
-  let done = false;
   const el = openModal({
-    title: t('survey.title'),
+    title: t('survey.title'), id: 'survey',
     body: `<label class="check" style="background:var(--brand-ll);border-radius:8px;padding:10px 12px;margin-bottom:12px"><input type="checkbox" id="sv-consent" ${prev.consent ? 'checked' : ''}><span><b>${esc(t('survey.consent'))}</b><br><span class="small muted">${esc(t('survey.consent_hint'))}</span></span></label>
       ${qs.map((q, i) => `<div class="sq"><div class="q" id="sv-q-${i}">${esc(q)}</div><div class="a"><textarea class="input" rows="1" data-sq="${i}" aria-labelledby="sv-q-${i}">${esc(ans(q))}</textarea>${SpeechRec ? `<button class="mic" data-i="${i}" type="button" aria-label="${esc(t('survey.mic'))}" title="${esc(t('survey.mic'))}">${ic('mic')}</button>` : ''}</div><div class="interim" id="sv-int-${i}" aria-live="polite"></div></div>`).join('')}
       ${SpeechRec ? '' : `<p class="small muted">${esc(t('survey.no_speech'))}</p>`}<div class="red small" id="sv-err" role="alert"></div>`,
-    foot: `<button class="btn" id="sv-skip">${esc(t('survey.skip'))}</button><button class="btn primary" id="sv-save">${esc(atCheckout ? t('survey.save_pay') : t('survey.save'))}</button>`,
-    onClose: () => { stopSpeech(); if (!done && atCheckout) focusSearch(); }
+    foot: `<button class="btn" id="sv-skip">${esc(t('survey.skip'))}</button><button class="btn primary" id="sv-save">${esc(t('survey.save'))}</button>`,
+    onClose: () => { stopSpeech(); renderCart(); }
   });
   $$('.mic', el).forEach(b => b.addEventListener('click', () => { const i = +b.dataset.i; if (SP.idx === i) stopSpeech(); else startSpeech(i, el); }));
-  $('#sv-skip', el).onclick = () => { done = true; S.cart.survey = { skipped: true, consent: false, answers: [] }; saveCart(); closeModal(); renderCart(); if (atCheckout) doSave(); };
+  $('#sv-skip', el).onclick = () => { S.cart.survey = { skipped: true, consent: false, answers: [] }; saveCart(); closeModal(); };
   $('#sv-save', el).onclick = () => {
     stopSpeech();
     const answers = qs.map((q, i) => ({ q, a: $(`[data-sq="${i}"]`, el).value.trim() })).filter(x => x.a);
     const consent = $('#sv-consent', el).checked;
     if (answers.length && !consent) { $('#sv-err', el).textContent = t('survey.need_consent'); $('#sv-consent', el).focus(); return; }
-    done = true;
     S.cart.survey = answers.length ? { consent: true, answers } : { skipped: true, consent: false, answers: [] };
-    saveCart(); closeModal(); renderCart(); if (atCheckout) doSave();
+    saveCart(); closeModal();
   };
+}
+
+/* ========== POS: voice survey — the cashier talks with the customer while paying, the device writes it down ==========
+   UU PDP: nothing is captured before the consent tap ("Pelanggan setuju — mulai rekam") in the payment panel.
+   Speech-to-text only: no audio is stored or uploaded; the text goes with the sale (survey_transcript) only
+   when the consent tap happened. "Bayar & Simpan" stops the recording; paying never waits for it.
+   Cart state: cart.voice = null (not asked) | { consent: true, text } | { skipped: true }. */
+const VS_MAX_MS = 10 * 60000, VS_MAX_CHARS = 4000;
+const VS = { on: false, rec: null, cart: null, started: 0, interim: '', tick: null, restart: null, ask: '', qi: 0, cid: '' };
+/** Web Speech API present (Chrome/Android; not iOS Safari or Firefox) and the owner did not turn it off. */
+const voiceSurveyOn = () => !!SpeechRec && settings().survey_voice !== false;
+const vsClean = s => String(s || '').replace(/\s+/g, ' ').trim().slice(0, VS_MAX_CHARS).trim();
+function vsAppend(cart, txt) {
+  const v = cart && cart.voice; if (!v || !v.consent || !String(txt || '').trim()) return;
+  v.text = vsClean((v.text ? v.text + ' ' : '') + txt);
+  if (cart === S.cart) saveCart();
+}
+function startVoice() {
+  if (!voiceSurveyOn() || VS.on || !S.cart || !S.cart.lines.length) return;
+  stopSpeech();
+  clearTimeout(VOICE.timer); try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) { } // item names are not spoken while recording
+  const cart = S.cart;
+  cart.voice = { consent: true, text: cart.voice && cart.voice.consent ? cart.voice.text || '' : '' }; saveCart();
+  Object.assign(VS, { on: true, cart, started: Date.now(), interim: '', ask: '' });
+  VS.tick = setInterval(vsTick, 1000);
+  vsListen();
+  drawVoice();
+}
+/** One recognition session; Android Chrome ends it after a silence → a fresh one starts while still recording. */
+function vsListen() {
+  let rec;
+  try { rec = new SpeechRec(); } catch (e) { vsFail('vs.mic_denied'); return; }
+  rec.lang = 'id-ID'; rec.continuous = true; rec.interimResults = true; // customers speak Indonesian, whatever the app language
+  VS.rec = rec;
+  rec.onresult = e => {
+    if (VS.rec !== rec) return;
+    let interim = '';
+    for (let k = e.resultIndex; k < e.results.length; k++) { const r = e.results[k]; if (r.isFinal) vsAppend(VS.cart, r[0].transcript); else interim += r[0].transcript; }
+    VS.interim = interim; vsShowText();
+  };
+  rec.onerror = e => {
+    if (VS.rec !== rec) return;
+    if (/not-allowed|service-not-allowed|audio-capture/.test(e.error)) vsFail('vs.mic_denied');
+    else if (e.error === 'network') vsFail('vs.need_net');
+    // no-speech / aborted: onend below starts listening again
+  };
+  rec.onend = () => {
+    if (VS.rec !== rec || !VS.on) return;
+    VS.interim = ''; vsShowText();
+    clearTimeout(VS.restart);
+    VS.restart = setTimeout(() => { if (VS.on && VS.rec === rec) vsListen(); }, 300);
+  };
+  try { rec.start(); } catch (e) { vsFail('vs.mic_denied'); }
+}
+/** Recording impossible (microphone refused, no internet): stop; with no text yet the consent banner comes back. */
+function vsFail(msgKey) {
+  const cart = VS.cart;
+  stopVoice();
+  if (cart && cart.voice && cart.voice.consent && !cart.voice.text) { cart.voice = null; if (cart === S.cart) saveCart(); drawVoice(); }
+  toast(t(msgKey), 'err', 4000);
+}
+/** Stops listening; words still being recognised (interim) are kept as they are. */
+function stopVoice() {
+  if (!VS.on) return;
+  VS.on = false;
+  clearInterval(VS.tick); clearTimeout(VS.restart);
+  const rec = VS.rec, cart = VS.cart; VS.rec = null; VS.cart = null;
+  if (VS.interim) vsAppend(cart, VS.interim);
+  VS.interim = '';
+  if (rec) { try { rec.stop(); } catch (e) { } }
+  drawVoice();
+}
+function skipVoice() { stopVoice(); S.cart.voice = { skipped: true }; VS.ask = ''; saveCart(); drawVoice(); }
+function vsTick() {
+  if (!VS.on) return;
+  const ms = Date.now() - VS.started;
+  if (ms > VS_MAX_MS) { stopVoice(); toast(t('vs.max'), 'warn', 4000); return; }
+  const tm = $('#vs-time'); if (tm) tm.textContent = `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+}
+function vsShowText() {
+  const el = $('#vs-tx'); if (!el || !S.cart) return;
+  const v = S.cart.voice, txt = v && v.consent ? v.text || '' : '';
+  el.innerHTML = esc(txt) + (VS.on && VS.interim ? ` <i>${esc(VS.interim)}</i>` : '');
+  el.scrollTop = el.scrollHeight;
+}
+/** The voice survey area at the top of the payment panel (cart), drawn from VS + cart.voice. Compact: the
+ *  desktop cart must keep "Bayar & Simpan" on screen, so the questions come one at a time (‹ ›, in order). */
+function voiceHTML() {
+  const c = S.cart, v = c.voice, sv = c.survey, qs = surveyQuestions();
+  if (c.client_id !== VS.cid) { VS.qi = 0; VS.cid = c.client_id; }
+  const manual = `<button type="button" class="linkbtn" id="vs-manual" data-act="survey-open">${ic('list')}${esc(t('vs.manual'))}${sv ? ` <span class="badge ${sv.skipped ? 'gray' : 'green'} survey-tag">${esc(sv.skipped ? t('survey.skipped') : t('survey.done'))}</span>` : ''}</button>`;
+  if (!voiceSurveyOn()) return `<div class="vs-links">${manual}</div>`;
+  if (VS.on && VS.cart === c) {
+    const qi = Math.min(VS.qi, Math.max(0, qs.length - 1));
+    return `<div class="vs rec" id="vs-rec">
+      <div class="vs-h"><span class="rec-dot" aria-hidden="true"></span><span class="grow" role="status">${esc(t('vs.recording'))} <span class="num" id="vs-time">0:00</span></span><button type="button" class="btn xs danger" data-act="vs-stop" id="vs-stop">■ ${esc(t('vs.stop'))}</button></div>
+      ${qs.length ? `<div class="vs-q" id="vs-q" title="${esc(t('vs.ask_hint'))}"><span class="n num">${qi + 1}/${qs.length}</span><span class="grow" dir="auto" id="vs-q-text">${esc(qs[qi])}</span>
+        <button type="button" data-act="vs-q" data-d="-1" id="vs-prev" aria-label="‹" ${qi ? '' : 'disabled'}>‹</button><button type="button" data-act="vs-q" data-d="1" id="vs-next" aria-label="›" ${qi < qs.length - 1 ? '' : 'disabled'}>›</button></div>` : ''}
+      <div class="vs-tx" dir="auto" id="vs-tx" aria-live="polite"></div></div>`;
+  }
+  if (v && v.consent) return `<div class="vs done" id="vs-done"><div class="vs-h">${ic('check')}<span class="grow">${esc(t('vs.saved'))}</span><button type="button" class="btn xs" data-act="vs-start" id="vs-resume">${ic('mic')} ${esc(t('vs.resume'))}</button></div>
+      <div class="vs-tx" dir="auto" id="vs-tx"></div><div class="vs-links">${manual}</div></div>`;
+  if (!v && (settings().survey_auto !== false || VS.ask === c.client_id)) return `<div class="vs" id="vs-ask">
+      <div class="vs-h"><span aria-hidden="true">🎙</span><span class="grow">${esc(t('vs.title'))}</span></div>
+      <div class="vs-row"><button type="button" class="btn primary vs-go" data-act="vs-start" id="vs-start" title="${esc(t('vs.hint'))}" aria-describedby="vs-hint">${ic('mic')} ${esc(t('vs.consent'))}</button></div>
+      <div class="vs-links"><button type="button" class="linkbtn" data-act="vs-skip" id="vs-skip">${esc(t('vs.skip'))}</button>${manual}</div><span class="sr-only" id="vs-hint">${esc(t('vs.hint'))}</span></div>`;
+  // skipped, or not shown automatically (settings.survey_auto off): a small link brings the banner back
+  return `<div class="vs-links"><button type="button" class="linkbtn" data-act="vs-ask" id="vs-ask-link">🎙 ${esc(t('vs.title'))}</button>${manual}</div>`;
+}
+function drawVoice() {
+  const w = $('#vs-wrap'); if (!w || !S.cart) return;
+  w.innerHTML = voiceHTML();
+  vsShowText(); vsTick();
 }
 
 /* ========== POS: checkout ========== */
@@ -2325,19 +2501,19 @@ function checkout() {
   if (shiftNeeded() && navigator.onLine) { promptOpenShift(() => checkout()); return; }
   if (v.error) { toast(v.error, 'err'); openCartSheet(); const b = $('#cart-cust'); if (b) b.animate([{ outline: '3px solid var(--danger)' }, { outline: '0' }], { duration: 1200 }); return; }
   if (v.lines.some(l => !l.p.id)) { toast(t('pos.unknown_product'), 'err'); return; }
-  const qs = surveyQuestions();
-  if (!S.cart.survey && qs.length && settings().survey_auto !== false) { openSurvey(true); return; }
+  // no survey step here any more: the voice / manual survey live in the payment panel and never block paying
   doSave();
 }
 function buildSaleRequest(v) {
   const c = S.cart, sv = c.survey;
+  const manual = !!(sv && !sv.skipped && sv.consent), vo = c.voice && c.voice.consent ? c.voice : null;
   const now = new Date();
   return {
     client_id: c.client_id, sale_date: jktDate(now), sale_time: jktISO(now),
     customer_id: v.cust ? v.cust.id : null, customer_name: v.cust ? v.cust.name : 'Umum', customer_type: v.cust ? v.cust.type : 'eceran',
     items: v.lines.map(l => ({ product_id: l.p.id, qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type })),
     discount: v.discount, payment_method: c.method, paid_amount: Math.min(v.paid, v.total),
-    survey: sv && !sv.skipped && sv.consent ? sv.answers : [], survey_consent: !!(sv && !sv.skipped && sv.consent),
+    survey: manual ? sv.answers : [], survey_consent: manual || !!vo, survey_transcript: vo ? vsClean(vo.text) : '', // transcript only after the consent tap
     channel: c.channel || 'toko', promo_code: cleanPromo(c.promo),
     notes: c.notes || ''
   };
@@ -2357,6 +2533,7 @@ async function doSave(extra = {}, meta = {}) {
   if (saving) return 'error';
   const v = cartView();
   if (!v.lines.length || v.error) { checkout(); return 'error'; }
+  stopVoice(); // paying ends the recording (the text so far goes with the sale)
   if (needsApproval(v) && !extra.approver && !extra.approval_id) { openApprovalStep(v); return 'needs_approval'; }
   saving = true;
   const btn = $('#btn-checkout'); if (btn) { btn.disabled = true; btn.textContent = t('saving'); }
@@ -2424,6 +2601,7 @@ function updateOutboxBadge() {
   b.hidden = !n; b.textContent = t('outbox.badge', { n });
 }
 async function syncOutbox(manual) {
+  syncContacts();
   if (syncing || !S.outbox.length) { if (manual && !S.outbox.length) toast(t('outbox.empty'), 'ok'); return; }
   syncing = true;
   let sent = 0;
@@ -2509,7 +2687,7 @@ function showReceipt(rc, opts = {}) {
   const canVoid = opts.sale && isOwner() && rc.status !== 'void' && !rc.pending;
   const el = openModal({
     title: rc.pending ? t('rc.title_pending') : t('rc.title'), cls: 'narrow',
-    body: `${opts.fromSale ? `<div class="row" style="justify-content:center;margin-bottom:10px"><span class="badge ${rc.pending ? 'amber' : 'green'}" style="font-size:14px;padding:6px 12px">${esc(rc.pending ? t('outbox.queued_short') : t('pos.saved_ok'))}</span></div>` : ''}<div id="exit-wrap"></div>${receiptHTML(rc)}`,
+    body: `${opts.fromSale ? `<div class="row" style="justify-content:center;margin-bottom:10px"><span class="badge ${rc.pending ? 'amber' : 'green'}" style="font-size:14px;padding:6px 12px">${esc(rc.pending ? t('outbox.queued_short') : t('pos.saved_ok'))}</span></div>` : ''}<div id="exit-wrap"></div>${opts.sale ? '' : '<div id="wa-wrap"></div>'}${receiptHTML(rc)}`,
     foot: `${canVoid ? `<button class="btn danger" data-act="void-sale" data-inv="${esc(rc.invoice_no)}">${esc(t('hist.void'))}</button>` : ''}${opts.sale && !isOwner() && rc.status !== 'void' && !rc.pending ? `<button class="btn danger sm" data-act="void-request" data-inv="${esc(rc.invoice_no)}">${esc(t('void.request'))}</button>` : ''}
       <button class="btn sm" data-act="rc-print">${ic('print')} ${esc(t('print'))}</button>
       <button class="btn sm" data-act="rc-copy">${ic('copy')} ${esc(t('copy'))}</button>
@@ -2518,7 +2696,90 @@ function showReceipt(rc, opts = {}) {
   });
   el._rc = rc;
   drawExitBox(el, rc);
+  drawWaCard(el, rc);
   if (opts.fromSale && !rc.exit_required) setTimeout(() => { const b = $('#rc-new', el); if (b && !isTouch()) b.focus(); }, 40);
+}
+
+/* ========== After payment: the customer's WhatsApp number ==========
+   The cashier asks for the number, the customer agrees to promos (checkbox, required) → save_customer
+   (wa_optin, source 'kasir'; the same number updates the existing customer). "Kirim ke WA toko" opens WhatsApp
+   with a ready message for the shop's own number (settings.wa_shop_number): the cashier still taps Send there,
+   the app cannot send by itself. Offline: kept in a local "pending contacts" list, sent on the next sync. */
+const shopWaNumber = () => { const raw = settings().wa_shop_number; return normPhone(raw) || String(raw || '').replace(/\D/g, ''); };
+const defaultCustName = phone => 'Pelanggan ' + String(phone).slice(-4);
+const localPhone = p => { p = String(p || ''); return /^62\d/.test(p) ? '0' + p.slice(2) : p; };
+function waShopText(rc) {
+  const w = rc.wa || {};
+  return t('wa.shop_text', { name: w.name || defaultCustName(w.phone), phone: '+' + w.phone, user: rc.cashier || S.user, time: fmtDateTime(rc.sale_time, rc.sale_date), inv: rc.invoice_no });
+}
+function drawWaCard(el, rc) {
+  const w = $('#wa-wrap', el); if (!w) return;
+  if (rc.status === 'void') { w.innerHTML = ''; return; }
+  // a customer chosen for the sale with a phone number: prefilled, already in the customer list
+  if (!rc.wa && rc.customer_phone && normPhone(rc.customer_phone)) {
+    const c = custById(rc.customer_id);
+    rc.wa = { phone: normPhone(rc.customer_phone), name: rc.customer_name, known: true, saved: !!(c && c.wa_optin) };
+  }
+  const wa = rc.wa || {}, shop = shopWaNumber();
+  const head = `<div class="wa-h">${ic('wa')}<span class="grow">${esc(t('wa.title'))}</span>${wa.saved || wa.known ? `<span class="badge green" id="wa-known">${esc(t('wa.known'))}</span>` : ''}</div>`;
+  if (wa.saved) {
+    w.innerHTML = `<div class="wa-card" id="wa-card">${head}
+      <div class="wa-done" id="wa-done">✓ <bdi>${esc(wa.name || defaultCustName(wa.phone))}</bdi> · <bdi class="num">+${esc(wa.phone)}</bdi>${wa.pending ? ` <span class="badge amber">${esc(t('outbox.queued_short'))}</span>` : ''}</div>
+      ${shop ? `<a class="btn block wa-send" id="wa-shop" target="_blank" rel="noopener" href="${esc(`https://wa.me/${shop}?text=${encodeURIComponent(waShopText(rc))}`)}">${ic('send')} ${esc(t('wa.send_shop'))}</a>
+      <div class="small muted" style="margin-top:6px">${esc(t('wa.send_hint'))}</div>` : ''}</div>`;
+    return;
+  }
+  w.innerHTML = `<div class="wa-card" id="wa-card">${head}
+    ${wa.known ? '' : `<div class="wa-remind" id="wa-remind">${esc(t('wa.remind'))}</div>`}
+    <div class="grid2"><div class="field" style="margin-bottom:8px"><label class="f" for="wa-phone">${esc(t('wa.phone'))}</label><input class="input" id="wa-phone" type="tel" inputmode="tel" autocomplete="off" placeholder="08xx xxxx xxxx" value="${esc(localPhone(wa.phone))}"></div>
+      <div class="field" style="margin-bottom:8px"><label class="f" for="wa-name">${esc(t('wa.name'))}</label><input class="input" id="wa-name" autocomplete="off" maxlength="60" value="${esc(wa.known ? wa.name || '' : '')}"></div></div>
+    <label class="check"><input type="checkbox" id="wa-optin"><span>${esc(t('wa.optin'))}</span></label>
+    <div class="red small" id="wa-err" role="alert"></div>
+    <button type="button" class="btn primary block" id="wa-save">${ic('wa')} ${esc(t('wa.save'))}</button></div>`;
+  $('#wa-save', w).onclick = () => saveWaContact(el, rc);
+  $('#wa-phone', w).addEventListener('keydown', e => { if (e.key === 'Enter') $('#wa-name', w).focus(); });
+}
+async function saveWaContact(el, rc) {
+  const w = $('#wa-wrap', el), err = $('#wa-err', w), btn = $('#wa-save', w);
+  const raw = $('#wa-phone', w).value.trim(), phone = normPhone(raw), name = $('#wa-name', w).value.trim().slice(0, 60);
+  if (!phone) { err.textContent = raw ? t('wa.bad_phone') : t('required') + ': ' + t('wa.phone'); $('#wa-phone', w).focus(); return; }
+  if (!$('#wa-optin', w).checked) { err.textContent = t('wa.need_optin'); return; }
+  err.textContent = ''; btn.disabled = true;
+  const data = { name, phone, type: 'eceran', wa_optin: true, source: 'kasir' };
+  try {
+    const r = await api('save_customer', data);
+    const keep = custById(r.customer.id), c = upsertLocal(S.customers, r.customer);
+    c.debt_balance = keep ? keep.debt_balance : int(r.customer.debt_balance); saveCache();
+    rc.wa = { phone, name: c.name, saved: true, existed: !!r.existed };
+    toast(t(r.existed ? 'wa.updated' : 'wa.saved'), 'ok');
+  } catch (e) {
+    if (!isRetryable(e)) { err.textContent = errMsg(e); btn.disabled = false; return; }
+    const list = store.get('pending_contacts', []);
+    list.push({ id: uuid(), data, key: S.key, user: S.user, pin_hash: S.pin_hash, queued_at: new Date().toISOString() });
+    store.set('pending_contacts', list);
+    rc.wa = { phone, name: name || defaultCustName(phone), saved: true, pending: true };
+    toast(t('outbox.queued'), 'warn', 4000);
+  }
+  rememberReceipt(rc);
+  drawWaCard(el, rc);
+}
+/** Customer numbers saved while offline: sent with the next outbox sync (they are not sales, so not in the outbox). */
+let syncingContacts = false;
+async function syncContacts() {
+  if (syncingContacts || !store.get('pending_contacts', []).length) return;
+  syncingContacts = true;
+  try {
+    for (const e of store.get('pending_contacts', [])) {
+      try {
+        const r = await apiRaw('save_customer', e.data, { key: e.key, user: e.user, pin_hash: e.pin_hash });
+        if (r.customer) { const keep = custById(r.customer.id), c = upsertLocal(S.customers, r.customer); c.debt_balance = keep ? keep.debt_balance : int(r.customer.debt_balance); saveCache(); }
+      } catch (err) {
+        if (err instanceof NetError) break;
+        console.warn('pending contact dropped', err); // {ok:false} would fail again on every retry
+      }
+      store.set('pending_contacts', store.get('pending_contacts', []).filter(x => x.id !== e.id));
+    }
+  } finally { syncingContacts = false; }
 }
 
 /* ========== Camera barcode scanning (BarcodeDetector) ========== */
@@ -4199,37 +4460,41 @@ async function loadRecentPurchases() {
 }
 
 /* ========== Customers ========== */
-const CU = { q: '', sort: 'debt', type: '' };
+const CU = { q: '', sort: 'debt', type: '', wa: false };
 function customerFormFields(c) {
   return `<div class="field"><label class="f">${esc(t('name'))} *<input class="input" name="c_name" value="${esc(c.name || '')}" style="margin-top:4px"></label></div>
     <div class="grid2"><div class="field"><label class="f">${esc(t('phone'))}<input class="input" name="c_phone" inputmode="tel" value="${esc(c.phone || '')}" style="margin-top:4px"></label></div>
     <div class="field"><label class="f">${esc(t('type'))}<select class="input" name="c_type" style="margin-top:4px"><option value="eceran" ${c.type !== 'grosir' ? 'selected' : ''}>${esc(t('type.eceran'))}</option><option value="grosir" ${c.type === 'grosir' ? 'selected' : ''}>${esc(t('type.grosir'))}</option></select></label></div></div>
     <div class="field"><label class="f">${esc(t('address'))}<input class="input" name="c_address" value="${esc(c.address || '')}" style="margin-top:4px"></label></div>
-    <div class="field"><label class="f">${esc(t('notes'))}<input class="input" name="c_notes" value="${esc(c.notes || '')}" style="margin-top:4px"></label></div>`;
+    <div class="field"><label class="f">${esc(t('notes'))}<input class="input" name="c_notes" value="${esc(c.notes || '')}" style="margin-top:4px"></label></div>
+    <label class="check"><input type="checkbox" name="c_wa_optin" ${c.wa_optin ? 'checked' : ''}> ${esc(t('wa.optin'))}</label>`;
 }
 function readCustomerForm(root) {
   const g = n => ($(`[name="${n}"]`, root) || {}).value || '';
-  return { name: g('c_name').trim(), phone: g('c_phone').trim(), type: g('c_type') || 'eceran', address: g('c_address').trim(), notes: g('c_notes').trim() };
+  const wa = $('[name="c_wa_optin"]', root);
+  return { name: g('c_name').trim(), phone: g('c_phone').trim(), type: g('c_type') || 'eceran', address: g('c_address').trim(), notes: g('c_notes').trim(), wa_optin: !!(wa && wa.checked) };
 }
 RENDER.customers = function () {
   const totalDebt = sum(S.customers, c => int(c.debt_balance));
-  $('#view-customers').innerHTML = `<div class="view-head"><h1>${esc(t('nav.customers'))}</h1><button class="btn primary" data-act="cust-new">${ic('plus')} ${esc(t('cust.new'))}</button></div>
+  $('#view-customers').innerHTML = `<div class="view-head"><h1>${esc(t('nav.customers'))}</h1><button class="btn" data-act="cust-vcf" id="cu-vcf" title="${esc(t('cust.vcf_hint'))}">${ic('download')} ${esc(t('cust.vcf'))}</button><button class="btn primary" data-act="cust-new">${ic('plus')} ${esc(t('cust.new'))}</button></div>
     <div class="kpis"><div class="kpi gold"><div class="k">${esc(t('rep.receivable'))}</div><div class="v num red" id="cu-debt-total">${fmtRp(totalDebt)}</div><div class="s">${esc(t('cust.n_debtors', { n: S.customers.filter(c => c.debt_balance > 0).length }))}</div></div>
       <div class="kpi"><div class="k">${esc(t('nav.customers'))}</div><div class="v num">${fmtNum(S.customers.length)}</div><div class="s">${esc(t('type.grosir'))}: ${S.customers.filter(c => c.type === 'grosir').length}</div></div></div>
     <div class="toolbar"><input class="input" id="cu-q" type="search" placeholder="${esc(t('search_customer'))}" value="${esc(CU.q)}" aria-label="${esc(t('search_customer'))}">
       <select class="input" id="cu-type" aria-label="${esc(t('type'))}"><option value="">${esc(t('all'))}</option><option value="grosir" ${CU.type === 'grosir' ? 'selected' : ''}>${esc(t('type.grosir'))}</option><option value="eceran" ${CU.type === 'eceran' ? 'selected' : ''}>${esc(t('type.eceran'))}</option></select>
-      <select class="input" id="cu-sort" aria-label="${esc(t('sort'))}"><option value="debt" ${CU.sort === 'debt' ? 'selected' : ''}>${esc(t('cust.sort_debt'))}</option><option value="name" ${CU.sort === 'name' ? 'selected' : ''}>${esc(t('cust.sort_name'))}</option></select></div>
+      <select class="input" id="cu-sort" aria-label="${esc(t('sort'))}"><option value="debt" ${CU.sort === 'debt' ? 'selected' : ''}>${esc(t('cust.sort_debt'))}</option><option value="name" ${CU.sort === 'name' ? 'selected' : ''}>${esc(t('cust.sort_name'))}</option></select>
+      <button type="button" class="chip ${CU.wa ? 'on' : ''}" id="cu-wa" aria-pressed="${CU.wa ? 'true' : 'false'}">${ic('wa')} ${esc(t('cust.wa_filter'))} <span class="num">(${S.customers.filter(c => c.wa_optin).length})</span></button></div>
     <div class="list" id="cu-list"></div>`;
   const draw = () => {
     const q = norm(CU.q);
-    let list = S.customers.filter(c => (!q || norm(`${c.name} ${c.phone} ${c.address}`).includes(q)) && (!CU.type || c.type === CU.type));
+    let list = S.customers.filter(c => (!q || norm(`${c.name} ${c.phone} ${c.address}`).includes(q)) && (!CU.type || c.type === CU.type) && (!CU.wa || c.wa_optin));
     list.sort(CU.sort === 'debt' ? (a, b) => b.debt_balance - a.debt_balance || a.name.localeCompare(b.name) : (a, b) => a.name.localeCompare(b.name));
     $('#cu-list').innerHTML = list.map(c => `<button class="li" data-act="cust-open" data-id="${esc(c.id)}"><div class="grow"><div class="t">${esc(c.name)}</div><div class="s">${esc(c.phone || '—')}${c.address ? ' · ' + esc(c.address) : ''}</div></div>
-      <div class="right"><span class="badge ${c.type === 'grosir' ? 'gold' : 'gray'}">${esc(t('type.' + c.type))}</span><div class="num ${c.debt_balance > 0 ? 'red' : 'muted'}" style="font-weight:800;margin-top:4px" data-debt="${esc(c.id)}">${fmtRp(c.debt_balance)}</div></div></button>`).join('') || `<div class="empty">${esc(t('no_data'))}</div>`;
+      <div class="right">${c.wa_optin ? `<span class="badge green wa-badge" title="${esc(t('wa.optin'))}">${ic('wa')} WA</span> ` : ''}<span class="badge ${c.type === 'grosir' ? 'gold' : 'gray'}">${esc(t('type.' + c.type))}</span><div class="num ${c.debt_balance > 0 ? 'red' : 'muted'}" style="font-weight:800;margin-top:4px" data-debt="${esc(c.id)}">${fmtRp(c.debt_balance)}</div></div></button>`).join('') || `<div class="empty">${esc(t('no_data'))}</div>`;
   };
   $('#cu-q').addEventListener('input', e => { CU.q = e.target.value; draw(); });
   $('#cu-type').onchange = e => { CU.type = e.target.value; draw(); };
   $('#cu-sort').onchange = e => { CU.sort = e.target.value; draw(); };
+  $('#cu-wa').onclick = e => { CU.wa = !CU.wa; const b = e.currentTarget; b.classList.toggle('on', CU.wa); b.setAttribute('aria-pressed', CU.wa ? 'true' : 'false'); draw(); };
   draw();
 };
 function openCustomerEditor(c, after) {
@@ -4249,6 +4514,22 @@ function openCustomerEditor(c, after) {
       after && after(saved);
     } catch (e) { $('#ce-err', el).textContent = errMsg(e); $('#ce-save', el).disabled = false; }
   };
+}
+/** vCard file of the customers who agreed to WhatsApp promos: imported once into the phone's contacts,
+ *  the numbers show up in WhatsApp ("saved in WhatsApp"). */
+const vcfEsc = v => String(v || '').replace(/[\\,;]/g, m => '\\' + m).replace(/\r?\n/g, ' ');
+function customersVcf(list) {
+  return list.map(c => ['BEGIN:VCARD', 'VERSION:3.0', `FN:${vcfEsc(c.name)}`, `N:;${vcfEsc(c.name)};;;`, `TEL;TYPE=CELL:+${normPhone(c.phone)}`, 'END:VCARD'].join('\r\n')).join('\r\n') + '\r\n';
+}
+function exportVcf() {
+  const list = S.customers.filter(c => c.wa_optin && normPhone(c.phone)).sort((a, b) => a.name.localeCompare(b.name));
+  if (!list.length) { toast(t('cust.vcf_none'), 'warn', 4000); return; }
+  const url = URL.createObjectURL(new Blob([customersVcf(list)], { type: 'text/vcard;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = `kontak-${String(settings().store_name || 'toko').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'toko'}-${today()}.vcf`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  toast(t('cust.vcf_done', { n: list.length }), 'ok', 4000);
 }
 function debtReminderText(c) {
   return t('cust.wa_text', { name: c.name, amount: fmtRp(c.debt_balance), store: settings().store_name });
@@ -4427,6 +4708,8 @@ function computeReport(d, from, to) {
       if (isSourceQuestion(x.q)) sources[classifySource(x.a)]++;
       answers.push({ q: x.q, a: x.a, time: s.sale_time, date: s.sale_date, customer: s.customer_name });
     });
+    const tx = String(s.survey_transcript || '').trim(); // voice survey (text only, given with consent)
+    if (tx) answers.push({ q: t('rep.transcript'), a: tx.length > 300 ? tx.slice(0, 300) + '…' : tx, time: s.sale_time, date: s.sale_date, customer: s.customer_name });
   });
   return {
     from, to, hasProfit, omzet, laba, margin: omzet ? laba / omzet * 100 : 0, count, avg: count ? Math.round(omzet / count) : 0,
@@ -4685,6 +4968,14 @@ const I18N = {
     'survey.title': 'Survei pelanggan (opsional)', 'survey.short': 'Survei', 'survey.consent': 'Pembeli setuju jawabannya dicatat', 'survey.consent_hint': 'Hanya teks jawaban yang disimpan, suara tidak direkam.',
     'survey.mic': 'Rekam jawaban dengan suara (ketuk lagi untuk berhenti)', 'survey.mic_denied': 'Mikrofon tidak diizinkan — silakan ketik jawabannya', 'survey.no_speech': 'Pengenalan suara tidak tersedia di browser ini — ketik jawabannya.',
     'survey.need_consent': 'Centang persetujuan pembeli dulu, atau tekan Lewati.', 'survey.skip': 'Lewati', 'survey.save': 'Simpan jawaban', 'survey.save_pay': 'Simpan & Bayar', 'survey.done': 'terisi', 'survey.skipped': 'dilewati',
+    'vs.title': 'Survei suara — tanyakan izin pelanggan', 'vs.hint': 'Tanya dulu: “Boleh obrolan kita dicatat untuk survei?” Hanya teks yang disimpan, suara tidak disimpan.',
+    'vs.consent': 'Pelanggan setuju — mulai rekam', 'vs.skip': 'Lewati', 'vs.manual': 'Isi survei manual', 'vs.recording': 'Merekam', 'vs.stop': 'Stop',
+    'vs.ask_hint': 'Tanyakan berurutan, centang yang sudah ditanya', 'vs.saved': 'Survei suara tercatat (teks saja)', 'vs.resume': 'Lanjut rekam',
+    'vs.mic_denied': 'Izin mikrofon ditolak', 'vs.need_net': 'Survei suara butuh internet', 'vs.max': 'Rekaman berhenti otomatis (maks. 10 menit)',
+    'wa.title': 'Nomor WhatsApp pelanggan', 'wa.known': 'Sudah tersimpan', 'wa.remind': 'Jangan lupa minta nomor WhatsApp pelanggan', 'wa.phone': 'No. WhatsApp', 'wa.name': 'Nama (opsional)',
+    'wa.optin': 'Pelanggan setuju dikirimi promo lewat WhatsApp', 'wa.save': 'Simpan nomor', 'wa.bad_phone': 'Nomor tidak valid (9–15 angka)', 'wa.need_optin': 'Centang dulu: pelanggan setuju dikirimi promo',
+    'wa.saved': 'Nomor pelanggan tersimpan', 'wa.updated': 'Nomor sudah ada — data pelanggan diperbarui', 'wa.send_shop': 'Kirim ke WA toko', 'wa.send_hint': 'WhatsApp akan terbuka, tekan Kirim.',
+    'wa.shop_text': 'Simpan nomor pelanggan baru: {name} {phone} (kasir {user}, {time}, nota {inv})',
     'outbox.badge': 'Belum terkirim ({n})', 'outbox.queued': 'Internet putus — transaksi disimpan di perangkat dan akan dikirim otomatis.', 'outbox.queued_short': 'Disimpan offline, menunggu dikirim',
     'outbox.synced': '{n} transaksi offline berhasil dikirim', 'outbox.still': 'Masih {n} transaksi belum terkirim', 'outbox.empty': 'Semua transaksi sudah terkirim', 'outbox.none': 'Tidak ada transaksi yang menunggu.',
     'outbox.pending': 'Belum terkirim', 'outbox.resend': 'Kirim ulang', 'outbox.copy': 'Salin data', 'outbox.tries': 'dicoba {n}x', 'outbox.hint': 'Dikirim otomatis tiap 30 detik saat online. Jangan hapus data browser selama masih ada antrian.',
@@ -4700,7 +4991,7 @@ const I18N = {
     'pu.supplier': 'Pemasok / supplier', 'pu.add_product': 'Tambah produk (cari / scan)', 'pu.cost_unit': 'Harga beli / satuan', 'pu.empty': 'Belum ada barang', 'pu.save': 'Simpan barang masuk',
     'pu.saved': 'Barang masuk tersimpan', 'pu.new_cost': 'HPP rata-rata baru', 'pu.recent': 'Barang masuk 30 hari terakhir', 'pu.bad_qty': 'Qty harus lebih dari 0', 'pu.zero_cost': 'Ada barang dengan harga beli 0. Tetap simpan?',
     'cust.new': 'Pelanggan baru', 'cust.edit': 'Ubah pelanggan', 'cust.quick_add': 'Tambah pelanggan baru', 'cust.receive': 'Terima pembayaran', 'cust.remind_wa': 'Tagih via WhatsApp',
-    'cust.recent': 'Pembelian terakhir', 'cust.payments': 'Pembayaran hutang', 'cust.sort_debt': 'Hutang terbesar', 'cust.sort_name': 'Nama A–Z', 'cust.n_debtors': '{n} pelanggan masih berhutang',
+    'cust.recent': 'Pembelian terakhir', 'cust.payments': 'Pembayaran hutang', 'cust.sort_debt': 'Hutang terbesar', 'cust.sort_name': 'Nama A–Z', 'cust.wa_filter': 'Setuju promo WA', 'cust.vcf': 'Ekspor kontak (.vcf)', 'cust.vcf_hint': 'File kontak pelanggan yang setuju promo WA — buka di HP untuk menyimpan semua nomor sekaligus', 'cust.vcf_none': 'Belum ada pelanggan yang setuju promo WA', 'cust.vcf_done': '{n} kontak diekspor — buka file .vcf di HP untuk menyimpan semuanya', 'cust.n_debtors': '{n} pelanggan masih berhutang',
     'cust.amount_invalid': 'Jumlah harus lebih dari 0', 'cust.amount_exceeds': 'Jumlah melebihi hutang', 'cust.paid_ok': 'Pembayaran {amount} dicatat. Sisa hutang {rest}',
     'cust.wa_text': 'Assalamu\'alaikum Kak {name}, semoga sehat selalu dan dilancarkan rezekinya. Kami dari {store} ingin mengingatkan dengan hormat bahwa masih ada sisa pembayaran belanja sebesar {amount}. Pembayaran bisa di toko atau via transfer, kapan pun Kakak ada kelapangan. Terima kasih banyak atas kepercayaannya. Jazakumullah khairan.',
     'hist.search_ph': 'Cari no. nota / pelanggan', 'hist.void': 'Batalkan transaksi', 'hist.void_confirm': 'Batalkan nota {inv}? Stok dikembalikan dan hutang (jika ada) dikurangi.',
@@ -4709,11 +5000,11 @@ const I18N = {
     'rep.receivable': 'Piutang pelanggan', 'rep.receivable_hint': 'total hutang saat ini', 'rep.new_debt': 'Hutang baru', 'rep.payments_in': 'Pembayaran hutang masuk', 'rep.purchases': 'Barang masuk',
     'rep.purchase_lines': '{n} baris', 'rep.adjust_lines': '{n} penyesuaian stok', 'rep.excl_void': 'tanpa transaksi batal', 'rep.chart': 'Grafik omzet dan laba', 'rep.chart_day': 'Omzet & laba per hari', 'rep.chart_hour': 'Omzet & laba per jam',
     'rep.split': 'Eceran vs Grosir', 'rep.split_hint': 'Berdasarkan harga per item (sebelum diskon nota).', 'rep.methods': 'Metode pembayaran', 'rep.top_qty': 'Terlaris (qty)', 'rep.top_omzet': 'Terlaris (omzet)',
-    'rep.top_profit': 'Paling untung (laba)', 'rep.slowest': 'Paling lambat terjual', 'rep.sold': 'Terjual', 'rep.low_stock': 'Stok menipis', 'rep.survey_sources': 'Tahu Khair Mart dari mana?', 'rep.survey_latest': 'Jawaban survei terbaru',
+    'rep.top_profit': 'Paling untung (laba)', 'rep.slowest': 'Paling lambat terjual', 'rep.sold': 'Terjual', 'rep.low_stock': 'Stok menipis', 'rep.survey_sources': 'Tahu Khair Mart dari mana?', 'rep.survey_latest': 'Jawaban survei terbaru', 'rep.transcript': '🎙 Survei suara',
     'rep.copy_day': 'Salin laporan harian', 'rep.copy_month': 'Salin laporan bulanan', 'rep.txt_day': 'Laporan Harian', 'rep.txt_month': 'Laporan Bulanan', 'rep.period': 'Periode', 'rep.top5': 'Top 5 produk',
     'src.tiktok': 'TikTok', 'src.instagram': 'Instagram', 'src.facebook': 'Facebook', 'src.google': 'Google / Maps', 'src.friends': 'Teman / keluarga', 'src.passing': 'Lewat depan toko', 'src.regular': 'Pelanggan lama', 'src.other': 'Lainnya',
     'set.store': 'Info toko & struk', 'set.store_name': 'Nama toko', 'set.footer': 'Catatan bawah struk', 'set.paper': 'Lebar kertas printer', 'set.survey': 'Pertanyaan survei',
-    'set.survey_auto': 'Tampilkan survei otomatis saat bayar', 'set.survey_new': 'Pertanyaan baru…', 'set.survey_reset': 'Kembalikan ke bawaan', 'set.users': 'Pengguna', 'set.add_user': 'Tambah pengguna',
+    'set.survey_auto': 'Tampilkan banner survei suara otomatis saat bayar', 'set.survey_voice': 'Survei suara saat bayar', 'set.survey_voice_hint': 'Kasir minta izin pelanggan dulu; hanya teks yang disimpan, suara tidak. Butuh Chrome di Android.', 'set.wa_shop': 'Nomor WhatsApp toko', 'set.wa_shop_hint': 'Tombol “Kirim ke WA toko” di struk mengirim nomor pelanggan baru ke nomor ini.', 'set.survey_new': 'Pertanyaan baru…', 'set.survey_reset': 'Kembalikan ke bawaan', 'set.users': 'Pengguna', 'set.add_user': 'Tambah pengguna',
     'set.role': 'Peran', 'set.reset_pin': 'Ganti PIN', 'set.activate': 'Aktifkan', 'set.deactivate': 'Nonaktifkan', 'set.deactivate_confirm': 'Nonaktifkan {name}? Ia tidak bisa masuk lagi.', 'set.user_exists': 'Nama sudah dipakai',
     'set.app': 'Aplikasi', 'set.language': 'Bahasa', 'set.autolock': 'Kunci otomatis jika tidak dipakai', 'set.reload_data': 'Muat ulang data', 'set.data_reloaded': 'Data diperbarui',
     'set.logout_store': 'Keluar dari toko', 'set.logout_confirm': 'Keluar dan hapus kode toko dari perangkat ini?', 'set.outbox': 'Antrian offline',
@@ -4753,6 +5044,14 @@ const I18N = {
     'survey.title': 'استبيان العميل (اختياري)', 'survey.short': 'استبيان', 'survey.consent': 'العميل موافق على تسجيل إجاباته', 'survey.consent_hint': 'يُحفظ النص فقط، ولا يُسجَّل الصوت.',
     'survey.mic': 'سجّل الإجابة بالصوت (اضغط مرة أخرى للإيقاف)', 'survey.mic_denied': 'الميكروفون غير مسموح — اكتب الإجابة', 'survey.no_speech': 'التعرف على الصوت غير متاح في هذا المتصفح — اكتب الإجابة.',
     'survey.need_consent': 'ضع علامة موافقة العميل أولًا أو اضغط تخطٍّ.', 'survey.skip': 'تخطٍّ', 'survey.save': 'حفظ الإجابات', 'survey.save_pay': 'حفظ ودفع', 'survey.done': 'مكتمل', 'survey.skipped': 'تم التخطي',
+    'vs.title': 'استبيان صوتي — اطلب إذن العميل', 'vs.hint': 'اسأل أولًا: هل تسمح بتسجيل حديثنا للاستبيان؟ يُحفظ النص فقط، ولا يُحفظ الصوت.',
+    'vs.consent': 'العميل موافق — ابدأ التسجيل', 'vs.skip': 'تخطٍّ', 'vs.manual': 'تعبئة الاستبيان يدويًا', 'vs.recording': 'جارٍ التسجيل', 'vs.stop': 'إيقاف',
+    'vs.ask_hint': 'اسأل بالترتيب، وضع علامة على ما سألته', 'vs.saved': 'سُجّل الاستبيان الصوتي (نص فقط)', 'vs.resume': 'متابعة التسجيل',
+    'vs.mic_denied': 'تم رفض إذن الميكروفون', 'vs.need_net': 'الاستبيان الصوتي يحتاج إلى الإنترنت', 'vs.max': 'توقف التسجيل تلقائيًا (10 دقائق كحد أقصى)',
+    'wa.title': 'رقم واتساب العميل', 'wa.known': 'محفوظ مسبقًا', 'wa.remind': 'لا تنسَ طلب رقم واتساب العميل', 'wa.phone': 'رقم واتساب', 'wa.name': 'الاسم (اختياري)',
+    'wa.optin': 'العميل موافق على استلام العروض عبر واتساب', 'wa.save': 'حفظ الرقم', 'wa.bad_phone': 'الرقم غير صحيح (9–15 رقمًا)', 'wa.need_optin': 'ضع علامة موافقة العميل على العروض أولًا',
+    'wa.saved': 'تم حفظ رقم العميل', 'wa.updated': 'الرقم موجود — تم تحديث بيانات العميل', 'wa.send_shop': 'إرسال إلى واتساب المتجر', 'wa.send_hint': 'سيفتح واتساب، اضغط إرسال.',
+    'wa.shop_text': 'احفظ رقم العميل الجديد: {name} {phone} (الكاشير {user}، {time}، فاتورة {inv})',
     'outbox.badge': 'غير مُرسَلة ({n})', 'outbox.queued': 'انقطع الإنترنت — حُفظت العملية على الجهاز وسترسل تلقائيًا.', 'outbox.queued_short': 'محفوظة دون اتصال، بانتظار الإرسال',
     'outbox.synced': 'تم إرسال {n} عملية محفوظة', 'outbox.still': 'ما زالت {n} عملية غير مرسلة', 'outbox.empty': 'كل العمليات مُرسلة', 'outbox.none': 'لا توجد عمليات بانتظار الإرسال.',
     'outbox.pending': 'غير مرسلة', 'outbox.resend': 'إعادة الإرسال', 'outbox.copy': 'نسخ البيانات', 'outbox.tries': 'محاولات: {n}', 'outbox.hint': 'تُرسل تلقائيًا كل 30 ثانية عند الاتصال. لا تمسح بيانات المتصفح ما دامت هناك عمليات بالانتظار.',
@@ -4768,7 +5067,7 @@ const I18N = {
     'pu.supplier': 'المورّد', 'pu.add_product': 'أضف منتجًا (بحث / مسح)', 'pu.cost_unit': 'سعر الشراء للوحدة', 'pu.empty': 'لا توجد بضاعة بعد', 'pu.save': 'حفظ البضاعة الواردة',
     'pu.saved': 'تم حفظ البضاعة الواردة', 'pu.new_cost': 'متوسط التكلفة الجديد', 'pu.recent': 'الوارد في آخر 30 يومًا', 'pu.bad_qty': 'الكمية يجب أن تكون أكبر من 0', 'pu.zero_cost': 'يوجد صنف بسعر شراء 0. هل تريد الحفظ؟',
     'cust.new': 'عميل جديد', 'cust.edit': 'تعديل عميل', 'cust.quick_add': 'إضافة عميل جديد', 'cust.receive': 'استلام دفعة', 'cust.remind_wa': 'تذكير عبر واتساب',
-    'cust.recent': 'آخر المشتريات', 'cust.payments': 'دفعات الدَّين', 'cust.sort_debt': 'الأكبر دَينًا', 'cust.sort_name': 'الاسم أ–ي', 'cust.n_debtors': '{n} عملاء عليهم دَين',
+    'cust.recent': 'آخر المشتريات', 'cust.payments': 'دفعات الدَّين', 'cust.sort_debt': 'الأكبر دَينًا', 'cust.sort_name': 'الاسم أ–ي', 'cust.wa_filter': 'موافق على عروض واتساب', 'cust.vcf': 'تصدير جهات الاتصال (.vcf)', 'cust.vcf_hint': 'ملف جهات اتصال العملاء الموافقين على عروض واتساب — افتحه على الهاتف لحفظ كل الأرقام دفعة واحدة', 'cust.vcf_none': 'لا يوجد عملاء موافقون على عروض واتساب بعد', 'cust.vcf_done': 'تم تصدير {n} جهة اتصال — افتح ملف .vcf على الهاتف لحفظها كلها', 'cust.n_debtors': '{n} عملاء عليهم دَين',
     'cust.amount_invalid': 'المبلغ يجب أن يكون أكبر من 0', 'cust.amount_exceeds': 'المبلغ أكبر من الدَّين', 'cust.paid_ok': 'سُجّلت دفعة {amount}. المتبقي {rest}',
     'cust.wa_text': 'Assalamu\'alaikum Kak {name}, semoga sehat selalu dan dilancarkan rezekinya. Kami dari {store} ingin mengingatkan dengan hormat bahwa masih ada sisa pembayaran belanja sebesar {amount}. Pembayaran bisa di toko atau via transfer, kapan pun Kakak ada kelapangan. Terima kasih banyak atas kepercayaannya. Jazakumullah khairan.',
     'hist.search_ph': 'ابحث برقم الفاتورة أو العميل', 'hist.void': 'إلغاء العملية', 'hist.void_confirm': 'إلغاء الفاتورة {inv}؟ سيُعاد المخزون ويُخصم الدَّين إن وُجد.',
@@ -4777,11 +5076,11 @@ const I18N = {
     'rep.receivable': 'ديون العملاء', 'rep.receivable_hint': 'إجمالي الديون الحالية', 'rep.new_debt': 'ديون جديدة', 'rep.payments_in': 'دفعات ديون مستلمة', 'rep.purchases': 'البضاعة الواردة',
     'rep.purchase_lines': '{n} سطر', 'rep.adjust_lines': '{n} تسوية مخزون', 'rep.excl_void': 'بدون الملغاة', 'rep.chart': 'رسم المبيعات والربح', 'rep.chart_day': 'المبيعات والربح يوميًا', 'rep.chart_hour': 'المبيعات والربح بالساعة',
     'rep.split': 'تجزئة مقابل جملة', 'rep.split_hint': 'حسب سعر كل صنف (قبل خصم الفاتورة).', 'rep.methods': 'طرق الدفع', 'rep.top_qty': 'الأكثر مبيعًا (كمية)', 'rep.top_omzet': 'الأكثر مبيعًا (قيمة)',
-    'rep.top_profit': 'الأكثر ربحًا', 'rep.slowest': 'الأبطأ مبيعًا', 'rep.sold': 'المباع', 'rep.low_stock': 'مخزون منخفض', 'rep.survey_sources': 'كيف عرفوا خير مارت؟', 'rep.survey_latest': 'أحدث إجابات الاستبيان',
+    'rep.top_profit': 'الأكثر ربحًا', 'rep.slowest': 'الأبطأ مبيعًا', 'rep.sold': 'المباع', 'rep.low_stock': 'مخزون منخفض', 'rep.survey_sources': 'كيف عرفوا خير مارت؟', 'rep.survey_latest': 'أحدث إجابات الاستبيان', 'rep.transcript': '🎙 استبيان صوتي',
     'rep.copy_day': 'نسخ التقرير اليومي', 'rep.copy_month': 'نسخ التقرير الشهري', 'rep.txt_day': 'Laporan Harian', 'rep.txt_month': 'Laporan Bulanan', 'rep.period': 'الفترة', 'rep.top5': 'أفضل 5 منتجات',
     'src.tiktok': 'تيك توك', 'src.instagram': 'إنستغرام', 'src.facebook': 'فيسبوك', 'src.google': 'جوجل / الخرائط', 'src.friends': 'الأصدقاء / العائلة', 'src.passing': 'المرور أمام المتجر', 'src.regular': 'عميل قديم', 'src.other': 'أخرى',
     'set.store': 'بيانات المتجر والإيصال', 'set.store_name': 'اسم المتجر', 'set.footer': 'ملاحظة أسفل الإيصال', 'set.paper': 'عرض ورق الطابعة', 'set.survey': 'أسئلة الاستبيان',
-    'set.survey_auto': 'إظهار الاستبيان تلقائيًا عند الدفع', 'set.survey_new': 'سؤال جديد…', 'set.survey_reset': 'استعادة الأسئلة الافتراضية', 'set.users': 'المستخدمون', 'set.add_user': 'إضافة مستخدم',
+    'set.survey_auto': 'إظهار شريط الاستبيان الصوتي تلقائيًا عند الدفع', 'set.survey_voice': 'استبيان صوتي أثناء الدفع', 'set.survey_voice_hint': 'يطلب الكاشير إذن العميل أولًا؛ يُحفظ النص فقط دون الصوت. يحتاج Chrome على أندرويد.', 'set.wa_shop': 'رقم واتساب المتجر', 'set.wa_shop_hint': 'زر «إرسال إلى واتساب المتجر» في الإيصال يرسل رقم العميل الجديد إلى هذا الرقم.', 'set.survey_new': 'سؤال جديد…', 'set.survey_reset': 'استعادة الأسئلة الافتراضية', 'set.users': 'المستخدمون', 'set.add_user': 'إضافة مستخدم',
     'set.role': 'الدور', 'set.reset_pin': 'تغيير الرقم السري', 'set.activate': 'تفعيل', 'set.deactivate': 'تعطيل', 'set.deactivate_confirm': 'تعطيل {name}؟ لن يستطيع الدخول.', 'set.user_exists': 'الاسم مستخدم',
     'set.app': 'التطبيق', 'set.language': 'اللغة', 'set.autolock': 'القفل التلقائي عند عدم الاستخدام', 'set.reload_data': 'تحديث البيانات', 'set.data_reloaded': 'تم تحديث البيانات',
     'set.logout_store': 'الخروج من المتجر', 'set.logout_confirm': 'الخروج وحذف رمز المتجر من هذا الجهاز؟', 'set.outbox': 'العمليات غير المرسلة',
@@ -5016,7 +5315,10 @@ RENDER.settings = function () {
       <div class="red" id="st-err"></div><button class="btn primary" data-act="set-save-store">${esc(t('save'))}</button></div></div>
 
     <div class="panel"><h3>${esc(t('set.survey'))}</h3><div class="pb">
+      <label class="check"><input type="checkbox" id="st-sv-voice" ${st.survey_voice !== false ? 'checked' : ''}> <span>${esc(t('set.survey_voice'))}<br><span class="small muted">${esc(t('set.survey_voice_hint'))}</span></span></label>
       <label class="check"><input type="checkbox" id="st-sv-auto" ${st.survey_auto !== false ? 'checked' : ''}> ${esc(t('set.survey_auto'))}</label>
+      <div class="field"><label class="f" for="st-wa-shop">${esc(t('set.wa_shop'))}</label><input class="input" id="st-wa-shop" type="tel" inputmode="tel" autocomplete="off" placeholder="08xx xxxx xxxx" value="${esc(st.wa_shop_number || '')}">
+        <div class="small muted" style="margin-top:4px">${esc(t('set.wa_shop_hint'))}</div></div>
       <div class="list" id="st-qs">${ST.qs.map((q, i) => `<div class="li" style="min-height:0;padding:8px 10px"><span class="grow">${esc(q)}</span>
         <button class="icon-btn ghost sm" data-act="sq-up" data-i="${i}" aria-label="↑" ${i ? '' : 'disabled'}>${ic('up')}</button>
         <button class="icon-btn ghost sm" data-act="sq-down" data-i="${i}" aria-label="↓" ${i < ST.qs.length - 1 ? '' : 'disabled'}>${ic('down')}</button>
@@ -5211,7 +5513,12 @@ const ACT = {
   'method': el => { S.cart.method = el.dataset.m; S.cart.paid = ''; saveCart(); renderCart(); if (el.dataset.m === 'hutang' && !S.cart.customer_id) { toast(t('pos.debt_needs_customer'), 'warn'); } },
   'paid-exact': () => { S.cart.paid = ''; saveCart(); renderCart(); },
   'paid-set': el => { S.cart.paid = String(int(el.dataset.v)); saveCart(); renderCart(); },
-  'survey-open': () => openSurvey(false),
+  'survey-open': () => openSurvey(),
+  'vs-start': () => startVoice(),
+  'vs-stop': () => stopVoice(),
+  'vs-skip': () => skipVoice(),
+  'vs-ask': () => { S.cart.voice = null; VS.ask = S.cart.client_id; saveCart(); drawVoice(); },
+  'vs-q': el => { VS.qi = Math.max(0, Math.min(surveyQuestions().length - 1, VS.qi + int(el.dataset.d))); drawVoice(); },
   'cart-clear': async () => { const r = await confirmBox(t('pos.clear_confirm'), { danger: true }); if (r.ok) { S.cart = newCart(); saveCart(); renderCart(); } },
   'checkout': () => checkout(),
   'cam-scan': () => cameraScan(code => { const p = findBySku(code); if (p) addToCart(p); else toast(t('pos.barcode_nf', { code }), 'err'); }),
@@ -5234,6 +5541,7 @@ const ACT = {
 
   /* customers */
   'cust-new': () => openCustomerEditor(null),
+  'cust-vcf': () => exportVcf(),
   'cust-open': el => openCustomerDetail(custById(el.dataset.id)),
   'cust-pay': el => openPayment(custById(el.dataset.id)),
   'cust-edit': el => openCustomerEditor(custById(el.dataset.id), c => { closeModal(); openCustomerDetail(c); }),
@@ -5265,7 +5573,12 @@ const ACT = {
   'sq-add': () => { const v = $('#st-q-new').value.trim(); if (!v) return; ST.qs.push(v); RENDER.settings(); const n = $('#st-q-new'); if (n) n.focus(); },
   'sq-reset': () => { ST.qs = DEFAULT_SURVEY.slice(); RENDER.settings(); },
   'set-save-photo': () => saveSettings({ exit_photo_min_total: moneyVal($('#st-exit-total').value), exit_photo_min_qty: qtyVal($('#st-exit-qty').value), require_purchase_photo: $('#st-req-photo').checked }, $('#st-ph-err')),
-  'set-save-survey': () => saveSettings({ survey_questions: ST.qs.slice(), survey_auto: $('#st-sv-auto').checked }, $('#st-sv-err')),
+  'set-save-survey': () => {
+    const raw = $('#st-wa-shop').value.trim(), wa = normPhone(raw);
+    if (raw && !wa) { $('#st-sv-err').textContent = t('wa.bad_phone'); $('#st-wa-shop').focus(); return; }
+    $('#st-sv-err').textContent = '';
+    return saveSettings({ survey_questions: ST.qs.slice(), survey_auto: $('#st-sv-auto').checked, survey_voice: $('#st-sv-voice').checked, wa_shop_number: wa }, $('#st-sv-err'));
+  },
   'user-add': async () => {
     const name = $('#nu-name').value.trim(), role = $('#nu-role').value, a = $('#nu-pin').value, b = $('#nu-pin2').value, err = $('#nu-err');
     if (!name) { err.textContent = t('required') + ': ' + t('name'); return; }
