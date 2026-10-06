@@ -224,7 +224,7 @@ Tracking rules (privacy, UU PDP):
 
 | action | who | data | response |
 |---|---|---|---|
-| `field_bootstrap` | sales, owner, manager | – | `user, products[] (no cost fields), images_version, shops[] (mine for sales, all for owner/manager), customers[] (grosir only), day: {status: "off"|"working"|"ended", started_at, ended_at, visits_today, km_today}, settings` |
+| `field_bootstrap` | sales, owner, manager | – | `user, products[] (no cost fields), images_version, shops[] (mine for sales, all for owner/manager), customers[] (grosir only), day: {status: "off"|"working"|"ended", started_at, ended_at, visits_today, km_today}, orders[] (sales only: own orders of the last 30 days, with status + status_note; empty for owner/manager), settings` |
 | `day_start` | sales | `{lat, lng, acc}` | `day` |
 | `day_end` | sales | `{lat, lng, acc, note}` | `day` (with `km_today`, `visits_today`, `orders_today`) |
 | `track` | sales | `{points: [{lat, lng, acc, t (ISO), speed?, battery?}]}` max 200 per call; ignored when the day is not started | `saved` |

@@ -107,6 +107,7 @@ switch (req.action) {
       products: products.filter(function (p) { return p.active !== false; }).map(productOut),
       shops: shops.map(clean), customers: customers,
       day: role === 'sales' ? dayOut(myDay) : null,
+      orders: role === 'sales' ? rows('Get Recent Orders').filter(mine).map(clean) : [],
       settings: {}, server_time: new Date().toISOString()
     });
   }

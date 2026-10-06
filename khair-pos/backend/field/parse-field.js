@@ -9,6 +9,7 @@ const isDate = function (s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2
 const action = String(body.action || '');
 const today = new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
 const pid = Number(data.product_id);
+const since30 = new Date(Date.now() + 7 * 3600000 - 30 * 86400000).toISOString().slice(0, 10);
 return [{ json: {
   action: action,
   key: String(body.key || ''),
@@ -20,6 +21,7 @@ return [{ json: {
   order_id: action === 'update_order' && data.order_id ? String(data.order_id) : '__none__',
   from: action === 'list_field' && isDate(data.from) ? data.from : '9999-12-31',
   to: action === 'list_field' && isDate(data.to) ? data.to : '0000-01-01',
+  recent_from: action === 'field_bootstrap' ? since30 : '9999-12-31',
   img_lo: action === 'product_images' ? 0 : (action === 'set_product_image' && pid > 0 ? pid : 1),
   img_hi: action === 'product_images' ? 1000000000 : (action === 'set_product_image' && pid > 0 ? pid : 0)
 } }];
