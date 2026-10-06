@@ -107,11 +107,11 @@ test('opening → buka_kas approval (manager approves, selling not blocked); clo
   await expect(page.locator('.rep-banner:not([hidden])')).toHaveCount(0); // no open shift → no reminder
 });
 
-test('owner and manager sell without opening the drawer; open_shift is for kasir accounts only', async ({ page }) => {
+test('owner and manager sell without opening the drawer; open_shift: kasir and (07 Oct) manager, never the owner', async ({ page }) => {
   await H.login(page, 'Jihan', '2222');
   await expect(page.locator('#gate')).toBeHidden();
   await H.tab(page, 'kas');
-  await expect(page.locator('#kas-mgr-none')).toContainText('Buka kas hanya dari akun kasir');
+  await expect(page.locator('#kas-mgr-open')).toContainText('Anda bisa menjual tanpa laci kas');
   await H.tab(page, 'sell');
   await H.addItem(page, 'tasbih');
   await H.pay(page);
@@ -128,7 +128,7 @@ test('owner and manager sell without opening the drawer; open_shift is for kasir
     try { await apiRaw('save_sale', { client_id: 'x-rina', sale_date: '2026-01-01', items: [{ product_id: 16, qty: 1, unit_price: 25000 }], payment_method: 'tunai', paid_amount: 25000 }, { key: 'demo', user: 'Siti', pin_hash: await pinHash('demo', 'Siti', '1111') }); r.Siti = 'ok'; } catch (e) { r.Siti = e.code; }
     return r;
   });
-  expect(codes).toEqual({ Jihan: 'FORBIDDEN', Pemilik: 'FORBIDDEN', Siti: 'SHIFT_REQUIRED' });
+  expect(codes).toEqual({ Jihan: 'ok', Pemilik: 'FORBIDDEN', Siti: 'SHIFT_REQUIRED' });
 });
 
 test('Arabic report; without WhatsApp numbers only "copy text" is offered (message stays Indonesian)', async ({ page }) => {
@@ -148,4 +148,62 @@ test('Arabic report; without WhatsApp numbers only "copy text" is offered (messa
   const text = await page.evaluate(() => navigator.clipboard.readText());
   expect(text).toContain('Laporan tutup kas');
   expect(text).toContain('Selisih: Rp 0');
+});
+
+test('manager as cashier (07 Oct): her own drawer, the opening goes to the owner (not her inbox), cash sales into it, normal close + report', async ({ page, context }) => {
+  await H.openKasir(page);
+  await H.setDb(page, SETTINGS);
+  await H.login(page, 'Jihan', '2222', { noGoto: true });
+  await expect(page.locator('#gate')).toBeHidden();
+  await H.tab(page, 'kas');
+  await page.click('#kas-open-mgr');
+  await expect(page.locator('#gate #shift-open')).toContainText('Buka kas sebagai kasir');
+  await page.click('#so-cancel'); // selling without a drawer stays allowed
+  await expect(page.locator('#gate')).toBeHidden();
+  await H.tab(page, 'more');
+  await page.click('#m-kas-open');
+  await page.fill('#so-cash', '300000');
+  await H.shot(page, 'phone-62-manager-drawer', false, { noToasts: true });
+  await page.click('#so-ok');
+  await expect(page.locator('.toast.ok')).toContainText('menunggu persetujuan pemilik');
+  let db = await H.getDb(page);
+  const sh = db.shifts.find(x => x.cashier === 'Jihan' && x.status === 'open');
+  const ap = db.approvals.find(a => a.kind === 'buka_kas' && a.ref === sh.shift_id);
+  expect(ap).toMatchObject({ status: 'pending', cashier: 'Jihan', approver_role: 'owner', total: 300000 });
+  // not hers to decide: not in her inbox
+  await page.click('#tb-appr');
+  await expect(page.locator(`.apr-card[data-req="${ap.request_id}"]`)).toHaveCount(0);
+  await H.closeModals(page);
+  // her cash sale goes into her drawer
+  await H.addItem(page, 'tasbih');
+  await H.pay(page);
+  await page.click('#pay-ok');
+  await expect(page.locator('#rc-modal #receipt')).toBeVisible();
+  await page.click('#rc-new');
+  db = await H.getDb(page);
+  const sale = db.sales[db.sales.length - 1];
+  expect(sale).toMatchObject({ cashier: 'Jihan', shift_id: sh.shift_id, payment_method: 'tunai' });
+  await H.tab(page, 'kas');
+  await expect(page.locator('#kas-open-apr')).toContainText('Modal awal menunggu persetujuan pemilik');
+  // the owner approves the opening
+  const p2 = await H.otherPhone(context);
+  await H.login(p2, 'Pemilik', '1234');
+  await p2.click('#tb-appr');
+  const card = p2.locator(`.apr-card[data-req="${ap.request_id}"]`);
+  await expect(card).toContainText('Buka kas: Jihan');
+  await card.locator('[data-d="approved"]').click();
+  await expect(card).toHaveCount(0);
+  await p2.close();
+  // she closes like a kasir: counted = opening + the cash sale
+  await page.click('#kas-close');
+  await page.fill('#cs-counted', String(300000 + sale.total));
+  await page.click('#cs-ok');
+  await expect(page.locator('#sr-diff')).toHaveAttribute('data-diff', '0');
+  await expect(page.locator('#sr-m-tunai')).toContainText(H.rp(sale.total));
+  const txt = decodeURIComponent((await page.locator('#sr-wa-shop').getAttribute('href')).split('?text=')[1]);
+  expect(txt).toContain('Kasir: Jihan');
+  await page.click('#sr-done');
+  await expect(page.locator('#gate')).toBeHidden(); // a manager is not forced to open again
+  await expect(page.locator('#kas-mgr-open')).toBeVisible();
+  expect((await H.getDb(page)).shifts.find(x => x.shift_id === sh.shift_id)).toMatchObject({ status: 'closed', difference: 0 });
 });

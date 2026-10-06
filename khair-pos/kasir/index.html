@@ -1751,8 +1751,8 @@ const MockServer = (() => {
         return { applied: false, request_id: approval.request_id, approval: approvalOut(approval, u.role) };
       }
       case 'open_shift': {
-        // v15: the drawer is opened from kasir accounts only; every opening count goes to the manager / owner to approve
-        if (u.role !== 'kasir') throw E('FORBIDDEN', 'Buka kas hanya dari akun kasir (aplikasi Khair Kasir)');
+        // kasir accounts always; (07 Oct) the manager may open her own drawer when she works as cashier — her opening goes to the owner
+        if (u.role !== 'kasir' && u.role !== 'manager') throw E('FORBIDDEN', 'Buka kas hanya dari akun kasir atau manajer (aplikasi Khair Kasir)');
         const ex = openShiftOf(db, u.name);
         if (ex) return { shift: Object.assign(blind(shiftSummary(db, ex), u.role), { already: true }) };
         if (data.opening_cash === undefined || data.opening_cash === '' || int(data.opening_cash) < 0) throw E('INVALID', 'opening_cash');
@@ -1761,7 +1761,7 @@ const MockServer = (() => {
         const last = db.shifts.filter(x => x.status === 'closed').sort((a, b) => String(b.closed_at).localeCompare(String(a.closed_at)))[0] || null;
         db.shifts.push(sh);
         const lastTxt = last ? ' — kas terakhir ditutup ' + str(last.closed_at).slice(0, 16).replace('T', ' ') + ' oleh ' + str(last.cashier) + ': dihitung Rp ' + money(last.counted_cash) + ', selisih dengan pembukaan Rp ' + (opening - money(last.counted_cash)) : '';
-        const approval = newApproval(db, u, { kind: 'buka_kas', approver_role: 'manager', ref: sh.shift_id, total: opening,
+        const approval = newApproval(db, u, { kind: 'buka_kas', approver_role: u.role === 'manager' ? 'owner' : 'manager', ref: sh.shift_id, total: opening,
           summary: ('Buka kas ' + u.name + ': modal awal dihitung Rp ' + opening + lastTxt).slice(0, 1500), note: str(data.note),
           payload: JSON.stringify({ shift_id: sh.shift_id, opening_cash: opening, last_counted: last ? money(last.counted_cash) : null, last_cashier: last ? str(last.cashier) : '' }) });
         logAct(db, u, 'buka_kas', 'Buka kas ' + u.name + ' Rp ' + opening + lastTxt, sh.shift_id, opening, last && money(last.counted_cash) !== opening ? 'warn' : 'info');
@@ -2758,14 +2758,14 @@ function hideGate() { $('#gate').hidden = true; }
 function renderGate() {
   const g = $('#gate');
   g.innerHTML = `<div class="screen-card" id="shift-open">
-    <div class="brand"><div class="mark" aria-hidden="true">K</div><div>${esc(t('gate.title'))}</div></div>
-    <p class="center" style="margin-top:0"><b>${esc(S.user)}</b> · ${esc(t('gate.hint'))}</p>
+    <div class="brand"><div class="mark" aria-hidden="true">K</div><div>${esc(t(S.role === 'kasir' ? 'gate.title' : 'gate.title_mgr'))}</div></div>
+    <p class="center" style="margin-top:0"><b>${esc(S.user)}</b> · ${esc(t(S.role === 'kasir' ? 'gate.hint' : 'gate.hint_mgr'))}</p>
     <div class="field"><label class="f" for="so-cash">${esc(t('gate.opening'))} (Rp)</label><input class="input money" data-rule="num" id="so-cash" inputmode="numeric" autocomplete="off"></div>
     <div class="quick">${[0, 200000, 300000, 500000, 1000000].map(v => `<button type="button" class="btn xs num" data-v="${v}">${v ? fmtShort(v) : '0'}</button>`).join('')}</div>
     <div class="field"><label class="f" for="so-note">${esc(t('notes'))}</label><input class="input" id="so-note"></div>
     <div class="err" id="so-err" role="alert"></div>
     <button class="btn primary big block" id="so-ok">${ic('cash')} ${esc(t('gate.open'))}</button>
-    <div class="center" style="margin-top:10px"><button class="btn ghost sm" data-act="logout">${ic('logout')} ${esc(t('more.logout'))}</button></div></div>`;
+    <div class="center" style="margin-top:10px">${S.role === 'kasir' ? `<button class="btn ghost sm" data-act="logout">${ic('logout')} ${esc(t('more.logout'))}</button>` : `<button class="btn ghost sm" id="so-cancel" type="button">${esc(t('gate.cancel_mgr'))}</button>`}</div></div>`;
   $('.quick', g).onclick = e => { const b = e.target.closest('[data-v]'); if (b) $('#so-cash', g).value = fmtNum(+b.dataset.v); };
   const open = async () => {
     const raw = $('#so-cash', g).value.trim();
@@ -2778,11 +2778,12 @@ function renderGate() {
       const amount = fmtRp(r.shift ? r.shift.opening_cash : moneyVal(raw)), rid = r.request_id || (r.approval || {}).request_id;
       // v15: the opening count goes to the manager / owner for approval; selling is not blocked meanwhile
       if (rid && r.shift && !r.shift.already) trackMyRequest(rid, 'buka_kas', t('req.buka_kas', { amount }), r.shift.shift_id);
-      toast(r.shift && r.shift.already ? t('gate.already') : t('gate.opened', { amount }) + ' · ' + t('kas.apr_pending'), 'ok', 4000);
+      toast(r.shift && r.shift.already ? t('gate.already') : t('gate.opened', { amount }) + ' · ' + t(S.role === 'manager' ? 'kas.apr_pending_owner' : 'kas.apr_pending'), 'ok', 4000);
       go('sell', true);
     } catch (e) { $('#so-err', g).textContent = e instanceof NetError ? t('gate.need_online') : errMsg(e); $('#so-ok', g).disabled = false; }
   };
   $('#so-ok', g).onclick = open;
+  const cancel = $('#so-cancel', g); if (cancel) cancel.onclick = () => hideGate();
   $('#so-cash', g).addEventListener('keydown', e => { if (e.key === 'Enter') open(); });
   setTimeout(() => { if (!isTouch()) $('#so-cash', g).focus(); }, 30);
 }
@@ -4951,7 +4952,8 @@ RENDER.kas = function () {
   const v = $('#v-kas'), sh = S.shift;
   const pend = S.outbox.filter(e => e.kind === 'cash_move' || e.kind === 'expense');
   let inner;
-  if ((!S.shiftsSupported || S.role !== 'kasir') && !sh) inner = `<div class="card pad empty" id="kas-mgr-none">${esc(t('kas.owner_none'))}</div>`;
+  if (S.role === 'manager' && !sh) inner = `<div class="card pad center" id="kas-mgr-open"><p style="margin-top:0">${esc(t('kas.mgr_none'))}</p><button class="btn primary big" data-act="gate-open" id="kas-open-mgr">${ic('cash')} ${esc(t('gate.title_mgr'))}</button><p class="small muted" style="margin-bottom:0">${esc(t('kas.mgr_hint'))}</p></div>`;
+  else if ((!S.shiftsSupported || S.role !== 'kasir') && !sh) inner = `<div class="card pad empty" id="kas-mgr-none">${esc(t('kas.owner_none'))}</div>`;
   else if (!sh) inner = `<div class="card pad center" id="kas-none"><p style="font-size:18px;margin-top:0"><b>${esc(t('kas.closed'))}</b></p><button class="btn primary big" data-act="gate-open">${ic('cash')} ${esc(t('gate.open'))}</button></div>`;
   else inner = `<div class="card pad" id="kas-mine">
       <div class="row wrap"><b class="grow" style="font-size:18px">${esc(t('kas.open_since', { time: jktTime(sh.opened_at) }))}</b><span class="badge ok">${esc(sh.shift_id || '')}</span></div>
@@ -5116,7 +5118,7 @@ const openingRequest = () => S.shift ? MYREQ.list.find(r => r.kind === 'buka_kas
 function openingStatusHTML() {
   const r = openingRequest(); if (!r) return '';
   const st = r.status === 'used' ? 'approved' : r.status;
-  return `<div class="status ${st === 'approved' ? 'cocok' : st === 'rejected' ? 'tidak_cocok' : 'perlu_cek'}" id="kas-open-apr" data-status="${esc(st)}" style="margin:10px 0 0;padding:10px 12px"><div class="small" style="font-weight:800">${esc(t('kas.apr_' + (['approved', 'rejected'].includes(st) ? st : 'pending'), { name: r.by || '', note: r.note || '' }))}</div></div>`;
+  return `<div class="status ${st === 'approved' ? 'cocok' : st === 'rejected' ? 'tidak_cocok' : 'perlu_cek'}" id="kas-open-apr" data-status="${esc(st)}" style="margin:10px 0 0;padding:10px 12px"><div class="small" style="font-weight:800">${esc(t(['approved', 'rejected'].includes(st) ? 'kas.apr_' + st : S.role === 'manager' ? 'kas.apr_pending_owner' : 'kas.apr_pending', { name: r.by || '', note: r.note || '' }))}</div></div>`;
 }
 
 /* ========== Lainnya ========== */
@@ -5126,6 +5128,7 @@ RENDER.more = function () {
     <div class="list" id="more-list">
       <button class="li" data-act="member-new" id="m-member">${ic('user')}<div class="grow"><div class="t">${esc(t('mem.new'))}</div><div class="s">${esc(t('mem.new_s'))}</div></div></button>
       <button class="li" data-act="debt-pay" id="m-debt">${ic('wallet')}<div class="grow"><div class="t">${esc(t('more.debt_pay'))}</div><div class="s">${esc(t('more.debt_pay_s'))}</div></div></button>
+      ${S.role === 'manager' && !S.shift ? `<button class="li" data-act="gate-open" id="m-kas-open">${ic('cash')}<div class="grow"><div class="t">${esc(t('gate.title_mgr'))}</div><div class="s">${esc(t('kas.mgr_hint'))}</div></div></button>` : ''}
       <button class="li" data-act="retur-open" id="m-retur">${ic('undo')}<div class="grow"><div class="t">${esc(t('more.retur'))}</div><div class="s">${esc(t('more.retur_s'))}</div></div></button>
       <button class="li" data-act="void-req" id="m-void">${ic('undo')}<div class="grow"><div class="t">${esc(t('more.void'))}</div><div class="s">${esc(t('more.void_s'))}</div></div></button>
       <button class="li" data-act="price-req" id="m-price">${ic('tag')}<div class="grow"><div class="t">${esc(t('more.price'))}</div><div class="s">${esc(S.role === 'kasir' ? t('more.price_s') : t('more.price_s_mgr'))}</div></div></button>
@@ -5397,7 +5400,7 @@ async function pollApprovals() {
   try {
     const r = await api('list_approvals');
     // an agreement I proposed waits for the other party: not in my inbox
-    const list = (r.approvals || []).filter(a => (!a.status || a.status === 'pending') && !(a.kind === 'kesepakatan' && String(a.cashier || '').toLowerCase() === String(S.user || '').toLowerCase()));
+    const list = (r.approvals || []).filter(a => (!a.status || a.status === 'pending') && !(['kesepakatan', 'buka_kas'].includes(a.kind) && String(a.cashier || '').toLowerCase() === String(S.user || '').toLowerCase()));
     const fresh = AP.seen ? list.filter(a => !AP.seen.has(a.request_id)) : [];
     AP.seen = AP.seen || new Set(); list.forEach(a => AP.seen.add(a.request_id));
     AP.list = list; AP.count = list.length;
@@ -6148,6 +6151,9 @@ Object.assign(I18N.ar, {
   'apr.retur_hint_c': 'عند الموافقة: السليم إلى المستودع، والتالف لا يُحتسب مخزونًا، ويُرد المبلغ بالطريقة أعلاه.', 'apr.retur_hint_s': 'عند الموافقة: يقل المخزون ويقل الدَّين للمورد (إشعار دائن).'
 });
 Object.assign(I18N.id, {
+  'gate.title_mgr': 'Buka kas sebagai kasir', 'gate.hint_mgr': 'Laci kas Anda sendiri. Hitung uang di laci. Modal awal disetujui pemilik.', 'gate.cancel_mgr': 'Batal — jual tanpa laci',
+  'kas.mgr_none': 'Anda bisa menjual tanpa laci kas. Jika hari ini Anda juga menjadi kasir, buka laci kas Anda sendiri.', 'kas.mgr_hint': 'Penjualan tunai masuk ke laci Anda; tutup kas seperti kasir. Modal awal disetujui pemilik.',
+  'kas.apr_pending_owner': 'Modal awal menunggu persetujuan pemilik',
   'disc.profit_before': 'Laba harga normal', 'disc.profit_after': 'Laba setelah diskon', 'disc.profit_less': 'Laba berkurang',
   'apr.kind_agree': 'Kesepakatan batas retur', 'agree.k_return_owner_min_value': 'Retur senilai ini atau lebih perlu persetujuan pemilik',
   'agree.k_return_owner_min_qty': 'Retur sebanyak ini atau lebih perlu persetujuan pemilik (0 = tidak dipakai)', 'agree.now': 'Sekarang', 'agree.new': 'Usulan',
@@ -6155,6 +6161,9 @@ Object.assign(I18N.id, {
   'agree.confirm': 'Konfirmasi', 'agree.manager_only': 'Dikonfirmasi oleh manajer', 'err.AGREEMENT_REQUIRED': 'Perlu kesepakatan pemilik dan manajer'
 });
 Object.assign(I18N.ar, {
+  'gate.title_mgr': 'فتح الصندوق كأمين صندوق', 'gate.hint_mgr': 'درج نقدي خاص بك. عُدّ النقود في الدرج. يوافق المالك على رصيد البداية.', 'gate.cancel_mgr': 'إلغاء — البيع بدون درج',
+  'kas.mgr_none': 'يمكنك البيع بدون درج نقدي. إذا كنتِ أمينة الصندوق اليوم أيضًا فافتحي درجك الخاص.', 'kas.mgr_hint': 'المبيعات النقدية تدخل درجك؛ أغلقيه مثل أمين الصندوق. يوافق المالك على رصيد البداية.',
+  'kas.apr_pending_owner': 'رصيد البداية بانتظار موافقة المالك',
   'disc.profit_before': 'الربح بالسعر العادي', 'disc.profit_after': 'الربح بعد الخصم', 'disc.profit_less': 'نقص الربح',
   'apr.kind_agree': 'اتفاق على حد المرتجع', 'agree.k_return_owner_min_value': 'المرتجع بهذه القيمة أو أكثر يحتاج موافقة المالك',
   'agree.k_return_owner_min_qty': 'المرتجع بهذه الكمية أو أكثر يحتاج موافقة المالك (0 = غير مستخدم)', 'agree.now': 'الحالي', 'agree.new': 'المقترح',
