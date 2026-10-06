@@ -365,3 +365,22 @@ Report: `lines: [{line_id, seq, line_date, description, amount, ref, status, pay
 Line status: `cocok` (same amount and direction, date within 1 day), `beda_tanggal` (2–3 days apart), `beda_jumlah` (the payment's transfer
 reference appears in the line but the amount differs), `tidak_tercatat` (no payment in the app), `manual`, `diabaikan`.
 Matching uses payments of the month ± 3 days; a reference match wins over a date match. Each import / manual match goes to the activity log.
+
+## Cash drawer only for cashiers, morning approval, daily report (v15)
+
+- `open_shift` is for **kasir** accounts only (owner / manager → `FORBIDDEN`). Only kasir sales need an open shift (`SHIFT_REQUIRED`);
+  owner and manager sell without one.
+- Every `open_shift` creates an approval `kind: "buka_kas"` (`approver_role: "manager"`, `ref: shift_id`, `total: opening_cash`,
+  `payload: {shift_id, opening_cash, last_counted, last_cashier}`) with a summary comparing the opening count with the last closed drawer
+  (counted cash). Manager or owner approves / rejects it like any approval; selling is not blocked. It is also logged (`buka_kas`, warn when
+  the opening differs from the last count).
+- Shifts track sales per method: `transfer_sales`, `qris_sales`, `debt_sales`, `items_qty` (plus the existing `cash_sales`, `sales_count`,
+  `sales_total`), returned by `close_shift` so the cashier's end-of-day message can show them.
+- Settings: `wa_shop_number` (company), `wa_manager_number`, `wa_owner_number`, `report_time` ("21:00", when the app reminds to send the report).
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `daily_report` | owner, manager | `{date}` | `report: {date, sales: {count, total, discount, items_qty, by_method: {tunai, transfer, qris}, debt, voids: {count, total}}, top_items (10, by value), payments_in / payments_out: {count, total, tunai, transfer, qris}, expenses: {count, total, from_kas}, shifts: [{cashier, status, opening_cash, cash_sales, cash_payments, cash_in, cash_out, expected_cash, counted_cash, difference, sales_count, sales_total}], bank: {sales_transfer, sales_qris, payments_transfer, payments_qris, in_total, out_transfer}, cash: {sales, payments_in, payments_out, expenses_from_kas, expected_total, counted_total, difference_total}, profit (owner only)}`, `send_to: {company, manager, owner}` (WhatsApp numbers) |
+
+Sending: the apps build the message text and open `https://wa.me/<number>?text=…` — one tap per number (company, manager, owner); the
+user presses Send in WhatsApp (no automatic sending without the WhatsApp Business API).
