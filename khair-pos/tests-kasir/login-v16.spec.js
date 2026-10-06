@@ -54,7 +54,7 @@ test('a PIN reset by the owner must be replaced at first login (typed twice, not
   await expect(page.locator('#np-stage')).toHaveText('Ulangi PIN baru');
   await H.typePin(page, '2468');
   await expect(page.locator('#app')).toBeVisible(); // Rina still has her drawer open from yesterday (demo data)
-  await expect(page.locator('#newpin')).toHaveCount(0);
+  await expect(page.locator('#newpin')).toBeHidden();
   let db = await H.getDb(page);
   expect(db.users.find(u => u.name === 'Rina')).toMatchObject({ pin_hash: H.sha('demo:rina:2468'), must_change: false });
   expect(db.activity.find(a => a.kind === 'ganti_pin' && a.ref === 'Rina')).toMatchObject({ level: 'info' });

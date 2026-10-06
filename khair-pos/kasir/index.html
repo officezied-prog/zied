@@ -237,6 +237,7 @@ main{overflow:hidden;position:relative;min-width:0}
 .pinpad button{height:64px;border-radius:14px;border:1px solid var(--line);background:#F8FAFC;font-size:26px;font-weight:800;color:var(--text)}
 .pinpad button:active{background:var(--pt)}
 .pinpad button.ok{background:var(--p);color:#fff;font-size:18px}
+.pinpad[data-locked] button,.pinpad button:disabled{opacity:.4;cursor:not-allowed}
 .err{color:var(--redd);text-align:center;font-weight:700;min-height:22px;margin:6px 0}
 .foot-links{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}
 .langs{display:flex;gap:6px}
@@ -3996,7 +3997,7 @@ RENDER.masuk = function (force) {
       <div class="small" id="pu-block" style="color:var(--warn);font-weight:800">${PU.lines.length ? esc(block) : ''}</div>
       <div class="err" id="pu-err" role="alert"></div>
       <div class="lockline">${ic('lock')} ${esc(t('pu.lock_hint'))}</div>
-      <div class="row" style="margin-top:8px"><button class="btn ghost" data-act="pu-clear">${esc(t('sell.clear'))}</button><button class="btn primary big grow" data-act="pu-save" id="pu-save" ${block ? 'disabled' : ''}>${esc(t('pu.save'))}</button></div>
+      <div class="row" style="margin-top:8px"><button class="btn ghost" data-act="pu-clear">${esc(t('sell.clear'))}</button><button class="btn primary big grow" data-act="pu-save" id="pu-save" style="white-space:normal;min-width:0;line-height:1.2" ${block ? 'disabled' : ''}>${esc(t('pu.save'))}</button></div>
     </div>
     <div id="pu-result">${PU.result || ''}</div>
     <div class="card pad" id="pu-hist-card" style="margin-top:12px"><div class="row"><b class="grow" style="font-size:17px">${esc(t('pu.hist'))}</b><button class="btn xs" data-act="pu-hist-refresh" aria-label="${esc(t('refresh'))}">${ic('refresh')}</button></div>
@@ -4227,7 +4228,7 @@ function openMoveStock(pre = {}) {
     const q = $('#mv-q', el).value.trim();
     const cand = (q ? filterProducts(q) : S.products.filter(p => p.active !== false)).filter(p => avail(p) > 0 && !M.lines.some(l => l.product_id == p.id)).slice(0, q ? 8 : 30);
     $('#mv-sug', el).innerHTML = cand.map(p => `<button class="li" type="button" data-mv-add="${esc(p.id)}" style="min-height:52px;padding:8px 12px"><div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${esc(t('shelf.gudang'))} ${fmtQty(gudangOf(p))} · ${esc(t('shelf.rak'))} ${fmtQty(shelfOf(p))} ${esc(p.unit || '')}</div></div>${ic('plus')}</button>`).join('')
-      || `<div class="small muted" id="mv-none">${esc(t(q ? 'sell.no_match' : 'mv.none_' + M.to))}</div>`;
+      || (q || !M.lines.length ? `<div class="small muted" id="mv-none">${esc(t(q ? 'sell.no_match' : 'mv.none_' + M.to))}</div>` : '');
     $('#mv-lines', el).innerHTML = M.lines.map(l => { const p = prodById(l.product_id); return `<div class="li" data-mv-line="${esc(p.id)}" style="min-height:0;padding:8px 10px"><div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${esc(t(M.to === 'toko' ? 'mv.in_gudang' : 'mv.on_shelf', { qty: fmtQty(avail(p)), unit: p.unit || '' }))}</div></div>
       <input class="input num" style="width:96px;font-weight:800;font-size:18px" data-mv-qty="${esc(p.id)}" inputmode="decimal" autocomplete="off" value="${esc(fmtQtyInput(l.qty))}" aria-label="${esc(t('qty'))} ${esc(p.name)}">
       <button class="icon-btn ghost sm" type="button" data-mv-del="${esc(p.id)}" aria-label="${esc(t('delete'))}">${ic('x')}</button></div>`; }).join('');
@@ -4246,7 +4247,7 @@ function openMoveStock(pre = {}) {
   };
   $('#mv-sug', el).onclick = e => { const b = e.target.closest('[data-mv-add]'); if (b) add(prodById(b.dataset.mvAdd)); };
   $('#mv-lines', el).onclick = e => { const b = e.target.closest('[data-mv-del]'); if (!b) return; M.lines = M.lines.filter(l => String(l.product_id) !== String(b.dataset.mvDel)); draw(); };
-  $('#mv-lines', el).addEventListener('input', e => { const i = e.target.closest('[data-mv-qty]'); if (!i) return; const l = M.lines.find(x => String(x.product_id) === String(i.dataset.mvQty)); if (l) l.qty = qtyVal(i.value); });
+  $('#mv-lines', el).addEventListener('input', e => { const i = e.target.closest('[data-mv-qty]'); if (!i) return; const l = M.lines.find(x => String(x.product_id) === String(i.dataset.mvQty)); if (l) l.qty = qtyVal(i.value); err.textContent = ''; });
   $('#mv-ok', el).onclick = async () => {
     for (const l of M.lines) {
       const p = prodById(l.product_id);
@@ -4268,6 +4269,9 @@ function openMoveStock(pre = {}) {
 }
 /** The server refused a sale for the shelf (NOT_ON_SHELF): which goods, and a way to move them. */
 function openNotOnShelf(items, msg) {
+  // the server's numbers are the fresh ones (another till may have sold or moved): update the local shelf / warehouse
+  applyStock(items.filter(x => x && x.product_id != null).map(x => ({ product_id: x.product_id, stock: roundQty(num(x.shop) + num(x.gudang)), shop_stock: num(x.shop) })));
+  renderGrid();
   const movable = items.filter(x => num(x.gudang) > 0);
   const el = openModal({
     title: t('shelf.title'), id: 'not-on-shelf',

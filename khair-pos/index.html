@@ -562,6 +562,20 @@ tr.miss td{background:var(--danger-l)}
   .act-row .grow{flex:1 1 calc(100% - 50px)}
   .act-amt{flex:1 1 100%;text-align:end}
 }
+/* v16 */
+.pin-change{position:fixed;inset:0;background:linear-gradient(160deg,var(--login-a) 0%,var(--brand-d) 55%,var(--login-b) 100%);display:flex;align-items:center;justify-content:center;padding:16px;z-index:60;overflow-y:auto}
+.pin-change[hidden]{display:none}
+.pin-dots.eight i{width:12px;height:12px}
+.pinpad.off button{opacity:.45}
+.notice{display:flex;gap:8px;align-items:flex-start;background:var(--warn-bg,rgba(217,119,6,.12));border:1px solid var(--warn);border-radius:10px;padding:8px 10px;margin:0 0 10px;font-size:14px}
+.disc-profit{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:8px 0}
+.disc-profit .k{font-size:12px;color:var(--muted)}.disc-profit .v{font-size:18px;font-weight:800}.disc-profit .dp-arrow{font-size:20px;color:var(--muted)}
+[dir="rtl"] .disc-profit .dp-arrow{transform:scaleX(-1)}
+tr.shelf-empty td{background:rgba(217,119,6,.10)}
+tr.shelf-empty td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
+[dir="rtl"] tr.shelf-empty td:first-child{box-shadow:inset -3px 0 0 var(--warn)}
+.who .badge#tb-master{margin-inline-start:4px;font-size:11px}
+@media (max-width:760px){.who .badge#tb-master{display:none}}
 </style>
 <style id="page-style"></style>
 </head>
@@ -583,7 +597,7 @@ tr.miss td{background:var(--danger-l)}
     <button class="btn appr-badge hide-phone" id="tb-appr" data-act="go" data-view="approvals" hidden></button>
     <button class="icon-btn bell act-btn" id="tb-act" data-act="go" data-view="activity" hidden></button>
     <button class="icon-btn bell" id="tb-bell" data-act="bell" hidden></button>
-    <div class="who"><b id="tb-user"></b><span id="tb-role"></span></div>
+    <div class="who"><b id="tb-user"></b><span id="tb-role"></span><span class="badge red" id="tb-master" hidden></span></div>
     <button class="icon-btn" id="tb-lang" data-act="toggle-lang" title="Bahasa / اللغة"><span style="font-weight:800;font-size:13px" id="tb-lang-l">ع</span></button>
     <button class="icon-btn" id="tb-lock" data-act="lock" data-i18n-title="lock"><svg class="i"><use href="#i-lock"/></svg></button>
   </header>
@@ -605,6 +619,7 @@ tr.miss td{background:var(--danger-l)}
     <section class="view" id="view-field" hidden></section>
     <section class="view" id="view-suppliers" hidden></section>
     <section class="view" id="view-bank" hidden></section>
+    <section class="view" id="view-members" hidden></section>
     <section class="view" id="view-activity" hidden></section>
     <section class="view" id="view-devices" hidden></section>
     <section class="view" id="view-settings" hidden></section>
@@ -615,6 +630,7 @@ tr.miss td{background:var(--danger-l)}
 <div id="toasts" role="status" aria-live="polite"></div>
 <div id="print-area"></div>
 <div id="dev-block" hidden></div>
+<div id="pin-change" class="pin-change" role="dialog" aria-modal="true" hidden></div>
 
 <!-- ========== Icons ========== -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -622,6 +638,7 @@ tr.miss td{background:var(--danger-l)}
   <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></symbol>
   <symbol id="i-warehouse" viewBox="0 0 24 24"><path d="M3 21V9l9-5 9 5v12"/><path d="M7 21v-8h10v8M7 17h10"/></symbol>
   <symbol id="i-truck" viewBox="0 0 24 24"><path d="M3 6h11v10H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+  <symbol id="i-member" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><circle cx="9" cy="11" r="2.3"/><path d="M5.8 16.2c.5-1.7 1.8-2.6 3.2-2.6s2.7.9 3.2 2.6M14.5 10h4M14.5 13.5h3"/></symbol>
   <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.5 3.3-5.5 6.5-5.5s5.9 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18.5 14.8c1.8.8 2.8 2.6 3 5.2"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
   <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
@@ -765,9 +782,9 @@ const store = {
 /* ========== Session (H2): the live pin_hash lives only in sessionStorage (this tab); localStorage keeps {user, role}.
    Offline login compares a verifier sha256('offline:' + pin_hash) kept in kpos.pins — never a usable hash. ========== */
 const SESS_KEY = PREFIX + 'session';
-function sessSet(user, role, hash) {
+function sessSet(user, role, hash, viaMaster) {
   store.set('session', { user, role });
-  try { if (hash) sessionStorage.setItem(SESS_KEY, JSON.stringify({ user, role, pin_hash: hash })); else sessionStorage.removeItem(SESS_KEY); } catch (e) { }
+  try { if (hash) sessionStorage.setItem(SESS_KEY, JSON.stringify(Object.assign({ user, role, pin_hash: hash }, viaMaster ? { via_master: true } : {}))); else sessionStorage.removeItem(SESS_KEY); } catch (e) { }
 }
 function sessGet() {
   const loc = store.get('session') || null;
@@ -779,7 +796,8 @@ function sessGet() {
   }
   if (!loc || !loc.user) { try { sessionStorage.removeItem(SESS_KEY); } catch (e) { } return null; } // storage was wiped: no session
   const user = loc.user;
-  return user ? { user, role: (loc && loc.role) || (ss && ss.role) || '', pin_hash: ss && ss.user && ss.user.toLowerCase() === user.toLowerCase() ? ss.pin_hash || '' : '' } : null;
+  const mine = ss && ss.user && ss.user.toLowerCase() === user.toLowerCase();
+  return user ? { user, role: (loc && loc.role) || (ss && ss.role) || '', pin_hash: mine ? ss.pin_hash || '' : '', via_master: !!(mine && ss.via_master) } : null;
 }
 function sessDel() { store.del('session'); try { sessionStorage.removeItem(SESS_KEY); } catch (e) { } }
 const offlineVerifier = hash => sha256Hex('offline:' + hash);
@@ -921,7 +939,8 @@ async function api(action, data, opts) {
   try {
     return await apiRaw(action, data, sessCred(), opts);
   } catch (e) {
-    if (e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_USERS') { forceRelogin(e); }
+    if (e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_USERS' || e.code === 'LOCKED') { if (e.code === 'LOCKED') setLock(S.user, e.message); forceRelogin(e); }
+    if (e.code === 'PIN_CHANGE_REQUIRED' && typeof showPinChange === 'function') showPinChange();
     throw e;
   }
 }
@@ -2758,6 +2777,7 @@ const VIEWS = [
   { id: 'expenses', icon: 'wallet', label: 'nav.expenses' },
   { id: 'kas', icon: 'cash', label: 'nav.kas' },
   { id: 'customers', icon: 'users', label: 'nav.customers' },
+  { id: 'members', icon: 'member', label: 'nav.members', approver: true },
   { id: 'suppliers', icon: 'supplier', label: 'nav.suppliers', approver: true },
   { id: 'bank', icon: 'bank', label: 'nav.bank', approver: true },
   { id: 'history', icon: 'clock', label: 'nav.history' },
@@ -2779,6 +2799,7 @@ function renderShell() {
   $('#tb-sub').textContent = 'POS · ' + (MOCK ? 'demo' : maskKey(S.key));
   $('#tb-user').textContent = S.user;
   $('#tb-role').textContent = t('role.' + S.role);
+  const tbm = $('#tb-master'); if (tbm) { tbm.hidden = !S.viaMaster; tbm.textContent = t('mc.via'); }
   $('#tb-mock').hidden = !MOCK;
   updateApprovalBadge();
   if (typeof updateBell === "function") updateBell();
@@ -2846,14 +2867,17 @@ function renderLogin() {
       <button class="btn primary block big" data-act="login-setup" ${L.busy ? 'disabled' : ''}>${esc(L.busy ? t('loading') : t('setup.create'))}</button>
       <div class="login-links"><button class="btn ghost sm" data-act="login-change-key">${esc(t('login.change_key'))}</button></div>`;
   } else {
-    const dots = Array.from({ length: Math.max(4, L.pin.length) }, (_, i) => `<i class="${i < L.pin.length ? 'f' : ''}"></i>`).join('');
+    const dots = Array.from({ length: L.master ? 8 : Math.max(4, L.pin.length) }, (_, i) => `<i class="${i < L.pin.length ? 'f' : ''}"></i>`).join('');
+    const lk = lockLeft(L.sel), off = lk ? 'disabled' : '';
     inner = `<h2>${esc(S.user && S.inApp ? t('login.locked') : t('login.pick_user'))}</h2>
       <div class="users-pick" role="radiogroup" aria-label="${esc(t('login.pick_user'))}">${L.users.length ? L.users.map(u => `<button role="radio" aria-checked="${L.sel === u.name}" class="${L.sel === u.name ? 'on' : ''}" data-act="login-user" data-name="${esc(u.name)}">${esc(u.name)}</button>`).join('') : `<span class="muted">${esc(t('loading'))}</span>`}</div>
-      <div class="pin-dots" aria-label="PIN">${dots}</div>
-      <div class="login-err" role="alert">${esc(L.err)}</div>
-      <div class="pinpad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button data-act="pin-key" data-k="${n}">${n}</button>`).join('')}
-        <button data-act="pin-key" data-k="del" aria-label="${esc(t('delete'))}">⌫</button><button data-act="pin-key" data-k="0">0</button>
-        <button class="ok" data-act="pin-key" data-k="ok" ${L.busy ? 'disabled' : ''}>${esc(L.busy ? '…' : t('login.enter'))}</button></div>
+      ${L.master ? `<div class="badge red" id="lg-master-on" style="margin:0 auto 6px">${ic('lock')} ${esc(t('mc.login_title', { name: L.sel || '…' }))}</div>` : ''}
+      <div class="pin-dots ${L.master ? 'eight' : ''}" aria-label="PIN">${dots}</div>
+      <div class="login-err" role="alert" id="lg-err">${lk ? `<span id="lg-locked">${esc(t('login.locked_until', { time: lk.time }))}</span>` : esc(L.err)}</div>
+      <div class="pinpad ${lk ? 'off' : ''}" id="lg-pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button data-act="pin-key" data-k="${n}" ${off}>${n}</button>`).join('')}
+        <button data-act="pin-key" data-k="del" aria-label="${esc(t('delete'))}" ${off}>⌫</button><button data-act="pin-key" data-k="0" ${off}>0</button>
+        <button class="ok" data-act="pin-key" data-k="ok" ${L.busy || lk ? 'disabled' : ''}>${esc(L.busy ? '…' : t('login.enter'))}</button></div>
+      <div class="login-links"><button class="btn ghost sm" data-act="login-master" id="lg-master">${esc(t(L.master ? 'mc.login_back' : 'mc.login_link'))}</button></div>
       <div class="login-links"><button class="btn ghost sm" data-act="login-change-key">${esc(t('login.change_key'))}</button><span class="muted small" style="align-self:center">${esc(t('login.store'))}: <b>${esc(maskKey(S.key))}</b></span></div>`;
   }
   box.innerHTML = `<div class="login-card">${brand}${inner}${langs}</div>`;
@@ -2873,20 +2897,24 @@ async function demoLogin(name) {
 async function submitPin() {
   if (L.busy) return;
   if (!L.sel) { L.err = t('login.pick_user_first'); renderLogin(); return; }
-  if (!/^\d{4,6}$/.test(L.pin)) { L.err = t('login.pin_len'); renderLogin(); return; }
+  if (lockLeft(L.sel)) { renderLogin(); return; }
+  if (L.master ? !/^\d{8}$/.test(L.pin) : !/^\d{4,6}$/.test(L.pin)) { L.err = t(L.master ? 'mc.len' : 'login.pin_len'); renderLogin(); return; }
   L.busy = true; L.err = ''; renderLogin();
-  const user = L.sel, hash = await pinHash(S.key, user, L.pin);
+  const user = L.sel, hash = L.master ? await masterHash(S.key, L.pin) : await pinHash(S.key, user, L.pin);
   try {
     const r = await apiRaw('login', {}, { key: S.key, user, pin_hash: hash });
-    await rememberPin(user, hash, r.user.role);
-    startSession(r.user.name, r.user.role, hash, false);
+    if (!r.via_master) await rememberPin(user, hash, r.user.role); // never keep a verifier of the master code
+    L.master = false;
+    PC.need = r.must_change === true;
+    startSession(r.user.name, r.user.role, hash, false, r.via_master === true);
   } catch (e) {
     L.busy = false; L.pin = '';
-    if (e instanceof NetError) {
+    if (e instanceof NetError && !L.master) {
       const known = await offlinePinOk(user, hash);
       if (known && store.get('cache')) { startSession(user, known.role, hash, true); return; }
     }
-    L.err = e.code === 'BAD_PIN' ? t('err.BAD_PIN') : errMsg(e);
+    if (e.code === 'LOCKED') { setLock(user, e.message); L.err = ''; renderLogin(); return; }
+    L.err = e.code === 'BAD_PIN' ? t('err.BAD_PIN') + (/kali lagi/.test(e.message || '') ? ' ' + t('login.tries_left', { n: (/(\d+) kali lagi/.exec(e.message) || [])[1] || '' }) : '') : errMsg(e);
     if (e.code === 'BAD_KEY') L.step = 'key';
     renderLogin();
   }
@@ -2908,15 +2936,16 @@ function showKasirRedirect(user, role = 'kasir') {
   clearTimeout(showKasirRedirect.timer);
   showKasirRedirect.timer = setTimeout(() => { location.href = A.url; }, 2000);
 }
-function startSession(user, role, hash, offline) {
+function startSession(user, role, hash, offline, viaMaster) {
   if (role === 'kasir' || role === 'sales') { store.set('last_user', user); showKasirRedirect(user, role); return; }
   const sameUser = S.user === user;
-  S.user = user; S.role = role; S.pin_hash = hash; S.lastActivity = Date.now();
-  sessSet(user, role, hash); store.set('last_user', user);
+  S.user = user; S.role = role; S.pin_hash = hash; S.lastActivity = Date.now(); S.viaMaster = !!viaMaster;
+  sessSet(user, role, hash, S.viaMaster); store.set('last_user', user);
   L.pin = ''; L.busy = false;
   enterApp(offline, sameUser);
 }
 async function enterApp(offline, keepView) {
+  if (PC.need && !offline) { showPinChange(); return; }
   $('#login').hidden = true; $('#app').hidden = false;
   const first = !S.inApp;
   S.inApp = true;
@@ -2935,7 +2964,7 @@ async function enterApp(offline, keepView) {
 }
 function lock() {
   if (!S.inApp) return;
-  S.pin_hash = '';
+  S.pin_hash = ''; S.viaMaster = false; L.master = false;
   sessSet(S.user, S.role, '');
   L.sel = S.user;
   showLogin('pin');
@@ -2967,8 +2996,10 @@ function applyData(d) {
   if (Array.isArray(d.users) && S.inApp && S.user) { const me = d.users.find(u => u.name.toLowerCase() === S.user.toLowerCase()); if (me && (me.role === 'kasir' || me.role === 'sales') && S.role !== me.role) setTimeout(() => showKasirRedirect(S.user, me.role), 0); }
   if (Array.isArray(d.open_shifts)) S.openShifts = d.open_shifts;
   if (Array.isArray(d.activity_recent)) { ACTV.recent = d.activity_recent; if (S.inApp) updateActBadge(); }
+  if (d.must_change === true && S.inApp && typeof showPinChange === 'function') setTimeout(() => showPinChange(), 0);
+  if ('via_master' in d && S.inApp) { S.viaMaster = d.via_master === true; }
   if (d.settings && S.inApp) setTimeout(() => devBlockCheck(), 0);
-  S.products.forEach(p => { p.id = isNaN(Number(p.id)) ? p.id : Number(p.id); ['retail_price', 'wholesale_price', 'cost_price'].forEach(k => { if (k in p) p[k] = int(p[k]); }); p.stock = num(p.stock); p.min_stock = num(p.min_stock); p.wholesale_min_qty = num(p.wholesale_min_qty); p.active = !(p.active === false || p.active === 'false' || p.active === 0 || p.active === '0'); });
+  S.products.forEach(p => { p.id = isNaN(Number(p.id)) ? p.id : Number(p.id); ['retail_price', 'wholesale_price', 'cost_price'].forEach(k => { if (k in p) p[k] = int(p[k]); }); p.stock = num(p.stock); if (p.shop_stock !== undefined && p.shop_stock !== null && p.shop_stock !== '') p.shop_stock = num(p.shop_stock); else delete p.shop_stock; p.min_stock = num(p.min_stock); p.wholesale_min_qty = num(p.wholesale_min_qty); p.active = !(p.active === false || p.active === 'false' || p.active === 0 || p.active === '0'); });
   S.customers.forEach(c => { c.id = isNaN(Number(c.id)) ? c.id : Number(c.id); c.debt_balance = int(c.debt_balance); });
 }
 function saveCache() {
@@ -2977,7 +3008,7 @@ function saveCache() {
 /** Re-applies unsynced outbox sales to locally loaded stock / debts. */
 function applyPendingToLocal() {
   for (const e of S.outbox) {
-    for (const it of e.req.items) { const p = prodById(it.product_id); if (p) p.stock = roundQty(p.stock - it.qty); }
+    for (const it of e.req.items) { const p = prodById(it.product_id); if (p) { if (p.shop_stock !== undefined) p.shop_stock = roundQty(p.shop_stock - it.qty); p.stock = roundQty(p.stock - it.qty); } }
     const c = custById(e.req.customer_id); if (c && e.rc) c.debt_balance += int(e.rc.debt);
   }
 }
@@ -3024,7 +3055,8 @@ function cartView(c = S.cart) {
   const cust = custById(c.customer_id);
   const lines = c.lines.map(l => Object.assign({ line: l }, lineCalc(l, cust)));
   const subtotal = sum(lines, l => l.total);
-  const discount = Math.min(subtotal, Math.max(0, int(c.discount)));
+  const mem = memberOf(cust), memDisc = mem && mem.pct > 0 ? Math.round(subtotal * mem.pct / 100) : 0; // v16: member discount, applied by the app
+  const discount = Math.min(subtotal, Math.max(0, int(c.discount)) + memDisc);
   const total = subtotal - discount;
   const typed = String(c.paid).trim() !== '';
   const paid = typed ? moneyVal(c.paid) : (c.method === 'hutang' ? 0 : total);
@@ -3032,7 +3064,7 @@ function cartView(c = S.cart) {
   const items = sum(c.lines, l => l.qty);
   let error = '';
   if (debt > 0 && !cust) error = c.method === 'hutang' ? t('pos.debt_needs_customer') : t('pos.partial_needs_customer');
-  return { cust, lines, subtotal, discount, total, paid, typed, change, debt, items, error };
+  return { cust, lines, subtotal, discount, total, paid, typed, change, debt, items, error, mem, memDisc };
 }
 /** Adds qty of p (scan, tap with "ask quantity" off); with set=true the line gets exactly qty (quantity sheet). */
 function addToCart(p, qty = 1, set = false) {
@@ -3271,6 +3303,7 @@ function renderCart(flashId) {
     </div>
     <div class="cart-foot">
       <div class="sumrow"><span>${esc(t('subtotal'))} <span class="muted small" data-ref="items">(${fmtQty(v.items)} ${esc(t('items'))})</span></span><span class="num" data-ref="sub">${fmtRp(v.subtotal)}</span></div>
+      <div class="sumrow" id="cart-mem" ${v.memDisc ? '' : 'hidden'}><span data-ref="memlabel">${v.mem ? esc(t('mem.cart_disc', { pct: v.mem.pct, n: v.mem.purchase_no })) : ''}</span><span class="num green" data-ref="memdisc">-${fmtRp(v.memDisc)}</span></div>
       <div class="sumrow"><label for="cart-disc">${esc(t('discount'))} (Rp)</label><input id="cart-disc" class="input num" inputmode="numeric" value="${c.discount ? esc(fmtNum(c.discount)) : ''}" placeholder="0"></div>
       <div class="badge red" id="cart-exit" hidden style="margin:2px 0">${ic('camera')} ${esc(t('exit.warn'))}</div>
       <div class="sumrow total"><span>${esc(t('total'))}</span><span class="num" data-ref="total" id="cart-total">${fmtRp(v.total)}</span></div>
@@ -3316,6 +3349,7 @@ function refreshCartNumbers() {
   });
   const set = (r, txt) => { const e = $(`#cart [data-ref="${r}"]`); if (e) e.textContent = txt; };
   set('sub', fmtRp(v.subtotal)); set('total', fmtRp(v.total)); set('items', `(${fmtQty(v.items)} ${t('items')})`);
+  const cm = $('#cart-mem'); if (cm) { cm.hidden = !v.memDisc; set('memdisc', '-' + fmtRp(v.memDisc)); set('memlabel', v.mem ? t('mem.cart_disc', { pct: v.mem.pct, n: v.mem.purchase_no }) : ''); }
   const res = $('#cart [data-ref="result"]');
   if (res) {
     res.className = 'result' + (v.error ? ' err' : v.debt > 0 ? ' debt' : '');
@@ -3483,7 +3517,7 @@ function openCustomerPicker(onPick, opts = {}) {
     const q = norm($('#cp-q', el).value);
     const list = S.customers.filter(c => !q || norm(`${c.name} ${c.phone}`).includes(q)).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 80);
     $('#cp-list', el).innerHTML = (opts.noWalkin ? '' : `<button class="li" data-pick=""><div class="grow"><div class="t">${esc(t('pos.walkin'))}</div><div class="s">${esc(t('pos.walkin_hint'))}</div></div></button>`) +
-      list.map(c => `<button class="li" data-pick="${esc(c.id)}"><div class="grow"><div class="t">${esc(c.name)}</div><div class="s">${esc(c.phone || '')}</div></div>
+      list.map(c => `<button class="li" data-pick="${esc(c.id)}"><div class="grow"><div class="t">${esc(c.name)} ${memberBadge(c)}</div><div class="s">${esc(c.phone || '')}</div></div>
         <div class="right"><span class="badge ${c.type === 'grosir' ? 'gold' : 'gray'}">${esc(t('type.' + c.type))}</span>${c.debt_balance ? `<div class="small red num" style="margin-top:3px">${fmtRp(c.debt_balance)}</div>` : ''}</div></button>`).join('');
   };
   draw();
@@ -3722,6 +3756,7 @@ async function doSave(extra = {}, meta = {}) {
     if (extra.approver && ['BAD_PIN', 'APPROVAL_REQUIRED'].includes(e.code)) return 'approval_error';
     if (e.code === 'APPROVAL_REQUIRED') { toast(errMsg(e), 'err', 5000); if (!extra.approval_id) openApprovalStep(v); return 'error'; }
     if (e.code === 'SHIFT_REQUIRED') { S.shift = null; S.shiftsSupported = true; promptOpenShift(() => doSave(extra, meta)); return 'error'; }
+    if (e.code === 'NOT_ON_SHELF') { openNotOnShelf(e.data && e.data.items, () => doSave(extra, meta)); return 'error'; }
     if (!['BAD_PIN', 'BAD_KEY', 'NO_USERS'].includes(e.code)) toast(errMsg(e), 'err', 5000);
     return 'error';
   } finally {
@@ -3735,7 +3770,7 @@ function localExitRequired(v) {
   return (minT > 0 && v.total >= minT) || (minQ > 0 && v.lines.some(l => num(l.line ? l.line.qty : l.qty) >= minQ));
 }
 function applyStock(list) {
-  (list || []).forEach(s => { const p = prodById(s.product_id); if (p) { p.stock = roundQty(num(s.stock) - pendingQty(p.id)); if (s.cost_price != null && isOwner()) p.cost_price = int(s.cost_price); } });
+  (list || []).forEach(s => { const p = prodById(s.product_id); if (p) { const sh0 = shelfOf(p); p.stock = roundQty(num(s.stock) - pendingQty(p.id)); p.shop_stock = s.shop_stock != null ? roundQty(num(s.shop_stock) - pendingQty(p.id)) : Math.min(sh0, p.stock); if (s.cost_price != null && isOwner()) p.cost_price = int(s.cost_price); } });
   saveCache();
 }
 function finishSale(rc) {
@@ -3757,8 +3792,9 @@ let syncing = false;
 function saveOutbox() { store.set('outbox', S.outbox); updateOutboxBadge(); }
 function queueSale(req, rc) {
   if (S.outbox.some(e => e.client_id === req.client_id)) return;
+  req.queued = true; // the customer already paid: the server never refuses it (logged jual_tanpa_rak when over the shelf)
   S.outbox.push({ client_id: req.client_id, req, rc, key: S.key, user: S.user, pin_hash: S.pin_hash, queued_at: new Date().toISOString(), tries: 0, error: '', field_order: S.cart && S.cart.field_order || null });
-  for (const it of req.items) { const p = prodById(it.product_id); if (p) p.stock = roundQty(p.stock - it.qty); }
+  for (const it of req.items) { const p = prodById(it.product_id); if (p) { if (p.shop_stock !== undefined) p.shop_stock = roundQty(p.shop_stock - it.qty); p.stock = roundQty(p.stock - it.qty); } }
   const c = custById(req.customer_id); if (c) { c.debt_balance += rc.debt; rc.debt_after = c.debt_balance; }
   saveOutbox(); saveCache();
 }
@@ -4099,7 +4135,7 @@ async function pollApprovals() {
     AP.fresh = new Set(fresh.map(a => a.request_id));
     if (fresh.length) {
       beep(); try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) { }
-      toast(t(fresh[0].kind === 'opname' ? 'gd.new_toast' : fresh[0].kind === 'purchase_fix' ? 'apr.new_fix' : fresh[0].kind === 'buka_kas' ? 'apr.new_bukakas' : 'apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name, no: fresh[0].ref }), 'warn', 6000);
+      toast(t(fresh[0].kind === 'opname' ? 'gd.new_toast' : fresh[0].kind === 'purchase_fix' ? 'apr.new_fix' : fresh[0].kind === 'buka_kas' ? 'apr.new_bukakas' : fresh[0].kind === 'discount' ? 'apr.new_disc' : 'apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name, no: fresh[0].ref }), 'warn', 6000);
     }
     updateApprovalBadge();
     if (S.view === 'approvals') drawApprovals();
@@ -4118,6 +4154,7 @@ function aprBodyHTML(a) {
   if (kind === 'opname') return opnameAprHTML(a, pl);
   if (kind === 'purchase_fix') return purchaseFixAprHTML(a, pl);
   if (kind === 'buka_kas') return bukaKasAprHTML(a, pl);
+  if (kind === 'discount') return discountAprHTML(a, pl);
   if (kind === 'void') return `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(t('apr.kind_void', { inv: a.ref }))}</b><span class="badge red">${esc(a.request_id)}</span></div>
     <div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))}</div>
     <div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('rc.customer'))}</div><div class="v">${esc(a.customer_name || t('pos.walkin'))}</div></div><div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(a.total)}</div></div></div>
@@ -5682,12 +5719,16 @@ function customerFormFields(c) {
     <div class="field"><label class="f">${esc(t('type'))}<select class="input" name="c_type" style="margin-top:4px"><option value="eceran" ${c.type !== 'grosir' ? 'selected' : ''}>${esc(t('type.eceran'))}</option><option value="grosir" ${c.type === 'grosir' ? 'selected' : ''}>${esc(t('type.grosir'))}</option></select></label></div></div>
     <div class="field"><label class="f">${esc(t('address'))}<input class="input" name="c_address" value="${esc(c.address || '')}" style="margin-top:4px"></label></div>
     <div class="field"><label class="f">${esc(t('notes'))}<input class="input" name="c_notes" value="${esc(c.notes || '')}" style="margin-top:4px"></label></div>
-    <label class="check"><input type="checkbox" name="c_wa_optin" ${c.wa_optin ? 'checked' : ''}> ${esc(t('wa.optin'))}</label>`;
+    <label class="check"><input type="checkbox" name="c_wa_optin" ${c.wa_optin ? 'checked' : ''}> ${esc(t('wa.optin'))}</label>
+    <div class="field"><label class="f">${esc(t('mem.email'))}<input class="input" name="c_email" type="email" inputmode="email" autocomplete="off" value="${esc(c.email || '')}" style="margin-top:4px"></label></div>
+    <label class="check"><input type="checkbox" name="c_member" ${c.member === true ? 'checked' : ''}> <span>${esc(t('mem.form'))}${c.member_no ? ` <b class="num">${esc(c.member_no)}</b>` : ''}<br><span class="small muted">${esc(t('mem.consent'))}</span></span></label>`;
 }
 function readCustomerForm(root) {
   const g = n => ($(`[name="${n}"]`, root) || {}).value || '';
   const wa = $('[name="c_wa_optin"]', root);
-  return { name: g('c_name').trim(), phone: g('c_phone').trim(), type: g('c_type') || 'eceran', address: g('c_address').trim(), notes: g('c_notes').trim(), wa_optin: !!(wa && wa.checked) };
+  const mem = $('[name="c_member"]', root);
+  return Object.assign({ name: g('c_name').trim(), phone: g('c_phone').trim(), type: g('c_type') || 'eceran', address: g('c_address').trim(), notes: g('c_notes').trim(), wa_optin: !!(wa && wa.checked) },
+    $('[name="c_email"]', root) ? { email: g('c_email').trim().toLowerCase() } : {}, mem ? { member: mem.checked } : {});
 }
 RENDER.customers = function () {
   const totalDebt = sum(S.customers, c => int(c.debt_balance));
@@ -5704,7 +5745,7 @@ RENDER.customers = function () {
     let list = S.customers.filter(c => (!q || norm(`${c.name} ${c.phone} ${c.address}`).includes(q)) && (!CU.type || c.type === CU.type) && (!CU.wa || c.wa_optin));
     list.sort(CU.sort === 'debt' ? (a, b) => b.debt_balance - a.debt_balance || a.name.localeCompare(b.name) : (a, b) => a.name.localeCompare(b.name));
     $('#cu-list').innerHTML = list.map(c => `<button class="li" data-act="cust-open" data-id="${esc(c.id)}"><div class="grow"><div class="t">${esc(c.name)}</div><div class="s">${esc(c.phone || '—')}${c.address ? ' · ' + esc(c.address) : ''}</div></div>
-      <div class="right">${c.wa_optin ? `<span class="badge green wa-badge" title="${esc(t('wa.optin'))}">${ic('wa')} WA</span> ` : ''}<span class="badge ${c.type === 'grosir' ? 'gold' : 'gray'}">${esc(t('type.' + c.type))}</span><div class="num ${c.debt_balance > 0 ? 'red' : 'muted'}" style="font-weight:800;margin-top:4px" data-debt="${esc(c.id)}">${fmtRp(c.debt_balance)}</div></div></button>`).join('') || `<div class="empty">${esc(t('no_data'))}</div>`;
+      <div class="right">${memberBadge(c)} ${c.wa_optin ? `<span class="badge green wa-badge" title="${esc(t('wa.optin'))}">${ic('wa')} WA</span> ` : ''}<span class="badge ${c.type === 'grosir' ? 'gold' : 'gray'}">${esc(t('type.' + c.type))}</span><div class="num ${c.debt_balance > 0 ? 'red' : 'muted'}" style="font-weight:800;margin-top:4px" data-debt="${esc(c.id)}">${fmtRp(c.debt_balance)}</div></div></button>`).join('') || `<div class="empty">${esc(t('no_data'))}</div>`;
   };
   $('#cu-q').addEventListener('input', e => { CU.q = e.target.value; draw(); });
   $('#cu-type').onchange = e => { CU.type = e.target.value; draw(); };
@@ -5718,6 +5759,7 @@ function openCustomerEditor(c, after) {
   $('#ce-save', el).onclick = async () => {
     const data = readCustomerForm(el);
     if (!data.name) { $('#ce-err', el).textContent = t('required') + ': ' + t('name'); return; }
+    if (data.email && !/^[^\s@<>"',;]+@[^\s@<>"',;]+\.[a-z]{2,}$/i.test(data.email)) { $('#ce-err', el).textContent = t('mem.email_bad'); return; }
     if (c.id) data.id = c.id;
     $('#ce-save', el).disabled = true;
     try {
@@ -5726,6 +5768,7 @@ function openCustomerEditor(c, after) {
       const saved = upsertLocal(S.customers, r.customer); saved.debt_balance = c.id ? keepDebt : int(r.customer.debt_balance);
       saveCache(); closeModal(); toast(t('saved'), 'ok');
       if (S.view === 'customers') RENDER.customers();
+      if (r.customer && r.customer.member === true && !(c.member === true)) toast(t('mem.added', { name: r.customer.name, no: r.customer.member_no || '' }), 'ok', 4000);
       after && after(saved);
     } catch (e) { $('#ce-err', el).textContent = errMsg(e); $('#ce-save', el).disabled = false; }
   };
@@ -5752,7 +5795,7 @@ function debtReminderText(c) {
 async function openCustomerDetail(c) {
   const el = openModal({
     title: c.name, cls: 'wide',
-    body: `<div class="row wrap" style="margin-bottom:12px"><span class="badge ${c.type === 'grosir' ? 'gold' : 'gray'}">${esc(t('type.' + c.type))}</span><span class="muted">${esc(c.phone || '—')}</span>${c.address ? `<span class="muted">· ${esc(c.address)}</span>` : ''}</div>
+    body: `<div class="row wrap" style="margin-bottom:12px"><span class="badge ${c.type === 'grosir' ? 'gold' : 'gray'}">${esc(t('type.' + c.type))}</span>${memberBadge(c)}${c.member_no ? `<span class="num small">${esc(c.member_no)}</span>` : ''}${c.email ? `<span class="muted small">${esc(c.email)}</span>` : ''}<span class="muted">${esc(c.phone || '—')}</span>${c.address ? `<span class="muted">· ${esc(c.address)}</span>` : ''}</div>
       <div class="kpis"><div class="kpi ${c.debt_balance > 0 ? 'gold' : ''}"><div class="k">${esc(t('debt'))}</div><div class="v num ${c.debt_balance > 0 ? 'red' : ''}" id="cd-debt">${fmtRp(c.debt_balance)}</div></div></div>
       <div class="row wrap" style="margin-bottom:16px">
         <button class="btn primary" data-act="cust-pay" data-id="${esc(c.id)}" ${c.debt_balance > 0 ? '' : 'disabled'}>${esc(t('cust.receive'))}</button>
@@ -6522,10 +6565,13 @@ RENDER.settings = function () {
       <div class="red" id="st-ph-err"></div><button class="btn primary" data-act="set-save-photo">${esc(t('save'))}</button></div></div>
 
     ${settingsExtraHTML()}
+    ${settingsV16HTML()}
     <div class="panel"><h3>${esc(t('set.users'))}</h3><div class="pb">
-      <div class="tbl-wrap" style="margin-bottom:12px"><table class="tbl" id="st-users"><tbody>${S.users.map(u => `<tr><td><b>${esc(u.name)}</b> <span class="badge ${u.role === 'owner' ? 'gold' : u.role === 'manager' ? 'blue' : 'gray'}">${esc(t('role.' + u.role))}</span> ${u.active === false ? `<span class="badge red">${esc(t('inactive'))}</span>` : ''}<br><select class="input" style="width:auto;min-height:32px;padding:2px 6px;margin-top:4px" data-user-role="${esc(u.name)}" aria-label="${esc(t('set.role'))}">${['kasir', 'sales', 'manager', 'owner'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${esc(t('role.' + r))}</option>`).join('')}</select></td>
+      <div class="tbl-wrap" style="margin-bottom:12px"><table class="tbl" id="st-users"><tbody>${S.users.map(u => `<tr><td><b>${esc(u.name)}</b> <span class="badge ${u.role === 'owner' ? 'gold' : u.role === 'manager' ? 'blue' : 'gray'}">${esc(t('role.' + u.role))}</span> ${u.active === false ? `<span class="badge red">${esc(t('inactive'))}</span>` : ''}${u.must_change ? ` <span class="badge amber" data-must="1">${esc(t('usr.must_change'))}</span>` : ''}${u.locked ? ` <span class="badge red" data-locked="1">${esc(t('usr.locked'))}</span>` : ''}${u.has_master ? ` <span class="badge gold" data-has-master="1">${ic('lock')} ${esc(t('mc.has'))}</span>` : ''}<br><select class="input" style="width:auto;min-height:32px;padding:2px 6px;margin-top:4px" data-user-role="${esc(u.name)}" aria-label="${esc(t('set.role'))}">${['kasir', 'sales', 'manager', 'owner'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${esc(t('role.' + r))}</option>`).join('')}</select></td>
         <td class="r"><button class="btn xs" data-act="user-pin" data-name="${esc(u.name)}">${esc(t('set.reset_pin'))}</button> <button class="btn xs ${u.active === false ? '' : 'danger'}" data-act="user-toggle" data-name="${esc(u.name)}">${esc(u.active === false ? t('set.activate') : t('set.deactivate'))}</button></td></tr>`).join('')}</tbody></table></div>
+      ${ST.tempPin ? `<div class="notice" id="st-temp-pin" role="status">${ic('lock')} <span>${esc(t('usr.temp_notice', { name: ST.tempPin }))}</span></div>` : ''}
       <h4 style="margin:0 0 8px">${esc(t('set.add_user'))}</h4>
+      <p class="small muted" style="margin-top:0">${esc(t('usr.temp_hint'))}</p>
       <div class="grid2"><div class="field"><label class="f" for="nu-name">${esc(t('name'))}</label><input class="input" id="nu-name" autocomplete="off"></div>
         <div class="field"><label class="f" for="nu-role">${esc(t('set.role'))}</label><select class="input" id="nu-role"><option value="kasir">${esc(t('role.kasir'))}</option><option value="sales">${esc(t('role.sales'))}</option><option value="manager">${esc(t('role.manager'))}</option><option value="owner">${esc(t('role.owner'))}</option></select></div></div>
       <div class="grid2"><div class="field"><label class="f" for="nu-pin">${esc(t('pin'))}</label><input class="input" id="nu-pin" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password"></div>
@@ -6572,7 +6618,7 @@ async function saveUser(data, errEl) {
     toast(t('saved'), 'ok'); RENDER.settings(); return true;
   } catch (e) { if (errEl) errEl.textContent = errMsg(e); else toast(errMsg(e), 'err'); return false; }
 }
-function upsertByName(arr, u) { const i = arr.findIndex(x => x.name.toLowerCase() === u.name.toLowerCase()); const clean = { name: u.name, role: u.role, active: u.active !== false }; if (i >= 0) arr[i] = clean; else arr.push(clean); }
+function upsertByName(arr, u) { const i = arr.findIndex(x => x.name.toLowerCase() === u.name.toLowerCase()); const clean = Object.assign({}, i >= 0 ? arr[i] : {}, { name: u.name, role: u.role, active: u.active !== false }); if (u.must_change !== undefined) clean.must_change = u.must_change === true; if (i >= 0) arr[i] = clean; else arr.push(clean); }
 function askNewPin(name) {
   return new Promise(resolve => {
     let done = false;
@@ -6665,12 +6711,13 @@ const ACT = {
     } catch (e) { L.busy = false; L.err = errMsg(e); renderLoginKeep(); }
   },
   'login-change-key': () => { L.users = []; L.sel = ''; S.inApp = false; L.step = 'key'; L.err = ''; renderLogin(); },
+  'login-master': () => { L.master = !L.master; L.pin = ''; L.err = ''; renderLogin(); },
   'login-user': el => { L.sel = el.dataset.name; L.pin = ''; L.err = ''; if (DEMO) { demoLogin(L.sel); return; } renderLogin(); },
   'pin-key': el => {
     const k = el.dataset.k;
     if (k === 'del') L.pin = L.pin.slice(0, -1);
     else if (k === 'ok') { submitPin(); return; }
-    else if (L.pin.length < 6) L.pin += k;
+    else if (L.pin.length < (L.master ? 8 : 6)) L.pin += k;
     L.err = ''; renderLogin();
   },
 
@@ -6772,15 +6819,16 @@ const ACT = {
     if (!name) { err.textContent = t('required') + ': ' + t('name'); return; }
     if (S.users.some(u => u.name.toLowerCase() === name.toLowerCase())) { err.textContent = t('set.user_exists'); return; }
     const pe = pinError(a, b); if (pe) { err.textContent = pe; return; }
-    saveUser({ name, role, pin_hash: await pinHash(S.key, name, a), active: true }, err);
+    if (await saveUser({ name, role, pin_hash: await pinHash(S.key, name, a), active: true }, err)) { ST.tempPin = name; RENDER.settings(); }
   },
   'user-pin': async el => {
     const u = S.users.find(x => x.name === el.dataset.name); if (!u) return;
     const pin = await askNewPin(u.name); if (!pin) return;
     const hash = await pinHash(S.key, u.name, pin);
-    if (await saveUser({ name: u.name, role: u.role, pin_hash: hash, active: u.active !== false }) && u.name.toLowerCase() === S.user.toLowerCase()) {
-      S.pin_hash = hash; sessSet(S.user, S.role, hash);
-      await rememberPin(S.user, hash, S.role);
+    const self = u.name.toLowerCase() === S.user.toLowerCase();
+    if (await saveUser({ name: u.name, role: u.role, pin_hash: hash, active: u.active !== false })) {
+      if (self) { S.pin_hash = hash; sessSet(S.user, S.role, hash, S.viaMaster); await rememberPin(S.user, hash, S.role); }
+      else { ST.tempPin = u.name; RENDER.settings(); }
     }
   },
   'user-toggle': async el => {
@@ -6810,8 +6858,15 @@ document.addEventListener('click', e => {
   Promise.resolve().then(() => fn(el, e)).catch(err => { console.error(err); toast(errMsg(err), 'err'); });
 });
 document.addEventListener('keydown', e => {
+  const pcb = $('#pin-change');
+  if (pcb && !pcb.hidden && !modalOpen()) {
+    if (/^\d$/.test(e.key)) { pcKey(e.key); e.preventDefault(); return; }
+    if (e.key === 'Backspace') { pcKey('del'); e.preventDefault(); return; }
+    if (e.key === 'Enter') { pcKey('ok'); e.preventDefault(); return; }
+  }
   if (!$('#login').hidden && L.step === 'pin' && !modalOpen()) {
-    if (/^\d$/.test(e.key)) { if (L.pin.length < 6) { L.pin += e.key; L.err = ''; renderLogin(); } e.preventDefault(); return; }
+    if (lockLeft(L.sel)) return;
+    if (/^\d$/.test(e.key)) { if (L.pin.length < (L.master ? 8 : 6)) { L.pin += e.key; L.err = ''; renderLogin(); } e.preventDefault(); return; }
     if (e.key === 'Backspace') { L.pin = L.pin.slice(0, -1); renderLogin(); e.preventDefault(); return; }
     if (e.key === 'Enter') { submitPin(); e.preventDefault(); return; }
   }
@@ -6833,7 +6888,7 @@ let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); re
    computed backwards from the current stock. Expiry uses purchase rows with exp_date (last 12 months) and assumes
    the current stock consists of the most recent purchases (FIFO). */
 const GD = { group: store.get('gd_group', '') || '', tab: 'overview', q: '', cat: '', status: '', sort: 'name', expMax: 60, d30: null, d30At: 0, year: null, yearAt: 0, yearP: null, gen: 0, bootAt: 0, err: '', result: '' };
-const GD_TTL = 5 * 60000, GD_TABS = ['overview', 'list', 'expiry', 'repack', 'opname'], GD_STATUS = ['', 'menipis', 'habis', 'lebih', 'kedaluwarsa'];
+const GD_TTL = 5 * 60000, GD_TABS = ['overview', 'list', 'expiry', 'repack', 'opname'], GD_STATUS = ['', 'menipis', 'habis', 'lebih', 'kedaluwarsa', 'rak_kosong'];
 const GDO = Object.assign({ lines: [], note: '', show: false }, store.get('gd_opname', null) || {});
 const saveGdo = () => store.set('gd_opname', { lines: GDO.lines, note: GDO.note, show: GDO.show });
 const isYmdStr = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
@@ -6888,7 +6943,8 @@ function gdRows() {
     const days = avg > 0 ? Math.max(0, stock) / avg : null;
     const status = stock <= 0 ? 'habis' : stock <= min ? 'menipis' : sold && (!(avg > 0) || days > 90) ? 'lebih' : 'aman';
     const reorder = (status === 'habis' || status === 'menipis') && avg > 0 ? Math.max(0, Math.ceil(roundQty(avg * 14 - Math.max(0, stock)))) : 0;
-    return { p, stock, min, avg, days, status, reorder, exp: expBy.get(String(p.id)) || null };
+    const shelf = shelfOf(p), gudang = roundQty(stock - shelf);
+    return { p, stock, min, avg, days, status, reorder, exp: expBy.get(String(p.id)) || null, shelf, gudang };
   });
 }
 const gdDaysTxt = d => d == null ? '—' : d < 1 ? t('gd.lt1') : t('gd.days', { n: fmtNum(Math.floor(d)) });
@@ -6979,8 +7035,9 @@ function gdDrawList(body, err) {
         <input class="input" id="gd-q" type="search" placeholder="${esc(t('gd.search_ph'))}" aria-label="${esc(t('gd.search_ph'))}" value="${esc(GD.q)}">
         <select class="input" id="gd-cat" aria-label="${esc(t('category'))}"><option value="">${esc(t('all_categories'))}</option>${categories().map(c => `<option ${GD.cat === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
         <select class="input" id="gd-sort" aria-label="${esc(t('gd.sort'))}">${['name', 'stock', 'stock_desc', 'days'].map(k => `<option value="${k}" ${GD.sort === k ? 'selected' : ''}>${esc(t('gd.sort_' + k))}</option>`).join('')}</select>
-        <select class="input" id="gd-group" aria-label="${esc(t('gd.group'))}">${GD_GROUPS.map(k => `<option value="${k}" ${(GD.group || '') === k ? 'selected' : ''}>${esc(t(k ? 'gd.group_' + k : 'gd.group_none'))}</option>`).join('')}</select></div>
-      <div class="chips" id="gd-status" style="margin-bottom:8px">${GD_STATUS.map(k => `<button class="chip ${GD.status === k ? 'on' : ''}" data-act="gd-status" data-status="${k}">${esc(t(k ? 'gd.' + k : 'gd.all'))}</button>`).join('')}</div>
+        <select class="input" id="gd-group" aria-label="${esc(t('gd.group'))}">${GD_GROUPS.map(k => `<option value="${k}" ${(GD.group || '') === k ? 'selected' : ''}>${esc(t(k ? 'gd.group_' + k : 'gd.group_none'))}</option>`).join('')}</select>
+        <button class="btn" data-act="gd-move" id="gd-move">${ic('warehouse')} ${esc(t('mv.title'))}</button></div>
+      <div class="chips" id="gd-status" style="margin-bottom:8px">${GD_STATUS.map(k => `<button class="chip ${GD.status === k ? 'on' : ''}" data-act="gd-status" data-status="${k}">${esc(t(k ? 'gd.' + k : 'gd.all'))}${k === 'rak_kosong' ? ` <span class="num">(${gdRows().filter(r => r.gudang > 0 && r.shelf <= 0).length})</span>` : ''}</button>`).join('')}</div>
       <div id="gd-list"></div><p class="small muted">${esc(t('gd.list_hint'))}</p>`;
     const q = $('#gd-q', body);
     q.addEventListener('input', debounce(() => { GD.q = q.value; gdDrawListRows(); }, 120));
@@ -6996,15 +7053,18 @@ function gdDrawListRows() {
   const ids = new Set(filterProducts(GD.q, GD.cat).map(p => String(p.id)));
   let rows = gdRows().filter(r => ids.has(String(r.p.id)));
   if (GD.status === 'kedaluwarsa') rows = rows.filter(r => r.exp);
+  else if (GD.status === 'rak_kosong') rows = rows.filter(r => r.gudang > 0 && r.shelf <= 0);
   else if (GD.status) rows = rows.filter(r => r.status === GD.status);
   const byName = (a, b) => a.p.name.localeCompare(b.p.name);
   const sorts = { name: byName, stock: (a, b) => a.stock - b.stock || byName(a, b), stock_desc: (a, b) => b.stock - a.stock || byName(a, b), days: (a, b) => (a.days ?? Infinity) - (b.days ?? Infinity) || a.stock - b.stock || byName(a, b) };
   rows.sort(sorts[GD.sort] || byName);
   const waitYear = (GD.status === 'kedaluwarsa' || GD.group === 'expiry' || GD.group === 'supplier') && !GD.year;
   const own = isOwner(), ctx = GD.group ? gdGroupCtx() : null;
-  const rowHTML = r => `<tr class="click" data-act="gd-card" data-id="${esc(r.p.id)}" data-pid="${esc(r.p.id)}">
+  const rowHTML = r => `<tr class="click ${r.gudang > 0 && r.shelf <= 0 ? 'shelf-empty' : ''}" data-act="gd-card" data-id="${esc(r.p.id)}" data-pid="${esc(r.p.id)}">
       <td><b>${esc(r.p.name)}</b><div class="small muted">${esc(r.p.category || '')}${r.exp ? ` · ${esc(t('gd.exp_short'))} ${esc(fmtDate(r.exp.exp))}` : ''}${num(r.p.repack_from) > 0 ? ` · <span class="badge blue">${esc(t('gd.pk_pack'))}</span>` : ''}</div></td>
       <td class="r num" data-col="stock"><b class="${r.stock <= 0 ? 'red' : ''}">${fmtQty(r.stock)}</b> <span class="small muted">${esc(r.p.unit || '')}</span></td>
+      <td class="r num" data-col="gudang">${r.gudang > 0 ? fmtQty(r.gudang) : '<span class="muted">0</span>'}</td>
+      <td class="r num" data-col="rak"><b class="${r.shelf <= 0 ? (r.gudang > 0 ? 'amber' : 'red') : ''}">${fmtQty(r.shelf)}</b>${r.gudang > 0 ? ` <button class="btn xs" data-act="gd-move-one" data-id="${esc(r.p.id)}" title="${esc(t('mv.title'))}">${esc(t('gd.to_rak'))}</button>` : ''}</td>
       <td class="r num hide-phone">${fmtQty(r.min)}</td>
       <td data-col="status">${gdBadge(r.status)}${r.exp ? ' ' + gdExpBadge(r.exp.days) : ''}</td>
       <td class="r num" data-col="days">${GD.d30 ? esc(gdDaysTxt(r.days)) : '…'}</td>
@@ -7016,8 +7076,8 @@ function gdDrawListRows() {
     groupsHTML = [...gm.values()].sort((a, b) => a.g.o - b.g.o || String(a.g.label).localeCompare(String(b.g.label))).map(x => `<tbody data-group="${esc(x.g.k)}">${gdGroupHead(x.g, x.rows, own)}${x.rows.slice(0, 400).map(rowHTML).join('')}</tbody>`).join('');
   }
   box.innerHTML = `<p class="muted small" id="gd-count">${esc(waitYear ? t('gd.loading_year') : t('gd.n_items', { n: fmtNum(rows.length) }))}${ctx && GD.group === 'abc' ? ' · ' + esc(t('gd.abc_hint')) : ''}</p>
-    <div class="tbl-wrap"><table class="tbl" id="gd-table" data-grouped="${groupsHTML ? GD.group : ''}"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('stock'))}</th><th class="r hide-phone">${esc(t('gd.min'))}</th><th>${esc(t('gd.status'))}</th><th class="r">${esc(t('gd.days_left'))}</th><th class="r">${esc(t('gd.reorder'))}</th></tr></thead>
-    ${groupsHTML || `<tbody>${rows.slice(0, 400).map(rowHTML).join('') || `<tr><td colspan="6" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody>`}</table></div>`;
+    <div class="tbl-wrap"><table class="tbl" id="gd-table" data-grouped="${groupsHTML ? GD.group : ''}"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('gd.col_total'))}</th><th class="r">${esc(t('gd.col_gudang'))}</th><th class="r">${esc(t('gd.col_rak'))}</th><th class="r hide-phone">${esc(t('gd.min'))}</th><th>${esc(t('gd.status'))}</th><th class="r">${esc(t('gd.days_left'))}</th><th class="r">${esc(t('gd.reorder'))}</th></tr></thead>
+    ${groupsHTML || `<tbody>${rows.slice(0, 400).map(rowHTML).join('') || `<tr><td colspan="8" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody>`}</table></div>`;
 }
 
 /* ---- Kedaluwarsa ---- */
@@ -7355,6 +7415,7 @@ function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { } }
 function deviceId() {
   if (DEV.id) return DEV.id;
   let id = lsGet(DEV_ID_KEY);
+  if (id && id.charAt(0) === '"') { try { const v = JSON.parse(id); if (typeof v === 'string') { id = v; lsSet(DEV_ID_KEY, id); } } catch (e) { } } // agreed format: raw string
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(id || '')) { id = 'd' + uuid().replace(/-/g, '').slice(0, 23); lsSet(DEV_ID_KEY, id); }
   return (DEV.id = id);
 }
@@ -7589,11 +7650,11 @@ function openDeviceDetail(id) {
 
 /* ========== Activity log (v12, owner) ========== */
 const ACTV = { recent: [], preset: '7d', from: '', to: '', group: '', user: '', q: '', data: null, err: '' };
-const ACT_GROUPS = { masuk: ['masuk', 'minta_koreksi', 'koreksi_masuk'], harga: ['harga', 'minta_harga'], stok: ['stok', 'opname', 'minta_opname', 'kemas_ulang', 'produk', 'produk_baru', 'impor'],
-  kas: ['biaya', 'kas', 'tutup_kas', 'buka_kas'], jual: ['batal', 'minta_batal', 'hutang'], bayar: ['bayar_masuk', 'bayar_keluar', 'alokasi', 'rekening'], pengguna: ['pengguna', 'pengaturan'], perangkat: ['perangkat_baru'] };
+const ACT_GROUPS = { masuk: ['masuk', 'minta_koreksi', 'koreksi_masuk'], harga: ['harga', 'minta_harga'], stok: ['stok', 'opname', 'minta_opname', 'kemas_ulang', 'produk', 'produk_baru', 'impor', 'pindah_stok', 'jual_tanpa_rak'],
+  kas: ['biaya', 'kas', 'tutup_kas', 'buka_kas'], jual: ['batal', 'minta_batal', 'hutang', 'minta_diskon', 'diskon', 'member_baru', 'member_berhenti'], bayar: ['bayar_masuk', 'bayar_keluar', 'alokasi', 'rekening'], pengguna: ['pengguna', 'pengaturan', 'masuk_master', 'ganti_pin', 'kode_pemilik'], perangkat: ['perangkat_baru'] };
 const ACT_ICON = { masuk: 'truck', harga: 'tag', stok: 'warehouse', kas: 'cash', jual: 'cart', bayar: 'wallet', pengguna: 'gear', perangkat: 'device', lain: 'activity' };
 function actGroup(a) {
-  if (a.kind === 'keputusan') { const m = /\((\w+)/.exec(a.summary || ''); return { credit: 'jual', void: 'jual', price: 'harga', opname: 'stok', purchase_fix: 'masuk', buka_kas: 'kas' }[m ? m[1] : 'credit'] || 'jual'; }
+  if (a.kind === 'keputusan') { const m = /\((\w+)/.exec(a.summary || ''); return { credit: 'jual', void: 'jual', discount: 'jual', price: 'harga', opname: 'stok', purchase_fix: 'masuk', buka_kas: 'kas' }[m ? m[1] : 'credit'] || 'jual'; }
   for (const [g, ks] of Object.entries(ACT_GROUPS)) if (ks.includes(a.kind)) return g;
   return 'lain';
 }
@@ -7717,7 +7778,7 @@ function gdGroupOf(r, ctx) {
 function gdGroupHead(g, rows, own) {
   const pos = r => Math.max(0, r.stock);
   const units = roundQty(sum(rows, pos)), retail = sum(rows, r => pos(r) * int(r.p.retail_price)), cost = sum(rows, r => pos(r) * int(r.p.cost_price));
-  return `<tr class="gd-grp" data-group-head="${esc(g.k)}"><td colspan="6"><div class="row wrap" style="gap:6px 14px"><b class="grow">${esc(g.label)}</b>
+  return `<tr class="gd-grp" data-group-head="${esc(g.k)}"><td colspan="8"><div class="row wrap" style="gap:6px 14px"><b class="grow">${esc(g.label)}</b>
     <span data-sub="items">${esc(t('gd.n_items', { n: fmtNum(rows.length) }))}</span><span data-sub="units">${esc(t('gd.units'))}: <b class="num">${fmtQty(units)}</b></span>
     <span data-sub="retail">${esc(t('gd.value_retail_s'))}: <b class="num">${fmtRp(retail)}</b></span>${own ? `<span data-sub="cost">${esc(t('gd.value_cost_s'))}: <b class="num">${fmtRp(cost)}</b></span>` : ''}</div></td></tr>`;
 }
@@ -8760,6 +8821,412 @@ Object.assign(I18N.ar, {
   'set.report_title': 'التقرير اليومي (واتساب)', 'set.wa_company': 'واتساب المتجر / الشركة', 'set.wa_manager': 'واتساب المدير', 'set.wa_owner': 'واتساب المالك', 'set.report_time': 'تذكير إرسال التقرير (الساعة)', 'set.report_time_bad': 'ساعة غير صالحة'
 });
 
+/* ========== v16: owner master code, own PINs, lock after wrong PINs, discount approvals, members, warehouse vs shelf ========== */
+/** Master code (8 digits): sha256(KEY + ':__master__:' + code) — opens every account; never stored on this device. */
+const fmtPct1 = v => fmtPct(Math.round(num(v) * 10) / 10);
+const masterHash = (key, code) => sha256Hex(`${key}:__master__:${code}`);
+
+/* ---- LOCKED: 5 wrong PINs → the server locks the account for 15 minutes ("Coba lagi jam HH:MM WIB") ---- */
+function setLock(user, msg) {
+  const m = /(\d{1,2})[:.](\d{2})/.exec(String(msg || '')), now = Date.now();
+  let until = now + 15 * 60000, time = '';
+  if (m) {
+    const j = new Date(now + 7 * 3600000);
+    let d = Date.UTC(j.getUTCFullYear(), j.getUTCMonth(), j.getUTCDate(), +m[1], +m[2]) - 7 * 3600000;
+    if (d < now - 60000) d += 86400000;
+    until = d + 60000; time = `${m[1].padStart(2, '0')}:${m[2]} WIB`;
+  } else time = new Date(until + 7 * 3600000).toISOString().slice(11, 16) + ' WIB';
+  const locks = store.get('locks', {}) || {};
+  locks[String(user || '').toLowerCase()] = { until, time };
+  store.set('locks', locks);
+  clearTimeout(setLock.timer);
+  setLock.timer = setTimeout(() => { if (!$('#login').hidden && L.step === 'pin') renderLogin(); }, Math.min(2 ** 31 - 1, Math.max(1000, until - now + 500)));
+}
+function lockLeft(user) {
+  if (!user) return null;
+  const locks = store.get('locks', {}) || {}, k = String(user).toLowerCase(), l = locks[k];
+  if (!l) return null;
+  if (Date.now() >= l.until) { delete locks[k]; store.set('locks', locks); return null; }
+  return l;
+}
+
+/* ---- Own PIN at first login (must_change) / after a temporary PIN: full screen "Buat PIN baru" ---- */
+const PC = { need: false, pin: '', first: '', err: '', busy: false };
+const ownPinLen = () => S.role === 'owner' || S.role === 'manager' ? 6 : 4;
+function showPinChange() {
+  if (!S.user || S.viaMaster) return;
+  PC.need = true; PC.pin = ''; PC.first = ''; PC.busy = false;
+  closeModal(true);
+  $('#app').hidden = true; $('#login').hidden = true;
+  const box = $('#pin-change'); box.hidden = false;
+  renderPinChange();
+}
+function renderPinChange() {
+  const box = $('#pin-change'); if (!box || box.hidden) return;
+  const n = ownPinLen();
+  const dots = Array.from({ length: n }, (_, i) => `<i class="${i < PC.pin.length ? 'f' : ''}"></i>`).join('');
+  box.innerHTML = `<div class="login-card"><div class="brand"><div class="logo">خ</div><div>${esc(settings().store_name || 'Khair Mart')}</div></div>
+    <h2 id="pc-title">${esc(t('pc.title'))}</h2>
+    <p class="muted small center" style="margin-top:0">${esc(t('pc.hint', { name: S.user, n }))}</p>
+    <div class="center" style="font-weight:700;margin-bottom:6px" id="pc-step" data-step="${PC.first ? 2 : 1}">${esc(t(PC.first ? 'pc.step2' : 'pc.step1', { n }))}</div>
+    <div class="pin-dots" aria-label="PIN">${dots}</div>
+    <div class="login-err" role="alert" id="pc-err">${esc(PC.err)}</div>
+    <div class="pinpad" id="pc-pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(k => `<button data-act="pc-key" data-k="${k}">${k}</button>`).join('')}
+      <button data-act="pc-key" data-k="del" aria-label="${esc(t('delete'))}">⌫</button><button data-act="pc-key" data-k="0">0</button>
+      <button class="ok" data-act="pc-key" data-k="ok" ${PC.busy ? 'disabled' : ''}>${esc(PC.busy ? '…' : t('pc.save'))}</button></div>
+    <div class="login-links"><button class="btn ghost sm" data-act="pc-cancel" id="pc-cancel">${esc(t('pc.cancel'))}</button></div>
+    <div class="lang-sw"><button class="btn xs ${S.lang === 'id' ? 'primary' : ''}" data-act="set-lang" data-lang="id">Indonesia</button><button class="btn xs ${S.lang === 'ar' ? 'primary' : ''}" data-act="set-lang" data-lang="ar">العربية</button></div></div>`;
+}
+function pcKey(k) {
+  if (PC.busy) return;
+  const n = ownPinLen();
+  if (k === 'del') PC.pin = PC.pin.slice(0, -1);
+  else if (k === 'ok') { submitPinChange(); return; }
+  else if (PC.pin.length < n) PC.pin += k;
+  PC.err = ''; renderPinChange();
+}
+async function submitPinChange() {
+  const n = ownPinLen();
+  if (!new RegExp(`^\\d{${n}}$`).test(PC.pin)) { PC.err = t('pc.len', { n }); renderPinChange(); return; }
+  if (!PC.first) { PC.first = PC.pin; PC.pin = ''; renderPinChange(); return; }
+  if (PC.first !== PC.pin) { PC.first = ''; PC.pin = ''; PC.err = t('pin_mismatch'); renderPinChange(); return; }
+  const hash = await pinHash(S.key, S.user, PC.pin);
+  if (hash === S.pin_hash) { PC.first = ''; PC.pin = ''; PC.err = t('pc.same'); renderPinChange(); return; }
+  PC.busy = true; renderPinChange();
+  try {
+    await apiRaw('change_pin', { new_pin_hash: hash }, sessCred());
+  } catch (e) {
+    PC.busy = false; PC.first = ''; PC.pin = ''; PC.err = errMsg(e); renderPinChange();
+    if (e.code === 'BAD_PIN' || e.code === 'LOCKED') { $('#pin-change').hidden = true; PC.need = false; forceRelogin(e); }
+    return;
+  }
+  S.pin_hash = hash; sessSet(S.user, S.role, hash, false);
+  await rememberPin(S.user, hash, S.role);
+  PC.need = false; PC.busy = false; PC.pin = ''; PC.first = '';
+  $('#pin-change').hidden = true;
+  toast(t('pc.done'), 'ok', 4000);
+  enterApp(false, S.inApp);
+}
+
+/* ---- Discount approval card: the owner sees profit before / after; the manager never does ---- */
+function discountAprHTML(a, pl) {
+  const own = isOwner(), list = int(pl.list_total), total = int(pl.total != null ? pl.total : a.total), disc = int(pl.discount != null ? pl.discount : a.debt_amount);
+  const pct = num(pl.pct), max = num(pl.max_pct || 3), mpct = num(pl.member_pct);
+  const lines = Array.isArray(pl.lines) ? pl.lines : [];
+  const hasProfit = own && pl.profit_before != null;
+  const pb = int(pl.profit_before), pa = int(pl.profit_after);
+  return `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(t('apr.kind_disc', { pct: fmtPct1(pct) }))}</b><span class="badge amber">${esc(a.request_id)}</span></div>
+    <div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))} · ${esc(a.customer_name || t('pos.walkin'))}</div>
+    <div class="apr-sum" data-disc style="grid-template-columns:repeat(auto-fit,minmax(110px,1fr))">
+      <div><div class="k">${esc(t('dsc.list'))}</div><div class="v num" data-v="list">${fmtRp(list)}</div></div>
+      <div><div class="k">${esc(t('dsc.amount'))}</div><div class="v num red" data-v="disc">-${fmtRp(disc)} <span class="small">(${esc(fmtPct1(pct))})</span></div></div>
+      <div><div class="k">${esc(t('dsc.total'))}</div><div class="v num" data-v="total">${fmtRp(total)}</div></div>
+      <div><div class="k">${esc(t('dsc.limit'))}</div><div class="v num" data-v="max">${esc(fmtPct1(max))}${mpct ? ` <span class="small muted">+ ${esc(t('dsc.member', { pct: fmtPct1(mpct) }))}</span>` : ''}</div></div></div>
+    ${hasProfit ? `<div class="disc-profit" data-profit>
+      <div class="dp-col"><div class="k">${esc(t('dsc.profit_before'))}</div><div class="v num green" data-v="profit-before">${fmtRp(pb)}</div><div class="small green" data-v="margin-before">${esc(t('dsc.margin', { pct: fmtPct1(num(pl.margin_before)) }))}</div></div>
+      <div class="dp-arrow" aria-hidden="true">→</div>
+      <div class="dp-col"><div class="k">${esc(t('dsc.profit_after'))}</div><div class="v num ${pa < 0 ? 'red' : pa < pb ? 'amber' : 'green'}" data-v="profit-after">${fmtRp(pa)}</div><div class="small ${pa < 0 ? 'red' : 'amber'}" data-v="margin-after">${esc(t('dsc.margin', { pct: fmtPct1(num(pl.margin_after)) }))}</div></div>
+      <div class="dp-col"><div class="k">${esc(t('dsc.lost'))}</div><div class="v num red" data-v="profit-lost">-${fmtRp(Math.max(0, pb - pa))}</div></div></div>` : ''}
+    ${lines.length ? `<table class="tbl" style="margin:8px 0" data-disc-lines><tbody>${lines.slice(0, 30).map(l => `<tr><td>${esc(l.name)}</td><td class="r num">${esc(fmtQty(num(l.qty)))} ×</td><td class="r num">${fmtRp(int(l.unit_price))}</td></tr>`).join('')}</tbody></table>` : ''}
+    ${pl.reason || a.note ? `<div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason || a.note)}”</b></div>` : ''}`;
+}
+
+/* ---- Members (pelanggan member): purchase number = visits + 1 → tier % (settings.member_tiers) ---- */
+const MEMBER_TIERS0 = [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }];
+const memberTiers = () => { const v = settings().member_tiers; return Array.isArray(v) ? v : MEMBER_TIERS0; };
+function memberOf(c) {
+  if (!c || c.member !== true || settings().member_enabled === false) return null;
+  const n = Math.max(0, Math.round(num(c.visits))) + 1;
+  let pct = 0;
+  memberTiers().forEach(x => { const f = num(x && x.from), q = num(x && x.pct); if (f >= 1 && f <= n && q > 0 && q <= 50 && q > pct) pct = q; });
+  return { pct, purchase_no: n, member_no: c.member_no || '' };
+}
+const memberBadge = c => c && c.member === true ? `<span class="badge gold mem-badge" data-member="${esc(c.member_no || '')}">${ic('member')} ${esc(t('mem.badge'))}</span>` : '';
+const MB = { q: '' };
+RENDER.members = function () {
+  if (!isApprover()) { go('pos'); return; }
+  const v = $('#view-members');
+  const all = S.customers.filter(c => c.member === true), from30 = addDays(today(), -29);
+  v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.members'))}</h1><button class="btn primary" data-act="mb-add" id="mb-add">${ic('plus')} ${esc(t('mem.add'))}</button></div>
+    <p class="muted small" style="margin-top:0">${esc(t('mem.hint'))}${settings().member_enabled === false ? ` <b class="red" id="mb-off">${esc(t('mem.off'))}</b>` : ''}</p>
+    <div class="kpis"><div class="kpi gold" data-kpi="mb-total"><div class="k">${esc(t('mem.total'))}</div><div class="v num" id="mb-total">${fmtNum(all.length)}</div></div>
+      <div class="kpi" data-kpi="mb-active"><div class="k">${esc(t('mem.active30'))}</div><div class="v num" id="mb-active">${fmtNum(all.filter(c => String(c.last_visit || '') >= from30).length)}</div></div>
+      <div class="kpi" data-kpi="mb-tiers"><div class="k">${esc(t('mem.tiers'))}</div><div class="v small" style="font-size:14px">${memberTiers().map(x => esc(t('mem.tier_txt', { from: x.from, pct: fmtPct1(x.pct) }))).join('<br>')}</div></div></div>
+    <div class="toolbar"><input class="input" id="mb-q" type="search" placeholder="${esc(t('mem.search'))}" aria-label="${esc(t('mem.search'))}" value="${esc(MB.q)}"></div>
+    <div id="mb-list"></div>`;
+  const draw = () => {
+    const q = norm(MB.q);
+    const list = all.filter(c => !q || norm(`${c.name} ${c.member_no} ${c.phone} ${c.email}`).includes(q)).sort((a, b) => String(b.last_visit || '').localeCompare(String(a.last_visit || '')) || a.name.localeCompare(b.name));
+    $('#mb-list').innerHTML = `<div class="tbl-wrap"><table class="tbl" id="mb-table"><thead><tr><th>${esc(t('name'))}</th><th>${esc(t('mem.no'))}</th><th class="hide-phone">${esc(t('phone'))} / ${esc(t('mem.email'))}</th><th class="r">${esc(t('mem.visits'))}</th><th>${esc(t('mem.last'))}</th><th class="r">${esc(t('mem.next_pct'))}</th><th></th></tr></thead><tbody>
+      ${list.map(c => { const m = memberOf(c); return `<tr data-cid="${esc(c.id)}"><td><b>${esc(c.name)}</b><div class="small muted show-phone-only">${esc(c.phone || '')}</div></td><td class="num" data-mno>${esc(c.member_no || '—')}</td>
+        <td class="hide-phone small">${esc(c.phone || '—')}${c.email ? `<br><span class="muted">${esc(c.email)}</span>` : ''}</td><td class="r num" data-visits>${fmtNum(int(c.visits))}</td>
+        <td class="num small ${String(c.last_visit || '') >= from30 ? '' : 'muted'}" data-last>${c.last_visit ? esc(fmtDate(c.last_visit)) : '—'}</td>
+        <td class="r num" data-tier><b>${m ? esc(fmtPct1(m.pct)) : '—'}</b><div class="small muted">${m ? esc(t('mem.purchase_n', { n: m.purchase_no })) : ''}</div></td>
+        <td class="r" style="white-space:nowrap"><button class="btn xs" data-act="mb-edit" data-id="${esc(c.id)}">${ic('edit')}</button> <button class="btn xs danger" data-act="mb-remove" data-id="${esc(c.id)}">${esc(t('mem.remove'))}</button></td></tr>`; }).join('') || `<tr><td colspan="7" class="empty">${esc(t('mem.none'))}</td></tr>`}</tbody></table></div>`;
+  };
+  $('#mb-q').addEventListener('input', e => { MB.q = e.target.value; draw(); });
+  draw();
+};
+async function saveCustomerMember(data) {
+  const r = await api('save_customer', data);
+  if (r.customer && r.customer.id != null) upsertLocal(S.customers, r.customer); else await refreshData(true);
+  saveCache();
+  return r;
+}
+function openMemberAdd() {
+  const others = S.customers.filter(c => c.member !== true).sort((a, b) => a.name.localeCompare(b.name));
+  const el = openModal({
+    title: t('mem.add'), cls: 'narrow', id: 'mb-modal',
+    body: `<div class="field"><label class="f" for="mb-pick">${esc(t('mem.pick'))}</label><select class="input" id="mb-pick"><option value="">${esc(t('mem.pick_new'))}</option>${others.map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.phone ? ' · ' + esc(c.phone) : ''}</option>`).join('')}</select></div>
+      <div id="mb-new"><div class="field"><label class="f" for="mb-name">${esc(t('name'))} *</label><input class="input" id="mb-name" autocomplete="off"></div>
+        <div class="field"><label class="f" for="mb-phone">${esc(t('phone'))}</label><input class="input" id="mb-phone" inputmode="tel" autocomplete="off"></div></div>
+      <div class="field"><label class="f" for="mb-email">${esc(t('mem.email'))}</label><input class="input" id="mb-email" type="email" inputmode="email" autocomplete="off" placeholder="nama@contoh.com"></div>
+      <label class="check"><input type="checkbox" id="mb-consent"> <span>${esc(t('mem.consent'))}</span></label>
+      <div class="red" id="mb-err"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="mb-save">${esc(t('mem.add'))}</button>`
+  });
+  const pick = $('#mb-pick', el), nw = $('#mb-new', el);
+  pick.onchange = () => { nw.hidden = !!pick.value; const c = custById(pick.value); $('#mb-email', el).value = c && c.email ? c.email : ''; };
+  $('#mb-save', el).onclick = async () => {
+    const err = $('#mb-err', el), email = $('#mb-email', el).value.trim().toLowerCase();
+    if (!$('#mb-consent', el).checked) { err.textContent = t('mem.consent_req'); return; }
+    if (email && !/^[^\s@<>"',;]+@[^\s@<>"',;]+\.[a-z]{2,}$/i.test(email)) { err.textContent = t('mem.email_bad'); return; }
+    const data = { member: true, email };
+    if (pick.value) data.id = custById(pick.value).id;
+    else {
+      data.name = $('#mb-name', el).value.trim(); data.phone = $('#mb-phone', el).value.trim(); data.source = 'member';
+      if (!data.name && !data.phone) { err.textContent = t('required') + ': ' + t('name'); return; }
+    }
+    $('#mb-save', el).disabled = true;
+    try {
+      const r = await saveCustomerMember(data);
+      closeModal(); toast(t('mem.added', { name: r.customer.name, no: r.customer.member_no }), 'ok', 4000);
+      if (S.view === 'members') RENDER.members();
+    } catch (e) { err.textContent = errMsg(e); $('#mb-save', el).disabled = false; }
+  };
+}
+async function removeMember(c) {
+  const r0 = await confirmBox(t('mem.remove_confirm', { name: c.name, no: c.member_no || '' }), { danger: true }); if (!r0.ok) return;
+  try { await saveCustomerMember({ id: c.id, member: false }); toast(t('mem.removed', { name: c.name }), 'ok'); if (S.view === 'members') RENDER.members(); }
+  catch (e) { toast(errMsg(e), 'err'); }
+}
+
+/* ---- Warehouse (gudang) vs shop shelf (toko): stock = total, shop_stock = on the shelf ---- */
+/** A product without shop_stock yet (before v16) counts all its stock as on the shelf. */
+const shelfOf = p => p.shop_stock === undefined || p.shop_stock === null || p.shop_stock === '' ? num(p.stock) : Math.min(num(p.shop_stock), num(p.stock));
+const gudangOf = p => roundQty(num(p.stock) - shelfOf(p));
+function openMoveStock(pid, to = 'toko') {
+  const MV = { to, lines: [] };
+  const addLine = id => { const p = prodById(id); if (!p || MV.lines.some(l => String(l.id) === String(p.id))) return; MV.lines.push({ id: p.id, qty: '' }); };
+  if (pid) addLine(pid);
+  const el = openModal({
+    title: t('mv.title'), id: 'move-modal',
+    body: `<p class="small muted" style="margin-top:0">${esc(t('mv.hint'))}</p>
+      <div class="seg" id="mv-to" style="max-width:420px;margin-bottom:10px"><button type="button" data-to="toko">${esc(t('mv.to_toko'))}</button><button type="button" data-to="gudang">${esc(t('mv.to_gudang'))}</button></div>
+      <div id="mv-lines"></div>
+      <div class="row" style="margin:8px 0"><select class="input" id="mv-add" aria-label="${esc(t('mv.add'))}"></select></div>
+      <div class="field"><label class="f" for="mv-note">${esc(t('notes'))}</label><input class="input" id="mv-note" autocomplete="off" maxlength="200"></div>
+      <div class="red" id="mv-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="mv-save">${esc(t('mv.save'))}</button>`
+  });
+  const avail = p => MV.to === 'toko' ? gudangOf(p) : shelfOf(p);
+  const draw = () => {
+    $$('#mv-to button', el).forEach(b => b.classList.toggle('on', b.dataset.to === MV.to));
+    $('#mv-lines', el).innerHTML = MV.lines.length ? `<div class="tbl-wrap"><table class="tbl" id="mv-table"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('gd.col_gudang'))}</th><th class="r">${esc(t('gd.col_rak'))}</th><th class="r">${esc(t('qty'))}</th><th></th></tr></thead><tbody>
+      ${MV.lines.map((l, i) => { const p = prodById(l.id); return `<tr data-mv="${esc(p.id)}"><td><b>${esc(p.name)}</b></td><td class="r num">${fmtQty(gudangOf(p))}</td><td class="r num">${fmtQty(shelfOf(p))}</td>
+        <td class="r"><input class="input num" style="width:90px;min-height:34px" data-mv-qty="${i}" inputmode="decimal" value="${esc(l.qty)}" placeholder="${esc(fmtQty(Math.max(0, avail(p))))}" aria-label="${esc(t('qty'))}"></td>
+        <td><button class="icon-btn ghost sm" data-mv-del="${i}" aria-label="${esc(t('delete'))}">${ic('trash')}</button></td></tr>`; }).join('')}</tbody></table></div>` : `<div class="muted small">${esc(t('mv.empty'))}</div>`;
+    const cand = S.products.filter(p => p.active !== false && avail(p) > 0 && !MV.lines.some(l => String(l.id) === String(p.id))).sort((a, b) => a.name.localeCompare(b.name));
+    $('#mv-add', el).innerHTML = `<option value="">${esc(t('mv.add'))}…</option>` + cand.map(p => `<option value="${esc(p.id)}">${esc(p.name)} · ${esc(fmtQty(avail(p)))} ${esc(p.unit || '')}</option>`).join('');
+    $$('[data-mv-qty]', el).forEach(inp => inp.oninput = () => { MV.lines[+inp.dataset.mvQty].qty = inp.value; });
+    $$('[data-mv-del]', el).forEach(b => b.onclick = () => { MV.lines.splice(+b.dataset.mvDel, 1); draw(); });
+  };
+  $('#mv-to', el).onclick = e => { const b = e.target.closest('[data-to]'); if (!b) return; MV.to = b.dataset.to; draw(); };
+  $('#mv-add', el).onchange = e => { if (e.target.value) { addLine(e.target.value); draw(); const q = $$('[data-mv-qty]', el).pop(); if (q) q.focus(); } };
+  draw();
+  $('#mv-save', el).onclick = async () => {
+    const err = $('#mv-err', el);
+    const lines = MV.lines.map(l => ({ product_id: l.id, qty: qtyVal(l.qty) })).filter(l => l.qty > 0);
+    if (!lines.length) { err.textContent = t('mv.need_qty'); return; }
+    $('#mv-save', el).disabled = true; err.textContent = '';
+    try {
+      const r = await api('move_stock', { to: MV.to, lines, note: $('#mv-note', el).value.trim() });
+      applyStock(r.stock);
+      closeModal(); toast(t(MV.to === 'toko' ? 'mv.done_toko' : 'mv.done_gudang', { n: lines.length }), 'ok');
+      if (S.view === 'gudang') gdDraw(); else if (S.view === 'products') drawProducts();
+      MV.after && MV.after();
+    } catch (e) { err.textContent = errMsg(e); $('#mv-save', el).disabled = false; }
+  };
+  return MV;
+}
+/** POS: the server refused a sale because goods are still in the warehouse → show what is missing, offer to move it. */
+function openNotOnShelf(items, retry) {
+  items = Array.isArray(items) ? items : [];
+  items.forEach(x => { const p = prodById(x.product_id); if (p) p.shop_stock = num(x.shop); });
+  const movable = items.map(x => ({ x, q: roundQty(Math.min(num(x.gudang), num(x.need) - num(x.shop))) })).filter(m => m.q > 0);
+  const all = movable.length === items.length && movable.every(m => roundQty(num(m.x.shop) + m.q) >= num(m.x.need));
+  const el = openModal({
+    title: t('ns.title'), id: 'shelf-modal', cls: 'narrow',
+    body: `<p style="margin-top:0">${esc(t('ns.hint'))}</p>
+      <div class="tbl-wrap"><table class="tbl" id="ns-table"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('ns.need'))}</th><th class="r">${esc(t('gd.col_rak'))}</th><th class="r">${esc(t('gd.col_gudang'))}</th></tr></thead><tbody>
+      ${items.map(x => `<tr data-pid="${esc(x.product_id)}"><td><b>${esc(x.name)}</b>${num(x.gudang) <= 0 ? `<div class="small red" data-nonote>${esc(t('ns.no_goods_in'))}</div>` : ''}</td><td class="r num">${fmtQty(num(x.need))}</td><td class="r num red">${fmtQty(num(x.shop))}</td><td class="r num">${fmtQty(num(x.gudang))}</td></tr>`).join('')}</tbody></table></div>
+      <div class="red small" id="ns-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button>${movable.length ? `<button class="btn primary" id="ns-move">${esc(t(all ? 'ns.move_save' : 'ns.move', { n: movable.length }))}</button>` : ''}`
+  });
+  const b = $('#ns-move', el); if (!b) return;
+  b.onclick = async () => {
+    b.disabled = true;
+    try {
+      const r = await api('move_stock', { to: 'toko', lines: movable.map(m => ({ product_id: m.x.product_id, qty: m.q })), note: t('ns.note') });
+      applyStock(r.stock); closeModal();
+      toast(t('mv.done_toko', { n: movable.length }), 'ok');
+      if (all) retry && retry(); else renderGrid();
+    } catch (e) { $('#ns-err', el).textContent = errMsg(e); b.disabled = false; }
+  };
+}
+
+/* ---- Settings (owner): discount limit + members, sell from the shelf only, owner master code ---- */
+const tierRowHTML = (x, i) => `<div class="row st-tier" data-tier="${i}" style="margin-bottom:6px;gap:6px"><span class="small">${esc(t('mem.tier_from'))}</span><input class="input num" style="width:80px" data-tier-from inputmode="numeric" value="${esc(x.from)}" aria-label="${esc(t('mem.tier_from'))}">
+  <span class="small">${esc(t('mem.tier_pct'))}</span><input class="input num" style="width:80px" data-tier-pct inputmode="decimal" value="${esc(x.pct)}" aria-label="${esc(t('mem.tier_pct'))}"><span>%</span>
+  <button class="icon-btn ghost sm" data-act="st-tier-del" data-i="${i}" aria-label="${esc(t('delete'))}">${ic('trash')}</button></div>`;
+function settingsV16HTML() {
+  if (!isOwner()) return '';
+  const st = settings(), me = (S.users || []).find(u => u.name.toLowerCase() === String(S.user).toLowerCase()) || {};
+  return `<div class="panel" id="st-disc"><h3>${ic('tag')} ${esc(t('set.disc_title'))}</h3><div class="pb">
+      <div class="field"><label class="f" for="st-maxdisc">${esc(t('set.max_disc'))}</label><div class="row"><input class="input num" id="st-maxdisc" style="max-width:110px" inputmode="decimal" value="${esc(st.max_discount_pct ?? 3)}"><span>%</span></div>
+        <div class="small muted" style="margin-top:4px">${esc(t('set.max_disc_hint'))}</div></div>
+      <label class="check"><input type="checkbox" id="st-mem-on" ${st.member_enabled !== false ? 'checked' : ''}> <span>${esc(t('set.mem_on'))}<br><span class="small muted">${esc(t('set.mem_hint'))}</span></span></label>
+      <div id="st-tiers">${memberTiers().map(tierRowHTML).join('')}</div>
+      <button class="btn sm" data-act="st-tier-add" id="st-tier-add">${ic('plus')} ${esc(t('mem.tier_add'))}</button>
+      <div class="red" id="st-disc-err"></div><button class="btn primary" data-act="set-save-disc" style="margin-top:8px">${esc(t('save'))}</button></div></div>
+    <div class="panel" id="st-shelf"><h3>${ic('warehouse')} ${esc(t('set.shelf_title'))}</h3><div class="pb">
+      <label class="check"><input type="checkbox" id="st-shelf-only" ${st.sell_from_shop_only !== false ? 'checked' : ''}> <span>${esc(t('set.shelf_only'))}</span></label>
+      <p class="small muted">${esc(t('set.shelf_hint'))}</p>
+      <div class="red" id="st-shelf-err"></div><button class="btn primary" data-act="set-save-shelf">${esc(t('save'))}</button></div></div>
+    <div class="panel" id="st-master"><h3>${ic('lock')} ${esc(t('mc.title'))} ${me.has_master ? `<span class="badge green" id="st-mc-state">${esc(t('mc.has'))}</span>` : `<span class="badge gray" id="st-mc-state">${esc(t('mc.none'))}</span>`}</h3><div class="pb">
+      <p class="small" style="margin-top:0">${esc(t('mc.hint'))}</p>
+      ${S.viaMaster ? `<div class="notice" id="st-mc-via">${ic('lock')} <span>${esc(t('mc.via_refuse'))}</span></div>` : ''}
+      <div class="grid2"><div class="field"><label class="f" for="st-mc1">${esc(t('mc.code'))}</label><input class="input num" id="st-mc1" type="password" inputmode="numeric" maxlength="8" autocomplete="new-password" ${S.viaMaster ? 'disabled' : ''}></div>
+        <div class="field"><label class="f" for="st-mc2">${esc(t('mc.code2'))}</label><input class="input num" id="st-mc2" type="password" inputmode="numeric" maxlength="8" autocomplete="new-password" ${S.viaMaster ? 'disabled' : ''}></div></div>
+      <div class="red" id="st-mc-err"></div><button class="btn primary" data-act="set-save-master" id="st-mc-save" ${S.viaMaster ? 'disabled' : ''}>${esc(t(me.has_master ? 'mc.change' : 'mc.set'))}</button></div></div>`;
+}
+function readTiers() {
+  const rows = $$('#st-tiers .st-tier').map(r => ({ from: $('[data-tier-from]', r).value.trim(), pct: $('[data-tier-pct]', r).value.trim().replace(',', '.') }));
+  const out = [];
+  for (const r of rows) {
+    if (r.from === '' && r.pct === '') continue;
+    const from = Number(r.from), pct = Number(r.pct);
+    if (!Number.isInteger(from) || from < 1) return { err: t('mem.tier_bad_from') };
+    if (!(pct > 0 && pct <= 50)) return { err: t('mem.tier_bad_pct') };
+    if (out.some(x => x.from === from)) return { err: t('mem.tier_dup', { n: from }) };
+    out.push({ from, pct: Math.round(pct * 10) / 10 });
+  }
+  return { tiers: out.sort((a, b) => a.from - b.from) };
+}
+
+Object.assign(ACT, {
+  'pc-key': el => pcKey(el.dataset.k),
+  'pc-cancel': () => { PC.need = false; $('#pin-change').hidden = true; logoutUser(); },
+  'mb-add': () => openMemberAdd(),
+  'mb-edit': el => openCustomerEditor(custById(el.dataset.id), () => { if (S.view === 'members') RENDER.members(); }),
+  'mb-remove': el => removeMember(custById(el.dataset.id)),
+  'gd-move': () => openMoveStock(null, 'toko'),
+  'gd-move-one': el => openMoveStock(el.dataset.id, 'toko'),
+  'st-tier-add': () => { const box = $('#st-tiers'); if (!box) return; const n = box.children.length; box.insertAdjacentHTML('beforeend', tierRowHTML({ from: '', pct: '' }, n)); const i = $$('[data-tier-from]', box).pop(); if (i) i.focus(); },
+  'st-tier-del': el => { const r = el.closest('.st-tier'); if (r) r.remove(); },
+  'set-save-disc': () => {
+    const err = $('#st-disc-err'), raw = $('#st-maxdisc').value.trim().replace(',', '.'), max = Number(raw);
+    if (!(max > 0 && max <= 100)) { err.textContent = t('set.max_disc_bad'); return; }
+    const tr = readTiers(); if (tr.err) { err.textContent = tr.err; return; }
+    err.textContent = '';
+    saveSettings({ max_discount_pct: Math.round(max * 10) / 10, member_enabled: $('#st-mem-on').checked, member_tiers: tr.tiers }, err);
+  },
+  'set-save-shelf': () => saveSettings({ sell_from_shop_only: $('#st-shelf-only').checked }, $('#st-shelf-err')),
+  'set-save-master': async () => {
+    const err = $('#st-mc-err'), a = $('#st-mc1').value.trim(), b = $('#st-mc2').value.trim();
+    if (S.viaMaster) { err.textContent = t('mc.via_refuse'); return; }
+    if (!/^\d{8}$/.test(a)) { err.textContent = t('mc.len'); return; }
+    if (a !== b) { err.textContent = t('mc.mismatch'); return; }
+    err.textContent = '';
+    try {
+      await api('set_master', { master_hash: await masterHash(S.key, a) });
+      const me = S.users.find(u => u.name.toLowerCase() === S.user.toLowerCase()); if (me) me.has_master = true;
+      saveCache(); toast(t('mc.saved'), 'ok', 4000); RENDER.settings();
+    } catch (e) { err.textContent = errMsg(e); }
+  }
+});
+function logoutUser() { S.pin_hash = ''; S.viaMaster = false; sessSet(S.user, S.role, ''); L.sel = S.user; S.inApp = false; showLogin('pin'); }
+Object.assign(I18N.id, {
+  'nav.members': 'Member', 'navs.members': 'Member',
+  'mc.title': 'Kode pemilik', 'mc.hint': 'Kode 8 angka yang hanya diketahui pemilik. Dengan kode ini pemilik bisa masuk ke akun siapa pun (misalnya saat kasir lupa PIN atau akun terkunci). Setiap masuk dengan kode ini dicatat di Aktivitas. Kode tidak disimpan di perangkat ini.',
+  'mc.code': 'Kode pemilik (8 angka)', 'mc.code2': 'Ulangi kode', 'mc.set': 'Simpan kode pemilik', 'mc.change': 'Ganti kode pemilik', 'mc.has': 'Kode pemilik aktif', 'mc.none': 'Belum ada',
+  'mc.len': 'Kode pemilik harus 8 angka', 'mc.mismatch': 'Kedua kode tidak sama', 'mc.saved': 'Kode pemilik disimpan', 'mc.via': 'via kode pemilik',
+  'mc.via_refuse': 'Anda masuk dengan kode pemilik. Kode pemilik hanya bisa diganti setelah masuk dengan PIN pemilik sendiri.',
+  'mc.login_link': 'Masuk dengan kode pemilik', 'mc.login_back': '← Masuk dengan PIN', 'mc.login_title': 'Kode pemilik untuk akun {name} (8 angka)',
+  'login.locked_until': 'Terlalu banyak PIN salah. Akun ini dikunci sampai jam {time}.', 'login.tries_left': '{n} kali lagi, lalu akun dikunci 15 menit.',
+  'err.LOCKED': 'Akun dikunci sementara', 'err.PIN_CHANGE_REQUIRED': 'Buat PIN baru dulu', 'err.NOT_ON_SHELF': 'Barang belum ada di rak toko', 'err.NOT_IN_GUDANG': 'Stok gudang kurang', 'err.DISCOUNT_APPROVAL_REQUIRED': 'Diskon perlu persetujuan',
+  'pc.title': 'Buat PIN baru', 'pc.hint': 'Halo {name}, PIN Anda dibuat oleh pemilik (sementara). Buat PIN sendiri {n} angka — jangan beri tahu siapa pun.',
+  'pc.step1': 'Masukkan PIN baru ({n} angka)', 'pc.step2': 'Ulangi PIN baru', 'pc.len': 'PIN harus {n} angka', 'pc.same': 'PIN baru harus berbeda dari PIN sementara', 'pc.save': 'Lanjut', 'pc.cancel': 'Keluar', 'pc.done': 'PIN baru disimpan',
+  'usr.must_change': 'belum ganti PIN', 'usr.locked': 'terkunci', 'usr.temp_notice': 'PIN untuk {name} adalah PIN sementara: saat pertama masuk, {name} wajib membuat PIN sendiri.',
+  'usr.temp_hint': 'PIN yang Anda buat untuk orang lain bersifat sementara — mereka membuat PIN sendiri saat pertama masuk.',
+  'apr.kind_disc': 'Diskon {pct}', 'apr.new_disc': 'Permintaan diskon dari {cashier} →',
+  'dsc.list': 'Harga normal', 'dsc.amount': 'Diskon', 'dsc.total': 'Total dibayar', 'dsc.limit': 'Batas tanpa persetujuan', 'dsc.member': 'member {pct}',
+  'dsc.profit_before': 'Laba sebelum diskon', 'dsc.profit_after': 'Laba setelah diskon', 'dsc.lost': 'Laba berkurang', 'dsc.margin': 'margin {pct}',
+  'mem.badge': 'Member', 'mem.add': 'Tambah member', 'mem.hint': 'Pelanggan member mendapat diskon otomatis mulai pembelian ke-2. Diskon dihitung aplikasi kasir dari jumlah kunjungan.', 'mem.off': 'Program member sedang nonaktif (Pengaturan).',
+  'mem.total': 'Jumlah member', 'mem.active30': 'Aktif 30 hari terakhir', 'mem.tiers': 'Tingkat diskon', 'mem.tier_txt': 'pembelian ke-{from}+: {pct}', 'mem.search': 'Cari nama, no. member, HP, e-mail…',
+  'mem.no': 'No. member', 'mem.email': 'E-mail', 'mem.visits': 'Kunjungan', 'mem.last': 'Terakhir', 'mem.next_pct': 'Diskon berikutnya', 'mem.purchase_n': 'pembelian ke-{n}', 'mem.remove': 'Hapus member', 'mem.none': 'Belum ada member.',
+  'mem.pick': 'Pelanggan', 'mem.pick_new': '— pelanggan baru —', 'mem.consent': 'Pelanggan setuju nama, nomor HP dan e-mailnya disimpan untuk program member dan struk, sesuai UU Pelindungan Data Pribadi (UU PDP). Data bisa dihapus kapan saja atas permintaan pelanggan.',
+  'mem.consent_req': 'Centang persetujuan pelanggan dulu', 'mem.email_bad': 'Alamat e-mail tidak valid', 'mem.added': '{name} sekarang member ({no})', 'mem.remove_confirm': 'Hapus keanggotaan {name} ({no})? Diskon member tidak berlaku lagi.', 'mem.removed': '{name} bukan member lagi',
+  'mem.cart_disc': 'Diskon member {pct}% · pembelian ke-{n}', 'mem.form': 'Pelanggan member (diskon otomatis)',
+  'mem.tier_from': 'Mulai pembelian ke-', 'mem.tier_pct': 'diskon', 'mem.tier_add': 'Tambah tingkat', 'mem.tier_bad_from': 'Pembelian ke- harus angka bulat ≥ 1', 'mem.tier_bad_pct': 'Diskon tingkat harus 0,1–50%', 'mem.tier_dup': 'Tingkat pembelian ke-{n} dobel',
+  'set.disc_title': 'Batas diskon & member', 'set.max_disc': 'Diskon maksimal tanpa persetujuan', 'set.max_disc_hint': 'Dihitung dari harga normal (eceran, atau grosir bila berlaku). Kasir yang memberi lebih harus minta persetujuan manajer / pemilik. Diskon member boleh ditambahkan di atas batas ini.',
+  'set.max_disc_bad': 'Isi persen antara 0,1 dan 100', 'set.mem_on': 'Program member aktif', 'set.mem_hint': 'Diskon menurut pembelian ke- (kunjungan + 1):',
+  'set.shelf_title': 'Gudang & rak toko', 'set.shelf_only': 'Jual hanya dari stok rak toko', 'set.shelf_hint': 'Barang masuk (dengan foto nota) masuk ke gudang dulu. Barang baru bisa dijual setelah dipindah ke rak toko ("Pindah ke rak" di Gudang). Ini mencegah barang dijual tanpa nota masuk. Penjualan yang tersimpan offline tetap diterima dan dicatat untuk pemilik.',
+  'gd.col_total': 'Total', 'gd.col_gudang': 'Gudang', 'gd.col_rak': 'Rak', 'gd.rak_kosong': 'Ada di gudang, rak kosong', 'gd.to_rak': '→ Rak',
+  'mv.title': 'Pindah stok gudang ↔ rak', 'mv.hint': 'Pindahkan barang dari gudang ke rak toko supaya bisa dijual, atau kembalikan ke gudang.', 'mv.to_toko': 'Gudang → rak toko', 'mv.to_gudang': 'Rak toko → gudang',
+  'mv.add': 'Tambah barang', 'mv.empty': 'Pilih barang di bawah.', 'mv.save': 'Pindahkan', 'mv.need_qty': 'Isi jumlah yang dipindah', 'mv.done_toko': '{n} barang dipindah ke rak', 'mv.done_gudang': '{n} barang dikembalikan ke gudang',
+  'ns.title': 'Barang belum ada di rak', 'ns.hint': 'Penjualan belum disimpan: barang ini masih di gudang. Pindahkan dulu ke rak toko.', 'ns.need': 'Perlu', 'ns.no_goods_in': 'Belum ada barang masuk dengan nota',
+  'ns.move': 'Pindahkan {n} barang ke rak', 'ns.move_save': 'Pindahkan ke rak & simpan penjualan', 'ns.note': 'Dipindah saat menjual (kasir)',
+  'led.auto': 'otomatis {n}', 'led.auto_hint': 'Pembayaran tanpa faktur dipakai untuk faktur terlama dulu',
+  'ak.minta_diskon': 'Minta diskon', 'ak.diskon': 'Diskon', 'ak.member_baru': 'Member baru', 'ak.member_berhenti': 'Member dihapus', 'ak.masuk_master': 'Masuk dengan kode pemilik', 'ak.ganti_pin': 'Ganti PIN', 'ak.kode_pemilik': 'Kode pemilik',
+  'ak.pindah_stok': 'Pindah stok gudang/rak', 'ak.jual_tanpa_rak': 'Jual melebihi stok rak'
+});
+Object.assign(I18N.ar, {
+  'nav.members': 'الأعضاء', 'navs.members': 'الأعضاء',
+  'mc.title': 'رمز المالك', 'mc.hint': 'رمز من 8 أرقام يعرفه المالك وحده. به يستطيع المالك الدخول إلى أي حساب (مثلاً إذا نسي الكاشير رقمه أو قُفل الحساب). كل دخول بهذا الرمز يُسجَّل في سجل النشاط. لا يُحفظ الرمز على هذا الجهاز.',
+  'mc.code': 'رمز المالك (8 أرقام)', 'mc.code2': 'أعد الرمز', 'mc.set': 'حفظ رمز المالك', 'mc.change': 'تغيير رمز المالك', 'mc.has': 'رمز المالك مفعّل', 'mc.none': 'غير موجود',
+  'mc.len': 'رمز المالك 8 أرقام', 'mc.mismatch': 'الرمزان غير متطابقين', 'mc.saved': 'تم حفظ رمز المالك', 'mc.via': 'عبر رمز المالك',
+  'mc.via_refuse': 'دخلت برمز المالك. لا يمكن تغيير الرمز إلا بعد الدخول برقم المالك الشخصي.',
+  'mc.login_link': 'الدخول برمز المالك', 'mc.login_back': '→ الدخول بالرقم السري', 'mc.login_title': 'رمز المالك لحساب {name} (8 أرقام)',
+  'login.locked_until': 'أرقام خاطئة كثيرة. الحساب مقفل حتى الساعة {time}.', 'login.tries_left': 'بقي {n} محاولات ثم يُقفل الحساب 15 دقيقة.',
+  'err.LOCKED': 'الحساب مقفل مؤقتاً', 'err.PIN_CHANGE_REQUIRED': 'أنشئ رقماً سرياً جديداً أولاً', 'err.NOT_ON_SHELF': 'البضاعة ليست على رف المحل', 'err.NOT_IN_GUDANG': 'مخزون المستودع غير كافٍ', 'err.DISCOUNT_APPROVAL_REQUIRED': 'الخصم يحتاج موافقة',
+  'pc.title': 'أنشئ رقماً سرياً جديداً', 'pc.hint': 'مرحباً {name}، رقمك السري وضعه المالك (مؤقت). أنشئ رقمك الخاص من {n} أرقام — لا تخبر به أحداً.',
+  'pc.step1': 'أدخل الرقم الجديد ({n} أرقام)', 'pc.step2': 'أعد الرقم الجديد', 'pc.len': 'الرقم السري {n} أرقام', 'pc.same': 'يجب أن يختلف الرقم الجديد عن المؤقت', 'pc.save': 'متابعة', 'pc.cancel': 'خروج', 'pc.done': 'تم حفظ الرقم الجديد',
+  'usr.must_change': 'لم يغيّر الرقم بعد', 'usr.locked': 'مقفل', 'usr.temp_notice': 'رقم {name} مؤقت: عند أول دخول يجب على {name} إنشاء رقمه الخاص.',
+  'usr.temp_hint': 'الرقم الذي تضعه لشخص آخر مؤقت — ينشئ رقمه الخاص عند أول دخول.',
+  'apr.kind_disc': 'خصم {pct}', 'apr.new_disc': 'طلب خصم من {cashier} ←',
+  'dsc.list': 'السعر العادي', 'dsc.amount': 'الخصم', 'dsc.total': 'المبلغ المدفوع', 'dsc.limit': 'الحد دون موافقة', 'dsc.member': 'عضو {pct}',
+  'dsc.profit_before': 'الربح قبل الخصم', 'dsc.profit_after': 'الربح بعد الخصم', 'dsc.lost': 'نقص الربح', 'dsc.margin': 'هامش {pct}',
+  'mem.badge': 'عضو', 'mem.add': 'إضافة عضو', 'mem.hint': 'يحصل العضو على خصم تلقائي ابتداءً من الشراء الثاني، يحسبه تطبيق الكاشير من عدد الزيارات.', 'mem.off': 'برنامج العضوية متوقف (الإعدادات).',
+  'mem.total': 'عدد الأعضاء', 'mem.active30': 'نشطون آخر 30 يوماً', 'mem.tiers': 'درجات الخصم', 'mem.tier_txt': 'من الشراء {from}: {pct}', 'mem.search': 'ابحث بالاسم أو رقم العضوية أو الهاتف أو البريد…',
+  'mem.no': 'رقم العضوية', 'mem.email': 'البريد الإلكتروني', 'mem.visits': 'الزيارات', 'mem.last': 'آخر زيارة', 'mem.next_pct': 'الخصم القادم', 'mem.purchase_n': 'الشراء رقم {n}', 'mem.remove': 'إلغاء العضوية', 'mem.none': 'لا يوجد أعضاء بعد.',
+  'mem.pick': 'العميل', 'mem.pick_new': '— عميل جديد —', 'mem.consent': 'يوافق العميل على حفظ اسمه ورقم هاتفه وبريده لبرنامج العضوية والإيصالات وفق قانون حماية البيانات الشخصية الإندونيسي (UU PDP). تُحذف البيانات متى طلب العميل.',
+  'mem.consent_req': 'ضع علامة موافقة العميل أولاً', 'mem.email_bad': 'البريد الإلكتروني غير صحيح', 'mem.added': '{name} أصبح عضواً ({no})', 'mem.remove_confirm': 'إلغاء عضوية {name} ({no})؟ لن يُطبَّق خصم العضوية بعد الآن.', 'mem.removed': '{name} لم يعد عضواً',
+  'mem.cart_disc': 'خصم العضو {pct}% · الشراء رقم {n}', 'mem.form': 'عميل عضو (خصم تلقائي)',
+  'mem.tier_from': 'من الشراء رقم', 'mem.tier_pct': 'خصم', 'mem.tier_add': 'إضافة درجة', 'mem.tier_bad_from': 'رقم الشراء عدد صحيح ≥ 1', 'mem.tier_bad_pct': 'خصم الدرجة بين 0.1 و50%', 'mem.tier_dup': 'الدرجة {n} مكررة',
+  'set.disc_title': 'حد الخصم والعضوية', 'set.max_disc': 'أقصى خصم دون موافقة', 'set.max_disc_hint': 'يُحسب من السعر العادي (التجزئة، أو الجملة عند انطباقها). الكاشير الذي يعطي أكثر يطلب موافقة المدير / المالك. يضاف خصم العضو فوق هذا الحد.',
+  'set.max_disc_bad': 'أدخل نسبة بين 0.1 و100', 'set.mem_on': 'برنامج العضوية مفعّل', 'set.mem_hint': 'الخصم حسب رقم الشراء (الزيارات + 1):',
+  'set.shelf_title': 'المستودع ورف المحل', 'set.shelf_only': 'البيع من مخزون الرف فقط', 'set.shelf_hint': 'البضاعة الواردة (مع صورة الفاتورة) تدخل المستودع أولاً، ولا تُباع إلا بعد نقلها إلى رف المحل ("نقل إلى الرف" في المستودع). هذا يمنع بيع بضاعة دون فاتورة وارد. المبيعات المحفوظة دون اتصال تُقبل دائماً وتُسجَّل للمالك.',
+  'gd.col_total': 'الإجمالي', 'gd.col_gudang': 'المستودع', 'gd.col_rak': 'الرف', 'gd.rak_kosong': 'في المستودع، الرف فارغ', 'gd.to_rak': '← الرف',
+  'mv.title': 'نقل المخزون مستودع ↔ رف', 'mv.hint': 'انقل البضاعة من المستودع إلى رف المحل لتصبح قابلة للبيع، أو أعدها إلى المستودع.', 'mv.to_toko': 'المستودع ← رف المحل', 'mv.to_gudang': 'رف المحل ← المستودع',
+  'mv.add': 'إضافة صنف', 'mv.empty': 'اختر الأصناف أدناه.', 'mv.save': 'نقل', 'mv.need_qty': 'أدخل الكمية المنقولة', 'mv.done_toko': 'نُقل {n} صنف إلى الرف', 'mv.done_gudang': 'أُعيد {n} صنف إلى المستودع',
+  'ns.title': 'البضاعة ليست على الرف', 'ns.hint': 'لم يُحفظ البيع: هذه البضاعة ما زالت في المستودع. انقلها أولاً إلى رف المحل.', 'ns.need': 'المطلوب', 'ns.no_goods_in': 'لا يوجد وارد بفاتورة',
+  'ns.move': 'نقل {n} صنف إلى الرف', 'ns.move_save': 'النقل إلى الرف وحفظ البيع', 'ns.note': 'نُقل أثناء البيع',
+  'led.auto': 'تلقائي {n}', 'led.auto_hint': 'الدفعات دون فاتورة تُخصم من أقدم الفواتير أولاً',
+  'ak.minta_diskon': 'طلب خصم', 'ak.diskon': 'خصم', 'ak.member_baru': 'عضو جديد', 'ak.member_berhenti': 'إلغاء عضوية', 'ak.masuk_master': 'دخول برمز المالك', 'ak.ganti_pin': 'تغيير الرقم السري', 'ak.kode_pemilik': 'رمز المالك',
+  'ak.pindah_stok': 'نقل مخزون مستودع/رف', 'ak.jual_tanpa_rak': 'بيع يتجاوز مخزون الرف'
+});
+
 /* ========== Boot ========== */
 function applyTheme() {
   const th = store.get('theme', 'auto');
@@ -8809,7 +9276,7 @@ async function init() {
   }
   if (S.key && sess && sess.user && sess.pin_hash) {
     if (sess.role === 'kasir' || sess.role === 'sales') { showKasirRedirect(sess.user, sess.role); return; }
-    S.user = sess.user; S.role = sess.role; S.pin_hash = sess.pin_hash; enterApp(false); return;
+    S.user = sess.user; S.role = sess.role; S.pin_hash = sess.pin_hash; S.viaMaster = !!sess.via_master; enterApp(false); return;
   }
   if (S.key) { if (sess && sess.user) { L.sel = sess.user; } showLogin('pin'); return; }
   showLogin('key');
