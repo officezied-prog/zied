@@ -495,7 +495,9 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
   #print-area .report td.r{text-align:end}
 }
 /* ========== v11–v15: devices, activity, repack, goods-in check, payments, bank account, daily report ========== */
-#app{grid-template-rows:var(--top) auto 1fr}
+#app{grid-template-rows:var(--top) auto 1fr;grid-template-columns:var(--rail) minmax(0,1fr)}
+.topbar{min-width:0;overflow:hidden}
+.brand .ellipsis{min-width:0}
 .topbar{grid-row:1}
 #dev-consent{grid-column:1/-1;grid-row:2}
 .rail{grid-row:3}
@@ -550,11 +552,15 @@ tr.miss td{background:var(--danger-l)}
 .br-beda_jumlah h4,.br-tidak_tercatat h4,.br-missing h4{background:var(--danger-l);color:var(--danger)}
 .br-diabaikan h4{background:var(--surface-2);color:var(--muted)}
 @media (max-width:759px){
-  #app{grid-template-rows:var(--top) auto 1fr var(--tab)}
+  #app{grid-template-rows:var(--top) auto 1fr var(--tab);grid-template-columns:minmax(0,1fr)}
+  .topbar .badge#tb-mock{display:none}
   #main{grid-row:3}
   .rail{grid-row:4}
   .consent-bar{padding:8px 12px;font-size:13px}
   .alloc-row .input{width:104px}
+  .act-row{flex-wrap:wrap;gap:6px 12px}
+  .act-row .grow{flex:1 1 calc(100% - 50px)}
+  .act-amt{flex:1 1 100%;text-align:end}
 }
 </style>
 <style id="page-style"></style>
@@ -1460,7 +1466,7 @@ const MockServer = (() => {
     const prev = addDays(T.slice(0, 8) + '01', -1).slice(0, 7), pd = d => `${prev}-${pad(d)}`;
     const custs = db.customers.filter(c => c.type === 'grosir');
     const slip = (pay, sd, amount) => { const ph = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'bayar', ref: pay.pay_id, created_at: at(pay.pay_date, 16, 0), photo_date: pay.pay_date, user: pay.cashier, drive_url: '', extracted: { date: sd, amount, sender_name: pay.direction === 'in' ? String(pay.customer_name).toUpperCase() : 'KHAIR MART', receiver_name: pay.direction === 'in' ? 'KHAIR MART' : String(pay.supplier).toUpperCase(), bank: pay.bank, transfer_ref: pay.transfer_ref, readable: true, notes: '' }, match_status: '', match_notes: '' }; db.photos.push(ph); pay.proof_photo_id = ph.photo_id; pay.slip_date = sd; };
-    const inPay = (d, c, amount, ref, sd, extra) => { const p = addPay(Object.assign({ pay_date: pd(d), direction: 'in', party_type: 'customer', customer_id: c.id, customer_name: c.name, supplier: '', amount, bank: 'BCA', transfer_ref: ref, note: 'Transfer cicilan', cashier: 'Jihan' }, extra || {})); slip(p, sd || p.pay_date, amount); return p; };
+    const inPay = (d, c, amount, ref, sd, extra) => { c.debt_balance = Math.max(0, int(c.debt_balance) - amount); const p = addPay(Object.assign({ pay_date: pd(d), direction: 'in', party_type: 'customer', customer_id: c.id, customer_name: c.name, supplier: '', amount, bank: 'BCA', transfer_ref: ref, note: 'Transfer cicilan', cashier: 'Jihan' }, extra || {})); slip(p, sd || p.pay_date, amount); return p; };
     const outPay = (d, sup, amount, ref, sd, extra) => { const p = addPay(Object.assign({ pay_date: pd(d), supplier: sup, amount, bank: 'BCA', transfer_ref: ref, note: 'Bayar nota', cashier: 'Jihan' }, extra || {})); slip(p, sd || p.pay_date, amount); return p; };
     const RC = [
       inPay(3, custs[0], 1500000, '7710023001'), inPay(8, custs[1], 850000, '7710023002', pd(8)), outPay(10, 'CV Timur Tengah Food', 3200000, '7710023003'),
@@ -7771,7 +7777,7 @@ function ledgerHTML(L, kind) {
   const unalloc = sum(L.payments, p => Math.max(0, p.amount - sum(p.alloc, a => a.amount)));
   const docsTbl = (list, id) => `<div class="tbl-wrap"><table class="tbl" id="${id}"><thead><tr><th>${esc(t(kind === 'customer' ? 'led.invoice' : 'led.note'))}</th><th>${esc(t('date'))}</th><th class="r">${esc(t(kind === 'customer' ? 'led.debt' : 'total'))}</th><th class="r">${esc(t('led.paid'))}</th><th class="r">${esc(t('led.remaining'))}</th></tr></thead><tbody>
     ${list.map(d => `<tr data-ref="${esc(d.ref)}"><td><b>${esc(d.ref)}</b></td><td class="num">${esc(fmtDate(d.date))}</td><td class="r num">${fmtRp(d.total)}</td><td class="r num">${fmtRp(d.paid)}</td><td class="r num" data-rem><b class="${d.remaining ? 'red' : 'green'}">${fmtRp(d.remaining)}</b></td></tr>`).join('') || `<tr><td colspan="5" class="empty">${esc(t('led.none_open'))}</td></tr>`}</tbody></table></div>`;
-  return `<div class="row wrap small" style="margin-bottom:8px;gap:6px 16px"><span>${esc(t('led.open_total'))}: <b class="num red" id="led-open-total">${fmtRp(sum(open, d => d.remaining))}</b></span>
+  return `<div class="row wrap small" style="margin-bottom:8px;gap:6px 16px"><span>${esc(t(kind === 'customer' ? 'led.open_total' : 'led.open_total_sup'))}: <b class="num red" id="led-open-total">${fmtRp(sum(open, d => d.remaining))}</b></span>
       <span>${esc(t('led.unalloc_total'))}: <b class="num" id="led-unalloc">${fmtRp(unalloc)}</b></span>${kind === 'supplier' ? `<span>${esc(t('sp.balance'))}: <b class="num" id="led-balance">${fmtRp(L.balance)}</b></span>` : ''}</div>
     <h4 style="margin:8px 0 6px">${esc(t(kind === 'customer' ? 'led.open_invoices' : 'led.open_notes'))} <span class="badge ${open.length ? 'amber' : 'green'}">${open.length}</span></h4>${docsTbl(open, 'led-docs')}
     ${done.length ? `<details style="margin:8px 0"><summary class="small muted">${esc(t('led.paid_docs', { n: done.length }))}</summary>${docsTbl(done.slice(-40).reverse(), 'led-docs-paid')}</details>` : ''}
@@ -8107,7 +8113,8 @@ function bkGroupHTML(s, R) {
 async function bkMatchLine(lineId) {
   const l = BK.data && BK.data.lines.find(x => x.line_id === lineId); if (!l) return;
   const dir = l.amount > 0 ? 'in' : 'out';
-  const cands = (BK.pays || []).filter(p => (p.direction === 'out' ? 'out' : 'in') === dir).map(p => ({ p, sc: Math.abs(int(p.amount) - Math.abs(l.amount)) / 1000 + Math.abs(daysBetween(l.line_date, p.pay_date)) })).sort((a, b) => a.sc - b.sc).slice(0, 40);
+  const used = new Set((BK.data.lines || []).filter(x => x.pay_id && x.line_id !== lineId).map(x => x.pay_id));
+  const cands = (BK.pays || []).filter(p => (p.direction === 'out' ? 'out' : 'in') === dir && !used.has(p.pay_id)).map(p => ({ p, sc: Math.abs(int(p.amount) - Math.abs(l.amount)) / 1000 + Math.abs(daysBetween(l.line_date, p.pay_date)) })).sort((a, b) => a.sc - b.sc).slice(0, 40);
   const el = openModal({
     title: t('br.match'), id: 'bk-match-modal',
     body: `<p style="margin-top:0"><b>${esc(fmtDate(l.line_date))}</b> · ${esc(l.description)} · <b class="num">${fmtRp(l.amount)}</b></p>
@@ -8220,7 +8227,11 @@ function openBankImport() {
     $('#bi-err', el).textContent = '';
     let text = await file.text();
     if (text.includes('�')) { try { text = new TextDecoder('windows-1252').decode(await file.arrayBuffer()); } catch (x) { } }
-    const { rows } = parseCSV(text);
+    // bank exports often start with a few info lines: start at the first line that has the table's separator
+    const ls = String(text).replace(/^\ufeff/, '').split(/\r?\n/), cnt = (l, c) => l.split(c).length - 1;
+    const sep = [';', ',', '\t'].map(c => [c, Math.max(0, ...ls.slice(0, 30).map(l => cnt(l, c)))]).sort((a, b) => b[1] - a[1])[0][0];
+    const start = Math.max(0, ls.findIndex(l => cnt(l, sep) >= 2));
+    const { rows } = parseCSV(ls.slice(start).join('\n'));
     let hi = rows.findIndex(r => Object.keys(guessBankMap(r.map(String))).length >= 2);
     if (hi < 0) hi = 0;
     if (rows.length - hi < 2) { $('#bi-err', el).textContent = t('imp.empty'); return; }
@@ -8446,7 +8457,7 @@ Object.assign(I18N.id, {
   'pu.history': 'Riwayat barang masuk (30 hari)', 'pu.no': 'No.', 'pu.locked_hint': 'Setelah disimpan, jumlah dan harga terkunci. Perubahan lewat "Koreksi" dengan alasan; manajer/pemilik menyetujui dan pemilik melihatnya di Aktivitas.',
   'fix.button': 'Koreksi', 'fix.title': 'Koreksi barang masuk', 'fix.hint_apply': 'Koreksi langsung diterapkan ke stok dan dicatat untuk pemilik.', 'fix.hint_request': 'Koreksi dikirim ke manajer / pemilik untuk disetujui.', 'fix.now': 'Sekarang', 'fix.new_qty': 'Jumlah benar',
   'fix.reason': 'Alasan koreksi', 'fix.reason_ph': 'mis. 2 dus rusak dikembalikan', 'fix.save': 'Simpan koreksi', 'fix.nothing': 'Tidak ada perubahan', 'fix.applied': 'Koreksi {no} diterapkan', 'fix.requested': 'Koreksi dikirim untuk persetujuan: {id}', 'fix.req_label': 'Koreksi barang masuk {no}', 'fix.before': 'Sebelum', 'fix.after': 'Sesudah',
-  'led.title': 'Buku piutang', 'led.invoice': 'Faktur', 'led.note': 'Nota', 'led.debt': 'Hutang', 'led.paid': 'Dibayar', 'led.remaining': 'Sisa', 'led.open_total': 'Sisa tagihan', 'led.unalloc_total': 'Pembayaran belum dialokasi', 'led.open_invoices': 'Faktur belum lunas', 'led.open_notes': 'Nota belum lunas',
+  'led.title': 'Buku piutang', 'led.invoice': 'Faktur', 'led.note': 'Nota', 'led.debt': 'Hutang', 'led.paid': 'Dibayar', 'led.remaining': 'Sisa', 'led.open_total': 'Sisa tagihan', 'led.open_total_sup': 'Sisa nota belum dibayar', 'led.unalloc_total': 'Pembayaran belum dialokasi', 'led.open_invoices': 'Faktur belum lunas', 'led.open_notes': 'Nota belum lunas',
   'led.none_open': 'Tidak ada yang belum lunas.', 'led.paid_docs': 'Sudah lunas ({n})', 'led.payments': 'Pembayaran', 'led.part_of': 'Bagian dari',
   'ps.lunas': 'lunas', 'ps.sebagian': 'sebagian', 'ps.belum_dialokasi': 'belum dialokasi', 'ps.lebih': 'lebih',
   'pay.slip': 'Bukti', 'pay.slip_take': 'Foto bukti transfer', 'pay.slip_hint': 'Foto bukti transfer / QRIS: jumlah, bank, nomor dan tanggal diisi otomatis.', 'pay.slip_reading': 'Membaca bukti…', 'pay.slip_ok_read': 'Bukti terbaca', 'pay.slip_unclear': 'Bukti kurang jelas — cek lagi jumlahnya.',
@@ -8512,7 +8523,7 @@ Object.assign(I18N.ar, {
   'pu.history': 'سجل الوارد (30 يومًا)', 'pu.no': 'الرقم', 'pu.locked_hint': 'بعد الحفظ تُقفل الكميات والأسعار. التغيير عبر «تصحيح» مع السبب؛ يوافق المدير/المالك ويراه المالك في سجل النشاط.',
   'fix.button': 'تصحيح', 'fix.title': 'تصحيح الوارد', 'fix.hint_apply': 'يُطبَّق التصحيح على المخزون مباشرة ويُسجَّل للمالك.', 'fix.hint_request': 'يُرسل التصحيح إلى المدير / المالك للموافقة.', 'fix.now': 'الحالي', 'fix.new_qty': 'الكمية الصحيحة',
   'fix.reason': 'سبب التصحيح', 'fix.reason_ph': 'مثلًا كرتونان تالفان أُعيدا', 'fix.save': 'حفظ التصحيح', 'fix.nothing': 'لا يوجد تغيير', 'fix.applied': 'طُبّق تصحيح {no}', 'fix.requested': 'أُرسل التصحيح للموافقة: {id}', 'fix.req_label': 'تصحيح الوارد {no}', 'fix.before': 'قبل', 'fix.after': 'بعد',
-  'led.title': 'دفتر الذمم', 'led.invoice': 'الفاتورة', 'led.note': 'فاتورة الوارد', 'led.debt': 'الدَّين', 'led.paid': 'المدفوع', 'led.remaining': 'المتبقي', 'led.open_total': 'المتبقي للتحصيل', 'led.unalloc_total': 'دفعات غير مخصصة', 'led.open_invoices': 'فواتير غير مسددة', 'led.open_notes': 'فواتير وارد غير مسددة',
+  'led.title': 'دفتر الذمم', 'led.invoice': 'الفاتورة', 'led.note': 'فاتورة الوارد', 'led.debt': 'الدَّين', 'led.paid': 'المدفوع', 'led.remaining': 'المتبقي', 'led.open_total': 'المتبقي للتحصيل', 'led.open_total_sup': 'المتبقي من فواتير الوارد', 'led.unalloc_total': 'دفعات غير مخصصة', 'led.open_invoices': 'فواتير غير مسددة', 'led.open_notes': 'فواتير وارد غير مسددة',
   'led.none_open': 'لا يوجد ما هو غير مسدد.', 'led.paid_docs': 'مسددة ({n})', 'led.payments': 'الدفعات', 'led.part_of': 'جزء من',
   'ps.lunas': 'مسدد', 'ps.sebagian': 'جزئي', 'ps.belum_dialokasi': 'غير مخصص', 'ps.lebih': 'زائد',
   'pay.slip': 'الإيصال', 'pay.slip_take': 'صوّر إيصال التحويل', 'pay.slip_hint': 'صوّر إيصال التحويل / QRIS: يُملأ المبلغ والبنك والرقم والتاريخ تلقائيًا.', 'pay.slip_reading': 'جارٍ قراءة الإيصال…', 'pay.slip_ok_read': 'قُرئ الإيصال', 'pay.slip_unclear': 'الإيصال غير واضح — راجع المبلغ.',

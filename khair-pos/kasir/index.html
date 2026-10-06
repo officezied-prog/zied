@@ -405,6 +405,7 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
     <div class="ttl grow"><b id="tb-store" class="ellipsis">Khair Mart</b><span id="tb-user" class="ellipsis"></span></div>
     <span class="demo" id="tb-demo" hidden>DEMO</span>
     <span class="pill loc" id="tb-loc" hidden role="status"></span>
+    <span class="demo" id="tb-master" hidden></span>
     <button class="pill warn" id="tb-outbox" data-act="outbox-open" hidden></button>
     <button class="pill" id="tb-appr" data-act="apr-open" hidden></button>
     <button class="icon-btn" id="tb-lock" data-act="lock" data-i18n-title="lock"><svg class="i"><use href="#i-lock"/></svg></button>
@@ -692,7 +693,8 @@ async function api(action, data, opts) {
   try {
     return await apiRaw(action, data, sessCred(), opts);
   } catch (e) {
-    if (e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_USERS') forceRelogin(e);
+    if (e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_USERS' || e.code === 'LOCKED') forceRelogin(e);
+    if (e.code === 'PIN_CHANGE_REQUIRED' && S.inApp && S.pin_hash) askNewPin(S.user, S.role, S.pin_hash, S.viaMaster);
     throw e;
   }
 }
@@ -811,9 +813,9 @@ const MockServer = (() => {
     if (src.active !== undefined) p.active = !(src.active === false || src.active === 'false' || src.active === 0);
     return p;
   }
-  function priceSale(db, data) {
+  function priceSale(db, data, quote) {
     if (!Array.isArray(data.items) || !data.items.length) throw E('INVALID', 'items required');
-    if (!['tunai', 'transfer', 'qris', 'hutang'].includes(data.payment_method)) throw E('INVALID', 'payment_method');
+    if (!quote && !['tunai', 'transfer', 'qris', 'hutang'].includes(data.payment_method)) throw E('INVALID', 'payment_method');
     const cust = data.customer_id ? db.customers.find(c => c.id === Number(data.customer_id)) : null;
     if (data.customer_id && !cust) throw E('NOT_FOUND', 'customer');
     const lines = data.items.map(it => {
@@ -823,7 +825,10 @@ const MockServer = (() => {
       if (!(qty > 0)) throw E('INVALID', 'qty must be > 0');
       const unit_price = Math.max(0, int(it.unit_price));
       const line_total = Math.round(qty * unit_price), line_cost = Math.round(qty * p.cost_price);
-      return { p, qty, unit_price, price_type: it.price_type === 'grosir' ? 'grosir' : 'eceran', line_total, line_cost };
+      // v16 list price (discount rule): wholesale when the customer is grosir or the line reaches wholesale_min_qty, else retail
+      const grosirOk = int(p.wholesale_price) > 0 && ((cust && cust.type === 'grosir') || (num(p.wholesale_min_qty) > 0 && qty >= num(p.wholesale_min_qty)));
+      const listPrice = grosirOk ? Math.min(int(p.wholesale_price), int(p.retail_price) || int(p.wholesale_price)) : int(p.retail_price);
+      return { p, qty, unit_price, price_type: it.price_type === 'grosir' ? 'grosir' : 'eceran', line_total, line_cost, list_total: Math.round(qty * listPrice) };
     });
     const subtotal = sum(lines, l => l.line_total);
     const discount = Math.min(subtotal, Math.max(0, int(data.discount)));
@@ -831,8 +836,8 @@ const MockServer = (() => {
     const total_cost = sum(lines, l => l.line_cost);
     const paid = Math.max(0, int(data.paid_amount));
     const debt = Math.max(0, total - paid);
-    if (debt > 0 && !cust) throw E('INVALID', 'Debt requires customer_id');
-    return { cust, lines, subtotal, discount, total, total_cost, paid, debt, sale_date: isYmd(data.sale_date) ? data.sale_date : jktDate() };
+    if (debt > 0 && !cust && !quote) throw E('INVALID', 'Debt requires customer_id');
+    return { cust, lines, subtotal, discount, total, total_cost, paid, debt, sale_date: isYmd(data.sale_date) ? data.sale_date : jktDate(), listTotal: sum(lines, l => l.list_total) };
   }
   const openShiftOf = (db, name) => db.shifts.find(x => x.status === 'open' && String(x.cashier).toLowerCase() === String(name).toLowerCase());
   function shiftSummary(db, sh) {
@@ -865,6 +870,7 @@ const MockServer = (() => {
     db.items.filter(i => i.invoice_no === s.invoice_no).forEach(i => { const p = db.products.find(x => x.id === i.product_id); if (p) p.stock = roundQty(p.stock + i.qty); });
     const c = s.customer_id ? db.customers.find(x => x.id === s.customer_id) : null;
     if (c && s.debt_amount) c.debt_balance = Math.max(0, int(c.debt_balance) - s.debt_amount);
+    if (c) c.visits = Math.max(0, num(c.visits) - 1); // v16: a voided purchase does not count
     return s;
   }
   function newApproval(db, u, f) {
@@ -909,7 +915,7 @@ const MockServer = (() => {
     const diffs = lines.filter(l => l.diff);
     const summary = `Stok opname ${lines.length} barang, ${diffs.length} selisih` + (diffs.length ? ': ' + diffs.slice(0, 3).map(l => `${l.name} ${fmtQty(l.system)}→${fmtQty(l.counted)}`).join(', ') + (diffs.length > 3 ? ', …' : '') : '');
     const approval = newApproval(db, u, { kind: 'opname', approver_role: 'owner', summary, payload: JSON.stringify({ lines, counted_at: jktISO(), by: u.name, note }) });
-    return { applied: false, request_id: approval.request_id, approval, lines };
+    return { applied: false, request_id: approval.request_id, approval: approvalOut(approval, u.role), lines };
   }
   /** Approved opname: each line's diff is added to the CURRENT stock (sales made meanwhile are kept). */
   function applyOpname(db, ap, approver) {
@@ -932,6 +938,7 @@ const MockServer = (() => {
   const money = v => Math.round(num(v));
   const fmtN = v => String(Math.round(num(v) * 1000) / 1000);
   function rand(n) { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (let i = 0; i < n; i++) s += a[Math.floor(Math.random() * a.length)]; return s; }
+  let lastRole = ''; // role of the authenticated caller (also via the owner's master code)
   let dirty = false; // read-only actions still save when a device row / activity row was written
   const LOG = []; // last requests as received (action, user, device) — for the tests
   function logAct(db, u, kind, summary, ref, amount, level) {
@@ -1038,6 +1045,15 @@ const MockServer = (() => {
       if (!mine) return;
       parseAlloc(p.alloc).forEach(a => { if (docs[a.ref]) docs[a.ref].paid += money(a.amount); });
     });
+    // v16: what payments left unallocated goes to the oldest open documents first (auto: true)
+    const list = Object.keys(docs).map(k => docs[k]).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    let free = 0;
+    db.payments.forEach(p => {
+      if (excludePayId && p.pay_id === excludePayId) return;
+      const mine = pt === 'customer' ? (Number(p.customer_id) === Number(key) && payDir(p) === 'in') : (str(p.supplier) === key && payDir(p) === 'out');
+      if (mine) free += Math.max(0, money(p.amount) - sum(parseAlloc(p.alloc), a => money(a.amount)));
+    });
+    for (const d of list) { if (free <= 0) break; const left = Math.max(0, d.total - d.paid); const x = Math.min(free, left); if (x > 0) { d.paid += x; d.auto = true; free -= x; } }
     Object.keys(docs).forEach(k => { docs[k].remaining = Math.max(0, docs[k].total - docs[k].paid); });
     return docs;
   }
@@ -1075,6 +1091,41 @@ const MockServer = (() => {
     return act.length ? str(act[0].id) : '';
   }
 
+  /* ---- v16 (mirrors the server): discount limit, members, cost never to kasir/manager, own PINs ---- */
+  const maxDiscPct = db => { const v = num(db.settings.max_discount_pct); return v > 0 ? v : 3; };
+  const DEFAULT_TIERS = [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }];
+  /** A member's discount for this purchase: tier of (visits + 1); first purchase → 0 %. */
+  function memberInfo(db, c) {
+    if (!c || !c.member || db.settings.member_enabled === false) return null;
+    const tiers = Array.isArray(db.settings.member_tiers) && db.settings.member_tiers.length ? db.settings.member_tiers : DEFAULT_TIERS;
+    const n = num(c.visits) + 1;
+    let pct = 0;
+    tiers.forEach(t => { if (num(t.from) <= n && num(t.pct) > pct) pct = num(t.pct); });
+    return { pct, purchase_no: n, member_no: str(c.member_no) };
+  }
+  const discountOf = P => { const amount = Math.max(0, P.listTotal - P.total); return { amount, pct: P.listTotal > 0 ? Math.round(amount / P.listTotal * 1000) / 10 : 0 }; };
+  const marginPct = (total, cost) => total > 0 ? Math.round((total - cost) / total * 1000) / 10 : 0;
+  /** What a non-owner may see of an approval: no profit (discount), quantities only (purchase fix). */
+  function approvalOut(a, role) {
+    if (!a) return a;
+    const o = Object.assign({}, a);
+    if (role !== 'owner') {
+      if (a.kind === 'discount') {
+        const pl = parseObj(a.payload); ['profit_before', 'profit_after', 'margin_before', 'margin_after', 'cost'].forEach(f => { delete pl[f]; });
+        o.payload = JSON.stringify(pl); o.summary = str(o.summary).replace(/ \| laba[^|]*/g, '');
+      }
+      if (a.kind === 'purchase_fix') {
+        const pl = parseObj(a.payload);
+        if (Array.isArray(pl.changes)) pl.changes = pl.changes.map(c => ({ product_id: c.product_id, name: c.name, from_qty: c.from_qty, to_qty: c.to_qty }));
+        o.payload = JSON.stringify(pl); o.summary = str(o.summary).replace(/ \(Rp -?\d+→-?\d+\)/g, ''); o.total = 0;
+      }
+    }
+    o.can_decide = role === 'owner' || (role === 'manager' && a.approver_role !== 'owner');
+    return o;
+  }
+  const isHex64 = h => /^[0-9a-f]{64}$/.test(String(h || ''));
+  const lockMsg = until => 'PIN salah 5 kali. Akun terkunci sampai ' + jktTime(until) + ' WIB';
+
   function handle(db, body) {
     const { action, key, user, pin_hash } = body;
     const data = body.data || {};
@@ -1088,9 +1139,25 @@ const MockServer = (() => {
       return { user: { name, role: 'owner' } };
     }
     if (!db.users.length) throw E('NO_USERS', 'Run setup first');
+    // v16: owner master code for any account, lock after 5 wrong PINs (15 min), own PIN at first login
     const u = db.users.find(x => x.active && x.name.toLowerCase() === String(user || '').toLowerCase());
-    if (!u || u.pin_hash !== pin_hash) throw E('BAD_PIN', 'Wrong user or PIN');
-    if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
+    const masterOwner = isHex64(pin_hash) ? db.users.find(x => x.active && x.role === 'owner' && x.master_hash && x.master_hash === pin_hash) : null;
+    const viaMaster = !!(u && masterOwner && u.pin_hash !== pin_hash);
+    if (!viaMaster) {
+      if (u && u.locked_until && Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', lockMsg(u.locked_until), { locked_until: u.locked_until });
+      if (!u || u.pin_hash !== pin_hash) {
+        if (u) {
+          u.fail_count = num(u.fail_count) + 1;
+          if (u.fail_count >= 5) { u.locked_until = new Date(Date.now() + 15 * 60000).toISOString(); u.fail_count = 0; save(db); throw E('LOCKED', lockMsg(u.locked_until), { locked_until: u.locked_until }); }
+          save(db); // the failure counts even though the request fails
+        }
+        throw E('BAD_PIN', 'Wrong user or PIN');
+      }
+      if (num(u.fail_count) || u.locked_until) { u.fail_count = 0; u.locked_until = ''; dirty = true; }
+    }
+    lastRole = u.role;
+    if (u.must_change && !['login', 'change_pin'].includes(action)) throw E('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu');
+    if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
     if (action !== 'device_ping') deviceTouch(db, u, data.device, false);
     const owner = u.role === 'owner';
     const needOwner = () => { if (!owner) throw E('FORBIDDEN', 'Owner only'); };
@@ -1098,7 +1165,47 @@ const MockServer = (() => {
     const custById = id => db.customers.find(c => c.id === Number(id));
 
     switch (action) {
-      case 'login': return { user: { name: u.name, role: u.role } };
+      case 'login':
+        if (viaMaster) logAct(db, u, 'masuk_master', 'Masuk ke akun ' + u.name + ' dengan kode pemilik', u.name, 0, 'warn');
+        return { user: { name: u.name, role: u.role }, must_change: !!u.must_change, via_master: viaMaster };
+      case 'change_pin': {
+        if (viaMaster && u.role === 'owner' && u === masterOwner) throw E('FORBIDDEN', 'PIN pemilik tidak bisa diganti lewat kode pemilik');
+        const h = str(data.new_pin_hash);
+        if (!isHex64(h)) throw E('INVALID', 'PIN baru tidak valid');
+        if (h === u.pin_hash) throw E('INVALID', 'PIN baru harus beda dengan PIN lama');
+        u.pin_hash = h; u.must_change = false; u.fail_count = 0; u.locked_until = '';
+        logAct(db, u, 'pengguna', 'PIN diganti sendiri: ' + u.name + (viaMaster ? ' (masuk dengan kode pemilik)' : ''), u.name, 0, 'info');
+        return {};
+      }
+      case 'set_master': {
+        if (u.role !== 'owner' || viaMaster) throw E('FORBIDDEN', 'Hanya pemilik dengan PIN sendiri');
+        if (!isHex64(data.master_hash)) throw E('INVALID', 'master_hash');
+        u.master_hash = String(data.master_hash);
+        logAct(db, u, 'pengguna', 'Kode pemilik (master) diatur', u.name, 0, 'warn');
+        return {};
+      }
+      case 'request_discount': {
+        // v16: a kasir above max_discount_pct (+ member %) asks the manager / owner first
+        if (!data.client_id) throw E('INVALID', 'client_id wajib');
+        const P = priceSale(db, data, true);
+        const disc = discountOf(P), mem = memberInfo(db, P.cust), allowed = maxDiscPct(db) + (mem ? mem.pct : 0);
+        if (disc.pct <= allowed + 1e-9) throw E('INVALID', 'Diskon ' + disc.pct + '% masih dalam batas, tidak perlu persetujuan');
+        const profitBefore = P.listTotal - P.total_cost, profitAfter = P.total - P.total_cost;
+        const mb = marginPct(P.listTotal, P.total_cost), ma = marginPct(P.total, P.total_cost);
+        const reason = str(data.reason).slice(0, 300);
+        const ap = newApproval(db, u, {
+          kind: 'discount', approver_role: 'manager', client_id: String(data.client_id), ref: String(data.client_id),
+          customer_id: P.cust ? P.cust.id : 0, customer_name: P.cust ? str(P.cust.name) : str(data.customer_name || 'Umum'),
+          total: P.total, debt_amount: disc.amount, note: reason,
+          summary: ('Diskon ' + disc.pct + '% (Rp ' + disc.amount + '): Rp ' + P.listTotal + ' → Rp ' + P.total + ' — ' + P.lines.map(l => l.p.name + ' x' + l.qty + ' @' + l.unit_price).join('; ') +
+            ' | laba ' + mb + '% → ' + ma + '% (Rp ' + profitBefore + ' → Rp ' + profitAfter + ')').slice(0, 1500),
+          payload: JSON.stringify({ list_total: P.listTotal, total: P.total, discount: disc.amount, pct: disc.pct, max_pct: allowed, reason,
+            lines: P.lines.map(l => ({ name: l.p.name, qty: l.qty, unit_price: l.unit_price })),
+            profit_before: profitBefore, profit_after: profitAfter, margin_before: mb, margin_after: ma })
+        });
+        logAct(db, u, 'minta_diskon', 'Minta diskon ' + disc.pct + '% (Rp ' + disc.amount + ') total Rp ' + P.listTotal + ' → Rp ' + P.total + ' | laba ' + mb + '% → ' + ma + '%' + (reason ? ' | ' + reason : ''), ap.request_id, disc.amount, 'warn');
+        return { request_id: ap.request_id, approval: approvalOut(ap, u.role) };
+      }
       case 'device_ping': {
         if (!deviceTouch(db, u, data.device, true)) throw E('INVALID', 'device.id tidak valid');
         return { require_location: db.settings.require_device_location === true, server_time: new Date().toISOString() };
@@ -1130,6 +1237,18 @@ const MockServer = (() => {
             approved_by = ap.decided_by; usedApproval = ap;
           } else throw E('APPROVAL_REQUIRED', 'Credit sale needs owner/manager approval');
         } else if (P.debt > 0) approved_by = u.name;
+        // v16: discount above max_discount_pct (+ member %) needs an approved request for a kasir
+        const disc = discountOf(P), mem = memberInfo(db, P.cust), allowedPct = maxDiscPct(db) + (mem ? mem.pct : 0);
+        let discBy = '', usedDisc = null;
+        if (disc.pct > allowedPct + 1e-9) {
+          if (u.role === 'kasir') {
+            const da = data.discount_approval_id ? db.approvals.find(x => x.request_id === String(data.discount_approval_id)) : null;
+            if (!da || da.kind !== 'discount') throw E('DISCOUNT_APPROVAL_REQUIRED', 'Diskon ' + disc.pct + '% melebihi batas ' + allowedPct + '%: minta persetujuan manajer / pemilik');
+            if (da.status !== 'approved') throw E('DISCOUNT_APPROVAL_REQUIRED', da.status === 'rejected' ? 'Diskon ditolak: ' + str(da.note) : 'Diskon belum disetujui');
+            if (da.client_id !== cid || disc.amount > int(da.debt_amount)) throw E('DISCOUNT_APPROVAL_REQUIRED', 'Transaksi berubah setelah diskon disetujui, minta persetujuan lagi');
+            discBy = str(da.decided_by); usedDisc = da;
+          } else discBy = u.name;
+        }
         const st = db.settings;
         const minTotal = int(st.exit_photo_min_total ?? 1000000), minQty = num(st.exit_photo_min_qty ?? 20);
         const exitReq = (minTotal > 0 && P.total >= minTotal) || (minQty > 0 && P.lines.some(l => l.qty >= minQty));
@@ -1141,10 +1260,11 @@ const MockServer = (() => {
           payment_method: data.payment_method, paid_amount: paid, debt_amount: debt, status: 'ok',
           survey: JSON.stringify(data.survey_consent && Array.isArray(data.survey) ? data.survey.filter(x => x && String(x.a || '').trim()).map(x => ({ q: String(x.q), a: String(x.a) })) : []),
           survey_transcript: data.survey_consent === true ? String(data.survey_transcript || '').trim().slice(0, 4000) : '',
-          notes: String(data.notes || ''), client_id: cid, approved_by, exit_photo: exitReq ? 'required' : '', exit_match: '',
+          notes: (String(data.notes || '') + (discBy ? ' [diskon ' + disc.pct + '% disetujui ' + discBy + ']' : '') + (mem ? ' [member ' + mem.pct + '% · pembelian ke-' + mem.purchase_no + ']' : '')).trim(), client_id: cid, approved_by, exit_photo: exitReq ? 'required' : '', exit_match: '',
           channel: CHANNELS.includes(data.channel) ? data.channel : 'toko', promo_code: String(data.promo_code || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, ''), shift_id: shift ? shift.shift_id : ''
         };
         if (usedApproval) usedApproval.status = 'used';
+        if (usedDisc) usedDisc.status = 'used';
         db.sales.push(sale);
         const touched = new Map();
         for (const l of lines) {
@@ -1152,10 +1272,11 @@ const MockServer = (() => {
           l.p.stock = roundQty(l.p.stock - l.qty);
           touched.set(l.p.id, l.p);
         }
-        if (cust) cust.debt_balance = int(cust.debt_balance) + debt;
+        if (cust) { cust.debt_balance = int(cust.debt_balance) + debt; cust.visits = num(cust.visits) + 1; cust.last_visit = sale_date; }
+        if (discBy) logAct(db, u, 'diskon', 'Diskon ' + disc.pct + '% (Rp ' + disc.amount + ') pada ' + sale.invoice_no + ' oleh ' + u.name + (discBy !== u.name ? ', disetujui ' + discBy : ''), sale.invoice_no, disc.amount, 'warn');
         if (debt > 0) logAct(db, u, 'hutang', 'Penjualan hutang ' + sale.invoice_no + ' ' + str(sale.customer_name) + ' Rp ' + debt + (approved_by ? ' (disetujui ' + approved_by + ')' : ''), sale.invoice_no, debt, 'info');
         const { id: _omit, ...saleOut } = sale;
-        return { invoice_no: sale.invoice_no, sale: saleOut, stock: [...touched.values()].map(p => ({ product_id: p.id, stock: p.stock })), duplicate: false, exit_photo_required: exitReq };
+        return Object.assign({ invoice_no: sale.invoice_no, sale: saleOut, stock: [...touched.values()].map(p => ({ product_id: p.id, stock: p.stock })), duplicate: false, exit_photo_required: exitReq }, mem ? { member: mem } : {});
       }
       case 'request_credit': {
         const cid = String(data.client_id || '');
@@ -1163,7 +1284,7 @@ const MockServer = (() => {
         const P = priceSale(db, data);
         if (!(P.debt > 0)) throw E('INVALID', 'No debt in this sale');
         const open = db.approvals.find(x => x.client_id === cid && x.status === 'pending' && x.total === P.total && x.debt_amount === P.debt && x.customer_id === P.cust.id);
-        if (open) return { request_id: open.request_id, approval: open };
+        if (open) return { request_id: open.request_id, approval: approvalOut(open, u.role) };
         const approval = {
           request_id: 'APR-' + String(nextId(db, 'approval')).padStart(4, '0'), client_id: cid, created_at: jktISO(), cashier: u.name,
           customer_id: P.cust.id, customer_name: P.cust.name, customer_debt_before: int(P.cust.debt_balance), total: P.total, debt_amount: P.debt,
@@ -1171,16 +1292,16 @@ const MockServer = (() => {
           kind: 'credit', ref: cid, payload: '', approver_role: 'manager'
         };
         db.approvals.push(approval);
-        return { request_id: approval.request_id, approval };
+        return { request_id: approval.request_id, approval: approvalOut(approval, u.role) };
       }
       case 'check_approval': {
         const ap = db.approvals.find(x => x.request_id === data.request_id);
         if (!ap) throw E('NOT_FOUND', 'approval');
-        return { approval: ap };
+        return { approval: approvalOut(ap, u.role) };
       }
       case 'list_approvals': {
         if (!['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Owner/manager only');
-        return { approvals: db.approvals.filter(x => x.status === 'pending').map(x => Object.assign({}, x, { can_decide: x.approver_role !== 'owner' || u.role === 'owner' })) };
+        return { approvals: db.approvals.filter(x => x.status === 'pending').map(x => approvalOut(x, u.role)) };
       }
       case 'decide_approval': {
         if (!['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Owner/manager only');
@@ -1212,7 +1333,7 @@ const MockServer = (() => {
         }
         Object.assign(ap, { status: data.decision, decided_by: u.name, decided_at: jktISO(), note: String(data.note || '') });
         logAct(db, u, 'keputusan', (data.decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + str(ap.kind || 'credit') + ', diminta ' + str(ap.cashier) + '): ' + str(ap.summary).slice(0, 600) + (str(data.note) ? ' | ' + str(data.note) : ''), ap.request_id, money(ap.total), data.decision === 'approved' ? 'info' : 'warn');
-        return Object.assign({ approval: ap }, out);
+        return Object.assign({ approval: approvalOut(ap, u.role) }, out);
       }
       case 'scan_purchase': {
         if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
@@ -1273,7 +1394,7 @@ const MockServer = (() => {
         const approval = newApproval(db, u, { kind: 'void', ref: sale.invoice_no, approver_role: 'owner', customer_id: sale.customer_id, customer_name: sale.customer_name, total: sale.total, debt_amount: sale.debt_amount,
           summary: `${sale.invoice_no} · ${sale.sale_date}`, payload: JSON.stringify({ reason, invoice_no: sale.invoice_no, sale_date: sale.sale_date, total: sale.total }) });
         logAct(db, u, 'minta_batal', 'Minta batal faktur ' + sale.invoice_no + ': ' + reason, sale.invoice_no, money(sale.total), 'warn');
-        return { request_id: approval.request_id, approval };
+        return { request_id: approval.request_id, approval: approvalOut(approval, u.role) };
       }
       case 'change_price': {
         const p = prodById(data.product_id); if (!p) throw E('NOT_FOUND', 'product');
@@ -1293,7 +1414,7 @@ const MockServer = (() => {
         }
         const approval = newApproval(db, u, fields);
         logAct(db, u, 'minta_harga', 'Minta ' + psum + (reason ? ' | ' + reason : ''), String(p.id), 0, 'info');
-        return { applied: false, request_id: approval.request_id, approval };
+        return { applied: false, request_id: approval.request_id, approval: approvalOut(approval, u.role) };
       }
       case 'open_shift': {
         // v15: the drawer is opened from kasir accounts only; every opening count goes to the manager / owner to approve
@@ -1311,7 +1432,7 @@ const MockServer = (() => {
           payload: JSON.stringify({ shift_id: sh.shift_id, opening_cash: opening, last_counted: last ? money(last.counted_cash) : null, last_cashier: last ? str(last.cashier) : '' }) });
         logAct(db, u, 'buka_kas', 'Buka kas ' + u.name + ' Rp ' + opening + lastTxt, sh.shift_id, opening, last && money(last.counted_cash) !== opening ? 'warn' : 'info');
         // PROPOSED (not in the v15 server answer): request_id / approval, so the cashier can follow the approval with check_approval
-        return { already: false, shift: blind(shiftSummary(db, sh), u.role), request_id: approval.request_id, approval };
+        return { already: false, shift: blind(shiftSummary(db, sh), u.role), request_id: approval.request_id, approval: approvalOut(approval, u.role) };
       }
       case 'cash_move': {
         const sh = openShiftOf(db, u.name); if (!sh) throw E('SHIFT_REQUIRED', 'No open shift');
@@ -1411,23 +1532,40 @@ const MockServer = (() => {
         const optin = data.wa_optin === undefined || data.wa_optin === null ? undefined : (data.wa_optin === true || data.wa_optin === 'true');
         const source = String(data.source || '').trim().slice(0, 20);
         const fields = { name: name || defName, phone, type: data.type === 'grosir' ? 'grosir' : 'eceran', address: String(data.address || ''), notes: String(data.notes || '') };
+        // v16 members: e-mail (lower-cased, checked) and member true/false; anyone registers, only owner / manager removes
+        const email = data.email === undefined || data.email === null ? undefined : str(data.email).toLowerCase().slice(0, 120);
+        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) throw E('INVALID', 'E-mail tidak valid');
+        const wantMember = data.member === true || data.member === 'true' ? true : (data.member === false || data.member === 'false' ? false : undefined);
+        const target = data.id ? custById(data.id) : (pn ? db.customers.find(c => normPhone(c.phone) === pn) : null);
+        if (wantMember === false && target && target.member && !['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer yang boleh mencabut member');
+        const memberize = c => {
+          if (email !== undefined) c.email = email;
+          if (wantMember === true && !c.member) {
+            Object.assign(c, { member: true, member_no: 'M' + rand(6), member_since: jktDate(), visits: num(c.visits) });
+            logAct(db, u, 'member_baru', 'Member baru: ' + c.name + ' (' + c.member_no + ')' + (c.phone ? ' ' + c.phone : ''), c.member_no, 0, 'info');
+          } else if (wantMember === false && c.member) {
+            c.member = false;
+            logAct(db, u, 'member_baru', 'Member dicabut: ' + c.name + ' (' + str(c.member_no) + ')', str(c.member_no), 0, 'warn');
+          }
+          return c;
+        };
         if (data.id) {
           const c = custById(data.id); if (!c) throw E('NOT_FOUND', 'customer');
           Object.assign(c, fields, { name: name || c.name || defName });
           if (optin !== undefined) c.wa_optin = optin;
           if (source) c.source = source;
-          return { customer: c };
+          return { customer: memberize(c) };
         }
         const same = pn ? db.customers.find(c => normPhone(c.phone) === pn) : null;
         if (same) {
           if (name && name !== defName) same.name = name;
           if (optin) same.wa_optin = true;
           if (source && !same.source) same.source = source;
-          return { customer: same, existed: true };
+          return { customer: memberize(same), existed: true };
         }
-        const c = Object.assign({ id: nextId(db, 'customer') }, fields, { debt_balance: 0, wa_optin: !!optin, source });
+        const c = Object.assign({ id: nextId(db, 'customer') }, fields, { debt_balance: 0, wa_optin: !!optin, source, email: '', member: false, member_no: '', member_since: '', visits: 0, last_visit: '' });
         db.customers.push(c);
-        return { customer: c };
+        return { customer: memberize(c) };
       }
       case 'receive_payment': {
         // v13 as on the server: slip check (photo kind 'bayar'), allocation to invoices, match_status; v14 account_id / slip_date
@@ -1541,12 +1679,12 @@ const MockServer = (() => {
         if (['owner', 'manager'].includes(u.role)) {
           const stock = applyPurchaseFix(db, u, no, pf.changes, reason, u.name);
           logAct(db, u, 'koreksi_masuk', summary + ' | ' + reason, no, sum(pf.changes, c => c.d_total), 'warn');
-          return { applied: true, changes: pf.changes, stock };
+          return { applied: true, changes: u.role === 'owner' ? pf.changes : pf.changes.map(c => ({ product_id: c.product_id, name: c.name, from_qty: c.from_qty, to_qty: c.to_qty })), stock };
         }
         const approval = newApproval(db, u, { kind: 'purchase_fix', approver_role: 'manager', ref: no, note: reason, summary: summary.slice(0, 1500), total: sum(pf.changes, c => c.to_total),
           payload: JSON.stringify({ purchase_no: no, lines: data.lines, reason, changes: pf.changes }) });
         logAct(db, u, 'minta_koreksi', 'Minta ' + summary + ' | ' + reason, no, 0, 'warn');
-        return { applied: false, request_id: approval.request_id, approval, changes: pf.changes };
+        return { applied: false, request_id: approval.request_id, approval: approvalOut(approval, u.role), changes: pf.changes.map(c => ({ product_id: c.product_id, name: c.name, from_qty: c.from_qty, to_qty: c.to_qty })) };
       }
       case 'stock_count': return stockCount(db, u, data);
       case 'get_sales': {
@@ -1554,7 +1692,7 @@ const MockServer = (() => {
         const inR = d => d >= data.from && d <= data.to;
         const sales = db.sales.filter(s => inR(s.sale_date));
         const inv = new Set(sales.map(s => s.invoice_no));
-        return { sales, items: db.items.filter(i => inv.has(i.invoice_no)), payments: db.payments.filter(p => inR(p.pay_date)), purchases: db.purchases.filter(p => inR(p.purchase_date)), expenses: db.expenses.filter(x => inR(x.expense_date)), shifts: db.shifts.filter(x => inR(x.shift_date)).map(x => blind(shiftSummary(db, x), u.role)) };
+        return { sales, items: db.items.filter(i => inv.has(i.invoice_no)), payments: db.payments.filter(p => inR(p.pay_date)), purchases: db.purchases.filter(p => inR(p.purchase_date)).map(p => { if (u.role === 'owner') return p; const o = Object.assign({}, p); delete o.total; return o; }), expenses: db.expenses.filter(x => inR(x.expense_date)), shifts: db.shifts.filter(x => inR(x.shift_date)).map(x => blind(shiftSummary(db, x), u.role)) };
       }
       case 'save_settings': {
         needOwner();
@@ -1574,7 +1712,7 @@ const MockServer = (() => {
         needOwner();
         const name = String(data.name || '').trim();
         if (!name) throw E('INVALID', 'name required');
-        const role = ['owner', 'manager'].includes(data.role) ? data.role : 'kasir';
+        const role = ['owner', 'manager', 'sales'].includes(data.role) ? data.role : 'kasir';
         if (data.pin_hash && !/^[0-9a-f]{64}$/.test(data.pin_hash)) throw E('INVALID', 'pin_hash');
         let x = db.users.find(v => v.name.toLowerCase() === name.toLowerCase());
         const existed = !!x;
@@ -1586,6 +1724,7 @@ const MockServer = (() => {
           x = { name, role, pin_hash: data.pin_hash, active };
           db.users.push(x);
         } else { x.role = role; x.active = active; if (data.pin_hash) x.pin_hash = data.pin_hash; }
+        if (data.pin_hash && x !== u) x.must_change = true; // v16: a new / reset PIN must be changed at first login (not the owner's own row)
         logAct(db, u, 'pengguna', (existed ? 'Pengguna diubah: ' : 'Pengguna baru: ') + x.name + ' (' + x.role + (x.active ? '' : ', nonaktif') + ')' + (existed && data.pin_hash ? ', PIN diganti' : ''), x.name, 0, 'warn');
         return { user: { name: x.name, role: x.role, active: x.active } };
       }
@@ -1606,8 +1745,9 @@ const MockServer = (() => {
     let res;
     dirty = false;
     try {
-      const role = (db.users.find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase() && x.pin_hash === body.pin_hash) || {}).role;
+      lastRole = '';
       res = handle(db, body);
+      const role = lastRole;
       if (!READ_ONLY.includes(body.action) || dirty) save(db);
       res = Object.assign({ ok: true }, role === 'owner' || ['users', 'setup'].includes(body.action) ? res : strip(res));
     } catch (e) {
@@ -1923,6 +2063,7 @@ function renderShell() {
   $('#tb-store').textContent = settings().store_name || 'Khair Mart';
   $('#tb-user').textContent = `${S.user} · ${t('role.' + S.role)}`;
   $('#tb-demo').hidden = !MOCK;
+  $('#tb-master').hidden = !S.viaMaster; $('#tb-master').textContent = t('login.via_master');
   updateApprovalBadge();
   updateOutboxBadge();
   devIndicator();
@@ -1984,19 +2125,62 @@ function renderLogin() {
       <div class="users" id="users">${list.length ? list.map(u => `<button data-act="login-user" data-name="${esc(u.name)}">${esc(u.name)}<span>${esc(t('role.' + u.role))}</span></button>`).join('') : `<div class="muted center" style="grid-column:1/-1">${esc(t('loading'))}</div>`}</div>
       <div class="err" role="alert">${esc(L.err)}</div>
       <div class="center"><button class="btn ghost sm" data-act="login-change-key">${esc(t('login.change_key'))} (${esc(maskKey(S.key))})</button></div>`;
-  } else {
-    const dots = Array.from({ length: Math.max(4, L.pin.length) }, (_, i) => `<i class="${i < L.pin.length ? 'f' : ''}"></i>`).join('');
-    inner = `<div class="who"><button class="icon-btn ghost sm" data-act="login-back" aria-label="${esc(t('login.switch'))}">${ic('back')}</button><b id="pin-who">${esc(L.sel)}</b></div>
-      <h2 class="muted" style="font-size:15px">${esc(S.user && S.inApp ? t('login.locked') : t('login.enter_pin'))}</h2>
+  } else if (L.step === 'newpin' && L.np) {
+    // v16: own PIN at first login (or after the owner reset it) — typed twice
+    const np = L.np, dots = Array.from({ length: Math.max(np.six ? 6 : 4, L.pin.length) }, (_, i) => `<i class="${i < L.pin.length ? 'f' : ''}"></i>`).join('');
+    inner = `<div id="newpin" data-stage="${np.first ? 2 : 1}"><h2>${esc(t('np.title'))}</h2>
+      <p class="center small" style="margin-top:-6px"><b>${esc(np.user)}</b> · ${esc(t(np.six ? 'np.hint6' : 'np.hint46'))}</p>
+      <h2 class="muted" style="font-size:15px" id="np-stage">${esc(t(np.first ? 'np.again' : 'np.first'))}</h2>
       <div class="dots" aria-label="PIN">${dots}</div>
-      <div class="err" role="alert">${esc(L.err)}</div>
-      <div class="pinpad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button data-act="pin-key" data-k="${n}">${n}</button>`).join('')}
-        <button data-act="pin-key" data-k="del" aria-label="${esc(t('delete'))}">⌫</button><button data-act="pin-key" data-k="0">0</button>
-        <button class="ok" data-act="pin-key" data-k="ok" ${L.busy ? 'disabled' : ''}>${esc(L.busy ? '…' : t('login.enter'))}</button></div>
-      <div class="center" style="margin-top:8px"><button class="btn ghost sm" data-act="login-back">${esc(t('login.switch'))}</button></div>`;
+      <div class="err" role="alert" id="np-err">${esc(L.err)}</div>
+      ${pinpadHTML(false)}
+      <div class="center" style="margin-top:8px"><button class="btn ghost sm" data-act="logout">${esc(t('more.logout'))}</button></div></div>`;
+  } else {
+    const master = !!L.master, until = lockedUntil(L.sel), locked = !master && until > Date.now();
+    const dots = Array.from({ length: Math.max(master ? 8 : 4, L.pin.length) }, (_, i) => `<i class="${i < L.pin.length ? 'f' : ''}"></i>`).join('');
+    inner = `<div class="who"><button class="icon-btn ghost sm" data-act="login-back" aria-label="${esc(t('login.switch'))}">${ic('back')}</button><b id="pin-who">${esc(L.sel)}</b></div>
+      <h2 class="muted" style="font-size:15px" id="pin-title">${esc(master ? t('login.master_title') : S.user && S.inApp ? t('login.locked') : t('login.enter_pin'))}</h2>
+      <div class="dots" aria-label="PIN">${dots}</div>
+      <div class="err" role="alert" id="login-err">${esc(locked ? t('login.locked_until', { time: jktTime(until) }) : L.err)}</div>
+      ${pinpadHTML(locked)}
+      <div class="center" style="margin-top:8px"><button class="btn ghost sm" data-act="login-back">${esc(t('login.switch'))}</button></div>
+      <div class="center"><button class="linkbtn" data-act="login-master" id="login-master">${esc(t(master ? 'login.use_pin' : 'login.use_master'))}</button></div>`;
   }
   box.innerHTML = `<div class="screen-card">${brand}${inner}${foot}</div>`;
   const k = $('#lg-key'); if (k) { k.addEventListener('keydown', e => { if (e.key === 'Enter') ACT['login-key'](); }); setTimeout(() => k.focus(), 30); }
+}
+function pinpadHTML(locked) {
+  const dis = locked || L.busy ? 'disabled' : '';
+  return `<div class="pinpad" id="pinpad" ${locked ? 'data-locked="1"' : ''}>${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button data-act="pin-key" data-k="${n}" ${locked ? 'disabled' : ''}>${n}</button>`).join('')}
+    <button data-act="pin-key" data-k="del" aria-label="${esc(t('delete'))}" ${locked ? 'disabled' : ''}>⌫</button><button data-act="pin-key" data-k="0" ${locked ? 'disabled' : ''}>0</button>
+    <button class="ok" data-act="pin-key" data-k="ok" ${dis}>${esc(L.busy ? '…' : t(L.step === 'newpin' ? 'np.ok' : 'login.enter'))}</button></div>`;
+}
+/* v16: 5 wrong PINs → LOCKED for 15 min (the server says until when); the pad stays off until then. */
+const LOCKS = {};
+const lockedUntil = user => LOCKS[String(user || '').toLowerCase()] || 0;
+const pinMax = () => L.master ? 8 : 6;
+/** v16: a new / reset PIN must be replaced at first login; also when any call answers PIN_CHANGE_REQUIRED. */
+function askNewPin(user, role, oldHash, via) {
+  closeModal(true);
+  L.np = { user, role, old: oldHash, via: !!via, first: '', six: role === 'owner' || role === 'manager' };
+  showLogin('newpin');
+}
+async function submitNewPin() {
+  const np = L.np; if (!np || L.busy) return;
+  const ok = np.six ? /^\d{6}$/.test(L.pin) : /^\d{4,6}$/.test(L.pin);
+  if (!ok) { L.err = t(np.six ? 'np.hint6' : 'np.hint46'); L.pin = ''; renderLogin(); return; }
+  if (!np.first) { np.first = L.pin; L.pin = ''; L.err = ''; renderLogin(); return; }
+  if (L.pin !== np.first) { np.first = ''; L.pin = ''; L.err = t('np.mismatch'); renderLogin(); return; }
+  const nh = await pinHash(S.key, np.user, L.pin);
+  if (nh === np.old) { np.first = ''; L.pin = ''; L.err = t('np.same'); renderLogin(); return; }
+  L.busy = true; L.err = ''; renderLogin();
+  try {
+    await apiRaw('change_pin', { new_pin_hash: nh }, { key: S.key, user: np.user, pin_hash: np.old });
+    const pins = store.get('pins', {}); pins[np.user.toLowerCase()] = { o: await offlineVerifier(nh), role: np.role }; store.set('pins', pins);
+    L.np = null; L.busy = false; L.pin = '';
+    toast(t('np.done'), 'ok');
+    startSession(np.user, np.role, nh, false);
+  } catch (e) { L.busy = false; np.first = ''; L.pin = ''; L.err = e instanceof NetError ? t('np.need_online') : errMsg(e); renderLogin(); }
 }
 // Demo only: log in with the PIN stored in the local demo data (this browser only, never the real shop)
 async function demoLogin(name) {
@@ -2012,19 +2196,31 @@ async function demoLogin(name) {
   } catch (e) { showLogin('users', errMsg(e)); }
 }
 async function submitPin() {
+  if (L.step === 'newpin') return submitNewPin();
   if (L.busy) return;
   if (!L.sel) { L.step = 'users'; renderLogin(); return; }
-  if (!/^\d{4,6}$/.test(L.pin)) { L.err = t('login.pin_len'); renderLogin(); return; }
+  const master = !!L.master;
+  if (!master && lockedUntil(L.sel) > Date.now()) { renderLogin(); return; }
+  if (master ? !/^\d{8}$/.test(L.pin) : !/^\d{4,6}$/.test(L.pin)) { L.err = t(master ? 'login.master_len' : 'login.pin_len'); renderLogin(); return; }
   L.busy = true; L.err = ''; renderLogin();
-  const user = L.sel, hash = await pinHash(S.key, user, L.pin);
+  // v16 owner master code: pin_hash = sha256(KEY + ':__master__:' + code), for the account chosen
+  const user = L.sel, hash = master ? await sha256Hex(S.key + ':__master__:' + L.pin) : await pinHash(S.key, user, L.pin);
   try {
     const r = await apiRaw('login', {}, { key: S.key, user, pin_hash: hash });
     if (r.user.role === 'sales') { const e = new Error('sales'); e.code = 'FORBIDDEN'; throw e; }
-    const pins = store.get('pins', {}); pins[user.toLowerCase()] = { o: await offlineVerifier(hash), role: r.user.role }; store.set('pins', pins);
-    startSession(r.user.name, r.user.role, hash, false);
+    if (!master) { const pins = store.get('pins', {}); pins[user.toLowerCase()] = { o: await offlineVerifier(hash), role: r.user.role }; store.set('pins', pins); }
+    L.master = false; L.busy = false; L.pin = '';
+    if (r.must_change) { askNewPin(r.user.name, r.user.role, hash, r.via_master); return; }
+    startSession(r.user.name, r.user.role, hash, false, { viaMaster: !!r.via_master });
   } catch (e) {
     L.busy = false; L.pin = '';
-    if (e instanceof NetError) {
+    if (e.code === 'LOCKED') {
+      const until = Date.parse(e.res && e.res.locked_until) || Date.now() + 15 * 60000;
+      LOCKS[user.toLowerCase()] = until; L.err = '';
+      setTimeout(() => { if (!$('#login').hidden && L.step === 'pin') renderLogin(); }, Math.min(until - Date.now() + 500, 2147483000));
+      renderLogin(); return;
+    }
+    if (e instanceof NetError && !master) {
       const known = store.get('pins', {})[user.toLowerCase()];
       if (known && known.o && known.o === await offlineVerifier(hash) && KS.get('cache')) { startSession(user, known.role, hash, true); return; }
     }
@@ -2033,10 +2229,10 @@ async function submitPin() {
     renderLogin();
   }
 }
-function startSession(user, role, hash, offline) {
+function startSession(user, role, hash, offline, opts = {}) {
   const sameUser = S.user === user;
-  S.user = user; S.role = role; S.pin_hash = hash; S.lastActivity = Date.now();
-  KS.set('session', { user, role }); SESS.set({ user, role, pin_hash: hash }); store.set('last_user', user);
+  S.user = user; S.role = role; S.pin_hash = hash; S.lastActivity = Date.now(); S.viaMaster = !!opts.viaMaster;
+  KS.set('session', { user, role }); SESS.set({ user, role, pin_hash: hash, via: S.viaMaster }); store.set('last_user', user);
   L.pin = ''; L.busy = false;
   if (!sameUser) { S.view = 'sell'; AP.list = []; AP.count = 0; AP.seen = null; S.cart = null; }
   enterApp(offline);
@@ -2301,7 +2497,20 @@ async function devRetry() {
 }
 
 /* ========== Sell: cart model ========== */
-function newCart() { return { client_id: uuid(), lines: [], customer_id: null, grosir: false, method: 'tunai', paid: '', survey: null, voice: null, channel: 'toko', promo: '', muted: false, remote: null }; }
+function newCart() { return { client_id: uuid(), lines: [], customer_id: null, grosir: false, method: 'tunai', paid: '', survey: null, voice: null, channel: 'toko', promo: '', muted: false, remote: null, discount: '', discReq: null }; }
+/* v16 discount limit + members (the server's rules): list price = retail, or wholesale for a grosir customer / from wholesale_min_qty;
+   discount % = (list total − total) / list total. A kasir may give max_discount_pct (default 3) + the member's tier %. */
+const maxDiscPct = () => { const v = num(settings().max_discount_pct); return v > 0 ? v : 3; };
+const MEMBER_TIERS = [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }];
+/** {pct, n (this purchase = visits + 1), no} for a member customer, else null. */
+function memberOf(c) {
+  if (!c || !c.member || settings().member_enabled === false) return null;
+  const tiers = Array.isArray(settings().member_tiers) && settings().member_tiers.length ? settings().member_tiers : MEMBER_TIERS;
+  const n = int(c.visits) + 1;
+  let pct = 0; tiers.forEach(x => { if (num(x.from) <= n && num(x.pct) > pct) pct = num(x.pct); });
+  return { pct, n, no: c.member_no || '' };
+}
+const fmtPct1 = p => String(Math.round(num(p) * 10) / 10).replace('.', ',') + '%';
 const cleanPromo = v => String(v || '').toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 30);
 /** One open cart per user on this device (a cashier swap does not inherit someone else's sale). */
 const cartKey = () => 'cart.' + String(S.user || '').toLowerCase();
@@ -2315,14 +2524,25 @@ function lineCalc(line, cust, cart = S.cart) {
   const want = !!(cart && cart.grosir) || (cust && cust.type === 'grosir') || (wmin > 0 && line.qty >= wmin);
   const type = want && hasW ? 'grosir' : 'eceran';
   const unit_price = type === 'grosir' ? int(p.wholesale_price) : int(p.retail_price);
-  return { p, type, unit_price, total: Math.round(line.qty * unit_price) };
+  const listOk = hasW && ((cust && cust.type === 'grosir') || (wmin > 0 && line.qty >= wmin));
+  const list = Math.round(line.qty * (listOk ? Math.min(int(p.wholesale_price), int(p.retail_price) || int(p.wholesale_price)) : int(p.retail_price)));
+  return { p, type, unit_price, total: Math.round(line.qty * unit_price), list };
 }
 function cartView(c = S.cart) {
   const cust = custById(c.customer_id);
   const lines = c.lines.map(l => Object.assign({ line: l }, lineCalc(l, cust, c)));
-  const total = sum(lines, l => l.total);
-  return { cust, lines, subtotal: total, discount: 0, total, items: sum(c.lines, l => l.qty) };
+  const subtotal = sum(lines, l => l.total), listTotal = sum(lines, l => l.list);
+  const mem = memberOf(cust);
+  const memberDisc = mem && mem.pct ? Math.round(subtotal * mem.pct / 100) : 0;
+  const manual = Math.max(0, Math.min(moneyVal(c.discount || 0), subtotal - memberDisc));
+  const discount = memberDisc + manual, total = subtotal - discount;
+  const discAmt = Math.max(0, listTotal - total), discPct = listTotal > 0 ? Math.round(discAmt / listTotal * 1000) / 10 : 0;
+  const discLimit = maxDiscPct() + (mem ? mem.pct : 0);
+  return { cust, lines, subtotal, discount, memberDisc, manual, mem, total, listTotal, discAmt, discPct, discLimit, discOver: discPct > discLimit + 1e-9, items: sum(c.lines, l => l.qty) };
 }
+/** A kasir above the limit needs an approved request (manager / owner give any discount). */
+const discApproved = v => { const r = S.cart && S.cart.discReq; return !!(r && r.status === 'approved' && int(r.amount) >= v.discAmt); };
+const needDiscApproval = v => S.role === 'kasir' && v.discOver && !discApproved(v);
 /** Adds qty of p (scan, tap with "ask quantity" off); with set=true the line gets exactly qty (quantity sheet). */
 function addToCart(p, qty = 1, set = false) {
   if (!p) return;
@@ -2575,7 +2795,7 @@ function refreshCartNumbers() {
   const g = $('#grosir'); if (g) { g.setAttribute('aria-pressed', S.cart.grosir ? 'true' : 'false'); g.innerHTML = `${S.cart.grosir ? '✓ ' : ''}${esc(t('grosir'))}`; }
   syncMuteChips();
   const cb = $('#cust');
-  if (cb) { cb.classList.toggle('set', !!v.cust); cb.innerHTML = `${ic('user')}<span class="grow ellipsis">${esc(v.cust ? v.cust.name : t('sell.walkin'))}</span>${v.cust ? `<span class="badge ${v.cust.type === 'grosir' ? '' : 'gray'}">${esc(t('type.' + v.cust.type))}</span>` : ''}`; }
+  if (cb) { cb.classList.toggle('set', !!v.cust); cb.innerHTML = `${ic('user')}<span class="grow ellipsis">${esc(v.cust ? v.cust.name : t('sell.walkin'))}</span>${v.cust && v.cust.member ? `<span class="badge ok" data-member>${esc(t('mem.badge'))}</span>` : ''}${v.cust ? `<span class="badge ${v.cust.type === 'grosir' ? '' : 'gray'}">${esc(t('type.' + v.cust.type))}</span>` : ''}`; }
   const bar = $('#paybar-cart');
   if (bar) bar.innerHTML = `${ic('cart')}<div class="grow"><b class="num" id="paybar-total">${fmtRp(v.total)}</b><span>${esc(t('sell.n_lines', { n: v.lines.length }))}${v.cust ? ' · ' + esc(v.cust.name) : ''}</span></div>`;
   const pb = $('#paybar-pay'); if (pb) pb.disabled = !v.lines.length;
@@ -2625,7 +2845,7 @@ function heldView(h) {
 function holdCurrent(label) {
   const list = heldList();
   if (list.length >= HOLD_MAX) { toast(t('hold.full', { max: HOLD_MAX }), 'err', 4000); return ''; }
-  const cart = Object.assign(clone(S.cart), { paid: '', remote: null });
+  const cart = Object.assign(clone(S.cart), { paid: '', remote: null, discReq: null });
   const lbl = String(label || '').trim().slice(0, 40) || defaultHoldLabel(list, cart);
   list.push({ id: uuid(), label: lbl, held_at: new Date().toISOString(), by: S.user, cart });
   saveHeld(list);
@@ -2686,7 +2906,7 @@ function resumeHeld(id) {
   const swapLabel = S.cart.lines.length ? defaultHoldLabel(list, S.cart) : '';
   saveHeld(list.filter(x => x.id !== id));
   const swapped = swapLabel ? holdCurrent(swapLabel) : '';
-  const cart = Object.assign(newCart(), h.cart, { paid: '', remote: null });
+  const cart = Object.assign(newCart(), h.cart, { paid: '', remote: null, discReq: null });
   const gone = [];
   cart.lines = cart.lines.filter(l => { const p = prodById(l.product_id); if (!p || p.active === false) { gone.push(p ? p.name : l.name); return false; } l.name = p.name; return true; });
   if (cart.customer_id != null && !custById(cart.customer_id)) { cart.customer_id = null; if (cart.method === 'hutang') cart.method = 'tunai'; }
@@ -2714,17 +2934,19 @@ function openCustomerPicker(onPick, opts = {}) {
     title: opts.title || t('cust.pick'), id: 'cust-picker',
     body: `<input class="input" id="cp-q" type="search" placeholder="${esc(t('cust.search'))}" autocomplete="off" autofocus>
       <div class="list" id="cp-list" style="margin-top:10px"></div>
-      ${opts.noAdd ? '' : `<details class="more" id="cp-new"><summary>${ic('plus')} ${esc(t('cust.quick_add'))}</summary>
+      ${opts.noAdd ? '' : `<details class="more" id="cp-new" ${opts.member ? 'open' : ''}><summary>${ic('plus')} ${esc(t('cust.quick_add'))}</summary>
         <div style="margin-top:10px"><div class="field"><label class="f" for="cn-name">${esc(t('name'))} *</label><input class="input" id="cn-name"></div>
         <div class="grid2"><div class="field"><label class="f" for="cn-phone">${esc(t('phone'))}</label><input class="input" id="cn-phone" inputmode="tel"></div>
         <div class="field"><label class="f" for="cn-type">${esc(t('type'))}</label><select class="input" id="cn-type"><option value="eceran">${esc(t('type.eceran'))}</option><option value="grosir">${esc(t('type.grosir'))}</option></select></div></div>
+        <div class="field"><label class="f" for="cn-email">${esc(t('mem.email'))}</label><input class="input" id="cn-email" type="email" inputmode="email" autocomplete="off" placeholder="nama@email.com"></div>
+        <label class="check" id="cn-member-l"><input type="checkbox" id="cn-member" ${opts.member ? 'checked' : ''}><span><b>${esc(t('mem.make'))}</b><br><span class="small muted">${esc(t('mem.consent'))}</span></span></label>
         <button class="btn primary block" id="cp-save">${esc(t('save'))}</button><div class="red small" id="cp-err"></div></div></details>`}`
   });
   const draw = () => {
     const q = norm($('#cp-q', el).value);
     const list = S.customers.filter(c => (!opts.onlyDebt || c.debt_balance > 0) && (!q || norm(`${c.name} ${c.phone}`).includes(q))).sort((a, b) => opts.onlyDebt ? b.debt_balance - a.debt_balance : a.name.localeCompare(b.name)).slice(0, 80);
     $('#cp-list', el).innerHTML = (opts.noWalkin ? '' : `<button class="li" data-pick=""><div class="grow"><div class="t">${esc(t('sell.walkin'))}</div><div class="s">${esc(t('cust.walkin_hint'))}</div></div></button>`) +
-      (list.map(c => `<button class="li" data-pick="${esc(c.id)}"><div class="grow"><div class="t">${esc(c.name)}</div><div class="s">${esc(c.phone || '')}</div></div>
+      (list.map(c => `<button class="li" data-pick="${esc(c.id)}"><div class="grow"><div class="t">${esc(c.name)}${c.member ? ` <span class="badge ok" data-member>${esc(t('mem.badge'))}</span>` : ''}</div><div class="s">${esc([c.phone, c.member ? c.member_no : ''].filter(Boolean).join(' · '))}</div></div>
         <div style="text-align:end"><span class="badge ${c.type === 'grosir' ? '' : 'gray'}">${esc(t('type.' + c.type))}</span>${c.debt_balance ? `<div class="small red num" style="margin-top:3px">${esc(t('debt'))} ${fmtRp(c.debt_balance)}</div>` : ''}</div></button>`).join('') || `<div class="empty">${esc(t('no_data'))}</div>`);
   };
   draw();
@@ -2732,10 +2954,12 @@ function openCustomerPicker(onPick, opts = {}) {
   $('#cp-list', el).addEventListener('click', e => { const b = e.target.closest('[data-pick]'); if (!b) return; dropModal(el); onPick(b.dataset.pick === '' ? null : custById(b.dataset.pick)); });
   const sv = $('#cp-save', el);
   if (sv) sv.addEventListener('click', async () => {
-    const data = { name: $('#cn-name', el).value.trim(), phone: $('#cn-phone', el).value.trim(), type: $('#cn-type', el).value };
+    const data = { name: $('#cn-name', el).value.trim(), phone: $('#cn-phone', el).value.trim(), type: $('#cn-type', el).value, email: $('#cn-email', el).value.trim().toLowerCase(), member: $('#cn-member', el).checked };
     if (!data.name) { $('#cp-err', el).textContent = t('required') + ': ' + t('name'); return; }
+    if (data.email && !okEmail(data.email)) { $('#cp-err', el).textContent = t('mem.bad_email'); return; }
+    if (!data.email) delete data.email;
     sv.disabled = true;
-    try { const r = await api('save_customer', data); const c = r.customer; c.debt_balance = int(c.debt_balance); S.customers.push(c); saveCache(); dropModal(el); toast(t('saved'), 'ok'); onPick(c); }
+    try { const r = await api('save_customer', data); const c = upsertCustomer(r.customer); dropModal(el); toast(c.member ? t('mem.saved', { no: c.member_no || '' }) : t('saved'), 'ok', 4000); onPick(c); }
     catch (e) { $('#cp-err', el).textContent = errMsg(e); sv.disabled = false; }
   });
 }
@@ -2931,7 +3155,7 @@ function openPay() {
   if (S.cart.client_id !== VS.cid) { VS.asked = []; VS.cid = S.cart.client_id; }
   const el = openModal({ title: t('pay.title'), id: 'pay', focus: false, onClose: () => { stopVoice(); refreshCartNumbers(); }, body: '', foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary big grow" id="pay-ok">${esc(t('pay.finish'))}</button>` });
   drawPay(el);
-  $('#pay-ok', el).onclick = () => doSave();
+  $('#pay-ok', el).onclick = () => payOk();
 }
 function drawPay(bg) {
   const body = $('.modal-b', bg); if (!body) return;
@@ -2940,6 +3164,13 @@ function drawPay(bg) {
     <div class="pay-total"><div class="k">${esc(t('total'))} · ${esc(t('sell.n_lines', { n: v.lines.length }))}</div><div class="v num" id="pay-total">${fmtRp(v.total)}</div></div>
     ${VOICE.on ? `<button class="toggle mute-chip pay-mute ${c.muted ? 'on' : ''}" id="pay-mute" data-act="sale-mute" aria-pressed="${c.muted ? 'true' : 'false'}">${muteChipHtml()}</button>` : ''}
     <button class="cust-chip ${cust ? 'set' : ''}" id="pay-cust" data-act="pick-customer">${ic('user')}<span class="grow ellipsis">${esc(cust ? cust.name : t('sell.walkin'))}</span>${cust && cust.debt_balance ? `<span class="badge red num">${esc(t('debt'))} ${fmtRp(cust.debt_balance)}</span>` : ''}</button>
+    ${v.mem ? `<div class="mbadge" id="member-badge">${ic('tag')} <span>${esc(t('mem.status', { n: v.mem.n, pct: fmtPct1(v.mem.pct) }))}</span>${v.mem.no ? ` <span class="num small">${esc(v.mem.no)}</span>` : ''}</div>` : ''}
+    <div class="discbox" id="pay-disc-box">
+      ${v.memberDisc ? `<div class="sumrow" id="pay-mdisc"><span>${esc(t('mem.disc_line', { pct: fmtPct1(v.mem.pct) }))}</span><b class="num">-${fmtRp(v.memberDisc)}</b></div>` : ''}
+      <div class="row"><label class="f grow" for="pay-disc" style="margin:0">${esc(t(v.mem ? 'disc.extra' : 'disc.label'))} (Rp)</label><span class="badge" id="pay-disc-pct"></span></div>
+      <input class="input num" id="pay-disc" inputmode="numeric" autocomplete="off" placeholder="0" value="${c.discount ? esc(fmtNum(moneyVal(c.discount))) : ''}">
+      <div class="small" id="pay-disc-warn" role="status"></div>
+    </div>
     <div class="seg" id="pay-m" role="radiogroup" aria-label="${esc(t('pay.method'))}" style="margin-top:12px">${['tunai', 'transfer', 'qris', 'hutang'].map(x => `<button role="radio" id="pm-${x}" aria-checked="${m === x}" class="${m === x ? 'on' : ''}" data-act="pay-method" data-m="${x}">${esc(t('pm.' + x))}</button>`).join('')}</div>
     <div id="pay-detail" style="margin-top:12px">${m === 'tunai' ? `<div class="field"><label class="f" for="pay-cash">${esc(t('pay.cash_in'))}</label><input class="input money" id="pay-cash" inputmode="numeric" autocomplete="off" placeholder="${esc(t('pay.exact'))}" value="${c.paid === '' ? '' : esc(fmtNum(moneyVal(c.paid)))}"></div>
         <div class="quick" id="pay-quick"><button class="btn xs" data-act="paid-set" data-v="">${esc(t('pay.exact'))}</button>${quickAmounts(v.total).map(a => `<button class="btn xs num" data-act="paid-set" data-v="${a}">${fmtShort(a)}</button>`).join('')}</div>`
@@ -2955,9 +3186,13 @@ function drawPay(bg) {
   [cash, dp].filter(Boolean).forEach(inp => {
     inp.addEventListener('input', () => { S.cart.paid = inp.value.trim() === '' ? '' : String(moneyVal(inp.value)); saveCart(); payResult(bg); });
     inp.addEventListener('change', () => { inp.value = S.cart.paid === '' ? '' : fmtNum(moneyVal(S.cart.paid)); });
-    inp.addEventListener('keydown', e => { if (e.key === 'Enter') doSave(); });
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') payOk(); });
   });
   const promo = $('#pay-promo', body); promo.addEventListener('input', () => { S.cart.promo = cleanPromo(promo.value); saveCart(); });
+  const disc = $('#pay-disc', body);
+  disc.addEventListener('input', () => { S.cart.discount = disc.value.trim() === '' ? '' : String(moneyVal(disc.value)); saveCart(); payResult(bg); });
+  disc.addEventListener('change', () => { disc.value = S.cart.discount ? fmtNum(moneyVal(S.cart.discount)) : ''; });
+  disc.addEventListener('keydown', e => { if (e.key === 'Enter') payOk(); });
   vsShowText(); vsTick();
   payResult(bg);
   if (cash && !isTouch()) setTimeout(() => cash.focus(), 30);
@@ -2967,8 +3202,15 @@ function payResult(bg) {
   res.className = 'result' + (p.error ? ' err' : p.debt > 0 ? ' debt' : '');
   res.innerHTML = p.error ? esc(p.error) : p.debt > 0 ? `<span>${esc(t('pay.new_debt'))}</span><span class="num" id="pay-debt">${fmtRp(p.debt)}</span>`
     : p.method === 'tunai' ? `<span>${esc(t('pay.change'))}</span><span class="num" id="pay-change">${fmtRp(p.change)}</span>` : `<span>${esc(t('pm.' + p.method))}</span><span class="num">${fmtRp(v.total)}</span>`;
-  const ok = $('#pay-ok', bg); if (ok) ok.disabled = !!p.error;
+  const ok = $('#pay-ok', bg); if (ok) { ok.disabled = !!p.error; if (!saving) ok.textContent = needDiscApproval(v) ? t('disc.ask') : t('pay.finish'); }
+  // v16: live discount % against the limit
+  const tot = $('#pay-total', bg); if (tot) tot.textContent = fmtRp(v.total);
+  const pb = $('#pay-disc-pct', bg), w = $('#pay-disc-warn', bg);
+  if (pb) { pb.textContent = t('disc.pct', { pct: fmtPct1(v.discPct), max: fmtPct1(v.discLimit) }); pb.className = 'badge ' + (v.discOver ? 'red' : v.discPct > 0 ? 'ok' : 'gray'); }
+  if (w) { w.className = 'small ' + (v.discOver ? 'red' : 'muted'); w.textContent = v.discOver ? (S.role === 'kasir' ? (discApproved(v) ? t('disc.approved', { name: S.cart.discReq.by || '' }) : t('disc.over_kasir', { max: fmtPct1(v.discLimit) })) : t('disc.over_mgr')) : ''; }
 }
+/** BAYAR / SELESAI: above the discount limit a kasir first asks for approval. */
+function payOk() { const v = cartView(); if (needDiscApproval(v) && !payCalc(v).error) { openDiscountStep(v); return; } doSave(); }
 
 /* ========== Save sale ========== */
 let saving = false;
@@ -2979,7 +3221,7 @@ function buildSaleRequest(v, pay) {
     client_id: c.client_id, sale_date: jktDate(now), sale_time: jktISO(now),
     customer_id: v.cust ? v.cust.id : null, customer_name: v.cust ? v.cust.name : 'Umum', customer_type: v.cust ? v.cust.type : 'eceran',
     items: v.lines.map(l => ({ product_id: l.p.id, qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type })),
-    discount: 0, payment_method: pay.method, paid_amount: Math.min(pay.paid, v.total),
+    discount: v.discount, payment_method: pay.method, paid_amount: Math.min(pay.paid, v.total),
     survey: manual ? sv.answers : [], survey_consent: manual || !!vo, survey_transcript: vo ? vsClean(vo.text) : '', // transcript only after the consent tap
     channel: c.channel || 'toko', promo_code: cleanPromo(c.promo), notes: ''
   };
@@ -2989,7 +3231,8 @@ function receiptFromCart(v, pay, req) {
     invoice_no: '', client_id: req.client_id, pending: false, sale_date: req.sale_date, sale_time: req.sale_time, cashier: S.user,
     customer_name: v.cust ? v.cust.name : t('sell.walkin'), customer_phone: v.cust ? v.cust.phone : '', customer_id: v.cust ? v.cust.id : null,
     lines: v.lines.map(l => ({ name: l.p.name, unit: l.p.unit || '', qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type, line_total: l.total })),
-    subtotal: v.subtotal, discount: 0, total: v.total, method: pay.method, paid: pay.paid, change: pay.change, debt: pay.debt, status: 'ok',
+    subtotal: v.subtotal, discount: v.discount, member_disc: v.memberDisc, member: v.mem ? { pct: v.mem.pct, purchase_no: v.mem.n, member_no: v.mem.no } : null,
+    customer_email: v.cust ? v.cust.email || '' : '', total: v.total, method: pay.method, paid: pay.paid, change: pay.change, debt: pay.debt, status: 'ok',
     promo_code: req.promo_code, channel: req.channel, debt_after: v.cust ? int(v.cust.debt_balance) + pay.debt : 0
   };
 }
@@ -3007,6 +3250,8 @@ async function doSave(extra = {}) {
   saving = true;
   const ok = $('#pay-ok'); if (ok) { ok.disabled = true; ok.textContent = t('saving'); }
   const req = Object.assign(buildSaleRequest(v, pay), extra), rc = receiptFromCart(v, pay, req);
+  const dr = S.cart.discReq; if (dr && dr.request_id && !req.discount_approval_id) req.discount_approval_id = dr.request_id; // v16
+  if (S.cart.remote && S.cart.remote.approved && !req.approval_id && !req.approver) req.approval_id = S.cart.remote.request_id;
   rc.approved_by = extra.approver ? extra.approver.user : '';
   rc.exit_required = localExitRequired(v);
   try {
@@ -3016,7 +3261,8 @@ async function doSave(extra = {}) {
     if (r.sale) { rc.total = int(r.sale.total ?? rc.total); rc.debt = int(r.sale.debt_amount ?? rc.debt); if (r.sale.approved_by) rc.approved_by = r.sale.approved_by; }
     if (r.exit_photo_required != null) rc.exit_required = !!r.exit_photo_required;
     applyStock(r.stock);
-    if (v.cust && !r.duplicate) v.cust.debt_balance = int(v.cust.debt_balance) + rc.debt;
+    if (v.cust && !r.duplicate) { v.cust.debt_balance = int(v.cust.debt_balance) + rc.debt; v.cust.visits = int(v.cust.visits) + 1; v.cust.last_visit = req.sale_date; }
+    if (r.member) rc.member = r.member;
     rc.debt_after = v.cust ? v.cust.debt_balance : 0;
     finishSale(rc);
     return 'ok';
@@ -3024,7 +3270,8 @@ async function doSave(extra = {}) {
     if (isRetryable(e)) {
       // security H1: an on-site approval (the approver's PIN typed here) is never written to the offline outbox
       if (extra.approver) return 'approval_offline';
-      if (pay.debt > 0 && S.role === 'kasir' && !extra.approval_id) { toast(t('apr.need_online'), 'err', 5000); return 'error'; }
+      if (pay.debt > 0 && S.role === 'kasir' && !req.approval_id) { toast(t('apr.need_online'), 'err', 5000); return 'error'; }
+      if (needDiscApproval(v)) { toast(t('disc.need_online'), 'err', 5000); return 'error'; }
       queueOp('sale', 'save_sale', req, { rc });
       finishSale(Object.assign(rc, { pending: true, invoice_no: 'OFFLINE-' + req.client_id.slice(0, 8).toUpperCase() }));
       toast(t('outbox.queued'), 'warn', 4000);
@@ -3032,6 +3279,7 @@ async function doSave(extra = {}) {
     }
     if (extra.approver && ['BAD_PIN', 'APPROVAL_REQUIRED'].includes(e.code)) return 'approval_error';
     if (e.code === 'APPROVAL_REQUIRED') { if (!extra.approval_id) openApprovalStep(v, pay); else toast(errMsg(e), 'err', 5000); return 'approval'; }
+    if (e.code === 'DISCOUNT_APPROVAL_REQUIRED') { if (S.cart.discReq && S.cart.discReq.status !== 'pending') S.cart.discReq = null; saveCart(); openDiscountStep(cartView(), e.message || errMsg(e)); return 'discount'; }
     if (e.code === 'SHIFT_REQUIRED') { S.shift = null; S.shiftsSupported = true; closeModal(true); showGate(); return 'error'; }
     if (!['BAD_PIN', 'BAD_KEY', 'NO_USERS'].includes(e.code)) toast(errMsg(e), 'err', 5000);
     return 'error';
@@ -3155,6 +3403,7 @@ function openWaiting(ap) {
       const a = r.approval || {};
       updateMyRequest(a);
       if (a.status === 'approved') {
+        if (S.cart.remote && S.cart.remote.request_id === ap.request_id) { S.cart.remote.approved = true; saveCart(); }
         finish(`<p class="okc"><b>${esc(t('apr.approved_by', { name: a.decided_by || '' }))}</b></p><div class="spinner"></div>`);
         const res = await doSave({ approval_id: ap.request_id });
         if (res === 'ok' || res === 'queued') { /* finishSale cleared the cart (and its remote) */ } else dropModal(el);
@@ -3175,6 +3424,83 @@ function openWaiting(ap) {
   timer = setTimeout(tick, 600);
 }
 
+/* ========== v16 discount above the limit: request_discount → manager / owner approves → the sale goes through ==========
+   Like the credit approval: a request id, polling check_approval, "Permintaan saya". The approval covers this cart (client_id)
+   up to the approved amount; a bigger discount needs a new request. */
+function discSummaryHTML(v) {
+  return `<div class="apr-sum"><div><div class="k">${esc(t('disc.list_total'))}</div><div class="v num">${fmtRp(v.listTotal)}</div></div>
+    <div><div class="k">${esc(t('disc.amount'))}</div><div class="v num red">-${fmtRp(v.discAmt)} · ${esc(fmtPct1(v.discPct))}</div></div>
+    <div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(v.total)}</div></div></div>
+    <div class="small muted" style="margin-bottom:8px">${esc(t('disc.limit_is', { max: fmtPct1(v.discLimit) }))}</div>`;
+}
+function openDiscountStep(v, msg) {
+  const old = $('#disc-step'); if (old) dropModal(old);
+  const rq = S.cart.discReq, resumable = rq && rq.status === 'pending' && int(rq.amount) >= v.discAmt;
+  const el = openModal({
+    title: t('disc.title'), id: 'disc-step', focus: false,
+    body: `${msg ? `<div class="status perlu_cek" id="disc-msg" style="padding:10px 12px"><div class="small" style="font-weight:800">${esc(msg)}</div></div>` : ''}
+      <p style="margin-top:0">${esc(t('disc.hint'))}</p>${discSummaryHTML(v)}
+      <div class="field"><label class="f" for="disc-reason">${esc(t('reason'))}</label><input class="input" id="disc-reason" maxlength="300" placeholder="${esc(t('disc.reason_ph'))}"></div>
+      ${resumable ? `<button class="btn block" id="disc-resume" style="margin-bottom:8px">${esc(t('apr.resume', { id: rq.request_id }))}</button>` : ''}
+      <div class="err" id="disc-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="disc-send">${ic('send')} ${esc(t('disc.send'))}</button>`,
+    onClose: () => refreshCartNumbers()
+  });
+  const r = $('#disc-resume', el); if (r) r.onclick = () => { dropModal(el); openDiscWait({ request_id: rq.request_id, amount: rq.amount, pct: v.discPct, total: v.total }); };
+  $('#disc-send', el).onclick = async () => {
+    const err = $('#disc-err', el), pay = payCalc(v);
+    $('#disc-send', el).disabled = true; err.textContent = '';
+    try {
+      const res = await api('request_discount', Object.assign(buildSaleRequest(v, pay), { reason: $('#disc-reason', el).value.trim() }));
+      const id = res.request_id || (res.approval || {}).request_id;
+      S.cart.discReq = { request_id: id, amount: v.discAmt, status: 'pending', by: '' }; saveCart();
+      trackMyRequest(id, 'discount', t('req.discount', { pct: fmtPct1(v.discPct), amount: fmtRp(v.discAmt) }));
+      dropModal(el);
+      openDiscWait({ request_id: id, amount: v.discAmt, pct: v.discPct, total: v.total });
+    } catch (e) { err.textContent = e instanceof NetError ? t('apr.need_online') : errMsg(e); $('#disc-send', el).disabled = false; }
+  };
+}
+function openDiscWait(info) {
+  let timer = null, stopped = false;
+  const started = Date.now();
+  const el = openModal({
+    title: t('apr.waiting_title'), id: 'disc-wait',
+    body: `<div class="wait"><div class="small muted">${esc(t('apr.request_id'))}</div><div class="rid" id="dw-id">${esc(info.request_id)}</div>
+      <p style="margin:6px 0">${esc(t('disc.waiting_for', { pct: fmtPct1(info.pct), amount: fmtRp(info.amount) }))}</p>
+      <div id="dw-state"><div class="spinner"></div><div id="dw-msg">${esc(t('apr.waiting'))}</div></div></div>`,
+    foot: `<button class="btn" id="dw-cancel">${esc(t('apr.stop_wait'))}</button>`,
+    onClose: () => { stopped = true; clearTimeout(timer); refreshCartNumbers(); }
+  });
+  const finish = html => { stopped = true; clearTimeout(timer); $('#dw-state', el).innerHTML = html; };
+  $('#dw-cancel', el).onclick = () => dropModal(el);
+  const tick = async () => {
+    if (stopped) return;
+    if (Date.now() - started > APR_MAX_MS) { finish(`<p class="red"><b>${esc(t('apr.timeout'))}</b></p>`); return; }
+    try {
+      const a = (await api('check_approval', { request_id: info.request_id })).approval || {};
+      if (stopped) return;
+      updateMyRequest(a);
+      if (a.status === 'approved') {
+        if (S.cart.discReq && S.cart.discReq.request_id === info.request_id) Object.assign(S.cart.discReq, { status: 'approved', by: a.decided_by || '' });
+        saveCart();
+        finish(`<p class="okc" id="dw-ok"><b>${esc(t('disc.approved_by', { name: a.decided_by || '' }))}</b></p>`);
+        dropModal(el);
+        const pay = $('#pay'); if (pay) drawPay(pay.closest('.modal-bg'));
+        await doSave();
+        return;
+      }
+      if (a.status === 'rejected' || a.status === 'used') {
+        if (S.cart.discReq && S.cart.discReq.request_id === info.request_id) S.cart.discReq = null;
+        saveCart();
+        finish(`<p class="red" style="font-size:19px" id="dw-rej"><b>${esc(a.status === 'used' ? t('apr.used') : t('disc.rejected_by', { name: a.decided_by || '' }))}</b></p>${a.note ? `<p id="dw-note">“${esc(a.note)}”</p>` : ''}<button class="btn primary" data-act="modal-close">${esc(t('apr.back_to_cart'))}</button>`);
+        return;
+      }
+    } catch (e) { if (stopped) return; const m = $('#dw-msg', el); if (m) m.textContent = e instanceof NetError ? t('apr.retrying') : errMsg(e); }
+    timer = setTimeout(tick, APR_POLL_MS);
+  };
+  timer = setTimeout(tick, 600);
+}
+
 /* ========== Receipt (58 / 80 mm), print, share, copy ========== */
 function receiptLinesHTML(rc) {
   const st = settings();
@@ -3188,6 +3514,9 @@ function receiptLinesHTML(rc) {
     <div class="r2"><span>${esc(t('rc.cashier'))}</span><span>${esc(rc.cashier)}</span></div>
     <div class="r2"><span>${esc(t('rc.customer'))}</span><span>${esc(rc.customer_name)}</span></div>
     <div class="ln"></div>${rows}<div class="ln"></div>
+    ${rc.discount ? `<div class="r2"><span>${esc(t('rc.subtotal'))}</span><span>${esc(NF.format(rc.subtotal))}</span></div>` : ''}
+    ${rc.member_disc ? `<div class="r2" id="rc-mdisc"><span>${esc(t('mem.disc_line', { pct: fmtPct1(rc.member && rc.member.pct) }))}</span><span>-${esc(NF.format(rc.member_disc))}</span></div>` : ''}
+    ${int(rc.discount) - int(rc.member_disc) > 0 ? `<div class="r2" id="rc-disc"><span>${esc(t('disc.label'))}</span><span>-${esc(NF.format(int(rc.discount) - int(rc.member_disc)))}</span></div>` : ''}
     ${rc.promo_code ? `<div class="r2"><span>${esc(t('pay.promo'))}</span><span>${esc(rc.promo_code)}</span></div>` : ''}
     <div class="r2 big"><span>${esc(t('total'))}</span><span>${esc(fmtRp(rc.total))}</span></div>
     <div class="r2"><span>${esc(t('rc.paid'))} (${esc(t('pm.' + rc.method))})</span><span>${esc(NF.format(rc.paid))}</span></div>
@@ -3195,6 +3524,7 @@ function receiptLinesHTML(rc) {
     ${rc.debt ? `<div class="r2 b"><span>${esc(t('rc.debt'))}</span><span>${esc(NF.format(rc.debt))}</span></div>` : ''}
     ${rc.debt && rc.debt_after ? `<div class="r2"><span>${esc(t('rc.debt_total'))}</span><span>${esc(NF.format(rc.debt_after))}</span></div>` : ''}
     ${rc.debt && rc.approved_by ? `<div class="r2"><span>${esc(t('rc.approved_by'))}</span><span>${esc(rc.approved_by)}</span></div>` : ''}
+    ${rc.member ? `<div class="ln"></div><div class="c" id="rc-member">${esc(t('mem.rc_line', { no: rc.member.member_no || '', n: rc.member.purchase_no }))}</div>` : ''}
     <div class="ln"></div>
     ${(st.receipt_footer || '').split('\n').map(x => `<div class="c">${esc(x)}</div>`).join('')}`;
 }
@@ -3229,7 +3559,7 @@ function showReceipt(rc, opts = {}) {
     title: rc.pending ? t('rc.title_pending') : t('rc.title'), id: 'rc-modal',
     body: `${opts.fromSale ? `<div class="row" style="justify-content:center;margin-bottom:10px"><span class="badge ${rc.pending ? 'warn' : 'ok'}" id="rc-state" style="font-size:15px;padding:6px 14px">${esc(rc.pending ? t('outbox.queued_short') : t('rc.saved_ok'))}</span></div>` : ''}
       ${rc.change ? `<div class="result" id="rc-change"><span>${esc(t('pay.change'))}</span><span class="num">${fmtRp(rc.change)}</span></div>` : ''}
-      <div id="exit-wrap"></div><div id="wa-wrap"></div>${receiptHTML(rc)}`,
+      <div id="exit-wrap"></div><div id="rcsend-wrap"></div><div id="wa-wrap"></div>${receiptHTML(rc)}`,
     foot: `<button class="btn sm" id="rc-print">${ic('print')} ${esc(t('print'))}</button>
       <button class="btn sm" id="rc-share">${ic('share')} ${esc(t('share'))}</button>
       <button class="btn sm" id="rc-copy">${ic('copy')} ${esc(t('copy'))}</button>
@@ -3239,7 +3569,42 @@ function showReceipt(rc, opts = {}) {
   $('#rc-share', el).onclick = () => shareText(receiptText(rc), rc.customer_phone);
   $('#rc-copy', el).onclick = async () => { const ok = await copyText(receiptText(rc)); toast(ok ? t('copied') : t('copy_failed'), ok ? 'ok' : 'err'); };
   drawExitBox(el, rc);
+  drawRcSend(el, rc);
   drawWaCard(el, rc);
+}
+/* v16: send the receipt as plain text — WhatsApp (wa.me to the customer's phone, or a number typed here) and e-mail (mailto),
+   one tap each; the cashier presses Send in WhatsApp / the mail app. Always Indonesian. */
+function receiptPlain(rc) {
+  const st = settings(), L2 = '------------------------------', out = [st.store_name || 'Khair Mart'];
+  if (st.address) out.push(st.address);
+  out.push(L2, `${tid('rc.no')}: ${rc.invoice_no}`, `${tid('rc.date')}: ${fmtDateTime(rc.sale_time, rc.sale_date)}`, `${tid('rc.cashier')}: ${rc.cashier}`, `${tid('rc.customer')}: ${rc.customer_name}`, L2);
+  rc.lines.forEach(l => out.push(l.name, `  ${fmtQty(l.qty)} x ${fmtRp(l.unit_price)} = ${fmtRp(l.line_total)}`));
+  out.push(L2);
+  if (rc.discount) out.push(`${tid('rc.subtotal')}: ${fmtRp(rc.subtotal)}`);
+  if (rc.member_disc) out.push(`${tid('mem.disc_line', { pct: fmtPct1(rc.member && rc.member.pct) })}: -${fmtRp(rc.member_disc)}`);
+  if (int(rc.discount) - int(rc.member_disc) > 0) out.push(`${tid('disc.label')}: -${fmtRp(int(rc.discount) - int(rc.member_disc))}`);
+  out.push(`${tid('total')}: ${fmtRp(rc.total)}`, `${tid('rc.paid')} (${tid('pm.' + rc.method)}): ${fmtRp(rc.paid)}`);
+  if (rc.change) out.push(`${tid('pay.change')}: ${fmtRp(rc.change)}`);
+  if (rc.debt) out.push(`${tid('rc.debt')}: ${fmtRp(rc.debt)}`);
+  if (rc.member) out.push(tid('mem.rc_line', { no: rc.member.member_no || '', n: rc.member.purchase_no }));
+  out.push(L2);
+  if (st.receipt_footer) out.push(st.receipt_footer);
+  return out.join('\n');
+}
+const okEmail = e => /^[^\s@?&#<>"]+@[^\s@?&#<>"]+\.[^\s@?&#<>"]{2,}$/.test(String(e || ''));
+function drawRcSend(el, rc) {
+  const w = $('#rcsend-wrap', el); if (!w) return;
+  if (rc.status === 'void' || rc.pending) { w.innerHTML = ''; return; }
+  const text = receiptPlain(rc), phone = normPhone(rc.customer_phone) || (rc.wa && rc.wa.phone) || '';
+  const waHref = n => `https://wa.me/${n}?text=${encodeURIComponent(text)}`;
+  const store = settings().store_name || 'Khair Mart';
+  const mail = okEmail(rc.customer_email) ? `mailto:${rc.customer_email}?subject=${encodeURIComponent(tid('rcs.subject', { store, inv: rc.invoice_no }))}&body=${encodeURIComponent(text)}` : '';
+  w.innerHTML = `<div class="wa-card" id="rc-send"><div class="wa-h">${ic('send')}<span class="grow">${esc(t('rcs.title'))}</span></div>
+    ${phone ? '' : `<div class="field" style="margin-bottom:8px"><label class="f" for="rcs-phone">${esc(t('rcs.phone'))}</label><input class="input" id="rcs-phone" type="tel" inputmode="tel" autocomplete="off" placeholder="08xx xxxx xxxx"></div>`}
+    <div class="list"><a class="btn block wa-send" id="rcs-wa" target="_blank" rel="noopener" ${phone ? `href="${esc(waHref(phone))}"` : 'aria-disabled="true"'}>${ic('wa')} ${esc(t('rcs.wa'))}</a>
+    ${mail ? `<a class="btn block" id="rcs-mail" href="${esc(mail)}">${ic('send')} ${esc(t('rcs.mail'))}</a>` : ''}</div></div>`;
+  const inp = $('#rcs-phone', w), a = $('#rcs-wa', w);
+  if (inp) inp.addEventListener('input', () => { const n = normPhone(inp.value); if (n) { a.href = waHref(n); a.removeAttribute('aria-disabled'); } else { a.removeAttribute('href'); a.setAttribute('aria-disabled', 'true'); } });
 }
 
 /* ========== After payment: the customer's WhatsApp number ==========
@@ -3909,6 +4274,7 @@ RENDER.more = function () {
   const n = S.outbox.length, mine = myPendingCount();
   $('#v-more').innerHTML = `<div class="wrapc"><h1>${esc(t('tab.more'))}</h1>
     <div class="list" id="more-list">
+      <button class="li" data-act="member-new" id="m-member">${ic('user')}<div class="grow"><div class="t">${esc(t('mem.new'))}</div><div class="s">${esc(t('mem.new_s'))}</div></div></button>
       <button class="li" data-act="debt-pay" id="m-debt">${ic('wallet')}<div class="grow"><div class="t">${esc(t('more.debt_pay'))}</div><div class="s">${esc(t('more.debt_pay_s'))}</div></div></button>
       <button class="li" data-act="void-req" id="m-void">${ic('undo')}<div class="grow"><div class="t">${esc(t('more.void'))}</div><div class="s">${esc(t('more.void_s'))}</div></div></button>
       <button class="li" data-act="price-req" id="m-price">${ic('tag')}<div class="grow"><div class="t">${esc(t('more.price'))}</div><div class="s">${esc(S.role === 'kasir' ? t('more.price_s') : t('more.price_s_mgr'))}</div></div></button>
@@ -4194,6 +4560,14 @@ function aprBodyHTML(a) {
   const kind = a.kind || 'credit', pl = aprPayload(a);
   const head = (title, badge) => `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(title)}</b><span class="badge ${badge}">${esc(a.request_id)}</span></div><div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))}</div>`;
   if (kind === 'opname') { const ls = (pl.lines || []).filter(l => num(l.diff)); return head(t('sc.apr_title', { n: (pl.lines || []).length, d: ls.length }), '') + `<table class="tbl" style="margin:8px 0" data-opname-lines><thead><tr><th></th><th class="r">${esc(t('sc.system'))}</th><th class="r">${esc(t('sc.qty'))}</th><th class="r">${esc(t('sc.diff'))}</th></tr></thead><tbody>${ls.map(l => `<tr><td>${esc(l.name)}</td><td class="r num">${fmtQty(l.system)}</td><td class="r num">${fmtQty(l.counted)}</td><td class="r num"><b>${num(l.diff) > 0 ? '+' : ''}${fmtQty(l.diff)}</b></td></tr>`).join('')}</tbody></table><div class="small muted" style="margin-bottom:8px">${esc(t('sc.apr_hint'))}</div>`; }
+  if (kind === 'discount') {
+    // never profit / margin here (the server sends them to the owner only, and this app shows none of it)
+    const lines = (Array.isArray(pl.lines) ? pl.lines : []).map(l => `<tr><td>${esc(l.name)}</td><td class="r num">${fmtQty(l.qty)}</td><td class="r num">${fmtRp(l.unit_price)}</td></tr>`).join('');
+    return head(t('apr.kind_disc', { pct: fmtPct1(pl.pct), name: a.customer_name || t('sell.walkin') }), 'warn') + `<div class="apr-sum" data-disc><div><div class="k">${esc(t('disc.list_total'))}</div><div class="v num">${fmtRp(pl.list_total)}</div></div>
+      <div><div class="k">${esc(t('disc.amount'))}</div><div class="v num red">-${fmtRp(pl.discount != null ? pl.discount : a.debt_amount)}</div></div><div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(pl.total != null ? pl.total : a.total)}</div></div></div>
+      <div class="small muted">${esc(t('disc.limit_is', { max: fmtPct1(pl.max_pct) }))}</div>
+      ${lines ? `<table class="tbl" style="margin:8px 0"><tbody>${lines}</tbody></table>` : ''}${pl.reason || a.note ? `<div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason || a.note)}”</b></div>` : ''}`;
+  }
   if (kind === 'buka_kas') {
     const open = num(pl.opening_cash != null ? pl.opening_cash : a.total), last = pl.last_counted;
     return head(t('apr.kind_kas', { name: a.cashier }), '') + `<div class="apr-sum" data-buka-kas><div><div class="k">${esc(t('apr.kas_open'))}</div><div class="v num">${fmtRp(open)}</div></div>
@@ -4283,9 +4657,11 @@ const ACT = {
     const k = el.dataset.k;
     if (k === 'del') L.pin = L.pin.slice(0, -1);
     else if (k === 'ok') { submitPin(); return; }
-    else if (L.pin.length < 6) L.pin += k;
+    else if (L.pin.length < pinMax()) L.pin += k;
     L.err = ''; renderLogin();
   },
+  'login-master': () => { L.master = !L.master; L.pin = ''; L.err = ''; renderLogin(); },
+  'member-new': () => openCustomerPicker(c => { if (c) toast(t('mem.saved', { no: c.member_no || '' }), 'ok'); }, { member: true, noWalkin: true, title: t('mem.new') }),
 
   /* sell */
   'add': el => pickProduct(prodById(el.dataset.id)),
@@ -4351,8 +4727,8 @@ document.addEventListener('click', e => {
   Promise.resolve().then(() => fn(el, e)).catch(err => { console.error(err); toast(errMsg(err), 'err'); });
 });
 document.addEventListener('keydown', e => {
-  if (!$('#login').hidden && L.step === 'pin' && !modalOpen()) {
-    if (/^\d$/.test(e.key)) { if (L.pin.length < 6) { L.pin += e.key; L.err = ''; renderLogin(); } e.preventDefault(); return; }
+  if (!$('#login').hidden && (L.step === 'pin' || L.step === 'newpin') && !modalOpen()) {
+    if (/^\d$/.test(e.key)) { if (L.pin.length < pinMax() && !$('#pinpad[data-locked]')) { L.pin += e.key; L.err = ''; renderLogin(); } e.preventDefault(); return; }
     if (e.key === 'Backspace') { L.pin = L.pin.slice(0, -1); renderLogin(); e.preventDefault(); return; }
     if (e.key === 'Enter') { submitPin(); e.preventDefault(); return; }
   }
@@ -4814,7 +5190,7 @@ async function init() {
     const want = new URLSearchParams(location.search).get('u');
     if (want && !(sess && sess.user && sess.user.toLowerCase() === want.toLowerCase())) { demoLogin(want); return; }
   }
-  if (S.key && sess && sess.user && live && live.pin_hash && live.user === sess.user) { S.user = sess.user; S.role = sess.role; S.pin_hash = live.pin_hash; enterApp(false); return; }
+  if (S.key && sess && sess.user && live && live.pin_hash && live.user === sess.user) { S.user = sess.user; S.role = sess.role; S.pin_hash = live.pin_hash; S.viaMaster = !!live.via; enterApp(false); return; }
   // locked session, or a kasir redirected here by the owner app (it remembers last_user) → PIN pad for that name
   const last = (sess && sess.user) || store.get('last_user', '');
   if (S.key) { if (last) { L.sel = last; showLogin('pin'); } else showLogin('users'); return; }
