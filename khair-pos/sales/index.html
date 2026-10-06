@@ -304,7 +304,9 @@ main{overflow:hidden;position:relative;min-width:0}
 const CONFIG = { API_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-pos', FIELD_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-pos-photo';
 const APP_VERSION = 'sales-1.0.0';
-const MOCK = /[?&]mock=1\b/.test(location.search);
+// ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
+const DEMO = /[?&]demo=1\b/.test(location.search);
+const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
 /* Same prefix as the owner and cashier apps (same origin): store key, language and the user list are
    shared on this device. Everything that belongs to Khair Sales lives under the extra "sales." prefix. */
 const PREFIX = MOCK ? 'kpos.mock.' : 'kpos.';
@@ -1437,7 +1439,7 @@ async function loadUsers() {
   try { const r = await apiRaw('users', {}, { key: S.key }); L.users = r.users || []; store.set('users_' + S.key, L.users); renderLogin(); }
   catch (e) { if (e.code === 'BAD_KEY') { L.step = 'key'; L.err = t('err.BAD_KEY'); renderLogin(); } else if (!L.users.length) { L.err = errMsg(e); renderLogin(); } }
 }
-const ownerHref = () => '../index.html' + (MOCK ? '?mock=1' : '');
+const ownerHref = () => '../index.html' + (DEMO ? '?demo=1' : (MOCK ? '?mock=1' : ''));
 function renderLogin() {
   const brand = `<div class="brand"><div class="mark" aria-hidden="true">S</div><div>Khair Sales${MOCK ? ' <span class="demo">DEMO</span>' : ''}</div></div>`;
   const foot = `<div class="foot-links"><div class="langs"><button class="btn xs ${S.lang === 'id' ? 'primary' : ''}" data-act="set-lang" data-lang="id">ID</button><button class="btn xs ${S.lang === 'ar' ? 'primary' : ''}" data-act="set-lang" data-lang="ar">العربية</button></div><a class="owner-link" href="${esc(ownerHref())}">${esc(t('login.owner_app'))}</a></div>`;
@@ -1457,6 +1459,19 @@ function renderLogin() {
   }
   $('#login').innerHTML = `<div class="screen-card">${brand}${inner}${foot}</div>`;
   const k = $('#lg-key'); if (k) k.addEventListener('keydown', e => { if (e.key === 'Enter') ACT['login-key'](); });
+}
+// Demo only: log in with the PIN stored in the local demo data (this browser only, never the real shop)
+async function demoLogin(name) {
+  try { await apiRaw('users', {}, { key: 'demo' }); } catch (e) { } // first request seeds the demo data (incl. the field rep)
+  let db = null; try { db = JSON.parse(localStorage.getItem('kmock.db') || 'null'); } catch (e) { }
+  const u = db && (db.users || []).find(x => x.active !== false && x.name.toLowerCase() === String(name || '').toLowerCase());
+  if (!u) { showLogin('users'); return; }
+  S.key = 'demo'; store.set('key', 'demo');
+  try {
+    const r = await apiRaw('login', {}, { key: 'demo', user: u.name, pin_hash: u.pin_hash });
+    if (!SALES_ROLES.includes(r.user.role)) { showLogin('users', t('login.not_sales', { role: t('role.' + r.user.role) })); return; }
+    startSession(r.user.name, r.user.role, u.pin_hash, false);
+  } catch (e) { showLogin('users', errMsg(e)); }
 }
 async function submitPin() {
   if (L.busy) return;
@@ -2056,7 +2071,7 @@ const ACT = {
     catch (e) { L.busy = false; L.err = e.code === 'BAD_KEY' ? t('err.BAD_KEY') : errMsg(e); renderLogin(); }
   },
   'login-change-key': () => { L.users = []; L.step = 'key'; L.err = ''; renderLogin(); },
-  'login-user': el => { L.sel = el.dataset.name; L.pin = ''; L.err = ''; L.step = 'pin'; renderLogin(); },
+  'login-user': el => { L.sel = el.dataset.name; L.pin = ''; L.err = ''; if (DEMO) { demoLogin(L.sel); return; } L.step = 'pin'; renderLogin(); },
   'login-back': () => { L.pin = ''; L.err = ''; L.step = 'users'; renderLogin(); if (!L.users.length) loadUsers(); },
   'pin-key': el => { const k = el.dataset.k; if (k === 'del') L.pin = L.pin.slice(0, -1); else if (k === 'ok') { submitPin(); return; } else if (L.pin.length < 6) L.pin += k; L.err = ''; renderLogin(); },
   'day-start': () => dayStart(),
@@ -2201,6 +2216,11 @@ async function init() {
   }
   if (MOCK) { try { await MockServer.ensure(); } catch (e) { console.error(e); } }
   const sess = FS.get('session');
+  if (DEMO) {
+    if (!S.key) { S.key = 'demo'; store.set('key', 'demo'); }
+    const want = new URLSearchParams(location.search).get('u');
+    if (want && !(sess && sess.user && sess.user.toLowerCase() === want.toLowerCase())) { demoLogin(want); return; }
+  }
   if (S.key && sess && sess.user && sess.pin_hash) {
     S.user = sess.user; S.role = sess.role; S.pin_hash = sess.pin_hash;
     const cd = FS.get(uk('day')); if (cd && cd.day_date === today()) S.day = cd;

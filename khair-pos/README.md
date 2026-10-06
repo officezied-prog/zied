@@ -145,6 +145,8 @@ Setiap barang yang masuk keranjang diucapkan (nama + jumlah, mis. "Kurma Ajwa 1 
 ## Mode DEMO (latihan)
 
 Buka `…/khair-pos/?mock=1` — data contoh tersimpan hanya di browser itu, tidak menyentuh data toko.
+
+**Coba tanpa kode & PIN** (untuk minta pendapat karyawan): tambahkan `?demo=1` — tidak perlu kode toko, cukup ketuk nama. Tambahkan `&u=Nama` agar langsung masuk sebagai orang itu, mis. `…/khair-pos/?demo=1&u=Jihan`, `…/khair-pos/kasir/?demo=1&u=Siti`, `…/khair-pos/sales/?demo=1&u=Ahmad`. Hanya data contoh; data toko asli tetap memakai kode toko + PIN.
 Kode toko demo: `demo` · Pemilik PIN `1234` · Jihan (manajer) PIN `2222` · Siti (kasir) PIN `1111` · Rina (kasir, lupa tutup kasir kemarin) PIN `3333` · Ahmad (sales lapangan) PIN `4444`. Reset di *Pengaturan → Reset data demo*.
 
 ## Untuk pengembang

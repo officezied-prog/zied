@@ -511,7 +511,10 @@ const CONFIG = { API_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-pos', TZ:
 CONFIG.PHOTO_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-pos-photo';
 CONFIG.FIELD_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-field';
 const APP_VERSION = '2.0.0';
-const MOCK = /[?&]mock=1\b/.test(location.search);
+// ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
+const DEMO = /[?&]demo=1\b/.test(location.search);
+const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
+const MOCK_Q = DEMO ? '?demo=1' : (MOCK ? '?mock=1' : '');
 const PREFIX = MOCK ? 'kpos.mock.' : 'kpos.';
 const OUTBOX_RETRY_MS = 30000;
 
@@ -1600,6 +1603,16 @@ function renderLogin() {
   const k = $('#lg-key'); if (k) { k.addEventListener('keydown', e => { if (e.key === 'Enter') ACT['login-key'](); }); setTimeout(() => k.focus(), 30); }
   const p2 = $('#su-pin2'); if (p2) p2.addEventListener('keydown', e => { if (e.key === 'Enter') ACT['login-setup'](); });
 }
+// Demo only: log in with the PIN stored in the local demo data (this browser only, never the real shop)
+async function demoLogin(name) {
+  try { await apiRaw('users', {}, { key: 'demo' }); } catch (e) { } // first request seeds the demo data (incl. the field rep)
+  let db = null; try { db = JSON.parse(localStorage.getItem('kmock.db') || 'null'); } catch (e) { }
+  const u = db && (db.users || []).find(x => x.active !== false && x.name.toLowerCase() === String(name || '').toLowerCase());
+  if (!u) { showLogin('pin'); return; }
+  S.key = 'demo'; store.set('key', 'demo');
+  try { const r = await apiRaw('login', {}, { key: 'demo', user: u.name, pin_hash: u.pin_hash }); startSession(r.user.name, r.user.role, u.pin_hash, false); }
+  catch (e) { showLogin('pin', errMsg(e)); }
+}
 async function submitPin() {
   if (L.busy) return;
   if (!L.sel) { L.err = t('login.pick_user_first'); renderLogin(); return; }
@@ -1622,11 +1635,12 @@ async function submitPin() {
   }
 }
 /* ========== Kasir accounts use the separate cashier app (./kasir/) ========== */
-const KASIR_APP_URL = './kasir/' + (MOCK ? '?mock=1' : '');
-const SALES_APP_URL = './sales/' + (MOCK ? '?mock=1' : '');
+const KASIR_APP_URL = './kasir/' + MOCK_Q;
+const SALES_APP_URL = './sales/' + MOCK_Q;
 const OTHER_APP = { kasir: { url: KASIR_APP_URL, k: 'kasirapp' }, sales: { url: SALES_APP_URL, k: 'salesapp' } };
 function showKasirRedirect(user, role = 'kasir') {
-  const A = OTHER_APP[role] || OTHER_APP.kasir;
+  const A0 = OTHER_APP[role] || OTHER_APP.kasir;
+  const A = DEMO ? Object.assign({}, A0, { url: A0.url + '&u=' + encodeURIComponent(user || '') }) : A0;
   S.pin_hash = ''; S.inApp = false; store.del('session');
   closeModal(true);
   $('#app').hidden = true; $('#login').hidden = false;
@@ -4908,7 +4922,7 @@ const ACT = {
     } catch (e) { L.busy = false; L.err = errMsg(e); renderLoginKeep(); }
   },
   'login-change-key': () => { L.users = []; L.sel = ''; S.inApp = false; L.step = 'key'; L.err = ''; renderLogin(); },
-  'login-user': el => { L.sel = el.dataset.name; L.pin = ''; L.err = ''; renderLogin(); },
+  'login-user': el => { L.sel = el.dataset.name; L.pin = ''; L.err = ''; if (DEMO) { demoLogin(L.sel); return; } renderLogin(); },
   'pin-key': el => {
     const k = el.dataset.k;
     if (k === 'del') L.pin = L.pin.slice(0, -1);
@@ -5066,6 +5080,11 @@ async function init() {
   }
   if (MOCK) { try { await MockServer.ensure(); } catch (e) { console.error(e); } }
   const sess = store.get('session');
+  if (DEMO) {
+    if (!S.key) { S.key = 'demo'; store.set('key', 'demo'); }
+    const want = new URLSearchParams(location.search).get('u');
+    if (want && !(sess && sess.user && sess.user.toLowerCase() === want.toLowerCase())) { demoLogin(want); return; }
+  }
   if (S.key && sess && sess.user && sess.pin_hash) {
     if (sess.role === 'kasir' || sess.role === 'sales') { showKasirRedirect(sess.user, sess.role); return; }
     S.user = sess.user; S.role = sess.role; S.pin_hash = sess.pin_hash; enterApp(false); return;

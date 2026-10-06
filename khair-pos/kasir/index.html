@@ -363,7 +363,9 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
 const CONFIG = { API_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-pos', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-pos-photo';
 const APP_VERSION = 'kasir-1.0.0';
-const MOCK = /[?&]mock=1\b/.test(location.search);
+// ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
+const DEMO = /[?&]demo=1\b/.test(location.search);
+const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
 /* Same prefix as the owner app (same origin): the store key, language, voice settings, user list and
    known PINs are shared on this device. Everything that belongs to the cashier app only (session,
    cart, outbox, cache, receipts) lives under the extra "kasir." prefix. */
@@ -1389,7 +1391,7 @@ async function loadUsersForLogin() {
     else if (!L.users.length) { L.err = errMsg(e); renderLogin(); }
   }
 }
-const ownerHref = () => '../index.html' + (MOCK ? '?mock=1' : '');
+const ownerHref = () => '../index.html' + (DEMO ? '?demo=1' : (MOCK ? '?mock=1' : ''));
 function renderLogin() {
   const box = $('#login');
   const brand = `<div class="brand"><div class="mark" aria-hidden="true">K</div><div>Khair Kasir${MOCK ? ' <span class="demo">DEMO</span>' : ''}</div></div>`;
@@ -1421,6 +1423,19 @@ function renderLogin() {
   }
   box.innerHTML = `<div class="screen-card">${brand}${inner}${foot}</div>`;
   const k = $('#lg-key'); if (k) { k.addEventListener('keydown', e => { if (e.key === 'Enter') ACT['login-key'](); }); setTimeout(() => k.focus(), 30); }
+}
+// Demo only: log in with the PIN stored in the local demo data (this browser only, never the real shop)
+async function demoLogin(name) {
+  try { await apiRaw('users', {}, { key: 'demo' }); } catch (e) { } // first request seeds the demo data (incl. the field rep)
+  let db = null; try { db = JSON.parse(localStorage.getItem('kmock.db') || 'null'); } catch (e) { }
+  const u = db && (db.users || []).find(x => x.active !== false && x.name.toLowerCase() === String(name || '').toLowerCase());
+  if (!u) { showLogin('users'); return; }
+  S.key = 'demo'; store.set('key', 'demo');
+  try {
+    const r = await apiRaw('login', {}, { key: 'demo', user: u.name, pin_hash: u.pin_hash });
+    if (r.user.role === 'sales') { showLogin('users', t('err.FORBIDDEN')); return; }
+    startSession(r.user.name, r.user.role, u.pin_hash, false);
+  } catch (e) { showLogin('users', errMsg(e)); }
 }
 async function submitPin() {
   if (L.busy) return;
@@ -2810,7 +2825,7 @@ const ACT = {
     } catch (e) { L.busy = false; L.err = e.code === 'BAD_KEY' ? t('err.BAD_KEY') : errMsg(e); renderLogin(); }
   },
   'login-change-key': () => { L.users = []; L.sel = ''; S.inApp = false; L.step = 'key'; L.err = ''; renderLogin(); },
-  'login-user': el => { L.sel = el.dataset.name; L.pin = ''; L.err = ''; L.step = 'pin'; renderLogin(); },
+  'login-user': el => { L.sel = el.dataset.name; L.pin = ''; L.err = ''; if (DEMO) { demoLogin(L.sel); return; } L.step = 'pin'; renderLogin(); },
   'login-back': () => { L.pin = ''; L.err = ''; L.step = 'users'; renderLogin(); if (!L.users.length) loadUsersForLogin(); },
   'pin-key': el => {
     const k = el.dataset.k;
@@ -3060,6 +3075,11 @@ async function init() {
   }
   if (MOCK) { try { await MockServer.ensure(); } catch (e) { console.error(e); } }
   const sess = KS.get('session');
+  if (DEMO) {
+    if (!S.key) { S.key = 'demo'; store.set('key', 'demo'); }
+    const want = new URLSearchParams(location.search).get('u');
+    if (want && !(sess && sess.user && sess.user.toLowerCase() === want.toLowerCase())) { demoLogin(want); return; }
+  }
   if (S.key && sess && sess.user && sess.pin_hash) { S.user = sess.user; S.role = sess.role; S.pin_hash = sess.pin_hash; enterApp(false); return; }
   // locked session, or a kasir redirected here by the owner app (it remembers last_user) → PIN pad for that name
   const last = (sess && sess.user) || store.get('last_user', '');
