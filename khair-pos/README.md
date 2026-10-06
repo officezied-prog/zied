@@ -1,7 +1,11 @@
 # Khair Mart POS — Panduan Operator
 
-Aplikasi kasir (POS) grosir & eceran untuk **Khair Mart, Condet**, pengganti majoo.
+Aplikasi **pemilik & manajer** Khair Mart, Condet (grosir & eceran), pengganti majoo.
 Buka di browser: **https://officezied-prog.github.io/zied/khair-pos/**
+
+> **Kasir memakai aplikasi terpisah "Khair Kasir"**: https://officezied-prog.github.io/zied/khair-pos/kasir/
+> Jika akun kasir masuk ke aplikasi ini, muncul layar "Aplikasi ini untuk pemilik" lalu otomatis pindah ke Khair Kasir.
+> Pemilik/manajer bisa membuka Khair Kasir dari menu **Lainnya** atau **Pengaturan → Aplikasi Kasir →**.
 
 Data tersimpan di server toko (n8n). Satu aplikasi untuk HP, tablet, dan PC.
 
@@ -87,7 +91,7 @@ Stok bertambah dan **HPP (harga modal) menjadi rata-rata tertimbang** dari stok 
 
 ## 10. Pengaturan (pemilik)
 
-Info toko & catatan struk, lebar kertas, pertanyaan survei (tambah / hapus / urutkan), **kontrol foto** (batas wajib foto keluar, wajib foto nota barang masuk), pengguna (tambah **Kasir / Manajer / Pemilik**, ganti PIN, nonaktifkan), bahasa, **suara kasir**, kunci otomatis, antrian offline.
+Info toko & catatan struk, lebar kertas, **tampilan** (otomatis / terang / gelap, per perangkat), pertanyaan survei (tambah / hapus / urutkan), **kontrol foto** (batas wajib foto keluar, wajib foto nota barang masuk), pengguna (tambah **Kasir / Manajer / Pemilik**, ganti PIN, nonaktifkan), bahasa, **suara kasir**, kunci otomatis, antrian offline.
 
 ## 11. Beranda (pemilik & manajer)
 
@@ -144,7 +148,7 @@ Kode toko demo: `demo` · Pemilik PIN `1234` · Jihan (manajer) PIN `2222` · Si
 
 ## ملخص للمالك (بالعربية)
 
-**نظام الكاشير لمتجر خير مارت** — يعمل على الجوال والتابلت والكمبيوتر، ويُثبَّت من المتصفح عبر «إضافة إلى الشاشة الرئيسية».
+**تطبيق المالك لمتجر خير مارت** — يعمل على الجوال والتابلت والكمبيوتر، ويُثبَّت من المتصفح عبر «إضافة إلى الشاشة الرئيسية». الكاشير يستخدم تطبيقًا منفصلًا هو «Khair Kasir» (‎/khair-pos/kasir/‎)، وإذا دخل حساب كاشير هنا يُحوَّل إليه تلقائيًا. الألوان: أزرق الشعار مع لمسات حمراء، مع دعم الوضع الداكن.
 
 - **الدخول:** يُدخَل رمز المتجر مرة واحدة على كل جهاز، ثم يختار الموظف اسمه ويكتب رقمه السري (4–6 أرقام). زر القفل يقفل التطبيق، ويُقفل تلقائيًا بعد 30 دقيقة دون استخدام.
 - **البيع:** بحث أو مسح باركود، وسعر **الجملة** يُطبَّق تلقائيًا عند بلوغ الحد الأدنى للكمية أو إذا كان العميل «جملة». الدفع نقدًا / تحويل / QRIS / **دَين** (الدَّين يتطلب اختيار عميل).

@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { sha, openApp, enterKey, typePin, login, getDb } = require('./helpers');
+const { sha, openApp, enterKey, typePin, login, getDb, loginKasirRedirect } = require('./helpers');
 
 test('first run: store key → setup owner → login, lock and unlock with PIN', async ({ page }) => {
   await openApp(page, '&seed=empty');
@@ -44,19 +44,30 @@ test('login: wrong PIN is rejected, keyboard PIN entry works, bad store key is r
   await expect(page.locator('.login-err')).toContainText('Kode toko tidak dikenal');
 
   await enterKey(page);
-  await page.click('[data-act="login-user"][data-name="Siti"]');
+  await page.click('[data-act="login-user"][data-name="Jihan"]');
   await typePin(page, '9999');
   await expect(page.locator('.login-err')).toContainText('PIN salah');
 
-  await page.keyboard.type('1111');
+  await page.keyboard.type('2222');
   await page.keyboard.press('Enter');
   await expect(page.locator('#app')).toBeVisible();
-  await expect(page.locator('#tb-role')).toHaveText('Kasir');
+  await expect(page.locator('#tb-role')).toHaveText('Manajer');
   await page.click('#shift-later');
-  // kasir has no owner-only panels
+  // manager has no owner-only panels
   await page.click('#nav [data-view="settings"]');
   await expect(page.locator('#st-users')).toHaveCount(0);
   await expect(page.locator('#st-outbox')).toBeVisible();
+  await expect(page.locator('#st-kasir-app')).toHaveAttribute('href', './kasir/?mock=1');
+});
+
+test('kasir account: owner app shows the cashier-app screen, logs out and redirects to ./kasir/ after 2 s', async ({ page }) => {
+  await loginKasirRedirect(page, 'Siti', '1111');
+  await expect(page.locator('#kasir-redirect')).toContainText('Aplikasi ini untuk pemilik');
+  await expect(page.locator('#kasir-go')).toHaveAttribute('href', './kasir/?mock=1');
+  await expect(page.locator('#app')).toBeHidden();
+  expect(await page.evaluate(() => localStorage.getItem('kpos.mock.session'))).toBeNull();
+  await page.waitForURL(/\/kasir\/\?mock=1$/, { timeout: 5000 });
+  await expect(page.locator('body')).toContainText('kasir app');
 });
 
 test('auto-lock after idle time', async ({ page }) => {
