@@ -1,7 +1,7 @@
 // Real (non-mock) mode against an intercepted n8n webhook: checks the request envelope of API.md
 // and that only network failures (not {ok:false}) put a sale in the outbox.
 const { test, expect } = require('@playwright/test');
-const { sha } = require('./helpers');
+const { sha, confirmQty } = require('./helpers');
 
 const API = 'https://ziedapp.app.n8n.cloud/webhook/khair-pos';
 const KEY = 'test-store-key';
@@ -56,6 +56,7 @@ test('real mode: envelope, text/plain, pin_hash, n8n array response, outbox on n
   // {ok:false} → message, not queued
   be.mode = 'invalid';
   await page.locator('#pos-grid .pcard').first().click();
+  await confirmQty(page);
   await page.click('#btn-checkout');
   await expect(page.locator('.toast.err')).toContainText('Data tidak valid');
   await expect(page.locator('#tb-outbox')).toBeHidden();
