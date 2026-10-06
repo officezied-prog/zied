@@ -230,21 +230,22 @@ Tracking rules (privacy, UU PDP):
 | `track` | sales | `{points: [{lat, lng, acc, t (ISO), speed?, battery?}]}` max 200 per call; ignored when the day is not started | `saved` |
 | `check_in` | sales | `{client_id, lat, lng, acc, shop_id?, shop: {name, owner_name, phone, address, area, type (warung/toko/minimarket/bakery/katering/restoran/masjid/lainnya)}, photo_base64? (JPEG ≤ 400 px, ≤ 45 KB of base64, stored as `photo_thumb` until Google Drive is connected), photo_consent: true, outcome (order/tertarik/tidak/tutup/sudah_pelanggan), notes, next_visit? (YYYY-MM-DD)}` | `visit, shop` (new shop created when `shop_id` is missing) |
 | `field_order` | sales | `{client_id, shop_id, visit_id?, items: [{product_id, qty, unit_price, price_type}], notes, delivery_date?}` | `order` (status `baru`) |
-| `list_field` | owner, manager | `{from, to, user?}` | `tracks[], visits[], shops[], orders[], days[]` |
+| `list_field` | owner, manager | `{from, to (≤ 1 year), user?, include_tracks? (default true; tracks only for ranges ≤ 7 days), photo thumbnails only for ranges ≤ 31 days}` | `tracks[], visits[], shops[], orders[], days[]` |
 | `update_order` | owner, manager | `{order_id, status: "diproses"|"dikirim"|"batal", note, invoice_no?}` | `order` |
 | `set_product_image` | owner, manager | `{product_id, image_base64 (JPEG ≤ 400 px, ≤ 60 KB)}` | `ok` |
 | `product_images` | any | `{ids?: [product_id]}` | `images: [{product_id, image_base64}]` |
+| `link_shop` | owner, manager | `{shop_id, customer_id}` | `shop` (status `pelanggan`, linked to the customer; create the customer first with `save_customer`) |
 
 `client_id` makes `check_in` and `field_order` idempotent: a resend returns the stored row.
 
 **Objects**:
-- **Shop** (`pos_shops`): `shop_id, name, owner_name, phone, address, area, type, lat, lng, created_by, created_at, last_visit_at, visits, status (prospek/pelanggan), customer_id`
+- **Shop** (`pos_shops`): `shop_id, name, owner_name, phone, address, area, type, lat, lng, created_by, created_at, last_visit_at, visits, status (prospek/pelanggan), customer_id, next_visit`
 - **Visit** (`pos_visits`): `visit_id, client_id, user, visit_date, visit_time, shop_id, shop_name, lat, lng, acc, distance_m (from the shop's saved location), outcome, notes, next_visit, photo_thumb (base64 ≈ 320 px), drive_url`
 - **Track point** (`pos_tracks`): `user, track_date, t, lat, lng, acc, speed, battery`
 - **Field day** (`pos_field_days`): `user, day_date, started_at, ended_at, start_lat, start_lng, end_lat, end_lng, km, visits, orders, note`
-- **Field order** (`pos_field_orders`): `order_id, client_id, user, order_date, shop_id, shop_name, items (JSON), total, notes, delivery_date, status, invoice_no, updated_by`
+- **Field order** (`pos_field_orders`): `order_id, client_id, user, order_date, order_time, shop_id, shop_name, items (JSON), total, notes, delivery_date, status, status_note, invoice_no, updated_by`
 
-Prices in field orders are recomputed by the server from the product table (retail/wholesale). The rep cannot
+Prices in field orders are set by the server: wholesale when the shop is linked to a grosir customer or qty ≥ wholesale_min_qty, otherwise retail. The rep cannot
 change them. An order becomes a real sale only when the owner/manager or the store processes it in the owner
 app ("Proses" loads it into the cart; `invoice_no` is saved back with `update_order`).
 

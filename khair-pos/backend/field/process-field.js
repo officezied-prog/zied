@@ -63,7 +63,7 @@ const role = ['owner', 'manager', 'sales'].indexOf(me.role) >= 0 ? me.role : 'ka
 if (role === 'kasir') return fail('FORBIDDEN', 'Aplikasi ini untuk sales lapangan');
 const isBoss = role === 'owner' || role === 'manager';
 const SALES_ONLY = ['day_start', 'day_end', 'track', 'check_in', 'field_order'];
-const BOSS_ONLY = ['list_field', 'update_order', 'set_product_image'];
+const BOSS_ONLY = ['list_field', 'update_order', 'set_product_image', 'link_shop'];
 if (BOSS_ONLY.indexOf(req.action) >= 0 && !isBoss) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
 if (SALES_ONLY.indexOf(req.action) >= 0 && role !== 'sales') return fail('FORBIDDEN', 'Hanya untuk akun sales');
 
@@ -233,7 +233,8 @@ switch (req.action) {
     const order = {
       order_id: 'SO' + rand(7), client_id: req.client_id, user: me.name, order_date: req.today, shop_id: shop.shop_id, shop_name: str(shop.name),
       items: JSON.stringify(lines), total: lines.reduce(function (a, l) { return a + l.line_total; }, 0), notes: str(data.notes).slice(0, 500),
-      delivery_date: isDate(data.delivery_date) ? data.delivery_date : '', status: 'baru', invoice_no: '', updated_by: ''
+      delivery_date: isDate(data.delivery_date) ? data.delivery_date : '', status: 'baru', invoice_no: '', updated_by: '',
+      order_time: new Date().toISOString(), status_note: ''
     };
     ops.orders.push(forWrite(order, -1));
     return done({ ok: true, duplicate: false, order: order });
@@ -242,14 +243,14 @@ switch (req.action) {
   case 'list_field': {
     if (!isDate(data.from) || !isDate(data.to) || data.from > data.to) return fail('INVALID', 'Rentang tanggal tidak valid');
     const span = (Date.parse(data.to) - Date.parse(data.from)) / 86400000;
-    if (span > 92) return fail('INVALID', 'Maksimal 3 bulan');
+    if (span > 366) return fail('INVALID', 'Maksimal 1 tahun');
     const u = str(data.user).toLowerCase();
     const byUser = function (r) { return !u || str(r.user).toLowerCase() === u; };
     const orderMap = {};
     rows('Get Range Orders').concat(rows('Get Open Orders')).forEach(function (o) { orderMap[o.order_id] = clean(o); });
     return done({
       ok: true,
-      tracks: span <= 7 ? rows('Get Range Tracks').filter(byUser).map(function (t) { return { user: t.user, track_date: t.track_date, t: t.t, lat: t.lat, lng: t.lng, acc: t.acc, speed: t.speed, battery: t.battery }; }) : [],
+      tracks: span <= 7 && data.include_tracks !== false ? rows('Get Range Tracks').filter(byUser).map(function (t) { return { user: t.user, track_date: t.track_date, t: t.t, lat: t.lat, lng: t.lng, acc: t.acc, speed: t.speed, battery: t.battery }; }) : [],
       visits: rows('Get Range Visits').filter(byUser).map(function (v) { return visitOut(v, span <= 31); }),
       shops: shops.map(clean),
       orders: Object.keys(orderMap).map(function (k) { return orderMap[k]; }).filter(byUser),
@@ -264,10 +265,21 @@ switch (req.action) {
     if (!st) return fail('INVALID', 'Status tidak valid');
     const no = Object.assign({}, o, {
       status: st, invoice_no: str(data.invoice_no) || str(o.invoice_no), updated_by: me.name,
-      notes: (str(o.notes) + (str(data.note) ? ' | ' + me.name + ': ' + str(data.note).slice(0, 300) : '')).trim()
+      status_note: str(data.note).slice(0, 300) || str(o.status_note)
     });
     ops.orders.push(forWrite(no, o.id));
     return done({ ok: true, order: clean(no) });
+  }
+
+  case 'link_shop': {
+    const shop = shopById[String(data.shop_id || '')];
+    if (!shop) return fail('NOT_FOUND', 'Toko tidak ditemukan');
+    const cid = Number(data.customer_id);
+    const cust = rows('Get Customers').find(function (c) { return Number(c.id) === cid; });
+    if (!cust) return fail('NOT_FOUND', 'Pelanggan tidak ditemukan');
+    const ns = Object.assign({}, shop, { customer_id: cust.id, status: 'pelanggan' });
+    ops.shops.push(forWrite(ns, shop.id));
+    return done({ ok: true, shop: clean(ns) });
   }
 
   case 'set_product_image': {
