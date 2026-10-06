@@ -209,3 +209,48 @@ Blind count: while a shift is open, a kasir never receives `cash_sales, cash_pay
 Sale gets `channel` (`toko|whatsapp|shopee|tiktok|tokopedia|web|lainnya`, default `toko`), `promo_code`
 (uppercase A–Z 0–9 _ -, e.g. campaign code `KHAIR1111`) and `shift_id`. Expense gets `paid_from` (`kas|lain`).
 Any failed request writes nothing.
+
+## Field sales: Khair Sales (v8)
+
+Endpoint: `POST https://ziedapp.app.n8n.cloud/webhook/khair-field` (separate workflow), same envelope and
+auth as the main API (`key`, `user`, `pin_hash`). New role **`sales`** (field rep / distributor), created by
+the owner with `save_user {role: "sales"}`. Sales reps use the app at `khair-pos/sales/`.
+
+Tracking rules (privacy, UU PDP):
+- GPS is recorded only between "Mulai kerja" and "Selesai kerja", which the rep presses.
+- The rep gives one-time consent in the app, and the app shows a visible indicator while tracking.
+- A web app cannot track while the phone is locked or the app is closed. Points are taken while the app is
+  open, plus at every check-in.
+
+| action | who | data | response |
+|---|---|---|---|
+| `field_bootstrap` | sales, owner, manager | – | `user, products[] (no cost fields), images_version, shops[] (mine for sales, all for owner/manager), customers[] (grosir only), day: {status: "off"|"working"|"ended", started_at, ended_at, visits_today, km_today}, settings` |
+| `day_start` | sales | `{lat, lng, acc}` | `day` |
+| `day_end` | sales | `{lat, lng, acc, note}` | `day` (with `km_today`, `visits_today`, `orders_today`) |
+| `track` | sales | `{points: [{lat, lng, acc, t (ISO), speed?, battery?}]}` max 200 per call; ignored when the day is not started | `saved` |
+| `check_in` | sales | `{client_id, lat, lng, acc, shop_id?, shop: {name, owner_name, phone, address, area, type (warung/toko/minimarket/bakery/katering/restoran/masjid/lainnya)}, photo_base64? (JPEG ≤ 400 px, ≤ 45 KB of base64, stored as `photo_thumb` until Google Drive is connected), photo_consent: true, outcome (order/tertarik/tidak/tutup/sudah_pelanggan), notes, next_visit? (YYYY-MM-DD)}` | `visit, shop` (new shop created when `shop_id` is missing) |
+| `field_order` | sales | `{client_id, shop_id, visit_id?, items: [{product_id, qty, unit_price, price_type}], notes, delivery_date?}` | `order` (status `baru`) |
+| `list_field` | owner, manager | `{from, to, user?}` | `tracks[], visits[], shops[], orders[], days[]` |
+| `update_order` | owner, manager | `{order_id, status: "diproses"|"dikirim"|"batal", note, invoice_no?}` | `order` |
+| `set_product_image` | owner, manager | `{product_id, image_base64 (JPEG ≤ 400 px, ≤ 60 KB)}` | `ok` |
+| `product_images` | any | `{ids?: [product_id]}` | `images: [{product_id, image_base64}]` |
+
+`client_id` makes `check_in` and `field_order` idempotent: a resend returns the stored row.
+
+**Objects**:
+- **Shop** (`pos_shops`): `shop_id, name, owner_name, phone, address, area, type, lat, lng, created_by, created_at, last_visit_at, visits, status (prospek/pelanggan), customer_id`
+- **Visit** (`pos_visits`): `visit_id, client_id, user, visit_date, visit_time, shop_id, shop_name, lat, lng, acc, distance_m (from the shop's saved location), outcome, notes, next_visit, photo_thumb (base64 ≈ 320 px), drive_url`
+- **Track point** (`pos_tracks`): `user, track_date, t, lat, lng, acc, speed, battery`
+- **Field day** (`pos_field_days`): `user, day_date, started_at, ended_at, start_lat, start_lng, end_lat, end_lng, km, visits, orders, note`
+- **Field order** (`pos_field_orders`): `order_id, client_id, user, order_date, shop_id, shop_name, items (JSON), total, notes, delivery_date, status, invoice_no, updated_by`
+
+Prices in field orders are recomputed by the server from the product table (retail/wholesale). The rep cannot
+change them. An order becomes a real sale only when the owner/manager or the store processes it in the owner
+app ("Proses" loads it into the cart; `invoice_no` is saved back with `update_order`).
+
+Images: the client resizes before sending. Products get `image_updated` (ISO) whenever their image changes;
+clients cache images per product and re-fetch only the changed ones.
+
+Mock mode: demo field rep **Ahmad** (role `sales`, PIN 4444) with about 14 days of seeded days, tracks around
+Condet/Kramat Jati/Cililitan, visits, shops (prospek and pelanggan) and orders. Mock mode keeps these tables inside `kmock.db` under the keys `shops`, `visits`, `tracks`, `field_days`,
+`field_orders` and `product_images`, with the shapes above.
