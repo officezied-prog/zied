@@ -65,7 +65,7 @@ for (const [label, vp] of [['desktop', { width: 1366, height: 768 }], ['phone', 
       if (label === 'phone') { await page.click('#nav-more'); await page.waitForTimeout(250); await shot(page, 'phone-more-menu'); await closeModals(page); }
       await nav(page, 'purchases');
       await page.setInputFiles('#pu-photo', await photoFile(page));
-      await page.waitForSelector('#pu-photo-card.done');
+      await expect(page.locator('#pu-photo-card'), 'purchase photo card never reached .done').toHaveClass(/\bdone\b/, { timeout: 15000 });
       await shot(page, `${label}-purchase-photo`);
       await nav(page, 'kas');
       await shot(page, `${label}-kas-owner`);
@@ -75,7 +75,7 @@ for (const [label, vp] of [['desktop', { width: 1366, height: 768 }], ['phone', 
       await page.route(/cdnjs\.cloudflare\.com|tile\.openstreetmap\.org/, r => r.abort());
       await nav(page, 'field');
       await page.fill('#fd-date', (await page.evaluate(() => JSON.parse(localStorage.getItem('kmock.db')).field_days.slice(-1)[0].day_date)));
-      await page.waitForSelector('#fd-map[data-mode="svg"]');
+      await expect(page.locator('#fd-map'), 'field map never drew (data-mode stays unset or not svg)').toHaveAttribute('data-mode', 'svg', { timeout: 15000 });
       await shot(page, `${label}-field`);
     });
 
