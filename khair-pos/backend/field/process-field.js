@@ -102,7 +102,8 @@ function visitOut(v, full) {
   if (!full) delete o.photo_thumb;
   return o;
 }
-const SHOP_TYPES = ['warung', 'toko', 'minimarket', 'bakery', 'katering', 'restoran', 'masjid', 'lainnya'];
+// Same ids as khair-pos/shared/shop-types.js (grouped list shown in the apps); unknown → 'lainnya' + type_other.
+const SHOP_TYPES = ['perlengkapan_haji', 'travel_umrah', 'oleh_oleh_haji', 'toko_kurma', 'herbal', 'busana_muslim', 'toko_buku_islam', 'warung', 'toko', 'grosir_sembako', 'pasar', 'minimarket', 'supermarket', 'hypermarket', 'grosir_modern', 'bakery', 'toko_kue', 'katering', 'restoran', 'kafe', 'hotel', 'oleh_oleh', 'parsel', 'toko_buah', 'masjid', 'pesantren', 'sekolah', 'majelis_taklim', 'kantor', 'koperasi', 'reseller', 'toko_online', 'lainnya'];
 const OUTCOMES = ['order', 'tertarik', 'tidak', 'tutup', 'sudah_pelanggan'];
 
 switch (req.action) {
@@ -190,6 +191,9 @@ switch (req.action) {
         last_visit_at: now, visits: num(shop.visits) + 1,
         lat: isCoord(shop.lat, shop.lng) ? shop.lat : num(data.lat), lng: isCoord(shop.lat, shop.lng) ? shop.lng : num(data.lng),
         owner_name: str(sd.owner_name) || str(shop.owner_name), phone: str(sd.phone) || str(shop.phone),
+        type: SHOP_TYPES.indexOf(sd.type) >= 0 ? sd.type : (shop.type || 'lainnya'),
+        type_other: SHOP_TYPES.indexOf(sd.type) >= 0 ? (sd.type === 'lainnya' ? str(sd.type_other).slice(0, 60) : '') : str(shop.type_other),
+        chain: sd.chain !== undefined ? str(sd.chain).slice(0, 40) : str(shop.chain),
         status: data.outcome === 'order' || data.outcome === 'sudah_pelanggan' ? 'pelanggan' : (shop.status || 'prospek'),
         next_visit: isDate(data.next_visit) ? data.next_visit : ''
       });
@@ -203,6 +207,8 @@ switch (req.action) {
       shop = {
         shop_id: shopId, name: name.slice(0, 120), owner_name: str(sd.owner_name).slice(0, 80), phone: str(sd.phone).slice(0, 30),
         address: str(sd.address).slice(0, 200), area: str(sd.area).slice(0, 60), type: SHOP_TYPES.indexOf(sd.type) >= 0 ? sd.type : 'lainnya',
+        type_other: SHOP_TYPES.indexOf(sd.type) < 0 || sd.type === 'lainnya' ? (str(sd.type_other) || (SHOP_TYPES.indexOf(sd.type) < 0 ? str(sd.type) : '')).slice(0, 60) : '',
+        chain: str(sd.chain).slice(0, 40),
         lat: num(data.lat), lng: num(data.lng), created_by: me.name, created_at: now, last_visit_at: now, visits: 1,
         status: data.outcome === 'order' || data.outcome === 'sudah_pelanggan' ? 'pelanggan' : 'prospek', customer_id: 0,
         next_visit: isDate(data.next_visit) ? data.next_visit : ''
