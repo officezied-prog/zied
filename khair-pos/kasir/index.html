@@ -356,6 +356,7 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="i-cart" viewBox="0 0 24 24"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.6 12.2a2 2 0 0 0 2 1.6h7.9a2 2 0 0 0 2-1.5L21 7H6"/></symbol>
   <symbol id="i-truck" viewBox="0 0 24 24"><path d="M3 6h11v10H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+  <symbol id="i-count" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 12.5l2 2 4-4.5"/></symbol>
   <symbol id="i-cash" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9v.01M18 15v.01"/></symbol>
   <symbol id="i-menu" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
@@ -700,6 +701,52 @@ const MockServer = (() => {
     db.approvals.push(ap);
     return ap;
   }
+  /* Stok opname (stock count): owner applies directly, others create an owner approval (kind 'opname'). */
+  const OPNAME_SUPPLIER = 'STOK OPNAME';
+  function opnameLog(db, p, diff, counted, system, note, user) {
+    db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: jktDate(), supplier: OPNAME_SUPPLIER, product_id: p.id, name: p.name, qty: diff, cost_price: p.cost_price, total: 0, note: `${note || 'Stok opname'} (dihitung ${fmtQty(counted)}, sistem ${fmtQty(system)})`, user });
+  }
+  function stockCount(db, u, data) {
+    if (u.role === 'sales') throw E('FORBIDDEN', 'Sales accounts cannot count stock');
+    const counts = data.counts;
+    if (!Array.isArray(counts) || !counts.length) throw E('INVALID', 'counts required');
+    if (counts.length > 500) throw E('INVALID', 'max 500 lines per count');
+    const seen = new Set();
+    const lines = counts.map(c => {
+      const p = db.products.find(x => x.id === Number(c && c.product_id));
+      if (!p) throw E('NOT_FOUND', 'product ' + (c && c.product_id));
+      if (seen.has(p.id)) throw E('INVALID', 'duplicate product ' + p.id);
+      seen.add(p.id);
+      if (c.counted === '' || c.counted == null || !Number.isFinite(Number(c.counted)) || Number(c.counted) < 0) throw E('INVALID', 'counted must be >= 0');
+      const counted = roundQty(c.counted), system = roundQty(p.stock);
+      return { product_id: p.id, name: p.name, unit: p.unit, system, counted, diff: roundQty(counted - system) };
+    });
+    const note = String(data.note || '').trim();
+    if (u.role === 'owner') {
+      const stock = lines.map(l => {
+        const p = db.products.find(x => x.id === l.product_id);
+        if (l.diff) opnameLog(db, p, l.diff, l.counted, l.system, note, u.name);
+        p.stock = l.counted;
+        return { product_id: p.id, stock: p.stock };
+      });
+      return { applied: true, lines, stock };
+    }
+    const diffs = lines.filter(l => l.diff);
+    const summary = `Stok opname ${lines.length} barang, ${diffs.length} selisih` + (diffs.length ? ': ' + diffs.slice(0, 3).map(l => `${l.name} ${fmtQty(l.system)}→${fmtQty(l.counted)}`).join(', ') + (diffs.length > 3 ? ', …' : '') : '');
+    const approval = newApproval(db, u, { kind: 'opname', approver_role: 'owner', summary, payload: JSON.stringify({ lines, counted_at: jktISO(), by: u.name, note }) });
+    return { applied: false, request_id: approval.request_id, approval, lines };
+  }
+  /** Approved opname: each line's diff is added to the CURRENT stock (sales made meanwhile are kept). */
+  function applyOpname(db, ap, approver) {
+    let pl = {}; try { pl = JSON.parse(ap.payload || '{}'); } catch (e) { }
+    const by = pl.by || ap.cashier;
+    return (pl.lines || []).map(l => {
+      const p = db.products.find(x => x.id === Number(l.product_id)); if (!p) return null;
+      const diff = roundQty(l.diff);
+      if (diff) { p.stock = roundQty(num(p.stock) + diff); opnameLog(db, p, diff, l.counted, l.system, [pl.note, `oleh ${by}, disetujui ${approver}`].filter(Boolean).join(' · '), by); }
+      return { product_id: p.id, stock: p.stock };
+    }).filter(Boolean);
+  }
   const nameTokens = s => norm(s).replace(/(\d)([a-z])/g, '$1 $2').replace(/([a-z])(\d)/g, '$1 $2').replace(/[^a-z0-9 ]/g, ' ').split(' ').filter(Boolean).map(w => w === 'gr' ? 'g' : w);
   function nameScore(a, b) { const A = nameTokens(a), B = new Set(nameTokens(b)); return A.length ? A.filter(w => B.has(w)).length / A.length : 0; }
   const blankProduct = () => ({ sku: '', name: '', category: '', unit: 'pcs', cost_price: 0, retail_price: 0, wholesale_price: 0, wholesale_min_qty: 0, stock: 0, min_stock: 0, active: true, notes: '' });
@@ -823,6 +870,7 @@ const MockServer = (() => {
           for (const [f, ch] of Object.entries(pl.changes || {})) p[f] = int(ch.to);
           out.product = p;
         }
+        if (data.decision === 'approved' && ap.kind === 'opname') out.stock = applyOpname(db, ap, u.name);
         Object.assign(ap, { status: data.decision, decided_by: u.name, decided_at: jktISO(), note: String(data.note || '') });
         return Object.assign({ approval: ap }, out);
       }
@@ -1019,19 +1067,20 @@ const MockServer = (() => {
         const checked = data.items.map(it => {
           const p = prodById(it.product_id); if (!p) throw E('NOT_FOUND', 'product ' + it.product_id);
           const qty = roundQty(it.qty); if (!(qty > 0)) throw E('INVALID', 'qty must be > 0');
-          return { p, qty, cost: Math.max(0, int(it.cost_price)) };
+          return { p, qty, cost: Math.max(0, int(it.cost_price)), exp: isYmd(it.exp_date) ? it.exp_date : '' };
         });
         const out = [];
-        for (const { p, qty, cost } of checked) {
+        for (const { p, qty, cost, exp } of checked) {
           const old = Math.max(0, num(p.stock));
           p.cost_price = old + qty > 0 ? Math.round((old * p.cost_price + qty * cost) / (old + qty)) : cost;
           p.stock = roundQty(p.stock + qty);
-          db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: pdate, supplier: String(data.supplier || ''), product_id: p.id, name: p.name, qty, cost_price: cost, total: Math.round(qty * cost), note: String(data.note || ''), user: u.name, photo_id: photo ? photo.photo_id : '' });
+          db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: pdate, supplier: String(data.supplier || ''), product_id: p.id, name: p.name, qty, cost_price: cost, total: Math.round(qty * cost), note: String(data.note || ''), user: u.name, photo_id: photo ? photo.photo_id : '', exp_date: exp });
           out.push({ product_id: p.id, stock: p.stock, cost_price: p.cost_price });
         }
         if (photo) photo.ref = [photo.ref, String(data.supplier || '')].filter(Boolean).join(' ') || 'masuk';
         return { stock: out };
       }
+      case 'stock_count': return stockCount(db, u, data);
       case 'get_sales': {
         if (!isYmd(data.from) || !isYmd(data.to)) throw E('INVALID', 'from/to');
         const inR = d => d >= data.from && d <= data.to;
@@ -1264,6 +1313,18 @@ const MockServer = (() => {
       const ph = newPhoto('masuk', rows[0].supplier, rows[0].purchase_date, 'Pemilik', { extracted: { supplier: rows[0].supplier, items: rows.map(r => ({ name: r.name, qty: r.qty, unit_price: r.cost_price, total: r.total })) } });
       rows.forEach(r => r.photo_id = ph.photo_id);
     });
+    // Gudang demo data (no random draws, so the data above stays identical): expiry dates on food batches of the
+    // last 12 months, three short-dated batches bought yesterday, and a few manual stock adjustments in the past.
+    const SHELF = { Kurma: 300, Kismis: 270, Cokelat: 150, Kacang: 210, Minuman: 365, Bumbu: 365, Sembako: 240 };
+    purchases.forEach(pu => { const sh = SHELF[products[pu.product_id - 1].category]; if (sh && pu.purchase_date >= addDays(T, -365)) pu.exp_date = addDays(pu.purchase_date, sh); });
+    const prodRe = re => products.find(p => re.test(p.name));
+    const addPur = (d, supplier, re, qty, exp, note) => { const p = prodRe(re); purchases.push({ id: ++seqPur, purchase_date: addDays(T, -d), supplier, product_id: p.id, name: p.name, qty, cost_price: p.cost_price, total: supplier === ADJUST_SUPPLIER ? 0 : qty * p.cost_price, note: note || '', user: 'Pemilik', photo_id: '', exp_date: exp == null ? '' : addDays(T, exp) }); };
+    addPur(1, 'CV Timur Tengah Food', /Cokelat Arab Kerang/, 12, 5, 'Stok promo, tanggal pendek');
+    addPur(1, 'PT Kurma Nusantara', /Kurma Sukkari/, 24, 21);
+    addPur(1, 'Grosir Kramat Jati', /Kacang Almond/, 20, 45);
+    addPur(4, ADJUST_SUPPLIER, /Kurma Medjool/, -1, null, 'Rusak — kemasan sobek');
+    addPur(11, ADJUST_SUPPLIER, /Tasbih/, -2, null, 'Hilang');
+    addPur(19, ADJUST_SUPPLIER, /Gula Pasir/, 3, null, 'Hitung ulang — salah input');
     const users = mode === 'empty' ? [] : [
       { name: 'Pemilik', role: 'owner', pin_hash: await pinHash('demo', 'Pemilik', '1234'), active: true },
       { name: 'Siti', role: 'kasir', pin_hash: await pinHash('demo', 'Siti', '1111'), active: true },
@@ -2827,6 +2888,7 @@ RENDER.more = function () {
       <button class="li" data-act="debt-pay" id="m-debt">${ic('wallet')}<div class="grow"><div class="t">${esc(t('more.debt_pay'))}</div><div class="s">${esc(t('more.debt_pay_s'))}</div></div></button>
       <button class="li" data-act="void-req" id="m-void">${ic('undo')}<div class="grow"><div class="t">${esc(t('more.void'))}</div><div class="s">${esc(t('more.void_s'))}</div></div></button>
       <button class="li" data-act="price-req" id="m-price">${ic('tag')}<div class="grow"><div class="t">${esc(t('more.price'))}</div><div class="s">${esc(S.role === 'kasir' ? t('more.price_s') : t('more.price_s_mgr'))}</div></div></button>
+      <button class="li" data-act="stock-count" id="m-count">${ic('count')}<div class="grow"><div class="t">${esc(t('more.count'))}</div><div class="s">${esc(t('more.count_s'))}</div></div></button>
       <button class="li" data-act="my-req" id="m-myreq">${ic('list')}<div class="grow"><div class="t">${esc(t('more.myreq'))}</div><div class="s">${esc(t('more.myreq_s'))}</div></div>${mine ? `<span class="badge warn">${mine}</span>` : ''}</button>
       ${isApprover() ? `<button class="li" data-act="apr-open" id="m-apr">${ic('check')}<div class="grow"><div class="t">${esc(t('apr.inbox'))} (<span id="m-apr-n">${AP.count}</span>)</div><div class="s">${esc(t('apr.inbox_s'))}</div></div></button>` : ''}
       <button class="li" data-act="last-rc" id="m-last">${ic('receipt')}<div class="grow"><div class="t">${esc(t('more.last_rc'))}</div></div></button>
@@ -2988,6 +3050,7 @@ function aprPayload(a) { try { return typeof a.payload === 'string' ? JSON.parse
 function aprBodyHTML(a) {
   const kind = a.kind || 'credit', pl = aprPayload(a);
   const head = (title, badge) => `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(title)}</b><span class="badge ${badge}">${esc(a.request_id)}</span></div><div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))}</div>`;
+  if (kind === 'opname') { const ls = (pl.lines || []).filter(l => num(l.diff)); return head(t('sc.apr_title', { n: (pl.lines || []).length, d: ls.length }), '') + `<table class="tbl" style="margin:8px 0" data-opname-lines><thead><tr><th></th><th class="r">${esc(t('sc.system'))}</th><th class="r">${esc(t('sc.qty'))}</th><th class="r">${esc(t('sc.diff'))}</th></tr></thead><tbody>${ls.map(l => `<tr><td>${esc(l.name)}</td><td class="r num">${fmtQty(l.system)}</td><td class="r num">${fmtQty(l.counted)}</td><td class="r num"><b>${num(l.diff) > 0 ? '+' : ''}${fmtQty(l.diff)}</b></td></tr>`).join('')}</tbody></table><div class="small muted" style="margin-bottom:8px">${esc(t('sc.apr_hint'))}</div>`; }
   if (kind === 'void') return head(t('apr.kind_void', { inv: a.ref }), 'red') + `<div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('rc.customer'))}</div><div class="v">${esc(a.customer_name || t('sell.walkin'))}</div></div><div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(a.total)}</div></div></div><div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason || a.summary || '')}”</b></div>`;
   if (kind === 'price') {
     const rows = Object.entries(pl.changes || {}).filter(([f]) => f !== 'cost_price').map(([f, ch]) => `<tr><td>${esc(t('price.f_' + f))}</td><td class="r num">${ch.from == null ? '—' : fmtRp(ch.from)}</td><td class="r num"><b>${ch.to == null ? '—' : fmtRp(ch.to)}</b></td></tr>`).join('');
@@ -3026,6 +3089,7 @@ async function decideApproval(id, decision, btn) {
     toast(decision === 'approved' ? t('apr.done_ok', { id }) : t('apr.done_rej', { id }), decision === 'approved' ? 'ok' : 'warn');
     if (r.product) { const p = prodById(r.product.id); if (p) Object.assign(p, noCost(Object.assign({}, r.product)), { stock: p.stock }); saveCache(); renderGrid(); }
     if (r.sale) refreshData(true);
+    if (r.stock) { r.stock.forEach(x => { const p = prodById(x.product_id); if (p) p.stock = roundQty(num(x.stock) - pendingQty(p.id)); }); saveCache(); renderGrid(); }
   } catch (e) { toast(e.code === 'NEEDS_OWNER' ? t('err.NEEDS_OWNER') : errMsg(e), 'err'); $$('button', card).forEach(b => b.disabled = false); pollApprovals(); }
 }
 
@@ -3323,6 +3387,114 @@ const I18N = {
     'hold.close_anyway': 'إغلاق على أي حال'
   }
 };
+
+/* ========== Hitung stok (blind stock count) → owner approval ==========
+   The cashier counts what is on the shelf; system stock and differences are never shown here (the stock_count
+   answer is not displayed either, only its request id). The count is a draft per user on this device until it
+   is sent, so it survives a reload and offline periods ("butuh internet untuk mengirim"). */
+const scKey = () => 'stock_count.' + String(S.user || '').toLowerCase();
+const scLoad = () => Object.assign({ lines: [], note: '' }, KS.get(scKey(), null) || {});
+const scSave = D => KS.set(scKey(), { lines: D.lines, note: D.note });
+function openStockCount() {
+  const D = scLoad();
+  const el = openModal({
+    title: t('sc.title'), id: 'stock-count', focus: false,
+    body: `<p class="small muted" style="margin-top:0">${esc(t('sc.hint'))}</p>
+      <div class="scanbar"><div class="search">${ic('search')}<input class="input" id="sc-q" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="${esc(t('sc.search'))}" aria-label="${esc(t('sc.search'))}"></div>
+        ${'BarcodeDetector' in window ? `<button class="icon-btn" id="sc-cam" type="button" aria-label="${esc(t('sell.camera'))}">${ic('scan')}</button>` : ''}</div>
+      <div class="list" id="sc-sug"></div>
+      <h3 style="font-size:16px;margin:14px 0 8px" id="sc-head"></h3>
+      <div class="list" id="sc-lines"></div>
+      <div class="field" style="margin-top:12px"><label class="f" for="sc-note">${esc(t('sc.note'))}</label><input class="input" id="sc-note" value="${esc(D.note || '')}"></div>
+      <div class="small muted" id="sc-draft">${esc(t('sc.draft'))}</div>
+      <div class="err" id="sc-err" role="alert"></div><div id="sc-res"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button><button class="btn primary" id="sc-send">${ic('send')} <span></span></button>`
+  });
+  const q = $('#sc-q', el), sug = $('#sc-sug', el), box = $('#sc-lines', el), err = $('#sc-err', el), send = $('#sc-send', el);
+  const filled = () => D.lines.filter(l => String(l.c || '').trim() !== '' && prodById(l.id));
+  const head = () => { $('#sc-head', el).textContent = t('sc.counted', { n: filled().length, total: D.lines.length }); $('span', send).textContent = t('sc.send', { n: filled().length }); send.disabled = !filled().length; };
+  const drawLines = () => {
+    box.innerHTML = D.lines.map(l => { const p = prodById(l.id); if (!p) return ''; return `<div class="li" data-line="${esc(p.id)}" style="min-height:0;padding:8px 10px"><div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${esc(p.sku || '')} · ${esc(p.unit || '')}</div></div>
+      <input class="input num" style="width:96px;font-weight:800;font-size:18px" data-sc="${esc(p.id)}" type="text" inputmode="${isWeightUnit(p.unit) ? 'decimal' : 'numeric'}" autocomplete="off" enterkeyhint="next" value="${esc(l.c || '')}" aria-label="${esc(t('sc.qty'))} ${esc(p.name)}">
+      <button class="icon-btn ghost sm" type="button" data-sc-del="${esc(p.id)}" aria-label="${esc(t('delete'))}">${ic('x')}</button></div>`; }).join('') || `<div class="empty" id="sc-empty">${esc(t('sc.empty'))}</div>`;
+    head();
+  };
+  const add = p => {
+    if (!p || p.active === false) return;
+    if (!D.lines.some(l => String(l.id) === String(p.id))) { D.lines.unshift({ id: p.id, c: '' }); scSave(D); drawLines(); }
+    q.value = ''; sug.innerHTML = ''; err.textContent = '';
+    const inp = $(`[data-sc="${p.id}"]`, el); if (inp) { inp.focus(); inp.select(); }
+  };
+  const drawSug = () => {
+    const list = q.value.trim() ? filterProducts(q.value).slice(0, 8) : [];
+    sug.innerHTML = list.map(p => `<button class="li" type="button" data-sc-add="${esc(p.id)}" style="min-height:52px;padding:8px 12px"><div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${esc(p.sku || '')} · ${esc(p.unit || '')}</div></div>${ic('plus')}</button>`).join('');
+  };
+  q.addEventListener('input', drawSug);
+  q.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const v = q.value.trim(); if (!v) return;
+    const p = findBySku(v) || (filterProducts(v).length === 1 ? filterProducts(v)[0] : null);
+    if (p) add(p); else if (/^\d{6,}$/.test(v)) { beep(); toast(t('sell.barcode_nf', { code: v }), 'err'); q.select(); }
+  });
+  const cam = $('#sc-cam', el); if (cam) cam.onclick = () => cameraScan(code => { const p = findBySku(code); if (p) add(p); else toast(t('sell.barcode_nf', { code }), 'err'); });
+  sug.onclick = e => { const b = e.target.closest('[data-sc-add]'); if (b) add(prodById(b.dataset.scAdd)); };
+  box.onclick = e => { const b = e.target.closest('[data-sc-del]'); if (!b) return; D.lines = D.lines.filter(l => String(l.id) !== String(b.dataset.scDel)); scSave(D); drawLines(); };
+  box.addEventListener('input', e => { const i = e.target.closest('[data-sc]'); if (!i) return; const l = D.lines.find(x => String(x.id) === String(i.dataset.sc)); if (l) { l.c = i.value; scSave(D); head(); } });
+  box.addEventListener('keydown', e => { const i = e.target.closest('[data-sc]'); if (!i || e.key !== 'Enter') return; e.preventDefault(); const all = $$('[data-sc]', box); const nx = all[all.indexOf(i) + 1]; if (nx) nx.focus(); else q.focus(); });
+  $('#sc-note', el).oninput = e => { D.note = e.target.value; scSave(D); };
+  send.onclick = async () => {
+    const lines = filled();
+    if (!lines.length) { err.textContent = t('sc.none'); return; }
+    const bad = lines.find(l => { const v = qtyVal(l.c); return !/\d/.test(String(l.c)) || !Number.isFinite(v) || v < 0; });
+    if (bad) { err.textContent = t('sc.bad', { name: prodById(bad.id).name }); return; }
+    if (lines.length > 500) { err.textContent = t('sc.too_many'); return; }
+    const ok = await confirmBox(t('sc.confirm', { n: lines.length }), { ok: t('sc.send_ok') });
+    if (!ok.ok) return;
+    send.disabled = true; err.textContent = '';
+    try {
+      const r = await api('stock_count', { counts: lines.map(l => ({ product_id: prodById(l.id).id, counted: qtyVal(l.c) })), note: String(D.note || '').trim() });
+      const id = r.request_id || (r.approval || {}).request_id || '';
+      const done = new Set(lines.map(l => String(l.id)));
+      D.lines = D.lines.filter(l => !done.has(String(l.id))); if (!D.lines.length) D.note = '';
+      scSave(D);
+      if (r.applied) { (r.stock || []).forEach(s => { const p = prodById(s.product_id); if (p) p.stock = roundQty(num(s.stock) - pendingQty(p.id)); }); saveCache(); }
+      else trackMyRequest(id, 'opname', t('req.opname', { n: lines.length }));
+      // only the outcome is shown — never the system stock / differences in the answer
+      $('#sc-res', el).innerHTML = `<div class="status ${r.applied ? 'cocok' : 'need'}" id="sc-sent"><div class="st">${ic('check')} ${esc(t(r.applied ? 'sc.applied' : 'sc.sent'))}</div>${id ? `<div>${esc(t('apr.request_id'))}: <b>${esc(id)}</b></div>` : ''}<div class="small">${esc(t('req.opname', { n: lines.length }))}</div></div>`;
+      $('#sc-note', el).value = D.note || '';
+      drawLines();
+      toast(t(r.applied ? 'sc.applied' : 'sc.sent'), 'ok', 4000);
+    } catch (e) {
+      send.disabled = false;
+      err.textContent = e instanceof NetError ? t('sc.offline') : errMsg(e);
+    }
+  };
+  drawLines();
+  if (!navigator.onLine) err.textContent = t('sc.offline');
+  setTimeout(() => { if (!isTouch()) q.focus(); }, 30);
+}
+Object.assign(ACT, { 'stock-count': () => openStockCount() });
+Object.assign(I18N.id, {
+  'more.count': 'Hitung stok', 'more.count_s': 'Hitung barang di rak/gudang, dikirim ke pemilik', 'sc.title': 'Hitung stok',
+  'sc.hint': 'Hitung jumlah barang yang ada di rak / gudang, lalu kirim. Hasilnya diperiksa dan disetujui pemilik.',
+  'sc.search': 'Cari / scan barang', 'sc.counted': 'Sudah dihitung: {n} dari {total}', 'sc.qty': 'Jumlah dihitung', 'sc.empty': 'Belum ada barang. Cari atau scan barang yang dihitung.',
+  'sc.note': 'Catatan (opsional)', 'sc.draft': 'Hitungan tersimpan otomatis di HP ini sampai dikirim.', 'sc.send': 'Kirim ({n})', 'sc.send_ok': 'Kirim',
+  'sc.confirm': 'Kirim hasil hitung {n} barang ke pemilik?', 'sc.sent': 'Terkirim ke pemilik untuk disetujui', 'sc.applied': 'Stok diperbarui',
+  'sc.offline': 'Butuh internet untuk mengirim. Hitungan tetap tersimpan di HP ini.', 'sc.none': 'Isi jumlah hitung minimal satu barang.', 'sc.bad': 'Jumlah tidak valid: {name}',
+  'sc.too_many': 'Maksimal 500 barang sekali kirim.', 'req.opname': 'Hitung stok {n} barang',
+  'sc.apr_title': 'Stok opname: {n} barang, {d} selisih', 'sc.system': 'Sistem', 'sc.diff': 'Selisih', 'sc.apr_hint': 'Jika disetujui, selisih ditambahkan ke stok saat ini.'
+});
+Object.assign(I18N.ar, {
+  'more.count': 'عدّ المخزون', 'more.count_s': 'عُدّ البضاعة على الرف/في المخزن وأرسلها إلى المالك', 'sc.title': 'عدّ المخزون',
+  'sc.hint': 'عُدّ الكمية الموجودة على الرف أو في المخزن ثم أرسلها. يراجعها المالك ويوافق عليها.',
+  'sc.search': 'ابحث / امسح الصنف', 'sc.counted': 'تم العدّ: {n} من {total}', 'sc.qty': 'الكمية المعدودة', 'sc.empty': 'لا توجد أصناف بعد. ابحث أو امسح الصنف الذي تعدّه.',
+  'sc.note': 'ملاحظة (اختياري)', 'sc.draft': 'يُحفظ العدّ تلقائيًا على هذا الجهاز حتى الإرسال.', 'sc.send': 'إرسال ({n})', 'sc.send_ok': 'إرسال',
+  'sc.confirm': 'إرسال نتيجة عدّ {n} صنف إلى المالك؟', 'sc.sent': 'أُرسل إلى المالك للموافقة', 'sc.applied': 'تم تحديث المخزون',
+  'sc.offline': 'يلزم الإنترنت للإرسال. العدّ محفوظ على هذا الجهاز.', 'sc.none': 'أدخل عدد صنف واحد على الأقل.', 'sc.bad': 'كمية غير صالحة: {name}',
+  'sc.too_many': 'الحد الأقصى 500 صنف في الإرسال الواحد.', 'req.opname': 'عدّ {n} صنف',
+  'sc.apr_title': 'جرد المخزون: {n} صنف، {d} فروق', 'sc.system': 'النظام', 'sc.diff': 'الفرق', 'sc.apr_hint': 'عند الموافقة يُضاف الفرق إلى المخزون الحالي.'
+});
 
 /* ========== Boot ========== */
 /* ========== Trial links (?demo=1 / ?mock=1) can be closed by the owner ==========

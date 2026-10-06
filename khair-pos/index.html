@@ -382,6 +382,20 @@ tr.diff td{background:var(--danger-l)}
 .fo-banner{margin:8px 14px 0;padding:6px 10px;border-radius:8px;background:var(--brand-l);color:var(--brand-text);font-weight:700;font-size:13px;display:flex;gap:6px;align-items:center}
 .vpop{font:13px/1.4 var(--font)}
 
+/* ========== Gudang (warehouse) ========== */
+.gd-tabs{margin-bottom:12px}
+.gd-tabs .gd-n{display:inline-grid;place-items:center;min-width:20px;height:20px;border-radius:10px;background:var(--surface-2);color:var(--muted);font-size:11.5px;padding:0 5px;margin-inline-start:4px}
+.gd-tabs .chip.on .gd-n{background:rgba(255,255,255,.25);color:#fff}
+.gd-kpi{display:block;width:100%;text-align:start;font:inherit;color:inherit;cursor:pointer}
+.gd-kpi:hover{border-color:var(--brand)}
+.gd-kpi .s{color:var(--brand-text)}
+.gd-diff.gd-plus{color:var(--ok)} .gd-diff.gd-minus{color:var(--danger)}
+.gd-count{width:110px;min-height:40px;padding:6px 10px;font-weight:700}
+.gd-op-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--border)}
+#gd-card-table tr.gd-bal td{background:var(--surface)}
+#gdo-table td{padding-top:6px;padding-bottom:6px}
+@media (max-width:759px){ .gd-count{width:84px} .gd-op-head .btn{flex:1} }
+
 @media (min-width:760px) and (max-height:860px){
   .rail{gap:2px;padding:6px 6px}
   .rail .nav-btn{min-height:48px;padding:4px 2px;font-size:11.5px}
@@ -477,6 +491,7 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
     <section class="view" id="view-kas" hidden></section>
     <section class="view" id="view-products" hidden></section>
     <section class="view" id="view-purchases" hidden></section>
+    <section class="view" id="view-gudang" hidden></section>
     <section class="view" id="view-customers" hidden></section>
     <section class="view" id="view-history" hidden></section>
     <section class="view" id="view-expenses" hidden></section>
@@ -496,6 +511,7 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="i-cart" viewBox="0 0 24 24"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.6 12.2a2 2 0 0 0 2 1.6h7.9a2 2 0 0 0 2-1.5L21 7H6"/></symbol>
   <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></symbol>
+  <symbol id="i-warehouse" viewBox="0 0 24 24"><path d="M3 21V9l9-5 9 5v12"/><path d="M7 21v-8h10v8M7 17h10"/></symbol>
   <symbol id="i-truck" viewBox="0 0 24 24"><path d="M3 6h11v10H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
   <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.5 3.3-5.5 6.5-5.5s5.9 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18.5 14.8c1.8.8 2.8 2.6 3 5.2"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
@@ -607,7 +623,8 @@ const today = () => jktDate(new Date());
 /** ISO timestamp with +07:00 offset, e.g. 2026-10-06T11:50:00+07:00 */
 function jktISO(d = new Date()) { const x = new Date(new Date(d).getTime() + 7 * 3600000).toISOString(); return x.slice(0, 19) + '+07:00'; }
 const ADJUST_SUPPLIER = 'PENYESUAIAN STOK';
-const isAdjustRow = r => String(r && r.supplier || '').trim().toUpperCase() === ADJUST_SUPPLIER;
+const OPNAME_SUPPLIER = 'STOK OPNAME';
+const isAdjustRow = r => [ADJUST_SUPPLIER, OPNAME_SUPPLIER].includes(String(r && r.supplier || '').trim().toUpperCase());
 function addDays(ymd, n) { const d = new Date(ymd + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 function fmtDate(ymd) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd || '')); return m ? `${m[3]}/${m[2]}/${m[1]}` : String(ymd || ''); }
 function fmtDateTime(iso, ymd) { return `${fmtDate(ymd || (iso ? jktDate(iso) : ''))} ${iso ? jktTime(iso) : ''}`.trim(); }
@@ -835,6 +852,52 @@ const MockServer = (() => {
     db.approvals.push(ap);
     return ap;
   }
+  /* Stok opname (stock count): owner applies directly, others create an owner approval (kind 'opname'). */
+  const OPNAME_SUPPLIER = 'STOK OPNAME';
+  function opnameLog(db, p, diff, counted, system, note, user) {
+    db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: jktDate(), supplier: OPNAME_SUPPLIER, product_id: p.id, name: p.name, qty: diff, cost_price: p.cost_price, total: 0, note: `${note || 'Stok opname'} (dihitung ${fmtQty(counted)}, sistem ${fmtQty(system)})`, user });
+  }
+  function stockCount(db, u, data) {
+    if (u.role === 'sales') throw E('FORBIDDEN', 'Sales accounts cannot count stock');
+    const counts = data.counts;
+    if (!Array.isArray(counts) || !counts.length) throw E('INVALID', 'counts required');
+    if (counts.length > 500) throw E('INVALID', 'max 500 lines per count');
+    const seen = new Set();
+    const lines = counts.map(c => {
+      const p = db.products.find(x => x.id === Number(c && c.product_id));
+      if (!p) throw E('NOT_FOUND', 'product ' + (c && c.product_id));
+      if (seen.has(p.id)) throw E('INVALID', 'duplicate product ' + p.id);
+      seen.add(p.id);
+      if (c.counted === '' || c.counted == null || !Number.isFinite(Number(c.counted)) || Number(c.counted) < 0) throw E('INVALID', 'counted must be >= 0');
+      const counted = roundQty(c.counted), system = roundQty(p.stock);
+      return { product_id: p.id, name: p.name, unit: p.unit, system, counted, diff: roundQty(counted - system) };
+    });
+    const note = String(data.note || '').trim();
+    if (u.role === 'owner') {
+      const stock = lines.map(l => {
+        const p = db.products.find(x => x.id === l.product_id);
+        if (l.diff) opnameLog(db, p, l.diff, l.counted, l.system, note, u.name);
+        p.stock = l.counted;
+        return { product_id: p.id, stock: p.stock };
+      });
+      return { applied: true, lines, stock };
+    }
+    const diffs = lines.filter(l => l.diff);
+    const summary = `Stok opname ${lines.length} barang, ${diffs.length} selisih` + (diffs.length ? ': ' + diffs.slice(0, 3).map(l => `${l.name} ${fmtQty(l.system)}→${fmtQty(l.counted)}`).join(', ') + (diffs.length > 3 ? ', …' : '') : '');
+    const approval = newApproval(db, u, { kind: 'opname', approver_role: 'owner', summary, payload: JSON.stringify({ lines, counted_at: jktISO(), by: u.name, note }) });
+    return { applied: false, request_id: approval.request_id, approval, lines };
+  }
+  /** Approved opname: each line's diff is added to the CURRENT stock (sales made meanwhile are kept). */
+  function applyOpname(db, ap, approver) {
+    let pl = {}; try { pl = JSON.parse(ap.payload || '{}'); } catch (e) { }
+    const by = pl.by || ap.cashier;
+    return (pl.lines || []).map(l => {
+      const p = db.products.find(x => x.id === Number(l.product_id)); if (!p) return null;
+      const diff = roundQty(l.diff);
+      if (diff) { p.stock = roundQty(num(p.stock) + diff); opnameLog(db, p, diff, l.counted, l.system, [pl.note, `oleh ${by}, disetujui ${approver}`].filter(Boolean).join(' · '), by); }
+      return { product_id: p.id, stock: p.stock };
+    }).filter(Boolean);
+  }
   const nameTokens = s => norm(s).replace(/(\d)([a-z])/g, '$1 $2').replace(/([a-z])(\d)/g, '$1 $2').replace(/[^a-z0-9 ]/g, ' ').split(' ').filter(Boolean).map(w => w === 'gr' ? 'g' : w);
   function nameScore(a, b) { const A = nameTokens(a), B = new Set(nameTokens(b)); return A.length ? A.filter(w => B.has(w)).length / A.length : 0; }
   const blankProduct = () => ({ sku: '', name: '', category: '', unit: 'pcs', cost_price: 0, retail_price: 0, wholesale_price: 0, wholesale_min_qty: 0, stock: 0, min_stock: 0, active: true, notes: '' });
@@ -957,6 +1020,7 @@ const MockServer = (() => {
           for (const [f, ch] of Object.entries(pl.changes || {})) p[f] = int(ch.to);
           out.product = p;
         }
+        if (data.decision === 'approved' && ap.kind === 'opname') out.stock = applyOpname(db, ap, u.name);
         Object.assign(ap, { status: data.decision, decided_by: u.name, decided_at: jktISO(), note: String(data.note || '') });
         return Object.assign({ approval: ap }, out);
       }
@@ -1153,19 +1217,20 @@ const MockServer = (() => {
         const checked = data.items.map(it => {
           const p = prodById(it.product_id); if (!p) throw E('NOT_FOUND', 'product ' + it.product_id);
           const qty = roundQty(it.qty); if (!(qty > 0)) throw E('INVALID', 'qty must be > 0');
-          return { p, qty, cost: Math.max(0, int(it.cost_price)) };
+          return { p, qty, cost: Math.max(0, int(it.cost_price)), exp: isYmd(it.exp_date) ? it.exp_date : '' };
         });
         const out = [];
-        for (const { p, qty, cost } of checked) {
+        for (const { p, qty, cost, exp } of checked) {
           const old = Math.max(0, num(p.stock));
           p.cost_price = old + qty > 0 ? Math.round((old * p.cost_price + qty * cost) / (old + qty)) : cost;
           p.stock = roundQty(p.stock + qty);
-          db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: pdate, supplier: String(data.supplier || ''), product_id: p.id, name: p.name, qty, cost_price: cost, total: Math.round(qty * cost), note: String(data.note || ''), user: u.name, photo_id: photo ? photo.photo_id : '' });
+          db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: pdate, supplier: String(data.supplier || ''), product_id: p.id, name: p.name, qty, cost_price: cost, total: Math.round(qty * cost), note: String(data.note || ''), user: u.name, photo_id: photo ? photo.photo_id : '', exp_date: exp });
           out.push({ product_id: p.id, stock: p.stock, cost_price: p.cost_price });
         }
         if (photo) photo.ref = [photo.ref, String(data.supplier || '')].filter(Boolean).join(' ') || 'masuk';
         return { stock: out };
       }
+      case 'stock_count': return stockCount(db, u, data);
       case 'get_sales': {
         if (!isYmd(data.from) || !isYmd(data.to)) throw E('INVALID', 'from/to');
         const inR = d => d >= data.from && d <= data.to;
@@ -1427,6 +1492,18 @@ const MockServer = (() => {
       const ph = newPhoto('masuk', rows[0].supplier, rows[0].purchase_date, 'Pemilik', { extracted: { supplier: rows[0].supplier, items: rows.map(r => ({ name: r.name, qty: r.qty, unit_price: r.cost_price, total: r.total })) } });
       rows.forEach(r => r.photo_id = ph.photo_id);
     });
+    // Gudang demo data (no random draws, so the data above stays identical): expiry dates on food batches of the
+    // last 12 months, three short-dated batches bought yesterday, and a few manual stock adjustments in the past.
+    const SHELF = { Kurma: 300, Kismis: 270, Cokelat: 150, Kacang: 210, Minuman: 365, Bumbu: 365, Sembako: 240 };
+    purchases.forEach(pu => { const sh = SHELF[products[pu.product_id - 1].category]; if (sh && pu.purchase_date >= addDays(T, -365)) pu.exp_date = addDays(pu.purchase_date, sh); });
+    const prodRe = re => products.find(p => re.test(p.name));
+    const addPur = (d, supplier, re, qty, exp, note) => { const p = prodRe(re); purchases.push({ id: ++seqPur, purchase_date: addDays(T, -d), supplier, product_id: p.id, name: p.name, qty, cost_price: p.cost_price, total: supplier === ADJUST_SUPPLIER ? 0 : qty * p.cost_price, note: note || '', user: 'Pemilik', photo_id: '', exp_date: exp == null ? '' : addDays(T, exp) }); };
+    addPur(1, 'CV Timur Tengah Food', /Cokelat Arab Kerang/, 12, 5, 'Stok promo, tanggal pendek');
+    addPur(1, 'PT Kurma Nusantara', /Kurma Sukkari/, 24, 21);
+    addPur(1, 'Grosir Kramat Jati', /Kacang Almond/, 20, 45);
+    addPur(4, ADJUST_SUPPLIER, /Kurma Medjool/, -1, null, 'Rusak — kemasan sobek');
+    addPur(11, ADJUST_SUPPLIER, /Tasbih/, -2, null, 'Hilang');
+    addPur(19, ADJUST_SUPPLIER, /Gula Pasir/, 3, null, 'Hitung ulang — salah input');
     const users = mode === 'empty' ? [] : [
       { name: 'Pemilik', role: 'owner', pin_hash: await pinHash('demo', 'Pemilik', '1234'), active: true },
       { name: 'Siti', role: 'kasir', pin_hash: await pinHash('demo', 'Siti', '1111'), active: true },
@@ -1536,6 +1613,7 @@ const VIEWS = [
   { id: 'pos', icon: 'cart', label: 'nav.pos' },
   { id: 'products', icon: 'box', label: 'nav.products' },
   { id: 'purchases', icon: 'truck', label: 'nav.purchases' },
+  { id: 'gudang', icon: 'warehouse', label: 'nav.gudang', approver: true },
   { id: 'expenses', icon: 'wallet', label: 'nav.expenses' },
   { id: 'kas', icon: 'cash', label: 'nav.kas' },
   { id: 'customers', icon: 'users', label: 'nav.customers' },
@@ -2671,7 +2749,7 @@ async function pollApprovals() {
     AP.fresh = new Set(fresh.map(a => a.request_id));
     if (fresh.length) {
       beep(); try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) { }
-      toast(t('apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name }), 'warn', 6000);
+      toast(t(fresh[0].kind === 'opname' ? 'gd.new_toast' : 'apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name }), 'warn', 6000);
     }
     updateApprovalBadge();
     if (S.view === 'approvals') drawApprovals();
@@ -2687,6 +2765,7 @@ RENDER.approvals = function () {
 function aprPayload(a) { try { return typeof a.payload === 'string' ? JSON.parse(a.payload || '{}') : (a.payload || {}); } catch (e) { return {}; } }
 function aprBodyHTML(a) {
   const kind = a.kind || 'credit', pl = aprPayload(a);
+  if (kind === 'opname') return opnameAprHTML(a, pl);
   if (kind === 'void') return `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(t('apr.kind_void', { inv: a.ref }))}</b><span class="badge red">${esc(a.request_id)}</span></div>
     <div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))}</div>
     <div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('rc.customer'))}</div><div class="v">${esc(a.customer_name || t('pos.walkin'))}</div></div><div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(a.total)}</div></div></div>
@@ -2714,7 +2793,7 @@ function drawApprovals() {
     return `<div class="card pad apr-card ${AP.fresh && AP.fresh.has(a.request_id) ? 'new' : ''}" data-req="${esc(a.request_id)}" data-kind="${esc(a.kind || 'credit')}">
       ${aprBodyHTML(a)}
       <input class="input" data-note placeholder="${esc(t('apr.note_ph'))}" aria-label="${esc(t('apr.note_ph'))}" ${can ? '' : 'disabled'}>
-      <div class="row" style="margin-top:10px;justify-content:flex-end">${can ? '' : `<span class="badge gold grow" style="justify-content:center" data-owner-only>${ic('lock')} ${esc(t('apr.owner_only'))}</span>`}
+      <div class="row" style="margin-top:10px;justify-content:flex-end">${can ? '' : `<span class="badge gold grow" style="justify-content:center" data-owner-only>${ic('lock')} ${esc(t(a.kind === 'opname' ? 'gd.needs_owner' : 'apr.owner_only'))}</span>`}
         <button class="btn danger" data-act="apr-decide" data-d="rejected" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t('apr.reject'))}</button><button class="btn primary" data-act="apr-decide" data-d="approved" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t('apr.approve'))}</button></div>
     </div>`; }).join('') : `<div class="empty">${ic('check')}<div>${esc(t('apr.none'))}</div></div>`;
   $$('.apr-card', box).forEach(c => { if (notes[c.dataset.req]) $('[data-note]', c).value = notes[c.dataset.req]; });
@@ -2732,6 +2811,7 @@ async function decideApproval(id, decision, btn) {
     updateApprovalBadge(); renderShell(); drawApprovals();
     toast(decision === 'approved' ? t('apr.done_ok', { id }) : t('apr.done_rej', { id }), decision === 'approved' ? 'ok' : 'warn');
     if (r.product) { upsertLocal(S.products, r.product); applyData({ products: S.products }); applyPendingStockFor(r.product.id); saveCache(); }
+    if (r.stock) gdAfterStockChange(r.stock);
     if (r.sale) {
       Object.keys(salesCache).forEach(k => delete salesCache[k]);
       await refreshData(true);
@@ -3234,13 +3314,13 @@ async function refreshAttention(force) {
   if (force) { clearFieldCache(); Object.keys(salesCache).forEach(k => delete salesCache[k]); }
   let d = null;
   try { d = await loadSales(addDays(today(), -30), today(), true); } catch (e) { }
-  ATT.items = computeAttention(d).concat(await loadFieldAttention());
+  ATT.items = computeAttention(d).concat(await gudangAttention(), await loadFieldAttention());
   updateBell(); renderNavDots();
   if (S.view === 'home') drawAttention();
 }
 function attentionHTML(items, limit) {
   if (!items.length) return `<div class="muted" style="padding:6px 2px">${ic('check')} ${esc(t('att.none'))}</div>`;
-  return `<div class="list">${items.slice(0, limit || items.length).map(x => `<button class="li att ${x.level}" data-act="att-go" data-go="${x.go}" ${x.low ? 'data-low="1"' : ''} style="min-height:48px;padding:8px 12px">${ic(x.icon)}<div class="grow t" style="font-weight:600">${esc(x.text)}</div><span class="muted">›</span></button>`).join('')}</div>`;
+  return `<div class="list">${items.slice(0, limit || items.length).map(x => `<button class="li att ${x.level}" data-act="att-go" data-go="${x.go}" ${x.low ? 'data-low="1"' : ''} ${x.tab ? `data-tab="${x.tab}"` : ''} style="min-height:48px;padding:8px 12px">${ic(x.icon)}<div class="grow t" style="font-weight:600">${esc(x.text)}</div><span class="muted">›</span></button>`).join('')}</div>`;
 }
 function renderNavDots() {
   const b = $('#nav [data-view="orders"]'); if (!b) return;
@@ -3504,9 +3584,11 @@ RENDER.field = function () {
   $('#fd-user').onchange = e => { FD.user = e.target.value; loadFieldView(); };
   loadFieldView();
 };
+let fieldViewSeq = 0;
 async function loadFieldView() {
   const b = $('#fd-body'); if (b) b.style.opacity = '.55';
-  try { FD.data = await loadField(FD.date, FD.date, '', false); FD.err = ''; } catch (e) { FD.data = null; FD.err = errMsg(e); }
+  const seq = ++fieldViewSeq; // a slower answer for an earlier date must not overwrite the newer one
+  try { const d = await loadField(FD.date, FD.date, '', false); if (seq !== fieldViewSeq) return; FD.data = d; FD.err = ''; } catch (e) { if (seq !== fieldViewSeq) return; FD.data = null; FD.err = errMsg(e); }
   drawFieldView();
 }
 function repDay(d, user, date) {
@@ -4079,7 +4161,7 @@ RENDER.purchases = function () {
       <div class="field" style="position:relative"><label class="f" for="pu-q">${esc(t('pu.add_product'))}</label>
         <div class="search-box">${ic('search')}<input class="input" id="pu-q" type="search" autocomplete="off" placeholder="${esc(t('pos.search_ph'))}" value="${esc(PU.q)}"></div>
         <div class="list" id="pu-sug" style="margin-top:6px"></div></div>
-      <div class="tbl-wrap"><table class="tbl" id="pu-lines"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('qty'))}</th><th class="r">${esc(t('pu.cost_unit'))}</th><th class="r">${esc(t('total'))}</th><th></th></tr></thead>
+      <div class="tbl-wrap"><table class="tbl" id="pu-lines"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('qty'))}</th><th class="r">${esc(t('pu.cost_unit'))}</th><th>${esc(t('pu.exp'))}</th><th class="r">${esc(t('total'))}</th><th></th></tr></thead>
         <tbody>${PU.lines.map((l, i) => {
           const p = prodById(l.product_id);
           const info = p ? `<div class="small muted">${esc(t('stock'))}: ${fmtQty(p.stock)} ${esc(p.unit || '')}${own && p.cost_price != null ? ` · ${esc(t('cost'))} ${fmtRp(p.cost_price)}` : ''}</div>` : '';
@@ -4091,8 +4173,9 @@ RENDER.purchases = function () {
           return `<tr class="${p ? '' : 'unmatched'}" data-line="${i}"><td style="min-width:220px">${cell}</td>
           <td class="r"><input class="input num" style="width:90px" inputmode="decimal" data-pu-qty="${i}" value="${esc(fmtQtyInput(l.qty))}" aria-label="${esc(t('qty'))}"></td>
           <td class="r"><input class="input num" style="width:120px" inputmode="numeric" data-pu-cost="${i}" value="${l.cost ? esc(fmtNum(l.cost)) : ''}" aria-label="${esc(t('pu.cost_unit'))}"></td>
+          <td><input class="input" type="date" style="width:150px" data-pu-exp="${i}" value="${esc(l.exp || '')}" aria-label="${esc(t('pu.exp'))}" title="${esc(t('pu.exp_hint'))}"></td>
           <td class="r num" data-pu-tot="${i}">${fmtRp(Math.round(num(l.qty) * int(l.cost)))}</td>
-          <td><button class="icon-btn ghost sm" data-act="pu-del" data-i="${i}" aria-label="${esc(t('delete'))}">${ic('trash')}</button></td></tr>`; }).join('') || `<tr><td colspan="5" class="empty">${esc(t('pu.empty'))}</td></tr>`}</tbody></table></div>
+          <td><button class="icon-btn ghost sm" data-act="pu-del" data-i="${i}" aria-label="${esc(t('delete'))}">${ic('trash')}</button></td></tr>`; }).join('') || `<tr><td colspan="6" class="empty">${esc(t('pu.empty'))}</td></tr>`}</tbody></table></div>
       <div class="row" style="margin-top:12px;justify-content:space-between;flex-wrap:wrap">
         <div style="font-size:20px;font-weight:800" class="green">${esc(t('total'))}: <span class="num" id="pu-total">${fmtRp(total)}</span></div>
         <div class="row"><button class="btn ghost" data-act="pu-clear">${esc(t('pos.clear'))}</button><button class="btn primary big" data-act="pu-save" id="pu-save" ${block ? 'disabled' : ''}>${esc(t('pu.save'))}</button></div>
@@ -4119,6 +4202,7 @@ RENDER.purchases = function () {
   const recalc = () => { $('#pu-total', v).textContent = fmtRp(sum(PU.lines, l => Math.round(num(l.qty) * int(l.cost)))); PU.lines.forEach((l, i) => { const c = $(`[data-pu-tot="${i}"]`, v); if (c) c.textContent = fmtRp(Math.round(num(l.qty) * int(l.cost))); }); savePuDraft(); };
   $$('[data-pu-qty]', v).forEach(i => i.oninput = () => { PU.lines[+i.dataset.puQty].qty = qtyVal(i.value); recalc(); });
   $$('[data-pu-cost]', v).forEach(i => i.oninput = () => { PU.lines[+i.dataset.puCost].cost = moneyVal(i.value); recalc(); });
+  $$('[data-pu-exp]', v).forEach(i => i.onchange = () => { PU.lines[+i.dataset.puExp].exp = i.value; savePuDraft(); });
   $$('[data-pu-prod]', v).forEach(sel => sel.onchange = () => { const l = PU.lines[+sel.dataset.puProd]; l.product_id = sel.value ? Number(sel.value) || sel.value : null; savePuDraft(); RENDER.purchases(); });
   loadRecentPurchases();
 };
@@ -4165,7 +4249,7 @@ async function savePurchase() {
   const err = $('#pu-err');
   const block = puBlockReason();
   if (block) { err.textContent = block; return; }
-  const items = PU.lines.map(l => ({ product_id: l.product_id, qty: roundQty(l.qty), cost_price: int(l.cost) }));
+  const items = PU.lines.map(l => Object.assign({ product_id: l.product_id, qty: roundQty(l.qty), cost_price: int(l.cost) }, /^\d{4}-\d{2}-\d{2}$/.test(l.exp || '') ? { exp_date: l.exp } : {}));
   if (items.some(i => !(i.qty > 0))) { err.textContent = t('pu.bad_qty'); return; }
   if (items.some(i => !(i.cost_price > 0))) { const ok = await confirmBox(t('pu.zero_cost')); if (!ok.ok) return; }
   const btn = $('#pu-save'); btn.disabled = true; btn.textContent = t('saving');
@@ -4180,7 +4264,7 @@ async function savePurchase() {
     PU.result = `<div class="panel" style="margin-bottom:16px;border-color:var(--ok)" id="pu-res"><h3>${ic('box')} ${esc(t('pu.saved'))}</h3><div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('stock'))}</th>${own ? `<th class="r">${esc(t('pu.new_cost'))}</th>` : ''}</tr></thead><tbody>
       ${(r.stock || []).map(s => { const p = prodById(s.product_id) || {}; const b = before.get(s.product_id) || before.get(Number(s.product_id)) || {}; return `<tr><td>${esc(p.name || s.product_id)}</td><td class="r num">${fmtQty(b.stock)} → <b>${fmtQty(s.stock)}</b></td>${own ? `<td class="r num" data-newcost="${esc(s.product_id)}">${b.cost != null ? fmtRp(b.cost) + ' → ' : ''}<b>${fmtRp(s.cost_price)}</b></td>` : ''}</tr>`; }).join('')}</tbody></table></div></div>`;
     Object.assign(PU, { lines: [], note: '', photo_id: '', thumb: '', scan: null, supplier: PU.supplier }); savePuDraft();
-    Object.keys(salesCache).forEach(k => delete salesCache[k]);
+    Object.keys(salesCache).forEach(k => delete salesCache[k]); gdInvalidate();
     toast(t('saved'), 'ok');
     RENDER.purchases();
   } catch (e) {
@@ -5119,7 +5203,7 @@ const ACT = {
   'order-open': el => openFieldOrder(FO.list.find(o => o.order_id === el.dataset.id)),
   'prod-photo': el => openProductPhoto(prodById(el.dataset.id)),
   'bell': () => openBell(),
-  'att-go': el => { if (el.closest('.modal-bg')) closeModal(true); if (el.dataset.low) PR.low = true; go(el.dataset.go); },
+  'att-go': el => { if (el.closest('.modal-bg')) closeModal(true); if (el.dataset.low) PR.low = true; if (el.dataset.tab) GD.tab = el.dataset.tab; go(el.dataset.go); },
   'shift-open': () => promptOpenShift(),
   'cash-move': el => openCashMove(el.dataset.type),
   'shift-close': el => openCloseShift(el.dataset.cashier),
@@ -5324,6 +5408,512 @@ document.addEventListener('keydown', e => {
   }
 });
 let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (!isPhone()) closeCartSheet(); }, 150); });
+
+/* ========== Gudang (warehouse): overview, stock list, stock card, expiry, stock count (opname) ==========
+   Owner + manager. Cost (stock value at cost, cost of differences) is shown to the owner only. Stock movements come
+   from get_sales (items = sales out, purchases = goods in / PENYESUAIAN STOK / STOK OPNAME rows); the stock card is
+   computed backwards from the current stock. Expiry uses purchase rows with exp_date (last 12 months) and assumes
+   the current stock consists of the most recent purchases (FIFO). */
+const GD = { tab: 'overview', q: '', cat: '', status: '', sort: 'name', expMax: 60, d30: null, d30At: 0, year: null, yearAt: 0, yearP: null, gen: 0, bootAt: 0, err: '', result: '' };
+const GD_TTL = 5 * 60000, GD_TABS = ['overview', 'list', 'expiry', 'opname'], GD_STATUS = ['', 'menipis', 'habis', 'lebih', 'kedaluwarsa'];
+const GDO = Object.assign({ lines: [], note: '', show: false }, store.get('gd_opname', null) || {});
+const saveGdo = () => store.set('gd_opname', { lines: GDO.lines, note: GDO.note, show: GDO.show });
+const isYmdStr = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+function gdInvalidate() { GD.gen++; GD.d30 = GD.year = GD.yearP = null; GD.d30At = GD.yearAt = 0; }
+function gdAfterStockChange(list) {
+  applyStock(list);
+  Object.keys(salesCache).forEach(k => delete salesCache[k]); gdInvalidate();
+  if (S.view === 'gudang') gdLoad(); else if (S.view === 'products') drawProducts();
+}
+/** Stock as the server knows it (local stock minus unsynced outbox sales is what S.products holds). */
+const gdServerStock = p => roundQty(num(p.stock) + pendingQty(p.id));
+/** 12 months of get_sales (purchases with exp_date, sales); shared by Gudang and the Beranda attention list. */
+function gdYear(force, ttl = GD_TTL) {
+  if (!force && GD.year && Date.now() - GD.yearAt < ttl) return Promise.resolve(GD.year);
+  if (GD.yearP) return GD.yearP;
+  const T = today(), gen = GD.gen;
+  const p = loadSales(addDays(T, -364), T).then(d => { if (gen === GD.gen) { GD.year = d; GD.yearAt = Date.now(); } return d; });
+  GD.yearP = p; p.finally(() => { if (GD.yearP === p) GD.yearP = null; }).catch(() => { });
+  return p;
+}
+/** Quantity sold per product over the last 30 days (today included), void sales excluded. */
+function gdSold30(d) {
+  const T = today(), from = addDays(T, -29), m = new Map();
+  const voided = new Set(d.sales.filter(s => s.status === 'void').map(s => s.invoice_no));
+  d.items.forEach(i => { const sd = String(i.sale_date || ''); if (voided.has(i.invoice_no) || sd < from || sd > T) return; const k = String(i.product_id); m.set(k, roundQty((m.get(k) || 0) + num(i.qty))); });
+  return m;
+}
+/** FIFO expiry estimate: newest purchases make up the current stock; batches (exp_date) expiring within `within` days. */
+function gdExpiry(d, within = 60) {
+  const T = today(), from = addDays(T, -364), byP = new Map(), batches = [];
+  d.purchases.forEach(r => { if (isAdjustRow(r) || !(num(r.qty) > 0) || String(r.purchase_date) < from) return; const k = String(r.product_id); if (!byP.has(k)) byP.set(k, []); byP.get(k).push(r); });
+  byP.forEach((rows, k) => {
+    const p = prodById(k); if (!p || p.active === false) return;
+    let left = Math.max(0, num(p.stock));
+    rows.sort((a, b) => String(b.purchase_date).localeCompare(String(a.purchase_date)) || num(b.id) - num(a.id));
+    for (const r of rows) {
+      if (left <= 0) break;
+      const rem = roundQty(Math.min(num(r.qty), left)); left = roundQty(left - rem);
+      const exp = String(r.exp_date || '').slice(0, 10);
+      if (rem > 0 && isYmdStr(exp)) { const days = daysBetween(T, exp); if (days <= within) batches.push({ p, row: r, exp, days, rem }); }
+    }
+  });
+  return batches.sort((a, b) => a.days - b.days || a.p.name.localeCompare(b.p.name));
+}
+function gdRows() {
+  const sold = GD.d30 ? gdSold30(GD.d30) : null;
+  const expBy = new Map();
+  if (GD.year) gdExpiry(GD.year, 30).forEach(b => { const k = String(b.p.id); if (!expBy.has(k)) expBy.set(k, b); });
+  return S.products.filter(p => p.active !== false).map(p => {
+    const stock = num(p.stock), min = num(p.min_stock);
+    const avg = sold ? (sold.get(String(p.id)) || 0) / 30 : null;
+    const days = avg > 0 ? Math.max(0, stock) / avg : null;
+    const status = stock <= 0 ? 'habis' : stock <= min ? 'menipis' : sold && (!(avg > 0) || days > 90) ? 'lebih' : 'aman';
+    const reorder = (status === 'habis' || status === 'menipis') && avg > 0 ? Math.max(0, Math.ceil(roundQty(avg * 14 - Math.max(0, stock)))) : 0;
+    return { p, stock, min, avg, days, status, reorder, exp: expBy.get(String(p.id)) || null };
+  });
+}
+const gdDaysTxt = d => d == null ? '—' : d < 1 ? t('gd.lt1') : t('gd.days', { n: fmtNum(Math.floor(d)) });
+const GD_BADGE = { habis: 'red', menipis: 'amber', lebih: 'blue', aman: 'green' };
+const gdBadge = st => `<span class="badge ${GD_BADGE[st] || 'gray'}" data-status="${st}">${esc(t('gd.' + st))}</span>`;
+function gdExpBadge(days) {
+  const cls = days <= 7 ? 'red' : days <= 30 ? 'amber' : 'gray';
+  const txt = days < 0 ? t('gd.expired', { n: -days }) : days === 0 ? t('gd.today') : t('gd.days', { n: days });
+  return `<span class="badge ${cls}" data-exp-days="${days}">${esc(txt)}</span>`;
+}
+
+RENDER.gudang = function () {
+  if (!isApprover()) { go('pos'); return; }
+  if (!GD_TABS.includes(GD.tab)) GD.tab = 'overview';
+  $('#view-gudang').innerHTML = `<div class="view-head"><h1>${esc(t('nav.gudang'))}</h1><button class="btn sm" data-act="gd-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
+    <div class="chips gd-tabs" role="tablist" id="gd-tabs">${GD_TABS.map(k => `<button class="chip ${GD.tab === k ? 'on' : ''}" role="tab" aria-selected="${GD.tab === k}" data-act="gd-tab" data-tab="${k}">${esc(t('gd.tab_' + k))}${k === 'opname' && GDO.lines.length ? ` <span class="gd-n">${GDO.lines.length}</span>` : ''}</button>`).join('')}</div>
+    <div id="gd-body"></div>`;
+  gdDraw(true);
+  gdLoad();
+  if (GD.tab === 'opname' && !AP.loaded) pollApprovals().then(() => { const b = $('#gd-body'); if (S.view === 'gudang' && GD.tab === 'opname' && b && !b.contains(document.activeElement)) gdDrawOpname(b, true); });
+};
+let gdSeq = 0;
+async function gdLoad(force) {
+  const seq = ++gdSeq, T = today();
+  if (force) { Object.keys(salesCache).forEach(k => delete salesCache[k]); gdInvalidate(); }
+  try {
+    if (force || Date.now() - GD.bootAt > 60000) { // fresh stock numbers without re-rendering the whole app
+      GD.bootAt = Date.now();
+      try { const r = await api('bootstrap'); applyData(r); applyPendingToLocal(); saveCache(); updateApprovalBadge(); } catch (e) { if (!(e instanceof NetError)) throw e; }
+      if (seq !== gdSeq) return;
+      gdDraw();
+    }
+    if (!GD.d30 || Date.now() - GD.d30At > GD_TTL) {
+      const gen = GD.gen, d = await loadSales(addDays(T, -29), T, !force);
+      if (seq !== gdSeq) return;
+      if (gen === GD.gen) { GD.d30 = d; GD.d30At = Date.now(); }
+      GD.err = ''; gdDraw();
+    }
+    if (!GD.year || Date.now() - GD.yearAt > GD_TTL) { await gdYear(force); if (seq !== gdSeq) return; GD.err = ''; gdDraw(); }
+  } catch (e) { if (seq !== gdSeq) return; GD.err = errMsg(e); gdDraw(); }
+}
+function gdDraw(full) {
+  const body = $('#gd-body'); if (!body || S.view !== 'gudang') return;
+  if (GD.tab === 'opname') { if (full || !$('#gdo-panel', body)) gdDrawOpname(body, true); else GDO.lines.forEach(l => gdoUpdateRow(l.id)); return; }
+  const err = GD.err ? `<div class="red small" style="margin-bottom:8px" role="alert">${esc(GD.err)}</div>` : '';
+  if (GD.tab === 'list') { gdDrawList(body, err); return; }
+  if (GD.tab === 'expiry') { body.innerHTML = err + gdExpiryHTML(); return; }
+  body.innerHTML = err + gdOverviewHTML();
+}
+
+/* ---- Ringkasan ---- */
+function gdOverviewHTML() {
+  const rows = gdRows(), own = isOwner(), T = today();
+  const pos = r => Math.max(0, r.stock);
+  const cnt = st => rows.filter(r => r.status === st).length;
+  const expN = GD.year ? rows.filter(r => r.exp).length : null;
+  const kb = (id, label, value, status, cls = '') => `<button class="kpi gd-kpi ${cls}" data-kpi="${id}" data-act="gd-filter" data-status="${status}"><div class="k">${esc(label)}</div><div class="v num">${value}</div><div class="s">${esc(t('gd.see_all'))} ›</div></button>`;
+  const urgent = [];
+  rows.filter(r => r.status === 'habis').sort((a, b) => (b.avg || 0) - (a.avg || 0)).forEach(r => urgent.push({ r, lvl: 'err', txt: t('gd.r_habis') }));
+  if (GD.year) gdExpiry(GD.year, 7).forEach(b => urgent.push({ r: { p: b.p }, lvl: 'err', txt: t('gd.r_exp', { date: fmtDate(b.exp), q: `${fmtQty(b.rem)} ${b.p.unit || ''}`.trim() }), badge: gdExpBadge(b.days) }));
+  rows.filter(r => r.status === 'menipis').sort((a, b) => (a.days ?? 1e9) - (b.days ?? 1e9)).forEach(r => urgent.push({ r, lvl: 'warn', txt: t('gd.r_menipis', { stock: `${fmtQty(r.stock)} ${r.p.unit || ''}`.trim(), d: gdDaysTxt(r.days) }) }));
+  if (GD.year) gdExpiry(GD.year, 30).filter(b => b.days > 7).forEach(b => urgent.push({ r: { p: b.p }, lvl: 'warn', txt: t('gd.r_exp', { date: fmtDate(b.exp), q: `${fmtQty(b.rem)} ${b.p.unit || ''}`.trim() }), badge: gdExpBadge(b.days) }));
+  const seen = new Set(), top = urgent.filter(u => { const k = String(u.r.p.id); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 8);
+  const cats = new Map();
+  rows.forEach(r => { const c = r.p.category || '—'; const a = cats.get(c) || { n: 0, units: 0, retail: 0, cost: 0, low: 0 }; a.n++; a.units += pos(r); a.retail += pos(r) * int(r.p.retail_price); a.cost += pos(r) * int(r.p.cost_price); if (r.status === 'habis' || r.status === 'menipis') a.low++; cats.set(c, a); });
+  return `<div class="kpis" id="gd-kpis">
+      <div class="kpi" data-kpi="gd-items"><div class="k">${esc(t('gd.items'))}</div><div class="v num">${fmtNum(rows.length)}</div></div>
+      <div class="kpi" data-kpi="gd-units"><div class="k">${esc(t('gd.units'))}</div><div class="v num">${fmtQty(roundQty(sum(rows, pos)))}</div></div>
+      ${own ? `<div class="kpi" data-kpi="gd-cost"><div class="k">${esc(t('gd.value_cost'))}</div><div class="v num">${fmtRp(sum(rows, r => pos(r) * int(r.p.cost_price)))}</div></div>` : ''}
+      <div class="kpi" data-kpi="gd-retail"><div class="k">${esc(t('gd.value_retail'))}</div><div class="v num">${fmtRp(sum(rows, r => pos(r) * int(r.p.retail_price)))}</div></div>
+      ${kb('gd-habis', t('gd.habis'), `<span class="${cnt('habis') ? 'red' : ''}">${fmtNum(cnt('habis'))}</span>`, 'habis')}
+      ${kb('gd-menipis', t('gd.menipis'), fmtNum(cnt('menipis')), 'menipis')}
+      ${kb('gd-exp', t('gd.exp30'), expN == null ? '…' : fmtNum(expN), 'kedaluwarsa')}
+    </div>
+    <div class="rgrid">
+      <div class="panel" id="gd-urgent"><h3>${esc(t('gd.urgent'))}</h3><div class="pb">${top.length ? `<div class="list">${top.map(u => `<button class="li att ${u.lvl}" data-act="gd-card" data-id="${esc(u.r.p.id)}" style="min-height:48px;padding:8px 12px">${ic('box')}<div class="grow"><div class="t">${esc(u.r.p.name)}</div><div class="s">${esc(u.txt)}</div></div>${u.badge || ''}<span class="muted">›</span></button>`).join('')}</div>` : `<div class="muted">${ic('check')} ${esc(t('gd.urgent_none'))}</div>`}
+        ${GD.year ? '' : `<div class="small muted" style="margin-top:8px">${esc(t('gd.loading_year'))}</div>`}</div></div>
+      <div class="panel" id="gd-cats"><h3>${esc(t('gd.by_cat'))}</h3><div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl"><thead><tr><th>${esc(t('category'))}</th><th class="r">${esc(t('gd.items_s'))}</th><th class="r">${esc(t('gd.low_short'))}</th><th class="r">${esc(t('gd.value_retail_s'))}</th>${own ? `<th class="r">${esc(t('gd.value_cost_s'))}</th>` : ''}</tr></thead><tbody>
+        ${[...cats.entries()].sort((a, b) => b[1].retail - a[1].retail).map(([c, a]) => `<tr class="click" data-act="gd-cat" data-cat="${esc(c === '—' ? '' : c)}"><td>${esc(c)}</td><td class="r num">${fmtNum(a.n)}</td><td class="r num ${a.low ? 'red' : ''}">${fmtNum(a.low)}</td><td class="r num">${fmtRp(a.retail)}</td>${own ? `<td class="r num">${fmtRp(a.cost)}</td>` : ''}</tr>`).join('')}</tbody></table></div></div>
+    </div>`;
+}
+
+/* ---- Daftar stok ---- */
+function gdDrawList(body, err) {
+  if (!$('#gd-q', body)) {
+    body.innerHTML = `${err}<div class="toolbar">
+        <input class="input" id="gd-q" type="search" placeholder="${esc(t('gd.search_ph'))}" aria-label="${esc(t('gd.search_ph'))}" value="${esc(GD.q)}">
+        <select class="input" id="gd-cat" aria-label="${esc(t('category'))}"><option value="">${esc(t('all_categories'))}</option>${categories().map(c => `<option ${GD.cat === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+        <select class="input" id="gd-sort" aria-label="${esc(t('gd.sort'))}">${['name', 'stock', 'stock_desc', 'days'].map(k => `<option value="${k}" ${GD.sort === k ? 'selected' : ''}>${esc(t('gd.sort_' + k))}</option>`).join('')}</select></div>
+      <div class="chips" id="gd-status" style="margin-bottom:8px">${GD_STATUS.map(k => `<button class="chip ${GD.status === k ? 'on' : ''}" data-act="gd-status" data-status="${k}">${esc(t(k ? 'gd.' + k : 'gd.all'))}</button>`).join('')}</div>
+      <div id="gd-list"></div><p class="small muted">${esc(t('gd.list_hint'))}</p>`;
+    const q = $('#gd-q', body);
+    q.addEventListener('input', debounce(() => { GD.q = q.value; gdDrawListRows(); }, 120));
+    $('#gd-cat', body).onchange = e => { GD.cat = e.target.value; gdDrawListRows(); };
+    $('#gd-sort', body).onchange = e => { GD.sort = e.target.value; gdDrawListRows(); };
+  }
+  gdDrawListRows();
+}
+function gdDrawListRows() {
+  const box = $('#gd-list'); if (!box) return;
+  $$('#gd-status .chip').forEach(c => c.classList.toggle('on', c.dataset.status === GD.status));
+  const ids = new Set(filterProducts(GD.q, GD.cat).map(p => String(p.id)));
+  let rows = gdRows().filter(r => ids.has(String(r.p.id)));
+  if (GD.status === 'kedaluwarsa') rows = rows.filter(r => r.exp);
+  else if (GD.status) rows = rows.filter(r => r.status === GD.status);
+  const byName = (a, b) => a.p.name.localeCompare(b.p.name);
+  const sorts = { name: byName, stock: (a, b) => a.stock - b.stock || byName(a, b), stock_desc: (a, b) => b.stock - a.stock || byName(a, b), days: (a, b) => (a.days ?? Infinity) - (b.days ?? Infinity) || a.stock - b.stock || byName(a, b) };
+  rows.sort(sorts[GD.sort] || byName);
+  const waitYear = GD.status === 'kedaluwarsa' && !GD.year;
+  box.innerHTML = `<p class="muted small" id="gd-count">${esc(waitYear ? t('gd.loading_year') : t('gd.n_items', { n: fmtNum(rows.length) }))}</p>
+    <div class="tbl-wrap"><table class="tbl" id="gd-table"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('stock'))}</th><th class="r hide-phone">${esc(t('gd.min'))}</th><th>${esc(t('gd.status'))}</th><th class="r">${esc(t('gd.days_left'))}</th><th class="r">${esc(t('gd.reorder'))}</th></tr></thead><tbody>
+    ${rows.slice(0, 400).map(r => `<tr class="click" data-act="gd-card" data-id="${esc(r.p.id)}" data-pid="${esc(r.p.id)}">
+      <td><b>${esc(r.p.name)}</b><div class="small muted">${esc(r.p.category || '')}${r.exp ? ` · ${esc(t('gd.exp_short'))} ${esc(fmtDate(r.exp.exp))}` : ''}</div></td>
+      <td class="r num" data-col="stock"><b class="${r.stock <= 0 ? 'red' : ''}">${fmtQty(r.stock)}</b> <span class="small muted">${esc(r.p.unit || '')}</span></td>
+      <td class="r num hide-phone">${fmtQty(r.min)}</td>
+      <td data-col="status">${gdBadge(r.status)}${r.exp ? ' ' + gdExpBadge(r.exp.days) : ''}</td>
+      <td class="r num" data-col="days">${GD.d30 ? esc(gdDaysTxt(r.days)) : '…'}</td>
+      <td class="r num" data-col="reorder">${r.reorder ? `<b>+${fmtNum(r.reorder)}</b> <span class="small muted">${esc(r.p.unit || '')}</span>` : '<span class="muted">—</span>'}</td></tr>`).join('') || `<tr><td colspan="6" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div>`;
+}
+
+/* ---- Kedaluwarsa ---- */
+function gdExpiryHTML() {
+  const hint = `<p class="muted small" style="margin-top:0" id="gd-exp-hint">${esc(t('gd.exp_hint'))}</p>`;
+  if (!GD.year) return hint + `<div class="empty">${esc(t('gd.loading_year'))}</div>`;
+  const list = gdExpiry(GD.year, 60);
+  const n7 = list.filter(b => b.days <= 7).length, n30 = list.filter(b => b.days <= 30).length;
+  return `${hint}<div class="kpis" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">
+      <div class="kpi" data-kpi="gd-exp7"><div class="k">${esc(t('gd.exp_le', { n: 7 }))}</div><div class="v num ${n7 ? 'red' : ''}">${fmtNum(n7)}</div></div>
+      <div class="kpi" data-kpi="gd-exp30"><div class="k">${esc(t('gd.exp_le', { n: 30 }))}</div><div class="v num">${fmtNum(n30)}</div></div>
+      <div class="kpi" data-kpi="gd-exp60"><div class="k">${esc(t('gd.exp_le', { n: 60 }))}</div><div class="v num">${fmtNum(list.length)}</div></div></div>
+    <div class="tbl-wrap"><table class="tbl" id="gd-exp-table"><thead><tr><th>${esc(t('product'))}</th><th class="hide-phone">${esc(t('gd.exp_in'))}</th><th>${esc(t('gd.exp_date'))}</th><th>${esc(t('gd.exp_left'))}</th><th class="r">${esc(t('gd.exp_qty'))}</th></tr></thead><tbody>
+    ${list.map(b => `<tr class="click" data-act="gd-card" data-id="${esc(b.p.id)}" data-pid="${esc(b.p.id)}" data-batch="${esc(b.row.id)}">
+      <td><b>${esc(b.p.name)}</b><div class="small muted show-phone">${esc(fmtDate(b.row.purchase_date))} · ${esc(b.row.supplier || '')}</div></td>
+      <td class="hide-phone"><span class="num">${esc(fmtDate(b.row.purchase_date))}</span><div class="small muted">${esc(b.row.supplier || '')} · ${fmtQty(b.row.qty)} ${esc(b.p.unit || '')}</div></td>
+      <td class="num">${esc(fmtDate(b.exp))}</td><td>${gdExpBadge(b.days)}</td>
+      <td class="r num" data-col="rem"><b>±${fmtQty(b.rem)}</b> <span class="small muted">${esc(b.p.unit || '')}</span></td></tr>`).join('') || `<tr><td colspan="5" class="empty">${esc(t('gd.exp_none'))}</td></tr>`}</tbody></table></div>`;
+}
+
+/* ---- Kartu stok (stock card) ---- */
+function gdMovements(d, p, from) {
+  const pid = String(p.id), rows = [];
+  d.purchases.forEach(r => {
+    if (String(r.product_id) !== pid || String(r.purchase_date) < from) return;
+    const sup = String(r.supplier || '').trim().toUpperCase();
+    const kind = sup === OPNAME_SUPPLIER ? 'opname' : sup === ADJUST_SUPPLIER ? 'adj' : 'in';
+    const exp = String(r.exp_date || '').slice(0, 10);
+    const text = kind === 'in' ? [t('gd.mv_in'), r.supplier, isYmdStr(exp) ? `${t('gd.exp_short')} ${fmtDate(exp)}` : '', r.note].filter(Boolean).join(' · ')
+      : [t('gd.mv_' + kind), r.note, r.user].filter(Boolean).join(' · ');
+    rows.push({ date: String(r.purchase_date), kind, qty: num(r.qty), text, id: num(r.id) });
+  });
+  const saleBy = new Map(d.sales.map(s => [s.invoice_no, s])), out = new Map(), back = new Map();
+  const bump = (m, date, qty, inv) => { const o = m.get(date) || { qty: 0, inv: new Set() }; o.qty += qty; o.inv.add(inv); m.set(date, o); };
+  d.items.forEach(i => {
+    if (String(i.product_id) !== pid) return;
+    const s = saleBy.get(i.invoice_no), date = String(i.sale_date || (s && s.sale_date) || '');
+    if (!date || date < from) return;
+    bump(out, date, num(i.qty), i.invoice_no);
+    if (s && s.status === 'void') bump(back, s.voided_at ? jktDate(s.voided_at) : date, num(i.qty), i.invoice_no);
+  });
+  out.forEach((o, date) => rows.push({ date, kind: 'out', qty: -roundQty(o.qty), text: t('gd.mv_out', { n: o.inv.size }) }));
+  back.forEach((o, date) => rows.push({ date, kind: 'void', qty: roundQty(o.qty), text: t('gd.mv_void', { inv: [...o.inv].join(', ') }) }));
+  const ORDER = { in: 0, adj: 1, out: 2, void: 3, opname: 4 };
+  rows.sort((a, b) => a.date.localeCompare(b.date) || ORDER[a.kind] - ORDER[b.kind] || (a.id || 0) - (b.id || 0));
+  const end = gdServerStock(prodById(p.id) || p);
+  let bal = end;
+  for (let k = rows.length - 1; k >= 0; k--) { rows[k].bal = roundQty(bal); bal = roundQty(bal - rows[k].qty); }
+  return { rows, opening: bal, end };
+}
+function openStockCard(p, days = 30) {
+  if (!p) return;
+  const T = today(), C = { from: addDays(T, -(days - 1)), mv: null };
+  const el = openModal({
+    title: `${t('gd.card')} — ${p.name}`, cls: 'wide', id: 'gd-card-modal',
+    body: `<div class="row wrap" style="margin-bottom:10px"><div class="grow"><span class="muted">${esc(t('stock_now'))}:</span> <b class="num" id="gdc-stock">${fmtQty(gdServerStock(p))} ${esc(p.unit || '')}</b> <span class="small muted">· ${esc(p.sku || '')} · ${esc(p.category || '')}</span></div></div>
+      <div class="toolbar"><div class="chips" id="gdc-range">${[7, 30, 90, 365].map(n => `<button class="chip" data-n="${n}" ${n === days ? 'autofocus' : ''}>${esc(n === 365 ? t('gd.one_year') : t('gd.days', { n }))}</button>`).join('')}</div>
+        <label class="f" style="margin:0">${esc(t('from'))} <input class="input" type="date" id="gdc-from" min="${addDays(T, -364)}" max="${T}" style="width:auto"></label></div>
+      <div id="gdc-body"><div class="empty">${esc(t('loading'))}</div></div>`,
+    foot: `<button class="btn" id="gdc-csv" disabled>${ic('upload')} ${esc(t('gd.csv'))}</button><button class="btn primary" data-act="modal-close">${esc(t('close'))}</button>`
+  });
+  const draw = async () => {
+    $('#gdc-from', el).value = C.from;
+    $$('#gdc-range .chip', el).forEach(c => c.classList.toggle('on', addDays(T, -(+c.dataset.n - 1)) === C.from));
+    const box = $('#gdc-body', el); box.style.opacity = '.55'; $('#gdc-csv', el).disabled = true;
+    const from = C.from;
+    try {
+      const d = GD.year && Date.now() - GD.yearAt < GD_TTL ? GD.year : await loadSales(from, T, true);
+      if (from !== C.from || !el.isConnected) return;
+      C.mv = gdMovements(d, p, from);
+      $('#gdc-stock', el).textContent = `${fmtQty(C.mv.end)} ${p.unit || ''}`;
+    } catch (e) { box.style.opacity = ''; box.innerHTML = `<div class="empty red">${esc(errMsg(e))}</div>`; return; }
+    const M = C.mv, q = v => v ? fmtQty(Math.abs(v)) : '';
+    box.style.opacity = '';
+    box.innerHTML = `<div class="tbl-wrap"><table class="tbl" id="gd-card-table"><thead><tr><th>${esc(t('date'))}</th><th>${esc(t('gd.col_desc'))}</th><th class="r">${esc(t('gd.col_in'))}</th><th class="r">${esc(t('gd.col_out'))}</th><th class="r">${esc(t('gd.col_bal'))}</th></tr></thead><tbody>
+      <tr class="gd-bal" data-kind="opening"><td class="num">${esc(fmtDate(from))}</td><td><b>${esc(t('gd.opening'))}</b></td><td></td><td></td><td class="r num"><b>${fmtQty(M.opening)}</b></td></tr>
+      ${M.rows.map(r => `<tr data-kind="${r.kind}"><td class="num">${esc(fmtDate(r.date))}</td><td>${esc(r.text)}</td><td class="r num green">${r.qty > 0 ? '+' + q(r.qty) : ''}</td><td class="r num red">${r.qty < 0 ? '−' + q(r.qty) : ''}</td><td class="r num" data-bal>${fmtQty(r.bal)}</td></tr>`).join('') || `<tr><td colspan="5" class="empty">${esc(t('gd.no_moves'))}</td></tr>`}
+      <tr class="gd-bal" data-kind="closing"><td class="num">${esc(fmtDate(T))}</td><td><b>${esc(t('gd.closing'))}</b></td><td class="r num green">${q(sum(M.rows.filter(r => r.qty > 0), r => r.qty))}</td><td class="r num red">${q(sum(M.rows.filter(r => r.qty < 0), r => r.qty))}</td><td class="r num" id="gdc-end"><b>${fmtQty(M.end)}</b></td></tr></tbody></table></div>`;
+    $('#gdc-csv', el).disabled = false;
+  };
+  $('#gdc-range', el).onclick = e => { const b = e.target.closest('[data-n]'); if (b) { C.from = addDays(T, -(+b.dataset.n - 1)); draw(); } };
+  $('#gdc-from', el).onchange = e => { const v = e.target.value; if (!isYmdStr(v)) return; C.from = v < addDays(T, -364) ? addDays(T, -364) : v > T ? T : v; draw(); };
+  $('#gdc-csv', el).onclick = () => { if (C.mv) gdCardCsv(p, C.from, C.mv); };
+  draw();
+}
+function gdCardCsv(p, from, M) {
+  const q = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+  const lines = [[t('date'), t('gd.col_desc'), t('gd.col_in'), t('gd.col_out'), t('gd.col_bal')].map(q).join(','), [from, t('gd.opening'), '', '', M.opening].map(q).join(',')]
+    .concat(M.rows.map(r => [r.date, r.text, r.qty > 0 ? r.qty : '', r.qty < 0 ? -r.qty : '', r.bal].map(q).join(',')))
+    .concat([[today(), t('gd.closing'), '', '', M.end].map(q).join(',')]);
+  const name = `kartu-stok-${String(p.sku || p.id).replace(/[^\w-]+/g, '')}-${from}-${today()}.csv`;
+  try {
+    const url = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  } catch (e) { toast(errMsg(e), 'err'); }
+}
+
+/* ---- Stok opname (blind count: system stock hidden until "Tampilkan selisih") ---- */
+const gdoLine = id => GDO.lines.find(l => String(l.id) === String(id));
+function gdoAdd(list, focus) {
+  let added = 0, last = null;
+  list.forEach(p => { if (!p || p.active === false) return; last = p; if (!gdoLine(p.id)) { GDO.lines.push({ id: p.id, c: '' }); added++; } });
+  saveGdo(); GD.result = '';
+  if (S.view === 'gudang' && GD.tab === 'opname') gdDrawOpname($('#gd-body'), true);
+  const tabN = $('#gd-tabs [data-tab="opname"]'); if (tabN) tabN.innerHTML = `${esc(t('gd.tab_opname'))}${GDO.lines.length ? ` <span class="gd-n">${GDO.lines.length}</span>` : ''}`;
+  if (focus && last) { const i = $(`#gdo-table [data-gdo="${last.id}"]`); if (i) { i.scrollIntoView({ block: 'center' }); i.focus(); i.select(); } }
+  return added;
+}
+function gdoDiff(l) {
+  const p = prodById(l.id); const raw = String(l.c == null ? '' : l.c).trim();
+  if (!p || raw === '') return null;
+  return roundQty(qtyVal(raw) - num(p.stock));
+}
+function gdoSummary() {
+  const filled = GDO.lines.filter(l => String(l.c || '').trim() !== '');
+  return { n: GDO.lines.length, done: filled.length, diffs: filled.filter(l => gdoDiff(l)).length };
+}
+function gdoUpdateRow(id) {
+  const l = gdoLine(id); if (!l) return;
+  const d = gdoDiff(l), c = $(`#gdo-table [data-gdo-diff="${id}"]`), sy = $(`#gdo-table [data-gdo-sys="${id}"]`), p = prodById(id);
+  if (sy && p) sy.textContent = fmtQty(p.stock);
+  if (c) { c.className = 'r num gd-diff ' + (d > 0 ? 'gd-plus' : d < 0 ? 'gd-minus' : ''); c.innerHTML = d == null ? '<span class="muted">—</span>' : `<b>${d > 0 ? '+' : ''}${fmtQty(d)}</b>`; }
+  const s = gdoSummary(), pr = $('#gdo-progress'); if (pr) pr.textContent = t('gd.op_progress', { done: s.done, n: s.n }) + (GDO.show ? ' · ' + t('gd.op_diffs', { n: s.diffs }) : '');
+}
+function gdDrawOpname(body) {
+  if (!body) return;
+  const own = isOwner(), cats = categories(), active = S.products.filter(p => p.active !== false);
+  const pend = (AP.list || []).filter(a => a.kind === 'opname' && (!a.status || a.status === 'pending'));
+  const s = gdoSummary();
+  const lines = GDO.lines.map(l => ({ l, p: prodById(l.id) })).filter(x => x.p);
+  body.innerHTML = `<p class="muted small" style="margin-top:0">${esc(t('gd.op_hint'))}</p>
+    ${pend.length ? `<div class="panel" id="gdo-pending" style="margin-bottom:12px"><h3>${ic('clock')} ${esc(t('gd.op_pending'))} <span class="badge amber">${pend.length}</span><button class="btn xs" style="margin-inline-start:auto" data-act="go" data-view="approvals">${esc(t('gd.op_open_inbox'))}</button></h3><div class="pb list">${pend.map(a => `<div class="li" style="min-height:0;padding:8px 12px" data-req="${esc(a.request_id)}"><span class="badge blue">${esc(a.request_id)}</span><div class="grow"><div class="t" style="font-weight:600">${esc(a.summary || '')}</div><div class="s">${esc(a.cashier)} · ${esc(fmtDateTime(a.created_at))}</div></div></div>`).join('')}</div></div>` : ''}
+    ${GD.result ? `<div id="gdo-result">${GD.result}</div>` : ''}
+    <div class="card pad" style="margin-bottom:12px" id="gdo-pick">
+      <div class="search-row" style="margin-bottom:6px"><div class="search-box">${ic('search')}<input class="input" id="gdo-q" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="${esc(t('gd.op_search'))}" aria-label="${esc(t('gd.op_search'))}"></div>
+        ${'BarcodeDetector' in window ? `<button class="icon-btn" style="width:50px;height:50px" data-act="gdo-cam" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}">${ic('scan')}</button>` : ''}</div>
+      <div class="list" id="gdo-sug"></div>
+      <div class="row wrap" style="margin-top:8px"><select class="input" id="gdo-cat" style="width:auto;flex:1;min-width:160px" aria-label="${esc(t('category'))}"><option value="">${esc(t('gd.op_pick_cat'))}</option>${cats.map(c => `<option>${esc(c)}</option>`).join('')}</select>
+        <button class="btn" data-act="gdo-add-cat">${ic('plus')} ${esc(t('gd.op_add_cat'))}</button><button class="btn" data-act="gdo-add-all">${ic('plus')} ${esc(t('gd.op_add_all', { n: active.length }))}</button></div>
+    </div>
+    <div class="panel" id="gdo-panel">
+      <div class="gd-op-head"><b class="grow" id="gdo-progress">${esc(t('gd.op_progress', { done: s.done, n: s.n }) + (GDO.show ? ' · ' + t('gd.op_diffs', { n: s.diffs }) : ''))}</b>
+        ${lines.length ? `<button class="btn sm ${GDO.show ? '' : 'primary'}" id="gdo-show" data-act="gdo-show">${esc(t(GDO.show ? 'gd.op_hide' : 'gd.op_show'))}</button><button class="btn sm ghost" data-act="gdo-clear">${ic('trash')} ${esc(t('gd.op_clear'))}</button>` : ''}</div>
+      ${lines.length ? `<div class="tbl-wrap" style="border:0;border-radius:0;max-height:min(60vh,560px);overflow-y:auto"><table class="tbl" id="gdo-table"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('gd.op_count'))}</th>${GDO.show ? `<th class="r">${esc(t('gd.op_system'))}</th><th class="r">${esc(t('gd.op_diff'))}</th>` : ''}<th></th></tr></thead><tbody>
+        ${lines.map(({ l, p }) => `<tr data-line="${esc(p.id)}"><td><b>${esc(p.name)}</b><div class="small muted">${esc(p.sku || '')} · ${esc(p.unit || '')}</div></td>
+          <td class="r"><input class="input num gd-count" data-gdo="${esc(p.id)}" type="text" inputmode="${isWeightUnit(p.unit) ? 'decimal' : 'numeric'}" autocomplete="off" enterkeyhint="next" value="${esc(l.c || '')}" aria-label="${esc(t('gd.op_count'))} ${esc(p.name)}"></td>
+          ${GDO.show ? `<td class="r num" data-gdo-sys="${esc(p.id)}">${fmtQty(p.stock)}</td><td class="r num gd-diff" data-gdo-diff="${esc(p.id)}"></td>` : ''}
+          <td><button class="icon-btn ghost sm" data-act="gdo-del" data-id="${esc(p.id)}" aria-label="${esc(t('delete'))}">${ic('x')}</button></td></tr>`).join('')}</tbody></table></div>` : `<div class="empty" id="gdo-empty">${esc(t('gd.op_empty'))}</div>`}
+      <div class="pb" style="border-top:1px solid var(--border)">
+        <div class="field"><label class="f" for="gdo-note">${esc(t('gd.op_note'))}</label><input class="input" id="gdo-note" value="${esc(GDO.note || '')}"></div>
+        <div class="row wrap" style="justify-content:space-between"><span class="small muted">${lines.length ? esc(t('gd.op_draft')) : ''}</span>
+          <button class="btn primary big" id="gdo-submit" data-act="gdo-submit" ${lines.length ? '' : 'disabled'}>${ic(own ? 'check' : 'send')} ${esc(t(own ? 'gd.op_submit_owner' : 'gd.op_submit'))}</button></div>
+        <div class="red" id="gdo-err" role="alert"></div></div>
+    </div>`;
+  if (GDO.show) GDO.lines.forEach(l => gdoUpdateRow(l.id));
+  const q = $('#gdo-q', body), sug = $('#gdo-sug', body);
+  const drawSug = () => {
+    const list = q.value.trim() ? filterProducts(q.value, '').slice(0, 8) : [];
+    sug.innerHTML = list.map(p => `<button class="li" data-act="gdo-add" data-id="${esc(p.id)}" style="min-height:48px;padding:8px 12px"><div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${esc(p.sku || '')} · ${esc(p.category || '')}</div></div>${gdoLine(p.id) ? `<span class="badge green">✓</span>` : ic('plus')}</button>`).join('');
+  };
+  q.addEventListener('input', drawSug);
+  q.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const v = q.value.trim(); if (!v) return;
+    const p = findBySku(v) || (filterProducts(v, '').length === 1 ? filterProducts(v, '')[0] : null);
+    if (p) { q.value = ''; drawSug(); gdoAdd([p], true); } else if (/^\d{6,}$/.test(v)) { beep(); toast(t('pos.barcode_nf', { code: v }), 'err'); q.select(); }
+  });
+  $('#gdo-note', body).oninput = e => { GDO.note = e.target.value; saveGdo(); };
+  $$('#gdo-table [data-gdo]', body).forEach(inp => {
+    inp.addEventListener('input', () => { const l = gdoLine(inp.dataset.gdo); if (!l) return; l.c = inp.value; saveGdo(); gdoUpdateRow(l.id); });
+    inp.addEventListener('focus', () => inp.select());
+    inp.addEventListener('keydown', e => { if (e.key !== 'Enter') return; e.preventDefault(); const all = $$('#gdo-table [data-gdo]'); const nx = all[all.indexOf(inp) + 1]; if (nx) nx.focus(); else q.focus(); });
+  });
+}
+async function gdoSubmit() {
+  const err = $('#gdo-err'), own = isOwner();
+  const filled = GDO.lines.filter(l => String(l.c || '').trim() !== '' && prodById(l.id));
+  if (!filled.length) { err.textContent = t('gd.op_none_counted'); return; }
+  const bad = filled.find(l => { const v = qtyVal(l.c); return !Number.isFinite(v) || v < 0 || !/\d/.test(String(l.c)); });
+  if (bad) { err.textContent = t('gd.op_bad', { name: prodById(bad.id).name }); return; }
+  if (filled.length > 500) { err.textContent = t('gd.op_too_many'); return; }
+  const ok = await confirmBox(t(own ? 'gd.op_confirm_owner' : 'gd.op_confirm', { n: filled.length }));
+  if (!ok.ok) return;
+  const btn = $('#gdo-submit'); if (btn) btn.disabled = true;
+  err.textContent = '';
+  try {
+    const r = await api('stock_count', { counts: filled.map(l => ({ product_id: prodById(l.id).id, counted: qtyVal(l.c) })), note: String(GDO.note || '').trim() });
+    const lines = r.lines || [], diffs = lines.filter(l => num(l.diff));
+    const done = new Set(filled.map(l => String(l.id)));
+    GDO.lines = GDO.lines.filter(l => !done.has(String(l.id))); if (!GDO.lines.length) { GDO.note = ''; GDO.show = false; }
+    saveGdo();
+    if (r.applied) {
+      GD.result = `<div class="panel" style="margin-bottom:12px;border-color:var(--ok)" id="gdo-res" data-applied="1"><h3>${ic('check')} ${esc(t('gd.op_applied', { n: lines.length, d: diffs.length }))}</h3><div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('gd.op_system'))}</th><th class="r">${esc(t('gd.op_count'))}</th><th class="r">${esc(t('gd.op_diff'))}</th></tr></thead><tbody>
+        ${diffs.concat(lines.filter(l => !num(l.diff))).slice(0, 60).map(l => `<tr><td>${esc(l.name)}</td><td class="r num">${fmtQty(l.system)}</td><td class="r num">${fmtQty(l.counted)}</td><td class="r num gd-diff ${l.diff > 0 ? 'gd-plus' : l.diff < 0 ? 'gd-minus' : ''}"><b>${l.diff > 0 ? '+' : ''}${fmtQty(l.diff)}</b></td></tr>`).join('')}</tbody></table></div></div>`;
+      toast(t('gd.op_applied', { n: lines.length, d: diffs.length }), 'ok', 4000);
+      gdAfterStockChange(r.stock || []);
+    } else {
+      const id = r.request_id || (r.approval || {}).request_id;
+      trackMyRequest(id, 'opname', t('gd.req_label', { n: filled.length }));
+      GD.result = `<div class="panel" style="margin-bottom:12px;border-color:var(--warn-b)" id="gdo-res" data-applied="0"><h3>${ic('clock')} ${esc(t('gd.op_waiting'))}</h3><div class="pb">${esc(t('gd.op_sent', { id }))} · ${esc(t('gd.req_label', { n: filled.length }))}</div></div>`;
+      toast(t('gd.op_waiting'), 'warn', 4000);
+      pollApprovals().then(() => { if (S.view === 'gudang' && GD.tab === 'opname') gdDrawOpname($('#gd-body'), true); });
+    }
+    if (S.view === 'gudang') RENDER.gudang();
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    err.textContent = e instanceof NetError ? t('gd.op_offline') : errMsg(e);
+  }
+}
+/** Approvals inbox card for kind 'opname': lines with system / counted / difference and its value. */
+function opnameAprHTML(a, pl) {
+  const own = isOwner(), lines = (pl.lines || []).slice().sort((x, y) => !!num(y.diff) - !!num(x.diff) || String(x.name).localeCompare(String(y.name)));
+  const diffs = lines.filter(l => num(l.diff)), same = lines.filter(l => !num(l.diff));
+  let vr = 0, vc = 0;
+  const row = l => { const p = prodById(l.product_id) || {}, d = num(l.diff), r = Math.round(d * int(p.retail_price)), c = Math.round(d * int(p.cost_price)); vr += r; vc += c;
+    return `<tr data-pid="${esc(l.product_id)}"><td>${esc(l.name)} <span class="small muted">${esc(l.unit || '')}</span></td><td class="r num">${fmtQty(l.system)}</td><td class="r num">${fmtQty(l.counted)}</td><td class="r num gd-diff ${d > 0 ? 'gd-plus' : d < 0 ? 'gd-minus' : ''}"><b>${d > 0 ? '+' : ''}${fmtQty(d)}</b></td><td class="r num" data-val="retail">${d ? fmtRp(r) : '—'}</td>${own ? `<td class="r num" data-val="cost">${d ? fmtRp(c) : '—'}</td>` : ''}</tr>`; };
+  const head = `<thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('gd.op_system'))}</th><th class="r">${esc(t('gd.op_count'))}</th><th class="r">${esc(t('gd.op_diff'))}</th><th class="r">${esc(t('gd.apr_val_retail'))}</th>${own ? `<th class="r">${esc(t('gd.apr_val_cost'))}</th>` : ''}</tr></thead>`;
+  const diffRows = diffs.map(row).join(''), sameRows = same.map(row).join('');
+  return `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(t('gd.apr_title', { n: lines.length, d: diffs.length }))}</b><span class="badge blue">${esc(a.request_id)}</span></div>
+    <div class="small muted">${esc(t('gd.apr_by'))}: <b>${esc(pl.by || a.cashier)}</b> · ${esc(fmtDateTime(pl.counted_at || a.created_at))}</div>
+    ${pl.note ? `<div style="margin-top:6px">${esc(t('notes'))}: <b>“${esc(pl.note)}”</b></div>` : ''}
+    <div class="tbl-wrap" style="margin:8px 0"><table class="tbl" data-opname-lines>${head}<tbody>${diffRows || `<tr><td colspan="${own ? 6 : 5}" class="muted">${esc(t('gd.apr_nodiff'))}</td></tr>`}</tbody>
+      <tfoot><tr><td colspan="4"><b>${esc(t('gd.total'))}</b></td><td class="r num" data-total="retail"><b class="${vr < 0 ? 'red' : ''}">${fmtRp(vr)}</b></td>${own ? `<td class="r num" data-total="cost"><b class="${vc < 0 ? 'red' : ''}">${fmtRp(vc)}</b></td>` : ''}</tr></tfoot></table></div>
+    ${same.length ? `<details style="margin-bottom:8px"><summary class="small muted">${esc(t('gd.apr_same', { n: same.length }))}</summary><div class="tbl-wrap" style="margin-top:6px"><table class="tbl">${head}<tbody>${sameRows}</tbody></table></div></details>` : ''}
+    <div class="small muted" style="margin-bottom:8px">${esc(t('gd.apr_hint'))}</div>`;
+}
+/** Beranda attention items: batches expiring within 30 days and opname counts waiting for the owner. */
+async function gudangAttention() {
+  if (!isApprover()) return [];
+  const items = [];
+  try {
+    const exp = gdExpiry(await gdYear(false, 30 * 60000), 30), ids = new Set(exp.map(b => String(b.p.id)));
+    if (ids.size) items.push({ key: 'gd-exp', level: exp.some(b => b.days <= 7) ? 'err' : 'warn', icon: 'warehouse', text: t('att.expiring', { n: ids.size }), go: 'gudang', tab: 'expiry' });
+  } catch (e) { }
+  try {
+    const list = AP.loaded ? AP.list : ((await api('list_approvals')).approvals || []);
+    const n = list.filter(a => a.kind === 'opname' && (!a.status || a.status === 'pending')).length;
+    if (n) items.push({ key: 'gd-opname', level: 'warn', icon: 'warehouse', text: t('att.opname', { n }), go: 'gudang', tab: 'opname' });
+  } catch (e) { }
+  return items;
+}
+Object.assign(ACT, {
+  'gd-refresh': () => gdLoad(true),
+  'gd-tab': el => { GD.tab = el.dataset.tab; GD.result = GD.tab === 'opname' ? GD.result : ''; RENDER.gudang(); },
+  'gd-filter': el => { GD.tab = 'list'; GD.status = el.dataset.status || ''; RENDER.gudang(); },
+  'gd-status': el => { GD.status = el.dataset.status || ''; gdDrawListRows(); },
+  'gd-cat': el => { GD.tab = 'list'; GD.cat = el.dataset.cat || ''; GD.status = ''; RENDER.gudang(); },
+  'gd-card': el => openStockCard(prodById(el.dataset.id)),
+  'gdo-add': el => { const q = $('#gdo-q'); if (q) q.value = ''; gdoAdd([prodById(el.dataset.id)], true); },
+  'gdo-add-cat': () => { const c = ($('#gdo-cat') || {}).value; if (!c) { toast(t('gd.op_pick_cat'), 'warn'); return; } const n = gdoAdd(filterProducts('', c)); toast(t('gd.op_added', { n }), 'ok'); },
+  'gdo-add-all': () => { const n = gdoAdd(S.products.filter(p => p.active !== false).slice().sort((a, b) => String(a.category).localeCompare(String(b.category)) || a.name.localeCompare(b.name))); toast(t('gd.op_added', { n }), 'ok'); },
+  'gdo-del': el => { GDO.lines = GDO.lines.filter(l => String(l.id) !== String(el.dataset.id)); saveGdo(); gdDrawOpname($('#gd-body'), true); },
+  'gdo-show': () => { GDO.show = !GDO.show; saveGdo(); gdDrawOpname($('#gd-body'), true); },
+  'gdo-clear': async () => { const r = await confirmBox(t('gd.op_clear_q'), { danger: true }); if (!r.ok) return; GDO.lines = []; GDO.note = ''; GDO.show = false; saveGdo(); RENDER.gudang(); },
+  'gdo-cam': () => cameraScan(code => { const p = findBySku(code); if (p) gdoAdd([p], true); else toast(t('pos.barcode_nf', { code }), 'err'); }),
+  'gdo-submit': () => gdoSubmit()
+});
+Object.assign(I18N.id, {
+  'nav.gudang': 'Gudang', 'navs.gudang': 'Gudang', 'pu.exp': 'Kedaluwarsa', 'pu.exp_hint': 'Opsional: tanggal kedaluwarsa barang yang datang ini',
+  'att.expiring': '{n} barang hampir kedaluwarsa', 'att.opname': 'Opname menunggu persetujuan ({n})',
+  'gd.tab_overview': 'Ringkasan', 'gd.tab_list': 'Daftar stok', 'gd.tab_expiry': 'Kedaluwarsa', 'gd.tab_opname': 'Stok opname',
+  'gd.items': 'Jumlah barang', 'gd.units': 'Total unit', 'gd.value_cost': 'Nilai stok (harga modal)', 'gd.value_retail': 'Nilai stok (harga eceran)',
+  'gd.value_cost_s': 'Modal', 'gd.value_retail_s': 'Eceran', 'gd.low_short': 'Menipis', 'gd.items_s': 'Barang',
+  'gd.habis': 'Habis', 'gd.menipis': 'Menipis', 'gd.lebih': 'Lebih', 'gd.aman': 'Aman', 'gd.kedaluwarsa': 'Kedaluwarsa', 'gd.all': 'Semua',
+  'gd.exp30': 'Kedaluwarsa ≤ 30 hari', 'gd.see_all': 'Lihat', 'gd.urgent': 'Perlu tindakan', 'gd.urgent_none': 'Tidak ada yang mendesak.', 'gd.by_cat': 'Per kategori',
+  'gd.r_habis': 'Stok habis', 'gd.r_menipis': 'Menipis: {stock}, perkiraan habis {d}', 'gd.r_exp': 'Kedaluwarsa {date} · sisa ±{q}',
+  'gd.search_ph': 'Cari nama / SKU / kategori', 'gd.sort': 'Urutkan', 'gd.sort_name': 'Nama A–Z', 'gd.sort_stock': 'Stok terendah', 'gd.sort_stock_desc': 'Stok terbanyak', 'gd.sort_days': 'Paling cepat habis',
+  'gd.status': 'Status', 'gd.min': 'Min', 'gd.days_left': 'Perkiraan habis', 'gd.reorder': 'Saran beli', 'gd.days': '{n} hari', 'gd.lt1': '< 1 hari', 'gd.one_year': '1 tahun',
+  'gd.n_items': '{n} barang', 'gd.loading_year': 'Memuat data 12 bulan…', 'gd.exp_short': 'exp',
+  'gd.list_hint': 'Perkiraan habis = stok ÷ rata-rata terjual per hari (30 hari terakhir). Saran beli = cukup untuk 14 hari dikurangi stok (hanya barang menipis/habis). Lebih = stok untuk lebih dari 90 hari, atau tidak terjual 30 hari.',
+  'gd.card': 'Kartu stok', 'gd.opening': 'Saldo awal', 'gd.closing': 'Saldo akhir = stok sekarang', 'gd.col_desc': 'Keterangan', 'gd.col_in': 'Masuk', 'gd.col_out': 'Keluar', 'gd.col_bal': 'Saldo',
+  'gd.mv_in': 'Barang masuk', 'gd.mv_out': 'Terjual ({n} nota)', 'gd.mv_void': 'Nota batal, stok kembali ({inv})', 'gd.mv_adj': 'Penyesuaian stok', 'gd.mv_opname': 'Stok opname',
+  'gd.csv': 'Ekspor CSV', 'gd.no_moves': 'Tidak ada pergerakan di periode ini.',
+  'gd.exp_hint': 'Perkiraan: stok sekarang dianggap berasal dari barang masuk terbaru (barang lama dianggap terjual lebih dulu). Batch yang kedaluwarsa dalam 60 hari.',
+  'gd.exp_none': 'Tidak ada batch yang kedaluwarsa dalam 60 hari.', 'gd.exp_le': 'Kedaluwarsa ≤ {n} hari', 'gd.exp_in': 'Barang masuk', 'gd.exp_date': 'Kedaluwarsa', 'gd.exp_left': 'Sisa waktu', 'gd.exp_qty': 'Perkiraan sisa',
+  'gd.expired': 'Lewat {n} hari', 'gd.today': 'Hari ini',
+  'gd.op_hint': 'Hitung barang fisik tanpa melihat stok sistem (hitung buta). Tekan "Tampilkan selisih" setelah selesai menghitung.',
+  'gd.op_search': 'Cari / scan barcode lalu Enter', 'gd.op_pick_cat': 'Pilih kategori…', 'gd.op_add_cat': 'Tambah kategori', 'gd.op_add_all': 'Semua barang ({n})', 'gd.op_added': '{n} barang ditambahkan',
+  'gd.op_count': 'Hitung', 'gd.op_system': 'Sistem', 'gd.op_diff': 'Selisih', 'gd.op_show': 'Tampilkan selisih', 'gd.op_hide': 'Sembunyikan selisih',
+  'gd.op_progress': '{done} dari {n} barang sudah dihitung', 'gd.op_diffs': '{n} selisih', 'gd.op_note': 'Catatan (opsional)',
+  'gd.op_submit_owner': 'Simpan & terapkan stok', 'gd.op_submit': 'Kirim ke pemilik', 'gd.op_clear': 'Kosongkan', 'gd.op_clear_q': 'Hapus semua baris hitungan di perangkat ini?',
+  'gd.op_empty': 'Belum ada barang. Cari atau scan barang, pilih kategori, atau ambil semua barang.', 'gd.op_none_counted': 'Isi jumlah hitung minimal satu barang.',
+  'gd.op_bad': 'Jumlah hitung tidak valid: {name}', 'gd.op_too_many': 'Maksimal 500 barang sekali kirim.',
+  'gd.op_confirm_owner': 'Stok {n} barang akan diganti dengan hasil hitung. Lanjutkan?', 'gd.op_confirm': 'Kirim hasil hitung {n} barang ke pemilik untuk disetujui?',
+  'gd.op_applied': 'Stok opname diterapkan: {n} barang, {d} selisih', 'gd.op_waiting': 'Menunggu persetujuan pemilik', 'gd.op_sent': 'Terkirim: {id}',
+  'gd.op_offline': 'Butuh internet untuk mengirim. Hasil hitung tetap tersimpan di perangkat ini.', 'gd.op_draft': 'Hasil hitung tersimpan otomatis di perangkat ini.',
+  'gd.op_pending': 'Opname menunggu persetujuan', 'gd.op_open_inbox': 'Buka persetujuan', 'gd.req_label': 'Stok opname {n} barang',
+  'gd.needs_owner': 'Butuh pemilik', 'gd.apr_title': 'Stok opname: {n} barang, {d} selisih', 'gd.apr_by': 'Dihitung oleh', 'gd.apr_val_retail': 'Nilai (eceran)', 'gd.apr_val_cost': 'Nilai (modal)',
+  'gd.apr_hint': 'Jika disetujui, selisih ditambahkan ke stok saat ini — penjualan sesudah penghitungan tetap terhitung.', 'gd.apr_same': '{n} barang sesuai (tanpa selisih)', 'gd.apr_nodiff': 'Tidak ada selisih.', 'gd.total': 'Total', 'gd.new_toast': 'Stok opname baru dari {cashier} →'
+});
+Object.assign(I18N.ar, {
+  'nav.gudang': 'المخزن', 'navs.gudang': 'المخزن', 'pu.exp': 'تاريخ الانتهاء', 'pu.exp_hint': 'اختياري: تاريخ انتهاء صلاحية هذه الدفعة',
+  'att.expiring': '{n} أصناف قاربت صلاحيتها على الانتهاء', 'att.opname': 'جرد بانتظار الموافقة ({n})',
+  'gd.tab_overview': 'ملخص', 'gd.tab_list': 'قائمة المخزون', 'gd.tab_expiry': 'الصلاحية', 'gd.tab_opname': 'جرد المخزون',
+  'gd.items': 'عدد الأصناف', 'gd.units': 'إجمالي الوحدات', 'gd.value_cost': 'قيمة المخزون (بالتكلفة)', 'gd.value_retail': 'قيمة المخزون (بسعر التجزئة)',
+  'gd.value_cost_s': 'بالتكلفة', 'gd.value_retail_s': 'بالتجزئة', 'gd.low_short': 'منخفض', 'gd.items_s': 'أصناف',
+  'gd.habis': 'نفد', 'gd.menipis': 'منخفض', 'gd.lebih': 'فائض', 'gd.aman': 'جيد', 'gd.kedaluwarsa': 'قارب الانتهاء', 'gd.all': 'الكل',
+  'gd.exp30': 'تنتهي خلال ≤ 30 يومًا', 'gd.see_all': 'عرض', 'gd.urgent': 'يحتاج إجراء', 'gd.urgent_none': 'لا يوجد ما هو عاجل.', 'gd.by_cat': 'حسب الفئة',
+  'gd.r_habis': 'نفد المخزون', 'gd.r_menipis': 'منخفض: {stock}، ينفد خلال {d}', 'gd.r_exp': 'ينتهي {date} · المتبقي ±{q}',
+  'gd.search_ph': 'ابحث بالاسم / الرمز / الفئة', 'gd.sort': 'الترتيب', 'gd.sort_name': 'الاسم أ–ي', 'gd.sort_stock': 'الأقل مخزونًا', 'gd.sort_stock_desc': 'الأكثر مخزونًا', 'gd.sort_days': 'الأسرع نفادًا',
+  'gd.status': 'الحالة', 'gd.min': 'الحد الأدنى', 'gd.days_left': 'ينفد خلال', 'gd.reorder': 'اقتراح الشراء', 'gd.days': '{n} يوم', 'gd.lt1': 'أقل من يوم', 'gd.one_year': 'سنة',
+  'gd.n_items': '{n} صنف', 'gd.loading_year': 'جارٍ تحميل بيانات 12 شهرًا…', 'gd.exp_short': 'ينتهي',
+  'gd.list_hint': 'ينفد خلال = المخزون ÷ متوسط المبيع اليومي (آخر 30 يومًا). اقتراح الشراء = ما يكفي 14 يومًا ناقص المخزون (للأصناف المنخفضة/النافدة فقط). فائض = مخزون يكفي أكثر من 90 يومًا أو لم يُبع خلال 30 يومًا.',
+  'gd.card': 'بطاقة الصنف', 'gd.opening': 'الرصيد الافتتاحي', 'gd.closing': 'الرصيد الختامي = المخزون الحالي', 'gd.col_desc': 'البيان', 'gd.col_in': 'وارد', 'gd.col_out': 'صادر', 'gd.col_bal': 'الرصيد',
+  'gd.mv_in': 'بضاعة واردة', 'gd.mv_out': 'مبيعات ({n} فاتورة)', 'gd.mv_void': 'فاتورة ملغاة، عاد المخزون ({inv})', 'gd.mv_adj': 'تسوية مخزون', 'gd.mv_opname': 'جرد المخزون',
+  'gd.csv': 'تصدير CSV', 'gd.no_moves': 'لا توجد حركة في هذه الفترة.',
+  'gd.exp_hint': 'تقدير: نفترض أن المخزون الحالي من أحدث البضاعة الواردة (الأقدم بيع أولًا). الدفعات التي تنتهي صلاحيتها خلال 60 يومًا.',
+  'gd.exp_none': 'لا توجد دفعات تنتهي صلاحيتها خلال 60 يومًا.', 'gd.exp_le': 'تنتهي خلال ≤ {n} يومًا', 'gd.exp_in': 'الوارد', 'gd.exp_date': 'تاريخ الانتهاء', 'gd.exp_left': 'المدة المتبقية', 'gd.exp_qty': 'الكمية المتبقية (تقديرًا)',
+  'gd.expired': 'انتهت منذ {n} يوم', 'gd.today': 'اليوم',
+  'gd.op_hint': 'عُدّ البضاعة فعليًا دون رؤية مخزون النظام (جرد أعمى). اضغط «إظهار الفروق» بعد انتهاء العدّ.',
+  'gd.op_search': 'ابحث / امسح الباركود ثم Enter', 'gd.op_pick_cat': 'اختر فئة…', 'gd.op_add_cat': 'إضافة الفئة', 'gd.op_add_all': 'كل الأصناف ({n})', 'gd.op_added': 'أضيف {n} صنف',
+  'gd.op_count': 'العدد', 'gd.op_system': 'النظام', 'gd.op_diff': 'الفرق', 'gd.op_show': 'إظهار الفروق', 'gd.op_hide': 'إخفاء الفروق',
+  'gd.op_progress': 'تم عدّ {done} من {n} صنف', 'gd.op_diffs': '{n} فروق', 'gd.op_note': 'ملاحظة (اختياري)',
+  'gd.op_submit_owner': 'حفظ وتطبيق المخزون', 'gd.op_submit': 'إرسال إلى المالك', 'gd.op_clear': 'تفريغ', 'gd.op_clear_q': 'حذف كل أسطر الجرد على هذا الجهاز؟',
+  'gd.op_empty': 'لا توجد أصناف بعد. ابحث أو امسح الباركود أو اختر فئة أو أضف كل الأصناف.', 'gd.op_none_counted': 'أدخل عدد صنف واحد على الأقل.',
+  'gd.op_bad': 'عدد غير صالح: {name}', 'gd.op_too_many': 'الحد الأقصى 500 صنف في الإرسال الواحد.',
+  'gd.op_confirm_owner': 'سيُستبدل مخزون {n} صنف بنتيجة العدّ. متابعة؟', 'gd.op_confirm': 'إرسال نتيجة عدّ {n} صنف إلى المالك للموافقة؟',
+  'gd.op_applied': 'تم تطبيق الجرد: {n} صنف، {d} فروق', 'gd.op_waiting': 'بانتظار موافقة المالك', 'gd.op_sent': 'أُرسل: {id}',
+  'gd.op_offline': 'يلزم الإنترنت للإرسال. نتيجة العدّ محفوظة على هذا الجهاز.', 'gd.op_draft': 'نتيجة العدّ تُحفظ تلقائيًا على هذا الجهاز.',
+  'gd.op_pending': 'جرد بانتظار الموافقة', 'gd.op_open_inbox': 'فتح الموافقات', 'gd.req_label': 'جرد {n} صنف',
+  'gd.needs_owner': 'يحتاج المالك', 'gd.apr_title': 'جرد المخزون: {n} صنف، {d} فروق', 'gd.apr_by': 'عدّه', 'gd.apr_val_retail': 'القيمة (تجزئة)', 'gd.apr_val_cost': 'القيمة (تكلفة)',
+  'gd.apr_hint': 'عند الموافقة يُضاف الفرق إلى المخزون الحالي — وتبقى المبيعات التي تمت بعد العدّ محسوبة.', 'gd.apr_same': '{n} أصناف مطابقة (بلا فرق)', 'gd.apr_nodiff': 'لا توجد فروق.', 'gd.total': 'الإجمالي', 'gd.new_toast': 'جرد جديد من {cashier} ←'
+});
 
 /* ========== Boot ========== */
 function applyTheme() {
