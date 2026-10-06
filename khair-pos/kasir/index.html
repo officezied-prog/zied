@@ -777,6 +777,8 @@ const MockServer = (() => {
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
   const READ_ONLY = ['users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos', 'party_ledger'];
+  /* v16 settings defaults as on the server (an older demo DB lacks them) */
+  const V16_DEFAULTS = { max_discount_pct: 3, sell_from_shop_only: true, member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
   class MockErr extends Error { constructor(code, message) { super(message || code); this.code = code; } }
   const E = (code, msg, extra) => { const e = new MockErr(code, msg); if (extra) e.extra = extra; return e; };
   let ready = null;
@@ -867,7 +869,7 @@ const MockServer = (() => {
     if (!s) throw E('NOT_FOUND', 'invoice');
     if (s.status === 'void') return s;
     s.status = 'void'; s.void_reason = reason; s.voided_by = by; s.voided_at = jktISO();
-    db.items.filter(i => i.invoice_no === s.invoice_no).forEach(i => { const p = db.products.find(x => x.id === i.product_id); if (p) p.stock = roundQty(p.stock + i.qty); });
+    db.items.filter(i => i.invoice_no === s.invoice_no).forEach(i => { const p = db.products.find(x => x.id === i.product_id); if (p) { shopSet.set(p.id, r3((shopSet.has(p.id) ? shopSet.get(p.id) : shopOf(p)) + i.qty)); p.stock = roundQty(p.stock + i.qty); } });
     const c = s.customer_id ? db.customers.find(x => x.id === s.customer_id) : null;
     if (c && s.debt_amount) c.debt_balance = Math.max(0, int(c.debt_balance) - s.debt_amount);
     if (c) c.visits = Math.max(0, num(c.visits) - 1); // v16: a voided purchase does not count
@@ -1124,6 +1126,24 @@ const MockServer = (() => {
     return o;
   }
   const qtyOnly = c => { const x = Object.assign({}, c); ['cost_price', 'from_total', 'to_total', 'd_total'].forEach(f => { delete x[f]; }); return x; };
+  /* v16 warehouse (gudang) and shelf (toko): stock = total, shop_stock = on the shelf; a product without shop_stock counts all
+     its stock as on the shelf. Only sales, voids and move_stock set the shelf (shopSet); every other change of a product row
+     keeps its shelf, capped at the total — goods-in, corrections and counts therefore land in the warehouse. */
+  const shopOf = p => p.shop_stock === undefined || p.shop_stock === null || p.shop_stock === '' ? num(p.stock) : num(p.shop_stock);
+  const r3 = v => Math.round(num(v) * 1000) / 1000;
+  const productOut = p => Object.assign({}, p, { shop_stock: shopOf(p), gudang_stock: r3(num(p.stock) - shopOf(p)) });
+  const shopSet = new Map();
+  function normShop(db, snap) {
+    db.products.forEach(p => {
+      const was = snap.get(p.id), written = !was || was.json !== JSON.stringify(p) || shopSet.has(p.id);
+      if (!written) return;
+      const st = num(p.stock);
+      let sh = shopSet.has(p.id) ? shopSet.get(p.id) : (was ? was.shop : st);
+      if (sh > st) sh = st;
+      if (sh < 0 && st >= 0) sh = 0;
+      p.shop_stock = r3(sh);
+    });
+  }
   const isHex64 = h => /^[0-9a-f]{64}$/.test(String(h || ''));
   const lockMsg = until => 'Terlalu banyak PIN salah. Coba lagi jam ' + new Date(Date.parse(until) + 7 * 3600000).toISOString().slice(11, 16) + ' WIB';
 
@@ -1168,6 +1188,32 @@ const MockServer = (() => {
       case 'login':
         if (viaMaster) logAct(db, u, 'masuk_master', 'Masuk ke akun ' + u.name + ' (' + u.role + ') dengan kode pemilik', u.name, 0, 'warn');
         return { user: { name: u.name, role: u.role }, must_change: u.must_change === true && !viaMaster, via_master: viaMaster };
+      case 'move_stock': {
+        // warehouse → shelf (to "toko") or back (to "gudang"); the shelf only gets what is in the warehouse
+        const toShop = data.to !== 'gudang';
+        const lines = Array.isArray(data.lines) ? data.lines.slice(0, 200) : [];
+        if (!lines.length) throw E('INVALID', 'Pilih barang yang dipindah');
+        const agg = new Map();
+        for (const l of lines) {
+          const p = prodById(l && l.product_id);
+          if (!p) throw E('NOT_FOUND', 'Produk tidak ditemukan: ' + (l && l.product_id));
+          const q = r3(l.qty);
+          if (!(q > 0)) throw E('INVALID', 'Jumlah tidak valid: ' + str(p.name));
+          agg.set(p.id, r3((agg.get(p.id) || 0) + q));
+        }
+        const short = [], out = [];
+        agg.forEach((q, pid) => {
+          const p = prodById(pid), sh = shopOf(p), gd = r3(num(p.stock) - sh);
+          if (toShop && q > gd + 1e-9) short.push(str(p.name) + ': gudang ' + fmtN(Math.max(0, gd)) + (gd <= 0 ? ' — belum ada barang masuk dengan nota' : ''));
+          else if (!toShop && q > sh + 1e-9) short.push(str(p.name) + ': rak ' + fmtN(Math.max(0, sh)));
+          else out.push({ p, q, sh: r3(sh + (toShop ? q : -q)) });
+        });
+        if (short.length) throw E(toShop ? 'NOT_IN_GUDANG' : 'NOT_ON_SHELF', (toShop ? 'Tidak bisa pindah ke toko — stok gudang kurang: ' : 'Stok rak kurang: ') + short.join('; '));
+        out.forEach(x => shopSet.set(x.p.id, x.sh));
+        const note = str(data.note).slice(0, 200);
+        logAct(db, u, 'pindah_stok', (toShop ? 'Gudang → toko: ' : 'Toko → gudang: ') + out.map(x => str(x.p.name) + ' ' + fmtN(x.q) + ' ' + str(x.p.unit)).join('; ') + (note ? ' | ' + note : ''), '', 0, 'info');
+        return { stock: out.map(x => ({ product_id: x.p.id, stock: num(x.p.stock), shop_stock: x.sh, gudang_stock: r3(num(x.p.stock) - x.sh) })) };
+      }
       case 'change_pin': {
         const h = data.new_pin_hash;
         if (!isHex64(h)) throw E('INVALID', 'PIN baru tidak valid');
@@ -1213,7 +1259,8 @@ const MockServer = (() => {
         if (!deviceTouch(db, u, data.device, true)) throw E('INVALID', 'device.id tidak valid');
         return { require_location: db.settings.require_device_location === true, server_time: new Date().toISOString() };
       }
-      case 'bootstrap': return { products: db.products, customers: db.customers, settings: db.settings, users: db.users.map(x => ({ name: x.name, role: x.role, active: x.active })), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
+      case 'bootstrap': return { products: db.products.map(productOut), customers: db.customers, settings: Object.assign({}, V16_DEFAULTS, db.settings), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
+        users: db.users.map(x => u.role === 'owner' ? { name: x.name, role: x.role, active: x.active !== false, must_change: x.must_change === true, locked: Date.parse(x.locked_until) > Date.now(), has_master: x.role === 'owner' && isHex64(x.master_hash) } : { name: x.name, role: x.role, active: x.active !== false }), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
         shift: blind(shiftSummary(db, openShiftOf(db, u.name)), u.role), open_shifts: ['owner', 'manager'].includes(u.role) ? db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)) : [] };
 
       case 'save_sale': {
@@ -1228,6 +1275,13 @@ const MockServer = (() => {
         const shift = openShiftOf(db, u.name);
         if (!shift && u.role === 'kasir' && db.settings.require_shift !== false) throw E('SHIFT_REQUIRED', 'Buka kasir (shift) dulu'); // v15: only kasir accounts need a drawer
         const P = priceSale(db, data);
+        // v16: only goods already on the shop shelf can be sold (a sale queued offline is never refused: queued: true)
+        const qtyBy = new Map(); P.lines.forEach(l => qtyBy.set(l.p.id, r3((qtyBy.get(l.p.id) || 0) + l.qty)));
+        const notOnShelf = [];
+        qtyBy.forEach((q, pid) => { const p = prodById(pid), sh = shopOf(p); if (q > sh + 1e-9) notOnShelf.push({ product_id: p.id, name: str(p.name), need: q, shop: sh, gudang: r3(num(p.stock) - sh) }); });
+        if (notOnShelf.length && db.settings.sell_from_shop_only !== false && data.queued !== true) {
+          throw E('NOT_ON_SHELF', 'Barang belum ada di rak toko: ' + notOnShelf.map(x => x.name + ' (perlu ' + fmtN(x.need) + ', rak ' + fmtN(x.shop) + ', gudang ' + fmtN(x.gudang) + (x.gudang <= 0 ? ' — belum ada barang masuk dengan nota' : ' — pindahkan dulu dari gudang') + ')').join('; '), { items: notOnShelf });
+        }
         let approved_by = '', usedApproval = null;
         if (P.debt > 0 && u.role === 'kasir') {
           if (data.approver && data.approver.user) {
@@ -1270,16 +1324,18 @@ const MockServer = (() => {
         if (usedDisc) usedDisc.status = 'used';
         db.sales.push(sale);
         const touched = new Map();
+        qtyBy.forEach((q, pid) => { const p = prodById(pid); shopSet.set(pid, r3(shopOf(p) - q)); });
         for (const l of lines) {
           db.items.push({ invoice_no: sale.invoice_no, sale_date, product_id: l.p.id, sku: l.p.sku, name: l.p.name, qty: l.qty, unit_price: l.unit_price, price_type: l.price_type, cost_price: l.p.cost_price, line_total: l.line_total, line_profit: l.line_total - l.line_cost, customer_name: sale.customer_name });
           l.p.stock = roundQty(l.p.stock - l.qty);
           touched.set(l.p.id, l.p);
         }
         if (cust) { cust.debt_balance = int(cust.debt_balance) + debt; cust.visits = Math.max(0, Math.round(num(cust.visits))) + 1; cust.last_visit = data.sale_date; }
+        if (notOnShelf.length) logAct(db, u, 'jual_tanpa_rak', 'Penjualan ' + sale.invoice_no + ' (tersimpan offline) melebihi stok rak: ' + notOnShelf.map(x => x.name + ' perlu ' + fmtN(x.need) + ', rak ' + fmtN(x.shop)).join('; '), sale.invoice_no, 0, 'warn');
         if (discBy) logAct(db, u, 'diskon', 'Diskon ' + disc.pct + '% (Rp ' + disc.amount + ') pada ' + sale.invoice_no + ' oleh ' + u.name + (discBy !== u.name ? ', disetujui ' + discBy : ''), sale.invoice_no, disc.amount, 'warn');
         if (debt > 0) logAct(db, u, 'hutang', 'Penjualan hutang ' + sale.invoice_no + ' ' + str(sale.customer_name) + ' Rp ' + debt + (approved_by ? ' (disetujui ' + approved_by + ')' : ''), sale.invoice_no, debt, 'info');
         const { id: _omit, ...saleOut } = sale;
-        return Object.assign({ invoice_no: sale.invoice_no, sale: saleOut, stock: [...touched.values()].map(p => ({ product_id: p.id, stock: p.stock })), duplicate: false, exit_photo_required: exitReq, member: mem });
+        return Object.assign({ invoice_no: sale.invoice_no, sale: saleOut, stock: [...touched.values()].map(p => ({ product_id: p.id, stock: p.stock, shop_stock: Math.min(p.stock, shopSet.get(p.id)) })), duplicate: false, exit_photo_required: exitReq, member: mem });
       }
       case 'request_credit': {
         const cid = String(data.client_id || '');
@@ -1746,7 +1802,10 @@ const MockServer = (() => {
     dirty = false;
     try {
       lastRole = '';
+      shopSet.clear();
+      const snap = new Map(db.products.map(p => [p.id, { json: JSON.stringify(p), shop: shopOf(p) }]));
       res = handle(db, body);
+      normShop(db, snap);
       const role = lastRole;
       if (!READ_ONLY.includes(body.action) || dirty) save(db);
       res = Object.assign({ ok: true }, role === 'owner' || ['users', 'setup'].includes(body.action) ? res : strip(res));
