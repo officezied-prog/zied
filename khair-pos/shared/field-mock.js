@@ -16,11 +16,19 @@
  * (+ products[].image_updated). Shapes follow API.md "Field sales: Khair Sales (v8)".
  * Mock-only extras: field_bootstrap.orders (the rep's orders, last 30 days), product_images[].image_updated,
  * list_field.include_tracks/include_photos (echo of the applied rules), settings.field_* tracking parameters.
+ * Shop categories: shops carry type (an id of shared/shop-types.js), type_other (own words for 'lainnya') and chain,
+ * exactly as backend/field/process-field.js (check_in with shop_id + shop.type/chain re-categorises the shop).
  */
 (function () {
   'use strict';
   var ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop'];
-  var SHOP_TYPES = ['warung', 'toko', 'minimarket', 'bakery', 'katering', 'restoran', 'masjid', 'lainnya'];
+  // Shop type ids: taken from window.KhairShopTypes (shared/shop-types.js) when the page loaded it; this copy is the
+  // fallback for pages that load only this file (e.g. the owner app). Same list as backend/field/process-field.js.
+  var SHOP_TYPES_FALLBACK = ['perlengkapan_haji', 'travel_umrah', 'oleh_oleh_haji', 'toko_kurma', 'herbal', 'busana_muslim', 'toko_buku_islam', 'warung', 'toko', 'grosir_sembako', 'pasar', 'minimarket', 'supermarket', 'hypermarket', 'grosir_modern', 'bakery', 'toko_kue', 'katering', 'restoran', 'kafe', 'hotel', 'oleh_oleh', 'parsel', 'toko_buah', 'masjid', 'pesantren', 'sekolah', 'majelis_taklim', 'kantor', 'koperasi', 'reseller', 'toko_online', 'lainnya'];
+  function shopTypes() {
+    var K = typeof window !== 'undefined' && window.KhairShopTypes;
+    return K && Array.isArray(K.IDS) && K.IDS.length ? K.IDS : SHOP_TYPES_FALLBACK;
+  }
   var OUTCOMES = ['order', 'tertarik', 'tidak', 'tutup', 'sudah_pelanggan'];
   var ORDER_STATUS = ['baru', 'diproses', 'dikirim', 'batal'];
   var COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
@@ -29,6 +37,7 @@
 
   /* ---------- small utilities (no globals) ---------- */
   function E(code, message) { return { code: code, message: message || code }; }
+  function str(v) { return v == null ? '' : String(v).trim(); }
   function int(v) { var n = Math.round(Number(v)); return isFinite(n) ? n : 0; }
   function num(v) { var n = Number(v); return isFinite(n) ? n : 0; }
   function pad(n, w) { n = String(n); while (n.length < w) n = '0' + n; return n; }
@@ -193,13 +202,22 @@
         if (data.shop_id) {
           shop = db.shops.find(function (s) { return s.shop_id === data.shop_id; });
           if (!shop) throw E('NOT_FOUND', 'shop');
+          // re-categorise (as the server): a known shop.type replaces the type (type_other kept only for 'lainnya'),
+          // an unknown/missing one keeps it; a sent shop.chain (even '') replaces the chain
+          var rd = data.shop && typeof data.shop === 'object' ? data.shop : {};
+          var known = shopTypes().indexOf(rd.type) >= 0;
+          if (known) { shop.type = rd.type; shop.type_other = rd.type === 'lainnya' ? str(rd.type_other).slice(0, 60) : ''; }
+          if (rd.chain !== undefined) shop.chain = str(rd.chain).slice(0, 40);
         } else {
           var sd = data.shop || {};
           var name = String(sd.name || '').trim();
           if (!name) throw E('INVALID', 'shop.name required');
+          var okType = shopTypes().indexOf(sd.type) >= 0;
           shop = {
             shop_id: 'TK-' + pad(nextId(db, 'shop'), 4), name: name, owner_name: String(sd.owner_name || '').trim(), phone: String(sd.phone || '').trim(),
-            address: String(sd.address || '').trim(), area: String(sd.area || '').trim(), type: SHOP_TYPES.indexOf(sd.type) >= 0 ? sd.type : 'lainnya',
+            address: String(sd.address || '').trim(), area: String(sd.area || '').trim(), type: okType ? sd.type : 'lainnya',
+            // the rep's own words for 'lainnya'; an unknown type id is kept as those words
+            type_other: !okType || sd.type === 'lainnya' ? (str(sd.type_other) || (!okType ? str(sd.type) : '')).slice(0, 60) : '', chain: str(sd.chain).slice(0, 40),
             lat: Number(data.lat), lng: Number(data.lng), created_by: user.name, created_at: vt, last_visit_at: '', visits: 0, status: 'prospek', customer_id: null, next_visit: ''
           };
           db.shops.push(shop);
@@ -336,16 +354,17 @@
       '<text x="200" y="236" font-family="Arial,sans-serif" font-size="26" font-weight="700" fill="#fff" text-anchor="middle">' + esc(l1) + '</text>' +
       '<text x="200" y="268" font-family="Arial,sans-serif" font-size="20" fill="#fff" opacity=".9" text-anchor="middle">' + esc(l2) + '</text></svg>');
   }
+  // [name, owner, type, area, chain, type_other] — the first shops take the names of the store's grosir customers (see seed)
   var SHOP_SEED = [
-    ['Warung Bu Siti Condet', 'Bu Siti', 'warung', 'Condet'], ['Toko Sembako Barokah', 'Pak Rahmat', 'toko', 'Condet'], ['Minimarket Berkah Jaya', 'Pak Hendra', 'minimarket', 'Balekambang'],
-    ['Roti Ummi Bakery', 'Bu Ummi', 'bakery', 'Batu Ampar'], ['Katering Al-Ikhlas', 'Bu Nur', 'katering', 'Kramat Jati'], ['Rumah Makan Padang Sederhana', 'Uda Rizal', 'restoran', 'Cililitan'],
-    ['Masjid Al-Hidayah', 'Ust. Hasan', 'masjid', 'Condet'], ['Warung Kopi Bang Jali', 'Bang Jali', 'warung', 'Kramat Jati'], ['Toko Kurma Al-Madinah', 'Pak Salim', 'toko', 'Condet'],
-    ['Warung Mpok Ipah', 'Mpok Ipah', 'warung', 'Batu Ampar'], ['Toko Oleh-oleh Haji Nur', 'H. Nur', 'toko', 'Cililitan'], ['Minimarket Sinar Pagi', 'Bu Lina', 'minimarket', 'Kramat Jati'],
-    ['Bakery Kue Arab Yaman', 'Pak Ahmad Baraqbah', 'bakery', 'Condet'], ['Katering Barokah Aqiqah', 'Bu Fauziah', 'katering', 'Balekambang'], ['Resto Kebab Turki', 'Mas Deni', 'restoran', 'Cililitan'],
-    ['Warung Sembako Pak Udin', 'Pak Udin', 'warung', 'Dukuh'], ['Toko Rempah Hadramaut', 'Pak Alwi', 'toko', 'Condet'], ['Warung Nasi Uduk Bu Yati', 'Bu Yati', 'warung', 'Kramat Jati'],
-    ['Toko Busana Muslim Az-Zahra', 'Bu Zahra', 'toko', 'Cililitan'], ['Kantin Pesantren Darul Quran', 'Ust. Farid', 'lainnya', 'Batu Ampar'], ['Minimarket Amanah', 'Pak Joko', 'minimarket', 'Balekambang'],
-    ['Warung Bu Halimah 2', 'Bu Halimah', 'warung', 'Batu Ampar'], ['Toko Madu & Herbal Syifa', 'Pak Arif', 'toko', 'Kramat Jati'], ['Restoran Nasi Kebuli Abah', 'Abah Umar', 'restoran', 'Condet'],
-    ['Warung Jajanan Ceu Popon', 'Ceu Popon', 'warung', 'Dukuh']
+    ['Toko Sembako Berkah', 'Pak Rahmat', 'toko', 'Condet'], ['Warung Bu Halimah', 'Bu Halimah', 'warung', 'Batu Ampar'], ['Grosir Sembako Al-Barokah', 'H. Mansur', 'grosir_sembako', 'Kramat Jati'],
+    ['Perlengkapan Haji & Umrah Al-Mabrur', 'H. Abdullah', 'perlengkapan_haji', 'Condet'], ['Toko Kurma Al-Madinah', 'Pak Salim', 'toko_kurma', 'Condet'], ['Indomaret Raya Condet', 'Mas Dimas (kepala toko)', 'minimarket', 'Condet', 'Indomaret'],
+    ['Masjid Al-Hidayah', 'Ust. Hasan', 'masjid', 'Condet'], ['Roti Ummi Bakery', 'Bu Ummi', 'bakery', 'Batu Ampar'], ['Superindo Cililitan', 'Bu Lina (pembelian)', 'supermarket', 'Cililitan', 'Superindo'],
+    ['Warung Mpok Ipah', 'Mpok Ipah', 'warung', 'Batu Ampar'], ['Zamzam Haji Store', 'H. Nur', 'perlengkapan_haji', 'Cililitan'], ['Pondok Pesantren Darul Quran', 'Ust. Farid', 'pesantren', 'Batu Ampar'],
+    ['Toko Parfum Al-Hadrami', 'Pak Alwi', 'lainnya', 'Condet', '', 'Toko parfum Arab'], ['Katering Barokah Aqiqah', 'Bu Fauziah', 'katering', 'Balekambang'], ['Resto Nasi Kebuli Abah', 'Abah Umar', 'restoran', 'Condet'],
+    ['Warung Sembako Pak Udin', 'Pak Udin', 'warung', 'Dukuh'], ['Toko Madu & Herbal Syifa', 'Pak Arif', 'herbal', 'Kramat Jati'], ['Toko Busana Muslim Az-Zahra', 'Bu Zahra', 'busana_muslim', 'Cililitan'],
+    ['Travel Umrah Baitullah', 'Pak Faisal', 'travel_umrah', 'Kramat Jati'], ['Majelis Taklim Nurul Iman', 'Ustadzah Maryam', 'majelis_taklim', 'Balekambang'], ['Pusat Oleh-oleh Haji Condet', 'Hj. Aminah', 'oleh_oleh_haji', 'Condet'],
+    ['Toko Kue Ceu Popon', 'Ceu Popon', 'toko_kue', 'Dukuh'], ['Parsel & Hampers Amanah', 'Bu Rina', 'parsel', 'Kramat Jati'], ['Kurma Kiloan Pasar Kramat Jati', 'Pak Joko', 'pasar', 'Kramat Jati'],
+    ['Reseller Kurma Ummu Hafidz', 'Ummu Hafidz', 'reseller', 'Balekambang']
   ];
   function seed(db) {
     if (!db || typeof db !== 'object') return false;
@@ -370,7 +389,7 @@
       var cust = i < grosirCust.length ? grosirCust[i] : null; // the first shops are the store's existing grosir customers
       db.shops.push({
         shop_id: 'TK-' + pad(i + 1, 4), name: cust ? cust.name : s[0], owner_name: s[1], phone: '08' + ri(11, 59) + '-' + ri(1000, 9999) + '-' + ri(1000, 9999),
-        address: 'Jl. ' + pick(['Raya Condet', 'Batu Ampar', 'Dewi Sartika', 'Kampung Tengah', 'Balekambang', 'Haji Jian', 'Mesjid']) + ' No. ' + ri(1, 120), area: s[3], type: s[2],
+        address: 'Jl. ' + pick(['Raya Condet', 'Batu Ampar', 'Dewi Sartika', 'Kampung Tengah', 'Balekambang', 'Haji Jian', 'Mesjid']) + ' No. ' + ri(1, 120), area: s[3], type: s[2], type_other: s[5] || '', chain: s[4] || '',
         lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6, created_by: 'Ahmad', created_at: iso(addDays(created0, i), 9 * 60), last_visit_at: '', visits: 0,
         status: cust || i % 3 === 0 ? 'pelanggan' : 'prospek', customer_id: cust ? cust.id : null, next_visit: ''
       });

@@ -186,24 +186,26 @@ test('an {ok:false} answer is shown and NOT queued; the cart is kept', async ({ 
   // product disappears on the server → NOT_FOUND
   await page.evaluate(() => { const db = JSON.parse(localStorage.getItem('kmock.db')); db.products = db.products.filter(p => !/Ajwa/.test(p.name)); localStorage.setItem('kmock.db', JSON.stringify(db)); });
   await page.click('#btn-checkout');
-  await page.click('#sv-skip');
   await expect(page.locator('.toast.err')).toContainText('tidak ditemukan');
   await expect(page.locator('#tb-outbox')).toBeHidden();
   await expect(page.locator('.cline')).toHaveCount(1);
 });
 
-test('survey: answers saved only with consent; skip saves nothing', async ({ page }) => {
+test('manual survey (optional, from the payment panel): answers saved only with consent; skip saves nothing', async ({ page }) => {
   await addBySearch(page, 'zamzam');
-  await page.click('#btn-checkout');
+  await page.click('#vs-manual');
   await expect(page.locator('.modal h2')).toHaveText('Survei pelanggan (opsional)');
   await page.locator('[data-sq="1"]').fill('Dari TikTok');
   await page.click('#sv-save');
   await expect(page.locator('#sv-err')).toContainText('persetujuan');
   await page.check('#sv-consent');
   await page.click('#sv-save');
-  await expect(page.locator('.modal #receipt')).toBeVisible();
+  await expect(page.locator('#survey')).toHaveCount(0);
+  await expect(page.locator('#vs-manual .badge')).toHaveText('terisi');
+  await checkoutSkip(page);
   let sale = (await getDb(page)).sales.slice(-1)[0];
   expect(JSON.parse(sale.survey)).toEqual([{ q: 'Tahu Khair Mart dari mana?', a: 'Dari TikTok' }]);
+  expect(sale.survey_transcript).toBe('');
   await closeModals(page);
 
   await addBySearch(page, 'zamzam');

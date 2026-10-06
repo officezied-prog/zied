@@ -53,6 +53,13 @@ async function tab(page, v) { await page.click(`#tab-${v}`); await expect(page.l
 async function photoFile(page, name = 'foto.png') {
   return { name, mimeType: 'image/png', buffer: await page.screenshot({ clip: { x: 0, y: 0, width: 390, height: 300 } }) };
 }
+/** New-shop form / "Ubah jenis toko": pick a shop type through its group (shared/shop-types.js). */
+async function pickType(page, type) {
+  const g = await page.evaluate(t => window.KhairShopTypes.groupOf(t), type);
+  await page.click(`#tp-groups [data-act="tp-group"][data-g="${g}"]`);
+  if (type !== 'lainnya') await page.click(`#tp-types [data-act="tp-type"][data-t="${type}"]`);
+  await expect(page.locator('#tp-sel')).toHaveAttribute('data-type', type);
+}
 async function closeModals(page) { while (await page.locator('.modal-bg').count()) await page.locator('.modal-bg').last().locator('[data-act="modal-close"]').first().click(); }
 
-module.exports = { test, expect, rp, SHOTS, shot, STORE, setPos, openSales, typePin, login, getDb, setDb, startDay, tab, photoFile, closeModals };
+module.exports = { test, expect, rp, SHOTS, shot, STORE, setPos, openSales, typePin, login, getDb, setDb, startDay, tab, photoFile, closeModals, pickType };

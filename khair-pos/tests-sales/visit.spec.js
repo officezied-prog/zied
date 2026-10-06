@@ -13,7 +13,7 @@ test('check-in at a NEW shop with a photo of the owner (consent required, ≤ 40
   await page.fill('#ci-phone', '0812-3456-7890');
   await page.fill('#ci-address', 'Jl. Raya Condet No. 99');
   await page.fill('#ci-area', 'Condet');
-  await page.selectOption('#ci-type', 'toko');
+  await H.pickType(page, 'toko');
   await page.setInputFiles('#ci-photo-back', await H.photoFile(page));
   await expect(page.locator('#ci-thumb')).toBeVisible();
   const kb = parseInt(await page.locator('#ci-photo-kb').textContent());
@@ -83,6 +83,7 @@ test('offline: check-in at a new shop + an order are queued, then synced in orde
   await H.tab(page, 'visit');
   await page.click('#ci-new');
   await page.fill('#ci-name', 'Warung Offline Bu Ani');
+  await H.pickType(page, 'warung');
   await page.click('#oc-order');
   await page.click('#ci-ok');
   await expect(page.locator('.toast.warn', { hasText: 'Offline' }).first()).toBeVisible();

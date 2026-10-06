@@ -90,7 +90,6 @@ test('owner/manager selling on credit need no extra step; manager never sees cos
   await page.locator('#cp-list [data-pick]').filter({ hasText: 'Ibu Fatimah' }).click();
   await page.click('[data-act="method"][data-m="hutang"]');
   await page.click('#btn-checkout');
-  await page.click('#sv-skip');
   await expect(page.locator('.modal #receipt')).toBeVisible();
   await expect(page.locator('#apr-step')).toHaveCount(0);
   expect((await getDb(page)).sales.slice(-1)[0]).toMatchObject({ cashier: 'Jihan', approved_by: 'Jihan' });

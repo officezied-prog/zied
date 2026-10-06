@@ -43,7 +43,7 @@ test.describe('phone', () => {
     await H.shot(page, 'phone-26-qty-sheet', false, { noToasts: true });
     await page.locator('#qs-qty').press('Enter');
     await expect(sheet).toHaveCount(0);
-    await H.skipSurvey(page);
+    await expect(page.locator('#survey')).toHaveCount(0);
     await H.openCart(page);
     const line = page.locator(`.cl[data-pid="${beras.id}"]`);
     await expect(line.locator('input[data-qty]')).toHaveValue('12');
@@ -73,7 +73,7 @@ test.describe('phone', () => {
     await page.click('#qs-dec');
     await expect(page.locator('#qs-qty')).toHaveValue('3');
     await page.click('#qs-ok');
-    await H.skipSurvey(page);
+    await expect(page.locator('#survey')).toHaveCount(0);
     await expect(page.locator(`#grid .pc[data-id="${tun.id}"] .incart`)).toHaveText('3');
 
     // tap it again: the sheet opens on the current quantity and sets it
@@ -121,7 +121,7 @@ test.describe('phone', () => {
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('kpos.mock.ask_qty')))).toBe(false);
     await H.tab(page, 'sell');
     await tapCard(page, 'almond');
-    await H.skipSurvey(page);
+    await expect(page.locator('#survey')).toHaveCount(0);
     await expect(page.locator('#qty-sheet')).toHaveCount(0);
     await page.locator('#grid .pc').first().click();
     await expect(page.locator(`#grid .pc[data-id="${almond.id}"] .incart`)).toHaveText('2');
@@ -152,7 +152,7 @@ test.describe('tablet', () => {
     await page.keyboard.type('7');
     await expect(page.locator('#qs-qty')).toHaveValue('7');
     await page.keyboard.press('Enter');
-    await H.skipSurvey(page);
+    await expect(page.locator('#survey')).toHaveCount(0);
     await expect(page.locator(`.cl[data-pid="${gula.id}"] input[data-qty]`)).toHaveValue('7');
     await expect(page.locator('#q')).toBeFocused();
     // a scan while the sheet is open is a scan (+1 of the scanned item), not a giant quantity
