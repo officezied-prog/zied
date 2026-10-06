@@ -159,6 +159,7 @@ const DEFAULT_SETTINGS = {
   wa_owner_number: '',
   report_time: '21:00',
   max_discount_pct: 3,
+  receipt_send_fee: 500,
   sell_from_shop_only: true,
   return_owner_min_value: 2000000,
   return_owner_min_qty: 0,
@@ -311,7 +312,11 @@ function computeSale(invoice, quote) {
   }
   const subtotal = lines.reduce(function (a, l) { return a + l.line_total; }, 0);
   const discount = Math.min(Math.max(money(data.discount), 0), subtotal);
-  const total = subtotal - discount;
+  // Receipt sent by WhatsApp / e-mail: the first one per customer is free (it is how we get the number), later ones
+  // add receipt_send_fee (default Rp 500) to the bill. Sending needs a saved customer (phone / e-mail).
+  if (data.send_receipt === true && !customer) return { error: fail('INVALID', 'Simpan nomor HP pelanggan dulu untuk kirim struk') };
+  const sendFee = data.send_receipt === true ? receiptFee(customer) : 0;
+  const total = subtotal - discount + sendFee;
   const totalCost = lines.reduce(function (a, l) { return a + Math.round(l.qty * l.cost_price); }, 0);
   const method = ['tunai', 'transfer', 'qris', 'hutang'].indexOf(data.payment_method) >= 0 ? data.payment_method : 'tunai';
   let paid = Math.max(money(data.paid_amount), 0);
@@ -320,12 +325,17 @@ function computeSale(invoice, quote) {
   if (debt > 0 && !customer && !quote) return { error: fail('INVALID', 'Hutang / bayar kurang wajib pilih pelanggan') };
   const listTotal = lines.reduce(function (a, l) { return a + l.list_total; }, 0);
   lines.forEach(function (l) { delete l.list_total; });
-  return { lines: lines, qtyByProduct: qtyByProduct, customer: customer, subtotal: subtotal, discount: discount, total: total, totalCost: totalCost, method: method, paid: paid, debt: debt, listTotal: listTotal };
+  return { lines: lines, qtyByProduct: qtyByProduct, customer: customer, subtotal: subtotal, discount: discount, total: total, totalCost: totalCost, method: method, paid: paid, debt: debt, listTotal: listTotal, sendFee: sendFee };
 }
 // Discount = list value − what the customer pays (a typed discount and lowered prices both count).
 function discountOf(c) {
-  const amount = Math.max(0, c.listTotal - c.total);
+  const amount = Math.max(0, c.listTotal - (c.total - (c.sendFee || 0)));
   return { amount: amount, pct: c.listTotal > 0 ? Math.round(amount / c.listTotal * 1000) / 10 : 0 };
+}
+function receiptFee(cust) {
+  const v = readSettings().receipt_send_fee;
+  const fee = v === undefined || v === null || v === '' ? 500 : Math.max(0, money(v));
+  return cust && num(cust.receipts_sent) >= 1 ? fee : 0;
 }
 function maxDiscountPct() { const v = num(readSettings().max_discount_pct); return v > 0 ? v : 3; }
 // Member discount for repeat purchases: this sale is purchase number visits + 1; highest tier with from <= that number.
@@ -829,7 +839,7 @@ switch (req.action) {
       cashier: me.name, customer_id: c.customer ? c.customer.id : 0,
       customer_name: c.customer ? str(c.customer.name) : (str(data.customer_name) || 'Umum'),
       customer_type: c.customer ? str(c.customer.type) : (data.customer_type === 'grosir' ? 'grosir' : 'eceran'),
-      subtotal: c.subtotal, discount: c.discount, total: c.total, total_cost: c.totalCost, profit: c.total - c.totalCost,
+      subtotal: c.subtotal, discount: c.discount, send_fee: c.sendFee, total: c.total, total_cost: c.totalCost, profit: c.total - c.totalCost,
       payment_method: c.method, paid_amount: c.paid, debt_amount: c.debt, status: 'ok',
       survey: JSON.stringify(survey), survey_transcript: data.survey_consent === true ? str(data.survey_transcript).slice(0, 4000) : '',
       notes: (str(data.notes) + (mem && mem.pct > 0 ? ' [member ' + mem.pct + '% · pembelian ke-' + mem.purchase_no + ']' : '') + (discApprovedBy ? ' [diskon ' + disc.pct + '% disetujui ' + discApprovedBy + ']' : '')).trim(), client_id: req.client_id, approved_by: approvedBy,
@@ -860,7 +870,8 @@ switch (req.action) {
     });
     if (c.customer) {
       ops.customers.push(forWrite(Object.assign({}, c.customer, {
-        debt_balance: money(c.customer.debt_balance) + c.debt, visits: Math.max(0, Math.round(num(c.customer.visits))) + 1, last_visit: data.sale_date
+        debt_balance: money(c.customer.debt_balance) + c.debt, visits: Math.max(0, Math.round(num(c.customer.visits))) + 1, last_visit: data.sale_date,
+        receipts_sent: Math.max(0, Math.round(num(c.customer.receipts_sent))) + (data.send_receipt === true ? 1 : 0)
       }), c.customer.id));
     }
     if (notOnShelf.length) logAct('jual_tanpa_rak', 'Penjualan ' + invoice + ' (tersimpan offline) melebihi stok rak: ' + notOnShelf.map(function (x) { return x.name + ' perlu ' + fmtN(x.need) + ', rak ' + fmtN(x.shop); }).join('; '), invoice, 0, 'warn');
@@ -1529,6 +1540,7 @@ switch (req.action) {
     c.member_no = ex && str(ex.member_no) ? str(ex.member_no) : (member ? 'M' + rand(6) : '');
     c.member_since = member ? (ex && str(ex.member_since) && wasMember ? str(ex.member_since) : jkDate()) : (ex ? str(ex.member_since) : '');
     c.visits = ex ? Math.max(0, Math.round(num(ex.visits))) : 0;
+    c.receipts_sent = ex ? Math.max(0, Math.round(num(ex.receipts_sent))) : 0;
     c.last_visit = ex ? str(ex.last_visit) : '';
     ops.customers.push(forWrite(c, ex ? ex.id : -1));
     if (member && !wasMember) logAct('member_baru', 'Member baru: ' + c.name + ' (' + c.member_no + ')' + (c.phone ? ' ' + c.phone : '') + (email ? ' ' + email : ''), c.member_no, 0, 'info');
@@ -1878,7 +1890,7 @@ switch (req.action) {
 
   case 'save_settings': {
     const incoming = data.settings && typeof data.settings === 'object' ? data.settings : {};
-    const allowed = ['store_name', 'address', 'phone', 'receipt_footer', 'paper', 'survey_questions', 'survey_auto', 'auto_lock_minutes', 'language', 'exit_photo_min_total', 'exit_photo_min_qty', 'require_purchase_photo', 'require_shift', 'wa_shop_number', 'wa_manager_number', 'wa_owner_number', 'report_time', 'max_discount_pct', 'sell_from_shop_only', 'return_owner_min_value', 'return_owner_min_qty', 'return_fee_pct', 'require_return_photo', 'require_carrier', 'member_enabled', 'member_tiers', 'survey_voice', 'store_lat', 'store_lng', 'require_device_location', 'bank_accounts'];
+    const allowed = ['store_name', 'address', 'phone', 'receipt_footer', 'paper', 'survey_questions', 'survey_auto', 'auto_lock_minutes', 'language', 'exit_photo_min_total', 'exit_photo_min_qty', 'require_purchase_photo', 'require_shift', 'wa_shop_number', 'wa_manager_number', 'wa_owner_number', 'report_time', 'max_discount_pct', 'receipt_send_fee', 'sell_from_shop_only', 'return_owner_min_value', 'return_owner_min_qty', 'return_fee_pct', 'require_return_photo', 'require_carrier', 'member_enabled', 'member_tiers', 'survey_voice', 'store_lat', 'store_lng', 'require_device_location', 'bank_accounts'];
     const byKey = {};
     settingRows.forEach(function (r) { byKey[r.skey] = r; });
     if (AGREED_KEYS.some(function (k) { return incoming[k] !== undefined && JSON.stringify(incoming[k]) !== JSON.stringify(readSettings()[k]); })) {
@@ -1901,6 +1913,16 @@ switch (req.action) {
     const newRole = ['owner', 'manager', 'sales'].indexOf(data.role) >= 0 ? data.role : 'kasir';
     const ex = users.find(function (u) { return str(u.name).toLowerCase() === name.toLowerCase(); });
     const active = data.active !== false;
+    // Another person takes this account / role (new name): needs a new PIN made with the new name (hash includes it).
+    let newName = '';
+    if (str(data.new_name)) {
+      newName = personName(data.new_name);
+      if (!ex) return fail('NOT_FOUND', 'Pengguna tidak ditemukan');
+      if (!newName) return fail('INVALID', 'Nama baru hanya boleh huruf, angka, spasi dan . , \' -');
+      if (users.some(function (u) { return u.id !== ex.id && str(u.name).toLowerCase() === newName.toLowerCase(); })) return fail('INVALID', 'Nama sudah dipakai');
+      if (!isHash(data.pin_hash)) return fail('INVALID', 'Ganti nama butuh PIN sementara baru');
+      if (shiftOf(ex.name)) return fail('INVALID', 'Tutup kas ' + ex.name + ' dulu sebelum ganti nama');
+    }
     if (data.pin_hash !== undefined && data.pin_hash !== '' && !isHash(data.pin_hash)) return fail('INVALID', 'PIN tidak valid');
     if (!ex && !isHash(data.pin_hash)) return fail('INVALID', 'PIN wajib untuk pengguna baru');
     if (ex && ex.role === 'owner' && (newRole !== 'owner' || !active)) {
@@ -1911,14 +1933,15 @@ switch (req.action) {
     const newPin = isHash(data.pin_hash) && (!ex || data.pin_hash !== ex.pin_hash);
     const self = ex && ex.id === me.id;
     const u = Object.assign({}, ex ? clean(ex) : {}, {
-      name: ex ? ex.name : name, role: newRole, pin_hash: isHash(data.pin_hash) ? data.pin_hash : ex.pin_hash, active: active,
+      name: newName || (ex ? ex.name : name), role: newRole, pin_hash: isHash(data.pin_hash) ? data.pin_hash : ex.pin_hash, active: active,
       must_change: newPin ? !self : (ex ? ex.must_change === true : false)
     });
     if (newPin) { u.fail_count = 0; u.locked_until = ''; }
     if (users.some(function (x) { return isHash(x.master_hash) && x.master_hash === u.pin_hash; })) return fail('INVALID', 'PIN tidak valid');
     delete u.id;
     ops.users.push(forWrite(u, ex ? ex.id : -1));
-    logAct('pengguna', (ex ? 'Pengguna diubah: ' : 'Pengguna baru: ') + u.name + ' (' + u.role + (u.active ? '' : ', nonaktif') + ')' + (ex && isHash(data.pin_hash) ? ', PIN diganti' : ''), u.name, 0, 'warn');
+    if (newName) logAct('pengguna', 'Ganti orang: ' + ex.name + ' → ' + newName + ' (' + newRole + '), PIN sementara baru', newName, 0, 'warn');
+    else logAct('pengguna', (ex ? 'Pengguna diubah: ' : 'Pengguna baru: ') + u.name + ' (' + u.role + (u.active ? '' : ', nonaktif') + ')' + (ex && isHash(data.pin_hash) ? ', PIN diganti' : ''), u.name, 0, 'warn');
     return done({ ok: true, user: { name: u.name, role: u.role, active: u.active, must_change: u.must_change } });
   }
 

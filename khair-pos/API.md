@@ -519,3 +519,10 @@ The apps must use the same rules in their inputs (`maxlength`, `inputmode`, `pat
 - **Manager as cashier (07 Oct):** the manager may also `open_shift` (her own drawer, when everyone else is busy); her opening-count
   approval goes to the **owner** (`approver_role: "owner"`). Her cash sales then go into her drawer and she closes it like a kasir.
   Without an open drawer she can still sell (as before). Owner accounts still have no drawer.
+- **Receipt sending fee (07 Oct):** `save_sale` with `send_receipt: true` (the app sends the receipt by WhatsApp / e-mail) needs a
+  saved customer. The first receipt for a customer is free (that is how we collect the number); later ones add
+  `receipt_send_fee` (setting, default Rp 500) to the bill: sale field `send_fee`, included in `total` (not counted against the discount
+  limit). Customers keep `receipts_sent`. A customer who does not want it sent gets the printed / on-screen receipt as before.
+- **Change the person in a role (07 Oct):** `save_user` `{name: <current>, new_name, role, pin_hash}` renames the account (another
+  person takes the role); the PIN hash must be made with the new name, the new person must change it at first login; refused while
+  that user has an open drawer. Logged "Ganti orang: A → B".
