@@ -17,11 +17,11 @@ function fakeBackend() {
     st.requests.push({ body, contentType: req.headers()['content-type'] });
     const send = (obj, wrap) => route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*', 'content-type': 'application/json' }, body: JSON.stringify(wrap ? [obj] : obj) });
     if (body.key !== KEY) return send({ ok: false, error: 'BAD_KEY', message: 'unknown key' });
-    if (body.action === 'users') return send({ ok: true, users: [{ name: 'Siti', role: 'kasir' }] });
-    if (body.pin_hash !== sha(`${KEY}:siti:4321`)) return send({ ok: false, error: 'BAD_PIN', message: 'bad pin' });
+    if (body.action === 'users') return send({ ok: true, users: [{ name: 'Jihan', role: 'manager' }] });
+    if (body.pin_hash !== sha(`${KEY}:jihan:4321`)) return send({ ok: false, error: 'BAD_PIN', message: 'bad pin' });
     switch (body.action) {
-      case 'login': return send({ ok: true, user: { name: 'Siti', role: 'kasir' } });
-      case 'bootstrap': return send({ ok: true, products: st.products, customers: [], settings: { store_name: 'Khair Mart', paper: '80', survey_questions: [] }, users: [{ name: 'Siti', role: 'kasir', active: true }], server_time: new Date().toISOString() }, true);
+      case 'login': return send({ ok: true, user: { name: 'Jihan', role: 'manager' } });
+      case 'bootstrap': return send({ ok: true, products: st.products, customers: [], settings: { store_name: 'Khair Mart', paper: '80', survey_questions: [] }, users: [{ name: 'Jihan', role: 'manager', active: true }], server_time: new Date().toISOString() }, true);
       case 'save_sale':
         if (st.mode === 'abort') return route.abort('internetdisconnected');
         if (st.mode === 'invalid') return send({ ok: false, error: 'INVALID', message: 'qty' });
@@ -41,14 +41,16 @@ test('real mode: envelope, text/plain, pin_hash, n8n array response, outbox on n
   await expect(page.locator('#lg-key')).toHaveValue('');
   await page.fill('#lg-key', KEY);
   await page.click('[data-act="login-key"]');
-  await page.click('[data-act="login-user"][data-name="Siti"]');
+  await page.click('[data-act="login-user"][data-name="Jihan"]');
   for (const d of '4321') await page.click(`[data-act="pin-key"][data-k="${d}"]`);
   await page.click('[data-act="pin-key"][data-k="ok"]');
+  await expect(page.locator('#view-home')).toBeVisible();
+  await page.click('#nav [data-view="pos"]');
   await expect(page.locator('#pos-grid .pcard')).toHaveCount(1);
 
   const login = be.requests.find(r => r.body.action === 'login');
   expect(login.contentType).toMatch(/^text\/plain/);
-  expect(login.body).toEqual({ action: 'login', key: KEY, user: 'Siti', pin_hash: sha(`${KEY}:siti:4321`), data: {} });
+  expect(login.body).toEqual({ action: 'login', key: KEY, user: 'Jihan', pin_hash: sha(`${KEY}:jihan:4321`), data: {} });
   expect(be.requests.find(r => r.body.action === 'users').body).toEqual({ action: 'users', key: KEY, data: {} });
 
   // {ok:false} → message, not queued

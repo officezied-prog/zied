@@ -1,0 +1,16 @@
+{
+  "name": "Khair Sales",
+  "short_name": "Khair Sales",
+  "description": "Sales lapangan Khair Mart — kunjungan toko, katalog, pesanan",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F1F5F9",
+  "theme_color": "#1E40AF",
+  "lang": "id",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

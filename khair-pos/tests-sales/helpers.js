@@ -1,0 +1,58 @@
+// Shared helpers for the Khair Sales e2e tests (mock backend, ?mock=1, mocked geolocation).
+// Network independence: cdnjs (Leaflet), OSM tiles and wa.me are blocked in every test → the map
+// falls back to the SVG plot.
+const base = require('@playwright/test');
+const { expect } = base;
+const path = require('path');
+
+const NF = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
+const rp = n => (Math.round(n) < 0 ? '-Rp ' : 'Rp ') + NF.format(Math.abs(Math.round(n)));
+const SHOTS = path.join(__dirname, 'screenshots');
+const shot = async (page, name, full = false) => { await page.waitForTimeout(350); return page.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: full }); };
+const BLOCK = /cdnjs\.cloudflare\.com|tile\.openstreetmap\.org|wa\.me|google\.com/;
+
+const test = base.test.extend({
+  context: async ({ context }, use) => {
+    await context.route(BLOCK, r => r.abort());
+    await use(context);
+  }
+});
+test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+const STORE = { latitude: -6.2655, longitude: 106.8605 };
+async function setPos(context, lat, lng, accuracy = 12) { await context.setGeolocation({ latitude: lat, longitude: lng, accuracy }); }
+
+async function openSales(page, query = '') {
+  await page.goto('sales/index.html?mock=1' + query);
+  await expect(page.locator('#login .screen-card')).toBeVisible();
+}
+async function typePin(page, pin) {
+  for (const d of pin) await page.click(`[data-act="pin-key"][data-k="${d}"]`);
+  await page.click('[data-act="pin-key"][data-k="ok"]');
+}
+/** Store key → name → PIN. */
+async function login(page, user = 'Ahmad', pin = '4444', opts = {}) {
+  if (!opts.noGoto) await openSales(page);
+  if (await page.locator('#lg-key').isVisible()) { await page.fill('#lg-key', 'demo'); await page.click('[data-act="login-key"]'); }
+  if (await page.locator('#pin-who').isVisible() && (await page.locator('#pin-who').textContent()) !== user) await page.locator('[data-act="login-back"]').first().click();
+  if (!(await page.locator('#pin-who').isVisible())) await page.click(`#users [data-act="login-user"][data-name="${user}"]`);
+  await typePin(page, pin);
+  await expect(page.locator('#app')).toBeVisible();
+  await expect(page.locator('#v-today .hero')).toBeVisible();
+}
+const getDb = page => page.evaluate(() => JSON.parse(localStorage.getItem('kmock.db')));
+const setDb = (page, src) => page.evaluate(s => { const db = JSON.parse(localStorage.getItem('kmock.db')); (new Function('db', s))(db); localStorage.setItem('kmock.db', JSON.stringify(db)); }, src);
+/** Consent (first time) + Mulai kerja. */
+async function startDay(page) {
+  await page.click('#day-start');
+  if (await page.locator('#consent').isVisible().catch(() => false) || await page.locator('#consent').waitFor({ timeout: 1500 }).then(() => true).catch(() => false)) await page.click('#consent-ok');
+  await expect(page.locator('#day-card[data-status="working"]')).toBeVisible();
+  await expect(page.locator('#tb-gps')).toBeVisible();
+}
+async function tab(page, v) { await page.click(`#tab-${v}`); await expect(page.locator(`#v-${v}`)).toBeVisible(); }
+async function photoFile(page, name = 'foto.png') {
+  return { name, mimeType: 'image/png', buffer: await page.screenshot({ clip: { x: 0, y: 0, width: 390, height: 300 } }) };
+}
+async function closeModals(page) { while (await page.locator('.modal-bg').count()) await page.locator('.modal-bg').last().locator('[data-act="modal-close"]').first().click(); }
+
+module.exports = { test, expect, rp, SHOTS, shot, STORE, setPos, openSales, typePin, login, getDb, setDb, startDay, tab, photoFile, closeModals };
