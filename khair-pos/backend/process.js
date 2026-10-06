@@ -1,7 +1,7 @@
 const STORE_KEY = '__STORE_KEY__';
 const req = $('Parse Request').first().json;
 const data = req.data || {};
-const ops = { sales: [], sale_items: [], payments: [], purchases: [], products: [], customers: [], users: [], settings: [], approvals: [], expenses: [] };
+const ops = { sales: [], sale_items: [], payments: [], purchases: [], products: [], customers: [], users: [], settings: [], approvals: [], expenses: [], shifts: [] };
 
 function rows(name) {
   try {
@@ -9,7 +9,7 @@ function rows(name) {
   } catch (e) { return []; }
 }
 function done(resp) { return [{ json: { response: resp, ops: ops, action: req.action } }]; }
-function fail(code, msg) { return done({ ok: false, error: code, message: msg || code }); }
+function fail(code, msg) { Object.keys(ops).forEach(function (k) { ops[k] = []; }); return done({ ok: false, error: code, message: msg || code }); }
 function num(v) { const x = Number(v); return isFinite(x) ? x : 0; }
 function money(v) { return Math.round(num(v)); }
 function str(v) { return v === undefined || v === null ? '' : String(v).trim(); }
@@ -32,6 +32,7 @@ function strip(r, role) {
   if (role !== 'owner') COST_FIELDS.forEach(function (f) { delete o[f]; });
   return o;
 }
+function jkDate() { return new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10); }
 function rand(n) {
   const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let s = '';
@@ -64,6 +65,21 @@ function findApprover(name, hash) {
   if (!u || u.pin_hash !== hash || (u.role !== 'owner' && u.role !== 'manager')) return null;
   return u;
 }
+const openShifts = rows('Get Open Shifts').filter(function (x) { return x.status === 'open'; });
+function shiftOf(name) { return openShifts.find(function (x) { return str(x.cashier).toLowerCase() === str(name).toLowerCase(); }) || null; }
+const myShift = shiftOf(me.name);
+function shiftOut(x) {
+  if (!x) return null;
+  const o = clean(x);
+  if (role === 'kasir' && o.status === 'open') { ['cash_sales', 'cash_payments', 'sales_total', 'expected_cash'].forEach(function (f) { delete o[f]; }); }
+  return o;
+}
+function addMove(x, type, amount, note) {
+  let mv = [];
+  try { mv = JSON.parse(x.moves || '[]'); } catch (e) { mv = []; }
+  mv.push({ t: new Date().toISOString(), type: type, amount: amount, note: note, by: me.name });
+  x.moves = JSON.stringify(mv.slice(-100));
+}
 const OWNER_ONLY = ['void_sale', 'save_product', 'import_products', 'stock_adjust', 'save_settings', 'save_user'];
 if (OWNER_ONLY.indexOf(req.action) >= 0 && role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik');
 
@@ -89,7 +105,8 @@ const DEFAULT_SETTINGS = {
   ],
   exit_photo_min_total: 1000000,
   exit_photo_min_qty: 20,
-  require_purchase_photo: true
+  require_purchase_photo: true,
+  require_shift: true
 };
 const settingRows = rows('Get Settings');
 const approvalRows = rows('Get Approvals');
@@ -200,6 +217,8 @@ switch (req.action) {
       customers: customers.map(clean),
       settings: readSettings(),
       users: users.map(function (u) { return { name: u.name, role: u.role, active: u.active !== false }; }),
+      shift: shiftOut(myShift),
+      open_shifts: isApprover ? openShifts.map(shiftOut) : [],
       server_time: new Date().toISOString()
     });
 
@@ -208,6 +227,7 @@ switch (req.action) {
     if (dup.length) {
       return done({ ok: true, duplicate: true, invoice_no: dup[0].invoice_no, sale: strip(dup[0], role), stock: [] });
     }
+    if (!myShift && role !== 'owner' && readSettings().require_shift !== false) return fail('SHIFT_REQUIRED', 'Buka kasir (shift) dulu');
     const invoice = 'KM' + str(data.sale_date).replace(/-/g, '').slice(2) + '-' + rand(5);
     const c = computeSale(invoice);
     if (c.error) return c.error;
@@ -246,8 +266,17 @@ switch (req.action) {
       subtotal: c.subtotal, discount: c.discount, total: c.total, total_cost: c.totalCost, profit: c.total - c.totalCost,
       payment_method: c.method, paid_amount: c.paid, debt_amount: c.debt, status: 'ok',
       survey: JSON.stringify(survey), notes: str(data.notes), client_id: req.client_id, approved_by: approvedBy,
-      exit_photo: exitRequired ? 'required' : '', exit_match: ''
+      exit_photo: exitRequired ? 'required' : '', exit_match: '',
+      channel: ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'].indexOf(data.channel) >= 0 ? data.channel : 'toko',
+      promo_code: str(data.promo_code).toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 30),
+      shift_id: myShift ? str(myShift.shift_id) : ''
     };
+    if (myShift) {
+      const cashPart = (c.method === 'tunai' || c.method === 'hutang') ? Math.min(c.paid, c.total) : 0;
+      ops.shifts.push(forWrite(Object.assign({}, myShift, {
+        sales_count: num(myShift.sales_count) + 1, sales_total: money(myShift.sales_total) + c.total, cash_sales: money(myShift.cash_sales) + cashPart
+      }), myShift.id));
+    }
     ops.sales.push(forWrite(sale, -1));
     c.lines.forEach(function (l) { ops.sale_items.push(forWrite(l, -1)); });
     const stockOut = [];
@@ -329,10 +358,57 @@ switch (req.action) {
     const e = {
       expense_date: isDate(data.expense_date) ? data.expense_date : new Date().toISOString().slice(0, 10),
       category: CATS.indexOf(data.category) >= 0 ? data.category : 'lain', amount: amount,
-      note: str(data.note).slice(0, 500), user: me.name, photo_id: str(data.photo_id)
+      note: str(data.note).slice(0, 500), user: me.name, photo_id: str(data.photo_id),
+      paid_from: data.paid_from === 'lain' ? 'lain' : (data.paid_from === 'kas' || myShift ? 'kas' : 'lain')
     };
     ops.expenses.push(forWrite(e, -1));
+    if (myShift && e.paid_from === 'kas') {
+      const sh = Object.assign({}, myShift, { cash_out: money(myShift.cash_out) + amount });
+      addMove(sh, 'out', amount, 'Pengeluaran ' + e.category + ': ' + e.note);
+      ops.shifts.push(forWrite(sh, myShift.id));
+    }
     return done({ ok: true, expense: Object.assign({ id: null }, e) });
+  }
+
+  case 'open_shift': {
+    if (myShift) return done({ ok: true, already: true, shift: shiftOut(myShift) });
+    const opening = money(data.opening_cash);
+    if (opening < 0) return fail('INVALID', 'Modal awal tidak valid');
+    const sh = {
+      shift_id: 'SH' + rand(6), cashier: me.name, shift_date: isDate(data.shift_date) ? data.shift_date : jkDate(),
+      opened_at: new Date().toISOString(), closed_at: '', status: 'open', opening_cash: opening,
+      cash_sales: 0, cash_payments: 0, cash_in: 0, cash_out: 0, sales_count: 0, sales_total: 0,
+      expected_cash: 0, counted_cash: 0, difference: 0, moves: '[]', note: str(data.note)
+    };
+    ops.shifts.push(forWrite(sh, -1));
+    return done({ ok: true, already: false, shift: shiftOut(sh) });
+  }
+
+  case 'cash_move': {
+    if (!myShift) return fail('SHIFT_REQUIRED', 'Buka kasir (shift) dulu');
+    const amount = money(data.amount);
+    if (!(amount > 0)) return fail('INVALID', 'Jumlah tidak valid');
+    if (!str(data.note)) return fail('INVALID', 'Keterangan wajib diisi');
+    const type = data.type === 'in' ? 'in' : 'out';
+    const sh = Object.assign({}, myShift);
+    if (type === 'in') sh.cash_in = money(sh.cash_in) + amount; else sh.cash_out = money(sh.cash_out) + amount;
+    addMove(sh, type, amount, str(data.note).slice(0, 300));
+    ops.shifts.push(forWrite(sh, myShift.id));
+    return done({ ok: true, shift: shiftOut(sh) });
+  }
+
+  case 'close_shift': {
+    const target = data.cashier && isApprover ? shiftOf(data.cashier) : myShift;
+    if (!target) return fail('NOT_FOUND', 'Tidak ada shift yang terbuka');
+    if (data.counted_cash === undefined || data.counted_cash === null || data.counted_cash === '') return fail('INVALID', 'Isi jumlah uang yang dihitung');
+    const counted = money(data.counted_cash);
+    const expected = money(target.opening_cash) + money(target.cash_sales) + money(target.cash_payments) + money(target.cash_in) - money(target.cash_out);
+    const sh = Object.assign({}, target, {
+      status: 'closed', closed_at: new Date().toISOString(), counted_cash: counted, expected_cash: expected, difference: counted - expected,
+      note: (str(target.note) + (str(data.note) ? ' | ' + str(data.note) : '') + (target.cashier !== me.name ? ' [ditutup oleh ' + me.name + ']' : '')).trim()
+    });
+    ops.shifts.push(forWrite(sh, target.id));
+    return done({ ok: true, shift: clean(sh) });
   }
 
   case 'check_approval': {
@@ -483,6 +559,9 @@ switch (req.action) {
     };
     ops.payments.push(forWrite(pay, -1));
     ops.customers.push(forWrite(nc, c.id));
+    if (myShift && pay.method === 'tunai') {
+      ops.shifts.push(forWrite(Object.assign({}, myShift, { cash_payments: money(myShift.cash_payments) + amount }), myShift.id));
+    }
     return done({ ok: true, payment: Object.assign({ id: null }, pay), customer: clean(nc) });
   }
 
@@ -534,13 +613,14 @@ switch (req.action) {
       items: rows('Get Range Items').map(function (r) { return strip(r, role); }),
       payments: rows('Get Range Payments').map(clean),
       purchases: rows('Get Range Purchases').map(function (r) { return strip(r, role); }),
-      expenses: rows('Get Range Expenses').map(clean)
+      expenses: rows('Get Range Expenses').map(clean),
+      shifts: rows('Get Range Shifts').map(clean)
     });
   }
 
   case 'save_settings': {
     const incoming = data.settings && typeof data.settings === 'object' ? data.settings : {};
-    const allowed = ['store_name', 'address', 'phone', 'receipt_footer', 'paper', 'survey_questions', 'survey_auto', 'auto_lock_minutes', 'language', 'exit_photo_min_total', 'exit_photo_min_qty', 'require_purchase_photo'];
+    const allowed = ['store_name', 'address', 'phone', 'receipt_footer', 'paper', 'survey_questions', 'survey_auto', 'auto_lock_minutes', 'language', 'exit_photo_min_total', 'exit_photo_min_qty', 'require_purchase_photo', 'require_shift'];
     const byKey = {};
     settingRows.forEach(function (r) { byKey[r.skey] = r; });
     allowed.forEach(function (k) {

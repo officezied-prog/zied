@@ -180,3 +180,32 @@ To "edit" an old invoice: the void is approved, then the sale is entered again (
 - per product: qty, revenue, cost, profit, margin %, share of total profit;
 - per category and per expense category;
 - year totals plus a P&L (laba rugi) summary that can be copied or printed.
+
+## Shifts / Kas Kasir (v4)
+
+Every kasir/manager must open a shift before selling (`SHIFT_REQUIRED` otherwise; owner exempt;
+setting `require_shift`, default `true`). The server keeps running totals on the shift, so the
+expected cash in the drawer is computed by the server, not the device.
+
+| action | who | data | response |
+|---|---|---|---|
+| `open_shift` | any | `{opening_cash, shift_date?, note?}` | `shift` (`already: true` if one is open) |
+| `cash_move` | any (own open shift) | `{type: "in"|"out", amount, note}` (note required) | `shift` |
+| `close_shift` | any (own); owner/manager may pass `cashier` to close someone else's | `{counted_cash, note?, cashier?}` | `shift` with `expected_cash, counted_cash, difference` |
+
+expected cash = opening_cash + cash_sales + cash_payments + cash_in − cash_out, where:
+
+- `cash_sales` = Σ min(paid, total) of `tunai`/`hutang` sales;
+- `cash_payments` = cash debt payments;
+- `cash_out` includes expenses with `paid_from: "kas"`.
+
+`difference` = counted − expected (negative = cash missing).
+
+Blind count: while a shift is open, a kasir never receives `cash_sales, cash_payments, sales_total, expected_cash`.
+`bootstrap` adds `shift` (mine or null) and, for owner/manager, `open_shifts[]`. `get_sales` adds `shifts[]` (by `shift_date`).
+
+**Shift**: `shift_id, cashier, shift_date, opened_at, closed_at, status (open|closed), opening_cash, cash_sales, cash_payments, cash_in, cash_out, sales_count, sales_total, expected_cash, counted_cash, difference, moves (JSON list), note`
+
+Sale gets `channel` (`toko|whatsapp|shopee|tiktok|tokopedia|web|lainnya`, default `toko`), `promo_code`
+(uppercase A–Z 0–9 _ -, e.g. campaign code `KHAIR1111`) and `shift_id`. Expense gets `paid_from` (`kas|lain`).
+Any failed request writes nothing.
