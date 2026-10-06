@@ -246,6 +246,35 @@ main{overflow:hidden;position:relative;min-width:0}
 .ostatus.baru{background:var(--pt);color:var(--pd)} .ostatus.diproses{background:var(--warnt);color:var(--warn)} .ostatus.dikirim{background:var(--okt);color:var(--ok)} .ostatus.batal{background:var(--redt);color:var(--redd)} .ostatus.pending{background:#FEF3C7;color:#78350F}
 .consent-list{padding-inline-start:20px;margin:8px 0} .consent-list li{margin:6px 0}
 .leaflet-container{font:inherit}
+/* ========== Shop categories (shared/shop-types.js) ========== */
+.gdot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--g,#64748B);flex:none}
+.tl{display:inline-flex;align-items:center;gap:6px}
+.tp-groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.tp-g{min-height:84px;border-radius:14px;border:2px solid var(--line2);background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:8px 4px;font-weight:800;font-size:13px;line-height:1.15;text-align:center;color:var(--text);border-top:5px solid var(--g)}
+.tp-g .e{font-size:26px;line-height:1}
+.tp-g small{font-weight:700;color:var(--muted);font-size:11.5px}
+.tp-g:hover,.tp-t:hover{border-color:var(--g);background:var(--pll)}
+.tp-types{display:flex;flex-direction:column;gap:6px}
+.tp-t{display:flex;align-items:center;gap:10px;min-height:52px;padding:8px 12px;border-radius:12px;border:2px solid var(--line2);border-inline-start:6px solid var(--g);background:#fff;font-weight:800;font-size:15px;text-align:start;width:100%;color:var(--text)}
+.tp-t .e,.tp-sel .e{font-size:22px;line-height:1;flex:none}
+.tp-t small{display:block;font-weight:600;color:var(--muted);font-size:12.5px;margin-top:1px}
+.tp-sel{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;border:2px solid var(--p);border-inline-start:6px solid var(--g);background:var(--pll)}
+.tp-sel .t{font-weight:900} .tp-sel .s{font-size:13px;color:var(--muted)}
+.tp-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:900}
+.recat{margin-top:10px;padding:12px;border:1px dashed var(--line2);border-radius:12px;background:#F8FAFC}
+.linkbtn{border:0;background:none;padding:6px 0;color:var(--p);font-weight:800;text-decoration:underline;font-size:14px;min-height:34px}
+.chip .cnt{display:inline-grid;place-items:center;min-width:22px;height:20px;border-radius:10px;padding:0 6px;margin-inline-start:4px;background:#E2E8F0;color:#334155;font-size:12px}
+.chip.on .cnt{background:rgba(255,255,255,.25);color:#fff}
+.chip .gdot{margin-inline-end:4px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 12px;margin:-4px 0 12px;font-size:12.5px;font-weight:700;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.tg h3 .e{font-size:22px}
+.tg-t{padding:10px 0;border-top:1px solid var(--line)}
+.tg-t:first-child{border-top:0;padding-top:0}
+.tg-t .t{font-weight:800}
+.tg-t .s{font-size:13.5px;color:var(--muted);margin-top:2px}
+.tg-t .chn{font-size:12.5px;color:var(--pd);font-weight:700;margin-top:3px}
+.tg-t .note{font-size:12.5px;color:var(--warn);font-weight:700;margin-top:3px}
 </style>
 </head>
 <body>
@@ -298,6 +327,7 @@ main{overflow:hidden;position:relative;min-width:0}
   <symbol id="i-present" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M12 16v4M8 20h8"/></symbol>
 </svg>
 
+<script src="../shared/shop-types.js"></script>
 <script src="../shared/field-mock.js"></script>
 <script>
 'use strict';
@@ -1191,7 +1221,14 @@ const MockServer = (() => {
 
 /* ========== State ========== */
 const SALES_ROLES = ['sales', 'owner', 'manager'];
-const SHOP_TYPES = ['warung', 'toko', 'minimarket', 'bakery', 'katering', 'restoran', 'masjid', 'lainnya'];
+/* Shop categories: one list for every app (shared/shop-types.js); emoji + map colour per group live here. */
+const KST = window.KhairShopTypes;
+const GROUP_UI = { haji_umrah: { e: '🕋', c: '#1F2937' }, muslim: { e: '🌙', c: '#7C3AED' }, sembako: { e: '🛒', c: '#EA580C' }, ritel_modern: { e: '🏬', c: '#DC2626' }, kuliner: { e: '🍞', c: '#DB2777' },
+  oleh_oleh: { e: '🎁', c: '#CA8A04' }, lembaga: { e: '🕌', c: '#16A34A' }, online: { e: '📱', c: '#0284C7' }, lainnya: { e: '✏️', c: '#94A3B8' } };
+const gUI = gid => GROUP_UI[gid] || GROUP_UI.lainnya;
+const shopGroup = s => KST.groupOf(s && s.type);
+const shopColor = s => gUI(shopGroup(s)).c;
+const shopLabel = (s, lang) => KST.label(s, lang || S.lang);
 const OUTCOMES = ['order', 'tertarik', 'tidak', 'tutup', 'sudah_pelanggan'];
 const NEAR_M = 150;
 const DEFAULT_SURVEY = ['Apakah ini pertama kali belanja di Khair Mart?', 'Tahu Khair Mart dari mana?', 'Apa yang paling Kakak suka di toko kami?', 'Ada barang yang Kakak cari tapi tidak ada?', 'Boleh kami kabari promo lewat WhatsApp?'];
@@ -1628,7 +1665,7 @@ function leafletMap(el, points, shops, current) {
   tiles.on('tileerror', () => { if (++errs >= 3 && !loaded) { MAPS.failed = true; try { m.remove(); } catch (e) { } svgMap(el, points, shops, current); } });
   const ll = [];
   if (points.length > 1) { const line = points.map(p => [p.lat, p.lng]); window.L.polyline(line, { color: '#1E40AF', weight: 4 }).addTo(m); ll.push(...line); }
-  shops.forEach(s => { if (!validPos(s)) return; ll.push([s.lat, s.lng]); window.L.circleMarker([s.lat, s.lng], { radius: 7, color: '#fff', weight: 2, fillColor: s.status === 'pelanggan' ? '#0F766E' : '#DC2626', fillOpacity: 1 }).bindTooltip(s.name).addTo(m); });
+  shops.forEach(s => { if (!validPos(s)) return; ll.push([s.lat, s.lng]); window.L.circleMarker([s.lat, s.lng], { radius: 7, color: '#fff', weight: 2, fillColor: shopColor(s), fillOpacity: 1 }).bindTooltip(s.name + ' · ' + shopLabel(s)).addTo(m); }); // colour = shop group
   if (validPos(current)) { ll.push([current.lat, current.lng]); window.L.circleMarker([current.lat, current.lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#1E40AF', fillOpacity: 1 }).addTo(m); }
   if (ll.length) m.fitBounds(ll, { padding: [24, 24], maxZoom: 17 }); else m.setView([-6.2655, 106.8605], 14);
 }
@@ -1646,7 +1683,7 @@ function svgMap(el, points, shops, current) {
   const grid = Array.from({ length: 9 }, (_, i) => `<path d="M${i * 50} 0V${Hh}M0 ${i * 50}H${W}" stroke="#D5DEEC" stroke-width="1"/>`).join('');
   const line = points.length > 1 ? `<polyline points="${points.map(p => X(p) + ',' + Y(p)).join(' ')}" fill="none" stroke="#1E40AF" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round" opacity=".9"/>` : '';
   const start = points.length ? `<circle cx="${X(points[0])}" cy="${Y(points[0])}" r="5" fill="#fff" stroke="#1E40AF" stroke-width="3"/>` : '';
-  const sh = shops.filter(validPos).map(s => `<g data-shop="${esc(s.shop_id)}"><circle cx="${X(s)}" cy="${Y(s)}" r="7" fill="${s.status === 'pelanggan' ? '#0F766E' : '#DC2626'}" stroke="#fff" stroke-width="2"><title>${esc(s.name)}</title></circle></g>`).join('');
+  const sh = shops.filter(validPos).map(s => `<g data-shop="${esc(s.shop_id)}" data-group="${esc(shopGroup(s))}"><circle cx="${X(s)}" cy="${Y(s)}" r="7" fill="${shopColor(s)}" stroke="#fff" stroke-width="2"><title>${esc(s.name + ' · ' + shopLabel(s))}</title></circle></g>`).join('');
   const cur = validPos(current) ? `<circle cx="${X(current)}" cy="${Y(current)}" r="12" fill="#1E40AF" opacity=".18"/><circle cx="${X(current)}" cy="${Y(current)}" r="6" fill="#1E40AF" stroke="#fff" stroke-width="2.5"/>` : '';
   const kmw = (W - 2 * pad) / sc * 111.32 / k * k; // width of the box in km (approx.)
   el.innerHTML = `<svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${esc(t('map.label'))}"><rect width="${W}" height="${Hh}" fill="#EEF3FA"/>${grid}${line}${start}${sh}${cur}</svg><div class="note">${esc(t('map.offline'))} · ≈ ${NF1.format(kmw)} km</div>`;
@@ -1691,7 +1728,7 @@ function drawTodayStats() {
 function shopRow(s, dist) {
   return `<div class="li shop-li" data-shop="${esc(s.shop_id)}" style="flex-direction:column;align-items:stretch;gap:4px">
     <div class="row" style="align-items:flex-start"><div class="t grow">${esc(s.name)}</div>${dist != null ? `<span class="dist">${fmtDist(dist)}</span>` : ''}</div>
-    <div class="row wrap" style="gap:6px"><span class="status-chip ${esc(s.status || 'prospek')}">${esc(t('shop.' + (s.status || 'prospek')))}</span>${s.pending ? `<span class="ostatus pending">${esc(t('pending'))}</span>` : ''}<span class="s">${esc([s.area, t('type.' + (s.type || 'lainnya'))].filter(Boolean).join(' · '))}</span></div>
+    <div class="row wrap" style="gap:6px"><span class="status-chip ${esc(s.status || 'prospek')}">${esc(t('shop.' + (s.status || 'prospek')))}</span>${s.pending ? `<span class="ostatus pending">${esc(t('pending'))}</span>` : ''}<span class="s tl" data-type="${esc(s.type || 'lainnya')}" data-group="${esc(shopGroup(s))}"><i class="gdot" style="--g:${shopColor(s)}"></i>${esc([s.area, shopLabel(s)].filter(Boolean).join(' · '))}</span></div>
     <div class="s">${s.last_visit_at ? esc(t('shop.last', { date: fmtDate(String(s.last_visit_at).slice(0, 10)) })) : ''}${s.next_visit ? (s.last_visit_at ? ' · ' : '') + `<b>${esc(t('shop.next', { date: fmtDate(s.next_visit) }))}</b>` : ''}</div>
     <div class="row" style="justify-content:flex-end;margin-top:2px">${validPos(s) ? `<a class="btn xs" href="${esc(mapsDir(s))}" target="_blank" rel="noopener" data-dir>${ic('route')} ${esc(t('shop.route_short'))}</a>` : ''}
     ${isRep() ? `<button class="btn xs primary" data-act="visit-shop" data-id="${esc(s.shop_id)}">${ic('pin')} ${esc(t('today.visit'))}</button>` : ''}</div></div>`;
@@ -1754,7 +1791,9 @@ async function dayEnd() {
 
 /* ========== Kunjungi toko (check-in) ========== */
 const CI = { fix: null, fixErr: '', shop_id: '', isNew: false, photo: '', photoKB: 0, consent: false, outcome: '', client_id: '', busy: false, locating: false };
-function resetCheckin(shopId) { Object.assign(CI, { fix: null, fixErr: '', shop_id: shopId || '', isNew: false, photo: '', photoKB: 0, consent: false, outcome: '', client_id: uuid(), busy: false, form: {}, notes: '', next: addDays(today(), 7) }); }
+// tp = type picker of the new-shop form, re = type picker of "Ubah jenis toko" (existing shop; null = closed)
+const blankTP = () => ({ type: '', type_other: '', chain: '', group: '', q: '', orig: '' });
+function resetCheckin(shopId) { Object.assign(CI, { fix: null, fixErr: '', shop_id: shopId || '', isNew: false, photo: '', photoKB: 0, consent: false, outcome: '', client_id: uuid(), busy: false, form: {}, tp: blankTP(), re: null, notes: '', next: addDays(today(), 7) }); }
 resetCheckin();
 RENDER.visit = function () {
   if (!isRep()) { $('#v-visit').innerHTML = `<div class="wrapc"><div class="card pad empty">${esc(t('visit.rep_only'))}</div></div>`; return; }
@@ -1771,14 +1810,16 @@ RENDER.visit = function () {
       <button class="btn sm" style="margin-top:8px" data-act="ci-locate">${ic('refresh')} ${esc(t('gps.refresh'))}</button></div>
     <div class="card pad" style="margin-top:12px"><div class="step-h"><span class="n">2</span>${esc(t('visit.which'))}</div>
       ${sel ? `<div class="li" id="ci-selected" data-shop="${esc(sel.shop_id)}" style="border-color:var(--p);background:var(--pll)">${ic('store')}<div class="grow"><div class="t">${esc(sel.name)}</div><div class="s">${esc(sel.owner_name || '')} · ${esc(sel.area || '')}${selDist != null ? ' · ' + fmtDist(selDist) : ''}</div></div><button class="btn xs" data-act="ci-unpick">${esc(t('visit.change'))}</button></div>
-        ${selDist != null && selDist > NEAR_M ? `<div class="small" style="color:var(--warn);font-weight:800;margin-top:6px">${esc(t('visit.far', { d: fmtDist(selDist) }))}</div>` : ''}`
+        ${selDist != null && selDist > NEAR_M ? `<div class="small" style="color:var(--warn);font-weight:800;margin-top:6px">${esc(t('visit.far', { d: fmtDist(selDist) }))}</div>` : ''}
+        <div class="row wrap" style="gap:4px 10px;margin-top:6px" id="ci-type-row"><span class="small muted tl" id="ci-type-now" data-type="${esc(sel.type || 'lainnya')}"><i class="gdot" style="--g:${shopColor(sel)}"></i>${esc(shopLabel(sel))}</span>${CI.re ? '' : `<button type="button" class="linkbtn" data-act="ci-recat" id="ci-recat">${esc(t('visit.recat'))}</button>`}</div>
+        ${CI.re ? `<div class="recat" id="ci-recat-box"><div class="tp-head"><span class="grow">${esc(t('visit.recat'))}</span><button type="button" class="btn xs" data-act="ci-recat-cancel" id="ci-recat-cancel">${esc(t('cancel'))}</button></div><div id="tp">${tpHTML()}</div><div class="small muted" style="margin-top:8px">${esc(t('visit.recat_hint'))}</div></div>` : ''}`
       : CI.isNew ? `<div id="ci-new-form"><div class="field"><label class="f" for="ci-name">${esc(t('shop.name'))} *</label><input class="input" id="ci-name" value="${esc(f.name || '')}"></div>
           <div class="grid2"><div class="field"><label class="f" for="ci-owner">${esc(t('shop.owner'))}</label><input class="input" id="ci-owner" value="${esc(f.owner_name || '')}"></div><div class="field"><label class="f" for="ci-phone">${esc(t('phone'))}</label><input class="input" id="ci-phone" inputmode="tel" value="${esc(f.phone || '')}"></div></div>
           <div class="field"><label class="f" for="ci-address">${esc(t('shop.address'))}</label><input class="input" id="ci-address" value="${esc(f.address || '')}"></div>
-          <div class="grid2"><div class="field"><label class="f" for="ci-area">${esc(t('shop.area'))}</label><input class="input" id="ci-area" value="${esc(f.area || '')}" list="dl-area"><datalist id="dl-area">${[...new Set(S.shops.map(s => s.area).filter(Boolean))].map(a => `<option value="${esc(a)}">`).join('')}</datalist></div>
-          <div class="field"><label class="f" for="ci-type">${esc(t('type'))}</label><select class="input" id="ci-type">${SHOP_TYPES.map(x => `<option value="${x}" ${(f.type || 'warung') === x ? 'selected' : ''}>${esc(t('type.' + x))}</option>`).join('')}</select></div></div>
+          <div class="field"><label class="f" for="ci-area">${esc(t('shop.area'))}</label><input class="input" id="ci-area" value="${esc(f.area || '')}" list="dl-area"><datalist id="dl-area">${[...new Set(S.shops.map(s => s.area).filter(Boolean))].map(a => `<option value="${esc(a)}">`).join('')}</datalist></div>
+          <div class="field"><label class="f" id="tp-label" for="tp-q">${esc(t('tp.title'))} *</label><div id="tp">${tpHTML()}</div></div>
           <button class="btn ghost sm" data-act="ci-unpick">${esc(t('visit.back_list'))}</button></div>`
-      : `<div class="list" id="ci-near">${near.map(s => `<button class="li" data-act="ci-pick" data-id="${esc(s.shop_id)}">${ic('store')}<div class="grow"><div class="t">${esc(s.name)}</div><div class="s">${esc(s.owner_name || '')} · ${esc(s.area || '')}</div></div><span class="dist" style="font-weight:900;color:var(--pd)">${fmtDist(s._d)}</span></button>`).join('') || `<div class="muted small">${esc(CI.fix ? t('visit.none_near') : t('visit.need_fix'))}</div>`}</div>
+      : `<div class="list" id="ci-near">${near.map(s => `<button class="li" data-act="ci-pick" data-id="${esc(s.shop_id)}">${ic('store')}<div class="grow"><div class="t">${esc(s.name)}</div><div class="s">${esc([s.owner_name, s.area, shopLabel(s)].filter(Boolean).join(' · '))}</div></div><span class="dist" style="font-weight:900;color:var(--pd)">${fmtDist(s._d)}</span></button>`).join('') || `<div class="muted small">${esc(CI.fix ? t('visit.none_near') : t('visit.need_fix'))}</div>`}</div>
         <button class="btn block" style="margin-top:10px" data-act="ci-new" id="ci-new">${ic('plus')} ${esc(t('visit.new_shop'))}</button>`}
     </div>
     <div class="card pad" style="margin-top:12px"><div class="step-h"><span class="n">3</span>${esc(t('visit.photo'))}</div>
@@ -1796,10 +1837,74 @@ RENDER.visit = function () {
       <div class="err" id="ci-err" role="alert"></div>
       <button class="btn primary big block" id="ci-ok" data-act="ci-save" ${CI.busy ? 'disabled' : ''}>${ic('check')} ${esc(t('visit.save'))}</button></div></div>`;
   const v = $('#v-visit');
-  const keep = () => { if (CI.isNew) CI.form = { name: $('#ci-name', v).value, owner_name: $('#ci-owner', v).value, phone: $('#ci-phone', v).value, address: $('#ci-address', v).value, area: $('#ci-area', v).value, type: $('#ci-type', v).value }; CI.notes = $('#ci-notes', v).value; CI.next = $('#ci-next', v).value; CI.consent = $('#ci-consent', v).checked; };
-  v.oninput = keep; v.onchange = keep;
+  const keep = () => { if (CI.isNew) CI.form = { name: $('#ci-name', v).value, owner_name: $('#ci-owner', v).value, phone: $('#ci-phone', v).value, address: $('#ci-address', v).value, area: $('#ci-area', v).value }; CI.notes = $('#ci-notes', v).value; CI.next = $('#ci-next', v).value; CI.consent = $('#ci-consent', v).checked; };
+  v.oninput = e => { keep(); tpInput(e); }; v.onchange = keep;
   ['#ci-photo-back', '#ci-photo-front'].forEach(id => { $(id, v).onchange = e => { const fl = e.target.files[0]; if (fl) takePhoto(fl); }; });
 };
+/* ---------- Shop type picker: 9 groups → types, search over all types (Indonesian + Arabic + chain names) ---------- */
+const tpState = () => CI.isNew ? CI.tp : CI.re;
+/** Lower case, no diacritics/tashkeel, one form of alef/ta marbuta/ya — so "تمر", "kurma", "indomaret" all match. */
+const tpNorm = s => norm(s).replace(/[\u064B-\u0652\u0670\u0640]/g, '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي');
+function typeMatches(q) {
+  const toks = tpNorm(q).split(' ').filter(Boolean), out = [];
+  if (!toks.length) return out;
+  KST.GROUPS.forEach(g => g.types.forEach(ty => {
+    const hay = tpNorm([ty.id_label, ty.ar, g.id_label, g.ar, (ty.chains || []).join(' '), ty.id.replace(/_/g, ' ')].join(' '));
+    if (toks.every(k => hay.includes(k))) out.push(ty);
+  }));
+  return out;
+}
+function tpTypeBtn(ty, sub) {
+  const u = gUI(ty.group);
+  return `<button type="button" class="tp-t" data-act="tp-type" data-t="${esc(ty.id)}" style="--g:${u.c}"><span class="e" aria-hidden="true">${u.e}</span><span class="grow">${esc(KST.typeLabel(ty.id, S.lang))}${sub ? `<small>${esc(sub)}</small>` : ''}</span></button>`;
+}
+function tpBodyHTML() {
+  const st = tpState(); if (!st) return '';
+  if (st.q.trim()) {
+    const m = typeMatches(st.q);
+    return `<div class="tp-types" id="tp-results">${m.map(ty => tpTypeBtn(ty, KST.groupLabel(ty.group, S.lang))).join('') || `<div class="muted small" id="tp-none">${esc(t('tp.none'))}</div>`}</div>`;
+  }
+  const g = st.group && KST.GROUPS.find(x => x.id === st.group);
+  if (g) {
+    const u = gUI(g.id);
+    return `<div class="tp-head"><button type="button" class="btn xs" data-act="tp-groups" id="tp-back">${esc(t('tp.groups'))}</button><span class="grow" id="tp-group" data-group="${esc(g.id)}">${u.e} ${esc(KST.groupLabel(g.id, S.lang))}</span></div>
+      <div class="tp-types" id="tp-types">${g.types.map(ty => tpTypeBtn(ty, (ty.chains || []).slice(0, 3).join(', ') + ((ty.chains || []).length > 3 ? ', …' : ''))).join('')}</div>`;
+  }
+  return `<div class="tp-groups" id="tp-groups">${KST.GROUPS.map(x => { const u = gUI(x.id); return `<button type="button" class="tp-g" data-act="tp-group" data-g="${esc(x.id)}" style="--g:${u.c}"><span class="e" aria-hidden="true">${u.e}</span><span>${esc(KST.groupLabel(x.id, S.lang))}</span>${x.types.length > 1 ? `<small>${esc(t('tp.n_types', { n: x.types.length }))}</small>` : ''}</button>`; }).join('')}</div>`;
+}
+function tpHTML() {
+  const st = tpState(); if (!st) return '';
+  if (!st.type) return `<div class="search" style="margin-bottom:10px">${ic('search')}<input class="input" id="tp-q" type="search" autocomplete="off" aria-labelledby="tp-label" placeholder="${esc(t('tp.search'))}" value="${esc(st.q)}"></div><div id="tp-body">${tpBodyHTML()}</div>`;
+  const ty = KST.BY_ID[st.type], u = gUI(ty.group), ch = KST.chains(st.type);
+  const known = [...new Set(ch.concat(S.shops.filter(x => x.type === st.type && x.chain).map(x => x.chain)))];
+  return `<div class="tp-sel" id="tp-sel" data-type="${esc(st.type)}" style="--g:${u.c}"><span class="e" aria-hidden="true">${u.e}</span><div class="grow"><div class="t">${esc(KST.typeLabel(st.type, S.lang))}</div><div class="s">${esc(KST.groupLabel(ty.group, S.lang))}</div></div><button type="button" class="btn xs" data-act="tp-change" id="tp-change">${esc(t('tp.change'))}</button></div>
+    ${st.type === 'lainnya' ? `<div class="field" style="margin-top:10px;margin-bottom:0"><label class="f" for="tp-other">${esc(t('tp.other'))} *</label><input class="input" id="tp-other" maxlength="60" value="${esc(st.type_other)}" placeholder="${esc(t('tp.other_ph'))}"></div>` : ''}
+    ${ch.length ? `<div class="field" style="margin-top:10px;margin-bottom:0"><label class="f" for="tp-chain">${esc(t('tp.chain'))}</label><div class="chips" id="tp-chains">${ch.map(c => `<button type="button" class="chip ${st.chain === c ? 'on' : ''}" data-act="tp-chain" data-c="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+      <input class="input" id="tp-chain" maxlength="40" list="dl-chain" autocomplete="off" value="${esc(st.chain)}" placeholder="${esc(t('tp.chain_ph'))}"><datalist id="dl-chain">${known.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>` : ''}`;
+}
+function drawTP() { const el = $('#tp'); if (el) el.innerHTML = tpHTML(); }
+function tpInput(e) {
+  const st = tpState(), id = e && e.target && e.target.id; if (!st || !id) return;
+  if (id === 'tp-q') { st.q = e.target.value; const b = $('#tp-body'); if (b) b.innerHTML = tpBodyHTML(); }
+  else if (id === 'tp-other') st.type_other = e.target.value;
+  else if (id === 'tp-chain') { st.chain = e.target.value; $$('#tp-chains .chip').forEach(c => c.classList.toggle('on', c.dataset.c === st.chain.trim())); }
+}
+function tpPick(id) {
+  const st = tpState(); if (!st || !KST.BY_ID[id]) return;
+  const prev = st.type || st.orig;
+  if (!KST.chains(id).length || (id !== prev && !KST.chains(id).includes(st.chain))) st.chain = '';
+  st.type = id; st.group = KST.groupOf(id); st.q = '';
+  drawTP();
+  const err = $('#ci-err'); if (err) err.textContent = '';
+  if (id === 'lainnya') { const o = $('#tp-other'); if (o) o.focus(); }
+}
+function openRecat() {
+  const sh = shopById(CI.shop_id); if (!sh) return;
+  const known = !!KST.BY_ID[sh.type];
+  CI.re = { type: '', type_other: sh.type_other || '', chain: sh.chain || '', group: known ? KST.groupOf(sh.type) : '', q: '', orig: known ? sh.type : '' };
+  RENDER.visit();
+  const b = $('#ci-recat-box'); if (b) b.scrollIntoView({ block: 'nearest' });
+}
 async function locate() {
   CI.locating = true; CI.fixErr = '';
   if (S.view === 'visit') RENDER.visit();
@@ -1832,14 +1937,25 @@ async function saveCheckin() {
   if (!CI.fix) { err.textContent = t('visit.need_fix'); return; }
   let shop = null, shopData = null;
   if (CI.shop_id) shop = shopById(CI.shop_id);
-  else if (CI.isNew) { shopData = Object.assign({ type: 'warung' }, CI.form); shopData.name = String(shopData.name || '').trim(); if (!shopData.name) { err.textContent = t('required') + ': ' + t('shop.name'); $('#ci-name').focus(); return; } }
+  else if (CI.isNew) { shopData = Object.assign({}, CI.form); shopData.name = String(shopData.name || '').trim(); if (!shopData.name) { err.textContent = t('required') + ': ' + t('shop.name'); $('#ci-name').focus(); return; } }
   else { err.textContent = t('visit.pick_shop'); return; }
+  // shop category: required for a new shop; for an existing shop only when "Ubah jenis toko" is open
+  let cat = null;
+  const st = CI.isNew ? CI.tp : (shop && CI.re);
+  if (st) {
+    if (!st.type) { err.textContent = t('visit.pick_type'); const b = $('#tp'); if (b) b.scrollIntoView({ block: 'center' }); return; }
+    const other = String(st.type_other || '').trim().slice(0, 60);
+    if (st.type === 'lainnya' && !other) { err.textContent = t('visit.need_type_other'); const o = $('#tp-other'); if (o) o.focus(); return; }
+    cat = { type: st.type, type_other: st.type === 'lainnya' ? other : '', chain: KST.chains(st.type).length ? String(st.chain || '').trim().slice(0, 40) : '' };
+    if (shopData) Object.assign(shopData, cat);
+  }
   if (!CI.outcome) { err.textContent = t('visit.pick_outcome'); return; }
   if (CI.photo && !CI.consent) { err.textContent = t('visit.need_consent'); return; }
   const data = { client_id: CI.client_id, lat: CI.fix.lat, lng: CI.fix.lng, acc: CI.fix.acc, outcome: CI.outcome, notes: (CI.notes || '').trim(), photo_consent: !!(CI.photo && CI.consent), at: new Date().toISOString() };
   if (shop && !String(shop.shop_id).startsWith('tmp:')) data.shop_id = shop.shop_id;
   else if (shop) data.shop_id = shop.shop_id; // pending new shop: resolved at sync
   else data.shop = shopData;
+  if (shop && cat) data.shop = cat; // re-categorise the existing shop with this check-in (also when queued offline)
   if (CI.photo && CI.consent) data.photo_base64 = CI.photo;
   if (CI.next) data.next_visit = CI.next;
   CI.busy = true; $('#ci-ok').disabled = true;
@@ -1854,7 +1970,7 @@ async function saveCheckin() {
     if (!(e instanceof NetError)) { err.textContent = errMsg(e); CI.busy = false; $('#ci-ok').disabled = false; return; }
     const extra = { tmp_visit: 'tmp:v:' + data.client_id };
     if (!shop) { const ls = Object.assign({}, shopData, { shop_id: 'tmp:' + data.client_id, lat: data.lat, lng: data.lng, status: 'prospek', visits: 1, last_visit_at: localVisit.visit_time, next_visit: data.next_visit || '', pending: true, created_by: S.user }); S.shops.push(ls); extra.tmp_shop = ls.shop_id; extra.local_shop = ls; }
-    else { shop.last_visit_at = localVisit.visit_time; if (data.next_visit) shop.next_visit = data.next_visit; }
+    else { shop.last_visit_at = localVisit.visit_time; if (data.next_visit) shop.next_visit = data.next_visit; if (cat) { Object.assign(shop, cat); saveCache(); } }
     localVisit.visit_id = extra.tmp_visit;
     queueOp('check_in', data, extra);
     toast(t('outbox.queued'), 'warn', 4000);
@@ -2015,21 +2131,39 @@ async function saveOrder() {
 }
 
 /* ========== Toko saya ========== */
-const SH = { q: '', map: false };
+const SH = { q: '', map: false, group: '', mode: 'mine' };
+/** Search text of a shop: name, owner, area, address, type label in both languages, own words, chain. */
+const shopHay = s => tpNorm(`${s.name} ${s.owner_name} ${s.area} ${s.address} ${shopLabel(s, 'id')} ${shopLabel(s, 'ar')}`);
 RENDER.shops = function () {
-  const q = norm(SH.q);
-  const list = S.shops.filter(s => !q || norm(`${s.name} ${s.owner_name} ${s.area} ${s.address}`).includes(q)).map(s => Object.assign({}, s, { _d: S.pos && validPos(s) ? haversine(S.pos, s) : null }))
+  const seg = `<div class="seg" id="sh-seg" style="margin-bottom:12px"><button class="${SH.mode === 'mine' ? 'on' : ''}" data-act="sh-mode" data-m="mine" id="sh-mode-mine">${esc(t('tab.shops'))} (${S.shops.length})</button><button class="${SH.mode === 'target' ? 'on' : ''}" data-act="sh-mode" data-m="target" id="sh-mode-target">🎯 ${esc(t('target.title'))}</button></div>`;
+  if (SH.mode === 'target') { $('#v-shops').innerHTML = `<div class="wrapc">${seg}${targetHTML()}</div>`; return; }
+  const q = tpNorm(SH.q);
+  const counts = {}; S.shops.forEach(s => { const g = shopGroup(s); counts[g] = (counts[g] || 0) + 1; });
+  const list = S.shops.filter(s => (!SH.group || shopGroup(s) === SH.group) && (!q || q.split(' ').every(k => shopHay(s).includes(k))))
+    .map(s => Object.assign({}, s, { _d: S.pos && validPos(s) ? haversine(S.pos, s) : null }))
     .sort((a, b) => String(b.last_visit_at || '').localeCompare(String(a.last_visit_at || '')));
-  $('#v-shops').innerHTML = `<div class="wrapc"><h1>${esc(t('tab.shops'))} <span class="muted small">(${S.shops.length})</span></h1>
-    <div class="row" style="margin-bottom:10px"><div class="search grow">${ic('search')}<input class="input" id="sh-q" type="search" placeholder="${esc(t('shop.search'))}" value="${esc(SH.q)}"></div><button class="btn ${SH.map ? 'primary' : ''}" data-act="sh-map" id="sh-map-btn">${ic('route')} ${esc(t('shop.map'))}</button></div>
-    ${SH.map ? `<div class="map tall" id="shops-map" style="margin-bottom:12px"></div>` : ''}
+  const chips = `<div class="chips" id="sh-groups"><button class="chip ${!SH.group ? 'on' : ''}" data-act="sh-group" data-g="" data-n="${S.shops.length}">${esc(t('all'))}<span class="cnt">${S.shops.length}</span></button>${KST.GROUPS.filter(g => counts[g.id] || SH.group === g.id).map(g => { const u = gUI(g.id); return `<button class="chip ${SH.group === g.id ? 'on' : ''}" data-act="sh-group" data-g="${esc(g.id)}" data-n="${counts[g.id] || 0}"><i class="gdot" style="--g:${u.c}"></i>${esc(KST.groupLabel(g.id, S.lang))}<span class="cnt">${counts[g.id] || 0}</span></button>`; }).join('')}</div>`;
+  const legendGroups = [...new Set(list.filter(validPos).map(shopGroup))];
+  $('#v-shops').innerHTML = `<div class="wrapc">${seg}
+    <div class="row" style="margin-bottom:8px"><div class="search grow">${ic('search')}<input class="input" id="sh-q" type="search" placeholder="${esc(t('shop.search'))}" value="${esc(SH.q)}"></div><button class="btn ${SH.map ? 'primary' : ''}" data-act="sh-map" id="sh-map-btn">${ic('route')} ${esc(t('shop.map'))}</button></div>
+    ${chips}
+    ${SH.map ? `<div class="map tall" id="shops-map" style="margin:4px 0 12px"></div><div class="legend" id="shops-legend" aria-label="${esc(t('map.legend'))}">${KST.GROUPS.filter(g => legendGroups.includes(g.id)).map(g => `<span data-group="${esc(g.id)}"><i class="gdot" style="--g:${gUI(g.id).c}"></i>${esc(KST.groupLabel(g.id, S.lang))}</span>`).join('')}</div>` : ''}
     <div class="list" id="sh-list">${list.map(s => shopRow(s, s._d)).join('') || `<div class="empty">${esc(t('no_data'))}</div>`}</div></div>`;
   $('#sh-q').addEventListener('input', debounce(e => { SH.q = $('#sh-q').value; const pos = $('#sh-q').selectionStart; RENDER.shops(); const i = $('#sh-q'); i.focus(); try { i.setSelectionRange(pos, pos); } catch (er) { } }, 250));
   if (SH.map) renderMap($('#shops-map'), { shops: list, current: S.pos, tall: true });
 };
+/** "Jenis toko target": every group and type with a short hint of what we can sell them (read-only). */
+function targetHTML() {
+  const mine = {}; S.shops.forEach(s => { const k = KST.BY_ID[s.type] ? s.type : 'lainnya'; mine[k] = (mine[k] || 0) + 1; });
+  return `<p class="muted small" style="margin:0 0 10px">${esc(t('target.lead'))}</p><div id="target-list">${KST.GROUPS.map(g => {
+    const u = gUI(g.id), n = sum(g.types, ty => mine[ty.id] || 0);
+    return `<div class="card pad tg" data-group="${esc(g.id)}" style="margin-bottom:10px;border-top:4px solid ${u.c}"><h3><span class="e" aria-hidden="true">${u.e}</span><span class="grow">${esc(KST.groupLabel(g.id, S.lang))}</span>${n ? `<span class="badge gray">${esc(t('target.mine', { n }))}</span>` : ''}</h3>
+      ${g.types.map(ty => `<div class="tg-t" data-type="${esc(ty.id)}"><div class="t">${esc(KST.typeLabel(ty.id, S.lang))}${mine[ty.id] ? ` <span class="badge ok">${mine[ty.id]}</span>` : ''}</div><div class="s">${esc(t('hint.' + ty.id))}</div>${ty.chains ? `<div class="chn"><bdi>${esc(ty.chains.join(' · '))}</bdi></div><div class="note">${esc(t('hint.chain_note'))}</div>` : ''}</div>`).join('')}</div>`;
+  }).join('')}</div>`;
+}
 function pickShop(onPick) {
   const el = openModal({ title: t('order.pick_shop'), id: 'shop-picker', body: `<input class="input" id="sp-q" type="search" placeholder="${esc(t('shop.search'))}"><div class="list" id="sp-list" style="margin-top:10px"></div>` });
-  const draw = () => { const q = norm($('#sp-q', el).value); $('#sp-list', el).innerHTML = S.shops.filter(s => !q || norm(s.name + ' ' + s.area).includes(q)).map(s => Object.assign({}, s, { _d: S.pos && validPos(s) ? haversine(S.pos, s) : null })).sort((a, b) => (a._d ?? 1e12) - (b._d ?? 1e12) || a.name.localeCompare(b.name)).slice(0, 60).map(s => `<button class="li" data-pick="${esc(s.shop_id)}"><div class="grow"><div class="t">${esc(s.name)}</div><div class="s">${esc(s.area || '')}</div></div>${s._d != null ? `<span class="dist">${fmtDist(s._d)}</span>` : ''}</button>`).join(''); };
+  const draw = () => { const q = norm($('#sp-q', el).value); $('#sp-list', el).innerHTML = S.shops.filter(s => !q || norm(s.name + ' ' + s.area).includes(q)).map(s => Object.assign({}, s, { _d: S.pos && validPos(s) ? haversine(S.pos, s) : null })).sort((a, b) => (a._d ?? 1e12) - (b._d ?? 1e12) || a.name.localeCompare(b.name)).slice(0, 60).map(s => `<button class="li" data-pick="${esc(s.shop_id)}"><div class="grow"><div class="t">${esc(s.name)}</div><div class="s">${esc([s.area, shopLabel(s)].filter(Boolean).join(' · '))}</div></div>${s._d != null ? `<span class="dist">${fmtDist(s._d)}</span>` : ''}</button>`).join(''); };
   draw(); $('#sp-q', el).addEventListener('input', draw);
   $('#sp-list', el).addEventListener('click', e => { const b = e.target.closest('[data-pick]'); if (!b) return; dropModal(el); onPick(shopById(b.dataset.pick)); });
 }
@@ -2080,8 +2214,15 @@ const ACT = {
   'day-end': () => dayEnd(),
   'visit-shop': el => { resetCheckin(el.dataset.id); go('visit', true); },
   'ci-locate': () => { CI.fix = null; locate(); },
-  'ci-pick': el => { CI.shop_id = el.dataset.id; CI.isNew = false; RENDER.visit(); },
-  'ci-unpick': () => { CI.shop_id = ''; CI.isNew = false; RENDER.visit(); },
+  'ci-pick': el => { CI.shop_id = el.dataset.id; CI.isNew = false; CI.re = null; RENDER.visit(); },
+  'ci-unpick': () => { CI.shop_id = ''; CI.isNew = false; CI.re = null; RENDER.visit(); },
+  'ci-recat': () => openRecat(),
+  'ci-recat-cancel': () => { CI.re = null; RENDER.visit(); },
+  'tp-group': el => { const st = tpState(), g = KST.GROUPS.find(x => x.id === el.dataset.g); if (!st || !g) return; if (g.types.length === 1) { tpPick(g.types[0].id); return; } st.group = g.id; st.q = ''; drawTP(); },
+  'tp-groups': () => { const st = tpState(); if (!st) return; st.group = ''; st.q = ''; drawTP(); },
+  'tp-type': el => tpPick(el.dataset.t),
+  'tp-change': () => { const st = tpState(); if (!st) return; st.orig = st.orig || st.type; st.type = ''; st.q = ''; drawTP(); },
+  'tp-chain': el => { const st = tpState(); if (!st) return; st.chain = st.chain === el.dataset.c ? '' : el.dataset.c; drawTP(); },
   'ci-new': () => { CI.shop_id = ''; CI.isNew = true; CI.form = CI.form || {}; RENDER.visit(); const n = $('#ci-name'); if (n) n.focus(); },
   'ci-outcome': el => { CI.outcome = el.dataset.o; $$('#ci-outcome button').forEach(b => b.classList.toggle('on', b === el)); },
   'ci-next': el => { CI.next = el.dataset.n ? addDays(today(), +el.dataset.n) : ''; $('#ci-next').value = CI.next; },
@@ -2098,7 +2239,9 @@ const ACT = {
   'po-inc': el => { S.cart.lines[+el.dataset.i].qty = roundQty(Math.floor(S.cart.lines[+el.dataset.i].qty) + 1); saveOrderCart(); RENDER.order(); },
   'po-dec': el => { const l = S.cart.lines[+el.dataset.i]; const nq = Math.ceil(l.qty) - 1; if (nq <= 0) S.cart.lines.splice(+el.dataset.i, 1); else l.qty = nq; saveOrderCart(); RENDER.order(); },
   'po-save': () => saveOrder(),
-  'sh-map': () => { SH.map = !SH.map; RENDER.shops(); }
+  'sh-map': () => { SH.map = !SH.map; RENDER.shops(); },
+  'sh-group': el => { SH.group = el.dataset.g || ''; RENDER.shops(); },
+  'sh-mode': el => { SH.mode = el.dataset.m === 'target' ? 'target' : 'mine'; RENDER.shops(); $('#v-shops').scrollTop = 0; }
 };
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-act]');
@@ -2149,7 +2292,47 @@ const I18N = {
     'oc.order': 'Pesan', 'oc.tertarik': 'Tertarik', 'oc.tidak': 'Tidak tertarik', 'oc.tutup': 'Toko tutup', 'oc.sudah_pelanggan': 'Sudah pelanggan',
     'shop.name': 'Nama toko', 'shop.owner': 'Nama pemilik', 'shop.address': 'Alamat', 'shop.area': 'Daerah', 'shop.prospek': 'Prospek', 'shop.pelanggan': 'Pelanggan', 'shop.last': 'kunjungan terakhir {date}',
     'shop.next': 'jadwal {date}', 'shop.route': 'Rute (Google Maps)', 'shop.route_short': 'Rute', 'shop.search': 'Cari toko / daerah', 'shop.map': 'Peta',
-    'type.warung': 'Warung', 'type.toko': 'Toko', 'type.minimarket': 'Minimarket', 'type.bakery': 'Bakery', 'type.katering': 'Katering', 'type.restoran': 'Restoran', 'type.masjid': 'Masjid', 'type.lainnya': 'Lainnya',
+    'tp.title': 'Jenis toko', 'tp.search': 'Cari jenis: kurma, haji, Indomaret…', 'tp.groups': '← Semua kelompok', 'tp.change': 'Ganti', 'tp.n_types': '{n} jenis',
+    'tp.other': 'Jenis toko (tulis sendiri)', 'tp.other_ph': 'mis. Toko parfum Arab', 'tp.chain': 'Jaringan / merek', 'tp.chain_ph': 'Pilih atau tulis — kosongkan jika toko mandiri',
+    'tp.none': 'Tidak ketemu. Pilih kelompok "Lainnya" lalu tulis sendiri.',
+    'visit.pick_type': 'Pilih jenis toko dulu', 'visit.need_type_other': 'Tulis jenis tokonya (Lainnya)', 'visit.recat': 'Ubah jenis toko', 'visit.recat_hint': 'Jenis baru dikirim bersama kunjungan ini.',
+    'map.legend': 'Warna titik = kelompok toko',
+    'target.title': 'Jenis toko target', 'target.mine': '{n} toko saya',
+    'target.lead': 'Toko yang bisa kita layani, per kelompok — dan barang Khair Grosir yang cocok untuk mereka (harga grosir).',
+    'hint.perlengkapan_haji': 'Kurma, air zamzam, tasbih, sajadah & oleh-oleh haji — beli grosir untuk dijual lagi.',
+    'hint.travel_umrah': 'Air zamzam & paket oleh-oleh untuk jamaah; kurma untuk manasik dan walimatus safar.',
+    'hint.oleh_oleh_haji': 'Kurma, zamzam, cokelat Arab, kacang & kismis — barang utama toko ini.',
+    'hint.toko_kurma': 'Kurma grosir (Ajwa, Sukkari, Medjool, Tunisia), kismis, kacang, bumbu Timur Tengah.',
+    'hint.herbal': 'Kurma Ajwa, minyak zaitun, za\'atar & teh Arab sebagai barang pelengkap.',
+    'hint.busana_muslim': 'Gamis Saudi, sajadah, tasbih; kurma & cokelat Arab untuk dekat kasir.',
+    'hint.toko_buku_islam': 'Sajadah, tasbih, dan kurma kemasan kecil untuk hadiah.',
+    'hint.warung': 'Kurma kemasan kecil (Tunisia 500 g), gula, minyak — pesanan kecil.',
+    'hint.toko': 'Sembako (beras, minyak, gula) + kurma kemasan menjelang Ramadan.',
+    'hint.grosir_sembako': 'Beras, minyak, gula harga grosir; kurma per dus untuk dijual ke warung.',
+    'hint.pasar': 'Kurma & kismis kiloan dengan harga grosir per kg.',
+    'hint.minimarket': 'Minimarket mandiri: kurma kemasan, cokelat Arab, kacang.',
+    'hint.supermarket': 'Rak impor: kurma premium, minyak zaitun, bumbu & teh Timur Tengah.',
+    'hint.hypermarket': 'Rak musiman: kurma per dus & paket Ramadan.',
+    'hint.grosir_modern': 'Kurma per dus & sembako dalam jumlah besar.',
+    'hint.bakery': 'Kurma pasta/kurma & kismis untuk kue; almond & pistachio untuk taburan.',
+    'hint.toko_kue': 'Kue kurma & camilan: kurma, kismis, kacang, cokelat Arab.',
+    'hint.katering': 'Bumbu kabsah & nasi mandi, beras, minyak; kurma untuk aqiqah & walimah.',
+    'hint.restoran': 'Bumbu kabsah/mandi, za\'atar, teh & kopi Arab, kurma untuk tamu.',
+    'hint.kafe': 'Kopi Arab kapulaga, teh Yaman, kurma & cokelat teman kopi; dallah & finjan.',
+    'hint.hotel': 'Kurma sambutan tamu, teh & kopi Arab; paket buka puasa saat Ramadan.',
+    'hint.oleh_oleh': 'Kurma, cokelat Arab, kacang & kismis kemasan.',
+    'hint.parsel': 'Isi parsel Lebaran & hampers: kurma, cokelat, kacang.',
+    'hint.toko_buah': 'Kurma kemasan sebagai pelengkap rak buah.',
+    'hint.masjid': 'Paket takjil & kurma untuk buka puasa Ramadan; sajadah.',
+    'hint.pesantren': 'Beras, minyak, gula grosir untuk dapur santri; kurma saat Ramadan.',
+    'hint.sekolah': 'Kurma & parsel untuk acara sekolah, Ramadan dan wisuda.',
+    'hint.majelis_taklim': 'Paket takjil/Ramadan, kurma & oleh-oleh untuk pengajian.',
+    'hint.kantor': 'Parsel Lebaran & hampers kurma untuk karyawan dan klien.',
+    'hint.koperasi': 'Sembako & kurma harga grosir untuk dijual ke anggota.',
+    'hint.reseller': 'Kurma, cokelat & kacang harga grosir untuk dijual lagi online.',
+    'hint.toko_online': 'Stok kurma & oleh-oleh grosir; foto barang dari katalog.',
+    'hint.lainnya': 'Tulis jenis tokonya saat kunjungan, lalu tanya barang apa yang mereka cari.',
+    'hint.chain_note': 'Toko jaringan: pembelian lewat kantor pusat / distributor — kunjungi untuk kenalan, minta kontak bagian pembelian.',
     'cat.search': 'Cari barang', 'cat.present': 'Presentasi', 'cat.grosir': 'Grosir {price} (min {qty} {unit})', 'cat.grosir_min': 'Grosir · min {qty} {unit}', 'cat.share': 'Bagikan', 'cat.add': 'Pesan', 'cat.added': '{name} masuk pesanan',
     'stock.ada': 'Tersedia', 'stock.sedikit': 'Sedikit', 'stock.habis': 'Habis',
     'order.title': 'Pesanan toko', 'order.shop': 'Toko', 'order.pick_shop': 'Pilih toko', 'order.add': 'Tambah barang…', 'order.from_catalog': 'Pilih dari katalog', 'order.empty': 'Belum ada barang',
@@ -2193,7 +2376,47 @@ const I18N = {
     'oc.order': 'طلب', 'oc.tertarik': 'مهتم', 'oc.tidak': 'غير مهتم', 'oc.tutup': 'المتجر مغلق', 'oc.sudah_pelanggan': 'عميل حالي',
     'shop.name': 'اسم المتجر', 'shop.owner': 'اسم المالك', 'shop.address': 'العنوان', 'shop.area': 'المنطقة', 'shop.prospek': 'محتمل', 'shop.pelanggan': 'عميل', 'shop.last': 'آخر زيارة {date}',
     'shop.next': 'موعد {date}', 'shop.route': 'المسار (خرائط Google)', 'shop.route_short': 'المسار', 'shop.search': 'ابحث عن متجر / منطقة', 'shop.map': 'الخريطة',
-    'type.warung': 'كشك', 'type.toko': 'متجر', 'type.minimarket': 'ميني ماركت', 'type.bakery': 'مخبز', 'type.katering': 'تموين', 'type.restoran': 'مطعم', 'type.masjid': 'مسجد', 'type.lainnya': 'أخرى',
+    'tp.title': 'نوع المتجر', 'tp.search': 'ابحث عن النوع: تمور، حج، إندومارت…', 'tp.groups': '→ كل المجموعات', 'tp.change': 'تغيير', 'tp.n_types': '{n} أنواع',
+    'tp.other': 'نوع المتجر (اكتبه بنفسك)', 'tp.other_ph': 'مثال: متجر عطور عربية', 'tp.chain': 'السلسلة / العلامة التجارية', 'tp.chain_ph': 'اختر أو اكتب — اتركه فارغًا إن كان المتجر مستقلًا',
+    'tp.none': 'لا نتائج. اختر مجموعة "أخرى" واكتب النوع بنفسك.',
+    'visit.pick_type': 'اختر نوع المتجر أولًا', 'visit.need_type_other': 'اكتب نوع المتجر (أخرى)', 'visit.recat': 'تغيير نوع المتجر', 'visit.recat_hint': 'يُرسل النوع الجديد مع هذه الزيارة.',
+    'map.legend': 'لون النقطة = مجموعة المتجر',
+    'target.title': 'أنواع المتاجر المستهدفة', 'target.mine': '{n} من متاجري',
+    'target.lead': 'المتاجر التي يمكننا خدمتها حسب المجموعة — وما يناسبها من بضائع Khair Grosir (بسعر الجملة).',
+    'hint.perlengkapan_haji': 'تمور، ماء زمزم، مسابح، سجاد وهدايا الحج — بالجملة لإعادة البيع.',
+    'hint.travel_umrah': 'ماء زمزم وباقات هدايا للمعتمرين؛ تمور للمناسك وولائم السفر.',
+    'hint.oleh_oleh_haji': 'تمور، زمزم، شوكولاتة عربية، مكسرات وزبيب — بضاعتهم الأساسية.',
+    'hint.toko_kurma': 'تمور بالجملة (عجوة، سكري، مجدول، تونسي)، زبيب، مكسرات، بهارات شرقية.',
+    'hint.herbal': 'تمر عجوة، زيت زيتون، زعتر وشاي عربي كبضائع مكمّلة.',
+    'hint.busana_muslim': 'ثياب سعودية، سجاد، مسابح؛ تمور وشوكولاتة عربية قرب الصندوق.',
+    'hint.toko_buku_islam': 'سجاد، مسابح، وعلب تمور صغيرة للهدايا.',
+    'hint.warung': 'تمور بعبوات صغيرة (تونسي 500 غ)، سكر، زيت — طلبات صغيرة.',
+    'hint.toko': 'مواد أساسية (أرز، زيت، سكر) + تمور معبأة قبل رمضان.',
+    'hint.grosir_sembako': 'أرز، زيت، سكر بسعر الجملة؛ كراتين تمور لبيعها للدكاكين.',
+    'hint.pasar': 'تمور وزبيب بالكيلو بسعر الجملة.',
+    'hint.minimarket': 'ميني ماركت مستقل: تمور معبأة، شوكولاتة عربية، مكسرات.',
+    'hint.supermarket': 'رف المستورد: تمور فاخرة، زيت زيتون، بهارات وشاي شرقي.',
+    'hint.hypermarket': 'الرف الموسمي: كراتين تمور وباقات رمضان.',
+    'hint.grosir_modern': 'كراتين تمور ومواد أساسية بكميات كبيرة.',
+    'hint.bakery': 'معجون التمر والتمر والزبيب للكعك؛ لوز وفستق للتزيين.',
+    'hint.toko_kue': 'كعك التمر والوجبات الخفيفة: تمور، زبيب، مكسرات، شوكولاتة عربية.',
+    'hint.katering': 'بهارات الكبسة والمندي، أرز، زيت؛ تمور للعقيقة والولائم.',
+    'hint.restoran': 'بهارات الكبسة/المندي، زعتر، شاي وقهوة عربية، تمور للضيوف.',
+    'hint.kafe': 'قهوة عربية بالهيل، شاي يمني، تمور وشوكولاتة مع القهوة؛ دلال وفناجين.',
+    'hint.hotel': 'تمور لاستقبال الضيوف، شاي وقهوة عربية؛ باقات إفطار في رمضان.',
+    'hint.oleh_oleh': 'تمور، شوكولاتة عربية، مكسرات وزبيب معبأ.',
+    'hint.parsel': 'محتوى سلال العيد والهدايا: تمور، شوكولاتة، مكسرات.',
+    'hint.toko_buah': 'تمور معبأة مكمّلة لرف الفواكه.',
+    'hint.masjid': 'باقات إفطار وتمور لإفطار رمضان؛ سجاد.',
+    'hint.pesantren': 'أرز، زيت، سكر بالجملة لمطبخ الطلاب؛ تمور في رمضان.',
+    'hint.sekolah': 'تمور وسلال هدايا لمناسبات المدرسة ورمضان والتخرج.',
+    'hint.majelis_taklim': 'باقات إفطار/رمضان، تمور وهدايا لحلقات التعليم.',
+    'hint.kantor': 'سلال العيد وهدايا التمور للموظفين والعملاء.',
+    'hint.koperasi': 'مواد أساسية وتمور بسعر الجملة لبيعها للأعضاء.',
+    'hint.reseller': 'تمور وشوكولاتة ومكسرات بسعر الجملة لإعادة البيع أونلاين.',
+    'hint.toko_online': 'مخزون تمور وهدايا بالجملة؛ صور المنتجات من الكتالوج.',
+    'hint.lainnya': 'اكتب نوع المتجر أثناء الزيارة، واسأل عن البضائع التي يبحثون عنها.',
+    'hint.chain_note': 'متاجر السلاسل: الشراء عبر المكتب الرئيسي / الموزّع — زُرهم للتعارف واطلب رقم قسم المشتريات.',
     'cat.search': 'ابحث عن صنف', 'cat.present': 'عرض', 'cat.grosir': 'جملة {price} (حد أدنى {qty} {unit})', 'cat.grosir_min': 'جملة · حد أدنى {qty} {unit}', 'cat.share': 'مشاركة', 'cat.add': 'اطلب', 'cat.added': 'أضيف {name} إلى الطلب',
     'stock.ada': 'متوفر', 'stock.sedikit': 'قليل', 'stock.habis': 'نفد',
     'order.title': 'طلب متجر', 'order.shop': 'المتجر', 'order.pick_shop': 'اختر متجرًا', 'order.add': 'أضف صنفًا…', 'order.from_catalog': 'اختر من الكتالوج', 'order.empty': 'لا توجد أصناف',

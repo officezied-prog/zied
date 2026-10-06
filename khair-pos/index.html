@@ -570,6 +570,7 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M4 20h16"/></symbol>
 </svg>
 
+<script src="shared/shop-types.js"></script>
 <script>
 'use strict';
 const CONFIG = { API_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-pos', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
@@ -3812,9 +3813,11 @@ function visitRowHTML(v, n) {
     <div class="grow"><div class="t">${esc(v.shop_name)}</div><div class="s">${esc(jktTime(v.visit_time))} · ${esc(v.user)}${v.notes ? ' · ' + esc(v.notes) : ''}</div></div>
     <div class="right"><span class="badge ${OUTCOME_CLS[v.outcome] || 'gray'}">${esc(t('out.' + v.outcome))}</span>${v.distance_m != null ? `<div class="small ${far ? 'red' : 'muted'}" style="margin-top:3px">${far ? '⚠ ' : ''}${fmtNum(v.distance_m)} m</div>` : ''}</div></div>`;
 }
+/** Shop category label (shared/shop-types.js; the old 8 labels if that file did not load). */
+function shopTypeLabel(s) { return window.KhairShopTypes ? KhairShopTypes.label(s, S.lang === 'ar' ? 'ar' : 'id') : t('stype.' + (s.type || 'lainnya')); }
 function leadRowHTML(s) {
   const c = shopCustomer(s);
-  return `<div class="li lead-row" data-shop="${esc(s.shop_id)}" style="min-height:0;padding:8px 12px"><div class="grow"><div class="t">${esc(s.name)} <span class="badge gray">${esc(t('stype.' + s.type))}</span></div>
+  return `<div class="li lead-row" data-shop="${esc(s.shop_id)}" style="min-height:0;padding:8px 12px"><div class="grow"><div class="t">${esc(s.name)} <span class="badge gray">${esc(shopTypeLabel(s))}</span></div>
     <div class="s">${esc([s.area, s.owner_name, s.phone].filter(Boolean).join(' · '))} · ${esc(fmtDate(String(s.created_at).slice(0, 10)))} · ${esc(s.created_by || '')}</div></div>
     ${c ? `<span class="badge green" data-linked>${esc(t('field.linked', { name: c.name }))}</span>` : `<button class="btn xs primary" data-act="lead-convert" data-shop="${esc(s.shop_id)}">${ic('plus')} ${esc(t('field.make_customer'))}</button>`}</div>`;
 }
