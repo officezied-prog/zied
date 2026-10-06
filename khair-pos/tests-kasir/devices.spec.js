@@ -128,8 +128,8 @@ test.describe('location required by the owner', () => {
     await expect(page.locator('#locblock')).toBeHidden();
     await expect(page.locator('#tb-loc')).toBeVisible();
     await expect(page.locator('#gate #shift-open')).toBeVisible();
-    const last = (await log(page)).filter(e => e.action === 'device_ping').pop();
-    expect(last.device.loc_status).toBe('granted');
+    // the screen opens as soon as the fix arrives; the ping that reports it follows right after
+    await expect.poll(async () => ((await log(page)).filter(e => e.action === 'device_ping').pop() || { device: {} }).device.loc_status).toBe('granted');
     expect(JSON.parse(await page.evaluate(() => localStorage.getItem('kpos.device_consent'))).ok).toBe(true);
 
     // location refused by the browser: the manager is blocked (status "denied" + how to allow it), the owner is not

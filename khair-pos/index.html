@@ -954,6 +954,7 @@ const MockServer = (() => {
   }
   function strip(o) {
     if (o && typeof o === 'object' && !Array.isArray(o) && typeof o.payload === 'string' && o.kind === 'price') o = Object.assign({}, o, { payload: stripPayload(o.payload) });
+    if (o && typeof o === 'object' && !Array.isArray(o) && o.request_id && (o.kind === 'purchase_fix' || o.kind === 'discount')) o = aprOut(o);
     if (Array.isArray(o)) return o.map(strip);
     if (o && typeof o === 'object') { const r = {}; for (const k in o) if (!COST_KEYS.includes(k)) r[k] = strip(o[k]); return r; }
     return o;
@@ -975,9 +976,9 @@ const MockServer = (() => {
     if (src.active !== undefined) p.active = !(src.active === false || src.active === 'false' || src.active === 0);
     return p;
   }
-  function priceSale(db, data) {
+  function priceSale(db, data, quote) {
     if (!Array.isArray(data.items) || !data.items.length) throw E('INVALID', 'items required');
-    if (!['tunai', 'transfer', 'qris', 'hutang'].includes(data.payment_method)) throw E('INVALID', 'payment_method');
+    if (!quote && !['tunai', 'transfer', 'qris', 'hutang'].includes(data.payment_method)) throw E('INVALID', 'payment_method');
     const cust = data.customer_id ? db.customers.find(c => c.id === Number(data.customer_id)) : null;
     if (data.customer_id && !cust) throw E('NOT_FOUND', 'customer');
     const lines = data.items.map(it => {
@@ -987,7 +988,9 @@ const MockServer = (() => {
       if (!(qty > 0)) throw E('INVALID', 'qty must be > 0');
       const unit_price = Math.max(0, int(it.unit_price));
       const line_total = Math.round(qty * unit_price), line_cost = Math.round(qty * p.cost_price);
-      return { p, qty, unit_price, price_type: it.price_type === 'grosir' ? 'grosir' : 'eceran', line_total, line_cost };
+      const grosirOk = int(p.wholesale_price) > 0 && ((cust && cust.type === 'grosir') || (num(p.wholesale_min_qty) > 0 && qty >= num(p.wholesale_min_qty)));
+      const list_total = Math.round(qty * (grosirOk ? Math.min(int(p.wholesale_price), int(p.retail_price) || int(p.wholesale_price)) : int(p.retail_price)));
+      return { p, qty, unit_price, price_type: it.price_type === 'grosir' ? 'grosir' : 'eceran', line_total, line_cost, list_total };
     });
     const subtotal = sum(lines, l => l.line_total);
     const discount = Math.min(subtotal, Math.max(0, int(data.discount)));
@@ -995,8 +998,9 @@ const MockServer = (() => {
     const total_cost = sum(lines, l => l.line_cost);
     const paid = Math.max(0, int(data.paid_amount));
     const debt = Math.max(0, total - paid);
-    if (debt > 0 && !cust) throw E('INVALID', 'Debt requires customer_id');
-    return { cust, lines, subtotal, discount, total, total_cost, paid, debt, sale_date: isYmd(data.sale_date) ? data.sale_date : jktDate() };
+    if (debt > 0 && !cust && !quote) throw E('INVALID', 'Debt requires customer_id');
+    const qtyBy = new Map(); lines.forEach(l => qtyBy.set(l.p.id, roundQty((qtyBy.get(l.p.id) || 0) + l.qty)));
+    return { cust, lines, subtotal, discount, total, total_cost, paid, debt, sale_date: isYmd(data.sale_date) ? data.sale_date : jktDate(), listTotal: sum(lines, l => l.list_total), qtyBy };
   }
   const openShiftOf = (db, name) => db.shifts.find(x => x.status === 'open' && String(x.cashier).toLowerCase() === String(name).toLowerCase());
   function shiftSummary(db, sh) {
@@ -1025,9 +1029,10 @@ const MockServer = (() => {
     if (!s) throw E('NOT_FOUND', 'invoice');
     if (s.status === 'void') return s;
     s.status = 'void'; s.void_reason = reason; s.voided_by = by; s.voided_at = jktISO();
-    db.items.filter(i => i.invoice_no === s.invoice_no).forEach(i => { const p = db.products.find(x => x.id === i.product_id); if (p) p.stock = roundQty(p.stock + i.qty); });
+    db.items.filter(i => i.invoice_no === s.invoice_no).forEach(i => { const p = db.products.find(x => x.id === i.product_id); if (p) { if (db._shopSet) db._shopSet[p.id] = roundQty((db._shopSet[p.id] !== undefined ? db._shopSet[p.id] : shopOf(p)) + i.qty); p.stock = roundQty(p.stock + i.qty); } });
     const c = s.customer_id ? db.customers.find(x => x.id === s.customer_id) : null;
     if (c && s.debt_amount) c.debt_balance = Math.max(0, int(c.debt_balance) - s.debt_amount);
+    if (c) c.visits = Math.max(0, Math.round(num(c.visits)) - 1);
     return s;
   }
   function newApproval(db, u, f) {
@@ -1101,6 +1106,58 @@ const MockServer = (() => {
     db.activity = db.activity || [];
     db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + randId(8), at: new Date().toISOString(), act_date: jktDate(), user: u.name, role: roleOf(u), kind,
       summary: strv(summary).slice(0, 1000), ref: strv(ref).slice(0, 60), amount: int(amount), level: level || 'info' });
+  }
+  /* ---- v16: shelf (toko) vs warehouse (gudang), discount limit, members, owner master code, own PINs ---- */
+  const isHash = v => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
+  const wibTime = iso => new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(11, 16) + ' WIB';
+  const V16_DEFAULTS = { max_discount_pct: 3, sell_from_shop_only: true, member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
+  const setting = (db, k) => db.settings && db.settings[k] !== undefined ? db.settings[k] : V16_DEFAULTS[k];
+  /** stock = total, shop_stock = on the shelf; a row without shop_stock (before v16) counts all its stock as on the shelf */
+  const shopOf = p => p.shop_stock === undefined || p.shop_stock === null || p.shop_stock === '' ? num(p.stock) : num(p.shop_stock);
+  const prodOut = p => Object.assign({}, p, { shop_stock: shopOf(p), gudang_stock: roundQty(num(p.stock) - shopOf(p)) });
+  /** After every request (like the server's normShop): sales / voids / move_stock set the shelf; any other stock change
+   *  keeps the shelf as it was, capped at the total; a new product's opening stock is on the shelf. */
+  function normShop(db, snap) {
+    const set = db._shopSet || {};
+    db.products.forEach(p => {
+      const o = snap.get(p.id), st = num(p.stock);
+      if (o && st === o.stock && set[p.id] === undefined) return;
+      let sh = set[p.id] !== undefined ? set[p.id] : (o ? o.shop : st);
+      if (sh > st) sh = st;
+      if (sh < 0 && st >= 0) sh = 0;
+      p.shop_stock = roundQty(sh);
+    });
+  }
+  const maxDiscountPct = db => { const v = num(setting(db, 'max_discount_pct')); return v > 0 ? v : 3; };
+  /** member discount: this sale is purchase number visits + 1; the highest tier with from <= that number */
+  function memberInfo(db, cust) {
+    if (!cust || cust.member !== true || setting(db, 'member_enabled') === false) return null;
+    const n = Math.max(0, Math.round(num(cust.visits))) + 1;
+    const tiers = Array.isArray(setting(db, 'member_tiers')) ? setting(db, 'member_tiers') : V16_DEFAULTS.member_tiers;
+    let pct = 0;
+    tiers.forEach(x => { const f = num(x && x.from), q = num(x && x.pct); if (f >= 1 && f <= n && q > 0 && q <= 50 && q > pct) pct = q; });
+    return { pct, purchase_no: n, member_no: strv(cust.member_no) };
+  }
+  const discountOf = P => { const amount = Math.max(0, P.listTotal - P.total); return { amount, pct: P.listTotal > 0 ? Math.round(amount / P.listTotal * 1000) / 10 : 0 }; };
+  const marginPct = (total, cost) => total > 0 ? Math.round((total - cost) / total * 1000) / 10 : 0;
+  const isEmail = v => /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[a-z]{2,}$/i.test(v) && v.length <= 120;
+  const qtyOnly = c => { const x = Object.assign({}, c); ['cost_price', 'from_total', 'to_total', 'd_total'].forEach(k => delete x[k]); return x; };
+  /** approvals as kasir / manager see them (server approvalOut): no purchase prices, no profit */
+  function aprOut(a) {
+    if (!a || typeof a !== 'object' || !a.request_id) return a;
+    if (a.kind === 'purchase_fix') {
+      const o = Object.assign({}, a);
+      try { const pl = JSON.parse(a.payload || '{}'); if (Array.isArray(pl.changes)) pl.changes = pl.changes.map(qtyOnly); o.payload = JSON.stringify(pl); } catch (e) { o.payload = ''; }
+      o.summary = strv(o.summary).replace(/ \(Rp -?\d+→-?\d+\)/g, ''); o.total = 0;
+      return o;
+    }
+    if (a.kind === 'discount') {
+      const o = Object.assign({}, a);
+      try { const pl = JSON.parse(a.payload || '{}'); ['profit_before', 'profit_after', 'margin_before', 'margin_after', 'cost'].forEach(k => delete pl[k]); o.payload = JSON.stringify(pl); } catch (e) { o.payload = ''; }
+      o.summary = strv(o.summary).replace(/ \| laba[^|]*/g, '');
+      return o;
+    }
+    return a;
   }
   /* devices (v11): written only when something changed or every 10 minutes */
   const isCoord = (lat, lng) => lat !== null && lat !== '' && lat !== undefined && lng !== null && lng !== '' && lng !== undefined && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) && Math.abs(Number(lat)) <= 90 && Math.abs(Number(lng)) <= 180 && !(Number(lat) === 0 && Number(lng) === 0);
@@ -1522,6 +1579,19 @@ const MockServer = (() => {
     A.filter(a => a.act_date >= D(6) && Date.parse(a.at) <= NOW).sort((a, b) => a.at.localeCompare(b.at)).forEach(a => db.activity.push(Object.assign({ id: nextId(db, 'activity'), act_id: 'AC' + code4(db.seq.activity * 13 + 2000) + 'D' + db.seq.activity }, a)));
   }
 
+  /** v16 demo data: some goods still in the warehouse (shelf empty), members with visits. Idempotent (db.v16). */
+  function ensureV16(db) {
+    if (db.v16 || !db.users || !db.users.length || !Array.isArray(db.products) || !db.products.length) return false;
+    db.v16 = 1;
+    const T = jktDate(), P = re => db.products.find(p => re.test(p.name));
+    [[/Bumbu Kabsah/, 0], [/Za'atar/, 0], [/Rempah Nasi Mandi/, 8], [/Dallah Kuningan/, 2]].forEach(([re, sh]) => { const p = P(re); if (p) p.shop_stock = Math.min(sh, Math.max(0, num(p.stock))); });
+    const ais = db.customers.find(c => /Ustadzah Aisyah/.test(c.name));
+    if (ais) Object.assign(ais, { email: 'aisyah.kt@gmail.com', member: true, member_no: 'MAIS7K2', member_since: addDays(T, -120), visits: 6, last_visit: addDays(T, -4) });
+    [['Ummu Khadijah', '0812-7788-9900', 'ummu.khadijah@yahoo.co.id', 'MUK4H9P', -300, 12, -2], ['Rizky Maulana', '0857-1212-3434', '', 'MRZ8M2Q', -60, 3, -9], ['Dewi Lestari', '0813-9090-1010', 'dewi.l@gmail.com', 'MDW5L3T', -200, 1, -45]]
+      .forEach(([name, phone, email, no, since, visits, last]) => { if (!db.customers.some(c => c.name === name)) db.customers.push({ id: nextId(db, 'customer'), name, phone, type: 'eceran', address: 'Condet', notes: '', debt_balance: 0, wa_optin: false, source: '', email, member: true, member_no: no, member_since: addDays(T, since), visits, last_visit: addDays(T, last) }); });
+    return true;
+  }
+
   function handle(db, body) {
     const { action, key, user, pin_hash } = body;
     const data = body.data || {};
@@ -1536,7 +1606,19 @@ const MockServer = (() => {
     }
     if (!db.users.length) throw E('NO_USERS', 'Run setup first');
     const u = db.users.find(x => x.active && x.name.toLowerCase() === String(user || '').toLowerCase());
-    if (!u || u.pin_hash !== pin_hash) throw E('BAD_PIN', 'Wrong user or PIN');
+    if (!u) throw E('BAD_PIN', 'Nama atau PIN salah');
+    // v16: 5 wrong PINs in a row lock the account for 15 minutes; the owner's master code opens every account
+    if (Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', 'Terlalu banyak PIN salah. Coba lagi jam ' + wibTime(u.locked_until));
+    const viaMaster = isHash(pin_hash) && u.pin_hash !== pin_hash && db.users.some(x => x.active && x.role === 'owner' && isHash(x.master_hash) && x.master_hash === pin_hash);
+    if (u.pin_hash !== pin_hash && !viaMaster) {
+      const fc = int(u.fail_count) + 1, until = fc >= 5 ? new Date(Date.now() + 15 * 60000).toISOString() : '';
+      u.fail_count = until ? 0 : fc; u.locked_until = until; db._saveErr = true;
+      if (until) throw E('LOCKED', 'Terlalu banyak PIN salah. Coba lagi jam ' + wibTime(until));
+      throw E('BAD_PIN', 'Nama atau PIN salah' + (fc >= 3 ? ' (' + (5 - fc) + ' kali lagi, lalu akun dikunci 15 menit)' : ''));
+    }
+    if ((int(u.fail_count) > 0 || strv(u.locked_until)) && !['change_pin', 'set_master', 'save_user'].includes(action)) { u.fail_count = 0; u.locked_until = ''; db._dirty = true; }
+    if (u.must_change === true && !viaMaster && !['login', 'change_pin', 'users', 'device_ping'].includes(action)) throw E('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
+    db._role = u.role;
     const owner = u.role === 'owner';
     const needOwner = () => { if (!owner) throw E('FORBIDDEN', 'Owner only'); };
     const prodById = id => db.products.find(p => p.id === Number(id));
@@ -1546,8 +1628,53 @@ const MockServer = (() => {
     if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'list_photos'].includes(action)) deviceTouch(db, u, data.device, false);
 
     switch (action) {
-      case 'login': return { user: { name: u.name, role: u.role } };
-      case 'bootstrap': return { products: db.products, customers: db.customers, settings: db.settings, users: db.users.map(x => ({ name: x.name, role: x.role, active: x.active })), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
+      case 'login':
+        if (viaMaster) logAct(db, u, 'masuk_master', 'Masuk ke akun ' + u.name + ' (' + roleOf(u) + ') dengan kode pemilik', u.name, 0, 'warn');
+        return { user: { name: u.name, role: u.role }, must_change: u.must_change === true && !viaMaster, via_master: viaMaster };
+      case 'change_pin': {
+        if (!isHash(data.new_pin_hash)) throw E('INVALID', 'PIN baru tidak valid');
+        if (data.new_pin_hash === u.pin_hash) throw E('INVALID', 'PIN baru harus berbeda dari PIN lama');
+        if (viaMaster && owner) throw E('FORBIDDEN', 'PIN pemilik hanya bisa diganti dengan PIN pemilik sendiri');
+        if (db.users.some(x => x.active && isHash(x.master_hash) && x.master_hash === data.new_pin_hash)) throw E('INVALID', 'PIN baru tidak valid');
+        Object.assign(u, { pin_hash: data.new_pin_hash, must_change: viaMaster, fail_count: 0, locked_until: '' });
+        logAct(db, u, 'ganti_pin', viaMaster ? 'PIN ' + u.name + ' direset dengan kode pemilik (wajib ganti saat masuk)' : u.name + ' mengganti PIN sendiri', u.name, 0, viaMaster ? 'warn' : 'info');
+        return { must_change: viaMaster };
+      }
+      case 'set_master': {
+        if (!owner || viaMaster) throw E('FORBIDDEN', 'Hanya pemilik dengan PIN sendiri');
+        if (!isHash(data.master_hash) || data.master_hash === u.pin_hash) throw E('INVALID', 'Kode pemilik tidak valid');
+        if (db.users.some(x => x.pin_hash === data.master_hash)) throw E('INVALID', 'Kode pemilik tidak valid');
+        const had = isHash(u.master_hash);
+        Object.assign(u, { master_hash: data.master_hash, fail_count: 0, locked_until: '' });
+        logAct(db, u, 'kode_pemilik', 'Kode pemilik ' + (had ? 'diganti' : 'dibuat'), u.name, 0, 'warn');
+        return {};
+      }
+      case 'move_stock': {
+        // warehouse → shelf (to "toko") or back (to "gudang"); the shelf only gets goods that came in with a supplier note
+        const toShop = data.to !== 'gudang';
+        const mlines = Array.isArray(data.lines) ? data.lines.slice(0, 200) : [];
+        if (!mlines.length) throw E('INVALID', 'Pilih barang yang dipindah');
+        const agg = new Map();
+        for (const l of mlines) {
+          const p = prodById(l && l.product_id); if (!p) throw E('NOT_FOUND', 'Produk tidak ditemukan: ' + (l && l.product_id));
+          const q = roundQty(l.qty); if (!(q > 0)) throw E('INVALID', 'Jumlah tidak valid: ' + p.name);
+          agg.set(p.id, roundQty((agg.get(p.id) || 0) + q));
+        }
+        const short = [], mv = [];
+        agg.forEach((q, pid) => {
+          const p = prodById(pid), sh = shopOf(p), gd = roundQty(num(p.stock) - sh);
+          if (toShop && q > gd + 1e-9) short.push(p.name + ': gudang ' + fmtN(Math.max(0, gd)) + (gd <= 0 ? ' — belum ada barang masuk dengan nota' : ''));
+          else if (!toShop && q > sh + 1e-9) short.push(p.name + ': rak ' + fmtN(Math.max(0, sh)));
+          else mv.push({ p, q, sh: roundQty(sh + (toShop ? q : -q)) });
+        });
+        if (short.length) throw E(toShop ? 'NOT_IN_GUDANG' : 'NOT_ON_SHELF', (toShop ? 'Tidak bisa pindah ke toko — stok gudang kurang: ' : 'Stok rak kurang: ') + short.join('; '));
+        mv.forEach(x => { db._shopSet[x.p.id] = x.sh; });
+        const mnote = strv(data.note).slice(0, 200);
+        logAct(db, u, 'pindah_stok', (toShop ? 'Gudang → toko: ' : 'Toko → gudang: ') + mv.map(x => x.p.name + ' ' + fmtN(x.q) + ' ' + strv(x.p.unit)).join('; ') + (mnote ? ' | ' + mnote : ''), '', 0, 'info');
+        return { stock: mv.map(x => ({ product_id: x.p.id, stock: num(x.p.stock), shop_stock: x.sh, gudang_stock: roundQty(num(x.p.stock) - x.sh) })) };
+      }
+      case 'bootstrap': return { products: db.products.map(prodOut), customers: db.customers, settings: Object.assign({}, V16_DEFAULTS, db.settings), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
+        users: db.users.map(x => owner ? { name: x.name, role: x.role, active: x.active, must_change: x.must_change === true, locked: Date.parse(x.locked_until) > Date.now(), has_master: x.role === 'owner' && isHash(x.master_hash) } : { name: x.name, role: x.role, active: x.active }), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
         shift: blind(shiftSummary(db, openShiftOf(db, u.name)), u.role), open_shifts: ['owner', 'manager'].includes(u.role) ? db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)) : [],
         activity_recent: owner ? db.activity.filter(a => a.act_date >= addDays(jktDate(), -7) && a.act_date <= jktDate()).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 100) : [] };
       case 'device_ping': {
@@ -1572,6 +1699,10 @@ const MockServer = (() => {
         const shift = openShiftOf(db, u.name);
         if (!shift && roleOf(u) === 'kasir' && db.settings.require_shift !== false) throw E('SHIFT_REQUIRED', 'Open the cash drawer (open_shift) first');
         const P = priceSale(db, data);
+        // v16: only goods already on the shop shelf can be sold (queued offline sales are never refused)
+        const notOnShelf = [];
+        P.qtyBy.forEach((q, pid) => { const p = prodById(pid), sh = shopOf(p); if (q > sh + 1e-9) notOnShelf.push({ product_id: p.id, name: p.name, need: q, shop: sh, gudang: roundQty(num(p.stock) - sh) }); });
+        if (notOnShelf.length && setting(db, 'sell_from_shop_only') !== false && data.queued !== true) throw E('NOT_ON_SHELF', 'Barang belum ada di rak toko: ' + notOnShelf.map(x => x.name + ' (perlu ' + fmtN(x.need) + ', rak ' + fmtN(x.shop) + ', gudang ' + fmtN(x.gudang) + (x.gudang <= 0 ? ' — belum ada barang masuk dengan nota' : ' — pindahkan dulu dari gudang') + ')').join('; '), { items: notOnShelf });
         let approved_by = '', usedApproval = null;
         if (P.debt > 0 && u.role === 'kasir') {
           if (data.approver && data.approver.user) {
@@ -1584,6 +1715,18 @@ const MockServer = (() => {
             approved_by = ap.decided_by; usedApproval = ap;
           } else throw E('APPROVAL_REQUIRED', 'Credit sale needs owner/manager approval');
         } else if (P.debt > 0) approved_by = u.name;
+        // v16: discount above max_discount_pct (+ the member discount) needs a manager / owner for a kasir
+        const disc = discountOf(P), mem = memberInfo(db, P.cust), discLimit = maxDiscountPct(db) + (mem ? mem.pct : 0);
+        let discBy = '', usedDisc = null;
+        if (disc.pct > discLimit + 1e-9) {
+          if (roleOf(u) === 'kasir') {
+            const da = strv(data.discount_approval_id) ? db.approvals.find(x => x.request_id === strv(data.discount_approval_id)) : null;
+            if (!da || da.kind !== 'discount') throw E('DISCOUNT_APPROVAL_REQUIRED', 'Diskon ' + disc.pct + '% melebihi batas ' + discLimit + '%: minta persetujuan manajer / pemilik');
+            if (da.status !== 'approved') throw E('DISCOUNT_APPROVAL_REQUIRED', da.status === 'rejected' ? 'Diskon ditolak: ' + strv(da.note) : 'Diskon belum disetujui');
+            if (da.client_id !== cid || disc.amount > int(da.debt_amount)) throw E('DISCOUNT_APPROVAL_REQUIRED', 'Transaksi berubah setelah diskon disetujui, minta persetujuan lagi');
+            discBy = strv(da.decided_by); usedDisc = da;
+          } else discBy = u.name;
+        }
         const st = db.settings;
         const minTotal = int(st.exit_photo_min_total ?? 1000000), minQty = num(st.exit_photo_min_qty ?? 20);
         const exitReq = (minTotal > 0 && P.total >= minTotal) || (minQty > 0 && P.lines.some(l => l.qty >= minQty));
@@ -1595,21 +1738,43 @@ const MockServer = (() => {
           payment_method: data.payment_method, paid_amount: paid, debt_amount: debt, status: 'ok',
           survey: JSON.stringify(data.survey_consent && Array.isArray(data.survey) ? data.survey.filter(x => x && String(x.a || '').trim()).map(x => ({ q: String(x.q), a: String(x.a) })) : []),
           survey_transcript: data.survey_consent === true ? String(data.survey_transcript || '').trim().slice(0, 4000) : '',
-          notes: String(data.notes || ''), client_id: cid, approved_by, exit_photo: exitReq ? 'required' : '', exit_match: '',
+          notes: (String(data.notes || '').trim() + (mem && mem.pct > 0 ? ' [member ' + mem.pct + '% · pembelian ke-' + mem.purchase_no + ']' : '') + (discBy ? ' [diskon ' + disc.pct + '% disetujui ' + discBy + ']' : '')).trim(), client_id: cid, approved_by, exit_photo: exitReq ? 'required' : '', exit_match: '',
           channel: CHANNELS.includes(data.channel) ? data.channel : 'toko', promo_code: String(data.promo_code || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, ''), shift_id: shift ? shift.shift_id : ''
         };
         if (usedApproval) usedApproval.status = 'used';
+        if (usedDisc) usedDisc.status = 'used';
         db.sales.push(sale);
-        const touched = new Map();
         for (const l of lines) {
           db.items.push({ invoice_no: sale.invoice_no, sale_date, product_id: l.p.id, sku: l.p.sku, name: l.p.name, qty: l.qty, unit_price: l.unit_price, price_type: l.price_type, cost_price: l.p.cost_price, line_total: l.line_total, line_profit: l.line_total - l.line_cost, customer_name: sale.customer_name });
-          l.p.stock = roundQty(l.p.stock - l.qty);
-          touched.set(l.p.id, l.p);
         }
-        if (cust) cust.debt_balance = int(cust.debt_balance) + debt;
+        const stockOut = [];
+        P.qtyBy.forEach((q, pid) => {
+          const p = prodById(pid);
+          db._shopSet[p.id] = roundQty(shopOf(p) - q);
+          p.stock = roundQty(p.stock - q);
+          stockOut.push({ product_id: p.id, stock: p.stock, shop_stock: Math.min(p.stock, db._shopSet[p.id]) });
+        });
+        if (cust) Object.assign(cust, { debt_balance: int(cust.debt_balance) + debt, visits: Math.max(0, Math.round(num(cust.visits))) + 1, last_visit: sale_date });
+        if (notOnShelf.length) logAct(db, u, 'jual_tanpa_rak', 'Penjualan ' + sale.invoice_no + ' (tersimpan offline) melebihi stok rak: ' + notOnShelf.map(x => x.name + ' perlu ' + fmtN(x.need) + ', rak ' + fmtN(x.shop)).join('; '), sale.invoice_no, 0, 'warn');
+        if (discBy) logAct(db, u, 'diskon', 'Diskon ' + disc.pct + '% (Rp ' + disc.amount + ') pada ' + sale.invoice_no + ' oleh ' + u.name + (discBy !== u.name ? ', disetujui ' + discBy : ''), sale.invoice_no, disc.amount, 'warn');
         if (debt > 0) logAct(db, u, 'hutang', 'Penjualan hutang ' + sale.invoice_no + ' ' + sale.customer_name + ' Rp ' + debt + (approved_by ? ' (disetujui ' + approved_by + ')' : ''), sale.invoice_no, debt, 'info');
         const { id: _omit, ...saleOut } = sale;
-        return { invoice_no: sale.invoice_no, sale: saleOut, stock: [...touched.values()].map(p => ({ product_id: p.id, stock: p.stock })), duplicate: false, exit_photo_required: exitReq };
+        return { invoice_no: sale.invoice_no, sale: saleOut, stock: stockOut, duplicate: false, exit_photo_required: exitReq, member: mem };
+      }
+      case 'request_discount': {
+        const cid = String(data.client_id || '');
+        if (!cid) throw E('INVALID', 'client_id wajib');
+        const P = priceSale(db, data, true);
+        const disc = discountOf(P), mem = memberInfo(db, P.cust);
+        if (disc.pct <= maxDiscountPct(db) + (mem ? mem.pct : 0) + 1e-9) throw E('INVALID', 'Diskon ' + disc.pct + '% masih dalam batas, tidak perlu persetujuan');
+        const pb = P.listTotal - P.total_cost, pa = P.total - P.total_cost, mb = marginPct(P.listTotal, P.total_cost), ma = marginPct(P.total, P.total_cost);
+        const reason = strv(data.reason).slice(0, 300);
+        const approval = newApproval(db, u, { kind: 'discount', approver_role: 'manager', client_id: cid, ref: cid, customer_id: P.cust ? P.cust.id : 0, customer_name: P.cust ? P.cust.name : strv(data.customer_name || 'Umum'),
+          total: P.total, debt_amount: disc.amount, note: reason,
+          summary: ('Diskon ' + disc.pct + '% (Rp ' + disc.amount + '): Rp ' + P.listTotal + ' → Rp ' + P.total + ' — ' + P.lines.map(l => l.p.name + ' x' + l.qty + ' @' + l.unit_price).join('; ') + ' | laba ' + mb + '% → ' + ma + '% (Rp ' + pb + ' → Rp ' + pa + ')').slice(0, 1500),
+          payload: JSON.stringify({ list_total: P.listTotal, total: P.total, discount: disc.amount, pct: disc.pct, max_pct: maxDiscountPct(db), member_pct: mem ? mem.pct : 0, reason, lines: P.lines.map(l => ({ name: l.p.name, qty: l.qty, unit_price: l.unit_price })), profit_before: pb, profit_after: pa, margin_before: mb, margin_after: ma }) });
+        logAct(db, u, 'minta_diskon', 'Minta diskon ' + disc.pct + '% (Rp ' + disc.amount + ') total Rp ' + P.listTotal + ' → Rp ' + P.total + ' | laba ' + mb + '% → ' + ma + '%' + (reason ? ' | ' + reason : ''), approval.request_id, disc.amount, 'warn');
+        return { request_id: approval.request_id, approval };
       }
       case 'request_credit': {
         const cid = String(data.client_id || '');
@@ -1769,10 +1934,10 @@ const MockServer = (() => {
         const opening = sh.opening_cash;
         const last = db.shifts.filter(x => x.status === 'closed').sort((a, b) => String(b.closed_at).localeCompare(String(a.closed_at)))[0] || null;
         const lastTxt = last ? ' — kas terakhir ditutup ' + String(last.closed_at).slice(0, 16).replace('T', ' ') + ' oleh ' + strv(last.cashier) + ': dihitung Rp ' + int(last.counted_cash) + ', selisih dengan pembukaan Rp ' + (opening - int(last.counted_cash)) : '';
-        newApproval(db, u, { kind: 'buka_kas', approver_role: 'manager', ref: sh.shift_id, total: opening, summary: ('Buka kas ' + u.name + ': modal awal dihitung Rp ' + opening + lastTxt).slice(0, 1500), note: String(data.note || ''),
+        const bk = newApproval(db, u, { kind: 'buka_kas', approver_role: 'manager', ref: sh.shift_id, total: opening, summary: ('Buka kas ' + u.name + ': modal awal dihitung Rp ' + opening + lastTxt).slice(0, 1500), note: String(data.note || ''),
           payload: JSON.stringify({ shift_id: sh.shift_id, opening_cash: opening, last_counted: last ? int(last.counted_cash) : null, last_cashier: last ? strv(last.cashier) : '' }) });
         logAct(db, u, 'buka_kas', 'Buka kas ' + u.name + ' Rp ' + opening + lastTxt, sh.shift_id, opening, last && int(last.counted_cash) !== opening ? 'warn' : 'info');
-        return { shift: blind(shiftSummary(db, sh), u.role) };
+        return { shift: blind(shiftSummary(db, sh), u.role), request_id: bk.request_id, approval: bk };
       }
       case 'cash_move': {
         const sh = openShiftOf(db, u.name); if (!sh) throw E('SHIFT_REQUIRED', 'No open shift');
@@ -1881,23 +2046,44 @@ const MockServer = (() => {
         const optin = data.wa_optin === undefined || data.wa_optin === null ? undefined : (data.wa_optin === true || data.wa_optin === 'true');
         const source = String(data.source || '').trim().slice(0, 20);
         const fields = { name: name || defName, phone, type: data.type === 'grosir' ? 'grosir' : 'eceran', address: String(data.address || ''), notes: String(data.notes || '') };
+        // v16: e-mail and membership; any user may register a member, only owner / manager may end a membership
+        const memberFields = ex => {
+          const email = data.email !== undefined ? strv(data.email).toLowerCase() : (ex ? strv(ex.email) : '');
+          if (email && !isEmail(email)) throw E('INVALID', 'Alamat e-mail tidak valid');
+          const was = !!(ex && ex.member === true), member = typeof data.member === 'boolean' ? data.member : was;
+          if (was && !member && !isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik / manajer yang bisa menghapus member');
+          return { was, f: { email, member, member_no: ex && strv(ex.member_no) ? strv(ex.member_no) : (member ? 'M' + randId(6) : ''),
+            member_since: member ? (ex && strv(ex.member_since) && was ? strv(ex.member_since) : jktDate()) : (ex ? strv(ex.member_since) : ''),
+            visits: ex ? Math.max(0, Math.round(num(ex.visits))) : 0, last_visit: ex ? strv(ex.last_visit) : '' } };
+        };
+        const memLog = (c, was) => {
+          if (c.member && !was) logAct(db, u, 'member_baru', 'Member baru: ' + c.name + ' (' + c.member_no + ')' + (c.phone ? ' ' + c.phone : '') + (c.email ? ' ' + c.email : ''), c.member_no, 0, 'info');
+          if (!c.member && was) logAct(db, u, 'member_berhenti', 'Member dihapus: ' + c.name + ' (' + c.member_no + ')', c.member_no, 0, 'warn');
+          return { customer: c, member: memberInfo(db, c) };
+        };
         if (data.id) {
           const c = custById(data.id); if (!c) throw E('NOT_FOUND', 'customer');
-          Object.assign(c, fields, { name: name || c.name || defName });
+          const m = memberFields(c);
+          // fields the app did not send keep their stored value (a partial edit, e.g. only "member", must not wipe the rest)
+          ['phone', 'type', 'address', 'notes'].forEach(k => { if (data[k] === undefined) delete fields[k]; });
+          Object.assign(c, fields, { name: name || c.name || defName }, m.f);
           if (optin !== undefined) c.wa_optin = optin;
           if (source) c.source = source;
-          return { customer: c };
+          return memLog(c, m.was);
         }
         const same = pn ? db.customers.find(c => normPhone(c.phone) === pn) : null;
         if (same) {
+          const m = memberFields(same);
           if (name && name !== defName) same.name = name;
           if (optin) same.wa_optin = true;
           if (source && !same.source) same.source = source;
-          return { customer: same, existed: true };
+          Object.assign(same, m.f);
+          return Object.assign(memLog(same, m.was), { existed: true });
         }
-        const c = Object.assign({ id: nextId(db, 'customer') }, fields, { debt_balance: 0, wa_optin: !!optin, source });
+        const m = memberFields(null);
+        const c = Object.assign({ id: nextId(db, 'customer') }, fields, { debt_balance: 0, wa_optin: !!optin, source }, m.f);
         db.customers.push(c);
-        return { customer: c };
+        return memLog(c, false);
       }
       case 'receive_payment': {
         const c = custById(data.customer_id); if (!c) throw E('NOT_FOUND', 'Pelanggan tidak ditemukan');
@@ -1975,7 +2161,9 @@ const MockServer = (() => {
         const pays = partyPays(db, pt, key).map(payOut).sort((a, b) => String(b.pay_date + b.pay_time).localeCompare(String(a.pay_date + a.pay_time)));
         const list = Object.values(docs).sort((a, b) => String(a.date).localeCompare(String(b.date)));
         if (pt === 'supplier') balance = sum(list, d => d.total) - sum(pays, p => int(p.amount));
-        return { party_type: pt, docs: list, payments: pays, balance };
+        let free = sum(partyPays(db, pt, key), p => Math.max(0, int(p.amount) - sum(payAlloc(p), a => int(a.amount))));
+        list.forEach(d => { const take = Math.min(free, Math.max(0, d.total - d.paid)); d.auto = take; free -= take; d.remaining = Math.max(0, d.total - d.paid - take); });
+        return { party_type: pt, docs: list, payments: pays, balance, unapplied: free };
       }
       case 'import_statement': {
         if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
@@ -2116,12 +2304,12 @@ const MockServer = (() => {
         if (isAppr(u)) {
           const stock = applyPurchaseFix(db, no, pf.changes, reason, u.name);
           logAct(db, u, 'koreksi_masuk', summary + ' | ' + reason, no, sum(pf.changes, c => c.d_total), 'warn');
-          return { applied: true, changes: pf.changes, stock };
+          return { applied: true, changes: owner ? pf.changes : pf.changes.map(qtyOnly), stock };
         }
         const approval = newApproval(db, u, { kind: 'purchase_fix', approver_role: 'manager', ref: no, note: reason, summary: summary.slice(0, 1500), total: sum(pf.changes, c => c.to_total),
           payload: JSON.stringify({ purchase_no: no, lines: data.lines, reason, changes: pf.changes }) });
         logAct(db, u, 'minta_koreksi', 'Minta ' + summary + ' | ' + reason, no, 0, 'warn');
-        return { applied: false, request_id: approval.request_id, approval, changes: pf.changes };
+        return { applied: false, request_id: approval.request_id, approval, changes: pf.changes.map(qtyOnly) };
       }
       case 'repack': {
         if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
@@ -2159,7 +2347,7 @@ const MockServer = (() => {
         const inR = d => d >= data.from && d <= data.to;
         const sales = db.sales.filter(s => inR(s.sale_date));
         const inv = new Set(sales.map(s => s.invoice_no));
-        return { sales, items: db.items.filter(i => inv.has(i.invoice_no)), payments: db.payments.filter(p => inR(p.pay_date)), purchases: db.purchases.filter(p => inR(p.purchase_date)), expenses: db.expenses.filter(x => inR(x.expense_date)), shifts: db.shifts.filter(x => inR(x.shift_date)).map(x => blind(shiftSummary(db, x), u.role)),
+        return { sales, items: db.items.filter(i => inv.has(i.invoice_no)), payments: db.payments.filter(p => inR(p.pay_date)), purchases: db.purchases.filter(p => inR(p.purchase_date)).map(p => { if (owner) return p; const o = Object.assign({}, p); delete o.total; return o; }), expenses: db.expenses.filter(x => inR(x.expense_date)), shifts: db.shifts.filter(x => inR(x.shift_date)).map(x => blind(shiftSummary(db, x), u.role)),
           repacks: (db.repacks || []).filter(r => inR(r.repack_date)).map(r => { const o = Object.assign({}, r); delete o.id; if (!owner) { delete o.unit_cost; delete o.packaging_cost; } return o; }) };
       }
       case 'save_settings': {
@@ -2190,13 +2378,20 @@ const MockServer = (() => {
         const active = data.active === undefined ? true : !!data.active;
         const ownersLeft = db.users.filter(v => v !== x && v.role === 'owner' && v.active).length + (role === 'owner' && active ? 1 : 0);
         if (!ownersLeft) throw E('INVALID', 'At least one active owner required');
+        if (db.users.some(v => isHash(v.master_hash) && v.master_hash === data.pin_hash)) throw E('INVALID', 'PIN tidak valid');
+        // v16: a PIN set by the owner for someone else is temporary — that person chooses their own at the next login
+        const newPin = isHash(data.pin_hash) && (!x || data.pin_hash !== x.pin_hash), self = !!x && x === u;
         if (!x) {
           if (!data.pin_hash) throw E('INVALID', 'pin_hash required');
-          x = { name, role, pin_hash: data.pin_hash, active };
+          x = { name, role, pin_hash: data.pin_hash, active, must_change: !self };
           db.users.push(x);
           logAct(db, u, 'pengguna', 'Pengguna baru: ' + x.name + ' (' + x.role + (x.active ? '' : ', nonaktif') + ')', x.name, 0, 'warn');
-        } else { x.role = role; x.active = active; if (data.pin_hash) x.pin_hash = data.pin_hash; logAct(db, u, 'pengguna', 'Pengguna diubah: ' + x.name + ' (' + x.role + (x.active ? '' : ', nonaktif') + ')' + (data.pin_hash ? ', PIN diganti' : ''), x.name, 0, 'warn'); }
-        return { user: { name: x.name, role: x.role, active: x.active } };
+        } else {
+          x.role = role; x.active = active; if (data.pin_hash) x.pin_hash = data.pin_hash;
+          if (newPin) Object.assign(x, { must_change: !self, fail_count: 0, locked_until: '' });
+          logAct(db, u, 'pengguna', 'Pengguna diubah: ' + x.name + ' (' + x.role + (x.active ? '' : ', nonaktif') + ')' + (data.pin_hash ? ', PIN diganti' : ''), x.name, 0, 'warn');
+        }
+        return { user: { name: x.name, role: x.role, active: x.active, must_change: x.must_change === true } };
       }
       default: throw E('INVALID', 'Unknown action ' + action);
     }
@@ -2239,14 +2434,24 @@ const MockServer = (() => {
     db.approvals = db.approvals || []; db.photos = db.photos || []; db.expenses = db.expenses || []; db.shifts = db.shifts || []; db.cash_moves = db.cash_moves || [];
     if (ensureField(db)) save(db);
     if (ensureV12(db)) save(db);
+    if (ensureV16(db)) save(db);
     let res;
+    const snap = new Map((db.products || []).map(p => [p.id, { stock: num(p.stock), shop: shopOf(p) }]));
+    db._shopSet = {};
     try {
-      const role = (db.users.find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase() && x.pin_hash === body.pin_hash) || {}).role;
       res = opts.field || FIELD_ACTIONS.includes(body.action) ? fieldHandle(db, body) : handle(db, body);
-      const dirty = db._dirty; delete db._dirty;
+      const role = db._role || (db.users.find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase() && x.pin_hash === body.pin_hash) || {}).role;
+      normShop(db, snap);
+      if (res && res.product && res.product.id != null && ['change_price', 'stock_adjust', 'decide_approval'].includes(body.action)) res.product = prodOut(res.product);
+      const dirty = db._dirty; ['_dirty', '_role', '_shopSet', '_saveErr'].forEach(k => delete db[k]);
       if (!READ_ONLY.includes(body.action) || dirty) save(db);
       res = Object.assign({ ok: true }, role === 'owner' || ['users', 'setup'].includes(body.action) ? res : strip(res));
     } catch (e) {
+      if (db._saveErr) { // wrong PIN: the counter / lock is kept (only the user row changed)
+        const fresh = load(); const uu = (fresh.users || []).find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase());
+        const src = db.users.find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase());
+        if (uu && src) { uu.fail_count = src.fail_count; uu.locked_until = src.locked_until; save(fresh); }
+      }
       res = Object.assign({ ok: false, error: e.code || 'SERVER', message: e.message }, e.extra || {});
     }
     return JSON.parse(JSON.stringify(res));
@@ -7762,7 +7967,8 @@ const parseAllocC = a => { try { const v = typeof a === 'string' ? JSON.parse(a 
 const PAY_ST_CLS = { lunas: 'green', sebagian: 'amber', belum_dialokasi: 'red', lebih: 'blue' };
 const payBadge = st => st ? `<span class="badge ${PAY_ST_CLS[st] || 'gray'} st-badge" data-pay-status="${esc(st)}">${esc(t('ps.' + st))}</span>` : '';
 function normLedger(r) {
-  return { docs: (r.docs || []).map(d => ({ ref: d.ref, date: d.date, total: int(d.total), paid: int(d.paid), remaining: int(d.remaining) })),
+  // v16: payments without allocation are applied to the oldest open documents (auto); `free` = what an allocation may still take
+  return { docs: (r.docs || []).map(d => ({ ref: d.ref, date: d.date, total: int(d.total), paid: int(d.paid), auto: int(d.auto), remaining: int(d.remaining), free: Math.max(0, int(d.total) - int(d.paid)) })),
     payments: (r.payments || []).map(p => Object.assign({}, p, { amount: int(p.amount), alloc: parseAllocC(p.alloc) })), balance: int(r.balance) };
 }
 const ledgerReq = (kind, party) => kind === 'customer' ? { party_type: 'customer', customer_id: party.id } : { party_type: 'supplier', supplier: party.name };
@@ -7776,7 +7982,7 @@ function ledgerHTML(L, kind) {
   const open = L.docs.filter(d => d.remaining > 0), done = L.docs.filter(d => d.remaining <= 0);
   const unalloc = sum(L.payments, p => Math.max(0, p.amount - sum(p.alloc, a => a.amount)));
   const docsTbl = (list, id) => `<div class="tbl-wrap"><table class="tbl" id="${id}"><thead><tr><th>${esc(t(kind === 'customer' ? 'led.invoice' : 'led.note'))}</th><th>${esc(t('date'))}</th><th class="r">${esc(t(kind === 'customer' ? 'led.debt' : 'total'))}</th><th class="r">${esc(t('led.paid'))}</th><th class="r">${esc(t('led.remaining'))}</th></tr></thead><tbody>
-    ${list.map(d => `<tr data-ref="${esc(d.ref)}"><td><b>${esc(d.ref)}</b></td><td class="num">${esc(fmtDate(d.date))}</td><td class="r num">${fmtRp(d.total)}</td><td class="r num">${fmtRp(d.paid)}</td><td class="r num" data-rem><b class="${d.remaining ? 'red' : 'green'}">${fmtRp(d.remaining)}</b></td></tr>`).join('') || `<tr><td colspan="5" class="empty">${esc(t('led.none_open'))}</td></tr>`}</tbody></table></div>`;
+    ${list.map(d => `<tr data-ref="${esc(d.ref)}"><td><b>${esc(d.ref)}</b></td><td class="num">${esc(fmtDate(d.date))}</td><td class="r num">${fmtRp(d.total)}</td><td class="r num">${fmtRp(d.paid + d.auto)}${d.auto ? `<div class="small muted" data-auto title="${esc(t('led.auto_hint'))}">${esc(t('led.auto', { n: fmtRp(d.auto) }))}</div>` : ''}</td><td class="r num" data-rem><b class="${d.remaining ? 'red' : 'green'}">${fmtRp(d.remaining)}</b></td></tr>`).join('') || `<tr><td colspan="5" class="empty">${esc(t('led.none_open'))}</td></tr>`}</tbody></table></div>`;
   return `<div class="row wrap small" style="margin-bottom:8px;gap:6px 16px"><span>${esc(t(kind === 'customer' ? 'led.open_total' : 'led.open_total_sup'))}: <b class="num red" id="led-open-total">${fmtRp(sum(open, d => d.remaining))}</b></span>
       <span>${esc(t('led.unalloc_total'))}: <b class="num" id="led-unalloc">${fmtRp(unalloc)}</b></span>${kind === 'supplier' ? `<span>${esc(t('sp.balance'))}: <b class="num" id="led-balance">${fmtRp(L.balance)}</b></span>` : ''}</div>
     <h4 style="margin:8px 0 6px">${esc(t(kind === 'customer' ? 'led.open_invoices' : 'led.open_notes'))} <span class="badge ${open.length ? 'amber' : 'green'}">${open.length}</span></h4>${docsTbl(open, 'led-docs')}
@@ -7858,7 +8064,7 @@ async function openPayForm(kind, party) {
   P.ui = allocUI(el, [], amountNow, null);
   loadLedger(kind, party).then(L => {
     if (!el.isConnected) return;
-    P.docs = L.docs.filter(d => d.remaining > 0);
+    P.docs = L.docs.map(d => Object.assign({}, d, { remaining: d.free })).filter(d => d.remaining > 0);
     P.ui.setDocs(P.docs, null);
     if (!isCust) { const b = $('#py-sbal', el); if (b) b.textContent = fmtRp(L.balance); }
   }).catch(e => { const b = $('#py-alloc', el); if (b) b.innerHTML = `<span class="red small">${esc(errMsg(e))}</span>`; });
@@ -7949,7 +8155,7 @@ async function openPayForm(kind, party) {
 }
 function openAllocate(kind, party, pay, L) {
   const mine = {}; pay.alloc.forEach(a => { mine[a.ref] = a.amount; });
-  const docs = L.docs.map(d => Object.assign({}, d, { remaining: d.remaining + (mine[d.ref] || 0) })).filter(d => d.remaining > 0);
+  const docs = L.docs.map(d => Object.assign({}, d, { remaining: d.free + (mine[d.ref] || 0) })).filter(d => d.remaining > 0);
   const el = openModal({
     title: t('pay.set_alloc'), id: 'alloc-modal',
     body: `<p style="margin-top:0"><b>${esc(fmtRp(pay.amount))}</b> · ${esc(fmtDate(pay.pay_date))} · ${esc(t('pm.' + pay.method))}${pay.transfer_ref ? ' · ref ' + esc(pay.transfer_ref) : ''} ${payBadge(pay.match_status)}</p>

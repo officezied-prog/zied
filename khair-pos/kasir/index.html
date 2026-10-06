@@ -377,6 +377,12 @@ tr.bad td{background:var(--redt);color:var(--redd);font-weight:800}
 
 /* v15: closing reminder */
 .rep-banner{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border-radius:12px;background:var(--warnt);color:#78350F;font-weight:800;font-size:14.5px;margin-bottom:8px;border:1px solid #FCD34D}
+/* v16: member badge, discount box */
+.apr-sum div{min-width:0} .apr-sum .v{overflow-wrap:anywhere}
+.mbadge{display:flex;align-items:center;gap:6px;margin-top:8px;padding:8px 12px;border-radius:12px;background:var(--okt);color:var(--ok);font-weight:800;font-size:14.5px}
+.mbadge svg.i{width:18px;height:18px}
+.discbox{margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#F8FAFC}
+.discbox .input{margin-top:6px}
 /* ========== Busy bar ========== */
 body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-index:300;background:linear-gradient(90deg,transparent,#F59E0B,transparent);background-size:40% 100%;background-repeat:no-repeat;animation:busy 1s linear infinite}
 @keyframes busy{from{background-position:-40% 0}to{background-position:140% 0}}
@@ -2217,6 +2223,14 @@ function pinpadHTML(locked) {
 /* v16: 5 wrong PINs → LOCKED for 15 min (the server says until when); the pad stays off until then. */
 const LOCKS = {};
 const lockedUntil = user => LOCKS[String(user || '').toLowerCase()] || 0;
+/** The server says "… Coba lagi jam HH:MM WIB": that time today (Jakarta), else 15 minutes from now. */
+function lockUntilFrom(e) {
+  const m = /(\d{2}):(\d{2})/.exec(String(e && e.message || ''));
+  if (!m) return Date.now() + 15 * 60000;
+  let at = Date.parse(today() + 'T' + m[1] + ':' + m[2] + ':00+07:00');
+  if (at < Date.now() - 60000) at += 86400000;
+  return at;
+}
 const pinMax = () => L.master ? 8 : 6;
 /** v16: a new / reset PIN must be replaced at first login; also when any call answers PIN_CHANGE_REQUIRED. */
 function askNewPin(user, role, oldHash, via) {
@@ -2262,7 +2276,7 @@ async function submitPin() {
   if (!L.sel) { L.step = 'users'; renderLogin(); return; }
   const master = !!L.master;
   if (!master && lockedUntil(L.sel) > Date.now()) { renderLogin(); return; }
-  if (master ? !/^\d{8}$/.test(L.pin) : !/^\d{4,6}$/.test(L.pin)) { L.err = t(master ? 'login.master_len' : 'login.pin_len'); renderLogin(); return; }
+  if (master ? !/^\d{8}$/.test(L.pin) : !/^\d{4,6}$/.test(L.pin)) { L.err = t(master ? 'login.master_len' : 'login.pin_len'); L.pin = ''; renderLogin(); return; }
   L.busy = true; L.err = ''; renderLogin();
   // v16 owner master code: pin_hash = sha256(KEY + ':__master__:' + code), for the account chosen
   const user = L.sel, hash = master ? await sha256Hex(S.key + ':__master__:' + L.pin) : await pinHash(S.key, user, L.pin);
@@ -2276,7 +2290,7 @@ async function submitPin() {
   } catch (e) {
     L.busy = false; L.pin = '';
     if (e.code === 'LOCKED') {
-      const until = Date.parse(e.res && e.res.locked_until) || Date.now() + 15 * 60000;
+      const until = lockUntilFrom(e);
       LOCKS[user.toLowerCase()] = until; L.err = '';
       setTimeout(() => { if (!$('#login').hidden && L.step === 'pin') renderLogin(); }, Math.min(until - Date.now() + 500, 2147483000));
       renderLogin(); return;
@@ -2285,7 +2299,9 @@ async function submitPin() {
       const known = store.get('pins', {})[user.toLowerCase()];
       if (known && known.o && known.o === await offlineVerifier(hash) && KS.get('cache')) { startSession(user, known.role, hash, true); return; }
     }
-    L.err = e.code === 'BAD_PIN' ? t('err.BAD_PIN') : errMsg(e);
+    // v16: the server warns before the lock ("(2 kali lagi, lalu akun dikunci 15 menit)")
+    const left = /\((\d) kali lagi/.exec(String(e.message || ''));
+    L.err = e.code === 'BAD_PIN' ? t('err.BAD_PIN') + (left ? ' — ' + t('login.tries_left', { n: left[1] }) : '') : errMsg(e);
     if (e.code === 'BAD_KEY') L.step = 'key';
     renderLogin();
   }
@@ -2323,7 +2339,7 @@ function forceRelogin(e) {
   if (e.code === 'BAD_KEY' || e.code === 'NO_USERS') { S.pin_hash = ''; KS.del('session'); SESS.del(); showLogin('key', t('err.' + e.code)); return; }
   // already locked: a background request that was still in flight must not wipe the PIN being typed
   if (e.code === 'BAD_PIN' && !S.pin_hash && !$('#login').hidden && L.step === 'pin') return;
-  if (e.code === 'LOCKED') LOCKS[String(S.user).toLowerCase()] = Date.parse(e.res && e.res.locked_until) || Date.now() + 15 * 60000;
+  if (e.code === 'LOCKED') LOCKS[String(S.user).toLowerCase()] = lockUntilFrom(e);
   S.pin_hash = ''; KS.set('session', { user: S.user, role: S.role }); SESS.del();
   L.sel = S.user; L.users = [];
   showLogin('pin', t('err.BAD_PIN_SESSION'));
@@ -2359,7 +2375,7 @@ function saveCache() {
 function applyPendingToLocal() {
   for (const e of S.outbox) {
     if (e.kind === 'sale') {
-      for (const it of e.data.items) { const p = prodById(it.product_id); if (p) p.stock = roundQty(p.stock - it.qty); }
+      for (const it of e.data.items) { const p = prodById(it.product_id); if (p) { p.stock = roundQty(p.stock - it.qty); if (p.shop_stock != null && p.shop_stock !== '') p.shop_stock = roundQty(num(p.shop_stock) - it.qty); } }
       const c = custById(e.data.customer_id); if (c && e.rc) c.debt_balance += int(e.rc.debt);
     } else if (e.kind === 'payment') { const c = custById(e.data.customer_id); if (c) c.debt_balance = Math.max(0, c.debt_balance - int(e.data.amount)); }
   }
@@ -2606,9 +2622,20 @@ function cartView(c = S.cart) {
 const discApproved = v => { const r = S.cart && S.cart.discReq; return !!(r && r.status === 'approved' && int(r.amount) >= v.discAmt); };
 const needDiscApproval = v => S.role === 'kasir' && v.discOver && !discApproved(v);
 /** Adds qty of p (scan, tap with "ask quantity" off); with set=true the line gets exactly qty (quantity sheet). */
+/* v16 shelf (rak) and warehouse (gudang): only what is on the shelf can be sold; goods-in lands in the warehouse first. */
+const sellFromShop = () => settings().sell_from_shop_only !== false;
+const shelfOf = p => p.shop_stock === undefined || p.shop_stock === null || p.shop_stock === '' ? num(p.stock) : num(p.shop_stock);
+const gudangOf = p => roundQty(Math.max(0, num(p.stock) - shelfOf(p)));
+/** '' when qty fits on the shelf, else the message for the cashier. */
+function shelfBlock(p, qty) {
+  if (!sellFromShop() || qty <= shelfOf(p) + 1e-9) return '';
+  return gudangOf(p) > 0 ? t('shelf.move_first', { name: p.name, shop: fmtQty(Math.max(0, shelfOf(p))), gudang: fmtQty(gudangOf(p)) }) : t('shelf.no_goods_in', { name: p.name, shop: fmtQty(Math.max(0, shelfOf(p))) });
+}
 function addToCart(p, qty = 1, set = false) {
   if (!p) return;
   if (p.active === false) { toast(t('sell.inactive'), 'warn'); return; }
+  const ex0 = S.cart.lines.find(l => l.product_id == p.id), want = set ? roundQty(qty) : roundQty((ex0 ? ex0.qty : 0) + qty);
+  const sb = shelfBlock(p, want); if (sb) { beep(); toast(sb, 'err', 5000); return; }
   const ex = S.cart.lines.find(l => l.product_id == p.id);
   if (ex) ex.qty = set ? roundQty(qty) : roundQty(ex.qty + qty); else S.cart.lines.push({ product_id: p.id, name: p.name, qty: roundQty(qty) });
   saveCart(); renderCart(p.id); renderGrid();
@@ -2700,7 +2727,7 @@ function openQtySheet(p) {
   let q = ex ? roundQty(ex.qty) : 1;
   const el = openModal({
     title: p.name, id: 'qty-sheet', focus: false,
-    body: `<div class="qs-info"><span class="pr num"><bdi>${fmtRp(p.retail_price)}</bdi><span class="muted small">/${esc(p.unit || 'pcs')}</span></span>${hasW ? `<span class="gr" id="qs-gr">${esc(t('grosir'))} <bdi class="num">${fmtRp(p.wholesale_price)}</bdi> · <bdi>≥${fmtQty(wmin)}</bdi></span>` : ''}<span class="muted small">${esc(t('stock'))} <bdi class="num">${fmtQty(p.stock)} ${esc(p.unit || '')}</bdi></span></div>
+    body: `<div class="qs-info"><span class="pr num"><bdi>${fmtRp(p.retail_price)}</bdi><span class="muted small">/${esc(p.unit || 'pcs')}</span></span>${hasW ? `<span class="gr" id="qs-gr">${esc(t('grosir'))} <bdi class="num">${fmtRp(p.wholesale_price)}</bdi> · <bdi>≥${fmtQty(wmin)}</bdi></span>` : ''}<span class="muted small" id="qs-stock">${esc(t('shelf.rak'))} <bdi class="num">${fmtQty(shelfOf(p))} ${esc(p.unit || '')}</bdi> · ${esc(t('shelf.gudang'))} <bdi class="num">${fmtQty(gudangOf(p))}</bdi></span></div>
       <div class="qs-row"><button type="button" id="qs-dec" aria-label="−">−</button><input id="qs-qty" type="text" inputmode="${isWeightUnit(p.unit) ? 'decimal' : 'numeric'}" autocomplete="off" enterkeyhint="done" aria-label="${esc(t('qty'))}" value="${esc(fmtQtyInput(q))}"><button type="button" id="qs-inc" aria-label="+">+</button></div>
       <div class="qs-chips" id="qs-chips">${QTY_CHIPS.map(n => `<button type="button" data-q="${n}">${n}</button>`).join('')}${hasW ? `<button type="button" class="g" data-q="${wmin}" id="qs-chip-g">${esc(t('grosir'))} ${esc(fmtQty(wmin))}</button>` : ''}</div>
       <div class="qs-total"><span><span class="pt" id="qs-pt"></span> <span class="muted small num" id="qs-up"></span></span><b class="num" id="qs-total"></b></div>
@@ -2715,9 +2742,10 @@ function openQtySheet(p) {
     $('#qs-up', el).textContent = `${fmtQty(q)} × ${fmtRp(c.unit_price)}`;
     $('#qs-total', el).textContent = fmtRp(c.total);
     $$('#qs-chips [data-q]', el).forEach(b => b.classList.toggle('on', num(b.dataset.q) === q));
-    $('#qs-warn', el).textContent = q > num(p.stock) ? t('sell.stock_low', { name: p.name }) : '';
+    const sb = shelfBlock(p, q);
+    $('#qs-warn', el).textContent = sb || (q > num(p.stock) ? t('sell.stock_low', { name: p.name }) : '');
     if (q >= QTY_MAX) $('#qs-warn', el).textContent = t('qty.too_big');
-    $('#qs-ok', el).disabled = !(q > 0 && q < QTY_MAX);
+    $('#qs-ok', el).disabled = !(q > 0 && q < QTY_MAX) || !!sb;
   };
   const setQ = v => { q = Math.max(0, roundQty(v)); inp.value = fmtQtyInput(q); draw(); };
   inp.addEventListener('input', () => { q = qtyVal(inp.value); draw(); });
@@ -2732,6 +2760,7 @@ function openQtySheet(p) {
   const ok = () => {
     q = qtyVal(inp.value);
     if (!(q > 0) || q >= QTY_MAX) { $('#qs-warn', el).textContent = t(q > 0 ? 'qty.too_big' : 'qty.invalid'); return; }
+    const sb = shelfBlock(p, q); if (sb) { $('#qs-warn', el).textContent = sb; return; }
     dropModal(el);
     addToCart(p, q, true); // speaks name + quantity once
     focusSearch();
@@ -2804,7 +2833,7 @@ function renderGrid() {
     const gr = int(p.wholesale_price) > 0 && num(p.wholesale_min_qty) > 0 ? `<div class="gr">${esc(t('grosir'))} <bdi class="num">${fmtRp(p.wholesale_price)}</bdi> · <bdi>≥${fmtQty(p.wholesale_min_qty)}</bdi></div>` : '';
     return `<button class="pc" data-act="add" data-id="${esc(p.id)}" data-sku="${esc(p.sku)}">${q ? `<span class="incart num">${fmtQty(q)}</span>` : ''}
       <div class="nm">${esc(p.name)}</div>
-      <div class="st ${low ? 'low' : ''}">${esc(t('stock'))} <bdi class="num">${fmtQty(p.stock)} ${esc(p.unit || '')}</bdi></div>
+      <div class="st ${low ? 'low' : ''}" data-shelf="${esc(shelfOf(p))}">${esc(t('shelf.rak'))} <bdi class="num">${fmtQty(shelfOf(p))} ${esc(p.unit || '')}</bdi>${gudangOf(p) > 0 ? ` · ${esc(t('shelf.gudang'))} <bdi class="num">${fmtQty(gudangOf(p))}</bdi>` : ''}</div>
       <div class="pr num"><bdi>${fmtRp(p.retail_price)}</bdi><span class="muted small" style="font-weight:700">/${esc(p.unit || 'pcs')}</span></div>${gr}</button>`;
   }).join('') + (list.length > shown.length ? `<button class="btn block" style="grid-column:1/-1" data-act="sell-more">${esc(t('show_more', { n: list.length - shown.length }))}</button>` : '')
     : `<div class="empty" style="grid-column:1/-1">${esc(S.products.length ? t('sell.no_match') : t('sell.no_products'))}</div>`;
@@ -2868,6 +2897,8 @@ function bindCartInputs() {
     inp.addEventListener('change', () => {
       const i = +inp.dataset.qty, q = qtyVal(inp.value);
       if (!(q > 0)) { S.cart.lines.splice(i, 1); saveCart(); renderCart(); renderGrid(); return; }
+      const pp = prodById(S.cart.lines[i].product_id), sb = pp ? shelfBlock(pp, q) : '';
+      if (sb) { toast(sb, 'err', 5000); const max = Math.max(0, Math.floor(shelfOf(pp) * 1000) / 1000); if (!(max > 0)) { S.cart.lines.splice(i, 1); saveCart(); renderCart(); renderGrid(); return; } S.cart.lines[i].qty = max; inp.value = fmtQtyInput(max); saveCart(); refreshCartNumbers(); renderGrid(); return; }
       S.cart.lines[i].qty = q; inp.value = fmtQtyInput(q); saveCart(); refreshCartNumbers(); renderGrid();
     });
     inp.addEventListener('keydown', e => { if (e.key === 'Enter') { inp.blur(); focusSearch(); } });
@@ -3341,6 +3372,7 @@ async function doSave(extra = {}) {
     }
     if (extra.approver && ['BAD_PIN', 'APPROVAL_REQUIRED'].includes(e.code)) return 'approval_error';
     if (e.code === 'APPROVAL_REQUIRED') { if (!extra.approval_id) openApprovalStep(v, pay); else toast(errMsg(e), 'err', 5000); return 'approval'; }
+    if (e.code === 'NOT_ON_SHELF') { openNotOnShelf((e.res && e.res.items) || [], e.message); return 'error'; }
     if (e.code === 'DISCOUNT_APPROVAL_REQUIRED') { if (S.cart.discReq && S.cart.discReq.status !== 'pending') S.cart.discReq = null; saveCart(); openDiscountStep(cartView(), e.message || errMsg(e)); return 'discount'; }
     if (e.code === 'SHIFT_REQUIRED') { S.shift = null; S.shiftsSupported = true; closeModal(true); showGate(); return 'error'; }
     if (!['BAD_PIN', 'BAD_KEY', 'NO_USERS'].includes(e.code)) toast(errMsg(e), 'err', 5000);
@@ -3352,7 +3384,16 @@ async function doSave(extra = {}) {
   }
 }
 function applyStock(list) {
-  (list || []).forEach(s => { const p = prodById(s.product_id); if (p) p.stock = roundQty(num(s.stock) - pendingQty(p.id)); });
+  (list || []).forEach(s => {
+    const p = prodById(s.product_id); if (!p) return;
+    const pend = pendingQty(p.id);
+    // the shelf only changes when the server says so (sale, move); otherwise it stays (goods-in → warehouse), capped at the total
+    if (s.shop_stock !== undefined && s.shop_stock !== null) p.shop_stock = roundQty(num(s.shop_stock) - pend);
+    else if (p.shop_stock === undefined || p.shop_stock === null || p.shop_stock === '') p.shop_stock = num(p.stock);
+    p.stock = roundQty(num(s.stock) - pend);
+    if (num(p.shop_stock) > p.stock) p.shop_stock = p.stock;
+    p.gudang_stock = gudangOf(p);
+  });
   saveCache();
 }
 function finishSale(rc) {
@@ -3491,7 +3532,7 @@ function openWaiting(ap) {
    up to the approved amount; a bigger discount needs a new request. */
 function discSummaryHTML(v) {
   return `<div class="apr-sum"><div><div class="k">${esc(t('disc.list_total'))}</div><div class="v num">${fmtRp(v.listTotal)}</div></div>
-    <div><div class="k">${esc(t('disc.amount'))}</div><div class="v num red">-${fmtRp(v.discAmt)} · ${esc(fmtPct1(v.discPct))}</div></div>
+    <div><div class="k">${esc(t('disc.amount'))}</div><div class="v num red">-${fmtRp(v.discAmt)}</div><div class="small red" style="font-weight:800">${esc(fmtPct1(v.discPct))}</div></div>
     <div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(v.total)}</div></div></div>
     <div class="small muted" style="margin-bottom:8px">${esc(t('disc.limit_is', { max: fmtPct1(v.discLimit) }))}</div>`;
 }
@@ -3808,7 +3849,7 @@ function queueOp(kind, action, data, extra = {}) {
   if (S.outbox.some(e => e.id === id)) return;
   S.outbox.push({ id, kind, action, data, rc: extra.rc || null, label: extra.label || '', key: S.key, user: S.user, pin_hash: S.pin_hash, queued_at: new Date().toISOString(), tries: 0, error: '' });
   if (kind === 'sale') {
-    for (const it of data.items) { const p = prodById(it.product_id); if (p) p.stock = roundQty(p.stock - it.qty); }
+    for (const it of data.items) { const p = prodById(it.product_id); if (p) { p.stock = roundQty(p.stock - it.qty); if (p.shop_stock != null && p.shop_stock !== '') p.shop_stock = roundQty(num(p.shop_stock) - it.qty); } }
     const c = custById(data.customer_id); if (c && extra.rc) { c.debt_balance += int(extra.rc.debt); extra.rc.debt_after = c.debt_balance; }
   }
   if (kind === 'payment') { const c = custById(data.customer_id); if (c) c.debt_balance = Math.max(0, c.debt_balance - int(data.amount)); }
@@ -3829,7 +3870,8 @@ async function syncOutbox(manual) {
     for (const e of S.outbox.slice()) {
       const cred = manual && e.error === 'BAD_PIN' && S.pin_hash ? sessCred() : { key: e.key, user: e.user, pin_hash: e.pin_hash };
       try {
-        const r = await apiRaw(e.action, e.data, cred);
+        // v16: a sale the customer already paid offline is never refused for the shelf (queued: true, logged for the owner)
+        const r = await apiRaw(e.action, e.kind === 'sale' ? Object.assign({}, e.data, { queued: true }) : e.data, cred);
         S.outbox = S.outbox.filter(x => x.id !== e.id);
         saveOutbox();
         if (e.kind === 'sale') {
@@ -3926,7 +3968,9 @@ RENDER.masuk = function (force) {
   else if (PU.photo_id) status = `<b class="okc" id="pu-photo-ok">${esc(t('pu.photo_ok', { n: sc ? sc.n : 0 }))}</b>${sc && (sc.supplier || sc.invoice_no) ? `<div class="small muted">${esc([sc.supplier, sc.invoice_no].filter(Boolean).join(' · '))}</div>` : ''}`;
   else status = `<span class="muted">${esc(req ? t('pu.photo_hint_req') : t('pu.photo_hint_opt'))}</span>`;
   const prodOptions = sel => `<option value="">— ${esc(t('pu.pick_product'))} —</option>` + S.products.filter(p => p.active !== false).slice().sort((a, b) => a.name.localeCompare(b.name)).map(p => `<option value="${esc(p.id)}" ${p.id == sel ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
-  $('#v-masuk').innerHTML = `<div class="wrapc"><h1>${esc(t('tab.masuk'))}</h1>
+  const inGudang = S.products.filter(p => p.active !== false && gudangOf(p) > 0).length;
+  $('#v-masuk').innerHTML = `<div class="wrapc"><div class="row" style="margin-bottom:8px"><h1 class="grow" style="margin:2px 0">${esc(t('tab.masuk'))}</h1>
+      <button class="btn sm" data-act="move-open" id="mv-open">${ic('truck')} ${esc(t('mv.title'))}${inGudang ? ` <span class="badge warn num" id="mv-open-n">${inGudang}</span>` : ''}</button></div>
     <div class="card pad step" id="pu-photo-card" style="margin-bottom:12px">
       ${PU.thumb ? `<img class="thumb" id="pu-thumb" src="${esc(PU.thumb)}" alt="${esc(t('pu.photo_title'))}">` : `<div class="thumb">${ic('camera')}</div>`}
       <div class="grow" style="min-width:180px"><div style="font-weight:900;font-size:17px">1. ${esc(t('pu.photo_title'))}</div><div id="pu-status">${status}</div></div>
@@ -4040,7 +4084,9 @@ async function savePurchase(reason) {
       <table class="tbl"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('qty'))}</th><th class="r">${esc(t('stock'))}</th></tr></thead><tbody>
       ${(r.stock || []).map(s => { const p = prodById(s.product_id) || {}; return `<tr><td>${esc(p.name || s.product_id)}</td><td class="r num">${fmtQty(qtyOf.get(String(s.product_id)))} ${esc(p.unit || '')}</td><td class="r num">${fmtQty(before.get(String(s.product_id)))} → <b>${fmtQty(s.stock)}</b></td></tr>`; }).join('')}</tbody></table>
       <div class="lockline" id="pu-res-locked">${ic('lock')} ${esc(t('pu.locked'))}</div>
-      ${no ? `<button class="btn sm" data-act="pu-fix" data-no="${esc(no)}" id="pu-res-fix" style="margin-top:8px">${esc(t('pu.fix_btn'))}</button>` : ''}</div>`;
+      <div class="row wrap" style="margin-top:8px"><button class="btn primary sm" data-act="pu-move-now" id="pu-res-move">${ic('truck')} ${esc(t('mv.now'))}</button>
+      ${no ? `<button class="btn sm" data-act="pu-fix" data-no="${esc(no)}" id="pu-res-fix">${esc(t('pu.fix_btn'))}</button>` : ''}</div></div>`;
+    PU.lastIn = lines.slice();
     Object.assign(PU, { lines: [], note: '', photo_id: '', thumb: '', scan: null, supplier: '' }); savePuDraft();
     const mm = $('#pu-mismatch'); if (mm) dropModal(mm);
     toast(t('saved'), 'ok');
@@ -4155,6 +4201,84 @@ async function openPuFix(no) {
       PUH.groups = null; loadPuHistory();
     } catch (e) { err.textContent = e instanceof NetError ? t('apr.need_online') : errMsg(e); $('#fx-send', el).disabled = false; }
   };
+}
+
+/* ========== v16 "Pindah ke rak": warehouse → shop shelf (or back) with move_stock ==========
+   Goods-in lands in the warehouse; the cashier moves what goes on the shelf. Lines: product + quantity (≤ what is there). */
+function openMoveStock(pre = {}) {
+  const M = { to: pre.to === 'gudang' ? 'gudang' : 'toko', lines: (pre.lines || []).filter(l => prodById(l.product_id)).map(l => ({ product_id: prodById(l.product_id).id, qty: roundQty(l.qty) })), q: '' };
+  const avail = p => M.to === 'toko' ? gudangOf(p) : Math.max(0, shelfOf(p));
+  const el = openModal({
+    title: t('mv.title'), id: 'move-stock', focus: false,
+    body: `<div class="seg" id="mv-dir" style="margin-bottom:10px">${['toko', 'gudang'].map(d => `<button type="button" data-to="${d}" id="mv-to-${d}">${esc(t('mv.to_' + d))}</button>`).join('')}</div>
+      <p class="small muted" style="margin-top:0" id="mv-hint"></p>
+      <div class="search">${ic('search')}<input class="input" id="mv-q" type="search" autocomplete="off" placeholder="${esc(t('sell.search_ph'))}" aria-label="${esc(t('sell.search_ph'))}"></div>
+      <div class="list" id="mv-sug" style="margin-top:6px"></div>
+      <h3 style="font-size:16px;margin:12px 0 6px" id="mv-head"></h3>
+      <div class="list" id="mv-lines"></div>
+      <div class="field" style="margin-top:10px"><label class="f" for="mv-note">${esc(t('notes'))}</label><input class="input" id="mv-note" maxlength="200"></div>
+      <div class="err" id="mv-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button><button class="btn primary" id="mv-ok">${ic('send')} <span></span></button>`
+  });
+  const err = $('#mv-err', el);
+  const draw = () => {
+    $$('#mv-dir button', el).forEach(b => b.classList.toggle('on', b.dataset.to === M.to));
+    $('#mv-hint', el).textContent = t('mv.hint_' + M.to);
+    const q = $('#mv-q', el).value.trim();
+    const cand = (q ? filterProducts(q) : S.products.filter(p => p.active !== false)).filter(p => avail(p) > 0 && !M.lines.some(l => l.product_id == p.id)).slice(0, q ? 8 : 30);
+    $('#mv-sug', el).innerHTML = cand.map(p => `<button class="li" type="button" data-mv-add="${esc(p.id)}" style="min-height:52px;padding:8px 12px"><div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${esc(t('shelf.gudang'))} ${fmtQty(gudangOf(p))} · ${esc(t('shelf.rak'))} ${fmtQty(shelfOf(p))} ${esc(p.unit || '')}</div></div>${ic('plus')}</button>`).join('')
+      || `<div class="small muted" id="mv-none">${esc(t(q ? 'sell.no_match' : 'mv.none_' + M.to))}</div>`;
+    $('#mv-lines', el).innerHTML = M.lines.map(l => { const p = prodById(l.product_id); return `<div class="li" data-mv-line="${esc(p.id)}" style="min-height:0;padding:8px 10px"><div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${esc(t(M.to === 'toko' ? 'mv.in_gudang' : 'mv.on_shelf', { qty: fmtQty(avail(p)), unit: p.unit || '' }))}</div></div>
+      <input class="input num" style="width:96px;font-weight:800;font-size:18px" data-mv-qty="${esc(p.id)}" inputmode="decimal" autocomplete="off" value="${esc(fmtQtyInput(l.qty))}" aria-label="${esc(t('qty'))} ${esc(p.name)}">
+      <button class="icon-btn ghost sm" type="button" data-mv-del="${esc(p.id)}" aria-label="${esc(t('delete'))}">${ic('x')}</button></div>`; }).join('');
+    $('#mv-head', el).textContent = t('mv.lines', { n: M.lines.length });
+    $('span', $('#mv-ok', el)).textContent = t('mv.ok_' + M.to, { n: M.lines.length });
+    $('#mv-ok', el).disabled = !M.lines.length;
+  };
+  $('#mv-dir', el).onclick = e => { const b = e.target.closest('[data-to]'); if (!b || b.dataset.to === M.to) return; M.to = b.dataset.to; M.lines = []; err.textContent = ''; draw(); };
+  $('#mv-q', el).addEventListener('input', draw);
+  $('#mv-q', el).addEventListener('keydown', e => { if (e.key !== 'Enter') return; e.preventDefault(); const v = e.target.value.trim(); const p = findBySku(v) || (filterProducts(v).length === 1 ? filterProducts(v)[0] : null); if (p) add(p); });
+  const add = p => {
+    if (!p) return;
+    if (!(avail(p) > 0)) { err.textContent = M.to === 'toko' ? t('shelf.no_goods_in', { name: p.name, shop: fmtQty(shelfOf(p)) }) : t('mv.none_gudang'); return; }
+    if (!M.lines.some(l => l.product_id == p.id)) M.lines.push({ product_id: p.id, qty: avail(p) });
+    $('#mv-q', el).value = ''; err.textContent = ''; draw();
+  };
+  $('#mv-sug', el).onclick = e => { const b = e.target.closest('[data-mv-add]'); if (b) add(prodById(b.dataset.mvAdd)); };
+  $('#mv-lines', el).onclick = e => { const b = e.target.closest('[data-mv-del]'); if (!b) return; M.lines = M.lines.filter(l => String(l.product_id) !== String(b.dataset.mvDel)); draw(); };
+  $('#mv-lines', el).addEventListener('input', e => { const i = e.target.closest('[data-mv-qty]'); if (!i) return; const l = M.lines.find(x => String(x.product_id) === String(i.dataset.mvQty)); if (l) l.qty = qtyVal(i.value); });
+  $('#mv-ok', el).onclick = async () => {
+    for (const l of M.lines) {
+      const p = prodById(l.product_id);
+      if (!(l.qty > 0)) { err.textContent = t('sc.bad', { name: p.name }); return; }
+      if (l.qty > avail(p) + 1e-9) { err.textContent = t(M.to === 'toko' ? 'mv.too_much_gudang' : 'mv.too_much_rak', { name: p.name, qty: fmtQty(avail(p)) }); return; }
+    }
+    $('#mv-ok', el).disabled = true; err.textContent = '';
+    try {
+      const r = await api('move_stock', { to: M.to, lines: M.lines.map(l => ({ product_id: l.product_id, qty: l.qty })), note: $('#mv-note', el).value.trim() });
+      applyStock(r.stock);
+      const n = M.lines.length;
+      dropModal(el);
+      toast(t('mv.done_' + M.to, { n }), 'ok', 4000);
+      renderGrid(); if (S.view === 'masuk') RENDER.masuk();
+      if (typeof pre.onDone === 'function') pre.onDone();
+    } catch (e) { err.textContent = e instanceof NetError ? t('mv.need_online') : errMsg(e); $('#mv-ok', el).disabled = false; }
+  };
+  draw();
+}
+/** The server refused a sale for the shelf (NOT_ON_SHELF): which goods, and a way to move them. */
+function openNotOnShelf(items, msg) {
+  const movable = items.filter(x => num(x.gudang) > 0);
+  const el = openModal({
+    title: t('shelf.title'), id: 'not-on-shelf',
+    body: `<div class="status tidak_cocok" style="padding:10px 12px"><div class="small" style="font-weight:800">${esc(t('shelf.refused'))}</div></div>
+      <table class="tbl" id="nos-items" style="margin-top:8px"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('qty'))}</th><th class="r">${esc(t('shelf.rak'))}</th><th class="r">${esc(t('shelf.gudang'))}</th></tr></thead><tbody>
+      ${items.map(x => `<tr class="bad"><td>${esc(x.name)}${num(x.gudang) <= 0 ? `<div class="small">${esc(t('shelf.no_note'))}</div>` : ''}</td><td class="r num">${fmtQty(x.need)}</td><td class="r num">${fmtQty(x.shop)}</td><td class="r num">${fmtQty(x.gudang)}</td></tr>`).join('')}</tbody></table>
+      ${!items.length && msg ? `<p>${esc(msg)}</p>` : ''}`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button>${movable.length ? `<button class="btn primary" id="nos-move">${esc(t('mv.title'))}</button>` : ''}`
+  });
+  const b = $('#nos-move', el);
+  if (b) b.onclick = () => { dropModal(el); openMoveStock({ to: 'toko', lines: movable.map(x => ({ product_id: x.product_id, qty: Math.min(num(x.gudang), roundQty(num(x.need) - Math.max(0, num(x.shop)))) })) }); };
 }
 
 /* ========== Kas: cash in/out, expenses, close shift (blind count) ========== */
@@ -4723,7 +4847,7 @@ const ACT = {
     L.err = ''; renderLogin();
   },
   'login-master': () => { L.master = !L.master; L.pin = ''; L.err = ''; renderLogin(); },
-  'member-new': () => openCustomerPicker(c => { if (c) toast(t('mem.saved', { no: c.member_no || '' }), 'ok'); }, { member: true, noWalkin: true, title: t('mem.new') }),
+  'member-new': () => openCustomerPicker(() => { }, { member: true, noWalkin: true, title: t('mem.new') }), // saving shows "Member tersimpan M…"
 
   /* sell */
   'add': el => pickProduct(prodById(el.dataset.id)),
@@ -4737,7 +4861,7 @@ const ACT = {
   'grosir-toggle': () => { S.cart.grosir = !S.cart.grosir; saveCart(); refreshCartNumbers(); toast(S.cart.grosir ? t('sell.grosir_on') : t('sell.grosir_off'), '', 1600); focusSearch(); },
   'pick-customer': () => openCustomerPicker(c => setCustomer(c)),
   'line-del': el => { S.cart.lines.splice(+el.dataset.i, 1); saveCart(); renderCart(); renderGrid(); focusSearch(); },
-  'qty-inc': el => { const l = S.cart.lines[+el.dataset.i]; l.qty = roundQty(Math.floor(l.qty + 1e-9) + 1); saveCart(); renderCart(); renderGrid(); speakQtyLater(l.product_id); },
+  'qty-inc': el => { const l = S.cart.lines[+el.dataset.i], nq = roundQty(Math.floor(l.qty + 1e-9) + 1), pp = prodById(l.product_id), sb = pp ? shelfBlock(pp, nq) : ''; if (sb) { beep(); toast(sb, 'err', 5000); return; } l.qty = nq; saveCart(); renderCart(); renderGrid(); speakQtyLater(l.product_id); },
   'qty-dec': el => { const i = +el.dataset.i, l = S.cart.lines[i]; const nq = l.qty > 1 ? roundQty(Math.ceil(l.qty - 1e-9) - 1) : 0; if (nq <= 0) S.cart.lines.splice(i, 1); else l.qty = nq; saveCart(); renderCart(); renderGrid(); if (nq > 0) speakQtyLater(l.product_id); },
   'sale-mute': () => toggleSaleMute(),
   'cart-clear': async () => { const r = await confirmBox(t('sell.clear_confirm'), { danger: true }); if (r.ok) { S.cart = newCart(); saveCart(); renderCart(); renderGrid(); } },
@@ -4758,6 +4882,8 @@ const ACT = {
   'pu-clear': () => { Object.assign(PU, { lines: [], photo_id: '', thumb: '', scan: null, result: null, scanErr: '' }); savePuDraft(); RENDER.masuk(); },
   'pu-save': () => savePurchase(),
   'pu-fix': el => openPuFix(el.dataset.no),
+  'move-open': () => openMoveStock({ to: 'toko' }),
+  'pu-move-now': () => { const agg = new Map(); (PU.lastIn || []).forEach(l => agg.set(String(l.product_id), roundQty((agg.get(String(l.product_id)) || 0) + l.qty))); openMoveStock({ to: 'toko', lines: [...agg].map(([id, q]) => { const p = prodById(id); return { product_id: id, qty: p ? Math.min(q, gudangOf(p)) : q }; }).filter(l => l.qty > 0) }); },
   'pu-hist-refresh': () => { PUH.groups = null; PUH.err = ''; drawPuHist(); loadPuHistory(); },
 
   /* kas */
@@ -5209,6 +5335,57 @@ Object.assign(I18N.ar, {
   'rep.no_numbers': 'لم يُدخل المالك أرقام واتساب المتجر/المدير/المالك — انسخ نص التقرير.',
   'rep.to_shop': 'إرسال إلى واتساب المتجر', 'rep.to_manager': 'إرسال إلى واتساب المدير', 'rep.to_owner': 'إرسال إلى واتساب المالك', 'rep.copy': 'نسخ النص',
   'rep.banner': 'الساعة {time}: حان وقت إغلاق الصندوق وإرسال التقرير'
+});
+
+Object.assign(I18N.id, {
+  'disc.label': 'Diskon', 'disc.extra': 'Diskon tambahan', 'disc.pct': 'Diskon {pct} (batas {max})', 'disc.over_kasir': 'Di atas batas {max}: perlu persetujuan manajer / pemilik.',
+  'disc.over_mgr': 'Di atas batas kasir — tercatat atas nama Anda.', 'disc.approved': 'Diskon disetujui {name}.', 'disc.ask': 'Minta persetujuan diskon',
+  'disc.title': 'Diskon perlu persetujuan', 'disc.hint': 'Diskon ini di atas batas kasir. Kirim permintaan ke manajer / pemilik.', 'disc.list_total': 'Harga normal',
+  'disc.amount': 'Diskon', 'disc.limit_is': 'Batas tanpa persetujuan: {max}', 'disc.reason_ph': 'mis. pelanggan grosir lama, barang hampir kedaluwarsa', 'disc.send': 'Kirim permintaan',
+  'disc.waiting_for': 'Diskon {pct} ({amount})', 'disc.approved_by': 'Diskon disetujui {name} — menyimpan…', 'disc.rejected_by': 'Diskon ditolak {name}',
+  'disc.need_online': 'Diskon di atas batas perlu persetujuan (butuh internet)', 'req.discount': 'Diskon {pct} ({amount})', 'apr.kind_disc': 'Diskon {pct}: {name}',
+  'mem.badge': 'Member', 'mem.status': 'Member · pembelian ke-{n} · diskon {pct}', 'mem.disc_line': 'Diskon member {pct}', 'mem.rc_line': 'Member {no} · pembelian ke-{n}',
+  'mem.email': 'E-mail (opsional)', 'mem.make': 'Jadikan member', 'mem.consent': 'Pelanggan setuju datanya dipakai untuk struk & promo (UU PDP).', 'mem.bad_email': 'Alamat e-mail tidak valid',
+  'mem.saved': 'Member tersimpan {no}', 'mem.new': 'Daftar member baru', 'mem.new_s': 'Nama, no. HP, e-mail — dapat diskon mulai pembelian ke-2',
+  'rc.subtotal': 'Subtotal', 'rcs.title': 'Kirim struk', 'rcs.phone': 'No. WhatsApp pembeli', 'rcs.wa': 'Kirim struk ke WhatsApp', 'rcs.mail': 'Kirim struk ke e-mail', 'rcs.subject': 'Struk {store} {inv}',
+  'login.master_title': 'Kode pemilik (8 angka)', 'login.use_master': 'Masuk dengan kode pemilik', 'login.use_pin': 'Pakai PIN', 'login.master_len': 'Kode pemilik 8 angka',
+  'login.locked_until': 'Terlalu banyak PIN salah. Coba lagi jam {time}', 'login.tries_left': '{n} kali lagi, lalu akun dikunci 15 menit', 'login.via_master': 'via kode pemilik',
+  'err.LOCKED': 'Akun terkunci sementara', 'err.PIN_CHANGE_REQUIRED': 'Buat PIN baru dulu', 'err.DISCOUNT_APPROVAL_REQUIRED': 'Diskon perlu persetujuan', 'err.NOT_ON_SHELF': 'Barang belum di rak', 'err.NOT_IN_GUDANG': 'Stok gudang kurang',
+  'np.title': 'Buat PIN baru', 'np.hint6': 'PIN 6 angka (pemilik / manajer)', 'np.hint46': 'PIN 4–6 angka', 'np.first': 'Ketik PIN baru', 'np.again': 'Ulangi PIN baru', 'np.ok': 'OK',
+  'np.mismatch': 'PIN tidak sama, ulangi', 'np.same': 'PIN baru harus beda dengan PIN lama', 'np.done': 'PIN baru tersimpan', 'np.need_online': 'Buat PIN baru perlu internet',
+  'shelf.rak': 'Rak', 'shelf.gudang': 'Gudang', 'shelf.move_first': '{name}: belum di rak — pindahkan dari gudang dulu (rak {shop}, gudang {gudang})',
+  'shelf.no_goods_in': '{name}: belum ada barang masuk dengan nota (rak {shop})', 'shelf.title': 'Barang belum di rak', 'shelf.refused': 'Penjualan ditolak: barang ini belum ada di rak toko.',
+  'shelf.no_note': 'Belum ada barang masuk dengan nota',
+  'mv.title': 'Pindah ke rak', 'mv.to_toko': 'Gudang → Rak', 'mv.to_gudang': 'Rak → Gudang', 'mv.hint_toko': 'Barang masuk ada di gudang. Pindahkan yang dipajang ke rak toko agar bisa dijual.',
+  'mv.hint_gudang': 'Kembalikan barang dari rak ke gudang.', 'mv.none_toko': 'Tidak ada barang di gudang.', 'mv.none_gudang': 'Tidak ada barang di rak.', 'mv.in_gudang': 'Di gudang: {qty} {unit}',
+  'mv.on_shelf': 'Di rak: {qty} {unit}', 'mv.lines': 'Dipindah: {n} barang', 'mv.ok_toko': 'Pindahkan ke rak ({n})', 'mv.ok_gudang': 'Kembalikan ke gudang ({n})',
+  'mv.too_much_gudang': '{name}: di gudang hanya {qty}', 'mv.too_much_rak': '{name}: di rak hanya {qty}', 'mv.done_toko': '{n} barang dipindah ke rak', 'mv.done_gudang': '{n} barang dikembalikan ke gudang',
+  'mv.need_online': 'Pindah stok perlu internet', 'mv.now': 'Pindahkan ke rak sekarang'
+});
+Object.assign(I18N.ar, {
+  'disc.label': 'خصم', 'disc.extra': 'خصم إضافي', 'disc.pct': 'الخصم {pct} (الحد {max})', 'disc.over_kasir': 'فوق الحد {max}: يحتاج موافقة المدير / المالك.',
+  'disc.over_mgr': 'فوق حد الكاشير — يُسجَّل باسمك.', 'disc.approved': 'وافق {name} على الخصم.', 'disc.ask': 'طلب موافقة على الخصم',
+  'disc.title': 'الخصم يحتاج موافقة', 'disc.hint': 'هذا الخصم فوق حد الكاشير. أرسل طلبًا إلى المدير / المالك.', 'disc.list_total': 'السعر العادي',
+  'disc.amount': 'الخصم', 'disc.limit_is': 'الحد دون موافقة: {max}', 'disc.reason_ph': 'مثل: عميل جملة قديم، بضاعة قريبة الانتهاء', 'disc.send': 'إرسال الطلب',
+  'disc.waiting_for': 'خصم {pct} ({amount})', 'disc.approved_by': 'وافق {name} على الخصم — جارٍ الحفظ…', 'disc.rejected_by': 'رفض {name} الخصم',
+  'disc.need_online': 'الخصم فوق الحد يحتاج موافقة (يلزم إنترنت)', 'req.discount': 'خصم {pct} ({amount})', 'apr.kind_disc': 'خصم {pct}: {name}',
+  'mem.badge': 'عضو', 'mem.status': 'عضو · الشراء رقم {n} · خصم {pct}', 'mem.disc_line': 'خصم العضوية {pct}', 'mem.rc_line': 'عضو {no} · الشراء رقم {n}',
+  'mem.email': 'البريد الإلكتروني (اختياري)', 'mem.make': 'تسجيل كعضو', 'mem.consent': 'العميل موافق على استخدام بياناته للإيصال والعروض (UU PDP).', 'mem.bad_email': 'البريد الإلكتروني غير صالح',
+  'mem.saved': 'حُفظ العضو {no}', 'mem.new': 'تسجيل عضو جديد', 'mem.new_s': 'الاسم، الهاتف، البريد — خصم من الشراء الثاني',
+  'rc.subtotal': 'المجموع الفرعي', 'rcs.title': 'إرسال الإيصال', 'rcs.phone': 'رقم واتساب المشتري', 'rcs.wa': 'إرسال الإيصال إلى واتساب', 'rcs.mail': 'إرسال الإيصال بالبريد', 'rcs.subject': 'Struk {store} {inv}',
+  'login.master_title': 'رمز المالك (8 أرقام)', 'login.use_master': 'الدخول برمز المالك', 'login.use_pin': 'استخدام الرمز السري', 'login.master_len': 'رمز المالك 8 أرقام',
+  'login.locked_until': 'رمز سري خاطئ مرات كثيرة. حاول مجددًا الساعة {time}', 'login.tries_left': 'بقي {n} محاولات ثم يُقفل الحساب 15 دقيقة', 'login.via_master': 'عبر رمز المالك',
+  'err.LOCKED': 'الحساب مقفل مؤقتًا', 'err.PIN_CHANGE_REQUIRED': 'أنشئ رمزًا سريًا جديدًا أولًا', 'err.DISCOUNT_APPROVAL_REQUIRED': 'الخصم يحتاج موافقة', 'err.NOT_ON_SHELF': 'البضاعة ليست على الرف', 'err.NOT_IN_GUDANG': 'مخزون المستودع غير كافٍ',
+  'np.title': 'إنشاء رمز سري جديد', 'np.hint6': 'رمز من 6 أرقام (المالك / المدير)', 'np.hint46': 'رمز من 4 إلى 6 أرقام', 'np.first': 'اكتب الرمز الجديد', 'np.again': 'أعد كتابة الرمز الجديد', 'np.ok': 'موافق',
+  'np.mismatch': 'الرمزان غير متطابقين، أعد المحاولة', 'np.same': 'يجب أن يختلف الرمز الجديد عن القديم', 'np.done': 'حُفظ الرمز الجديد', 'np.need_online': 'إنشاء رمز جديد يحتاج إلى الإنترنت',
+  'shelf.rak': 'الرف', 'shelf.gudang': 'المستودع', 'shelf.move_first': '{name}: ليس على الرف — انقله من المستودع أولًا (الرف {shop}، المستودع {gudang})',
+  'shelf.no_goods_in': '{name}: لا يوجد استلام بفاتورة بعد (الرف {shop})', 'shelf.title': 'البضاعة ليست على الرف', 'shelf.refused': 'رُفض البيع: هذه البضاعة ليست على رف المتجر بعد.',
+  'shelf.no_note': 'لا يوجد استلام بفاتورة بعد',
+  'mv.title': 'النقل إلى الرف', 'mv.to_toko': 'المستودع ← الرف', 'mv.to_gudang': 'الرف ← المستودع', 'mv.hint_toko': 'البضاعة المستلمة في المستودع. انقل المعروض إلى رف المتجر ليُباع.',
+  'mv.hint_gudang': 'أعد البضاعة من الرف إلى المستودع.', 'mv.none_toko': 'لا توجد بضاعة في المستودع.', 'mv.none_gudang': 'لا توجد بضاعة على الرف.', 'mv.in_gudang': 'في المستودع: {qty} {unit}',
+  'mv.on_shelf': 'على الرف: {qty} {unit}', 'mv.lines': 'للنقل: {n} أصناف', 'mv.ok_toko': 'النقل إلى الرف ({n})', 'mv.ok_gudang': 'الإعادة إلى المستودع ({n})',
+  'mv.too_much_gudang': '{name}: في المستودع {qty} فقط', 'mv.too_much_rak': '{name}: على الرف {qty} فقط', 'mv.done_toko': 'نُقل {n} صنف إلى الرف', 'mv.done_gudang': 'أُعيد {n} صنف إلى المستودع',
+  'mv.need_online': 'نقل المخزون يحتاج إلى الإنترنت', 'mv.now': 'انقل إلى الرف الآن'
 });
 /* ========== Boot ========== */
 /* ========== Trial links (?demo=1 / ?mock=1) can be closed by the owner ==========

@@ -556,7 +556,8 @@ async function api(action, data, opts) {
   try {
     return await apiRaw(action, data, sessCred(), opts);
   } catch (e) {
-    if (e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_USERS') forceRelogin(e);
+    if (e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_USERS' || e.code === 'LOCKED') forceRelogin(e);
+    if (e.code === 'PIN_CHANGE_REQUIRED' && S.inApp && S.pin_hash) askNewPin(S.user, S.role, S.pin_hash);
     throw e;
   }
 }
@@ -730,9 +731,40 @@ const MockServer = (() => {
       return { user: { name, role: 'owner' } };
     }
     if (!db.users.length) throw E('NO_USERS', 'Run setup first');
-    const u = db.users.find(x => x.active && x.name.toLowerCase() === String(user || '').toLowerCase());
-    if (!u || u.pin_hash !== pin_hash) throw E('BAD_PIN', 'Wrong user or PIN');
-    if (window.KhairFieldMock && KhairFieldMock.actions.includes(action)) return KhairFieldMock.handle(action, data, { name: u.name, role: u.role }, db, { jktDate: d => jktDate(d == null ? new Date() : d), jktISO: d => jktISO(d == null ? new Date() : d) });
+    const u = db.users.find(x => x.active !== false && x.name.toLowerCase() === String(user || '').trim().toLowerCase());
+    if (window.KhairFieldMock && KhairFieldMock.actions.includes(action)) {
+      // the field workflow: plain PIN check (no master code, no lock / own-PIN rules there yet)
+      if (!u || u.pin_hash !== pin_hash) throw E('BAD_PIN', 'Wrong user or PIN');
+      return KhairFieldMock.handle(action, data, { name: u.name, role: u.role }, db, { jktDate: d => jktDate(d == null ? new Date() : d), jktISO: d => jktISO(d == null ? new Date() : d) });
+    }
+    // v16 main API, as on the server: lock after 5 wrong PINs (15 min), owner master code, own PIN at first login
+    if (!u) throw E('BAD_PIN', 'Nama atau PIN salah');
+    const isHex64 = h => /^[0-9a-f]{64}$/.test(String(h || ''));
+    const lockMsg = until => 'Terlalu banyak PIN salah. Coba lagi jam ' + new Date(Date.parse(until) + 7 * 3600000).toISOString().slice(11, 16) + ' WIB';
+    if (Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', lockMsg(u.locked_until));
+    const viaMaster = isHex64(pin_hash) && u.pin_hash !== pin_hash && db.users.some(x => x.active !== false && x.role === 'owner' && isHex64(x.master_hash) && x.master_hash === pin_hash);
+    if (u.pin_hash !== pin_hash && !viaMaster) {
+      const fc = num(u.fail_count) + 1, until = fc >= 5 ? new Date(Date.now() + 15 * 60000).toISOString() : '';
+      u.fail_count = until ? 0 : fc; u.locked_until = until; save(db);
+      if (until) throw E('LOCKED', lockMsg(until));
+      throw E('BAD_PIN', 'Nama atau PIN salah' + (fc >= 3 ? ' (' + (5 - fc) + ' kali lagi, lalu akun dikunci 15 menit)' : ''));
+    }
+    if ((num(u.fail_count) > 0 || str(u.locked_until)) && !['change_pin', 'set_master', 'save_user'].includes(action)) { u.fail_count = 0; u.locked_until = ''; dirty = true; }
+    if (u.must_change === true && !viaMaster && !['login', 'change_pin', 'users', 'device_ping'].includes(action)) throw E('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
+    if (action === 'change_pin') {
+      const h = data.new_pin_hash;
+      if (!isHex64(h)) throw E('INVALID', 'PIN baru tidak valid');
+      if (h === u.pin_hash) throw E('INVALID', 'PIN baru harus berbeda dari PIN lama');
+      if (viaMaster && u.role === 'owner') throw E('FORBIDDEN', 'PIN pemilik hanya bisa diganti dengan PIN pemilik sendiri');
+      if (db.users.some(x => x.active !== false && isHex64(x.master_hash) && x.master_hash === h)) throw E('INVALID', 'PIN baru tidak valid');
+      Object.assign(u, { pin_hash: h, must_change: viaMaster, fail_count: 0, locked_until: '' });
+      logAct(db, u, 'ganti_pin', viaMaster ? 'PIN ' + u.name + ' direset dengan kode pemilik (wajib ganti saat masuk)' : u.name + ' mengganti PIN sendiri', u.name, 0, viaMaster ? 'warn' : 'info');
+      return { must_change: viaMaster };
+    }
+    if (action === 'login') {
+      if (viaMaster) logAct(db, u, 'masuk_master', 'Masuk ke akun ' + u.name + ' (' + u.role + ') dengan kode pemilik', u.name, 0, 'warn');
+      return { user: { name: u.name, role: u.role }, must_change: u.must_change === true && !viaMaster, via_master: viaMaster };
+    }
     if (action !== 'device_ping') deviceTouch(db, u, data.device, false);
     const owner = u.role === 'owner';
     const needOwner = () => { if (!owner) throw E('FORBIDDEN', 'Owner only'); };
@@ -1672,11 +1704,19 @@ function renderLogin() {
     const list = L.users.filter(u => SALES_ROLES.includes(u.role)).sort((a, b) => (a.role === 'sales' ? 0 : 1) - (b.role === 'sales' ? 0 : 1) || a.name.localeCompare(b.name));
     inner = `<h2>${esc(t('login.who'))}</h2><div class="users" id="users">${list.map(u => `<button data-act="login-user" data-name="${esc(u.name)}">${esc(u.name)}<span>${esc(t('role.' + u.role))}</span></button>`).join('') || `<div class="muted center" style="grid-column:1/-1">${esc(L.users.length ? t('login.no_sales') : t('loading'))}</div>`}</div>
       <div class="err" role="alert">${esc(L.err)}</div><div class="center"><button class="btn ghost sm" data-act="login-change-key">${esc(t('login.change_key'))} (${esc(maskKey(S.key))})</button></div>`;
+  } else if (L.step === 'newpin' && L.np) {
+    // v16: own PIN at first login (or after the owner reset it), typed twice. (The owner's master code is not offered here:
+    // the field workflow does not accept it yet.)
+    const np = L.np, dots = Array.from({ length: Math.max(np.six ? 6 : 4, L.pin.length) }, (_, i) => `<i class="${i < L.pin.length ? 'f' : ''}"></i>`).join('');
+    inner = `<div id="newpin" data-stage="${np.first ? 2 : 1}"><h2>${esc(t('np.title'))}</h2><p class="center small" style="margin-top:-6px"><b>${esc(np.user)}</b> · ${esc(t(np.six ? 'np.hint6' : 'np.hint46'))}</p>
+      <h2 class="muted" style="font-size:15px" id="np-stage">${esc(t(np.first ? 'np.again' : 'np.first'))}</h2><div class="dots">${dots}</div><div class="err" role="alert" id="np-err">${esc(L.err)}</div>
+      ${pinpadHTML(false)}<div class="center" style="margin-top:8px"><button class="btn ghost sm" data-act="login-back">${esc(t('login.switch'))}</button></div></div>`;
   } else {
+    const until = lockedUntil(L.sel), locked = until > Date.now();
     const dots = Array.from({ length: Math.max(4, L.pin.length) }, (_, i) => `<i class="${i < L.pin.length ? 'f' : ''}"></i>`).join('');
     inner = `<div class="who"><button class="icon-btn ghost sm" data-act="login-back" aria-label="${esc(t('login.switch'))}">${ic('back')}</button><b id="pin-who">${esc(L.sel)}</b></div>
-      <h2 class="muted" style="font-size:15px">${esc(t('login.enter_pin'))}</h2><div class="dots">${dots}</div><div class="err" role="alert" id="login-err">${esc(L.err)}</div>
-      <div class="pinpad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button data-act="pin-key" data-k="${n}">${n}</button>`).join('')}<button data-act="pin-key" data-k="del" aria-label="${esc(t('delete'))}">⌫</button><button data-act="pin-key" data-k="0">0</button><button class="ok" data-act="pin-key" data-k="ok" ${L.busy ? 'disabled' : ''}>${esc(L.busy ? '…' : t('login.enter'))}</button></div>`;
+      <h2 class="muted" style="font-size:15px">${esc(t('login.enter_pin'))}</h2><div class="dots">${dots}</div><div class="err" role="alert" id="login-err">${esc(locked ? t('login.locked_until', { time: jktTime(until) }) : L.err)}</div>
+      ${pinpadHTML(locked)}`;
   }
   $('#login').innerHTML = `<div class="screen-card">${brand}${inner}${foot}</div>`;
   const k = $('#lg-key'); if (k) k.addEventListener('keydown', e => { if (e.key === 'Enter') ACT['login-key'](); });
@@ -1694,8 +1734,45 @@ async function demoLogin(name) {
     startSession(r.user.name, r.user.role, u.pin_hash, false);
   } catch (e) { showLogin('users', errMsg(e)); }
 }
+function pinpadHTML(locked) {
+  const d = locked ? 'disabled' : '';
+  return `<div class="pinpad" id="pinpad" ${locked ? 'data-locked="1"' : ''}>${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button data-act="pin-key" data-k="${n}" ${d}>${n}</button>`).join('')}<button data-act="pin-key" data-k="del" aria-label="${esc(t('delete'))}" ${d}>⌫</button><button data-act="pin-key" data-k="0" ${d}>0</button><button class="ok" data-act="pin-key" data-k="ok" ${L.busy || locked ? 'disabled' : ''}>${esc(L.busy ? '…' : t(L.step === 'newpin' ? 'np.ok' : 'login.enter'))}</button></div>`;
+}
+/* v16: 5 wrong PINs → LOCKED for 15 min ("… Coba lagi jam HH:MM WIB"); the pad stays off until then. */
+const LOCKS = {};
+const lockedUntil = user => LOCKS[String(user || '').toLowerCase()] || 0;
+function lockUntilFrom(e) {
+  const m = /(\d{2}):(\d{2})/.exec(String(e && e.message || ''));
+  if (!m) return Date.now() + 15 * 60000;
+  let at = Date.parse(today() + 'T' + m[1] + ':' + m[2] + ':00+07:00');
+  if (at < Date.now() - 60000) at += 86400000;
+  return at;
+}
+function askNewPin(user, role, oldHash) {
+  if (L.step === 'newpin' && L.np && L.np.user === user && !$('#login').hidden) return;
+  S.inApp = false;
+  L.np = { user, role, old: oldHash, first: '', six: role === 'owner' || role === 'manager' };
+  showLogin('newpin', '', S.day && S.day.status === 'working');
+}
+async function submitNewPin() {
+  const np = L.np; if (!np || L.busy) return;
+  if (!(np.six ? /^\d{6}$/.test(L.pin) : /^\d{4,6}$/.test(L.pin))) { L.err = t(np.six ? 'np.hint6' : 'np.hint46'); L.pin = ''; renderLogin(); return; }
+  if (!np.first) { np.first = L.pin; L.pin = ''; L.err = ''; renderLogin(); return; }
+  if (L.pin !== np.first) { np.first = ''; L.pin = ''; L.err = t('np.mismatch'); renderLogin(); return; }
+  const nh = await pinHash(S.key, np.user, L.pin);
+  if (nh === np.old) { np.first = ''; L.pin = ''; L.err = t('np.same'); renderLogin(); return; }
+  L.busy = true; L.err = ''; renderLogin();
+  try {
+    await apiRaw('change_pin', { new_pin_hash: nh }, { key: S.key, user: np.user, pin_hash: np.old });
+    const pins = store.get('pins', {}); pins[np.user.toLowerCase()] = { o: await offlineVerifier(nh), role: np.role }; store.set('pins', pins);
+    L.np = null; L.busy = false; L.pin = ''; toast(t('np.done'), 'ok');
+    startSession(np.user, np.role, nh, false);
+  } catch (e) { L.busy = false; np.first = ''; L.pin = ''; L.err = e instanceof NetError ? t('np.need_online') : errMsg(e); renderLogin(); }
+}
 async function submitPin() {
+  if (L.step === 'newpin') return submitNewPin();
   if (L.busy) return;
+  if (lockedUntil(L.sel) > Date.now()) { renderLogin(); return; }
   if (!/^\d{4,6}$/.test(L.pin)) { L.err = t('login.pin_len'); renderLogin(); return; }
   L.busy = true; L.err = ''; renderLogin();
   const user = L.sel, hash = await pinHash(S.key, user, L.pin);
@@ -1703,11 +1780,15 @@ async function submitPin() {
     const r = await apiRaw('login', {}, { key: S.key, user, pin_hash: hash });
     if (!SALES_ROLES.includes(r.user.role)) { L.busy = false; L.pin = ''; L.err = t('login.not_sales', { role: t('role.' + r.user.role) }); renderLogin(); return; }
     const pins = store.get('pins', {}); pins[user.toLowerCase()] = { o: await offlineVerifier(hash), role: r.user.role }; store.set('pins', pins);
+    L.busy = false; L.pin = '';
+    if (r.must_change) { askNewPin(r.user.name, r.user.role, hash); return; }
     startSession(r.user.name, r.user.role, hash, false);
   } catch (e) {
     L.busy = false; L.pin = '';
+    if (e.code === 'LOCKED') { const until = lockUntilFrom(e); LOCKS[user.toLowerCase()] = until; L.err = ''; setTimeout(() => { if (!$('#login').hidden && L.step === 'pin') renderLogin(); }, Math.min(until - Date.now() + 500, 2147483000)); renderLogin(); return; }
     if (e instanceof NetError) { const known = store.get('pins', {})[user.toLowerCase()]; if (known && known.o && known.o === await offlineVerifier(hash) && SALES_ROLES.includes(known.role) && FS.get('cache')) { startSession(user, known.role, hash, true); return; } }
-    L.err = e.code === 'BAD_PIN' ? t('err.BAD_PIN') : errMsg(e); renderLogin();
+    const left = /\((\d) kali lagi/.exec(String(e.message || ''));
+    L.err = e.code === 'BAD_PIN' ? t('err.BAD_PIN') + (left ? ' — ' + t('login.tries_left', { n: left[1] }) : '') : errMsg(e); renderLogin();
   }
 }
 function startSession(user, role, hash, offline) {
@@ -1741,6 +1822,7 @@ setInterval(() => { if (S.inApp && S.pin_hash && !$('#app').hidden && Date.now()
 function forceRelogin(e) {
   // already locked: a background request that was still in flight must not wipe the PIN being typed
   if (e.code === 'BAD_PIN' && !S.pin_hash && !$('#login').hidden && L.step === 'pin') return;
+  if (e.code === 'LOCKED') LOCKS[String(S.user).toLowerCase()] = lockUntilFrom(e);
   if (e.code === 'FORBIDDEN' && S.inApp) { toast(t('login.not_sales', { role: t('role.' + S.role) }), 'err', 5000); }
   S.pin_hash = ''; S.inApp = false; FS.set('session', { user: S.user, role: S.role }); SESS.del(); L.sel = S.user;
   showLogin(e.code === 'BAD_KEY' ? 'key' : 'pin', t('err.' + (e.code === 'BAD_PIN' ? 'BAD_PIN_SESSION' : e.code)));
@@ -2404,7 +2486,7 @@ const ACT = {
   'login-change-key': () => { L.users = []; L.step = 'key'; L.err = ''; renderLogin(); },
   'login-user': el => { L.sel = el.dataset.name; L.pin = ''; L.err = ''; if (DEMO) { demoLogin(L.sel); return; } L.step = 'pin'; renderLogin(); },
   'login-back': () => { L.pin = ''; L.err = ''; L.step = 'users'; renderLogin(); if (!L.users.length) loadUsers(); },
-  'pin-key': el => { const k = el.dataset.k; if (k === 'del') L.pin = L.pin.slice(0, -1); else if (k === 'ok') { submitPin(); return; } else if (L.pin.length < 6) L.pin += k; L.err = ''; renderLogin(); },
+  'pin-key': el => { const k = el.dataset.k; if (k === 'del') L.pin = L.pin.slice(0, -1); else if (k === 'ok') { submitPin(); return; } else if (L.pin.length < 6 && !$('#pinpad[data-locked]')) L.pin += k; L.err = ''; renderLogin(); },
   'day-start': () => dayStart(),
   'day-end': () => dayEnd(),
   'visit-shop': el => { resetCheckin(el.dataset.id); go('visit', true); },
@@ -2447,8 +2529,8 @@ document.addEventListener('click', e => {
   Promise.resolve().then(() => fn(el, e)).catch(err => { console.error(err); toast(errMsg(err), 'err'); });
 });
 document.addEventListener('keydown', e => {
-  if (!$('#login').hidden && L.step === 'pin' && !modalStack.length) {
-    if (/^\d$/.test(e.key)) { if (L.pin.length < 6) { L.pin += e.key; L.err = ''; renderLogin(); } e.preventDefault(); return; }
+  if (!$('#login').hidden && (L.step === 'pin' || L.step === 'newpin') && !modalStack.length) {
+    if (/^\d$/.test(e.key)) { if (L.pin.length < 6 && !$('#pinpad[data-locked]')) { L.pin += e.key; L.err = ''; renderLogin(); } e.preventDefault(); return; }
     if (e.key === 'Backspace') { L.pin = L.pin.slice(0, -1); renderLogin(); e.preventDefault(); return; }
     if (e.key === 'Enter') { submitPin(); e.preventDefault(); return; }
   }
@@ -2640,6 +2722,20 @@ const I18N = {
    on the phone; {"open": true, "until": "<ISO time>"} closes them by themselves at that time (server clock from
    the Date header, the phone's clock as fallback; remembered for offline use). Real mode is never affected; a
    local test server is never closed. */
+
+/* v16 login texts */
+Object.assign(I18N.id, {
+  'login.locked_until': 'Terlalu banyak PIN salah. Coba lagi jam {time}', 'login.tries_left': '{n} kali lagi, lalu akun dikunci 15 menit',
+  'err.LOCKED': 'Akun terkunci sementara', 'err.PIN_CHANGE_REQUIRED': 'Buat PIN baru dulu',
+  'np.title': 'Buat PIN baru', 'np.hint6': 'PIN 6 angka (pemilik / manajer)', 'np.hint46': 'PIN 4–6 angka', 'np.first': 'Ketik PIN baru', 'np.again': 'Ulangi PIN baru', 'np.ok': 'OK',
+  'np.mismatch': 'PIN tidak sama, ulangi', 'np.same': 'PIN baru harus beda dengan PIN lama', 'np.done': 'PIN baru tersimpan', 'np.need_online': 'Buat PIN baru perlu internet'
+});
+Object.assign(I18N.ar, {
+  'login.locked_until': 'رمز سري خاطئ مرات كثيرة. حاول مجددًا الساعة {time}', 'login.tries_left': 'بقي {n} محاولات ثم يُقفل الحساب 15 دقيقة',
+  'err.LOCKED': 'الحساب مقفل مؤقتًا', 'err.PIN_CHANGE_REQUIRED': 'أنشئ رمزًا سريًا جديدًا أولًا',
+  'np.title': 'إنشاء رمز سري جديد', 'np.hint6': 'رمز من 6 أرقام (المالك / المدير)', 'np.hint46': 'رمز من 4 إلى 6 أرقام', 'np.first': 'اكتب الرمز الجديد', 'np.again': 'أعد كتابة الرمز الجديد', 'np.ok': 'موافق',
+  'np.mismatch': 'الرمزان غير متطابقين، أعد المحاولة', 'np.same': 'يجب أن يختلف الرمز الجديد عن القديم', 'np.done': 'حُفظ الرمز الجديد', 'np.need_online': 'إنشاء رمز جديد يحتاج إلى الإنترنت'
+});
 async function demoStillOpen() {
   if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) return true;
   try {

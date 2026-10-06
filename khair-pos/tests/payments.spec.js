@@ -6,12 +6,18 @@ const { SHOTS, jktToday, login, openApp, getDb, nav, photoFile, asUser, editDb }
 const NF = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
 const rp = n => (n < 0 ? '-Rp ' : 'Rp ') + NF.format(Math.abs(Math.round(n)));
 const parse = a => typeof a === 'string' ? JSON.parse(a || '[]') : (a || []);
-/** Open invoices of a customer, the server's way: sales with debt minus the allocations of its payments. */
-function openDocs(db, cid) {
+/** Invoices of a customer, the server's way (v16): sales with debt minus the allocations of its payments (free = what an
+ *  allocation may take), then money paid without an invoice applied to the oldest ones first (auto) → remaining. */
+function ledger(db, cid) {
   const docs = db.sales.filter(s => s.customer_id === cid && s.status !== 'void' && s.debt_amount > 0).map(s => ({ ref: s.invoice_no, date: s.sale_date, total: s.debt_amount, paid: 0 }));
-  db.payments.filter(p => p.customer_id === cid && (p.direction || 'in') === 'in').forEach(p => parse(p.alloc).forEach(a => { const d = docs.find(x => x.ref === a.ref); if (d) d.paid += a.amount; }));
-  return docs.map(d => Object.assign(d, { remaining: Math.max(0, d.total - d.paid) })).filter(d => d.remaining > 0).sort((a, b) => a.date.localeCompare(b.date));
+  const pays = db.payments.filter(p => p.customer_id === cid && (p.direction || 'in') === 'in');
+  pays.forEach(p => parse(p.alloc).forEach(a => { const d = docs.find(x => x.ref === a.ref); if (d) d.paid += a.amount; }));
+  let free = pays.reduce((a, p) => a + Math.max(0, p.amount - parse(p.alloc).reduce((b, x) => b + x.amount, 0)), 0);
+  docs.sort((a, b) => a.date.localeCompare(b.date));
+  docs.forEach(d => { d.free = Math.max(0, d.total - d.paid); const take = Math.min(free, d.free); d.auto = take; free -= take; d.remaining = d.free - take; });
+  return docs;
 }
+const openDocs = (db, cid) => ledger(db, cid).filter(d => d.free > 0);
 
 test('customer: slip photo pre-fills amount/bank/ref/date, MISMATCH needs a reason, part of a chosen invoice; ledger and "Atur alokasi"', async ({ page }) => {
   await login(page, 'Pemilik', '1234', '', { stay: true });
@@ -20,13 +26,14 @@ test('customer: slip photo pre-fills amount/bank/ref/date, MISMATCH needs a reas
   let db = await getDb(page);
   const cust = db.customers.find(c => /Toko Berkah/.test(c.name));
   const docs = openDocs(db, cust.id);
-  const target = docs.find((d, i) => i > 0 && d.remaining > 100000); // not the oldest one
+  const target = docs.find((d, i) => i > 0 && d.free > 100000 && d.remaining > 0); // not the oldest one
   expect(target).toBeTruthy();
 
   await nav(page, 'customers');
   await page.locator('[data-act="cust-open"]').filter({ hasText: cust.name }).click();
   await expect(page.locator('#cd-ledger #led-docs')).toBeVisible();
   await expect(page.locator('#led-open-total')).toHaveText(rp(docs.reduce((a, d) => a + d.remaining, 0)));
+  if (docs.some(d => d.auto)) await expect(page.locator('#led-docs [data-auto]').first()).toBeVisible();
   await expect(page.locator(`#led-docs tr[data-ref="${target.ref}"] [data-rem]`)).toHaveText(rp(target.remaining));
   await page.screenshot({ path: path.join(SHOTS, 'desktop-ledger.png') });
 
@@ -64,7 +71,10 @@ test('customer: slip photo pre-fills amount/bank/ref/date, MISMATCH needs a reas
   expect(pay.proof_photo_id).toMatch(/^PH-/);
   expect(parse(pay.alloc)).toEqual([{ ref: target.ref, amount: 100000 }]);
   // ledger: remaining of that invoice went down; payment row with status and allocation
-  await expect(page.locator(`#led-docs tr[data-ref="${target.ref}"] [data-rem]`)).toHaveText(rp(target.remaining - 100000));
+  // the 150.000 not allocated counts for the oldest open invoices first (auto)
+  const L2 = ledger(db, cust.id);
+  await expect(page.locator(`#cd-ledger tr[data-ref="${target.ref}"] [data-rem]`).first()).toHaveText(rp(L2.find(d => d.ref === target.ref).remaining));
+  await expect(page.locator('#led-open-total')).toHaveText(rp(L2.reduce((a, d) => a + d.remaining, 0)));
   const prow = page.locator(`#led-pays tr[data-pay="${pay.pay_id}"]`);
   await expect(prow.locator('[data-pay-status]')).toHaveAttribute('data-pay-status', 'sebagian');
   await expect(prow.locator('[data-alloc]')).toContainText(target.ref);
@@ -79,7 +89,7 @@ test('customer: slip photo pre-fills amount/bank/ref/date, MISMATCH needs a reas
   await prow.locator('[data-act="pay-alloc"]').click();
   await expect(page.locator('#alloc-modal')).toBeVisible();
   const oldest = docs[0];
-  const take = Math.min(150000, oldest.remaining);
+  const take = Math.min(150000, oldest.free);
   const orow = page.locator(`#alloc-modal .alloc-row[data-ref="${oldest.ref}"]`);
   await orow.locator('[data-al-chk]').check();
   await orow.locator('[data-al-amt]').fill(NF.format(take));
@@ -109,7 +119,7 @@ test('seeded unallocated payment → "Atur alokasi" makes it lunas; manager allo
   await expect(page.locator(`#led-pays tr[data-pay="${p0.pay_id}"] [data-pay-status]`)).not.toHaveAttribute('data-pay-status', 'belum_dialokasi');
   db = await getDb(page);
   const p1 = db.payments.find(p => p.pay_id === p0.pay_id);
-  expect(parse(p1.alloc).reduce((a, x) => a + x.amount, 0)).toBe(Math.min(p0.amount, openDocs(Object.assign({}, db, { payments: db.payments.filter(p => p.pay_id !== p0.pay_id) }), cust.id).reduce((a, d) => a + d.remaining, 0)));
+  expect(parse(p1.alloc).reduce((a, x) => a + x.amount, 0)).toBe(Math.min(p0.amount, openDocs(Object.assign({}, db, { payments: db.payments.filter(p => p.pay_id !== p0.pay_id) }), cust.id).reduce((a, d) => a + d.free, 0)));
 });
 
 test('Pemasok: open notes and balance; pay a supplier from the drawer → expected cash goes down; phone + Arabic screenshot', async ({ page }) => {
