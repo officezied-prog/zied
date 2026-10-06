@@ -443,3 +443,18 @@ user presses Send in WhatsApp (no automatic sending without the WhatsApp Busines
 - Cost never reaches kasir / manager: `request_purchase_fix` and `purchase_fix` approvals keep quantities only; `get_sales` purchases
   have no `total` for them.
 - `party_ledger`: payments without allocation are applied to the oldest open invoices first (`auto: true` on those amounts).
+
+### Warehouse (gudang) and shop shelf (toko) — sell only what came in with a note (v16)
+- Products carry `stock` (total, as before) and `shop_stock` (on the shelf); the apps get `gudang_stock = stock − shop_stock` too.
+  A product without `shop_stock` yet (rows from before v16) counts all its stock as on the shelf, so nothing is blocked at go-live.
+- **Goods-in** (`save_purchase`, with the supplier-note photo) adds to the **warehouse** only. Repacking, goods-in corrections,
+  stock counts and owner adjustments also change the warehouse; the shelf is capped at the total. A new product's opening stock
+  (owner) is on the shelf.
+- **`move_stock`** `{to: "toko" | "gudang", lines: [{product_id, qty}], note}` (any app user except sales): moves goods from the
+  warehouse to the shelf (or back). Moving to the shelf needs that much in the warehouse → else `NOT_IN_GUDANG`, with
+  "belum ada barang masuk dengan nota" when the warehouse is empty. Logged `pindah_stok`. Response `stock: [{product_id, stock,
+  shop_stock, gudang_stock}]`.
+- **`save_sale`** sells from the shelf only: a line above `shop_stock` → `NOT_ON_SHELF` with `items: [{product_id, name, need,
+  shop, gudang}]` and a message telling the cashier to move the goods first (or that no goods-in exists). Setting
+  `sell_from_shop_only` (default true) turns it off. Sales the app queued offline send `queued: true`: never refused (the customer
+  already paid), logged `jual_tanpa_rak` (warn) for the owner. Sales and voids change the shelf; `save_sale.stock[]` has `shop_stock`.

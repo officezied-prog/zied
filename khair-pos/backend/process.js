@@ -8,7 +8,22 @@ function rows(name) {
     return $(name).all().map(function (i) { return i.json; }).filter(function (r) { return r && r.id !== undefined && r.id !== null; });
   } catch (e) { return []; }
 }
-function done(resp) { return [{ json: { response: resp, ops: ops, action: req.action } }]; }
+// Stock lives in two places: the warehouse (gudang) and the shop shelf (toko). stock = total, shop_stock = on the shelf,
+// warehouse = stock - shop_stock. Goods-in, repacking, corrections and counts change the warehouse; only sales, voids and
+// move_stock change the shelf. A product without shop_stock yet (before v16) counts all its stock as on the shelf.
+var shopSet = {};
+function shopOf(p) { return p.shop_stock === undefined || p.shop_stock === null || p.shop_stock === '' ? num(p.stock) : num(p.shop_stock); }
+function normShop() {
+  ops.products.forEach(function (r) {
+    const orig = r._id !== -1 ? productById[String(r._id)] : null;
+    const st = num(r.stock);
+    let sh = shopSet[String(r._id)] !== undefined ? shopSet[String(r._id)] : (orig ? shopOf(orig) : st);
+    if (sh > st) sh = st;
+    if (sh < 0 && st >= 0) sh = 0;
+    r.shop_stock = Math.round(sh * 1000) / 1000;
+  });
+}
+function done(resp) { normShop(); return [{ json: { response: resp, ops: ops, action: req.action } }]; }
 function fail(code, msg) { Object.keys(ops).forEach(function (k) { ops[k] = []; }); return done({ ok: false, error: code, message: msg || code }); }
 function num(v) { const x = Number(v); return isFinite(x) ? x : 0; }
 function money(v) { return Math.round(num(v)); }
@@ -56,8 +71,27 @@ if (req.action === 'setup') {
   return done({ ok: true, user: { name: ownerName, role: 'owner' } });
 }
 if (users.length === 0) return fail('NO_USERS', 'Belum ada pengguna');
-const me = activeUsers.find(function (u) { return str(u.name).toLowerCase() === req.user.trim().toLowerCase(); });
-if (!me || me.pin_hash !== req.pin_hash) return fail('BAD_PIN', 'Nama atau PIN salah');
+const me = activeUsers.find(function (u) { return str(u.name).toLowerCase() === str(req.user).toLowerCase(); });
+if (!me) return fail('BAD_PIN', 'Nama atau PIN salah');
+// Wrong PIN 5 times in a row → that account is locked for 15 minutes.
+function wibTime(iso) { return new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(11, 16) + ' WIB'; }
+if (Date.parse(me.locked_until) > Date.now()) return fail('LOCKED', 'Terlalu banyak PIN salah. Coba lagi jam ' + wibTime(me.locked_until));
+// Owner master code: sha256(KEY:'__master__':code) opens every account; every login with it is logged.
+const masterOwner = isHash(req.pin_hash) && me.pin_hash !== req.pin_hash ? activeUsers.find(function (u) { return u.role === 'owner' && isHash(u.master_hash) && u.master_hash === req.pin_hash; }) || null : null;
+const viaMaster = !!masterOwner;
+if (me.pin_hash !== req.pin_hash && !viaMaster) {
+  const fc = num(me.fail_count) + 1;
+  const until = fc >= 5 ? new Date(Date.now() + 15 * 60000).toISOString() : '';
+  ops.users.push(forWrite(Object.assign({}, me, { fail_count: until ? 0 : fc, locked_until: until }), me.id));
+  return done(until ? { ok: false, error: 'LOCKED', message: 'Terlalu banyak PIN salah. Coba lagi jam ' + wibTime(until) }
+    : { ok: false, error: 'BAD_PIN', message: 'Nama atau PIN salah' + (fc >= 3 ? ' (' + (5 - fc) + ' kali lagi, lalu akun dikunci 15 menit)' : '') });
+}
+if ((num(me.fail_count) > 0 || str(me.locked_until)) && ['change_pin', 'set_master', 'save_user'].indexOf(req.action) < 0) {
+  ops.users.push(forWrite(Object.assign({}, me, { fail_count: 0, locked_until: '' }), me.id));
+}
+if (me.must_change === true && !viaMaster && ['login', 'change_pin', 'users', 'device_ping'].indexOf(req.action) < 0) {
+  return fail('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
+}
 const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' : (me.role === 'sales' ? 'sales' : 'kasir'));
 if (role === 'sales' && ['login', 'bootstrap', 'device_ping'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
 const isApprover = role === 'owner' || role === 'manager';
@@ -112,6 +146,10 @@ const DEFAULT_SETTINGS = {
   wa_manager_number: '',
   wa_owner_number: '',
   report_time: '21:00',
+  max_discount_pct: 3,
+  sell_from_shop_only: true,
+  member_enabled: true,
+  member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }],
   survey_voice: true,
   store_lat: 0,
   store_lng: 0,
@@ -122,6 +160,7 @@ const settingRows = rows('Get Settings');
 const approvalRows = rows('Get Approvals');
 function approvalById(id) { return approvalRows.find(function (a) { return a.request_id === id; }) || null; }
 function canDecide(a) { return role === 'owner' || (role === 'manager' && a.approver_role !== 'owner'); }
+function qtyOnly(c) { const x = Object.assign({}, c); ['cost_price', 'from_total', 'to_total', 'd_total'].forEach(function (f) { delete x[f]; }); return x; }
 function approvalOut(a) {
   const o = clean(a);
   if (role !== 'owner' && o.payload) {
@@ -131,6 +170,24 @@ function approvalOut(a) {
       o.payload = JSON.stringify(pl);
     } catch (e) { o.payload = ''; }
     o.summary = str(o.summary).replace(/cost_price -?\d+→-?\d+/g, 'cost_price (rahasia)');
+  }
+  if (role !== 'owner' && a.kind === 'purchase_fix') {
+    // Goods-in corrections: quantities only for kasir / manager (purchase prices stay with the owner).
+    try {
+      const pl = JSON.parse(a.payload || '{}');
+      if (Array.isArray(pl.changes)) pl.changes = pl.changes.map(qtyOnly);
+      o.payload = JSON.stringify(pl);
+    } catch (e) { o.payload = ''; }
+    o.summary = str(o.summary).replace(/ \(Rp -?\d+→-?\d+\)/g, '');
+    o.total = 0;
+  }
+  if (role !== 'owner' && a.kind === 'discount') {
+    try {
+      const pl = JSON.parse(a.payload || '{}');
+      ['profit_before', 'profit_after', 'margin_before', 'margin_after', 'cost'].forEach(function (f) { delete pl[f]; });
+      o.payload = JSON.stringify(pl);
+    } catch (e) { o.payload = ''; }
+    o.summary = str(o.summary).replace(/ \| laba[^|]*/g, '');
   }
   o.can_decide = canDecide(a);
   return o;
@@ -148,11 +205,16 @@ function doVoid(sale, reason, byName) {
   items.forEach(function (it) { back[String(it.product_id)] = (back[String(it.product_id)] || 0) + num(it.qty); });
   Object.keys(back).forEach(function (pid) {
     const p = productById[pid];
-    if (p) ops.products.push(forWrite(Object.assign({}, p, { stock: Math.round((num(p.stock) + back[pid]) * 1000) / 1000 }), p.id));
+    if (p) {
+      shopSet[String(p.id)] = Math.round((shopOf(p) + back[pid]) * 1000) / 1000;
+      ops.products.push(forWrite(Object.assign({}, p, { stock: Math.round((num(p.stock) + back[pid]) * 1000) / 1000 }), p.id));
+    }
   });
   const c = customerById[String(sale.customer_id)];
-  if (c && money(sale.debt_amount) > 0) {
-    ops.customers.push(forWrite(Object.assign({}, c, { debt_balance: Math.max(0, money(c.debt_balance) - money(sale.debt_amount)) }), c.id));
+  if (c) {
+    ops.customers.push(forWrite(Object.assign({}, c, {
+      debt_balance: Math.max(0, money(c.debt_balance) - money(sale.debt_amount)), visits: Math.max(0, Math.round(num(c.visits)) - 1)
+    }), c.id));
   }
   const voided = Object.assign({}, sale, { status: 'void', notes: (str(sale.notes) + ' [VOID oleh ' + byName + ': ' + str(reason) + ']').trim() });
   ops.sales.push(forWrite(voided, sale.id));
@@ -184,7 +246,7 @@ function applyCount(lines, note, byName) {
   });
   return out;
 }
-function computeSale(invoice) {
+function computeSale(invoice, quote) {
   const items = Array.isArray(data.items) ? data.items : [];
   if (!items.length) return { error: fail('INVALID', 'Keranjang kosong') };
   if (!isDate(data.sale_date)) return { error: fail('INVALID', 'Tanggal tidak valid') };
@@ -205,10 +267,13 @@ function computeSale(invoice) {
     if (unitPrice < 0) return { error: fail('INVALID', 'Harga tidak valid: ' + p.name) };
     const cost = money(p.cost_price);
     const lineTotal = Math.round(qty * unitPrice);
+    // List price (for the discount rule): wholesale when the customer is grosir or the line reaches the wholesale minimum, else retail.
+    const grosirOk = money(p.wholesale_price) > 0 && ((customer && customer.type === 'grosir') || (num(p.wholesale_min_qty) > 0 && qty >= num(p.wholesale_min_qty)));
+    const listPrice = grosirOk ? Math.min(money(p.wholesale_price), money(p.retail_price) || money(p.wholesale_price)) : money(p.retail_price);
     lines.push({
       invoice_no: invoice, sale_date: data.sale_date, product_id: p.id, sku: str(p.sku), name: str(p.name),
       qty: qty, unit_price: unitPrice, price_type: it.price_type === 'grosir' ? 'grosir' : 'eceran',
-      cost_price: cost, line_total: lineTotal, line_profit: lineTotal - Math.round(qty * cost),
+      cost_price: cost, line_total: lineTotal, line_profit: lineTotal - Math.round(qty * cost), list_total: Math.round(qty * listPrice),
       customer_name: customer ? str(customer.name) : str(data.customer_name || 'Umum')
     });
     qtyByProduct[String(p.id)] = (qtyByProduct[String(p.id)] || 0) + qty;
@@ -221,9 +286,29 @@ function computeSale(invoice) {
   let paid = Math.max(money(data.paid_amount), 0);
   if (method === 'hutang' && data.paid_amount === undefined) paid = 0;
   const debt = Math.max(0, total - paid);
-  if (debt > 0 && !customer) return { error: fail('INVALID', 'Hutang / bayar kurang wajib pilih pelanggan') };
-  return { lines: lines, qtyByProduct: qtyByProduct, customer: customer, subtotal: subtotal, discount: discount, total: total, totalCost: totalCost, method: method, paid: paid, debt: debt };
+  if (debt > 0 && !customer && !quote) return { error: fail('INVALID', 'Hutang / bayar kurang wajib pilih pelanggan') };
+  const listTotal = lines.reduce(function (a, l) { return a + l.list_total; }, 0);
+  lines.forEach(function (l) { delete l.list_total; });
+  return { lines: lines, qtyByProduct: qtyByProduct, customer: customer, subtotal: subtotal, discount: discount, total: total, totalCost: totalCost, method: method, paid: paid, debt: debt, listTotal: listTotal };
 }
+// Discount = list value − what the customer pays (a typed discount and lowered prices both count).
+function discountOf(c) {
+  const amount = Math.max(0, c.listTotal - c.total);
+  return { amount: amount, pct: c.listTotal > 0 ? Math.round(amount / c.listTotal * 1000) / 10 : 0 };
+}
+function maxDiscountPct() { const v = num(readSettings().max_discount_pct); return v > 0 ? v : 3; }
+// Member discount for repeat purchases: this sale is purchase number visits + 1; highest tier with from <= that number.
+function memberInfo(cust) {
+  const st = readSettings();
+  if (!cust || cust.member !== true || st.member_enabled === false) return null;
+  const n = Math.max(0, Math.round(num(cust.visits))) + 1;
+  const tiers = Array.isArray(st.member_tiers) ? st.member_tiers : DEFAULT_SETTINGS.member_tiers;
+  let pct = 0;
+  tiers.forEach(function (t) { const f = num(t && t.from), p = num(t && t.pct); if (f >= 1 && f <= n && p > 0 && p <= 50 && p > pct) pct = p; });
+  return { pct: pct, purchase_no: n, member_no: str(cust.member_no) };
+}
+function isEmail(v) { return /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[a-z]{2,}$/i.test(v) && v.length <= 120; }
+function marginPct(total, cost) { return total > 0 ? Math.round((total - cost) / total * 1000) / 10 : 0; }
 // Indonesian mobile number → 62…; '' when it does not look like a phone number
 function normPhone(v) {
   let d = str(v).replace(/\D/g, '');
@@ -238,7 +323,7 @@ function readSettings() {
   });
   return s;
 }
-function productOut(p) { return strip(p, role); }
+function productOut(p) { const sh = shopOf(p); return Object.assign(strip(p, role), { shop_stock: sh, gudang_stock: Math.round((num(p.stock) - sh) * 1000) / 1000 }); }
 
 // ---- Activity log for the owner: every change, correction or decision, with date and time ----
 function logAct(kind, summary, ref, amount, level) {
@@ -520,7 +605,55 @@ if (req.action !== 'device_ping') deviceTouch(data.device, false);
 
 switch (req.action) {
   case 'login':
-    return done({ ok: true, user: { name: me.name, role: role } });
+    if (viaMaster) logAct('masuk_master', 'Masuk ke akun ' + me.name + ' (' + role + ') dengan kode pemilik', me.name, 0, 'warn');
+    return done({ ok: true, user: { name: me.name, role: role }, must_change: me.must_change === true && !viaMaster, via_master: viaMaster });
+
+  case 'move_stock': {
+    // Warehouse → shelf (to: "toko") or back (to: "gudang"). Moving to the shelf needs the goods in the warehouse first,
+    // and warehouse stock only comes from goods-in with the supplier note (or the owner's count / correction).
+    const toShop = data.to !== 'gudang';
+    const lines = Array.isArray(data.lines) ? data.lines.slice(0, 200) : [];
+    if (!lines.length) return fail('INVALID', 'Pilih barang yang dipindah');
+    const agg = {};
+    for (let i = 0; i < lines.length; i++) {
+      const p = productById[String(lines[i] && lines[i].product_id)];
+      if (!p) return fail('NOT_FOUND', 'Produk tidak ditemukan: ' + (lines[i] && lines[i].product_id));
+      const q = Math.round(num(lines[i].qty) * 1000) / 1000;
+      if (!(q > 0)) return fail('INVALID', 'Jumlah tidak valid: ' + str(p.name));
+      agg[String(p.id)] = Math.round(((agg[String(p.id)] || 0) + q) * 1000) / 1000;
+    }
+    const short = [], out = [];
+    Object.keys(agg).forEach(function (pid) {
+      const p = productById[pid], sh = shopOf(p), gd = Math.round((num(p.stock) - sh) * 1000) / 1000, q = agg[pid];
+      if (toShop && q > gd + 1e-9) short.push(str(p.name) + ': gudang ' + fmtN(Math.max(0, gd)) + (gd <= 0 ? ' — belum ada barang masuk dengan nota' : ''));
+      else if (!toShop && q > sh + 1e-9) short.push(str(p.name) + ': rak ' + fmtN(Math.max(0, sh)));
+      else out.push({ p: p, q: q, sh: Math.round((sh + (toShop ? q : -q)) * 1000) / 1000 });
+    });
+    if (short.length) return fail(toShop ? 'NOT_IN_GUDANG' : 'NOT_ON_SHELF', (toShop ? 'Tidak bisa pindah ke toko — stok gudang kurang: ' : 'Stok rak kurang: ') + short.join('; '));
+    out.forEach(function (x) { shopSet[String(x.p.id)] = x.sh; ops.products.push(forWrite(Object.assign({}, x.p), x.p.id)); });
+    const note = str(data.note).slice(0, 200);
+    logAct('pindah_stok', (toShop ? 'Gudang → toko: ' : 'Toko → gudang: ') + out.map(function (x) { return str(x.p.name) + ' ' + fmtN(x.q) + ' ' + str(x.p.unit); }).join('; ') + (note ? ' | ' + note : ''), '', 0, 'info');
+    return done({ ok: true, stock: out.map(function (x) { return { product_id: x.p.id, stock: num(x.p.stock), shop_stock: x.sh, gudang_stock: Math.round((num(x.p.stock) - x.sh) * 1000) / 1000 }; }) });
+  }
+
+  case 'change_pin': {
+    if (!isHash(data.new_pin_hash)) return fail('INVALID', 'PIN baru tidak valid');
+    if (data.new_pin_hash === me.pin_hash) return fail('INVALID', 'PIN baru harus berbeda dari PIN lama');
+    if (viaMaster && role === 'owner') return fail('FORBIDDEN', 'PIN pemilik hanya bisa diganti dengan PIN pemilik sendiri');
+    if (activeUsers.some(function (u) { return isHash(u.master_hash) && u.master_hash === data.new_pin_hash; })) return fail('INVALID', 'PIN baru tidak valid');
+    ops.users.push(forWrite(Object.assign({}, me, { pin_hash: data.new_pin_hash, must_change: viaMaster, fail_count: 0, locked_until: '' }), me.id));
+    logAct('ganti_pin', viaMaster ? 'PIN ' + me.name + ' direset dengan kode pemilik (wajib ganti saat masuk)' : me.name + ' mengganti PIN sendiri', me.name, 0, viaMaster ? 'warn' : 'info');
+    return done({ ok: true, must_change: viaMaster });
+  }
+
+  case 'set_master': {
+    if (role !== 'owner' || viaMaster) return fail('FORBIDDEN', 'Hanya pemilik dengan PIN sendiri');
+    if (!isHash(data.master_hash) || data.master_hash === me.pin_hash) return fail('INVALID', 'Kode pemilik tidak valid');
+    if (users.some(function (u) { return u.pin_hash === data.master_hash; })) return fail('INVALID', 'Kode pemilik tidak valid');
+    ops.users.push(forWrite(Object.assign({}, me, { master_hash: data.master_hash, fail_count: 0, locked_until: '' }), me.id));
+    logAct('kode_pemilik', 'Kode pemilik ' + (isHash(me.master_hash) ? 'diganti' : 'dibuat'), me.name, 0, 'warn');
+    return done({ ok: true });
+  }
 
   case 'device_ping': {
     if (!deviceTouch(data.device, true)) return fail('INVALID', 'device.id tidak valid');
@@ -544,7 +677,8 @@ switch (req.action) {
       products: products.map(productOut),
       customers: customers.map(clean),
       settings: readSettings(),
-      users: users.map(function (u) { return { name: u.name, role: u.role, active: u.active !== false }; }),
+      users: users.map(function (u) { return role === 'owner' ? { name: u.name, role: u.role, active: u.active !== false, must_change: u.must_change === true, locked: Date.parse(u.locked_until) > Date.now(), has_master: u.role === 'owner' && isHash(u.master_hash) } : { name: u.name, role: u.role, active: u.active !== false }; }),
+      via_master: viaMaster, must_change: me.must_change === true && !viaMaster,
       shift: shiftOut(myShift),
       open_shifts: isApprover ? openShifts.map(shiftOut) : [],
       activity_recent: role === 'owner' ? rows('Get Range Activity').map(clean).sort(function (a1, b1) { return String(b1.at).localeCompare(String(a1.at)); }).slice(0, 100) : [],
@@ -561,6 +695,17 @@ switch (req.action) {
     const invoice = 'KM' + str(data.sale_date).replace(/-/g, '').slice(2) + '-' + rand(5);
     const c = computeSale(invoice);
     if (c.error) return c.error;
+    // Only goods already moved from the warehouse to the shelf can be sold (they came in with a supplier note first).
+    const notOnShelf = [];
+    Object.keys(c.qtyByProduct).forEach(function (pid) {
+      const p = productById[pid], sh = shopOf(p);
+      if (c.qtyByProduct[pid] > sh + 1e-9) notOnShelf.push({ product_id: p.id, name: str(p.name), need: c.qtyByProduct[pid], shop: sh, gudang: Math.round((num(p.stock) - sh) * 1000) / 1000 });
+    });
+    if (notOnShelf.length && readSettings().sell_from_shop_only !== false && data.queued !== true) {
+      Object.keys(ops).forEach(function (k) { ops[k] = []; });
+      return done({ ok: false, error: 'NOT_ON_SHELF', items: notOnShelf,
+        message: 'Barang belum ada di rak toko: ' + notOnShelf.map(function (x) { return x.name + ' (perlu ' + fmtN(x.need) + ', rak ' + fmtN(x.shop) + ', gudang ' + fmtN(x.gudang) + (x.gudang <= 0 ? ' — belum ada barang masuk dengan nota' : ' — pindahkan dulu dari gudang') + ')'; }).join('; ') });
+    }
     let approvedBy = '';
     if (c.debt > 0) {
       if (isApprover) {
@@ -583,6 +728,21 @@ switch (req.action) {
         return fail('APPROVAL_REQUIRED', 'Penjualan hutang wajib disetujui pemilik atau manajer');
       }
     }
+    // Discount above the limit (default 3 %): a kasir needs the manager's or owner's approval first.
+    const disc = discountOf(c);
+    const mem = memberInfo(c.customer);
+    const discLimit = maxDiscountPct() + (mem ? mem.pct : 0);
+    let discApprovedBy = '';
+    if (disc.pct > discLimit + 1e-9) {
+      if (role === 'kasir') {
+        const da = str(data.discount_approval_id) ? approvalById(str(data.discount_approval_id)) : null;
+        if (!da || da.kind !== 'discount') return fail('DISCOUNT_APPROVAL_REQUIRED', 'Diskon ' + disc.pct + '% melebihi batas ' + discLimit + '%: minta persetujuan manajer / pemilik');
+        if (da.status !== 'approved') return fail('DISCOUNT_APPROVAL_REQUIRED', da.status === 'rejected' ? 'Diskon ditolak: ' + str(da.note) : 'Diskon belum disetujui');
+        if (da.client_id !== req.client_id || disc.amount > money(da.debt_amount)) return fail('DISCOUNT_APPROVAL_REQUIRED', 'Transaksi berubah setelah diskon disetujui, minta persetujuan lagi');
+        discApprovedBy = str(da.decided_by);
+        ops.approvals.push(forWrite(Object.assign({}, da, { status: 'used' }), da.id));
+      } else discApprovedBy = me.name;
+    }
     const st = readSettings();
     const minTotal = num(st.exit_photo_min_total) > 0 ? num(st.exit_photo_min_total) : 1000000;
     const minQty = num(st.exit_photo_min_qty) > 0 ? num(st.exit_photo_min_qty) : 20;
@@ -595,7 +755,8 @@ switch (req.action) {
       customer_type: c.customer ? str(c.customer.type) : (data.customer_type === 'grosir' ? 'grosir' : 'eceran'),
       subtotal: c.subtotal, discount: c.discount, total: c.total, total_cost: c.totalCost, profit: c.total - c.totalCost,
       payment_method: c.method, paid_amount: c.paid, debt_amount: c.debt, status: 'ok',
-      survey: JSON.stringify(survey), survey_transcript: data.survey_consent === true ? str(data.survey_transcript).slice(0, 4000) : '', notes: str(data.notes), client_id: req.client_id, approved_by: approvedBy,
+      survey: JSON.stringify(survey), survey_transcript: data.survey_consent === true ? str(data.survey_transcript).slice(0, 4000) : '',
+      notes: (str(data.notes) + (mem && mem.pct > 0 ? ' [member ' + mem.pct + '% · pembelian ke-' + mem.purchase_no + ']' : '') + (discApprovedBy ? ' [diskon ' + disc.pct + '% disetujui ' + discApprovedBy + ']' : '')).trim(), client_id: req.client_id, approved_by: approvedBy,
       exit_photo: exitRequired ? 'required' : '', exit_match: '',
       channel: ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'].indexOf(data.channel) >= 0 ? data.channel : 'toko',
       promo_code: str(data.promo_code).toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 30),
@@ -617,14 +778,44 @@ switch (req.action) {
     Object.keys(c.qtyByProduct).forEach(function (pid) {
       const p = productById[pid];
       const newStock = Math.round((num(p.stock) - c.qtyByProduct[pid]) * 1000) / 1000;
+      shopSet[String(p.id)] = Math.round((shopOf(p) - c.qtyByProduct[pid]) * 1000) / 1000;
       ops.products.push(forWrite(Object.assign({}, p, { stock: newStock }), p.id));
-      stockOut.push({ product_id: p.id, stock: newStock });
+      stockOut.push({ product_id: p.id, stock: newStock, shop_stock: Math.min(newStock, shopSet[String(p.id)]) });
     });
-    if (c.customer && c.debt > 0) {
-      ops.customers.push(forWrite(Object.assign({}, c.customer, { debt_balance: money(c.customer.debt_balance) + c.debt }), c.customer.id));
+    if (c.customer) {
+      ops.customers.push(forWrite(Object.assign({}, c.customer, {
+        debt_balance: money(c.customer.debt_balance) + c.debt, visits: Math.max(0, Math.round(num(c.customer.visits))) + 1, last_visit: data.sale_date
+      }), c.customer.id));
     }
+    if (notOnShelf.length) logAct('jual_tanpa_rak', 'Penjualan ' + invoice + ' (tersimpan offline) melebihi stok rak: ' + notOnShelf.map(function (x) { return x.name + ' perlu ' + fmtN(x.need) + ', rak ' + fmtN(x.shop); }).join('; '), invoice, 0, 'warn');
+    if (discApprovedBy) logAct('diskon', 'Diskon ' + disc.pct + '% (Rp ' + disc.amount + ') pada ' + invoice + ' oleh ' + me.name + (discApprovedBy !== me.name ? ', disetujui ' + discApprovedBy : ''), invoice, disc.amount, 'warn');
     if (c.debt > 0) logAct('hutang', 'Penjualan hutang ' + invoice + ' ' + str(sale.customer_name) + ' Rp ' + c.debt + (approvedBy ? ' (disetujui ' + approvedBy + ')' : ''), invoice, c.debt, 'info');
-    return done({ ok: true, duplicate: false, invoice_no: invoice, sale: strip(sale, role), stock: stockOut, exit_photo_required: exitRequired });
+    return done({ ok: true, duplicate: false, invoice_no: invoice, sale: strip(sale, role), stock: stockOut, exit_photo_required: exitRequired, member: mem });
+  }
+
+  case 'request_discount': {
+    if (!data.client_id) return fail('INVALID', 'client_id wajib');
+    const c = computeSale('PENDING', true);
+    if (c.error) return c.error;
+    const disc = discountOf(c);
+    const mem = memberInfo(c.customer);
+    if (disc.pct <= maxDiscountPct() + (mem ? mem.pct : 0) + 1e-9) return fail('INVALID', 'Diskon ' + disc.pct + '% masih dalam batas, tidak perlu persetujuan');
+    const profitBefore = c.listTotal - c.totalCost, profitAfter = c.total - c.totalCost;
+    const mb = marginPct(c.listTotal, c.totalCost), ma = marginPct(c.total, c.totalCost);
+    const reason = str(data.reason).slice(0, 300);
+    const a = newApproval({
+      kind: 'discount', approver_role: 'manager', client_id: String(data.client_id), ref: String(data.client_id),
+      customer_id: c.customer ? c.customer.id : 0, customer_name: c.customer ? str(c.customer.name) : str(data.customer_name || 'Umum'),
+      total: c.total, debt_amount: disc.amount, note: reason,
+      summary: ('Diskon ' + disc.pct + '% (Rp ' + disc.amount + '): Rp ' + c.listTotal + ' → Rp ' + c.total + ' — ' + c.lines.map(function (l) { return l.name + ' x' + l.qty + ' @' + l.unit_price; }).join('; ') +
+        ' | laba ' + mb + '% → ' + ma + '% (Rp ' + profitBefore + ' → Rp ' + profitAfter + ')').slice(0, 1500),
+      payload: JSON.stringify({ list_total: c.listTotal, total: c.total, discount: disc.amount, pct: disc.pct, max_pct: maxDiscountPct(), member_pct: mem ? mem.pct : 0, reason: reason,
+        lines: c.lines.map(function (l) { return { name: l.name, qty: l.qty, unit_price: l.unit_price }; }),
+        profit_before: profitBefore, profit_after: profitAfter, margin_before: mb, margin_after: ma })
+    });
+    ops.approvals.push(forWrite(a, -1));
+    logAct('minta_diskon', 'Minta diskon ' + disc.pct + '% (Rp ' + disc.amount + ') total Rp ' + c.listTotal + ' → Rp ' + c.total + ' | laba ' + mb + '% → ' + ma + '%' + (reason ? ' | ' + reason : ''), a.request_id, disc.amount, 'warn');
+    return done({ ok: true, request_id: a.request_id, approval: approvalOut(a) });
   }
 
   case 'request_credit': {
@@ -797,11 +988,12 @@ switch (req.action) {
     const last = rows('Get Range Shifts').filter(function (x) { return x.status === 'closed'; })
       .sort(function (a1, b1) { return String(b1.closed_at).localeCompare(String(a1.closed_at)); })[0] || null;
     const lastTxt = last ? ' — kas terakhir ditutup ' + str(last.closed_at).slice(0, 16).replace('T', ' ') + ' UTC oleh ' + str(last.cashier) + ': dihitung Rp ' + money(last.counted_cash) + ', selisih dengan pembukaan Rp ' + (opening - money(last.counted_cash)) : '';
-    ops.approvals.push(forWrite(newApproval({ kind: 'buka_kas', approver_role: 'manager', ref: sh.shift_id, total: opening,
+    const bk = newApproval({ kind: 'buka_kas', approver_role: 'manager', ref: sh.shift_id, total: opening,
       summary: ('Buka kas ' + me.name + ': modal awal dihitung Rp ' + opening + lastTxt).slice(0, 1500), note: str(data.note),
-      payload: JSON.stringify({ shift_id: sh.shift_id, opening_cash: opening, last_counted: last ? money(last.counted_cash) : null, last_cashier: last ? str(last.cashier) : '' }) }), -1));
+      payload: JSON.stringify({ shift_id: sh.shift_id, opening_cash: opening, last_counted: last ? money(last.counted_cash) : null, last_cashier: last ? str(last.cashier) : '' }) });
+    ops.approvals.push(forWrite(bk, -1));
     logAct('buka_kas', 'Buka kas ' + me.name + ' Rp ' + opening + lastTxt, sh.shift_id, opening, last && money(last.counted_cash) !== opening ? 'warn' : 'info');
-    return done({ ok: true, already: false, shift: shiftOut(sh) });
+    return done({ ok: true, already: false, shift: shiftOut(sh), request_id: bk.request_id, approval: approvalOut(bk) });
   }
 
   case 'cash_move': {
@@ -1001,12 +1193,29 @@ switch (req.action) {
       name: name, phone: phone, type: str(ex.type) || 'eceran', address: str(data.address) || str(ex.address), notes: str(data.notes) || str(ex.notes),
       debt_balance: money(ex.debt_balance), wa_optin: optin, source: str(ex.source) || str(data.source).slice(0, 20)
     } : {
-      name: name, phone: phone || str(data.phone), type: data.type === 'grosir' ? 'grosir' : 'eceran',
-      address: str(data.address), notes: str(data.notes), debt_balance: ex ? money(ex.debt_balance) : 0,
+      // Fields the app did not send keep their stored value (a partial edit, e.g. only "member", must not wipe the rest).
+      name: name, phone: phone || (data.phone !== undefined ? str(data.phone) : (ex ? str(ex.phone) : '')),
+      type: data.type !== undefined ? (data.type === 'grosir' ? 'grosir' : 'eceran') : (ex ? str(ex.type) || 'eceran' : 'eceran'),
+      address: data.address !== undefined ? str(data.address) : (ex ? str(ex.address) : ''), notes: data.notes !== undefined ? str(data.notes) : (ex ? str(ex.notes) : ''),
+      debt_balance: ex ? money(ex.debt_balance) : 0,
       wa_optin: optin, source: str(data.source).slice(0, 20) || (ex ? str(ex.source) : '')
     };
+    // E-mail and membership (v16). Any user may register a member; only owner / manager may end a membership.
+    let email = data.email !== undefined ? str(data.email).toLowerCase() : (ex ? str(ex.email) : '');
+    if (email && !isEmail(email)) return fail('INVALID', 'Alamat e-mail tidak valid');
+    const wasMember = !!(ex && ex.member === true);
+    const member = typeof data.member === 'boolean' ? data.member : wasMember;
+    if (wasMember && !member && !isApprover) return fail('FORBIDDEN', 'Hanya pemilik / manajer yang bisa menghapus member');
+    c.email = email;
+    c.member = member;
+    c.member_no = ex && str(ex.member_no) ? str(ex.member_no) : (member ? 'M' + rand(6) : '');
+    c.member_since = member ? (ex && str(ex.member_since) && wasMember ? str(ex.member_since) : jkDate()) : (ex ? str(ex.member_since) : '');
+    c.visits = ex ? Math.max(0, Math.round(num(ex.visits))) : 0;
+    c.last_visit = ex ? str(ex.last_visit) : '';
     ops.customers.push(forWrite(c, ex ? ex.id : -1));
-    return done({ ok: true, existed: existed, customer: Object.assign({ id: ex ? ex.id : null }, c) });
+    if (member && !wasMember) logAct('member_baru', 'Member baru: ' + c.name + ' (' + c.member_no + ')' + (c.phone ? ' ' + c.phone : '') + (email ? ' ' + email : ''), c.member_no, 0, 'info');
+    if (!member && wasMember) logAct('member_berhenti', 'Member dihapus: ' + c.name + ' (' + c.member_no + ')', c.member_no, 0, 'warn');
+    return done({ ok: true, existed: existed, customer: Object.assign({ id: ex ? ex.id : null }, c), member: memberInfo(Object.assign({}, c)) });
   }
 
   case 'receive_payment': {
@@ -1228,7 +1437,17 @@ switch (req.action) {
       .map(payOut).sort(function (a1, b1) { return String(b1.pay_date + b1.pay_time).localeCompare(String(a1.pay_date + a1.pay_time)); });
     const list = Object.keys(docs).map(function (k) { return docs[k]; }).sort(function (a1, b1) { return String(a1.date).localeCompare(String(b1.date)); });
     if (pt === 'supplier') balance = list.reduce(function (a1, d) { return a1 + d.total; }, 0) - pays.reduce(function (a1, p) { return a1 + money(p.amount); }, 0);
-    return done({ ok: true, party_type: pt, docs: list, payments: pays, balance: balance });
+    // Money paid without choosing an invoice is applied to the oldest open ones first (auto), so old invoices do not look unpaid.
+    let free = partyPayments.filter(function (p) { return pt === 'customer' ? (Number(p.customer_id) === Number(key) && payDir(p) === 'in') : (str(p.supplier) === key && payDir(p) === 'out'); }).reduce(function (a1, p) {
+      const alloc = payAlloc(p).reduce(function (a2, x) { return a2 + money(x.amount); }, 0);
+      return a1 + Math.max(0, money(p.amount) - alloc);
+    }, 0);
+    list.forEach(function (d) {
+      const take = Math.min(free, Math.max(0, d.total - d.paid));
+      d.auto = take; free -= take;
+      d.remaining = Math.max(0, d.total - d.paid - take);
+    });
+    return done({ ok: true, party_type: pt, docs: list, payments: pays, balance: balance, unapplied: free });
   }
 
   case 'save_purchase': {
@@ -1298,14 +1517,14 @@ switch (req.action) {
     if (isApprover) {
       const stock = applyPurchaseFix(no, pf.changes, reason, me.name);
       logAct('koreksi_masuk', summary + ' | ' + reason, no, pf.changes.reduce(function (a1, c) { return a1 + c.d_total; }, 0), 'warn');
-      return done({ ok: true, applied: true, changes: pf.changes, stock: stock });
+      return done({ ok: true, applied: true, changes: role === 'owner' ? pf.changes : pf.changes.map(qtyOnly), stock: stock });
     }
     const a = newApproval({ kind: 'purchase_fix', approver_role: 'manager', ref: no, note: reason, summary: summary.slice(0, 1500),
       total: pf.changes.reduce(function (a1, c) { return a1 + c.to_total; }, 0),
       payload: JSON.stringify({ purchase_no: no, lines: data.lines, reason: reason, changes: pf.changes }) });
     ops.approvals.push(forWrite(a, -1));
     logAct('minta_koreksi', 'Minta ' + summary + ' | ' + reason, no, 0, 'warn');
-    return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a), changes: pf.changes });
+    return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a), changes: pf.changes.map(qtyOnly) });
   }
 
   case 'list_activity': {
@@ -1319,7 +1538,7 @@ switch (req.action) {
       sales: rows('Get Range Sales').map(function (r) { return strip(r, role); }),
       items: rows('Get Range Items').map(function (r) { return strip(r, role); }),
       payments: rows('Get Range Payments').map(clean),
-      purchases: rows('Get Range Purchases').map(function (r) { return strip(r, role); }),
+      purchases: rows('Get Range Purchases').map(function (r) { const o = strip(r, role); if (role !== 'owner') delete o.total; return o; }),
       expenses: rows('Get Range Expenses').map(clean),
       shifts: rows('Get Range Shifts').map(clean),
       repacks: rows('Get Range Repacks').map(function (r) { const o = clean(r); if (role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; } return o; })
@@ -1328,7 +1547,7 @@ switch (req.action) {
 
   case 'save_settings': {
     const incoming = data.settings && typeof data.settings === 'object' ? data.settings : {};
-    const allowed = ['store_name', 'address', 'phone', 'receipt_footer', 'paper', 'survey_questions', 'survey_auto', 'auto_lock_minutes', 'language', 'exit_photo_min_total', 'exit_photo_min_qty', 'require_purchase_photo', 'require_shift', 'wa_shop_number', 'wa_manager_number', 'wa_owner_number', 'report_time', 'survey_voice', 'store_lat', 'store_lng', 'require_device_location', 'bank_accounts'];
+    const allowed = ['store_name', 'address', 'phone', 'receipt_footer', 'paper', 'survey_questions', 'survey_auto', 'auto_lock_minutes', 'language', 'exit_photo_min_total', 'exit_photo_min_qty', 'require_purchase_photo', 'require_shift', 'wa_shop_number', 'wa_manager_number', 'wa_owner_number', 'report_time', 'max_discount_pct', 'sell_from_shop_only', 'member_enabled', 'member_tiers', 'survey_voice', 'store_lat', 'store_lng', 'require_device_location', 'bank_accounts'];
     const byKey = {};
     settingRows.forEach(function (r) { byKey[r.skey] = r; });
     allowed.forEach(function (k) {
@@ -1354,10 +1573,19 @@ switch (req.action) {
       const owners = activeUsers.filter(function (u) { return u.role === 'owner'; });
       if (owners.length <= 1) return fail('INVALID', 'Harus ada minimal satu pemilik aktif');
     }
-    const u = { name: ex ? ex.name : name, role: newRole, pin_hash: isHash(data.pin_hash) ? data.pin_hash : ex.pin_hash, active: active };
+    // A PIN set by the owner for someone else is temporary: that person chooses their own at the next login.
+    const newPin = isHash(data.pin_hash) && (!ex || data.pin_hash !== ex.pin_hash);
+    const self = ex && ex.id === me.id;
+    const u = Object.assign({}, ex ? clean(ex) : {}, {
+      name: ex ? ex.name : name, role: newRole, pin_hash: isHash(data.pin_hash) ? data.pin_hash : ex.pin_hash, active: active,
+      must_change: newPin ? !self : (ex ? ex.must_change === true : false)
+    });
+    if (newPin) { u.fail_count = 0; u.locked_until = ''; }
+    if (users.some(function (x) { return isHash(x.master_hash) && x.master_hash === u.pin_hash; })) return fail('INVALID', 'PIN tidak valid');
+    delete u.id;
     ops.users.push(forWrite(u, ex ? ex.id : -1));
     logAct('pengguna', (ex ? 'Pengguna diubah: ' : 'Pengguna baru: ') + u.name + ' (' + u.role + (u.active ? '' : ', nonaktif') + ')' + (ex && isHash(data.pin_hash) ? ', PIN diganti' : ''), u.name, 0, 'warn');
-    return done({ ok: true, user: { name: u.name, role: u.role, active: u.active } });
+    return done({ ok: true, user: { name: u.name, role: u.role, active: u.active, must_change: u.must_change } });
   }
 
   default:
