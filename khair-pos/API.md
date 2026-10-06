@@ -346,3 +346,22 @@ Rules: allocation amounts must be > 0, each `ref` must belong to that customer/s
 remaining amount; the sum of allocations cannot exceed the payment. `match_status`: `lunas` (allocations = payment and every invoice fully
 paid), `sebagian` (an invoice is only partly paid), `belum_dialokasi` (no allocation yet), `lebih` (payment > allocations).
 Cash supplier payments from the drawer count as cash out of the open shift. Every payment and allocation goes to the activity log.
+
+## Company bank account: monthly statement vs recorded payments (v14)
+
+Settings `bank_accounts: [{id, bank, account_no, holder, active}]` (owner edits; e.g. `{id: "BA1", bank: "BCA", account_no: "1234567890", holder: "Khair Mart"}`).
+Transfer / QRIS payments (`receive_payment`, `pay_supplier`) may send `account_id`; without it the first active account is used.
+They also store `slip_date` (the date read from the slip). A slip date different from `pay_date` is flagged in the activity log (warn).
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `import_statement` | owner, manager | `{account_id, period: "YYYY-MM", lines: [{date, description, amount (+in / −out) or credit/debit, ref?, balance?}]}` (≤ 1500 lines, dates inside the month; re-importing replaces the month) | reconciliation report (below) |
+| `bank_recon` | owner, manager | `{account_id, period}` | `imported` (bool) + report, recomputed, no writes |
+| `match_bank_line` | owner, manager | `{account_id, period, line_id, pay_id? \| ignore: true, note}` — link a line to a payment by hand (`manual`), mark it ignored (bank fee, interest: `diabaikan`, note required), or reopen it (no pay_id, no ignore) | `line` |
+
+Report: `lines: [{line_id, seq, line_date, description, amount, ref, status, pay_id, diff_days, pay_amount?, pay_date?, party?, note}]`,
+`missing` (transfer/QRIS payments recorded in the app for that account and month that are not on the statement),
+`counts` per status, `totals: {statement_in, statement_out, recorded_in, recorded_out}`.
+Line status: `cocok` (same amount and direction, date within 1 day), `beda_tanggal` (2–3 days apart), `beda_jumlah` (the payment's transfer
+reference appears in the line but the amount differs), `tidak_tercatat` (no payment in the app), `manual`, `diabaikan`.
+Matching uses payments of the month ± 3 days; a reference match wins over a date match. Each import / manual match goes to the activity log.
