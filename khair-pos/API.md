@@ -458,3 +458,41 @@ user presses Send in WhatsApp (no automatic sending without the WhatsApp Busines
   shop, gudang}]` and a message telling the cashier to move the goods first (or that no goods-in exists). Setting
   `sell_from_shop_only` (default true) turns it off. Sales the app queued offline send `queued: true`: never refused (the customer
   already paid), logged `jual_tanpa_rak` (warn) for the owner. Sales and voids change the shelf; `save_sale.stock[]` has `shop_stock`.
+
+### Who brought the goods (goods-in) (v16)
+`save_purchase` needs `data.carrier` (setting `require_carrier`, default true → `CARRIER_REQUIRED`):
+`{type: "umum" | "teman" | "pemasok" | "karyawan", kind, name, vehicle, phone}`.
+- `umum` = public transport: `vehicle` (plate / angkot number) required, `kind` = ojek / angkot / taksi / truk… (free word).
+- `teman` = a friend, `karyawan` = our staff: `name` required. `pemasok` = the supplier's own driver (name / plate optional).
+- Names: letters (any language), digits, space, `. , ' -`; vehicle numbers: letters, digits, space, `/ - .`; phone: digits.
+Stored on each goods-in row (`carrier_type, carrier_name, carrier_vehicle, carrier_phone`) and in the activity log.
+
+### Returns (retur) — customers and suppliers (v16)
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `request_return` | kasir, manager, owner | customer: `{kind:"pelanggan", invoice_no, lines:[{product_id, qty, condition:"baik"\|"rusak"}], reason_code, reason_note, returned_by, returned_by_phone, refund_method:"tunai"\|"transfer"\|"potong_hutang"\|"tukar"}`; supplier: `{kind:"pemasok", purchase_no, lines:[{product_id, qty}], reason_code, reason_note, out_doc_no, photo_id, carrier}` | `request_id, return_id, approver_role, approval` |
+| `list_returns` | owner, manager (kasir: customer returns only) | `{from, to}` | `returns: [...]` — pending requests first, then decided returns in the range |
+
+- `reason_code`: `tidak_sesuai` (not to spec), `rusak`, `kadaluarsa`, `salah_kirim`, `kualitas_buruk`, `berubah_pikiran`, `lainnya`
+  (`reason_note` required for `lainnya`).
+- **Customer return:** the server reads the purchase invoice (who bought it, when, at what price after the sale discount) and refuses
+  more than was bought minus what was already returned or is pending. `returned_by` = who brought it back (default the buyer).
+  Refund = value of the returned lines; setting `return_fee_pct` (default 0) is a deduction for returned goods (`fee`).
+  On approval: good items (`baik`) go back to the **warehouse** (they are checked before going back on the shelf), damaged ones (`rusak`) are
+  not stock; `tunai` → cash out of the cashier's open drawer + payment row out; `transfer` → payment row out; `potong_hutang` → less debt.
+  The return id (`RT…`) is the entry note for the returned goods.
+- **Supplier return:** from a goods-in note (`purchase_no`): not more than came in minus earlier returns, and not more than in stock;
+  needs the outgoing note number `out_doc_no` and a photo of the goods-exit receipt `photo_id` (setting `require_return_photo`, default
+  true) and the carrier. On approval: stock goes down, and negative goods-in rows (`purchase_no` = return id, `match_status: "retur"`)
+  lower what we owe the supplier. Values are purchase cost: owner only.
+- **Approval:** every return is an approval `kind: "retur"`. The manager approves; when value ≥ `return_owner_min_value`
+  (default Rp 1,000,000) or qty ≥ `return_owner_min_qty` (0 = off) only the owner may (`approver_role: "owner"`). The owner is always told
+  (activity `minta_retur` on request, `retur` on the decision). Decided returns are kept in `pos_returns` with every detail.
+- `daily_report.report.returns = {customer: {count, refund, tunai}, supplier: {count, value (owner)}}`.
+
+### Plain-text input everywhere (v16)
+Before any action the server cleans `data`: control and direction-override characters and HTML tags / `< >` are removed, the keys
+`__proto__`, `constructor`, `prototype` are dropped, strings are cut at 4000 characters. Then each field is checked: person names,
+product / customer / supplier names (letters, digits, `. , ' & ( ) / % + # -`), SKU / barcode (`A-Z 0-9 . _ -`), units, phone (digits),
+e-mail, dates (`YYYY-MM-DD`), document and vehicle numbers. A field that does not fit is refused with a message saying what is allowed.
+The apps must use the same rules in their inputs (`maxlength`, `inputmode`, `pattern`) and show the server message.
