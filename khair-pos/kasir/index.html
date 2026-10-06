@@ -1096,11 +1096,11 @@ const MockServer = (() => {
   const DEFAULT_TIERS = [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }];
   /** A member's discount for this purchase: tier of (visits + 1); first purchase → 0 %. */
   function memberInfo(db, c) {
-    if (!c || !c.member || db.settings.member_enabled === false) return null;
-    const tiers = Array.isArray(db.settings.member_tiers) && db.settings.member_tiers.length ? db.settings.member_tiers : DEFAULT_TIERS;
-    const n = num(c.visits) + 1;
+    if (!c || c.member !== true || db.settings.member_enabled === false) return null;
+    const n = Math.max(0, Math.round(num(c.visits))) + 1;
+    const tiers = Array.isArray(db.settings.member_tiers) ? db.settings.member_tiers : DEFAULT_TIERS;
     let pct = 0;
-    tiers.forEach(t => { if (num(t.from) <= n && num(t.pct) > pct) pct = num(t.pct); });
+    tiers.forEach(t => { const f = num(t && t.from), q = num(t && t.pct); if (f >= 1 && f <= n && q > 0 && q <= 50 && q > pct) pct = q; });
     return { pct, purchase_no: n, member_no: str(c.member_no) };
   }
   const discountOf = P => { const amount = Math.max(0, P.listTotal - P.total); return { amount, pct: P.listTotal > 0 ? Math.round(amount / P.listTotal * 1000) / 10 : 0 }; };
@@ -1116,15 +1116,16 @@ const MockServer = (() => {
       }
       if (a.kind === 'purchase_fix') {
         const pl = parseObj(a.payload);
-        if (Array.isArray(pl.changes)) pl.changes = pl.changes.map(c => ({ product_id: c.product_id, name: c.name, from_qty: c.from_qty, to_qty: c.to_qty }));
+        if (Array.isArray(pl.changes)) pl.changes = pl.changes.map(qtyOnly);
         o.payload = JSON.stringify(pl); o.summary = str(o.summary).replace(/ \(Rp -?\d+→-?\d+\)/g, ''); o.total = 0;
       }
     }
     o.can_decide = role === 'owner' || (role === 'manager' && a.approver_role !== 'owner');
     return o;
   }
+  const qtyOnly = c => { const x = Object.assign({}, c); ['cost_price', 'from_total', 'to_total', 'd_total'].forEach(f => { delete x[f]; }); return x; };
   const isHex64 = h => /^[0-9a-f]{64}$/.test(String(h || ''));
-  const lockMsg = until => 'PIN salah 5 kali. Akun terkunci sampai ' + jktTime(until) + ' WIB';
+  const lockMsg = until => 'Terlalu banyak PIN salah. Coba lagi jam ' + new Date(Date.parse(until) + 7 * 3600000).toISOString().slice(11, 16) + ' WIB';
 
   function handle(db, body) {
     const { action, key, user, pin_hash } = body;
@@ -1139,24 +1140,23 @@ const MockServer = (() => {
       return { user: { name, role: 'owner' } };
     }
     if (!db.users.length) throw E('NO_USERS', 'Run setup first');
-    // v16: owner master code for any account, lock after 5 wrong PINs (15 min), own PIN at first login
-    const u = db.users.find(x => x.active && x.name.toLowerCase() === String(user || '').toLowerCase());
-    const masterOwner = isHex64(pin_hash) ? db.users.find(x => x.active && x.role === 'owner' && x.master_hash && x.master_hash === pin_hash) : null;
-    const viaMaster = !!(u && masterOwner && u.pin_hash !== pin_hash);
-    if (!viaMaster) {
-      if (u && u.locked_until && Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', lockMsg(u.locked_until), { locked_until: u.locked_until });
-      if (!u || u.pin_hash !== pin_hash) {
-        if (u) {
-          u.fail_count = num(u.fail_count) + 1;
-          if (u.fail_count >= 5) { u.locked_until = new Date(Date.now() + 15 * 60000).toISOString(); u.fail_count = 0; save(db); throw E('LOCKED', lockMsg(u.locked_until), { locked_until: u.locked_until }); }
-          save(db); // the failure counts even though the request fails
-        }
-        throw E('BAD_PIN', 'Wrong user or PIN');
-      }
-      if (num(u.fail_count) || u.locked_until) { u.fail_count = 0; u.locked_until = ''; dirty = true; }
+    // v16 (as on the server): lock after 5 wrong PINs in a row (15 min), owner master code opens every account, own PIN at first login
+    const u = db.users.find(x => x.active !== false && x.name.toLowerCase() === String(user || '').trim().toLowerCase());
+    if (!u) throw E('BAD_PIN', 'Nama atau PIN salah');
+    if (Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', lockMsg(u.locked_until));
+    const masterOwner = isHex64(pin_hash) && u.pin_hash !== pin_hash ? db.users.find(x => x.active !== false && x.role === 'owner' && isHex64(x.master_hash) && x.master_hash === pin_hash) || null : null;
+    const viaMaster = !!masterOwner;
+    if (u.pin_hash !== pin_hash && !viaMaster) {
+      const fc = num(u.fail_count) + 1, until = fc >= 5 ? new Date(Date.now() + 15 * 60000).toISOString() : '';
+      u.fail_count = until ? 0 : fc; u.locked_until = until;
+      save(db); // the failure is written although the request fails
+      if (until) throw E('LOCKED', lockMsg(until));
+      throw E('BAD_PIN', 'Nama atau PIN salah' + (fc >= 3 ? ' (' + (5 - fc) + ' kali lagi, lalu akun dikunci 15 menit)' : ''));
     }
+    if ((num(u.fail_count) > 0 || str(u.locked_until)) && !['change_pin', 'set_master', 'save_user'].includes(action)) { u.fail_count = 0; u.locked_until = ''; dirty = true; }
+    if (u.must_change === true && !viaMaster && !['login', 'change_pin', 'users', 'device_ping'].includes(action)) throw E('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
     lastRole = u.role;
-    if (u.must_change && !['login', 'change_pin'].includes(action)) throw E('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu');
+    // NOTE: the server refuses change_pin for sales (not in its sales list) — a rep with a reset PIN could never get in; allowed here, reported
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
     if (action !== 'device_ping') deviceTouch(db, u, data.device, false);
     const owner = u.role === 'owner';
@@ -1166,22 +1166,25 @@ const MockServer = (() => {
 
     switch (action) {
       case 'login':
-        if (viaMaster) logAct(db, u, 'masuk_master', 'Masuk ke akun ' + u.name + ' dengan kode pemilik', u.name, 0, 'warn');
-        return { user: { name: u.name, role: u.role }, must_change: !!u.must_change, via_master: viaMaster };
+        if (viaMaster) logAct(db, u, 'masuk_master', 'Masuk ke akun ' + u.name + ' (' + u.role + ') dengan kode pemilik', u.name, 0, 'warn');
+        return { user: { name: u.name, role: u.role }, must_change: u.must_change === true && !viaMaster, via_master: viaMaster };
       case 'change_pin': {
-        if (viaMaster && u.role === 'owner' && u === masterOwner) throw E('FORBIDDEN', 'PIN pemilik tidak bisa diganti lewat kode pemilik');
-        const h = str(data.new_pin_hash);
+        const h = data.new_pin_hash;
         if (!isHex64(h)) throw E('INVALID', 'PIN baru tidak valid');
-        if (h === u.pin_hash) throw E('INVALID', 'PIN baru harus beda dengan PIN lama');
-        u.pin_hash = h; u.must_change = false; u.fail_count = 0; u.locked_until = '';
-        logAct(db, u, 'pengguna', 'PIN diganti sendiri: ' + u.name + (viaMaster ? ' (masuk dengan kode pemilik)' : ''), u.name, 0, 'info');
-        return {};
+        if (h === u.pin_hash) throw E('INVALID', 'PIN baru harus berbeda dari PIN lama');
+        if (viaMaster && u.role === 'owner') throw E('FORBIDDEN', 'PIN pemilik hanya bisa diganti dengan PIN pemilik sendiri');
+        if (db.users.some(x => x.active !== false && isHex64(x.master_hash) && x.master_hash === h)) throw E('INVALID', 'PIN baru tidak valid');
+        Object.assign(u, { pin_hash: h, must_change: viaMaster, fail_count: 0, locked_until: '' });
+        logAct(db, u, 'ganti_pin', viaMaster ? 'PIN ' + u.name + ' direset dengan kode pemilik (wajib ganti saat masuk)' : u.name + ' mengganti PIN sendiri', u.name, 0, viaMaster ? 'warn' : 'info');
+        return { must_change: viaMaster };
       }
       case 'set_master': {
         if (u.role !== 'owner' || viaMaster) throw E('FORBIDDEN', 'Hanya pemilik dengan PIN sendiri');
-        if (!isHex64(data.master_hash)) throw E('INVALID', 'master_hash');
-        u.master_hash = String(data.master_hash);
-        logAct(db, u, 'pengguna', 'Kode pemilik (master) diatur', u.name, 0, 'warn');
+        if (!isHex64(data.master_hash) || data.master_hash === u.pin_hash) throw E('INVALID', 'Kode pemilik tidak valid');
+        if (db.users.some(x => x.pin_hash === data.master_hash)) throw E('INVALID', 'Kode pemilik tidak valid');
+        const had = isHex64(u.master_hash);
+        Object.assign(u, { master_hash: data.master_hash, fail_count: 0, locked_until: '' });
+        logAct(db, u, 'kode_pemilik', 'Kode pemilik ' + (had ? 'diganti' : 'dibuat'), u.name, 0, 'warn');
         return {};
       }
       case 'request_discount': {
@@ -1199,7 +1202,7 @@ const MockServer = (() => {
           total: P.total, debt_amount: disc.amount, note: reason,
           summary: ('Diskon ' + disc.pct + '% (Rp ' + disc.amount + '): Rp ' + P.listTotal + ' → Rp ' + P.total + ' — ' + P.lines.map(l => l.p.name + ' x' + l.qty + ' @' + l.unit_price).join('; ') +
             ' | laba ' + mb + '% → ' + ma + '% (Rp ' + profitBefore + ' → Rp ' + profitAfter + ')').slice(0, 1500),
-          payload: JSON.stringify({ list_total: P.listTotal, total: P.total, discount: disc.amount, pct: disc.pct, max_pct: allowed, reason,
+          payload: JSON.stringify({ list_total: P.listTotal, total: P.total, discount: disc.amount, pct: disc.pct, max_pct: maxDiscPct(db), member_pct: mem ? mem.pct : 0, reason,
             lines: P.lines.map(l => ({ name: l.p.name, qty: l.qty, unit_price: l.unit_price })),
             profit_before: profitBefore, profit_after: profitAfter, margin_before: mb, margin_after: ma })
         });
@@ -1260,7 +1263,7 @@ const MockServer = (() => {
           payment_method: data.payment_method, paid_amount: paid, debt_amount: debt, status: 'ok',
           survey: JSON.stringify(data.survey_consent && Array.isArray(data.survey) ? data.survey.filter(x => x && String(x.a || '').trim()).map(x => ({ q: String(x.q), a: String(x.a) })) : []),
           survey_transcript: data.survey_consent === true ? String(data.survey_transcript || '').trim().slice(0, 4000) : '',
-          notes: (String(data.notes || '') + (discBy ? ' [diskon ' + disc.pct + '% disetujui ' + discBy + ']' : '') + (mem ? ' [member ' + mem.pct + '% · pembelian ke-' + mem.purchase_no + ']' : '')).trim(), client_id: cid, approved_by, exit_photo: exitReq ? 'required' : '', exit_match: '',
+          notes: (String(data.notes || '') + (mem && mem.pct > 0 ? ' [member ' + mem.pct + '% · pembelian ke-' + mem.purchase_no + ']' : '') + (discBy ? ' [diskon ' + disc.pct + '% disetujui ' + discBy + ']' : '')).trim(), client_id: cid, approved_by, exit_photo: exitReq ? 'required' : '', exit_match: '',
           channel: CHANNELS.includes(data.channel) ? data.channel : 'toko', promo_code: String(data.promo_code || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, ''), shift_id: shift ? shift.shift_id : ''
         };
         if (usedApproval) usedApproval.status = 'used';
@@ -1272,11 +1275,11 @@ const MockServer = (() => {
           l.p.stock = roundQty(l.p.stock - l.qty);
           touched.set(l.p.id, l.p);
         }
-        if (cust) { cust.debt_balance = int(cust.debt_balance) + debt; cust.visits = num(cust.visits) + 1; cust.last_visit = sale_date; }
+        if (cust) { cust.debt_balance = int(cust.debt_balance) + debt; cust.visits = Math.max(0, Math.round(num(cust.visits))) + 1; cust.last_visit = data.sale_date; }
         if (discBy) logAct(db, u, 'diskon', 'Diskon ' + disc.pct + '% (Rp ' + disc.amount + ') pada ' + sale.invoice_no + ' oleh ' + u.name + (discBy !== u.name ? ', disetujui ' + discBy : ''), sale.invoice_no, disc.amount, 'warn');
         if (debt > 0) logAct(db, u, 'hutang', 'Penjualan hutang ' + sale.invoice_no + ' ' + str(sale.customer_name) + ' Rp ' + debt + (approved_by ? ' (disetujui ' + approved_by + ')' : ''), sale.invoice_no, debt, 'info');
         const { id: _omit, ...saleOut } = sale;
-        return Object.assign({ invoice_no: sale.invoice_no, sale: saleOut, stock: [...touched.values()].map(p => ({ product_id: p.id, stock: p.stock })), duplicate: false, exit_photo_required: exitReq }, mem ? { member: mem } : {});
+        return Object.assign({ invoice_no: sale.invoice_no, sale: saleOut, stock: [...touched.values()].map(p => ({ product_id: p.id, stock: p.stock })), duplicate: false, exit_photo_required: exitReq, member: mem });
       }
       case 'request_credit': {
         const cid = String(data.client_id || '');
@@ -1524,48 +1527,40 @@ const MockServer = (() => {
         return { product: p };
       }
       case 'save_customer': {
-        // name is optional with a phone ("Pelanggan 1234"); without an id, the same normalised phone updates that customer
-        const phone = String(data.phone || '').trim(), pn = normPhone(phone);
-        const name = String(data.name || '').trim();
-        if (!name && !pn) throw E('INVALID', 'name required');
-        const defName = pn ? 'Pelanggan ' + pn.slice(-4) : '';
-        const optin = data.wa_optin === undefined || data.wa_optin === null ? undefined : (data.wa_optin === true || data.wa_optin === 'true');
-        const source = String(data.source || '').trim().slice(0, 20);
-        const fields = { name: name || defName, phone, type: data.type === 'grosir' ? 'grosir' : 'eceran', address: String(data.address || ''), notes: String(data.notes || '') };
-        // v16 members: e-mail (lower-cased, checked) and member true/false; anyone registers, only owner / manager removes
-        const email = data.email === undefined || data.email === null ? undefined : str(data.email).toLowerCase().slice(0, 120);
-        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) throw E('INVALID', 'E-mail tidak valid');
-        const wantMember = data.member === true || data.member === 'true' ? true : (data.member === false || data.member === 'false' ? false : undefined);
-        const target = data.id ? custById(data.id) : (pn ? db.customers.find(c => normPhone(c.phone) === pn) : null);
-        if (wantMember === false && target && target.member && !['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer yang boleh mencabut member');
-        const memberize = c => {
-          if (email !== undefined) c.email = email;
-          if (wantMember === true && !c.member) {
-            Object.assign(c, { member: true, member_no: 'M' + rand(6), member_since: jktDate(), visits: num(c.visits) });
-            logAct(db, u, 'member_baru', 'Member baru: ' + c.name + ' (' + c.member_no + ')' + (c.phone ? ' ' + c.phone : ''), c.member_no, 0, 'info');
-          } else if (wantMember === false && c.member) {
-            c.member = false;
-            logAct(db, u, 'member_baru', 'Member dicabut: ' + c.name + ' (' + str(c.member_no) + ')', str(c.member_no), 0, 'warn');
-          }
-          return c;
+        // as on the server: a number taken at the counter (no id) that is already known updates that customer
+        const phone = normPhone(data.phone);
+        let ex = data.id ? custById(data.id) : null;
+        if (data.id && !ex) throw E('NOT_FOUND', 'Pelanggan tidak ditemukan');
+        let existed = false;
+        if (!ex && phone) { ex = db.customers.find(x => normPhone(x.phone) === phone) || null; existed = !!ex; }
+        const name = str(data.name) || (ex ? str(ex.name) : (phone ? 'Pelanggan ' + phone.slice(-4) : ''));
+        if (!name) throw E('INVALID', 'Nama pelanggan wajib');
+        const optin = typeof data.wa_optin === 'boolean' ? (existed ? (data.wa_optin || ex.wa_optin === true) : data.wa_optin) : !!(ex && ex.wa_optin === true);
+        const c = existed ? {
+          name, phone, type: str(ex.type) || 'eceran', address: str(data.address) || str(ex.address), notes: str(data.notes) || str(ex.notes),
+          debt_balance: money(ex.debt_balance), wa_optin: optin, source: str(ex.source) || str(data.source).slice(0, 20)
+        } : {
+          name, phone: phone || (data.phone !== undefined ? str(data.phone) : (ex ? str(ex.phone) : '')),
+          type: data.type !== undefined ? (data.type === 'grosir' ? 'grosir' : 'eceran') : (ex ? str(ex.type) || 'eceran' : 'eceran'),
+          address: data.address !== undefined ? str(data.address) : (ex ? str(ex.address) : ''), notes: data.notes !== undefined ? str(data.notes) : (ex ? str(ex.notes) : ''),
+          debt_balance: ex ? money(ex.debt_balance) : 0, wa_optin: optin, source: str(data.source).slice(0, 20) || (ex ? str(ex.source) : '')
         };
-        if (data.id) {
-          const c = custById(data.id); if (!c) throw E('NOT_FOUND', 'customer');
-          Object.assign(c, fields, { name: name || c.name || defName });
-          if (optin !== undefined) c.wa_optin = optin;
-          if (source) c.source = source;
-          return { customer: memberize(c) };
-        }
-        const same = pn ? db.customers.find(c => normPhone(c.phone) === pn) : null;
-        if (same) {
-          if (name && name !== defName) same.name = name;
-          if (optin) same.wa_optin = true;
-          if (source && !same.source) same.source = source;
-          return { customer: memberize(same), existed: true };
-        }
-        const c = Object.assign({ id: nextId(db, 'customer') }, fields, { debt_balance: 0, wa_optin: !!optin, source, email: '', member: false, member_no: '', member_since: '', visits: 0, last_visit: '' });
-        db.customers.push(c);
-        return { customer: memberize(c) };
+        // v16 e-mail and membership: any user registers a member; only owner / manager may end a membership
+        const email = data.email !== undefined ? str(data.email).toLowerCase() : (ex ? str(ex.email) : '');
+        if (email && !(/^[^\s@<>"',;]+@[^\s@<>"',;]+\.[a-z]{2,}$/i.test(email) && email.length <= 120)) throw E('INVALID', 'Alamat e-mail tidak valid');
+        const wasMember = !!(ex && ex.member === true);
+        const member = typeof data.member === 'boolean' ? data.member : wasMember;
+        if (wasMember && !member && !['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik / manajer yang bisa menghapus member');
+        c.email = email; c.member = member;
+        c.member_no = ex && str(ex.member_no) ? str(ex.member_no) : (member ? 'M' + rand(6) : '');
+        c.member_since = member ? (ex && str(ex.member_since) && wasMember ? str(ex.member_since) : jktDate()) : (ex ? str(ex.member_since) : '');
+        c.visits = ex ? Math.max(0, Math.round(num(ex.visits))) : 0;
+        c.last_visit = ex ? str(ex.last_visit) : '';
+        let row;
+        if (ex) row = Object.assign(ex, c); else { row = Object.assign({ id: nextId(db, 'customer') }, c); db.customers.push(row); }
+        if (member && !wasMember) logAct(db, u, 'member_baru', 'Member baru: ' + c.name + ' (' + c.member_no + ')' + (c.phone ? ' ' + c.phone : '') + (email ? ' ' + email : ''), c.member_no, 0, 'info');
+        if (!member && wasMember) logAct(db, u, 'member_berhenti', 'Member dihapus: ' + c.name + ' (' + c.member_no + ')', c.member_no, 0, 'warn');
+        return { existed, customer: row, member: memberInfo(db, row) };
       }
       case 'receive_payment': {
         // v13 as on the server: slip check (photo kind 'bayar'), allocation to invoices, match_status; v14 account_id / slip_date
@@ -1679,12 +1674,12 @@ const MockServer = (() => {
         if (['owner', 'manager'].includes(u.role)) {
           const stock = applyPurchaseFix(db, u, no, pf.changes, reason, u.name);
           logAct(db, u, 'koreksi_masuk', summary + ' | ' + reason, no, sum(pf.changes, c => c.d_total), 'warn');
-          return { applied: true, changes: u.role === 'owner' ? pf.changes : pf.changes.map(c => ({ product_id: c.product_id, name: c.name, from_qty: c.from_qty, to_qty: c.to_qty })), stock };
+          return { applied: true, changes: u.role === 'owner' ? pf.changes : pf.changes.map(qtyOnly), stock };
         }
         const approval = newApproval(db, u, { kind: 'purchase_fix', approver_role: 'manager', ref: no, note: reason, summary: summary.slice(0, 1500), total: sum(pf.changes, c => c.to_total),
           payload: JSON.stringify({ purchase_no: no, lines: data.lines, reason, changes: pf.changes }) });
         logAct(db, u, 'minta_koreksi', 'Minta ' + summary + ' | ' + reason, no, 0, 'warn');
-        return { applied: false, request_id: approval.request_id, approval: approvalOut(approval, u.role), changes: pf.changes.map(c => ({ product_id: c.product_id, name: c.name, from_qty: c.from_qty, to_qty: c.to_qty })) };
+        return { applied: false, request_id: approval.request_id, approval: approvalOut(approval, u.role), changes: u.role === 'owner' ? pf.changes : pf.changes.map(qtyOnly) };
       }
       case 'stock_count': return stockCount(db, u, data);
       case 'get_sales': {
@@ -1723,10 +1718,15 @@ const MockServer = (() => {
           if (!data.pin_hash) throw E('INVALID', 'pin_hash required');
           x = { name, role, pin_hash: data.pin_hash, active };
           db.users.push(x);
-        } else { x.role = role; x.active = active; if (data.pin_hash) x.pin_hash = data.pin_hash; }
-        if (data.pin_hash && x !== u) x.must_change = true; // v16: a new / reset PIN must be changed at first login (not the owner's own row)
+        }
+        const newPinDiff = existed && !!data.pin_hash && data.pin_hash !== x.pin_hash;
+        if (existed) { x.role = role; x.active = active; if (data.pin_hash) x.pin_hash = data.pin_hash; }
+        // v16: a PIN set by the owner for someone else is temporary — that person chooses their own at the next login
+        const newPin = !!data.pin_hash && (!existed || newPinDiff);
+        x.must_change = newPin ? x !== u : x.must_change === true;
+        if (newPin) { x.fail_count = 0; x.locked_until = ''; }
         logAct(db, u, 'pengguna', (existed ? 'Pengguna diubah: ' : 'Pengguna baru: ') + x.name + ' (' + x.role + (x.active ? '' : ', nonaktif') + ')' + (existed && data.pin_hash ? ', PIN diganti' : ''), x.name, 0, 'warn');
-        return { user: { name: x.name, role: x.role, active: x.active } };
+        return { user: { name: x.name, role: x.role, active: x.active, must_change: x.must_change } };
       }
       default: throw E('INVALID', 'Unknown action ' + action);
     }
@@ -2161,6 +2161,8 @@ const lockedUntil = user => LOCKS[String(user || '').toLowerCase()] || 0;
 const pinMax = () => L.master ? 8 : 6;
 /** v16: a new / reset PIN must be replaced at first login; also when any call answers PIN_CHANGE_REQUIRED. */
 function askNewPin(user, role, oldHash, via) {
+  if (L.step === 'newpin' && L.np && L.np.user === user && !$('#login').hidden) return; // already asking
+  S.inApp = false; // background requests stop until the new PIN is set
   closeModal(true);
   L.np = { user, role, old: oldHash, via: !!via, first: '', six: role === 'owner' || role === 'manager' };
   showLogin('newpin');
@@ -2262,6 +2264,7 @@ function forceRelogin(e) {
   if (e.code === 'BAD_KEY' || e.code === 'NO_USERS') { S.pin_hash = ''; KS.del('session'); SESS.del(); showLogin('key', t('err.' + e.code)); return; }
   // already locked: a background request that was still in flight must not wipe the PIN being typed
   if (e.code === 'BAD_PIN' && !S.pin_hash && !$('#login').hidden && L.step === 'pin') return;
+  if (e.code === 'LOCKED') LOCKS[String(S.user).toLowerCase()] = Date.parse(e.res && e.res.locked_until) || Date.now() + 15 * 60000;
   S.pin_hash = ''; KS.set('session', { user: S.user, role: S.role }); SESS.del();
   L.sel = S.user; L.users = [];
   showLogin('pin', t('err.BAD_PIN_SESSION'));
@@ -4651,8 +4654,8 @@ const ACT = {
     } catch (e) { L.busy = false; L.err = e.code === 'BAD_KEY' ? t('err.BAD_KEY') : errMsg(e); renderLogin(); }
   },
   'login-change-key': () => { L.users = []; L.sel = ''; S.inApp = false; L.step = 'key'; L.err = ''; renderLogin(); },
-  'login-user': el => { L.sel = el.dataset.name; L.pin = ''; L.err = ''; if (DEMO) { demoLogin(L.sel); return; } L.step = 'pin'; renderLogin(); },
-  'login-back': () => { L.pin = ''; L.err = ''; L.step = 'users'; renderLogin(); if (!L.users.length) loadUsersForLogin(); },
+  'login-user': el => { L.sel = el.dataset.name; L.pin = ''; L.err = ''; L.master = false; if (DEMO) { demoLogin(L.sel); return; } L.step = 'pin'; renderLogin(); },
+  'login-back': () => { L.pin = ''; L.err = ''; L.master = false; L.step = 'users'; renderLogin(); if (!L.users.length) loadUsersForLogin(); },
   'pin-key': el => {
     const k = el.dataset.k;
     if (k === 'del') L.pin = L.pin.slice(0, -1);
