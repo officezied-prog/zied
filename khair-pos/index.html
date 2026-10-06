@@ -501,6 +501,8 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
 .rail{grid-row:3}
 #main{grid-row:3}
 .amber{color:var(--warn)}
+.toolbar .chips{min-width:0;max-width:100%;flex:0 1 auto}
+#view-devices .fd-svg,#view-bank table{max-width:100%}
 .consent-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 16px;background:var(--brand-ll);border-bottom:1px solid var(--border);font-size:14px}
 .consent-bar>svg.i{color:var(--brand-text)}
 .consent-bar .grow{min-width:220px}
@@ -7345,7 +7347,7 @@ function deviceSVG(list, store, Wpx) {
   const minLa = Math.min(...pts.map(p => p.lat)), maxLa = Math.max(...pts.map(p => p.lat)), minLo = Math.min(...pts.map(p => p.lng)), maxLo = Math.max(...pts.map(p => p.lng));
   const k = Math.cos((minLa + maxLa) / 2 * Math.PI / 180);
   const w = (maxLo - minLo) * k || 0.004, h = (maxLa - minLa) || 0.004;
-  const W = Wpx || 800, H = Math.round(W * (W < 560 ? 0.9 : 0.5)), pad = 36, sc = Math.min((W - 2 * pad) / w, (H - 2 * pad) / h);
+  const W = Wpx || 800, H = Math.round(W * (W < 560 ? 0.9 : 0.42)), pad = 36, sc = Math.min((W - 2 * pad) / w, (H - 2 * pad) / h);
   const ox = (W - w * sc) / 2, oy = (H - h * sc) / 2;
   const X = lo => ox + (lo - minLo) * k * sc, Y = la => oy + (maxLa - la) * sc;
   const mPerPx = 111320 / sc;
