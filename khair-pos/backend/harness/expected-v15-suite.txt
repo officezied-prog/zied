@@ -1,0 +1,182 @@
+users {"ok":true,"users":[{"name":"Pemilik","role":"owner"},{"name":"Siti","role":"kasir"},{"name":"Jihan","role":"manager"}]}
+badkey BAD_KEY
+badpin BAD_PIN
+boot kasir cost? false 58
+sale {"ok":true,"duplicate":false,"invoice_no":"KM261006-SQPES","sale":{"invoice_no":"KM261006-SQPES","sale_date":"2026-10-06","sale_time":"2026-10-06T16:00:08.661Z","cashier":"Siti","customer_id":0,"customer_name":"Umum","customer_type":"eceran","subtotal":600000,"discount":5000,"total":595000,"payment_method":"tunai","paid_amount":600000,"debt_amount":0,"status":"ok","survey":"[{\"q\":\"Tahu dari man
+ops {
+  sales: 1,
+  sale_items: 2,
+  payments: 0,
+  purchases: 0,
+  products: 2,
+  customers: 0,
+  users: 0,
+  settings: 0,
+  approvals: 0,
+  expenses: 0,
+  shifts: 1,
+  devices: 0,
+  repacks: 0,
+  activity: 0,
+  bank_lines: 0
+} [ [ 1, 18 ], [ 2, 40 ] ]
+hutang no cust INVALID
+hutang 850000 [ [ 7, 950000 ] ]
+dup true KMX false
+void kasir FORBIDDEN
+void void [ [ 1, 22 ] ] [ 50000 ] 9
+purchase no photo PHOTO_REQUIRED
+purchase photo_id PH1
+purchase {"ok":true,"stock":[{"product_id":1,"stock":40}],"purchase_no":"PB261006-2SYS","match":{"status":"perlu_cek","diffs":[],"notes":"Nota tidak terbaca"}}
+pay 70000 1
+import {"ok":true,"created":1,"updated":1} [
+  [ 1, 'Kurma Ajwa 1kg', 190000, 20 ],
+  [ -1, 'Cokelat Arab', 30000, 10 ]
+]
+settings [{"_id":-1,"skey":"paper","svalue":"\"80\""},{"_id":-1,"skey":"survey_questions","svalue":"[\"a\",\"b\"]"}]
+user {"ok":true,"user":{"name":"Budi","role":"kasir","active":true}}
+last owner INVALID
+get_sales kasir {"ok":true,"sales":[{"id":1,"total":10}],"items":[{"id":1}],"payments":[],"purchases":[],"expenses":[],"shifts":[],"repacks":[]}
+setup {"ok":true,"user":{"name":"X","role":"owner"}} 1
+adjust 45 -5
+A kasir hutang APPROVAL_REQUIRED
+B wrong pin APPROVAL_REQUIRED
+C kasir approver APPROVAL_REQUIRED
+D onsite true Jihan false
+E manager self true Jihan false
+F request APD9QMMZ 185000 1
+G kasir list FORBIDDEN
+H list 1
+I pending Hutang belum disetujui
+J decide approved Jihan 5
+K remote ok true Jihan used
+L changed Transaksi berubah setelah disetujui, minta persetujuan lagi
+M rejected Hutang ditolak: limit
+N exit qty true required
+O small false ""
+P photo off true
+V1 req void true void owner false
+V2 manager void NEEDS_OWNER
+V3 list can_decide false
+V4 no invoice Kirim invoice_no faktur yang dibatalkan
+V5 owner void void [ [ 1, 22 ] ] [ 50000 ] approved
+V6 direct void void
+P1 mgr wholesale true 168000 false auto
+P2 mgr cost false owner {"product_id":1,"product_name":"Kurma Ajwa 1kg","changes":{"cost_price":{"from":null,"to":null,"hidden":true}},"reason":""} Ubah harga Kurma Ajwa 1kg: cost_price (rahasia)
+P3 kasir false manager
+P4 nochange INVALID
+P5 mgr decide cost NEEDS_OWNER
+P6 owner 155000 155000
+P7 log 1 Ubah harga Kurma Ajwa 1kg: retail_price 185000→189000
+E1 {"ok":true,"expense":{"id":null,"expense_date":"2026-10-06","category":"listrik_air","amount":350000,"note":"PLN","user":"Siti","photo_id":"","paid_from":"kas"}}
+E2 INVALID
+E3 1
+C9 wrong kind Persetujuan ini bukan untuk hutang
+S1 no shift SHIFT_REQUIRED true
+S2 owner no shift true
+S3 open open 200000 -1 false
+S4 sale whatsapp KHAIR-1111 SHS [[21,46000,1,46000]]
+S5 qris cash 0
+S6 move 20000 1
+S7 exp kas kas 15000
+S8 pay 30000
+S9 close 241000 -1000 closed
+S10 mgr close 0 [ditutup oleh Jihan]
+S11 boot kasir {"id":21,"shift_id":"SHS","cashier":"Siti","status":"open","opening_cash":200000,"cash_in":0,"cash_out":0,"sales_count":0,"moves":"[]","note":""} 0
+S12 boot owner null 2 true
+S13 1
+S14 shift-first, approval untouched SHIFT_REQUIRED 0
+Z1 sales login sales
+Z2 boot true false
+Z3 sale FORBIDDEN
+Z4 create sales
+transcript 4000
+no consent ""
+dup phone true 8 Bu Rina 6281234567890 true Condet kasir
+new phone false -1 Pelanggan 2222 6285711112222 eceran
+bad phone no name INVALID
+owner edit false 8 false 6281234567890
+short phone kept 0812 -1
+settings 0811-9008-0090 false 2
+defaults "" true
+owner opname true [[1,18]] 1 STOK OPNAME -2 opname Oktober (dihitung 18, sistem 20)
+kasir opname false opname owner 0 Stok opname 1 barang, 1 selisih: Kurma Ajwa 1kg 20→17
+manager decide opname NEEDS_OWNER
+owner decide opname [{"product_id":1,"stock":12}] approved Pemilik (dihitung Siti)
+neg INVALID
+empty INVALID
+purchase exp [ '2027-03-01', '' ]
+ping new true false {"device_id":"dev_ABCDEFGH12","user":"Siti","role":"kasir","app":"kasir","label":"Android · Chrome","ua":"Mozilla/5.0 (Linux; Android 14)","ip":"1.2.3.4","lat":-6.262,"lng":106.861,"acc":12,"loc_status":"granted","loc_at":"2026-10-06T16:00:08.677Z","first_seen":"2026-10-06T16:00:08.677Z","last_seen":"2026-10-06T16:00:08.677Z","pings":1,"battery":0.8,"_id":-1}
+piggy same place, fresh -> no write 0
+moved -> write 1 5 4
+denied keeps last loc denied -6.262 x
+bad id ignored 0 true
+manager list FORBIDDEN
+owner list [ 'dev_ZZZZZZZZ', 'dev_ABCDEFGH12' ] {"lat":-6.26,"lng":106.86}
+ping bad INVALID
+failed action writes no device INVALID 0
+repack mgr {"repack_id":"RPUEGY3E","repack_date":"2026-10-06","repack_time":"2026-10-06T16:00:08.686Z","user":"Jihan","from_product_id":3,"from_name":"Kurma Sukkari curah 10kg","from_unit":"kg","from_qty":10,"to_product_id":4,"to_name":"Kurma Sukkari 500g","to_unit":"pak","to_qty":19,"pack_size":0.5,"expected_qty":20,"yield_pct":95,"loss_qty":0.5,"exp_date":"","note":"karton A"} [{"product_id":3,"stock":20},{"product_id":4,"stock":21}] [ [ 3, -10, 'KEMAS ULANG' ], [ 4, 19, 'KEMAS ULANG' ] ]
+repack owner default from 10 100 30000 [{"product_id":3,"stock":20},{"product_id":4,"stock":22,"cost_price":27273}]
+kasir FORBIDDEN
+too much INVALID Stok Kurma Sukkari curah 10kg tidak cukup (30 kg)
+not repack INVALID
+save link 3 0.5 PT Kurma Jaya
+self link INVALID
+no size INVALID
+get_sales repacks mgr [{"id":1,"repack_id":"RP1"}]
+match ok true cocok PB261006-9EXA cocok 1 info
+mismatch MISMATCH Jumlah tidak sama dengan nota: Kurma Ajwa 1kg: input 12 / nota 10 0 0
+mismatch with reason true tidak_cocok Kurma Ajwa 1kg: input 12 / nota 10 | alasan: 2 dus bonus warn
+missing line MISMATCH 1
+kasir fix false purchase_fix manager [{"product_id":1,"name":"Kurma Ajwa 1kg","supplier":"PT Kurma","from_qty":10,"to_qty":8,"from_total":1500000,"to_total":1200000,"cost_price":150000,"d_qty":-2,"d_total":-300000}] 0 minta_koreksi
+no reason INVALID
+no change INVALID
+mgr approves fix [{"product_id":1,"stock":18}] [ [ -2, -300000, 'koreksi' ] ] approved [ 'keputusan' ]
+mgr direct cost fix true [[0,-20000]] -20000
+list act [ 'b', 'a' ]
+mgr list act FORBIDDEN
+boot owner act 1
+boot kasir act 0
+new device act [ 'Perangkat baru: iPhone (kasir, Siti) IP 1.2.3.4' ]
+void act batal warn
+settings act [ 'Pengaturan diubah: paper' ]
+pay partial true sebagian [{"ref":"KM1","amount":50000}] bayar_masuk
+slip mismatch MISMATCH 50000 0
+slip mismatch reason true lunas warn
+void invoice INVALID Faktur / nota tidak ditemukan untuk pihak ini: KM3
+over remaining Alokasi KM2 melebihi sisa (40000)
+KM1 now lunas lunas
+dup ref INVALID Nomor transfer ini sudah pernah dipakai: trx0
+no alloc belum_dialokasi warn
+kasir alloc FORBIDDEN
+realloc sebagian [{"ref":"KM1","amount":10000},{"ref":"KM2","amount":20000}] 20
+pay supplier lunas out bayar_keluar
+supplier from kas 1 100000
+kasir pay supplier FORBIDDEN
+supplier ledger [{"ref":"PB1","date":"2026-10-01","total":1500000,"paid":1000000,"remaining":500000},{"ref":"PB2","date":"2026-10-02","total":300000,"paid":0,"remaining":300000}] 800000
+cust ledger [["KM1",30000,30000],["KM2",0,40000]] 1 100000
+kasir supplier ledger FORBIDDEN
+import true [[1,"cocok","P1",0],[2,"beda_tanggal","P2",3],[3,"tidak_tercatat","",null],[4,"beda_jumlah","P5",1],[5,"tidak_tercatat","",null]] [ 'P3' ] {"statement_in":1100000,"statement_out":1515000,"recorded_in":1000000,"recorded_out":1500000} 5 Rekening BCA 1234567890 2026-10: 5 baris — cocok 1, beda tanggal 1, beda jumlah 1, tidak tercatat di aplikasi 2, diabaikan 0, tercatat tapi tidak ada di rekening 1
+kasir import FORBIDDEN
+bad acct INVALID
+out of period Baris 1: tanggal di luar periode 2026-10
+recon {"cocok":1,"beda_tanggal":1,"tidak_tercatat":1,"beda_jumlah":1,"diabaikan":1} true
+manual manual P3 102
+ignore no note INVALID
+reimport shorter [
+  [ 100, 'cocok' ],
+  [ 101, 'beda_tanggal' ],
+  [ 102, 'dihapus' ],
+  [ 103, 'dihapus' ],
+  [ 104, 'dihapus' ]
+]
+acct+slip date BA1 2026-10-01 warn tanggal bukti 2026-10-01 ≠ dicatat 2026-10-06
+manager sells w/o shift true
+kasir w/o shift SHIFT_REQUIRED
+manager open FORBIDDEN
+kasir open true buka_kas manager Buka kas Siti: modal awal dihitung Rp 500000 — kas terakhir ditutup 2026-10-05 14:00 UTC oleh Rina: dihitung Rp 450000, selisih dengan pembukaan Rp 50000 warn
+shift split {"transfer_sales":300000,"qris_sales":0,"debt_sales":70000,"items_qty":2,"cash_sales":0}
+approve buka_kas approved keputusan
+report {"count":3,"total":450000,"discount":5000,"items_qty":10.5,"by_method":{"tunai":100000,"transfer":200000,"qris":50000},"debt":100000,"voids":{"count":1,"total":70000}} {"sales_transfer":200000,"sales_qris":50000,"payments_transfer":80000,"payments_qris":0,"out_transfer":1000000,"in_total":330000} {"sales":100000,"payments_in":20000,"payments_out":0,"expenses_from_kas":30000,"expected_total":590000,"counted_total":585000,"difference_total":-5000} [ 'Ajwa:2.5', 'Kismis:8' ] false {"company":"","manager":"628111","owner":""}
+owner profit 90000
+kasir report FORBIDDEN
