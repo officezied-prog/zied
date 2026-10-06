@@ -153,7 +153,7 @@ test('stock card: running balance ends at the current stock; purchase, sales and
   await refreshGudang(page);
   await page.fill('#gd-q', 'ajwa');
   await expect(page.locator(`#gd-table tr[data-pid="${p.id}"] [data-col="stock"]`)).toContainText(fq(cur - 1));
-  await page.locator(`#gd-table tr[data-pid="${p.id}"]`).click();
+  await page.locator(`#gd-table tr[data-pid="${p.id}"]`).locator("td").first().click();
   const card = page.locator('#gd-card-modal');
   await expect(card.locator('#gd-card-table')).toBeVisible();
   await expect(card.locator('#gdc-range .chip.on')).toHaveText('30 hari');

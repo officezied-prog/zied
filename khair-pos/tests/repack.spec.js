@@ -53,7 +53,7 @@ test('owner repacks 5 kg of bulk dates into 9 × 500 g: preview, stock, weighted
   // stock card of the bulk product shows the repack row
   await page.click('#gd-tabs [data-tab="list"]');
   await page.fill('#gd-q', 'rabia curah');
-  await page.locator(`#gd-table tr[data-pid="${bulk.id}"]`).click();
+  await page.locator(`#gd-table tr[data-pid="${bulk.id}"]`).locator("td").first().click();
   await expect(page.locator('#gd-card-table tr[data-kind="repack"]').last()).toContainText('Kemas ulang');
   await expect(page.locator('#gd-card-table tr[data-kind="repack"]').last()).toContainText('5');
   await expect(page.locator('#gdc-end')).toContainText(fq(b2.stock));
