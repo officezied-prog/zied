@@ -63,7 +63,7 @@ Transaksi **tidak hilang**. Struk bertanda *BELUM TERKIRIM*, dan di atas muncul 
 
 ## 7. Barang masuk (pembelian)
 
-Menu **Barang Masuk**: isi supplier & tanggal → cari/scan produk → isi **qty** dan **harga beli per satuan** → **Simpan**.
+Menu **Barang Masuk**: mulai dengan **foto nota** (lihat no. 15), periksa supplier & tanggal → cari/scan produk → isi **qty** dan **harga beli per satuan** → **Simpan**.
 Stok bertambah dan **HPP (harga modal) menjadi rata-rata tertimbang** dari stok lama dan barang baru (terlihat oleh pemilik).
 
 ## 8. Produk & stok (pemilik)
@@ -87,17 +87,57 @@ Stok bertambah dan **HPP (harga modal) menjadi rata-rata tertimbang** dari stok 
 
 ## 10. Pengaturan (pemilik)
 
-Info toko & catatan struk, lebar kertas, pertanyaan survei (tambah / hapus / urutkan), pengguna (tambah kasir, ganti PIN, nonaktifkan), bahasa, kunci otomatis, antrian offline.
+Info toko & catatan struk, lebar kertas, pertanyaan survei (tambah / hapus / urutkan), **kontrol foto** (batas wajib foto keluar, wajib foto nota barang masuk), pengguna (tambah **Kasir / Manajer / Pemilik**, ganti PIN, nonaktifkan), bahasa, **suara kasir**, kunci otomatis, antrian offline.
+
+## 11. Beranda (pemilik & manajer)
+
+Satu layar tenang, tanpa iklan/banner: pilih periode (Hari ini … Tahun ini) dan toko (Semua · Khair Mart eceran · Khair Grosir).
+Omzet, transaksi, rata-rata per struk, laba kotor & margin (pemilik), hutang baru, pengeluaran; **Perlu perhatian** (persetujuan menunggu, foto keluar belum ada, selisih kas, kasir belum ditutup, stok minus/menipis); produk terlaris, metode bayar, kanal penjualan, grafik per jam, tabel per kasir. Setiap blok maks. 5 baris — tombol **Semua** untuk daftar lengkap.
+Ikon **lonceng** di atas = notifikasi (hal yang perlu dicek + hasil permintaan saya).
+
+## 12. Kas Kasir (buka / tutup kasir)
+
+- Kasir & manajer **wajib buka kasir** (isi modal awal) sebelum menjual. Aplikasi menanyakannya otomatis setelah login.
+- **Kas masuk / Kas keluar** (wajib catatan), pengeluaran "dibayar dari kas laci" ikut mengurangi kas.
+- **Tutup kasir**: hitung uang di laci lalu isi. Kasir **tidak melihat** jumlah seharusnya sebelum menutup (hitung buta); selisih muncul setelah ditutup (merah jika kurang). Laporan kas bisa dicetak / disalin.
+- Pemilik/manajer melihat kas seharusnya secara langsung dan bisa menutup kasir orang lain yang lupa ditutup. *Laporan → Kas Kasir* berisi semua shift dan selisihnya.
+
+## 13. Hutang kasir perlu persetujuan
+
+Penjualan **hutang oleh kasir** harus disetujui pemilik atau manajer (Jihan):
+- **Setujui di sini** — penyetuju memilih namanya dan mengetik PIN di perangkat kasir; atau
+- **Minta persetujuan jarak jauh** — muncul nomor permintaan; pemilik/manajer menyetujui di menu **Persetujuan** di HP-nya; transaksi tersimpan otomatis. Jika ditolak, catatannya tampil dan keranjang tetap ada.
+Nama penyetuju tercetak di struk ("Disetujui").
+
+## 14. Perubahan yang dilindungi
+
+- **Membatalkan nota lama** hanya pemilik. Kasir/manajer menekan **Minta pembatalan** (dengan alasan); setelah pemilik menyetujui, nota batal dan bisa **Buat ulang transaksi** (barang dimuat ke keranjang, nota baru).
+- **Ubah harga** (menu Produk): manajer boleh langsung mengubah harga eceran/grosir; harga modal perlu persetujuan pemilik; perubahan dari kasir selalu jadi permintaan. Semua perubahan harga tercatat.
+
+## 15. Foto barang masuk & keluar (dibaca AI)
+
+- **Barang Masuk**: langkah pertama **Foto nota / barang masuk**. AI membaca supplier, tanggal dan barangnya, lalu mencocokkan ke produk (bisa diubah per baris; baris yang belum cocok berwarna oranye; pemilik bisa langsung membuat produk baru). Tanpa foto tombol simpan tidak aktif (kecuali dimatikan di Pengaturan).
+- **Penjualan besar** (default total ≥ Rp 1.000.000 atau qty satu barang ≥ 20): di struk muncul **Foto barang keluar (wajib)** → hasil **Cocok** (hijau), **Tidak cocok** (merah, dengan tabel selisih) atau **Perlu dicek**. Yang belum difoto tampil merah di Riwayat dan Laporan (*Kontrol foto*).
+
+## 16. Pengeluaran, kanal & kode promo, laporan tahunan
+
+- **Pengeluaran** (semua peran): tanggal, kategori (sewa, gaji, listrik & air, transport, iklan, kemasan, perawatan, lain), jumlah, catatan, dibayar dari kas laci atau lainnya.
+- Di kasir, bagian **Kanal · Kode promo**: pilih kanal (Toko, WhatsApp, Shopee, TikTok, Tokopedia, Web) dan ketik kode kampanye (mis. KHAIR1111). Laporan menampilkan penjualan per kanal dan per kode promo.
+- **Laporan → Tahunan** (pemilik): per bulan omzet, HPP, laba kotor, pengeluaran, laba bersih, margin, perubahan vs bulan lalu dan vs tahun lalu; Laba-Rugi; produk menurut laba; pengeluaran per kategori. Bisa disalin & dicetak.
+
+## 17. Suara kasir
+
+Setiap barang yang masuk keranjang diucapkan (nama + jumlah, mis. "Kurma Ajwa 1 kilo, 1"), perubahan jumlah diucapkan "jumlah 3". **Harga, total, nama pelanggan, hutang dan cara bayar tidak pernah diucapkan.** Tombol **speaker** di keranjang membisukan transaksi ini saja; matikan total di *Pengaturan → Suara kasir* (per perangkat).
 
 ## Mode DEMO (latihan)
 
 Buka `…/khair-pos/?mock=1` — data contoh tersimpan hanya di browser itu, tidak menyentuh data toko.
-Kode toko demo: `demo` · Pemilik PIN `1234` · Siti (kasir) PIN `1111`. Reset di *Pengaturan → Reset data demo*.
+Kode toko demo: `demo` · Pemilik PIN `1234` · Jihan (manajer) PIN `2222` · Siti (kasir) PIN `1111` · Rina (kasir, lupa tutup kasir kemarin) PIN `3333`. Reset di *Pengaturan → Reset data demo*.
 
 ## Untuk pengembang
 
 - Satu file `index.html` (tanpa build). `sw.js` + `manifest.webmanifest` + `icon.svg` hanya untuk instalasi/offline.
-- Kontrak backend: `API.md`. Alamat API ada di `CONFIG` bagian atas skrip.
+- Kontrak backend: `API.md`. Alamat API dan endpoint foto ada di `CONFIG` bagian atas skrip.
 - Tes: `cd khair-pos/tests && npm install && npx playwright test` (memakai Chromium di `/opt/pw-browsers`, server `python3 -m http.server`).
 
 ---
@@ -116,4 +156,10 @@ Kode toko demo: `demo` · Pemilik PIN `1234` · Siti (kasir) PIN `1111`. Reset d
 - **التقارير (للمالك فقط):** المبيعات، الربح الإجمالي، هامش الربح، الجملة مقابل التجزئة، طرق الدفع، الديون، الأكثر مبيعًا وربحًا، المخزون المنخفض، ومن أين عرف العملاء المتجر. نسخ تقرير يومي/شهري جاهز لواتساب.
 - **الكاشير** لا يرى التكلفة ولا الأرباح إطلاقًا.
 - **استيراد المنتجات من majoo** بملف CSV مع مطابقة الأعمدة تلقائيًا.
+- **الرئيسية (لوحة المالك):** شاشة هادئة بلا إعلانات: المبيعات، العمليات، الربح، الديون، المصروفات، «يحتاج انتباه»، الأكثر مبيعًا، المبيعات بالساعة، حسب الكاشير والقناة.
+- **صندوق الكاشير:** فتح الصندوق برصيد البداية، إيداع/سحب نقدي، وإغلاق بعدّ أعمى؛ يظهر الفرق بعد الإغلاق، والمالك يرى المتوقع مباشرة.
+- **الموافقات:** البيع بالدَّين من الكاشير يحتاج موافقتك أو موافقة المديرة جيهان (هنا بالرقم السري أو عن بُعد من جوالك). إلغاء فاتورة قديمة وتغيير سعر التكلفة يحتاجان موافقة المالك فقط.
+- **صور البضاعة:** صورة فاتورة المورّد إلزامية عند الوارد ويقرؤها الذكاء الاصطناعي؛ المبيعات الكبيرة تحتاج صورة خروج تُطابَق مع الفاتورة.
+- **المصروفات والتقرير السنوي:** صافي الربح شهريًا ومقارنة بالشهر والعام الماضي.
+- **صوت الكاشير:** يُنطق اسم الصنف والكمية فقط ليطمئن العميل، ولا تُنطق الأسعار أبدًا.
 - زر **ع / ID** في الأعلى يبدّل الواجهة بين العربية والإندونيسية.

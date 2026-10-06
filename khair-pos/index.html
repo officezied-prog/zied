@@ -239,14 +239,14 @@ button.li:hover{border-color:var(--green)}
 
 /* ========== Reports ========== */
 .kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:14px}
-.kpi{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;box-shadow:var(--shadow)}
+.kpi{background:#fff;border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;box-shadow:var(--shadow);min-width:0}
 .kpi .k{font-size:12.5px;color:var(--muted);font-weight:600}
 .kpi .v{font-size:21px;font-weight:800;margin-top:2px}
 .kpi .s{font-size:12px;color:var(--muted);margin-top:2px}
 .kpi.hl{background:var(--green);color:#fff;border-color:var(--green)}
 .kpi.hl .k,.kpi.hl .s{color:rgba(255,255,255,.85)}
 .kpi.gold{border-top:3px solid var(--gold)}
-.rgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-bottom:14px}
+.rgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr));gap:14px;margin-bottom:14px}
 .panel{background:#fff;border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
 .panel h3{margin:0;padding:12px 14px;font-size:15px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
 .panel .pb{padding:12px 14px}
@@ -339,6 +339,10 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
   .modal.wide,.modal.narrow{max-width:none}
   .grid3{grid-template-columns:1fr 1fr}
   .hide-phone{display:none!important}
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .kpi{padding:10px 12px}
+  .kpi .v{font-size:17px}
+  .panel{min-width:0}
   .tbl th,.tbl td{padding:9px 8px}
   #toasts{bottom:calc(var(--tab) + 16px)}
 }
@@ -374,7 +378,7 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
     </div>
     <button class="btn outbox-badge" id="tb-outbox" data-act="go" data-view="settings" hidden></button>
     <span class="badge amber" id="tb-mock" hidden>DEMO</span>
-    <button class="btn appr-badge" id="tb-appr" data-act="go" data-view="approvals" hidden></button>
+    <button class="btn appr-badge hide-phone" id="tb-appr" data-act="go" data-view="approvals" hidden></button>
     <button class="icon-btn bell" id="tb-bell" data-act="bell" hidden></button>
     <div class="who"><b id="tb-user"></b><span id="tb-role"></span></div>
     <button class="icon-btn" id="tb-lang" data-act="toggle-lang" title="Bahasa / اللغة"><span style="font-weight:800;font-size:13px" id="tb-lang-l">ع</span></button>
@@ -1831,7 +1835,7 @@ function renderCart(flashId) {
   }
 }
 const fmtQtyInput = q => String(roundQty(q)).replace('.', ',');
-const fmtShort = n => n >= 1000000 ? (n / 1000000).toString().replace('.', ',') + 'jt' : n >= 1000 ? (n / 1000) + 'rb' : String(n);
+const fmtShort = n => n >= 1000000 ? String(Math.round(n / 100000) / 10).replace('.', ',') + 'jt' : n >= 1000 ? Math.round(n / 1000) + 'rb' : String(n);
 function quickAmounts(total) {
   if (total <= 0) return [];
   const set = new Set();
@@ -2718,7 +2722,7 @@ function promptOpenShift(after) {
 function shiftRows(sh, withExpected) {
   const rows = [[t('shift.opening'), fmtRp(sh.opening_cash)]];
   if (withExpected) rows.push([t('shift.cash_sales'), fmtRp(sh.cash_sales)], [t('shift.cash_payments'), fmtRp(sh.cash_payments)]);
-  rows.push([t('shift.cash_in'), fmtRp(sh.cash_in)], [t('shift.cash_out'), '-' + fmtRp(sh.cash_out)]);
+  rows.push([t('shift.cash_in'), fmtRp(sh.cash_in)], [t('shift.cash_out'), (int(sh.cash_out) ? '-' : '') + fmtRp(sh.cash_out)]);
   if (withExpected) rows.push([t('shift.expected'), `<b>${fmtRp(sh.expected_cash)}</b>`]);
   return rows;
 }
@@ -2806,7 +2810,7 @@ function shiftReportHTML(sh) {
   return `<div class="receipt w${st.paper === '80' ? '80' : '58'}" id="shift-report"><div class="c b big">${esc(st.store_name)}</div><div class="c b">${esc(t('shift.report_title'))}</div><div class="ln"></div>
     ${row(t('rc.cashier'), sh.cashier)}${row(t('date'), fmtDate(sh.shift_date))}${row(t('shift.t_open'), fmtDateTime(sh.opened_at))}${row(t('shift.t_close'), sh.closed_at ? fmtDateTime(sh.closed_at) : '—')}
     <div class="ln"></div>${row(t('rep.tx_count'), fmtNum(sh.sales_count))}${row(t('rep.omzet'), fmtRp(sh.sales_total))}<div class="ln"></div>
-    ${row(t('shift.opening'), fmtRp(sh.opening_cash))}${row(t('shift.cash_sales'), fmtRp(sh.cash_sales))}${row(t('shift.cash_payments'), fmtRp(sh.cash_payments))}${row(t('shift.cash_in'), fmtRp(sh.cash_in))}${row(t('shift.cash_out'), '-' + fmtRp(sh.cash_out))}
+    ${row(t('shift.opening'), fmtRp(sh.opening_cash))}${row(t('shift.cash_sales'), fmtRp(sh.cash_sales))}${row(t('shift.cash_payments'), fmtRp(sh.cash_payments))}${row(t('shift.cash_in'), fmtRp(sh.cash_in))}${row(t('shift.cash_out'), (int(sh.cash_out) ? '-' : '') + fmtRp(sh.cash_out))}
     ${shiftMoves(sh).map(m => `<div class="small">  ${m.type === 'in' ? '+' : '-'}${esc(NF.format(m.amount))} ${esc(m.note || '')}</div>`).join('')}
     <div class="ln"></div>${row(t('shift.expected'), fmtRp(sh.expected_cash), true)}${row(t('shift.counted'), fmtRp(sh.counted_cash), true)}
     <div class="r2 big"><span>${esc(t('shift.difference'))}</span><span id="sr-diff" data-diff="${d}">${d > 0 ? '+' : ''}${esc(fmtRp(d))}</span></div>
