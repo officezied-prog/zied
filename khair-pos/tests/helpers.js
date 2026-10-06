@@ -77,10 +77,10 @@ async function confirmQty(page, qty) {
   await expect(page.locator('#qty-sheet')).toHaveCount(0);
 }
 
-/** Checkout and skip the survey; returns once the receipt is shown. */
+/** Checkout ("Bayar & Simpan"): no survey step any more, the receipt is shown at once. */
 async function checkoutSkip(page) {
   await page.click('#btn-checkout');
-  await page.click('#sv-skip');
+  await expect(page.locator('#survey')).toHaveCount(0);
   await expect(page.locator('.modal #receipt')).toBeVisible();
 }
 

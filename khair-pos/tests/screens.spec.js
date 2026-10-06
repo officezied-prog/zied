@@ -23,13 +23,14 @@ for (const [label, vp] of [['desktop', { width: 1366, height: 768 }], ['phone', 
       await shot(page, label === 'phone' ? 'phone-cart' : 'desktop-pos');
       await page.click('#cart-cust');
       await page.locator('#cp-list [data-pick]').filter({ hasText: 'Toko Berkah' }).click();
-      await page.click('#btn-checkout');
+      await page.click('#vs-manual');
       await expect(page.locator('#sv-consent')).toBeVisible();
       await page.check('#sv-consent');
       await page.locator('[data-sq="1"]').fill('Lihat video di TikTok');
       await page.waitForTimeout(300);
       await shot(page, `${label}-survey`);
       await page.click('#sv-save');
+      await page.click('#btn-checkout');
       await expect(page.locator('.modal #receipt')).toBeVisible();
       await page.waitForTimeout(200);
       await shot(page, `${label}-receipt`);

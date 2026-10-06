@@ -142,6 +142,19 @@ Setiap barang yang masuk keranjang diucapkan (nama + jumlah, mis. "Kurma Ajwa 1 
 - *Perlu perhatian* juga menampilkan pesanan sales baru, sales yang tidak mengirim lokasi > 30 menit, kunjungan jauh dari toko, dan toko yang lewat jadwal kunjungan ulang. Laporan bulanan/tahunan memuat panel **Lapangan** (kunjungan, toko baru, pesanan, konversi per sales).
 - Privasi: lokasi hanya direkam antara "Mulai kerja" dan "Selesai kerja" yang ditekan sales sendiri, dengan persetujuan.
 
+## 19. Gudang (pemilik & manajer)
+
+Menu **Gudang** (di HP: *Lainnya → Gudang*) mengumpulkan semua urusan stok di satu tempat:
+
+- **Ringkasan:** jumlah barang, total unit, nilai stok (harga eceran; harga modal hanya untuk pemilik), jumlah barang **Habis**, **Menipis** (≤ stok minimum) dan **Kedaluwarsa ≤ 30 hari**, plus daftar *Perlu tindakan*.
+- **Daftar stok:** cari, filter kategori & status (menipis / habis / lebih / kedaluwarsa), urutkan. **Perkiraan habis** = stok ÷ rata-rata terjual per hari (30 hari terakhir). **Saran beli** (barang menipis/habis) = cukup untuk 14 hari dikurangi stok.
+- **Kartu stok:** ketuk barang → semua pergerakan (barang masuk + supplier + kedaluwarsa, penjualan per hari, nota batal, penyesuaian, stok opname) dengan saldo berjalan yang berakhir di stok sekarang; 7 hari s.d. 1 tahun; **Ekspor CSV**.
+- **Kedaluwarsa:** isi tanggal *Kedaluwarsa* (opsional) per baris di **Barang Masuk**. Gudang memperkirakan sisa tiap batch: stok sekarang dianggap berasal dari barang masuk terbaru. Merah ≤ 7 hari, kuning ≤ 30 hari.
+- **Stok opname (hitung stok):** pilih barang (cari, scan barcode, per kategori, atau semua) → ketik hasil hitung. Stok sistem tersembunyi sampai **Tampilkan selisih** ditekan (hitung buta). Pemilik: stok langsung diganti. Manajer & kasir (Khair Kasir → *Lainnya → Hitung stok*, kasir tidak pernah melihat stok sistem/selisih): hasil dikirim ke **Persetujuan** pemilik; saat disetujui, selisih ditambahkan ke stok saat itu (penjualan sesudah hitung tetap terhitung). Setiap perubahan tercatat sebagai baris *STOK OPNAME*. Hitungan yang belum dikirim tersimpan di perangkat.
+- *Perlu perhatian* di Beranda menampilkan barang yang hampir kedaluwarsa dan opname yang menunggu persetujuan.
+
+**بالعربية — المخزن:** ملخص (عدد الأصناف، قيمة المخزون، النافد، المنخفض، ما تنتهي صلاحيته خلال 30 يومًا)، قائمة المخزون مع «ينفد خلال» و«اقتراح الشراء»، بطاقة الصنف بكل الحركات ورصيد جارٍ ينتهي بالمخزون الحالي (تصدير CSV)، الصلاحية (تقدير الدفعات المتبقية: المخزون من أحدث الوارد)، وجرد المخزون بعدّ أعمى: المالك يطبّق فورًا، والمديرة والكاشير يرسلان للموافقة، وعند الموافقة يُضاف الفرق إلى المخزون الحالي. التكلفة تظهر للمالك فقط.
+
 ## Mode DEMO (latihan)
 
 Buka `…/khair-pos/?mock=1` — data contoh tersimpan hanya di browser itu, tidak menyentuh data toko.

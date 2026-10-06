@@ -42,6 +42,7 @@ test('consent + start day + tracking batches + end of day with km / visits / ord
   await expect(page.locator('#ci-fix')).toContainText('akurasi');
   await page.click('#ci-new');
   await page.fill('#ci-name', 'Warung Uji Coba');
+  await H.pickType(page, 'warung');
   await page.click('#oc-order');
   await page.click('#ci-ok');
   await expect(page.locator('#v-order')).toBeVisible();

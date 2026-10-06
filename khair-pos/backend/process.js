@@ -107,7 +107,9 @@ const DEFAULT_SETTINGS = {
   exit_photo_min_total: 1000000,
   exit_photo_min_qty: 20,
   require_purchase_photo: true,
-  require_shift: true
+  require_shift: true,
+  wa_shop_number: '',
+  survey_voice: true
 };
 const settingRows = rows('Get Settings');
 const approvalRows = rows('Get Approvals');
@@ -156,6 +158,25 @@ function applyPrices(p, changes) {
   return np;
 }
 const PRICE_FIELDS = ['retail_price', 'wholesale_price', 'cost_price'];
+// Stock count (opname): each line's difference is counted against the stock at counting time, so sales made
+// while the count waited for approval are not lost. Every change is logged as a 'STOK OPNAME' purchase row.
+function applyCount(lines, note, byName) {
+  const out = [];
+  lines.forEach(function (l) {
+    const p = productById[String(l.product_id)];
+    const diff = Math.round(num(l.diff) * 1000) / 1000;
+    if (!p || !diff) return;
+    const newStock = Math.round((num(p.stock) + diff) * 1000) / 1000;
+    ops.products.push(forWrite(Object.assign({}, p, { stock: newStock }), p.id));
+    ops.purchases.push(forWrite({
+      purchase_date: jkDate(), supplier: 'STOK OPNAME', product_id: p.id, name: str(p.name), qty: diff, cost_price: money(p.cost_price), total: 0,
+      note: (str(note) + ' (dihitung ' + l.counted + ', sistem ' + l.system + ')').trim().slice(0, 500), user: byName, photo_id: '', exp_date: ''
+    }, -1));
+    const o = { product_id: p.id, stock: newStock };
+    out.push(o);
+  });
+  return out;
+}
 function computeSale(invoice) {
   const items = Array.isArray(data.items) ? data.items : [];
   if (!items.length) return { error: fail('INVALID', 'Keranjang kosong') };
@@ -195,6 +216,13 @@ function computeSale(invoice) {
   const debt = Math.max(0, total - paid);
   if (debt > 0 && !customer) return { error: fail('INVALID', 'Hutang / bayar kurang wajib pilih pelanggan') };
   return { lines: lines, qtyByProduct: qtyByProduct, customer: customer, subtotal: subtotal, discount: discount, total: total, totalCost: totalCost, method: method, paid: paid, debt: debt };
+}
+// Indonesian mobile number → 62…; '' when it does not look like a phone number
+function normPhone(v) {
+  let d = str(v).replace(/\D/g, '');
+  if (d.indexOf('0') === 0) d = '62' + d.slice(1);
+  else if (d.indexOf('8') === 0) d = '62' + d;
+  return d.length >= 9 && d.length <= 15 ? d : '';
 }
 function readSettings() {
   const s = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
@@ -266,7 +294,7 @@ switch (req.action) {
       customer_type: c.customer ? str(c.customer.type) : (data.customer_type === 'grosir' ? 'grosir' : 'eceran'),
       subtotal: c.subtotal, discount: c.discount, total: c.total, total_cost: c.totalCost, profit: c.total - c.totalCost,
       payment_method: c.method, paid_amount: c.paid, debt_amount: c.debt, status: 'ok',
-      survey: JSON.stringify(survey), notes: str(data.notes), client_id: req.client_id, approved_by: approvedBy,
+      survey: JSON.stringify(survey), survey_transcript: data.survey_consent === true ? str(data.survey_transcript).slice(0, 4000) : '', notes: str(data.notes), client_id: req.client_id, approved_by: approvedBy,
       exit_photo: exitRequired ? 'required' : '', exit_match: '',
       channel: ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'].indexOf(data.channel) >= 0 ? data.channel : 'toko',
       promo_code: str(data.promo_code).toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 30),
@@ -350,6 +378,31 @@ switch (req.action) {
     const a = newApproval({ summary: summary, note: str(data.reason), kind: 'price', ref: String(p.id), payload: payload, approver_role: need });
     ops.approvals.push(forWrite(a, -1));
     return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a) });
+  }
+
+  case 'stock_count': {
+    const list = Array.isArray(data.counts) ? data.counts.slice(0, 500) : [];
+    const lines = [];
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i] || {};
+      const p = productById[String(it.product_id)];
+      if (!p) return fail('NOT_FOUND', 'Produk tidak ditemukan: ' + it.product_id);
+      if (it.counted === undefined || it.counted === null || it.counted === '' || !(num(it.counted) >= 0)) return fail('INVALID', 'Jumlah hitung tidak valid: ' + p.name);
+      const counted = Math.round(num(it.counted) * 1000) / 1000;
+      const system = Math.round(num(p.stock) * 1000) / 1000;
+      lines.push({ product_id: p.id, name: str(p.name), unit: str(p.unit), system: system, counted: counted, diff: Math.round((counted - system) * 1000) / 1000 });
+    }
+    if (!lines.length) return fail('INVALID', 'Belum ada barang yang dihitung');
+    const note = str(data.note).slice(0, 300);
+    if (role === 'owner') return done({ ok: true, applied: true, lines: lines, stock: applyCount(lines, note, me.name) });
+    const changed = lines.filter(function (l) { return l.diff !== 0; });
+    const a = newApproval({
+      kind: 'opname', approver_role: 'owner', ref: 'OP' + rand(5), note: note,
+      summary: ('Stok opname ' + lines.length + ' barang, ' + changed.length + ' selisih: ' + changed.slice(0, 20).map(function (l) { return l.name + ' ' + l.system + '→' + l.counted; }).join('; ')).slice(0, 1500),
+      payload: JSON.stringify({ lines: lines, counted_at: new Date().toISOString(), by: me.name })
+    });
+    ops.approvals.push(forWrite(a, -1));
+    return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a), lines: lines });
   }
 
   case 'save_expense': {
@@ -436,6 +489,12 @@ switch (req.action) {
       const sale = rows('Get Sale By Invoice')[0];
       if (!sale || sale.invoice_no !== a.ref) return fail('INVALID', 'Kirim invoice_no faktur yang dibatalkan');
       if (sale.status !== 'void') out.sale = strip(doVoid(sale, a.note, me.name + ' (diminta ' + str(a.cashier) + ')'), role);
+      finalStatus = 'used';
+    }
+    if (decision === 'approved' && a.kind === 'opname') {
+      let pl = {};
+      try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+      out.stock = applyCount(Array.isArray(pl.lines) ? pl.lines : [], a.note, me.name + ' (dihitung ' + str(a.cashier) + ')');
       finalStatus = 'used';
     }
     if (decision === 'approved' && a.kind === 'price') {
@@ -533,16 +592,25 @@ switch (req.action) {
   }
 
   case 'save_customer': {
-    const name = str(data.name);
-    if (!name) return fail('INVALID', 'Nama pelanggan wajib');
-    const ex = data.id ? customerById[String(data.id)] : null;
+    // A number taken at the counter (no id) that is already known updates that customer instead of adding a duplicate.
+    const phone = normPhone(data.phone);
+    let ex = data.id ? customerById[String(data.id)] : null;
     if (data.id && !ex) return fail('NOT_FOUND', 'Pelanggan tidak ditemukan');
-    const c = {
-      name: name, phone: str(data.phone), type: data.type === 'grosir' ? 'grosir' : 'eceran',
-      address: str(data.address), notes: str(data.notes), debt_balance: ex ? money(ex.debt_balance) : 0
+    let existed = false;
+    if (!ex && phone) { ex = customers.find(function (x) { return normPhone(x.phone) === phone; }) || null; existed = !!ex; }
+    const name = str(data.name) || (ex ? str(ex.name) : (phone ? 'Pelanggan ' + phone.slice(-4) : ''));
+    if (!name) return fail('INVALID', 'Nama pelanggan wajib');
+    const optin = typeof data.wa_optin === 'boolean' ? (existed ? (data.wa_optin || ex.wa_optin === true) : data.wa_optin) : !!(ex && ex.wa_optin === true);
+    const c = existed ? {
+      name: name, phone: phone, type: str(ex.type) || 'eceran', address: str(data.address) || str(ex.address), notes: str(data.notes) || str(ex.notes),
+      debt_balance: money(ex.debt_balance), wa_optin: optin, source: str(ex.source) || str(data.source).slice(0, 20)
+    } : {
+      name: name, phone: phone || str(data.phone), type: data.type === 'grosir' ? 'grosir' : 'eceran',
+      address: str(data.address), notes: str(data.notes), debt_balance: ex ? money(ex.debt_balance) : 0,
+      wa_optin: optin, source: str(data.source).slice(0, 20) || (ex ? str(ex.source) : '')
     };
     ops.customers.push(forWrite(c, ex ? ex.id : -1));
-    return done({ ok: true, customer: Object.assign({ id: ex ? ex.id : null }, c) });
+    return done({ ok: true, existed: existed, customer: Object.assign({ id: ex ? ex.id : null }, c) });
   }
 
   case 'receive_payment': {
@@ -592,7 +660,8 @@ switch (req.action) {
       state[String(p.id)] = p;
       ops.purchases.push(forWrite({
         purchase_date: date, supplier: str(data.supplier), product_id: p.id, name: str(p.name), qty: qty,
-        cost_price: cost, total: Math.round(qty * cost), note: str(data.note), user: me.name, photo_id: photoId
+        cost_price: cost, total: Math.round(qty * cost), note: str(data.note), user: me.name, photo_id: photoId,
+        exp_date: isDate(it.exp_date) ? it.exp_date : ''
       }, -1));
     }
     const stockOut = [];
@@ -621,7 +690,7 @@ switch (req.action) {
 
   case 'save_settings': {
     const incoming = data.settings && typeof data.settings === 'object' ? data.settings : {};
-    const allowed = ['store_name', 'address', 'phone', 'receipt_footer', 'paper', 'survey_questions', 'survey_auto', 'auto_lock_minutes', 'language', 'exit_photo_min_total', 'exit_photo_min_qty', 'require_purchase_photo', 'require_shift'];
+    const allowed = ['store_name', 'address', 'phone', 'receipt_footer', 'paper', 'survey_questions', 'survey_auto', 'auto_lock_minutes', 'language', 'exit_photo_min_total', 'exit_photo_min_qty', 'require_purchase_photo', 'require_shift', 'wa_shop_number', 'survey_voice'];
     const byKey = {};
     settingRows.forEach(function (r) { byKey[r.skey] = r; });
     allowed.forEach(function (k) {

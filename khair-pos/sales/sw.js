@@ -1,9 +1,9 @@
 /* Khair Sales — offline shell cache for the field-sales app (scope ./ = khair-pos/sales/).
-   Network-first for the app files (+ the shared mock script and the Leaflet files from cdnjs),
+   Network-first for the app files (+ the shared shop-type list, the shared mock script and the Leaflet files from cdnjs),
    cache fallback when offline. API calls (POST to n8n) and map tiles are never cached here.
    Only old "khair-sales-*" caches are removed on activate. */
-const CACHE = 'khair-sales-v1';
-const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', '../shared/field-mock.js'];
+const CACHE = 'khair-sales-v2';
+const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', '../shared/shop-types.js', '../shared/field-mock.js'];
 const LEAFLET = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(() => {}));
@@ -17,7 +17,7 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   const scope = new URL('./', self.registration.scope).pathname;
-  const mine = url.origin === self.location.origin && (url.pathname.startsWith(scope) || url.pathname.endsWith('/shared/field-mock.js'));
+  const mine = url.origin === self.location.origin && (url.pathname.startsWith(scope) || /\/shared\/(field-mock|shop-types)\.js$/.test(url.pathname));
   if (!mine && !req.url.startsWith(LEAFLET)) return;
   e.respondWith(
     fetch(req).then(res => {

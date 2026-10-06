@@ -68,7 +68,7 @@ test('hold → next sale → resume (same lines, discount, override) → pay; su
   await expect(page.locator('#cart-total')).toHaveText(rp(total));
   expect(await heldStored(page)).toEqual([]);
 
-  await checkoutSkip(page); // the held cart had no survey yet → asked at checkout
+  await checkoutSkip(page); // paying never waits for a survey
   const db = await getDb(page);
   const sale = db.sales[db.sales.length - 1];
   expect(sale).toMatchObject({ total, discount: 4000, status: 'ok' });

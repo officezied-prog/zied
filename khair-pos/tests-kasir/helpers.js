@@ -54,14 +54,13 @@ const getDb = page => page.evaluate(() => JSON.parse(localStorage.getItem('kmock
 const setDb = (page, fn, arg) => page.evaluate(([src, a]) => { const db = JSON.parse(localStorage.getItem('kmock.db')); (new Function('db', 'arg', src))(db, a); localStorage.setItem('kmock.db', JSON.stringify(db)); }, [fn, arg]);
 const productByName = (db, re) => db.products.find(p => re.test(p.name));
 
-/** Search, tap the first card → quantity sheet (opts.qty, default 1) → Tambah; on the first item of a sale
- *  the survey opens → skip it (unless keepSurvey). */
+/** Search, tap the first card → quantity sheet (opts.qty, default 1) → Tambah. Nothing else opens: the
+ *  customer survey lives inside the payment window and never interrupts selling. */
 async function addItem(page, query, opts = {}) {
-  const first = await page.evaluate(() => window.KASIR.S.cart.lines.length === 0);
   await page.fill('#q', query);
   await page.locator('#grid .pc').first().click();
   await confirmQty(page, opts.qty);
-  if (first && !opts.keepSurvey) await skipSurvey(page);
+  await expect(page.locator('#survey')).toHaveCount(0);
   await page.fill('#q', '');
 }
 /** The quantity sheet is open: optionally type a quantity, then confirm. */
@@ -70,11 +69,6 @@ async function confirmQty(page, qty) {
   if (qty != null) await page.fill('#qs-qty', String(qty));
   await page.click('#qs-ok');
   await expect(page.locator('#qty-sheet')).toHaveCount(0);
-}
-async function skipSurvey(page) {
-  await expect(page.locator('#survey')).toBeVisible();
-  await page.click('#sv-skip');
-  await expect(page.locator('#survey')).toHaveCount(0);
 }
 /** Phone: the cart is a sheet opened from the pay bar. */
 async function openCart(page) {
@@ -96,4 +90,4 @@ async function tab(page, v) {
   await expect(page.locator(`#v-${v}`)).toBeVisible();
 }
 
-module.exports = { rp, sha, SHOTS, shot, PHONE, TABLET, openKasir, enterKey, typePin, login, getDb, setDb, productByName, addItem, confirmQty, skipSurvey, openCart, pay, photoFile, closeModals, tab };
+module.exports = { rp, sha, SHOTS, shot, PHONE, TABLET, openKasir, enterKey, typePin, login, getDb, setDb, productByName, addItem, confirmQty, openCart, pay, photoFile, closeModals, tab };

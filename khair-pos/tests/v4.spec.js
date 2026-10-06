@@ -76,7 +76,6 @@ test('SHIFT_REQUIRED: selling without an open shift asks to open the cash drawer
   await expect(page.locator('#shift-open')).toBeVisible();
   await page.fill('#so-cash', '300000');
   await page.click('#so-ok');
-  await page.click('#sv-skip');
   await expect(page.locator('.modal #receipt')).toBeVisible();
   const db = await getDb(page);
   const sale = db.sales.slice(-1)[0];

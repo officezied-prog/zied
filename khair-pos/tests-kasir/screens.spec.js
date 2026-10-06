@@ -23,19 +23,21 @@ for (const [label, vp] of [['phone', H.PHONE], ['tablet', H.TABLET]]) {
       await expect(page.locator('#grid .pc').first()).toBeVisible();
       await page.waitForTimeout(2900); // let the toast go
       await s('05-sell-empty');
-      await H.addItem(page, 'ajwa', { keepSurvey: true });
-      await expect(page.locator('#survey')).toBeVisible();
-      await page.check('#sv-consent');
-      await page.locator('[data-sq="1"]').fill('Lihat video di TikTok');
-      await s('06-survey');
-      await page.click('#sv-save');
-      await page.fill('#q', '');
+      await H.addItem(page, 'ajwa');
       await H.addItem(page, 'tunisia');
       await H.addItem(page, 'pistachio');
       await s('07-sell');
       if (label === 'phone') { await H.openCart(page); await s('08-cart'); await page.click('#btn-pay'); }
       else await page.click('#btn-pay');
       await expect(page.locator('#pay')).toBeVisible();
+      // the manual survey is optional: opened from the link inside the payment window
+      await page.click('#vs-manual');
+      await expect(page.locator('#survey')).toBeVisible();
+      await page.check('#sv-consent');
+      await page.locator('[data-sq="1"]').fill('Lihat video di TikTok');
+      await s('06-survey');
+      await page.click('#sv-save');
+      await expect(page.locator('#survey')).toHaveCount(0);
       await page.click('[data-act="paid-set"] >> nth=2');
       await s('09-pay');
       await page.click('#pay-ok');

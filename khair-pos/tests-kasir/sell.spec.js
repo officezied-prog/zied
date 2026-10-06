@@ -55,7 +55,7 @@ test('scan (keyboard wedge) + search, quantity stepper, cash payment with change
   await page.locator('#q').focus();
   await page.keyboard.type(ajwa.sku, { delay: 5 });
   await page.keyboard.press('Enter');
-  await H.skipSurvey(page); // the survey opens when the sale starts
+  await expect(page.locator('#survey')).toHaveCount(0); // the survey never interrupts selling
   await expect(page.locator('#paybar-total')).toHaveText(H.rp(175000));
   // unknown barcode → error, nothing added
   await page.locator('#q').focus();

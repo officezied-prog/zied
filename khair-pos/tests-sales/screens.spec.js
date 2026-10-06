@@ -18,7 +18,7 @@ test('screens phone', async ({ page, context }) => {
   await context.setOffline(true);
   await H.tab(page, 'visit');
   await page.click('#ci-pick, #ci-new >> nth=0').catch(() => { });
-  if (await page.locator('#ci-name').isVisible()) await page.fill('#ci-name', 'Warung Contoh');
+  if (await page.locator('#ci-name').isVisible()) { await page.fill('#ci-name', 'Warung Contoh'); await H.pickType(page, 'warung'); }
   await page.click('#oc-tertarik');
   await page.click('#ci-ok');
   await page.click('#tb-outbox');
