@@ -384,3 +384,62 @@ Matching uses payments of the month ± 3 days; a reference match wins over a dat
 
 Sending: the apps build the message text and open `https://wa.me/<number>?text=…` — one tap per number (company, manager, owner); the
 user presses Send in WhatsApp (no automatic sending without the WhatsApp Business API).
+
+## Discount limit, members, receipts, owner master code, own PINs (v16)
+
+### Discount limit (default 3 %)
+- `computeSale` compares the sale with its **list total**: retail price per line, or the wholesale price when the customer is `grosir`
+  or the line reaches `wholesale_min_qty`. `discount % = (list total − total) / list total` (both the discount field and lower unit
+  prices count).
+- Allowed without approval: `max_discount_pct` (setting, default 3) **plus the member discount** (below). Owner and manager may give
+  more (note `[diskon X% disetujui <name>]`). A kasir above the limit gets `DISCOUNT_APPROVAL_REQUIRED` and sends `request_discount`.
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `request_discount` | any (kasir) | same as `save_sale` (+ `reason`) — payment fields not needed | `request_id`, `approval` (`kind: "discount"`, `approver_role: "manager"`, `total` = total after discount, `debt_amount` = discount amount) |
+
+- The approval `payload`: `{list_total, total, discount, pct, max_pct, reason, lines: [{name, qty, unit_price}]}` and, **owner only**,
+  `profit_before, profit_after, margin_before, margin_after` (%). The summary ends with ` | laba 18.9% → 14.7% (Rp a → Rp b)` for the
+  owner only; manager and kasir never see profit.
+- `save_sale` with `data.discount_approval_id` = an approved `discount` request of the same `client_id` whose amount is ≥ this
+  discount → the sale goes through and the approval becomes `used`. Pending → `Diskon belum disetujui`; rejected →
+  `Diskon ditolak: <note>`; bigger discount or other sale → `Transaksi berubah…`.
+
+### Members (pelanggan member)
+- Customer fields: `email`, `member` (bool), `member_no` (server, `M` + 6 chars), `member_since` (date), `visits` (purchases counted
+  by the server), `last_visit` (date).
+- `save_customer` accepts `email` (lower-cased, checked) and `member: true|false`. Any user may register a member (logged
+  `member_baru`); only owner / manager may remove membership (kasir → `FORBIDDEN`).
+- Setting `member_tiers` (default `[{"from":2,"pct":2},{"from":5,"pct":3},{"from":10,"pct":5}]`): this sale's purchase number is
+  `visits + 1`; the member gets the `pct` of the highest tier whose `from` ≤ that number (first purchase → 0 %). Setting
+  `member_enabled` (default true).
+- The app applies the member discount itself (put it in `discount`, show it as "Diskon member X%"); the server allows it on top of
+  `max_discount_pct` and answers `member: {pct, purchase_no, member_no}`; the sale note gets `[member X% · pembelian ke-N]`.
+- Every `save_sale` with a customer adds 1 to `visits` and sets `last_visit`; `void_sale` takes 1 off.
+
+### Receipts by WhatsApp or e-mail
+- No server action: the kasir app sends the receipt text with `https://wa.me/<customer phone>?text=…` or `mailto:<email>?subject=…&body=…`
+  (shown when the customer has a phone / e-mail). Automatic e-mail from the server needs a Gmail credential in n8n (not connected yet).
+
+### Owner master code and own PINs
+- **Master code** (8 digits): the owner sets it with `set_master` `{master_hash}` where `master_hash = sha256(KEY + ':__master__:' + code)`
+  (must be logged in with the real PIN, not via the master code). Stored as `master_hash` on the owner's user row.
+- **Logging in to any account with it:** send the target `user` and `pin_hash = master_hash`. The server accepts it for every active
+  user, the response has `via_master: true`, and `login` is logged `masuk_master` (warn). The apps keep using that hash for the session.
+  `set_master` and `change_pin` of the owner's own row are refused via the master code.
+- **Own PIN at first login:** `save_user` with a (new or reset) `pin_hash` marks the user `must_change: true` (except the owner's own
+  row). `login` answers `must_change: true`; every other action → `PIN_CHANGE_REQUIRED` until `change_pin` `{new_pin_hash}`
+  (`sha256(KEY:user:newpin)`, must differ from the current one). Owner / manager PINs: 6 digits; kasir / sales: 4–6 (apps enforce).
+- **Lock after wrong PINs:** 5 wrong PINs in a row for a user → `LOCKED` for 15 minutes (`message` gives the time). Users fields
+  `fail_count`, `locked_until`.
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `change_pin` | any | `{new_pin_hash}` | `ok` |
+| `set_master` | owner (real PIN) | `{master_hash}` | `ok` |
+
+### Other v16 changes
+- `open_shift` also returns `request_id` and `approval` (the `buka_kas` request).
+- Cost never reaches kasir / manager: `request_purchase_fix` and `purchase_fix` approvals keep quantities only; `get_sales` purchases
+  have no `total` for them.
+- `party_ledger`: payments without allocation are applied to the oldest open invoices first (`auto: true` on those amounts).
