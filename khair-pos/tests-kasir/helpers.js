@@ -8,7 +8,7 @@ const NF = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
 const rp = n => (Math.round(n) < 0 ? '-Rp ' : 'Rp ') + NF.format(Math.abs(Math.round(n)));
 const sha = s => crypto.createHash('sha256').update(s).digest('hex');
 const SHOTS = path.join(__dirname, 'screenshots');
-const shot = async (page, name, full = false) => { await page.waitForTimeout(350); return page.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: full }); };
+const shot = async (page, name, full = false, opts = {}) => { if (opts.noToasts) await page.evaluate(() => document.querySelectorAll('#toasts .toast').forEach(t => t.remove())); await page.waitForTimeout(350); return page.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: full }); };
 
 const PHONE = { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true };
 const TABLET = { viewport: { width: 1180, height: 820 } };
@@ -54,13 +54,22 @@ const getDb = page => page.evaluate(() => JSON.parse(localStorage.getItem('kmock
 const setDb = (page, fn, arg) => page.evaluate(([src, a]) => { const db = JSON.parse(localStorage.getItem('kmock.db')); (new Function('db', 'arg', src))(db, a); localStorage.setItem('kmock.db', JSON.stringify(db)); }, [fn, arg]);
 const productByName = (db, re) => db.products.find(p => re.test(p.name));
 
-/** Search, tap the first card; on the first item of a sale the survey opens → skip it (unless keepSurvey). */
+/** Search, tap the first card → quantity sheet (opts.qty, default 1) → Tambah; on the first item of a sale
+ *  the survey opens → skip it (unless keepSurvey). */
 async function addItem(page, query, opts = {}) {
   const first = await page.evaluate(() => window.KASIR.S.cart.lines.length === 0);
   await page.fill('#q', query);
   await page.locator('#grid .pc').first().click();
+  await confirmQty(page, opts.qty);
   if (first && !opts.keepSurvey) await skipSurvey(page);
   await page.fill('#q', '');
+}
+/** The quantity sheet is open: optionally type a quantity, then confirm. */
+async function confirmQty(page, qty) {
+  await expect(page.locator('#qty-sheet')).toBeVisible();
+  if (qty != null) await page.fill('#qs-qty', String(qty));
+  await page.click('#qs-ok');
+  await expect(page.locator('#qty-sheet')).toHaveCount(0);
 }
 async function skipSurvey(page) {
   await expect(page.locator('#survey')).toBeVisible();
@@ -87,4 +96,4 @@ async function tab(page, v) {
   await expect(page.locator(`#v-${v}`)).toBeVisible();
 }
 
-module.exports = { rp, sha, SHOTS, shot, PHONE, TABLET, openKasir, enterKey, typePin, login, getDb, setDb, productByName, addItem, skipSurvey, openCart, pay, photoFile, closeModals, tab };
+module.exports = { rp, sha, SHOTS, shot, PHONE, TABLET, openKasir, enterKey, typePin, login, getDb, setDb, productByName, addItem, confirmQty, skipSurvey, openCart, pay, photoFile, closeModals, tab };

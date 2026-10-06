@@ -212,6 +212,32 @@ button.li:hover{border-color:var(--brand)}
 .paybox .result.err::before{content:"⚠";margin-inline-end:6px}
 .cart-bar{display:none}
 .cart-close{display:none}
+/* Hold sale ("Tahan") + quantity sheet */
+.cats-row{display:flex;gap:8px;align-items:flex-start;min-width:0}
+.cats-row .chips{flex:1;min-width:0}
+.held-chip{flex:none;min-height:36px;padding:0 12px;border-radius:999px;border:2px solid var(--brand);background:var(--brand-l);color:var(--brand-text);font-weight:800;font-size:14px;display:inline-flex;align-items:center;gap:6px}
+.held-chip svg.i{width:18px;height:18px}
+.held-chip.old{border-color:var(--warn-b);background:var(--warn-l);color:var(--warn)}
+.held{flex-wrap:wrap}
+.held.old{border-color:var(--warn-b);background:var(--warn-l)}
+.held .acts{display:flex;gap:8px;width:100%;justify-content:flex-end}
+.hold-btn svg.i{width:19px;height:19px}
+.qs-info{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;margin-bottom:10px}
+.qs-info .pr{font-weight:800;font-size:18px;color:var(--brand-text)}
+.qs-info .gr{font-size:13.5px;font-weight:700;color:var(--brand-text);background:var(--brand-l);border-radius:999px;padding:2px 10px}
+.qs-row{display:grid;grid-template-columns:60px 1fr 60px;gap:10px}
+.qs-row button{height:64px;border-radius:12px;border:1px solid var(--border-d);background:var(--surface-2);font-size:30px;font-weight:800;color:var(--brand-text)}
+.qs-row input{height:64px;width:100%;min-width:0;border-radius:12px;border:2px solid var(--brand);background:var(--card);color:var(--text);text-align:center;font-size:34px;font-weight:800;-moz-appearance:textfield}
+.qs-row input:focus{outline:none;box-shadow:0 0 0 3px rgba(37,99,235,.25)}
+.qs-chips{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 4px}
+.qs-chips button{flex:1 0 48px;min-height:46px;border-radius:10px;border:1px solid var(--border-d);background:var(--card);font-weight:800;font-size:16px}
+.qs-chips button.on{background:var(--brand);border-color:var(--brand);color:#fff}
+.qs-chips button.g{flex-basis:96px;border:2px dashed var(--brand);color:var(--brand-text)}
+.qs-chips button.g.on{border-style:solid;color:#fff}
+.qs-total{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;background:var(--brand-ll);margin-top:8px}
+.qs-total b{font-size:21px;color:var(--brand-text)}
+.qs-warn{color:var(--danger);font-weight:700;font-size:13.5px;min-height:20px;margin-top:6px}
+.qs-ok{flex:1}
 .survey-tag{font-size:12px}
 
 /* ========== Modal / toast ========== */
@@ -502,6 +528,8 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
   <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="m17 9 5 6M22 9l-5 6"/></symbol>
   <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></symbol>
   <symbol id="i-clip" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6M9 18h4"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></symbol>
+  <symbol id="i-hash" viewBox="0 0 24 24"><path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16"/></symbol>
   <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></symbol>
 </svg>
 
@@ -1731,6 +1759,7 @@ async function refreshData(quiet) {
     saveCache();
     S.offline = false;
     if (S.inApp) { renderShell(); if (S.view === 'pos') { renderPosSkeleton(); renderGrid(); renderCart(); focusSearch(); } else RENDER[S.view] && RENDER[S.view](); }
+    const hl = $('#held-list'); if (hl) drawHeld(hl); // an open held list is re-priced with the fresh data
     return true;
   } catch (e) {
     S.offline = e instanceof NetError;
@@ -1759,8 +1788,8 @@ function lineCalc(line, cust) {
   const unit_price = type === 'grosir' ? int(p.wholesale_price) : int(p.retail_price);
   return { p, type, auto, unit_price, total: Math.round(line.qty * unit_price), manual: !!line.override && line.override !== auto };
 }
-function cartView() {
-  const c = S.cart, cust = custById(c.customer_id);
+function cartView(c = S.cart) {
+  const cust = custById(c.customer_id);
   const lines = c.lines.map(l => Object.assign({ line: l }, lineCalc(l, cust)));
   const subtotal = sum(lines, l => l.total);
   const discount = Math.min(subtotal, Math.max(0, int(c.discount)));
@@ -1773,11 +1802,12 @@ function cartView() {
   if (debt > 0 && !cust) error = c.method === 'hutang' ? t('pos.debt_needs_customer') : t('pos.partial_needs_customer');
   return { cust, lines, subtotal, discount, total, paid, typed, change, debt, items, error };
 }
-function addToCart(p, qty = 1) {
+/** Adds qty of p (scan, tap with "ask quantity" off); with set=true the line gets exactly qty (quantity sheet). */
+function addToCart(p, qty = 1, set = false) {
   if (!p) return;
   if (p.active === false) { toast(t('pos.inactive'), 'warn'); return; }
   const ex = S.cart.lines.find(l => l.product_id == p.id);
-  if (ex) ex.qty = roundQty(ex.qty + qty); else S.cart.lines.push({ product_id: p.id, name: p.name, qty, override: null });
+  if (ex) ex.qty = set ? roundQty(qty) : roundQty(ex.qty + qty); else S.cart.lines.push({ product_id: p.id, name: p.name, qty: roundQty(qty), override: null });
   saveCart(); renderCart(p.id);
   speakAdded(p, ex ? ex.qty : qty);
   const stockLeft = num(p.stock) - (ex ? ex.qty : qty);
@@ -1844,6 +1874,72 @@ function toggleSaleMute() {
   const b = $('#cart-mute'); if (b) { b.classList.toggle('on', !!S.cart.muted); b.innerHTML = ic(S.cart.muted ? 'mute' : 'speaker'); b.setAttribute('aria-pressed', S.cart.muted ? 'true' : 'false'); b.title = t(S.cart.muted ? 'voice.unmute' : 'voice.mute'); }
 }
 
+/* ========== POS: quantity sheet — a tapped product asks "how many?" (barcode scans still add 1) ==========
+   Per-device setting "ask_qty" (default on, shared with Khair Kasir on this device). */
+const askQty = () => store.get('ask_qty', true) !== false;
+const WEIGHT_UNITS = ['kg', 'kilo', 'g', 'gr', 'gram', 'ons', 'l', 'lt', 'ltr', 'liter', 'litre', 'ml'];
+const isWeightUnit = u => WEIGHT_UNITS.includes(String(u || '').trim().toLowerCase());
+const QTY_CHIPS = [1, 2, 3, 5, 10], QTY_MAX = 100000;
+/** Product tap / single search result → quantity sheet, or straight +1 when the setting is off. */
+function pickProduct(p) {
+  if (!p) return;
+  if (!askQty()) { addToCart(p); focusSearch(); return; }
+  openQtySheet(p);
+}
+function openQtySheet(p) {
+  if (p.active === false) { toast(t('pos.inactive'), 'warn'); return; }
+  const ex = S.cart.lines.find(l => l.product_id == p.id);
+  const wmin = num(p.wholesale_min_qty), hasW = int(p.wholesale_price) > 0 && wmin > 0;
+  let q = ex ? roundQty(ex.qty) : 1;
+  const el = openModal({
+    title: p.name, cls: 'narrow qty-modal', id: 'qty-sheet',
+    body: `<div class="qs-info"><span class="pr num"><bdi>${fmtRp(p.retail_price)}</bdi><span class="muted small">/${esc(p.unit || 'pcs')}</span></span>${hasW ? `<span class="gr" id="qs-gr">${esc(t('grosir'))} <bdi class="num">${fmtRp(p.wholesale_price)}</bdi> · <bdi>≥${fmtQty(wmin)}</bdi></span>` : ''}<span class="muted small">${esc(t('stock'))} <bdi class="num">${fmtQty(p.stock)} ${esc(p.unit || '')}</bdi></span></div>
+      <div class="qs-row"><button type="button" id="qs-dec" aria-label="−">−</button><input id="qs-qty" type="text" inputmode="${isWeightUnit(p.unit) ? 'decimal' : 'numeric'}" autocomplete="off" enterkeyhint="done" aria-label="${esc(t('qty'))}" value="${esc(fmtQtyInput(q))}"><button type="button" id="qs-inc" aria-label="+">+</button></div>
+      <div class="qs-chips" id="qs-chips">${QTY_CHIPS.map(n => `<button type="button" data-q="${n}">${n}</button>`).join('')}${hasW ? `<button type="button" class="g" data-q="${wmin}" id="qs-chip-g">${esc(t('grosir'))} ${esc(fmtQty(wmin))}</button>` : ''}</div>
+      <div class="qs-total"><span><span class="ptype" id="qs-pt"></span> <span class="muted small num" id="qs-up"></span></span><b class="num" id="qs-total"></b></div>
+      <div class="qs-warn" id="qs-warn" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary big qs-ok" id="qs-ok">${esc(ex ? t('qty.change') : t('qty.add'))}</button>`
+  });
+  const inp = $('#qs-qty', el);
+  // same price rule as the cart line (grosir customer, wholesale_min_qty, the line's manual override)
+  const draw = () => {
+    const c = lineCalc({ product_id: p.id, qty: q, override: ex ? ex.override : null }, custById(S.cart.customer_id));
+    const pt = $('#qs-pt', el); pt.className = 'ptype ' + c.type; pt.textContent = t(c.type);
+    $('#qs-up', el).textContent = `${fmtQty(q)} × ${fmtRp(c.unit_price)}`;
+    $('#qs-total', el).textContent = fmtRp(c.total);
+    $$('#qs-chips [data-q]', el).forEach(b => b.classList.toggle('on', num(b.dataset.q) === q));
+    $('#qs-warn', el).textContent = q > num(p.stock) ? t('pos.stock_low', { name: p.name }) : '';
+    if (q >= QTY_MAX) $('#qs-warn', el).textContent = t('qty.too_big');
+    $('#qs-ok', el).disabled = !(q > 0 && q < QTY_MAX);
+  };
+  const setQ = v => { q = Math.max(0, roundQty(v)); inp.value = fmtQtyInput(q); draw(); };
+  inp.addEventListener('input', () => { q = qtyVal(inp.value); draw(); });
+  inp.addEventListener('focus', () => inp.select());
+  // a barcode scanner typing into the box (very fast keys + Enter) is a scan, not a quantity
+  const keys = [];
+  inp.addEventListener('keydown', e => { if (e.key.length === 1) keys.push(performance.now()); });
+  const scanned = () => keys.length >= 4 && (keys[keys.length - 1] - keys[keys.length - 4]) / 3 < 50;
+  $('#qs-dec', el).onclick = () => { if (q > 1) setQ(Math.ceil(q - 1e-9) - 1); };
+  $('#qs-inc', el).onclick = () => setQ(Math.floor(q + 1e-9) + 1);
+  $('#qs-chips', el).onclick = e => { const b = e.target.closest('[data-q]'); if (b) setQ(num(b.dataset.q)); };
+  const ok = () => {
+    q = qtyVal(inp.value);
+    if (!(q > 0) || q >= QTY_MAX) { $('#qs-warn', el).textContent = t(q > 0 ? 'qty.too_big' : 'qty.invalid'); return; }
+    closeModal();
+    addToCart(p, q, true); // speaks name + quantity once
+    focusSearch();
+  };
+  $('#qs-ok', el).onclick = ok;
+  el.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.isComposing) return;
+    const b = e.target.closest && e.target.closest('button'); if (b && b.id !== 'qs-ok') return;
+    e.preventDefault();
+    if (e.target === inp && scanned()) { const code = inp.value; closeModal(); onSearchEnter(code, true); return; }
+    ok();
+  });
+  draw();
+}
+
 /* ========== POS: rendering ========== */
 const POS = { q: '', cat: '', limit: 60, keyTimes: [] };
 function renderPosSkeleton() {
@@ -1853,7 +1949,7 @@ function renderPosSkeleton() {
         <div class="search-box">${ic('search')}<input id="pos-search" class="input" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="${esc(t('pos.search_ph'))}" aria-label="${esc(t('pos.search_ph'))}" value="${esc(POS.q)}"></div>
         <button class="icon-btn" style="width:50px;height:50px" id="pos-cam" data-act="cam-scan" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}" ${'BarcodeDetector' in window ? '' : 'hidden'}>${ic('scan')}</button>
       </div>
-      <div class="chips" id="pos-cats"></div>
+      <div class="cats-row"><button class="held-chip" id="held-chip" data-act="held-open" hidden></button><div class="chips" id="pos-cats"></div></div>
       <div class="prod-grid" id="pos-grid" aria-label="${esc(t('nav.products'))}"></div>
       <button class="cart-bar" id="cart-bar" data-act="cart-open"></button>
     </div>
@@ -1882,7 +1978,7 @@ function onSearchEnter(raw, fast) {
   if (p) { addToCart(p); clear(); return; }
   if (fast) { beep(); toast(t('pos.barcode_nf', { code: v }), 'err'); clear(); return; }
   const list = filterProducts(v, POS.cat);
-  if (list.length === 1) { addToCart(list[0]); clear(); }
+  if (list.length === 1) { clear(); pickProduct(list[0]); }
 }
 function beep() { try { const a = new (window.AudioContext || window.webkitAudioContext)(); const o = a.createOscillator(); o.frequency.value = 330; o.connect(a.destination); o.start(); setTimeout(() => { o.stop(); a.close(); }, 160); } catch (e) { } }
 function focusSearch() {
@@ -1923,6 +2019,7 @@ function renderCart(flashId) {
       </button>
       ${cust ? `<button class="icon-btn ghost sm" data-act="clear-customer" aria-label="${esc(t('pos.walkin'))}">${ic('x')}</button>` : ''}
       ${VOICE.on ? `<button class="icon-btn ghost sm mute-btn ${c.muted ? 'on' : ''}" id="cart-mute" data-act="sale-mute" aria-pressed="${c.muted ? 'true' : 'false'}" title="${esc(t(c.muted ? 'voice.unmute' : 'voice.mute'))}" aria-label="${esc(t('voice.mute'))}">${ic(c.muted ? 'mute' : 'speaker')}</button>` : ''}
+      ${c.lines.length ? `<button class="icon-btn ghost sm" style="color:var(--danger)" data-act="cart-clear" title="${esc(t('pos.clear'))}" aria-label="${esc(t('pos.clear'))}">${ic('trash')}</button>` : ''}
     </div>
     ${c.field_order ? `<div class="fo-banner" id="cart-fo">${ic('clip')} ${esc(t('fo.in_cart', { id: c.field_order.order_id, shop: c.field_order.shop_name }))}</div>` : ''}
     <div class="cart-lines" id="cart-lines">${v.lines.length ? v.lines.map((l, i) => `
@@ -1951,7 +2048,7 @@ function renderCart(flashId) {
         <input class="input" id="cart-promo" style="min-height:36px;text-transform:uppercase" placeholder="${esc(t('promo.ph'))}" aria-label="${esc(t('promo.title'))}" value="${esc(c.promo || '')}"></details>
       <div class="row" style="margin-top:8px">
         <button class="btn sm" data-act="survey-open" title="${esc(t('survey.title'))}">${ic('mic')}<span>${esc(t('survey.short'))}</span>${sv ? `<span class="badge ${sv.skipped ? 'gray' : 'green'} survey-tag">${esc(sv.skipped ? t('survey.skipped') : t('survey.done'))}</span>` : ''}</button>
-        ${c.lines.length ? `<button class="icon-btn danger" style="color:var(--danger)" data-act="cart-clear" title="${esc(t('pos.clear'))}" aria-label="${esc(t('pos.clear'))}">${ic('trash')}</button>` : ''}
+        <button class="btn big hold-btn" style="padding:0 12px" data-act="hold" id="btn-hold" ${canHold() ? '' : 'hidden'}>${ic('pause')}${esc(t('hold.btn'))}</button>
         <button class="btn primary big grow" style="padding:0 12px" data-act="checkout" id="btn-checkout" title="F9" ${v.lines.length ? '' : 'disabled'}>${esc(t('pos.pay_save'))}</button>
       </div>
     </div>`;
@@ -1987,6 +2084,8 @@ function refreshCartNumbers() {
     res.innerHTML = v.error ? esc(v.error) : v.debt > 0 ? `<span>${esc(t('pos.debt_new'))}</span><span class="num">${fmtRp(v.debt)}</span>` : `<span>${esc(t('pos.change'))}</span><span class="num" id="cart-change">${fmtRp(v.change)}</span>`;
   }
   const btn = $('#btn-checkout'); if (btn) btn.disabled = !v.lines.length;
+  const hb = $('#btn-hold'); if (hb) hb.hidden = !canHold();
+  updateHeldChip();
   const ex = $('#cart-exit'); if (ex) ex.hidden = !v.lines.length || !localExitRequired(v);
   const bar = $('#cart-bar');
   if (bar) {
@@ -2018,6 +2117,119 @@ function bindCartInputs() {
 }
 function openCartSheet() { const c = $('#cart'); if (c) c.classList.add('open'); }
 function closeCartSheet() { const c = $('#cart'); if (c) c.classList.remove('open'); }
+
+/* ========== POS: hold sale ("Tahan") — park the cart, serve the next customer, resume later ==========
+   Held carts stay on this device under the store key (separate from Khair Kasir's). Only product ids,
+   quantities and the cart settings are kept: a resumed cart is priced again from the current product data. */
+const HOLD_MAX = 10, HOLD_OLD_MS = 12 * 3600000;
+const heldKey = () => 'held.' + String(S.key || '');
+function heldList() { const a = store.get(heldKey(), []); return Array.isArray(a) ? a.filter(h => h && h.id && h.cart && Array.isArray(h.cart.lines)) : []; }
+const saveHeld = list => { store.set(heldKey(), list); updateHeldChip(); };
+const isOldHeld = h => Date.now() - new Date(h.held_at).getTime() > HOLD_OLD_MS;
+/** Not while saving or while a credit approval is pending for this cart. */
+const holdBlocked = () => !!(S.cart && S.cart.remote) || !!$('#apr-step') || !!$('#apr-wait') || saving;
+const canHold = () => !!(S.cart && S.cart.lines.length) && !holdBlocked();
+function defaultHoldLabel(list, cart) {
+  const cust = custById(cart.customer_id); if (cust) return cust.name;
+  const used = new Set(list.map(h => h.label));
+  let n = 1; while (used.has(t('hold.default', { n }))) n++;
+  return t('hold.default', { n });
+}
+function heldAgo(iso) {
+  const m = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+  return m < 1 ? t('hold.just_now') : m < 60 ? t('hold.min_ago', { n: m }) : t('hold.hour_ago', { n: Math.floor(m / 60) });
+}
+/** A held cart priced with today's product data; lines whose product is gone or inactive are left out. */
+function heldView(h) {
+  const ok = h.cart.lines.filter(l => { const p = prodById(l.product_id); return p && p.active !== false; });
+  return Object.assign(cartView(Object.assign({}, h.cart, { lines: ok, paid: '' })), { gone: h.cart.lines.length - ok.length });
+}
+/** Moves the current cart into the held list and starts an empty one. Returns the label ('' = refused). */
+function holdCurrent(label) {
+  const list = heldList();
+  if (list.length >= HOLD_MAX) { toast(t('hold.full', { max: HOLD_MAX }), 'err', 4000); return ''; }
+  const cart = Object.assign(clone(S.cart), { paid: '', remote: null });
+  const lbl = String(label || '').trim().slice(0, 40) || defaultHoldLabel(list, cart);
+  list.push({ id: uuid(), label: lbl, held_at: new Date().toISOString(), by: S.user, cart });
+  saveHeld(list);
+  clearTimeout(VOICE.timer);
+  S.cart = newCart(); saveCart();
+  return lbl;
+}
+function openHold() {
+  if (!canHold()) { if (S.cart.lines.length) toast(t('hold.busy'), 'warn'); return; }
+  const list = heldList();
+  if (list.length >= HOLD_MAX) { toast(t('hold.full', { max: HOLD_MAX }), 'err', 4000); return; }
+  const el = openModal({
+    title: t('hold.title'), cls: 'narrow', id: 'hold-prompt',
+    body: `<p style="margin-top:0">${esc(t('hold.hint'))}</p>
+      <div class="field"><label class="f" for="hold-label">${esc(t('hold.label'))}</label><input class="input" id="hold-label" maxlength="40" autocomplete="off" placeholder="${esc(defaultHoldLabel(list, S.cart))}"></div>
+      <p class="small muted" style="margin:-4px 0 0">${esc(t('hold.label_hint'))}</p>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="hold-ok">${ic('pause')} ${esc(t('hold.btn'))}</button>`
+  });
+  const fin = () => {
+    const lbl = holdCurrent($('#hold-label', el).value);
+    if (!lbl) return;
+    closeModal(); closeCartSheet(); renderCart(); focusSearch();
+    toast(t('hold.held', { label: lbl }), 'ok');
+  };
+  $('#hold-ok', el).onclick = fin;
+  $('#hold-label', el).addEventListener('keydown', e => { if (e.key === 'Enter') fin(); });
+}
+function updateHeldChip() {
+  const b = $('#held-chip'); if (!b) return;
+  const list = heldList();
+  b.hidden = !list.length;
+  b.classList.toggle('old', list.some(isOldHeld));
+  b.innerHTML = `${ic('pause')}<span>${esc(t('hold.chip', { n: list.length }))}</span>`;
+}
+function openHeld() {
+  const el = openModal({ title: t('hold.list'), id: 'held-list', body: '' });
+  drawHeld(el);
+}
+function drawHeld(el) {
+  const body = $('.modal-b', el); if (!body) return;
+  const list = heldList();
+  body.innerHTML = list.length ? `<div class="list" id="held-items">${list.map(h => {
+    const v = heldView(h), old = isOldHeld(h);
+    return `<div class="li held ${old ? 'old' : ''}" data-id="${esc(h.id)}">${ic('pause')}
+      <div class="grow"><div class="t">${esc(h.label)} ${old ? `<span class="badge amber">${esc(t('hold.old'))}</span>` : ''}</div>
+        <div class="s"><span data-ref="n">${esc(t('pos.lines', { n: v.lines.length }))}</span> · <span data-ref="ago">${esc(heldAgo(h.held_at))}</span> (${esc(jktTime(h.held_at))})${h.by ? ' · ' + esc(h.by) : ''}</div>
+        ${v.gone ? `<div class="s red">${esc(t('hold.n_gone', { n: v.gone }))}</div>` : ''}</div>
+      <b class="num" data-ref="total">${fmtRp(v.total)}</b>
+      <div class="acts"><button class="btn sm danger" data-act="held-del" data-id="${esc(h.id)}">${ic('trash')} ${esc(t('delete'))}</button><button class="btn sm primary" data-act="held-resume" data-id="${esc(h.id)}">${esc(t('hold.resume'))}</button></div></div>`;
+  }).join('')}</div>` : `<div class="empty">${esc(t('hold.empty'))}</div>`;
+}
+/** Resume a held cart. A non-empty current cart is held first (swap). Voice stays silent. */
+function resumeHeld(id) {
+  const list = heldList(), h = list.find(x => x.id === id);
+  if (!h) { const m = $('#held-list'); if (m) drawHeld(m); return; }
+  if (S.cart.lines.length && !canHold()) { toast(t('hold.busy'), 'warn'); return; }
+  // the swap label is chosen before the resumed entry leaves the list ("Pelanggan 1" is not reused at once)
+  const swapLabel = S.cart.lines.length ? defaultHoldLabel(list, S.cart) : '';
+  saveHeld(list.filter(x => x.id !== id));
+  const swapped = swapLabel ? holdCurrent(swapLabel) : '';
+  const cart = Object.assign(newCart(), h.cart, { paid: '', remote: null });
+  const gone = [];
+  cart.lines = cart.lines.filter(l => { const p = prodById(l.product_id); if (!p || p.active === false) { gone.push(p ? p.name : l.name); return false; } l.name = p.name; return true; });
+  if (cart.customer_id != null && !custById(cart.customer_id)) { cart.customer_id = null; if (cart.method === 'hutang') cart.method = 'tunai'; }
+  S.cart = cart; saveCart();
+  closeModal(true);
+  renderCart();
+  if (cart.lines.length && isPhone()) openCartSheet();
+  toast(swapped ? t('hold.swapped', { held: swapped, label: h.label }) : t('hold.resumed', { label: h.label }), 'ok', swapped ? 5000 : 2800);
+  if (gone.length) toast(t('hold.dropped', { names: gone.join(', ') }), 'warn', 6000);
+  const low = cart.lines.find(l => num(prodById(l.product_id).stock) < l.qty);
+  if (low) toast(t('pos.stock_low', { name: low.name }), 'warn', 3000);
+}
+async function deleteHeld(id) {
+  const h = heldList().find(x => x.id === id); if (!h) return;
+  const r = await confirmBox(t('hold.del_confirm', { label: h.label }), { danger: true, ok: t('delete') });
+  if (!r.ok) return;
+  saveHeld(heldList().filter(x => x.id !== id));
+  toast(t('hold.deleted'), 'ok');
+  const m = $('#held-list'); if (m) drawHeld(m);
+}
 
 /* ========== POS: customer picker ========== */
 function openCustomerPicker(onPick, opts = {}) {
@@ -2334,8 +2546,10 @@ function openApprovalStep(v) {
       ${aprSummaryHTML(v.cust, int(v.cust.debt_balance), v.debt, v.total)}
       <div class="grid2"><button class="btn primary big" id="ap-here">${ic('lock')} ${esc(t('apr.here'))}</button><button class="btn big" id="ap-remote">${ic('send')} ${esc(t('apr.remote'))}</button></div>
       ${resumable ? `<button class="btn block" style="margin-top:8px" id="ap-resume">${esc(t('apr.resume', { id: rem.request_id }))}</button>` : ''}
-      <div id="ap-body" style="margin-top:14px"></div>`
+      <div id="ap-body" style="margin-top:14px"></div>`,
+    onClose: () => refreshCartNumbers()
   });
+  refreshCartNumbers();
   $('#ap-here', el).onclick = () => drawOnSite(el, v);
   $('#ap-remote', el).onclick = () => requestRemote(el, v);
   const r = $('#ap-resume', el); if (r) r.onclick = () => { closeModal(); openWaiting({ request_id: rem.request_id, customer_name: v.cust.name, debt_amount: v.debt, total: v.total, status: 'pending' }); };
@@ -2372,7 +2586,7 @@ async function requestRemote(el, v) {
   try {
     const r = await api('request_credit', buildSaleRequest(v));
     const ap = r.approval || { request_id: r.request_id };
-    S.cart.remote = { request_id: r.request_id || ap.request_id, total: v.total, debt: v.debt, customer_id: v.cust.id }; saveCart();
+    S.cart.remote = { request_id: r.request_id || ap.request_id, total: v.total, debt: v.debt, customer_id: v.cust.id }; saveCart(); refreshCartNumbers();
     closeModal();
     openWaiting(Object.assign({ customer_name: v.cust.name, debt_amount: v.debt, total: v.total, status: 'pending' }, ap, { request_id: S.cart.remote.request_id }));
   } catch (e) {
@@ -2390,7 +2604,7 @@ function openWaiting(ap) {
       <div class="row" style="justify-content:center;gap:18px"><span>${esc(t('apr.debt_new'))}: <b class="red num">${fmtRp(ap.debt_amount)}</b></span><span>${esc(t('total'))}: <b class="num">${fmtRp(ap.total)}</b></span></div>
       <div id="aw-state"><div class="spinner"></div><div id="aw-msg">${esc(t('apr.waiting'))}</div><div class="small muted" id="aw-time"></div></div></div>`,
     foot: `<button class="btn" id="aw-cancel">${esc(t('apr.stop_wait'))}</button>`,
-    onClose: () => { stopped = true; clearTimeout(timer); }
+    onClose: () => { stopped = true; clearTimeout(timer); refreshCartNumbers(); }
   });
   const msg = txt => { const m = $('#aw-msg', el); if (m) m.textContent = txt; };
   const finish = html => { stopped = true; clearTimeout(timer); $('#aw-state', el).innerHTML = html; };
@@ -2901,6 +3115,8 @@ function openCashMove(type) {
   };
 }
 async function openCloseShift(cashier) {
+  const own = !cashier || (S.shift && cashier === S.shift.cashier), nHeld = heldList().length;
+  if (own && nHeld) { const r = await confirmBox(t('hold.close_warn', { n: nHeld }), { ok: t('hold.close_anyway'), title: t('shift.close') }); if (!r.ok) return; }
   await refreshData(true);
   const other = cashier && (!S.shift || cashier !== S.shift.cashier);
   const sh = other ? (S.openShifts || []).find(x => x.cashier === cashier) : S.shift;
@@ -4706,6 +4922,32 @@ Object.assign(I18N.ar, {
 
 Object.assign(I18N.id, { 'voice.title': 'Suara kasir (sebut nama & jumlah barang)', 'voice.on': 'Nyala', 'voice.off': 'Mati', 'voice.lang': 'Bahasa suara', 'voice.mute': 'Bisukan suara untuk transaksi ini', 'voice.unmute': 'Nyalakan suara lagi', 'voice.hint': 'Hanya nama barang dan jumlah yang diucapkan — tidak pernah harga, total, nama pelanggan, hutang atau cara bayar. Pengaturan per perangkat.' });
 Object.assign(I18N.ar, { 'voice.title': 'صوت الكاشير (نطق اسم الصنف والكمية)', 'voice.on': 'تشغيل', 'voice.off': 'إيقاف', 'voice.lang': 'لغة الصوت', 'voice.mute': 'كتم الصوت لهذه العملية', 'voice.unmute': 'إعادة تشغيل الصوت', 'voice.hint': 'يُنطق اسم الصنف والكمية فقط — لا الأسعار ولا الإجمالي ولا اسم العميل ولا الدَّين ولا طريقة الدفع. إعداد خاص بهذا الجهاز.' });
+Object.assign(I18N.id, {
+  'qty.add': 'Tambah', 'qty.change': 'Ubah', 'qty.invalid': 'Jumlah harus lebih dari 0', 'qty.too_big': 'Jumlah terlalu besar',
+  'set.ask_qty': 'Tanya jumlah saat pilih barang', 'set.ask_qty_hint': 'Ketuk barang → pilih jumlah. Scan barcode tetap langsung +1. Pengaturan per perangkat.',
+  'hold.btn': 'Tahan', 'hold.title': 'Tahan transaksi', 'hold.hint': 'Keranjang disimpan di perangkat ini. Layani pembeli berikutnya, lalu lanjutkan dari tombol "Ditahan".',
+  'hold.label': 'Penanda (opsional)', 'hold.label_hint': 'mis. baju merah, Bapak topi hitam', 'hold.default': 'Pelanggan {n}', 'hold.held': 'Ditahan: {label}',
+  'hold.chip': 'Ditahan ({n})', 'hold.list': 'Transaksi ditahan', 'hold.resume': 'Lanjutkan', 'hold.resumed': 'Dilanjutkan: {label}',
+  'hold.swapped': 'Keranjang tadi ditahan sebagai "{held}". Dilanjutkan: {label}', 'hold.del_confirm': 'Hapus transaksi ditahan "{label}"? Barangnya tidak jadi dijual.',
+  'hold.deleted': 'Transaksi ditahan dihapus', 'hold.full': 'Sudah {max} transaksi ditahan. Lanjutkan atau hapus salah satu dulu.', 'hold.empty': 'Tidak ada transaksi ditahan',
+  'hold.old': 'lama', 'hold.just_now': 'baru saja', 'hold.min_ago': '{n} menit lalu', 'hold.hour_ago': '{n} jam lalu',
+  'hold.dropped': 'Produk tidak tersedia lagi, dihapus dari keranjang: {names}', 'hold.n_gone': '{n} produk tidak tersedia lagi',
+  'hold.busy': 'Selesaikan dulu pembayaran / persetujuan hutang', 'hold.close_warn': 'Masih ada {n} transaksi ditahan (belum dibayar). Transaksi itu tetap tersimpan di perangkat ini. Tetap tutup kasir?',
+  'hold.close_anyway': 'Tetap tutup'
+});
+Object.assign(I18N.ar, {
+  'qty.add': 'إضافة', 'qty.change': 'تعديل', 'qty.invalid': 'الكمية يجب أن تكون أكبر من 0', 'qty.too_big': 'الكمية كبيرة جدًا',
+  'set.ask_qty': 'السؤال عن الكمية عند اختيار الصنف', 'set.ask_qty_hint': 'اضغط الصنف ← اختر الكمية. مسح الباركود يضيف 1 مباشرة. إعداد خاص بهذا الجهاز.',
+  'hold.btn': 'تعليق', 'hold.title': 'تعليق العملية', 'hold.hint': 'تُحفظ السلة على هذا الجهاز. اخدم الزبون التالي، ثم تابِع من زر "المعلّقة".',
+  'hold.label': 'علامة مميزة (اختياري)', 'hold.label_hint': 'مثل: قميص أحمر، رجل بقبعة سوداء', 'hold.default': 'زبون {n}', 'hold.held': 'عُلّقت: {label}',
+  'hold.chip': 'المعلّقة ({n})', 'hold.list': 'العمليات المعلّقة', 'hold.resume': 'متابعة', 'hold.resumed': 'تمت متابعة: {label}',
+  'hold.swapped': 'عُلّقت السلة السابقة باسم "{held}". تمت متابعة: {label}', 'hold.del_confirm': 'حذف العملية المعلّقة "{label}"؟ لن تُباع أصنافها.',
+  'hold.deleted': 'حُذفت العملية المعلّقة', 'hold.full': 'توجد {max} عمليات معلّقة. تابِع واحدة أو احذفها أولًا.', 'hold.empty': 'لا توجد عمليات معلّقة',
+  'hold.old': 'قديمة', 'hold.just_now': 'الآن', 'hold.min_ago': 'منذ {n} دقيقة', 'hold.hour_ago': 'منذ {n} ساعة',
+  'hold.dropped': 'منتجات لم تعد متاحة وحُذفت من السلة: {names}', 'hold.n_gone': '{n} منتجات لم تعد متاحة',
+  'hold.busy': 'أكمل الدفع / موافقة الدَّين أولًا', 'hold.close_warn': 'ما زالت هناك {n} عمليات معلّقة (غير مدفوعة). ستبقى محفوظة على هذا الجهاز. إغلاق الصندوق على أي حال؟',
+  'hold.close_anyway': 'إغلاق على أي حال'
+});
 Object.assign(I18N.id, { 'set.theme': 'Tampilan', 'theme.auto': 'Otomatis (ikut perangkat)', 'theme.light': 'Terang', 'theme.dark': 'Gelap' });
 Object.assign(I18N.ar, { 'set.theme': 'المظهر', 'theme.auto': 'تلقائي (حسب الجهاز)', 'theme.light': 'فاتح', 'theme.dark': 'داكن' });
 Object.assign(I18N.id, { 'kasirapp.title': 'Aplikasi ini untuk pemilik', 'kasirapp.hint': 'Kasir memakai aplikasi Khair Kasir. {name}, silakan masuk di sana.', 'kasirapp.open': 'Buka Khair Kasir', 'kasirapp.auto': 'Pindah otomatis dalam 2 detik…', 'kasirapp.link': 'Aplikasi Kasir →', 'kasirapp.link_hint': '(untuk perangkat kasir)' });
@@ -4798,6 +5040,8 @@ RENDER.settings = function () {
       <div class="field"><label class="f">${esc(t('voice.title'))}</label><div class="seg" style="max-width:360px">${[['1', 'voice.on'], ['0', 'voice.off']].map(([v, k]) => `<button type="button" data-act="voice-on" data-v="${v}" class="${(VOICE.on ? '1' : '0') === v ? 'on' : ''}">${esc(t(k))}</button>`).join('')}</div>
         <select class="input" id="st-voice-lang" style="margin-top:6px;max-width:360px" aria-label="${esc(t('voice.lang'))}"><option value="id-ID" ${VOICE.lang === 'id-ID' ? 'selected' : ''}>${esc(t('voice.lang'))}: Bahasa Indonesia (id-ID)</option><option value="ar-SA" ${VOICE.lang === 'ar-SA' ? 'selected' : ''}>${esc(t('voice.lang'))}: العربية (ar-SA)</option></select>
         <div class="small muted" style="margin-top:4px">${esc(t('voice.hint'))}</div></div>
+      <div class="field"><label class="f">${esc(t('set.ask_qty'))}</label><div class="seg" style="max-width:360px">${[['1', 'voice.on'], ['0', 'voice.off']].map(([v, k]) => `<button type="button" data-act="ask-qty" data-v="${v}" id="askqty-${v === '1' ? 'on' : 'off'}" class="${(askQty() ? '1' : '0') === v ? 'on' : ''}">${esc(t(k))}</button>`).join('')}</div>
+        <div class="small muted" style="margin-top:4px">${esc(t('set.ask_qty_hint'))}</div></div>
       <div class="field"><label class="f" for="st-theme">${esc(t('set.theme'))}</label><select class="input" id="st-theme" style="max-width:360px">${['auto', 'light', 'dark'].map(m => `<option value="${m}" ${store.get('theme', 'auto') === m ? 'selected' : ''}>${esc(t('theme.' + m))}</option>`).join('')}</select></div>
       <div class="field"><label class="f" for="st-lock">${esc(t('set.autolock'))}</label><select class="input" id="st-lock">${[5, 10, 15, 30, 60, 120, 0].map(m => `<option value="${m}" ${S.lockMinutes === m || (!S.lockMinutes && !m) ? 'selected' : ''}>${m ? esc(t('minutes', { n: m })) : esc(t('never'))}</option>`).join('')}</select></div>
       <p style="margin:0 0 10px"><a href="${esc(KASIR_APP_URL)}" id="st-kasir-app">${esc(t('kasirapp.link'))}</a> <span class="small muted">${esc(t('kasirapp.link_hint'))}</span></p>
@@ -4934,7 +5178,12 @@ const ACT = {
   },
 
   /* POS */
-  'add': el => { addToCart(prodById(el.dataset.id)); focusSearch(); },
+  'add': el => pickProduct(prodById(el.dataset.id)),
+  'hold': () => openHold(),
+  'held-open': () => openHeld(),
+  'held-resume': el => resumeHeld(el.dataset.id),
+  'held-del': el => deleteHeld(el.dataset.id),
+  'ask-qty': el => { store.set('ask_qty', el.dataset.v === '1'); $$('[data-act="ask-qty"]').forEach(b => b.classList.toggle('on', b === el)); toast(t('saved'), 'ok'); },
   'pos-cat': el => { POS.cat = el.dataset.cat; POS.limit = 60; renderGrid(); focusSearch(); },
   'pos-more': () => { POS.limit += 120; renderGrid(); },
   'cart-open': () => openCartSheet(),
