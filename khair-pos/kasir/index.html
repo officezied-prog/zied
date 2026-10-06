@@ -5528,17 +5528,25 @@ function openInbox() {
   const el = openModal({ title: t('apr.inbox'), id: 'apr-inbox', body: `<div class="spinner"></div>` });
   drawInbox(el); pollApprovals();
 }
-function drawInbox(el) {
-  const box = $('.modal-b', el); if (!box) return;
-  const notes = {}; $$('.apr-card', box).forEach(c => { notes[c.dataset.req] = $('[data-note]', c).value; });
-  box.innerHTML = AP.list.length ? AP.list.map(a => {
-    const can = a.can_decide !== false && (a.kind !== 'kesepakatan' || a.approver_role === S.role);
-    return `<div class="card pad apr-card" data-req="${esc(a.request_id)}" data-kind="${esc(a.kind || 'credit')}">${aprBodyHTML(a)}
+/** Cards are updated in place: a poll answer never replaces a card the manager is typing a note in (focus and text stay). */
+function aprCardHTML(a) {
+  const can = a.can_decide !== false && (a.kind !== 'kesepakatan' || a.approver_role === S.role);
+  return `<div class="card pad apr-card" data-req="${esc(a.request_id)}" data-kind="${esc(a.kind || 'credit')}">${aprBodyHTML(a)}
       <input class="input" data-note placeholder="${esc(t('apr.note_ph'))}" aria-label="${esc(t('apr.note_ph'))}" ${can ? '' : 'disabled'}>
       <div class="row" style="margin-top:10px;justify-content:flex-end">${can ? '' : `<span class="badge warn grow" data-owner-only>${ic('lock')} ${esc(t(a.kind === 'kesepakatan' && a.approver_role === 'manager' ? 'agree.manager_only' : 'apr.owner_only'))}</span>`}
         <button class="btn danger" data-act="apr-decide" data-d="rejected" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t('apr.reject'))}</button><button class="btn primary" data-act="apr-decide" data-d="approved" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t(a.kind === 'kesepakatan' ? 'agree.confirm' : 'apr.approve'))}</button></div></div>`;
-  }).join('') : `<div class="empty">${ic('check')}<div>${esc(t('apr.none'))}</div></div>`;
-  $$('.apr-card', box).forEach(c => { if (notes[c.dataset.req]) $('[data-note]', c).value = notes[c.dataset.req]; });
+}
+function drawInbox(el) {
+  const box = $('.modal-b', el); if (!box) return;
+  if (!AP.list.length) { box.innerHTML = `<div class="empty">${ic('check')}<div>${esc(t('apr.none'))}</div></div>`; return; }
+  [...box.children].forEach(n => { if (!n.classList.contains('apr-card')) n.remove(); }); // spinner / "none"
+  const want = new Set(AP.list.map(a => a.request_id));
+  $$('.apr-card', box).forEach(c => { if (!want.has(c.dataset.req)) c.remove(); });
+  AP.list.forEach((a, i) => {
+    let c = [...box.children].find(n => n.dataset.req === a.request_id);
+    if (!c) { const tmp = document.createElement('div'); tmp.innerHTML = aprCardHTML(a); c = tmp.firstElementChild; }
+    if (box.children[i] !== c) box.insertBefore(c, box.children[i] || null);
+  });
 }
 async function decideApproval(id, decision, btn) {
   const card = btn.closest('.apr-card');
