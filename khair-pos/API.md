@@ -503,3 +503,16 @@ The apps must use the same rules in their inputs (`maxlength`, `inputmode`, `pat
 - `LOCKED` answers carry `locked_until` (ISO time). Sales accounts may call `change_pin` (forced new PIN).
 - Field and photo workflows accept the owner master code, refuse locked accounts and `must_change` users (PIN_CHANGE_REQUIRED),
   and the field workflow cleans its input the same way (photos as `data:` URLs are left alone).
+
+### Owner decisions (07 Oct): manager sees profit on discounts; return limit agreed by owner and manager
+- `discount` approvals: owner **and manager** see `profit_before/after`, `margin_before/after` and the ` | laba …` summary; kasir never.
+- `return_owner_min_value` default **Rp 2,000,000**. `return_owner_min_value` and `return_owner_min_qty` cannot be changed with
+  `save_settings` (`AGREEMENT_REQUIRED`); they change only by agreement:
+
+| Action | Who | `data` | Response |
+|---|---|---|---|
+| `propose_agreement` | owner, manager | `{key: "return_owner_min_value" \| "return_owner_min_qty", value, note}` | `request_id`, `approval` (`kind: "kesepakatan"`, `approver_role` = the other party) |
+
+  The other party confirms it with `decide_approval` (the proposer cannot; the owner cannot confirm a request meant for the manager).
+  On approval the setting changes and setting `limit_agreements` keeps the history `[{key, value, from, proposed_by, confirmed_by, at, note}]`
+  (newest first, 50 kept); logged `usul_kesepakatan` / `kesepakatan`.

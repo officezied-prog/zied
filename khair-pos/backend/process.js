@@ -160,11 +160,12 @@ const DEFAULT_SETTINGS = {
   report_time: '21:00',
   max_discount_pct: 3,
   sell_from_shop_only: true,
-  return_owner_min_value: 1000000,
+  return_owner_min_value: 2000000,
   return_owner_min_qty: 0,
   return_fee_pct: 0,
   require_return_photo: true,
   require_carrier: true,
+  limit_agreements: [],
   member_enabled: true,
   member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }],
   survey_voice: true,
@@ -211,7 +212,7 @@ function approvalOut(a) {
       }
     } catch (e) { o.payload = ''; }
   }
-  if (role !== 'owner' && a.kind === 'discount') {
+  if (!isApprover && a.kind === 'discount') {
     try {
       const pl = JSON.parse(a.payload || '{}');
       ['profit_before', 'profit_after', 'margin_before', 'margin_after', 'cost'].forEach(function (f) { delete pl[f]; });
@@ -338,6 +339,8 @@ function memberInfo(cust) {
   return { pct: pct, purchase_no: n, member_no: str(cust.member_no) };
 }
 // ---- Returns, carriers and strict text fields (v16) ----
+// Limits the owner and the manager agree on together: changed only through propose_agreement, approved by the other one.
+const AGREED_KEYS = ['return_owner_min_value', 'return_owner_min_qty'];
 const RETURN_REASONS = ['tidak_sesuai', 'rusak', 'kadaluarsa', 'salah_kirim', 'kualitas_buruk', 'berubah_pikiran', 'lainnya'];
 const RETURN_REASON_TEXT = { tidak_sesuai: 'Tidak sesuai spesifikasi', rusak: 'Rusak / cacat', kadaluarsa: 'Kedaluwarsa', salah_kirim: 'Salah kirim / salah barang', kualitas_buruk: 'Kualitas buruk', berubah_pikiran: 'Pelanggan berubah pikiran', lainnya: 'Lainnya' };
 // A person's name: starts with a letter (any language), then letters, digits, spaces and . , ' - only, at most 60 characters.
@@ -1203,7 +1206,7 @@ switch (req.action) {
         carrier_type: carrier.type, carrier_name: carrier.name, carrier_vehicle: carrier.vehicle, carrier_phone: carrier.phone
       };
     }
-    const minVal = num(st.return_owner_min_value) > 0 ? num(st.return_owner_min_value) : 1000000;
+    const minVal = num(st.return_owner_min_value) > 0 ? num(st.return_owner_min_value) : 2000000;
     const minQty = num(st.return_owner_min_qty);
     const ownerNeeded = rec.value >= minVal || (minQty > 0 && rec.qty_total >= minQty);
     const summary = (kind === 'pelanggan' ? 'Retur pelanggan ' + rec.party_name + ' (dikembalikan ' + rec.returned_by + ') faktur ' + ref : 'Retur ke pemasok ' + rec.party_name + ' dari ' + ref + ', nota keluar ' + rec.out_doc_no) +
@@ -1218,6 +1221,23 @@ switch (req.action) {
     ops.approvals.push(forWrite(a, -1));
     logAct('minta_retur', summary + (ownerNeeded ? ' — butuh persetujuan pemilik' : ' — menunggu manajer'), returnId, a.total, 'warn');
     return done({ ok: true, request_id: a.request_id, return_id: returnId, approver_role: a.approver_role, approval: approvalOut(a) });
+  }
+
+  case 'propose_agreement': {
+    // The owner and the manager agree on a limit: one proposes, the other confirms; each agreement is recorded.
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    const key = AGREED_KEYS.indexOf(data.key) >= 0 ? data.key : '';
+    if (!key) return fail('INVALID', 'Batas tidak dikenal');
+    const value = Math.round(num(data.value));
+    if (!(value >= 0) || value > 1000000000 || (key === 'return_owner_min_value' && value < 1)) return fail('INVALID', 'Nilai tidak valid');
+    const note = str(data.note).slice(0, 300);
+    const label = key === 'return_owner_min_value' ? 'Batas retur yang perlu persetujuan pemilik: Rp ' : 'Batas jumlah barang retur untuk pemilik: ';
+    const a = newApproval({ kind: 'kesepakatan', approver_role: role === 'owner' ? 'manager' : 'owner', ref: key, total: value,
+      summary: ('Usul ' + me.name + ': ' + label + value + ' (sekarang ' + num(readSettings()[key]) + ')' + (note ? ' | ' + note : '')).slice(0, 1500), note: note,
+      payload: JSON.stringify({ key: key, value: value, from: num(readSettings()[key]), proposed_by: me.name, proposed_role: role }) });
+    ops.approvals.push(forWrite(a, -1));
+    logAct('usul_kesepakatan', a.summary, a.request_id, value, 'info');
+    return done({ ok: true, request_id: a.request_id, approval: approvalOut(a) });
   }
 
   case 'get_sale': {
@@ -1286,6 +1306,27 @@ switch (req.action) {
       Object.keys(pl.changes || {}).forEach(function (f) { if (PRICE_FIELDS.indexOf(f) >= 0) changes[f] = { from: money(p[f]), to: money(pl.changes[f].to) }; });
       out.product = productOut(applyPrices(p, changes));
       finalStatus = 'used';
+    }
+    if (a.kind === 'kesepakatan') {
+      if (str(a.cashier).toLowerCase() === me.name.toLowerCase()) return fail('FORBIDDEN', 'Kesepakatan harus dikonfirmasi pihak lain');
+      if (a.approver_role === 'owner' && role !== 'owner') return fail('NEEDS_OWNER', 'Butuh konfirmasi pemilik');
+      if (a.approver_role === 'manager' && role !== 'manager') return fail('FORBIDDEN', 'Kesepakatan ini dikonfirmasi oleh manajer');
+      let pl = {};
+      try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+      if (decision === 'approved' && AGREED_KEYS.indexOf(pl.key) >= 0) {
+        const byKey = {};
+        settingRows.forEach(function (r) { byKey[r.skey] = r; });
+        ops.settings.push({ _id: byKey[pl.key] ? byKey[pl.key].id : -1, skey: pl.key, svalue: JSON.stringify(num(pl.value)) });
+        const agreed = { key: pl.key, value: num(pl.value), from: num(pl.from), proposed_by: str(pl.proposed_by), confirmed_by: me.name, at: new Date().toISOString(), note: str(a.note) };
+        let hist = [];
+        try { hist = JSON.parse(JSON.stringify(readSettings().limit_agreements || [])); } catch (e) { hist = []; }
+        if (!Array.isArray(hist)) hist = [];
+        hist.unshift(agreed);
+        ops.settings.push({ _id: byKey.limit_agreements ? byKey.limit_agreements.id : -1, skey: 'limit_agreements', svalue: JSON.stringify(hist.slice(0, 50)) });
+        out.agreement = agreed;
+      }
+      logAct('kesepakatan', (decision === 'approved' ? 'Disepakati ' : 'Ditolak ') + str(pl.proposed_by) + ' & ' + me.name + ': ' + str(a.summary).slice(0, 500), a.request_id, money(a.total), 'warn');
+      finalStatus = decision === 'approved' ? 'used' : 'rejected';
     }
     if (a.kind === 'retur') {
       let rec = {};
@@ -1839,6 +1880,9 @@ switch (req.action) {
     const allowed = ['store_name', 'address', 'phone', 'receipt_footer', 'paper', 'survey_questions', 'survey_auto', 'auto_lock_minutes', 'language', 'exit_photo_min_total', 'exit_photo_min_qty', 'require_purchase_photo', 'require_shift', 'wa_shop_number', 'wa_manager_number', 'wa_owner_number', 'report_time', 'max_discount_pct', 'sell_from_shop_only', 'return_owner_min_value', 'return_owner_min_qty', 'return_fee_pct', 'require_return_photo', 'require_carrier', 'member_enabled', 'member_tiers', 'survey_voice', 'store_lat', 'store_lng', 'require_device_location', 'bank_accounts'];
     const byKey = {};
     settingRows.forEach(function (r) { byKey[r.skey] = r; });
+    if (AGREED_KEYS.some(function (k) { return incoming[k] !== undefined && JSON.stringify(incoming[k]) !== JSON.stringify(readSettings()[k]); })) {
+      return fail('AGREEMENT_REQUIRED', 'Batas retur diubah lewat kesepakatan pemilik dan manajer (propose_agreement)');
+    }
     allowed.forEach(function (k) {
       if (incoming[k] === undefined) return;
       ops.settings.push({ _id: byKey[k] ? byKey[k].id : -1, skey: k, svalue: JSON.stringify(incoming[k]) });
