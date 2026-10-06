@@ -119,4 +119,11 @@ async function closeModals(page) {
   }
 }
 
-module.exports = { rp, pct, sha, SHOTS, jktToday, openApp, enterKey, typePin, login, getDb, productByName, nav, addBySearch, confirmQty, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect, editDb, blockMapNetwork };
+/** v16: goods-in needs "who brought the goods" (require_carrier, default on): picks one in the owner purchase form. */
+async function pickCarrier(page, type = 'pemasok') {
+  const b = page.locator(`#pu-car-${type}`);
+  if (!/\bon\b/.test((await b.getAttribute('class')) || '')) await b.click();
+  await expect(page.locator(`#pu-car-${type}`)).toHaveClass(/\bon\b/);
+}
+const CARRIER = { type: 'pemasok', name: 'Pak Darto', vehicle: 'B 9012 TTF' };
+module.exports = { pickCarrier, CARRIER, rp, pct, sha, SHOTS, jktToday, openApp, enterKey, typePin, login, getDb, productByName, nav, addBySearch, confirmQty, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect, editDb, blockMapNetwork };

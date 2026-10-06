@@ -3,7 +3,7 @@
 const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const path = require('path');
-const { rp, SHOTS, jktToday, login, typePin, getDb, productByName, nav, closeModals, photoFile, asUser, editDb } = require('./helpers');
+const { rp, SHOTS, jktToday, login, typePin, getDb, productByName, nav, closeModals, photoFile, asUser, editDb, pickCarrier, CARRIER } = require('./helpers');
 
 const NF = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
 const NFQ = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 3 });
@@ -142,7 +142,7 @@ test('stock card: running balance ends at the current stock; purchase, sales and
   await login(page, 'Pemilik', '1234', '', { stay: true });
   const T = jktToday(), p = productByName(await getDb(page), /Kurma Ajwa/);
   const ph = await asUser(page, 'Pemilik', '1234', 'scan_purchase', { image_base64: 'AAAA', mime: 'image/jpeg' });
-  await asUser(page, 'Pemilik', '1234', 'save_purchase', { purchase_date: T, supplier: 'PT Uji Kartu Stok', photo_id: ph.photo_id, items: [{ product_id: p.id, qty: 10, cost_price: 130000, exp_date: addDays(T, 200) }], mismatch_reason: 'uji kartu stok' });
+  await asUser(page, 'Pemilik', '1234', 'save_purchase', { carrier: CARRIER, purchase_date: T, supplier: 'PT Uji Kartu Stok', photo_id: ph.photo_id, items: [{ product_id: p.id, qty: 10, cost_price: 130000, exp_date: addDays(T, 200) }], mismatch_reason: 'uji kartu stok' });
   await asUser(page, 'Pemilik', '1234', 'save_sale', saleData(p, 3));
   const cur = productByName(await getDb(page), /Kurma Ajwa/).stock;
   const op = await asUser(page, 'Pemilik', '1234', 'stock_count', { counts: [{ product_id: p.id, counted: cur - 1 }], note: 'Uji kartu' });
@@ -333,6 +333,7 @@ test('Barang Masuk: optional expiry date per line is sent as exp_date and shows 
   await page.locator('[data-pu-qty="0"]').fill('6');
   await page.locator('[data-pu-cost="0"]').fill('26.000');
   await page.locator('[data-pu-exp="0"]').fill(addDays(T, 12));
+  await pickCarrier(page);
   await page.click('#pu-save');
   await page.fill('#pu-reason', 'Nota lain');
   await page.click('#pu-save-reason');

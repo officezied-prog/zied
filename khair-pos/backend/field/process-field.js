@@ -1,6 +1,17 @@
 const STORE_KEY = '__STORE_KEY__';
 const req = $('Parse Field').first().json;
-const data = req.data || {};
+const data = req.data && typeof req.data === 'object' ? req.data : {};
+// Plain text only (v16): control / direction characters and HTML tags are removed and keys that reach JavaScript
+// internals are dropped. Photos (data: URLs) are left as they are; their size is checked where they are used.
+(function cleanInput(o, depth) {
+  if (!o || typeof o !== 'object' || depth > 6) return;
+  Object.keys(o).forEach(function (k) {
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') { delete o[k]; return; }
+    const v = o[k];
+    if (typeof v === 'string' && v.indexOf('data:') !== 0) o[k] = v.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g, '').replace(/<[^>]*>/g, '').replace(/[<>]/g, '');
+    else if (v && typeof v === 'object') cleanInput(v, depth + 1);
+  });
+})(data, 0);
 const ops = { shops: [], visits: [], tracks: [], days: [], orders: [], images: [], product_flags: [] };
 
 function rows(name) {

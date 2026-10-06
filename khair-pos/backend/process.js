@@ -87,7 +87,7 @@ const me = activeUsers.find(function (u) { return str(u.name).toLowerCase() === 
 if (!me) return fail('BAD_PIN', 'Nama atau PIN salah');
 // Wrong PIN 5 times in a row → that account is locked for 15 minutes.
 function wibTime(iso) { return new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(11, 16) + ' WIB'; }
-if (Date.parse(me.locked_until) > Date.now()) return fail('LOCKED', 'Terlalu banyak PIN salah. Coba lagi jam ' + wibTime(me.locked_until));
+if (Date.parse(me.locked_until) > Date.now()) return done({ ok: false, error: 'LOCKED', locked_until: str(me.locked_until), message: 'Terlalu banyak PIN salah. Coba lagi jam ' + wibTime(me.locked_until) });
 // Owner master code: sha256(KEY:'__master__':code) opens every account; every login with it is logged.
 const masterOwner = isHash(req.pin_hash) && me.pin_hash !== req.pin_hash ? activeUsers.find(function (u) { return u.role === 'owner' && isHash(u.master_hash) && u.master_hash === req.pin_hash; }) || null : null;
 const viaMaster = !!masterOwner;
@@ -95,7 +95,7 @@ if (me.pin_hash !== req.pin_hash && !viaMaster) {
   const fc = num(me.fail_count) + 1;
   const until = fc >= 5 ? new Date(Date.now() + 15 * 60000).toISOString() : '';
   ops.users.push(forWrite(Object.assign({}, me, { fail_count: until ? 0 : fc, locked_until: until }), me.id));
-  return done(until ? { ok: false, error: 'LOCKED', message: 'Terlalu banyak PIN salah. Coba lagi jam ' + wibTime(until) }
+  return done(until ? { ok: false, error: 'LOCKED', locked_until: until, message: 'Terlalu banyak PIN salah. Coba lagi jam ' + wibTime(until) }
     : { ok: false, error: 'BAD_PIN', message: 'Nama atau PIN salah' + (fc >= 3 ? ' (' + (5 - fc) + ' kali lagi, lalu akun dikunci 15 menit)' : '') });
 }
 if ((num(me.fail_count) > 0 || str(me.locked_until)) && ['change_pin', 'set_master', 'save_user'].indexOf(req.action) < 0) {
@@ -105,7 +105,7 @@ if (me.must_change === true && !viaMaster && ['login', 'change_pin', 'users', 'd
   return fail('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
 }
 const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' : (me.role === 'sales' ? 'sales' : 'kasir'));
-if (role === 'sales' && ['login', 'bootstrap', 'device_ping'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
+if (role === 'sales' && ['login', 'bootstrap', 'device_ping', 'change_pin'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
 const isApprover = role === 'owner' || role === 'manager';
 function findApprover(name, hash) {
   const u = activeUsers.find(function (x) { return str(x.name).toLowerCase() === str(name).toLowerCase(); });
@@ -1218,6 +1218,17 @@ switch (req.action) {
     ops.approvals.push(forWrite(a, -1));
     logAct('minta_retur', summary + (ownerNeeded ? ' — butuh persetujuan pemilik' : ' — menunggu manajer'), returnId, a.total, 'warn');
     return done({ ok: true, request_id: a.request_id, return_id: returnId, approver_role: a.approver_role, approval: approvalOut(a) });
+  }
+
+  case 'get_sale': {
+    // One invoice by its number (returns at the counter): the sale, its lines and what was already returned or is pending.
+    const no = str(data.invoice_no);
+    const sale = rows('Get Sale By Invoice').find(function (x) { return x.invoice_no === no; });
+    if (!no || !sale) return fail('NOT_FOUND', 'Faktur tidak ditemukan: ' + no);
+    const items = rows('Get Items By Invoice').filter(function (it) { return it.invoice_no === no; }).map(function (it) { return strip(it, role); });
+    const before = returnedBefore(no);
+    const cust = customerById[String(sale.customer_id)] || null;
+    return done({ ok: true, sale: strip(sale, role), items: items, returned: before, customer_debt: cust ? money(cust.debt_balance) : 0 });
   }
 
   case 'list_returns': {

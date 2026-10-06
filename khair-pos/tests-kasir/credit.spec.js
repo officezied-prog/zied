@@ -93,6 +93,12 @@ test('remote request: the manager approves on her phone, the kasir sale saves it
 
 test('rejected request shows the manager note; void and price requests respect can_decide', async ({ page, context }) => {
   await H.login(page);
+  // a sale of today to void (the demo data has none for today before 08:00 WIB)
+  await H.addItem(page, 'ajwa');
+  await H.pay(page);
+  await page.click('#pay-ok');
+  await expect(page.locator('#rc-modal #receipt')).toBeVisible();
+  await page.click('#rc-new');
   await debtCart(page);
   await page.click('#ap-remote');
   const rid = (await page.locator('#aw-id').textContent()).trim();

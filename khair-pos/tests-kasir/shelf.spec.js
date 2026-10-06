@@ -143,6 +143,7 @@ test('goods-in lands in the warehouse → "Pindahkan ke rak sekarang"', async ({
   await page.setInputFiles('#pu-photo', await H.photoFile(page, 'nota.png'));
   await expect(page.locator('#pu-photo-ok')).toContainText('1 baris');
   await expect(page.locator('#pu-match-box')).toHaveAttribute('data-status', 'cocok');
+  await H.pickCarrier(page);
   await page.click('#pu-save');
   await expect(page.locator('#pu-res-match')).toHaveText('Cocok dengan nota');
   let db = await H.getDb(page);

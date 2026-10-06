@@ -90,7 +90,10 @@ test('stock count input rules: nothing counted, invalid quantity', async ({ page
   await page.fill('#sc-q', 'ajwa');
   await page.press('#sc-q', 'Enter');
   const inp = page.locator('#sc-lines [data-sc]').first();
-  await inp.fill('abc');
+  await inp.fill('abc'); // v16: letters are refused while typing
+  await expect(inp).toHaveValue('');
+  await expect(page.locator('#rule-hint')).toHaveText('Angka saja');
+  await inp.fill('.,');
   await page.click('#sc-send');
   await expect(page.locator('#sc-err')).toContainText('Jumlah tidak valid');
   await inp.fill('0');

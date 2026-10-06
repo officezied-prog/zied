@@ -1,7 +1,7 @@
 // Photos: goods in (purchase needs an AI-read photo of the supplier note) and goods out (large sales).
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { rp, SHOTS, jktToday, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, photoFile } = require('./helpers');
+const { rp, SHOTS, jktToday, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, photoFile, pickCarrier, CARRIER } = require('./helpers');
 
 test('purchase is blocked without a photo; mock AI scan prefills editable lines; save stores photo_id', async ({ page }) => {
   await login(page);
@@ -12,8 +12,8 @@ test('purchase is blocked without a photo; mock AI scan prefills editable lines;
   await page.locator('[data-act="pu-add"]').first().click();
   await expect(page.locator('#pu-save')).toBeDisabled();
   await expect(page.locator('#pu-block')).toHaveText('Ambil foto nota dulu');
-  const code = await page.evaluate(async () => { try { await api('save_purchase', { supplier: 'x', items: [{ product_id: 1, qty: 1, cost_price: 1 }] }); return 'saved'; } catch (e) { return e.code; } });
-  expect(code).toBe('INVALID');
+  const code = await page.evaluate(async () => { try { await api('save_purchase', { carrier: { type: 'pemasok' }, supplier: 'x', items: [{ product_id: 1, qty: 1, cost_price: 1 }] }); return 'saved'; } catch (e) { return e.code; } });
+  expect(code).toBe('PHOTO_REQUIRED'); // as on the server (backend/process.js)
 
   await page.setInputFiles('#pu-photo', await photoFile(page, 'nota.png'));
   await expect(page.locator('#pu-photo-card')).toHaveClass(/done/);
@@ -40,8 +40,10 @@ test('purchase is blocked without a photo; mock AI scan prefills editable lines;
   await page.locator('[data-act="pu-del"][data-i="0"]').click();
   await page.locator('[data-pu-qty="0"]').fill('12');
   await page.locator('[data-pu-prod="1"]').selectOption(String(productByName(db0, /Kismis Hitam/).id));
+  await pickCarrier(page);
   await expect(page.locator('#pu-save')).toBeEnabled();
   await expect(page.locator('#pu-cmp tr[data-cmp="diff"]')).toHaveCount(1);
+  await pickCarrier(page);
   await page.click('#pu-save');
   await expect(page.locator('#pu-mismatch')).toBeVisible();
   await expect(page.locator('#pu-mm-diffs tbody tr')).toHaveCount(1);

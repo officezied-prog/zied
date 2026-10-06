@@ -70,6 +70,7 @@ label.f{display:block;font-size:14px;font-weight:700;color:var(--muted);margin:0
 .seg button{min-height:52px;border-radius:var(--rs);border:1px solid var(--line2);background:#fff;font-weight:800;font-size:15px;padding:0 4px}
 .seg button.on{background:var(--p);color:#fff;border-color:var(--p)}
 .seg button:disabled{opacity:.45}
+.seg.seg2{grid-auto-flow:row;grid-template-columns:1fr 1fr}
 .chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 6px;scrollbar-width:none}
 .chips::-webkit-scrollbar{display:none}
 .chip{flex:none;min-height:40px;padding:0 14px;border-radius:999px;border:1px solid var(--line2);background:#fff;font-size:15px;font-weight:700;color:var(--muted)}
@@ -380,6 +381,8 @@ tr.bad td{background:var(--redt);color:var(--redd);font-weight:800}
 .rep-banner{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border-radius:12px;background:var(--warnt);color:#78350F;font-weight:800;font-size:14.5px;margin-bottom:8px;border:1px solid #FCD34D}
 /* v16: member badge, discount box */
 .apr-sum div{min-width:0} .apr-sum .v{overflow-wrap:anywhere}
+.apr-sum div div{padding:0;background:none;border-radius:0}
+@media (max-width:420px){.apr-sum>div{padding:8px}.apr-sum .v{font-size:15px}}
 .mbadge{display:flex;align-items:center;gap:6px;margin-top:8px;padding:8px 12px;border-radius:12px;background:var(--okt);color:var(--ok);font-weight:800;font-size:14.5px}
 .mbadge svg.i{width:18px;height:18px}
 .discbox{margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#F8FAFC}
@@ -783,9 +786,9 @@ const MockServer = (() => {
   const DBKEY = 'kmock.db';
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
-  const READ_ONLY = ['users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos', 'party_ledger'];
+  const READ_ONLY = ['users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos', 'party_ledger', 'list_returns'];
   /* v16 settings defaults as on the server (an older demo DB lacks them) */
-  const V16_DEFAULTS = { max_discount_pct: 3, sell_from_shop_only: true, member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
+  const V16_DEFAULTS = { max_discount_pct: 3, sell_from_shop_only: true, return_owner_min_value: 1000000, return_owner_min_qty: 0, return_fee_pct: 0, require_return_photo: true, require_carrier: true, member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
   class MockErr extends Error { constructor(code, message) { super(message || code); this.code = code; } }
   const E = (code, msg, extra) => { const e = new MockErr(code, msg); if (extra) e.extra = extra; return e; };
   let ready = null;
@@ -1128,6 +1131,14 @@ const MockServer = (() => {
         if (Array.isArray(pl.changes)) pl.changes = pl.changes.map(qtyOnly);
         o.payload = JSON.stringify(pl); o.summary = str(o.summary).replace(/ \(Rp -?\d+→-?\d+\)/g, ''); o.total = 0;
       }
+      if (a.kind === 'retur') {
+        // supplier returns are valued at purchase cost: only the owner sees the amounts
+        const pl = parseObj(a.payload);
+        if (pl.kind === 'pemasok') {
+          delete pl.value; delete pl.refund; (pl.lines || []).forEach(l => { delete l.unit_price; delete l.value; });
+          o.payload = JSON.stringify(pl); o.total = 0; o.summary = str(o.summary).replace(/ \| nilai Rp -?\d+/g, '');
+        }
+      }
     }
     o.can_decide = role === 'owner' || (role === 'manager' && a.approver_role !== 'owner');
     return o;
@@ -1150,6 +1161,55 @@ const MockServer = (() => {
       if (sh < 0 && st >= 0) sh = 0;
       p.shop_stock = r3(sh);
     });
+  }
+  /* ---- v16 returns (retur), who brought the goods (carrier) and strict text fields — as on the server ---- */
+  // Everything the apps send is plain text: control / direction-override characters and < > (and tags) are removed,
+  // __proto__ / constructor / prototype keys are dropped, strings are cut at 4000 characters.
+  function cleanInput(o, depth) {
+    if (!o || typeof o !== 'object' || depth > 6) return;
+    Object.keys(o).forEach(k => {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') { delete o[k]; return; }
+      const v = o[k];
+      if (typeof v === 'string') o[k] = v.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F‪-‮⁦-⁩]/g, '').replace(/<[^>]*>/g, '').replace(/[<>]/g, '').slice(0, 4000);
+      else if (v && typeof v === 'object') cleanInput(v, depth + 1);
+    });
+  }
+  const RETURN_REASONS = ['tidak_sesuai', 'rusak', 'kadaluarsa', 'salah_kirim', 'kualitas_buruk', 'berubah_pikiran', 'lainnya'];
+  const RETURN_REASON_TEXT = { tidak_sesuai: 'Tidak sesuai spesifikasi', rusak: 'Rusak / cacat', kadaluarsa: 'Kedaluwarsa', salah_kirim: 'Salah kirim / salah barang', kualitas_buruk: 'Kualitas buruk', berubah_pikiran: 'Pelanggan berubah pikiran', lainnya: 'Lainnya' };
+  const personName = v => { const x = str(v).replace(/\s+/g, ' '); return /^[\p{L}\p{M}][\p{L}\p{M}\p{N} .,'-]{0,59}$/u.test(x) ? x : ''; };
+  const safeName = (v, max) => { const x = str(v).replace(/\s+/g, ' '); return x.length <= (max || 80) && /^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N} .,'&()\/%+#-]*$/u.test(x) ? x : ''; };
+  const docNo = v => { const x = str(v).toUpperCase().replace(/\s+/g, ' '); return /^[A-Z0-9][A-Z0-9 \/.-]{0,39}$/.test(x) ? x : ''; };
+  const CARRIER_TYPES = ['umum', 'teman', 'pemasok', 'karyawan'];
+  function readCarrier(c, required) {
+    c = c && typeof c === 'object' ? c : {};
+    const type = CARRIER_TYPES.indexOf(c.type) >= 0 ? c.type : '';
+    if (!type) return required ? { error: 'Pilih siapa yang membawa barang (kendaraan umum / teman / sopir pemasok / karyawan)' } : { type: '', name: '', vehicle: '', phone: '' };
+    const name = str(c.name) ? personName(c.name) : '';
+    if (str(c.name) && !name) return { error: 'Nama pembawa barang hanya boleh huruf' };
+    const vehicle = str(c.vehicle) ? docNo(c.vehicle) : '';
+    if (str(c.vehicle) && !vehicle) return { error: 'Nomor kendaraan hanya boleh huruf dan angka' };
+    const phone = str(c.phone) ? normPhone(c.phone) : '';
+    if (str(c.phone) && !phone) return { error: 'Nomor HP pembawa tidak valid' };
+    if (type === 'umum' && !vehicle) return { error: 'Kendaraan umum: tulis nomor kendaraannya (plat / nomor angkot)' };
+    if ((type === 'teman' || type === 'karyawan') && !name) return { error: 'Tulis nama orang yang membawa barang' };
+    const kindText = str(c.kind) ? str(c.kind).replace(/[^\p{L}\p{N} -]/gu, '').slice(0, 30) : '';
+    return { type, name: name || kindText, vehicle, phone };
+  }
+  /** Quantities already returned (approved returns + pending requests) for one invoice / goods-in note. */
+  function returnedBefore(db, ref) {
+    const q = {};
+    const add = lines => (Array.isArray(lines) ? lines : []).forEach(l => { const k = String(l.product_id); q[k] = Math.round(((q[k] || 0) + num(l.qty)) * 1000) / 1000; });
+    (db.returns || []).filter(r => str(r.ref) === ref && r.status === 'approved').forEach(r => { let l = []; try { l = JSON.parse(r.lines || '[]'); } catch (e) { l = []; } add(l); });
+    db.approvals.filter(a => a.kind === 'retur' && a.status === 'pending').forEach(a => { let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; } if (str(pl.ref) === ref) add(pl.lines); });
+    return q;
+  }
+  function returnOut(r, role) {
+    if (!r) return null;
+    const o = JSON.parse(JSON.stringify(r));
+    if (typeof o.lines === 'string') { try { o.lines = JSON.parse(o.lines); } catch (e) { o.lines = []; } }
+    if (role === 'kasir' && o.kind === 'pemasok') return null;
+    if (role !== 'owner' && o.kind === 'pemasok') { delete o.value; delete o.refund; (o.lines || []).forEach(l => { delete l.unit_price; delete l.value; }); }
+    return o;
   }
   const isHex64 = h => /^[0-9a-f]{64}$/.test(String(h || ''));
   const lockMsg = until => 'Terlalu banyak PIN salah. Coba lagi jam ' + new Date(Date.parse(until) + 7 * 3600000).toISOString().slice(11, 16) + ' WIB';
@@ -1360,6 +1420,129 @@ const MockServer = (() => {
         db.approvals.push(approval);
         return { request_id: approval.request_id, approval: approvalOut(approval, u.role) };
       }
+      case 'request_return': {
+        // v16 returns: kind "pelanggan" (a customer brings goods back: refund or less debt) or "pemasok" (goods go back to the
+        // supplier). The manager approves; above the limit only the owner. The owner is always told (activity log).
+        const kind = data.kind === 'pemasok' ? 'pemasok' : 'pelanggan';
+        const st = Object.assign({}, V16_DEFAULTS, db.settings);
+        const reasonCode = RETURN_REASONS.indexOf(data.reason_code) >= 0 ? data.reason_code : '';
+        if (!reasonCode) throw E('INVALID', 'Pilih alasan retur');
+        const reasonNote = str(data.reason_note).slice(0, 300);
+        if (reasonCode === 'lainnya' && !reasonNote) throw E('INVALID', 'Tulis alasan retur');
+        const lines = Array.isArray(data.lines) ? data.lines.slice(0, 100) : [];
+        if (!lines.length) throw E('INVALID', 'Pilih barang yang diretur');
+        const agg = {};
+        for (const l0 of lines) {
+          const l = l0 || {};
+          const p = prodById(l.product_id);
+          if (!p) throw E('NOT_FOUND', 'Produk tidak ditemukan: ' + l.product_id);
+          const q = Math.round(num(l.qty) * 1000) / 1000;
+          if (!(q > 0)) throw E('INVALID', 'Jumlah tidak valid: ' + str(p.name));
+          const cond = l.condition === 'rusak' ? 'rusak' : 'baik';
+          const k = String(p.id) + '|' + (kind === 'pelanggan' ? cond : '');
+          if (!agg[k]) agg[k] = { product_id: p.id, name: str(p.name), unit: str(p.unit), qty: 0, condition: kind === 'pelanggan' ? cond : '' };
+          agg[k].qty = Math.round((agg[k].qty + q) * 1000) / 1000;
+        }
+        const list = Object.keys(agg).map(k => agg[k]);
+        const qtyByPid = {};
+        list.forEach(l => { qtyByPid[String(l.product_id)] = Math.round(((qtyByPid[String(l.product_id)] || 0) + l.qty) * 1000) / 1000; });
+        const ref = kind === 'pelanggan' ? str(data.invoice_no) : str(data.purchase_no);
+        if (!ref) throw E('INVALID', kind === 'pelanggan' ? 'Nomor faktur pembelian wajib' : 'Nomor barang masuk (nota pemasok) wajib');
+        const before = returnedBefore(db, ref);
+        const returnId = 'RT' + jktDate().replace(/-/g, '').slice(2) + '-' + rand(4);
+        let rec;
+        if (kind === 'pelanggan') {
+          const sale = db.sales.find(x => x.invoice_no === ref);
+          if (!sale) throw E('NOT_FOUND', 'Faktur tidak ditemukan: ' + ref);
+          if (sale.status === 'void') throw E('INVALID', 'Faktur ini sudah dibatalkan');
+          const items = db.items.filter(it => it.invoice_no === ref);
+          const sold = {}, value = {};
+          items.forEach(it => { const k = String(it.product_id); sold[k] = (sold[k] || 0) + num(it.qty); value[k] = (value[k] || 0) + money(it.line_total); });
+          const discRatio = money(sale.subtotal) > 0 ? Math.min(1, money(sale.discount) / money(sale.subtotal)) : 0;
+          const over = [];
+          Object.keys(qtyByPid).forEach(pid => {
+            const left = Math.round(((sold[pid] || 0) - (before[pid] || 0)) * 1000) / 1000;
+            if (qtyByPid[pid] > left + 1e-9) over.push(str(prodById(pid).name) + ': dibeli ' + fmtN(sold[pid] || 0) + ', sudah diretur ' + fmtN(before[pid] || 0));
+          });
+          if (over.length) throw E('INVALID', 'Jumlah retur melebihi yang dibeli di faktur ini: ' + over.join('; '));
+          list.forEach(l => {
+            const pid = String(l.product_id);
+            const unitNet = sold[pid] > 0 ? (value[pid] / sold[pid]) * (1 - discRatio) : 0;
+            l.unit_price = Math.round(unitNet);
+            l.value = Math.round(l.qty * unitNet);
+          });
+          const gross = list.reduce((a1, l) => a1 + l.value, 0);
+          const feePct = Math.min(50, Math.max(0, num(st.return_fee_pct)));
+          const fee = Math.round(gross * feePct / 100);
+          const method = ['tunai', 'transfer', 'potong_hutang', 'tukar'].indexOf(data.refund_method) >= 0 ? data.refund_method : 'tunai';
+          const cust = sale.customer_id != null ? custById(sale.customer_id) || null : null;
+          if (method === 'potong_hutang' && !(cust && money(cust.debt_balance) > 0)) throw E('INVALID', 'Pelanggan ini tidak punya hutang untuk dipotong');
+          if (str(data.returned_by) && !personName(data.returned_by)) throw E('INVALID', 'Nama orang yang mengembalikan hanya boleh huruf');
+          if (str(data.returned_by_phone) && !normPhone(data.returned_by_phone)) throw E('INVALID', 'Nomor HP orang yang mengembalikan tidak valid');
+          const by = personName(data.returned_by) || (cust ? str(cust.name) : str(sale.customer_name));
+          if (!by) throw E('INVALID', 'Nama orang yang mengembalikan wajib');
+          rec = {
+            return_id: returnId, kind, ref, party_id: cust ? cust.id : 0, party_name: str(sale.customer_name), bought_by: str(sale.customer_name),
+            bought_date: str(sale.sale_date), returned_by: by, returned_by_phone: normPhone(data.returned_by_phone), lines: list,
+            qty_total: Math.round(list.reduce((a1, l) => a1 + l.qty, 0) * 1000) / 1000, value: gross, fee_pct: feePct, fee,
+            refund: gross - fee, refund_method: method, reason_code: reasonCode, reason_note: reasonNote, photo_id: '', out_doc_no: '',
+            carrier_type: '', carrier_name: '', carrier_vehicle: '', carrier_phone: ''
+          };
+        } else {
+          const prows = db.purchases.filter(x => str(x.purchase_no) === ref && num(x.qty) > 0);
+          if (!prows.length) throw E('NOT_FOUND', 'Barang masuk tidak ditemukan: ' + ref);
+          const bought = {}, cost = {};
+          prows.forEach(x => { const k = String(x.product_id); bought[k] = (bought[k] || 0) + num(x.qty); cost[k] = money(x.cost_price); });
+          const over = [];
+          Object.keys(qtyByPid).forEach(pid => {
+            const left = Math.round(((bought[pid] || 0) - (before[pid] || 0)) * 1000) / 1000;
+            if (!bought[pid]) over.push(str(prodById(pid).name) + ': tidak ada di nota ' + ref);
+            else if (qtyByPid[pid] > left + 1e-9) over.push(str(prodById(pid).name) + ': masuk ' + fmtN(bought[pid]) + ', sudah diretur ' + fmtN(before[pid] || 0));
+            else if (qtyByPid[pid] > num(prodById(pid).stock) + 1e-9) over.push(str(prodById(pid).name) + ': stok hanya ' + fmtN(prodById(pid).stock));
+          });
+          if (over.length) throw E('INVALID', 'Retur ke pemasok tidak bisa: ' + over.join('; '));
+          const outDoc = docNo(data.out_doc_no);
+          if (!outDoc) throw E('INVALID', 'Nomor nota / surat jalan barang keluar wajib (huruf, angka, / - . saja)');
+          const photoId = str(data.photo_id);
+          const ph = photoId ? db.photos.find(x => x.photo_id === photoId) : null;
+          if (st.require_return_photo !== false && !ph) throw E('INVALID', 'Foto bukti barang keluar wajib');
+          const carrier = readCarrier(data.carrier, true);
+          if (carrier.error) throw E('INVALID', carrier.error);
+          list.forEach(l => { l.unit_price = cost[String(l.product_id)] || 0; l.value = Math.round(l.qty * l.unit_price); });
+          const gross = list.reduce((a1, l) => a1 + l.value, 0);
+          rec = {
+            return_id: returnId, kind, ref, party_id: 0, party_name: str(prows[0].supplier), bought_by: '', bought_date: str(prows[0].purchase_date),
+            returned_by: carrier.name || u.name, returned_by_phone: carrier.phone, lines: list,
+            qty_total: Math.round(list.reduce((a1, l) => a1 + l.qty, 0) * 1000) / 1000, value: gross, fee_pct: 0, fee: 0,
+            refund: gross, refund_method: 'nota_kredit', reason_code: reasonCode, reason_note: reasonNote, photo_id: ph ? photoId : '', out_doc_no: outDoc,
+            carrier_type: carrier.type, carrier_name: carrier.name, carrier_vehicle: carrier.vehicle, carrier_phone: carrier.phone
+          };
+        }
+        const minVal = num(st.return_owner_min_value) > 0 ? num(st.return_owner_min_value) : 1000000;
+        const minQty = num(st.return_owner_min_qty);
+        const ownerNeeded = rec.value >= minVal || (minQty > 0 && rec.qty_total >= minQty);
+        const summary = (kind === 'pelanggan' ? 'Retur pelanggan ' + rec.party_name + ' (dikembalikan ' + rec.returned_by + ') faktur ' + ref : 'Retur ke pemasok ' + rec.party_name + ' dari ' + ref + ', nota keluar ' + rec.out_doc_no) +
+          ': ' + list.map(l => l.name + ' ' + fmtN(l.qty) + ' ' + l.unit + (l.condition === 'rusak' ? ' (rusak)' : '')).join('; ') +
+          ' | ' + RETURN_REASON_TEXT[reasonCode] + (reasonNote ? ': ' + reasonNote : '') +
+          (kind === 'pelanggan' ? ' | uang kembali Rp ' + rec.refund + ' (' + rec.refund_method + ')' + (rec.fee ? ', potongan retur Rp ' + rec.fee : '') : ' | nilai Rp ' + rec.value);
+        const ap = newApproval(db, u, {
+          kind: 'retur', approver_role: ownerNeeded ? 'owner' : 'manager', ref: returnId, client_id: str(data.client_id).slice(0, 60),
+          customer_id: rec.party_id, customer_name: rec.party_name, total: kind === 'pelanggan' ? rec.refund : rec.value, debt_amount: 0,
+          summary: summary.slice(0, 1500), note: reasonNote, payload: JSON.stringify(rec)
+        });
+        logAct(db, u, 'minta_retur', summary + (ownerNeeded ? ' — butuh persetujuan pemilik' : ' — menunggu manajer'), returnId, ap.total, 'warn');
+        return { request_id: ap.request_id, return_id: returnId, approver_role: ap.approver_role, approval: approvalOut(ap, u.role) };
+      }
+      case 'list_returns': {
+        if (!['owner', 'manager', 'kasir'].includes(u.role)) throw E('FORBIDDEN', 'Tidak diizinkan');
+        const inR = d => (!isYmd(data.from) || str(d) >= data.from) && (!isYmd(data.to) || str(d) <= data.to);
+        const done1 = db.returns.filter(r => inR(r.return_date)).map(r => returnOut(r, u.role)).filter(Boolean);
+        const pending = db.approvals.filter(a => a.kind === 'retur' && a.status === 'pending').map(a => {
+          const pl = parseObj(a.payload);
+          return returnOut(Object.assign({}, pl, { status: 'pending', request_id: a.request_id, approver_role: a.approver_role, return_date: str(a.created_at).slice(0, 10), user: str(a.cashier) }), u.role);
+        }).filter(Boolean);
+        return { returns: pending.concat(done1.sort((x, y) => String(y.at).localeCompare(String(x.at)))) };
+      }
       case 'check_approval': {
         const ap = db.approvals.find(x => x.request_id === data.request_id);
         if (!ap) throw E('NOT_FOUND', 'approval');
@@ -1397,7 +1580,52 @@ const MockServer = (() => {
           if (!pf.found) throw E('INVALID', 'Kirim purchase_no barang masuk yang dikoreksi');
           out.stock = applyPurchaseFix(db, u, no, pf.changes, str(pl.reason) + ' (diminta ' + str(ap.cashier) + ', disetujui ' + u.name + ')', u.name);
         }
-        Object.assign(ap, { status: data.decision, decided_by: u.name, decided_at: jktISO(), note: String(data.note || '') });
+        if (ap.kind === 'retur') {
+          const rec = parseObj(ap.payload);
+          const lines = Array.isArray(rec.lines) ? rec.lines : [];
+          if (data.decision === 'approved') {
+            const back = {};
+            lines.forEach(l => {
+              const pid = String(l.product_id);
+              if (rec.kind === 'pemasok') back[pid] = (back[pid] || 0) - num(l.qty);
+              else if (l.condition !== 'rusak') back[pid] = (back[pid] || 0) + num(l.qty);
+            });
+            // good returned goods go back to the warehouse (checked before they return to the shelf); damaged ones are not stock
+            out.stock = [];
+            Object.keys(back).forEach(pid => {
+              const p = prodById(pid);
+              if (!p || !back[pid]) return;
+              const ns = Math.round((num(p.stock) + back[pid]) * 1000) / 1000;
+              if (back[pid] < 0) shopSet.set(p.id, Math.min(shopOf(p), Math.max(0, ns)));
+              p.stock = ns;
+              out.stock.push({ product_id: p.id, stock: ns });
+            });
+            if (rec.kind === 'pemasok') {
+              // a credit note from the supplier: negative goods-in rows lower what we owe them
+              lines.forEach(l => {
+                db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: jktDate(), supplier: str(rec.party_name), product_id: l.product_id, name: str(l.name), qty: -num(l.qty),
+                  cost_price: money(l.unit_price), total: -money(l.value), note: 'RETUR ' + str(rec.return_id) + ' dari ' + str(rec.ref) + ' — ' + (RETURN_REASON_TEXT[rec.reason_code] || '') + (rec.reason_note ? ': ' + str(rec.reason_note) : ''),
+                  user: str(ap.cashier), photo_id: str(rec.photo_id), exp_date: '', purchase_no: str(rec.return_id), match_status: 'retur', match_notes: 'nota keluar ' + str(rec.out_doc_no) });
+              });
+            } else {
+              const cust = rec.party_id ? custById(rec.party_id) : null;
+              const refund = money(rec.refund);
+              if (rec.refund_method === 'potong_hutang' && cust) cust.debt_balance = Math.max(0, money(cust.debt_balance) - refund);
+              else if ((rec.refund_method === 'tunai' || rec.refund_method === 'transfer') && refund > 0) {
+                db.payments.push({ id: nextId(db, 'payment'), pay_id: 'PY' + rand(7), pay_date: jktDate(), pay_time: new Date().toISOString(), direction: 'out', party_type: 'customer',
+                  customer_id: rec.party_id || 0, customer_name: str(rec.party_name), supplier: '', amount: refund, method: rec.refund_method,
+                  account_id: payAccount(db, rec.refund_method, data.account_id), slip_date: '', bank: '', transfer_ref: '', proof_photo_id: '', alloc: '[]', match_status: 'retur',
+                  note: 'Uang kembali retur ' + str(rec.return_id) + ' faktur ' + str(rec.ref), cashier: str(ap.cashier) });
+                const sh = rec.refund_method === 'tunai' ? openShiftOf(db, ap.cashier) : null;
+                if (sh) db.cash_moves.push({ id: nextId(db, 'move'), shift_id: sh.shift_id, type: 'out', amount: refund, note: 'Retur ' + str(rec.return_id), user: u.name, time: jktISO() });
+              }
+            }
+          }
+          db.returns.push(Object.assign({}, rec, { id: nextId(db, 'return'), lines: JSON.stringify(lines), status: data.decision, user: str(ap.cashier), approved_by: u.name, return_date: jktDate(), at: new Date().toISOString(), request_id: ap.request_id }));
+          logAct(db, u, 'retur', (data.decision === 'approved' ? 'Retur disetujui ' : 'Retur ditolak ') + u.name + ': ' + str(ap.summary).slice(0, 600), str(rec.return_id), money(ap.total), 'warn');
+          out.return_id = str(rec.return_id);
+        }
+        Object.assign(ap, { status: data.decision, decided_by: u.name, decided_at: jktISO(), note: str(data.note) || str(ap.note) });
         logAct(db, u, 'keputusan', (data.decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + str(ap.kind || 'credit') + ', diminta ' + str(ap.cashier) + '): ' + str(ap.summary).slice(0, 600) + (str(data.note) ? ' | ' + str(data.note) : ''), ap.request_id, money(ap.total), data.decision === 'approved' ? 'info' : 'warn');
         return Object.assign({ approval: approvalOut(ap, u.role) }, out);
       }
@@ -1596,7 +1824,10 @@ const MockServer = (() => {
         if (data.id && !ex) throw E('NOT_FOUND', 'Pelanggan tidak ditemukan');
         let existed = false;
         if (!ex && phone) { ex = db.customers.find(x => normPhone(x.phone) === phone) || null; existed = !!ex; }
-        const name = str(data.name) || (ex ? str(ex.name) : (phone ? 'Pelanggan ' + phone.slice(-4) : ''));
+        if (str(data.name) && !safeName(data.name, 80)) throw E('INVALID', 'Nama pelanggan hanya boleh huruf, angka dan . , \' & ( ) / -');
+        if (str(data.phone) && !/^[0-9+ ().-]{3,20}$/.test(str(data.phone))) throw E('INVALID', 'Nomor HP hanya boleh angka (contoh 0812xxxxxxx)');
+        if (str(data.address).length > 200 || str(data.notes).length > 300) throw E('INVALID', 'Alamat / catatan terlalu panjang');
+        const name = safeName(data.name, 80) || (ex ? str(ex.name) : (phone ? 'Pelanggan ' + phone.slice(-4) : ''));
         if (!name) throw E('INVALID', 'Nama pelanggan wajib');
         const optin = typeof data.wa_optin === 'boolean' ? (existed ? (data.wa_optin || ex.wa_optin === true) : data.wa_optin) : !!(ex && ex.wa_optin === true);
         const c = existed ? {
@@ -1692,6 +1923,10 @@ const MockServer = (() => {
       }
       case 'save_purchase': {
         if (!Array.isArray(data.items) || !data.items.length) throw E('INVALID', 'items required');
+        if (str(data.supplier) && !safeName(data.supplier, 80)) throw E('INVALID', 'Nama pemasok hanya boleh huruf dan angka');
+        // v16 who brought the goods: public transport (+ its number), a friend (name), the supplier's driver or our staff
+        const carrier = readCarrier(data.carrier, Object.assign({}, V16_DEFAULTS, db.settings).require_carrier !== false);
+        if (carrier.error) throw E('CARRIER_REQUIRED', carrier.error);
         const photo = data.photo_id ? db.photos.find(x => x.photo_id === data.photo_id && x.kind === 'masuk') : null;
         if (data.photo_id && !photo) throw E('INVALID', 'photo_id not found');
         if (!photo && db.settings.require_purchase_photo !== false) throw E('INVALID', 'Purchase photo (photo_id) required');
@@ -1715,13 +1950,13 @@ const MockServer = (() => {
           p.cost_price = old + qty > 0 ? Math.round((old * p.cost_price + qty * cost) / (old + qty)) : cost;
           p.stock = roundQty(p.stock + qty);
           db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: pdate, supplier: String(data.supplier || ''), product_id: p.id, name: p.name, qty, cost_price: cost, total: Math.round(qty * cost), note: String(data.note || ''), user: u.name, photo_id: photo ? photo.photo_id : '', exp_date: exp,
-            purchase_no, match_status: match.status, match_notes: matchNotes });
+            purchase_no, match_status: match.status, match_notes: matchNotes, carrier_type: carrier.type, carrier_name: carrier.name, carrier_vehicle: carrier.vehicle, carrier_phone: carrier.phone });
           sumTotal += Math.round(qty * cost);
           const o = out.find(x => x.product_id === p.id);
           if (o) Object.assign(o, { stock: p.stock, cost_price: p.cost_price }); else out.push({ product_id: p.id, stock: p.stock, cost_price: p.cost_price });
         }
         if (photo) photo.ref = [photo.ref, String(data.supplier || '')].filter(Boolean).join(' ') || 'masuk';
-        logAct(db, u, 'masuk', 'Barang masuk ' + purchase_no + (str(data.supplier) ? ' dari ' + str(data.supplier) : '') + ': ' + data.items.length + ' baris, Rp ' + sumTotal + ' — nota: ' + match.status + (matchNotes ? ' (' + matchNotes + ')' : ''), purchase_no, sumTotal, match.status === 'cocok' ? 'info' : 'warn');
+        logAct(db, u, 'masuk', 'Barang masuk ' + purchase_no + (str(data.supplier) ? ' dari ' + str(data.supplier) : '') + ': ' + data.items.length + ' baris, Rp ' + sumTotal + ' — nota: ' + match.status + (matchNotes ? ' (' + matchNotes + ')' : '') + (carrier.type ? ' — dibawa ' + ({ umum: 'kendaraan umum', teman: 'teman', pemasok: 'sopir pemasok', karyawan: 'karyawan' })[carrier.type] + (carrier.name ? ' ' + carrier.name : '') + (carrier.vehicle ? ' ' + carrier.vehicle : '') : ''), purchase_no, sumTotal, match.status === 'cocok' ? 'info' : 'warn');
         return { stock: out, purchase_no, match };
       }
       case 'request_purchase_fix': {
@@ -1802,7 +2037,7 @@ const MockServer = (() => {
     if (!navigator.onLine || forced) throw new NetError('offline (mock)');
     const db = load();
     db.approvals = db.approvals || []; db.photos = db.photos || []; db.expenses = db.expenses || []; db.shifts = db.shifts || []; db.cash_moves = db.cash_moves || [];
-    db.devices = db.devices || []; db.activity = db.activity || [];
+    db.devices = db.devices || []; db.activity = db.activity || []; db.returns = db.returns || [];
     LOG.push({ action: body.action, user: body.user || '', device: body.data && body.data.device ? JSON.parse(JSON.stringify(body.data.device)) : null, at: Date.now() });
     if (LOG.length > 300) LOG.shift();
     let res;
@@ -1811,6 +2046,7 @@ const MockServer = (() => {
       lastRole = '';
       shopSet.clear();
       const snap = new Map(db.products.map(p => [p.id, { json: JSON.stringify(p), shop: shopOf(p) }]));
+      if (body.data && typeof body.data === 'object' && !/^scan_/.test(body.action)) { body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); } // (a copy: the server gets it over the network)
       res = handle(db, body);
       normShop(db, snap);
       const role = lastRole;
@@ -2071,6 +2307,73 @@ function setLang(l) {
 const ic = (name, cls = '') => `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
 /* ========== Toasts & modals ========== */
+/* ========== v16 plain-text inputs: every field accepts only what the server accepts ==========
+   data-rule on an input / textarea: name (person), pname (product / customer / shop / supplier), phone, email, doc (document /
+   vehicle number), num (quantity / money), pin, search, text (default), long (textarea default). Characters a field does not
+   take are dropped while typing (with a short hint); maxlength / inputmode are set on every field. User text is never HTML. */
+const INPUT_CTRL = /[<>\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F‪-‮⁦-⁩]/g;
+const INPUT_RULES = {
+  name: { drop: /[^\p{L}\p{M}\p{N} .,'-]/gu, max: 60 },
+  pname: { drop: /[^\p{L}\p{M}\p{N} .,'&()\/%+#-]/gu, max: 80 },
+  phone: { drop: /[^0-9]/g, max: 20, mode: 'tel', digits: true }, // room for a pasted "+62 812-…" before it is cleaned
+  email: { drop: /[\s<>"',;()]/g, max: 120, mode: 'email' },
+  doc: { drop: /[^A-Z0-9 \/.-]/g, max: 40, upper: true },
+  num: { drop: /[^0-9.,]/g, max: 15, mode: 'decimal', digits: true },
+  pin: { drop: /[^0-9]/g, max: 8, mode: 'numeric', digits: true },
+  search: { drop: INPUT_CTRL, max: 80 },
+  text: { drop: INPUT_CTRL, max: 200 },
+  long: { drop: INPUT_CTRL, max: 300 }
+};
+const SKIP_TYPES = ['checkbox', 'radio', 'file', 'date', 'time', 'hidden', 'range', 'color', 'button', 'submit'];
+const ruleName = el => el.dataset.rule && INPUT_RULES[el.dataset.rule] ? el.dataset.rule : el.tagName === 'TEXTAREA' ? 'long' : el.type === 'search' ? 'search' : 'text';
+const asciiDigits = v => v.replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x660)).replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x6F0));
+function cleanByRule(v, rule) {
+  const r = INPUT_RULES[rule] || INPUT_RULES.text;
+  let x = String(v == null ? '' : v);
+  if (r.digits) x = asciiDigits(x);
+  if (r.upper) x = x.toUpperCase();
+  x = x.replace(INPUT_CTRL, '');
+  if (r.drop !== INPUT_CTRL) x = x.replace(r.drop, '');
+  return x;
+}
+/** maxlength / inputmode / autocapitalize on every text field under root (new screens are covered by the observer below). */
+function applyInputRules(root) {
+  const list = root && root.matches && root.matches('input, textarea') ? [root] : root && root.querySelectorAll ? root.querySelectorAll('input, textarea') : [];
+  for (const el of list) {
+    if (el.tagName === 'INPUT' && SKIP_TYPES.includes(el.type)) continue;
+    const rn = ruleName(el), r = INPUT_RULES[rn];
+    if (!el.dataset.rule) el.dataset.rule = rn;
+    if (!el.hasAttribute('maxlength')) el.setAttribute('maxlength', String(r.max));
+    if (r.mode && !el.hasAttribute('inputmode')) el.setAttribute('inputmode', r.mode);
+    if (rn === 'doc') el.setAttribute('autocapitalize', 'characters');
+    if (rn === 'phone' || rn === 'email' || rn === 'pin') { el.setAttribute('autocapitalize', 'off'); el.setAttribute('spellcheck', 'false'); }
+  }
+}
+/** A short hint right under the field (not a toast: it must not cover the form being typed in). */
+function showRuleHint(el, msg) {
+  let h = document.getElementById('rule-hint');
+  if (!h) { h = document.createElement('div'); h.id = 'rule-hint'; h.setAttribute('role', 'status'); h.setAttribute('aria-live', 'polite'); document.body.appendChild(h); }
+  const r = el.getBoundingClientRect(), w = Math.min(320, innerWidth - 16);
+  h.textContent = msg;
+  h.style.cssText = `position:fixed;z-index:9999;top:${Math.round(Math.min(r.bottom + 4, innerHeight - 44))}px;left:${Math.round(Math.max(8, Math.min(r.left, innerWidth - w - 8)))}px;max-width:${w}px;background:#7C2D12;color:#fff;font-size:13px;font-weight:700;line-height:1.3;padding:6px 10px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.2);pointer-events:none`;
+  h.hidden = false;
+  clearTimeout(showRuleHint.tm); showRuleHint.tm = setTimeout(() => { h.hidden = true; }, 2400);
+}
+function enforceRule(el) {
+  if (!el || !el.matches || !el.matches('input, textarea') || (el.tagName === 'INPUT' && SKIP_TYPES.includes(el.type))) return;
+  const rn = ruleName(el), before = el.value, after = cleanByRule(before, rn);
+  if (after === before) return;
+  let pos = null; try { pos = el.selectionStart; } catch (e) { pos = null; }
+  el.value = after;
+  if (pos != null) { const p = cleanByRule(before.slice(0, pos), rn).length; try { el.setSelectionRange(p, p); } catch (e) { } }
+  // a hint only when a character was refused (not for upper-casing)
+  if (after.length < before.length && typeof t === 'function') showRuleHint(el, t('rule.' + rn));
+}
+document.addEventListener('input', e => { if (!e.isComposing) enforceRule(e.target); }, true);
+document.addEventListener('compositionend', e => enforceRule(e.target), true);
+document.addEventListener('focusin', e => { if (e.target && e.target.matches && e.target.matches('input, textarea')) applyInputRules(e.target); }, true);
+document.addEventListener('focusout', () => { const h = document.getElementById('rule-hint'); if (h) h.hidden = true; }, true);
+new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) applyInputRules(n); }).observe(document.documentElement, { childList: true, subtree: true });
 function toast(msg, type = '', ms = 2800) {
   const el = document.createElement('div');
   el.className = 'toast ' + type; el.textContent = msg;
@@ -2411,7 +2714,7 @@ function renderGate() {
   g.innerHTML = `<div class="screen-card" id="shift-open">
     <div class="brand"><div class="mark" aria-hidden="true">K</div><div>${esc(t('gate.title'))}</div></div>
     <p class="center" style="margin-top:0"><b>${esc(S.user)}</b> · ${esc(t('gate.hint'))}</p>
-    <div class="field"><label class="f" for="so-cash">${esc(t('gate.opening'))} (Rp)</label><input class="input money" id="so-cash" inputmode="numeric" autocomplete="off"></div>
+    <div class="field"><label class="f" for="so-cash">${esc(t('gate.opening'))} (Rp)</label><input class="input money" data-rule="num" id="so-cash" inputmode="numeric" autocomplete="off"></div>
     <div class="quick">${[0, 200000, 300000, 500000, 1000000].map(v => `<button type="button" class="btn xs num" data-v="${v}">${v ? fmtShort(v) : '0'}</button>`).join('')}</div>
     <div class="field"><label class="f" for="so-note">${esc(t('notes'))}</label><input class="input" id="so-note"></div>
     <div class="err" id="so-err" role="alert"></div>
@@ -2729,7 +3032,7 @@ function openQtySheet(p) {
   const el = openModal({
     title: p.name, id: 'qty-sheet', focus: false,
     body: `<div class="qs-info"><span class="pr num"><bdi>${fmtRp(p.retail_price)}</bdi><span class="muted small">/${esc(p.unit || 'pcs')}</span></span>${hasW ? `<span class="gr" id="qs-gr">${esc(t('grosir'))} <bdi class="num">${fmtRp(p.wholesale_price)}</bdi> · <bdi>≥${fmtQty(wmin)}</bdi></span>` : ''}<span class="muted small" id="qs-stock">${esc(t('shelf.rak'))} <bdi class="num">${fmtQty(shelfOf(p))} ${esc(p.unit || '')}</bdi> · ${esc(t('shelf.gudang'))} <bdi class="num">${fmtQty(gudangOf(p))}</bdi></span></div>
-      <div class="qs-row"><button type="button" id="qs-dec" aria-label="−">−</button><input id="qs-qty" type="text" inputmode="${isWeightUnit(p.unit) ? 'decimal' : 'numeric'}" autocomplete="off" enterkeyhint="done" aria-label="${esc(t('qty'))}" value="${esc(fmtQtyInput(q))}"><button type="button" id="qs-inc" aria-label="+">+</button></div>
+      <div class="qs-row"><button type="button" id="qs-dec" aria-label="−">−</button><input data-rule="num" id="qs-qty" type="text" inputmode="${isWeightUnit(p.unit) ? 'decimal' : 'numeric'}" autocomplete="off" enterkeyhint="done" aria-label="${esc(t('qty'))}" value="${esc(fmtQtyInput(q))}"><button type="button" id="qs-inc" aria-label="+">+</button></div>
       <div class="qs-chips" id="qs-chips">${QTY_CHIPS.map(n => `<button type="button" data-q="${n}">${n}</button>`).join('')}${hasW ? `<button type="button" class="g" data-q="${wmin}" id="qs-chip-g">${esc(t('grosir'))} ${esc(fmtQty(wmin))}</button>` : ''}</div>
       <div class="qs-total"><span><span class="pt" id="qs-pt"></span> <span class="muted small num" id="qs-up"></span></span><b class="num" id="qs-total"></b></div>
       <div class="qs-warn" id="qs-warn" role="alert"></div>`,
@@ -2853,7 +3156,7 @@ function renderCart(flashId) {
       <div class="cl" data-line="${i}" data-pid="${esc(l.p.id)}">
         <div class="a"><div class="nm">${esc(l.p.name)}</div><div class="lt num" data-ref="lt">${fmtRp(l.total)}</div><button class="icon-btn ghost sm" data-act="line-del" data-i="${i}" aria-label="${esc(t('delete'))}" style="margin-top:-8px;color:var(--muted)">${ic('trash')}</button></div>
         <div class="b">
-          <div class="qty"><button data-act="qty-dec" data-i="${i}" aria-label="−">−</button><input type="text" inputmode="decimal" data-qty="${i}" value="${esc(fmtQtyInput(l.line.qty))}" aria-label="${esc(t('qty'))} ${esc(l.p.name)}"><button data-act="qty-inc" data-i="${i}" aria-label="+">+</button></div>
+          <div class="qty"><button data-act="qty-dec" data-i="${i}" aria-label="−">−</button><input type="text" inputmode="decimal" data-rule="num" data-qty="${i}" value="${esc(fmtQtyInput(l.line.qty))}" aria-label="${esc(t('qty'))} ${esc(l.p.name)}"><button data-act="qty-inc" data-i="${i}" aria-label="+">+</button></div>
           <span class="muted small num" data-ref="up">× ${fmtRp(l.unit_price)}</span>
           <span class="pt ${l.type}" data-ref="pt">${esc(t(l.type))}</span>
         </div></div>`).join('') : `<div class="empty">${ic('cart')}<div>${esc(t('sell.cart_empty'))}</div><div class="small">${esc(t('sell.cart_empty_hint'))}</div></div>`}
@@ -3029,10 +3332,10 @@ function openCustomerPicker(onPick, opts = {}) {
     body: `<input class="input" id="cp-q" type="search" placeholder="${esc(t('cust.search'))}" autocomplete="off" autofocus>
       <div class="list" id="cp-list" style="margin-top:10px"></div>
       ${opts.noAdd ? '' : `<details class="more" id="cp-new" ${opts.member ? 'open' : ''}><summary>${ic('plus')} ${esc(t('cust.quick_add'))}</summary>
-        <div style="margin-top:10px"><div class="field"><label class="f" for="cn-name">${esc(t('name'))} *</label><input class="input" id="cn-name"></div>
-        <div class="grid2"><div class="field"><label class="f" for="cn-phone">${esc(t('phone'))}</label><input class="input" id="cn-phone" inputmode="tel"></div>
+        <div style="margin-top:10px"><div class="field"><label class="f" for="cn-name">${esc(t('name'))} *</label><input class="input" data-rule="pname" id="cn-name"></div>
+        <div class="grid2"><div class="field"><label class="f" for="cn-phone">${esc(t('phone'))}</label><input class="input" data-rule="phone" id="cn-phone" inputmode="tel"></div>
         <div class="field"><label class="f" for="cn-type">${esc(t('type'))}</label><select class="input" id="cn-type"><option value="eceran">${esc(t('type.eceran'))}</option><option value="grosir">${esc(t('type.grosir'))}</option></select></div></div>
-        <div class="field"><label class="f" for="cn-email">${esc(t('mem.email'))}</label><input class="input" id="cn-email" type="email" inputmode="email" autocomplete="off" placeholder="nama@email.com"></div>
+        <div class="field"><label class="f" for="cn-email">${esc(t('mem.email'))}</label><input class="input" data-rule="email" id="cn-email" type="email" inputmode="email" autocomplete="off" placeholder="nama@email.com"></div>
         <label class="check" id="cn-member-l"><input type="checkbox" id="cn-member" ${opts.member ? 'checked' : ''}><span><b>${esc(t('mem.make'))}</b><br><span class="small muted">${esc(t('mem.consent'))}</span></span></label>
         <button class="btn primary block" id="cp-save">${esc(t('save'))}</button><div class="red small" id="cp-err"></div></div></details>`}`
   });
@@ -3262,20 +3565,20 @@ function drawPay(bg) {
     <div class="discbox" id="pay-disc-box">
       ${v.memberDisc ? `<div class="sumrow" id="pay-mdisc"><span>${esc(t('mem.disc_line', { pct: fmtPct1(v.mem.pct) }))}</span><b class="num">-${fmtRp(v.memberDisc)}</b></div>` : ''}
       <div class="row"><label class="f grow" for="pay-disc" style="margin:0">${esc(t(v.mem ? 'disc.extra' : 'disc.label'))} (Rp)</label><span class="badge" id="pay-disc-pct"></span></div>
-      <input class="input num" id="pay-disc" inputmode="numeric" autocomplete="off" placeholder="0" value="${c.discount ? esc(fmtNum(moneyVal(c.discount))) : ''}">
+      <input class="input num" data-rule="num" id="pay-disc" inputmode="numeric" autocomplete="off" placeholder="0" value="${c.discount ? esc(fmtNum(moneyVal(c.discount))) : ''}">
       <div class="small" id="pay-disc-warn" role="status"></div>
     </div>
     <div class="seg" id="pay-m" role="radiogroup" aria-label="${esc(t('pay.method'))}" style="margin-top:12px">${['tunai', 'transfer', 'qris', 'hutang'].map(x => `<button role="radio" id="pm-${x}" aria-checked="${m === x}" class="${m === x ? 'on' : ''}" data-act="pay-method" data-m="${x}">${esc(t('pm.' + x))}</button>`).join('')}</div>
-    <div id="pay-detail" style="margin-top:12px">${m === 'tunai' ? `<div class="field"><label class="f" for="pay-cash">${esc(t('pay.cash_in'))}</label><input class="input money" id="pay-cash" inputmode="numeric" autocomplete="off" placeholder="${esc(t('pay.exact'))}" value="${c.paid === '' ? '' : esc(fmtNum(moneyVal(c.paid)))}"></div>
+    <div id="pay-detail" style="margin-top:12px">${m === 'tunai' ? `<div class="field"><label class="f" for="pay-cash">${esc(t('pay.cash_in'))}</label><input class="input money" data-rule="num" id="pay-cash" inputmode="numeric" autocomplete="off" placeholder="${esc(t('pay.exact'))}" value="${c.paid === '' ? '' : esc(fmtNum(moneyVal(c.paid)))}"></div>
         <div class="quick" id="pay-quick"><button class="btn xs" data-act="paid-set" data-v="">${esc(t('pay.exact'))}</button>${quickAmounts(v.total).map(a => `<button class="btn xs num" data-act="paid-set" data-v="${a}">${fmtShort(a)}</button>`).join('')}</div>`
       : m === 'hutang' ? `${cust ? '' : `<button class="btn block" data-act="pick-customer" id="pay-pick">${ic('user')} ${esc(t('pay.pick_customer'))}</button>`}
-        <div class="field" style="margin-top:8px"><label class="f" for="pay-dp">${esc(t('pay.dp'))}</label><input class="input money" id="pay-dp" inputmode="numeric" autocomplete="off" placeholder="0" value="${c.paid === '' ? '' : esc(fmtNum(moneyVal(c.paid)))}"></div>
+        <div class="field" style="margin-top:8px"><label class="f" for="pay-dp">${esc(t('pay.dp'))}</label><input class="input money" data-rule="num" id="pay-dp" inputmode="numeric" autocomplete="off" placeholder="0" value="${c.paid === '' ? '' : esc(fmtNum(moneyVal(c.paid)))}"></div>
         <p class="small muted" style="margin:0">${esc(S.role === 'kasir' ? t('pay.debt_hint_kasir') : t('pay.debt_hint'))}</p>`
       : `<p class="muted" style="margin:4px 0">${esc(t('pay.check_' + m))}</p>`}</div>
     <div class="result" id="pay-result"></div>
     <details class="more" id="pay-more" ${c.channel !== 'toko' || c.promo ? 'open' : ''}><summary>${esc(t('pay.more'))}: ${esc(t('ch.' + (c.channel || 'toko')))}${c.promo ? ' · ' + esc(c.promo) : ''}</summary>
       <div class="chips" style="margin-top:6px">${CHANNELS.map(ch => `<button type="button" class="chip ${(c.channel || 'toko') === ch ? 'on' : ''}" data-act="channel" data-c="${ch}">${esc(t('ch.' + ch))}</button>`).join('')}</div>
-      <div class="field" style="margin-top:6px"><label class="f" for="pay-promo">${esc(t('pay.promo'))}</label><input class="input" id="pay-promo" style="text-transform:uppercase" placeholder="KHAIR1111" value="${esc(c.promo || '')}"></div></details>`;
+      <div class="field" style="margin-top:6px"><label class="f" for="pay-promo">${esc(t('pay.promo'))}</label><input class="input" data-rule="doc" id="pay-promo" style="text-transform:uppercase" placeholder="KHAIR1111" value="${esc(c.promo || '')}"></div></details>`;
   const cash = $('#pay-cash', body), dp = $('#pay-dp', body);
   [cash, dp].filter(Boolean).forEach(inp => {
     inp.addEventListener('input', () => { S.cart.paid = inp.value.trim() === '' ? '' : String(moneyVal(inp.value)); saveCart(); payResult(bg); });
@@ -3439,7 +3742,7 @@ function drawOnSite(el) {
   body.innerHTML = `<label class="f">${esc(t('apr.choose'))}</label>
     <div class="picker" id="ap-users">${list.map(u => `<button type="button" data-n="${esc(u.name)}" class="${sel === u.name ? 'on' : ''}">${esc(u.name)} <span class="small">(${esc(t('role.' + u.role))})</span></button>`).join('') || `<span class="red">${esc(t('apr.no_approver'))}</span>`}</div>
     <label class="f" for="ap-pin">${esc(t('apr.pin_of'))}</label>
-    <input class="input num" id="ap-pin" type="password" inputmode="numeric" maxlength="6" autocomplete="off" style="font-size:24px;text-align:center;letter-spacing:8px">
+    <input class="input num" data-rule="pin" id="ap-pin" type="password" inputmode="numeric" maxlength="6" autocomplete="off" style="font-size:24px;text-align:center;letter-spacing:8px">
     <div class="pinpad" style="margin-top:10px">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button type="button" data-k="${n}">${n}</button>`).join('')}<button type="button" data-k="del" aria-label="${esc(t('delete'))}">⌫</button><button type="button" data-k="0">0</button><button type="button" class="ok" data-k="ok" id="ap-ok">${esc(t('apr.approve_save'))}</button></div>
     <div class="err" id="ap-err" role="alert"></div>`;
   const pin = $('#ap-pin', body), err = $('#ap-err', body);
@@ -3667,11 +3970,13 @@ function showReceipt(rc, opts = {}) {
     foot: `<button class="btn sm" id="rc-print">${ic('print')} ${esc(t('print'))}</button>
       <button class="btn sm" id="rc-share">${ic('share')} ${esc(t('share'))}</button>
       <button class="btn sm" id="rc-copy">${ic('copy')} ${esc(t('copy'))}</button>
+      ${!rc.pending && rc.invoice_no && !opts.fromSale ? `<button class="btn sm" id="rc-retur">${ic('undo')} ${esc(t('rt.from_receipt'))}</button>` : ''}
       <button class="btn primary sm grow" data-act="modal-close" id="rc-new">${esc(opts.fromSale ? t('rc.new_sale') : t('close'))}</button>`
   });
   $('#rc-print', el).onclick = () => printHTML(receiptHTML(rc));
   $('#rc-share', el).onclick = () => shareText(receiptText(rc), rc.customer_phone);
   $('#rc-copy', el).onclick = async () => { const ok = await copyText(receiptText(rc)); toast(ok ? t('copied') : t('copy_failed'), ok ? 'ok' : 'err'); };
+  const rb = $('#rc-retur', el); if (rb) rb.onclick = () => { dropModal(el); openReturn({ invoice: rc.invoice_no }); };
   drawExitBox(el, rc);
   drawRcSend(el, rc);
   drawWaCard(el, rc);
@@ -3704,7 +4009,7 @@ function drawRcSend(el, rc) {
   const store = settings().store_name || 'Khair Mart';
   const mail = okEmail(rc.customer_email) ? `mailto:${rc.customer_email}?subject=${encodeURIComponent(tid('rcs.subject', { store, inv: rc.invoice_no }))}&body=${encodeURIComponent(text)}` : '';
   w.innerHTML = `<div class="wa-card" id="rc-send"><div class="wa-h">${ic('send')}<span class="grow">${esc(t('rcs.title'))}</span></div>
-    ${phone ? '' : `<div class="field" style="margin-bottom:8px"><label class="f" for="rcs-phone">${esc(t('rcs.phone'))}</label><input class="input" id="rcs-phone" type="tel" inputmode="tel" autocomplete="off" placeholder="08xx xxxx xxxx"></div>`}
+    ${phone ? '' : `<div class="field" style="margin-bottom:8px"><label class="f" for="rcs-phone">${esc(t('rcs.phone'))}</label><input class="input" data-rule="phone" id="rcs-phone" type="tel" inputmode="tel" autocomplete="off" placeholder="08xx xxxx xxxx"></div>`}
     <div class="list"><a class="btn block wa-send" id="rcs-wa" target="_blank" rel="noopener" ${phone ? `href="${esc(waHref(phone))}"` : 'aria-disabled="true"'}>${ic('wa')} ${esc(t('rcs.wa'))}</a>
     ${mail ? `<a class="btn block" id="rcs-mail" href="${esc(mail)}">${ic('send')} ${esc(t('rcs.mail'))}</a>` : ''}</div></div>`;
   const inp = $('#rcs-phone', w), a = $('#rcs-wa', w);
@@ -3748,8 +4053,8 @@ function drawWaCard(el, rc) {
   }
   w.innerHTML = `<div class="wa-card" id="wa-card">${head}
     ${wa.known ? '' : `<div class="wa-remind" id="wa-remind">${esc(t('wa.remind'))}</div>`}
-    <div class="grid2"><div class="field" style="margin-bottom:8px"><label class="f" for="wa-phone">${esc(t('wa.phone'))}</label><input class="input" id="wa-phone" type="tel" inputmode="tel" autocomplete="off" placeholder="08xx xxxx xxxx" value="${esc(localPhone(wa.phone))}"></div>
-      <div class="field" style="margin-bottom:8px"><label class="f" for="wa-name">${esc(t('wa.name'))}</label><input class="input" id="wa-name" autocomplete="off" maxlength="60" value="${esc(wa.known ? wa.name || '' : '')}"></div></div>
+    <div class="grid2"><div class="field" style="margin-bottom:8px"><label class="f" for="wa-phone">${esc(t('wa.phone'))}</label><input class="input" data-rule="phone" id="wa-phone" type="tel" inputmode="tel" autocomplete="off" placeholder="08xx xxxx xxxx" value="${esc(localPhone(wa.phone))}"></div>
+      <div class="field" style="margin-bottom:8px"><label class="f" for="wa-name">${esc(t('wa.name'))}</label><input class="input" data-rule="pname" id="wa-name" autocomplete="off" maxlength="60" value="${esc(wa.known ? wa.name || '' : '')}"></div></div>
     <label class="check"><input type="checkbox" id="wa-optin"><span>${esc(t('wa.optin'))}</span></label>
     <div class="red small" id="wa-err" role="alert"></div>
     <button type="button" class="btn primary block" id="wa-save">${ic('wa')} ${esc(t('wa.save'))}</button></div>`;
@@ -3913,16 +4218,18 @@ function drawOutbox(el) {
    v12: lines pre-filled from the note keep their photo_index; the app compares what is typed with the note live (same rules
    as the server) and the server refuses a difference without a reason (MISMATCH). A saved goods-in gets a purchase_no and can
    no longer be edited: "Minta koreksi" sends request_purchase_fix (manager/owner approves; the owner sees it in the log). */
-const PU = Object.assign({ supplier: '', date: '', note: '', lines: [], photo_id: '', thumb: '', scan: null }, KS.get('purchase_draft', null) || {});
+const PU = Object.assign({ supplier: '', date: '', note: '', lines: [], photo_id: '', thumb: '', scan: null, carrier: { type: '' } }, KS.get('purchase_draft', null) || {});
+if (!PU.carrier || typeof PU.carrier !== 'object') PU.carrier = { type: '' };
 PU.result = null; PU.q = ''; PU.scanning = false; PU.scanErr = '';
 const PUH = { groups: null, loading: false, err: '' };
-const savePuDraft = () => KS.set('purchase_draft', { supplier: PU.supplier, date: PU.date, note: PU.note, lines: PU.lines, photo_id: PU.photo_id, thumb: PU.thumb, scan: PU.scan });
+const savePuDraft = () => KS.set('purchase_draft', { supplier: PU.supplier, date: PU.date, note: PU.note, lines: PU.lines, photo_id: PU.photo_id, thumb: PU.thumb, scan: PU.scan, carrier: PU.carrier });
 const purchasePhotoRequired = () => settings().require_purchase_photo !== false;
-const MATCH_BADGE = { cocok: 'ok', tidak_cocok: 'red', perlu_cek: 'warn', tanpa_foto: 'gray', koreksi: '' };
+const MATCH_BADGE = { cocok: 'ok', tidak_cocok: 'red', perlu_cek: 'warn', tanpa_foto: 'gray', koreksi: '', retur: 'red' };
 function puBlockReason() {
   if (!PU.lines.length) return t('pu.empty');
   if (purchasePhotoRequired() && !PU.photo_id) return t('pu.need_photo');
   if (PU.lines.some(l => !prodById(l.product_id))) return t('pu.need_match');
+  if (carrierRequired() && !CARRIER_TYPES.includes(PU.carrier.type)) return t('car.need');
   return '';
 }
 function parseAnyDate(v) {
@@ -3979,19 +4286,20 @@ RENDER.masuk = function (force) {
       ${PHOTO_INPUT('pu-photo')}</div>
     <div class="card pad" style="margin-bottom:12px">
       <div style="font-weight:900;font-size:17px;margin-bottom:10px">2. ${esc(t('pu.check_lines'))}</div>
-      <div class="grid2"><div class="field"><label class="f" for="pu-sup">${esc(t('pu.supplier'))}</label><input class="input" id="pu-sup" value="${esc(PU.supplier)}"></div>
+      <div class="grid2"><div class="field"><label class="f" for="pu-sup">${esc(t('pu.supplier'))}</label><input class="input" data-rule="pname" id="pu-sup" value="${esc(PU.supplier)}"></div>
       <div class="field"><label class="f" for="pu-date">${esc(t('date'))}</label><input class="input" type="date" id="pu-date" value="${esc(PU.date)}"></div></div>
       <div id="pu-lines">${PU.lines.map((l, i) => {
         const p = prodById(l.product_id), it = noteItem(l), bad = lineDiffers(l);
         return `<div class="pu-line ${p ? '' : 'unmatched'} ${bad ? 'diff' : ''}" data-line="${i}" ${hasIdx(l) ? `data-idx="${esc(l.photo_index)}"` : ''}>
           ${l.ext ? `<div class="note">${esc(t('pu.on_note'))}: <b>${esc(l.ext.name)}</b>${it && it.qty != null ? ` · <b class="num" data-note-qty>${esc(fmtQty(it.qty))} ${esc(it.unit || '')}</b>` : ''}${l.ext.score != null ? ` <span class="badge ${l.ext.score >= 0.75 ? 'ok' : l.ext.score >= 0.5 ? '' : 'warn'}">${Math.round(l.ext.score * 100)}%</span>` : ''}</div>` : ''}
           ${l.ext ? `<select class="input" data-pu-prod="${i}" aria-label="${esc(t('product'))}">${prodOptions(l.product_id)}</select>${p ? '' : `<div class="small" style="color:var(--warn);font-weight:800;margin-top:4px">${esc(t('pu.unmatched'))}</div>`}` : `<b>${esc(p ? p.name : l.name)}</b> <span class="badge gray">${esc(t('pu.manual'))}</span>`}
-          <div class="g3"><div><label class="f">${esc(t('qty'))}${p ? ` (${esc(p.unit || '')})` : ''}</label><input class="input num" inputmode="decimal" data-pu-qty="${i}" value="${esc(fmtQtyInput(l.qty))}"></div>
-          <div><label class="f">${esc(t('pu.price_note'))}</label><input class="input num" inputmode="numeric" data-pu-cost="${i}" value="${l.cost ? esc(fmtNum(l.cost)) : ''}"></div>
+          <div class="g3"><div><label class="f">${esc(t('qty'))}${p ? ` (${esc(p.unit || '')})` : ''}</label><input class="input num" inputmode="decimal" data-rule="num" data-pu-qty="${i}" value="${esc(fmtQtyInput(l.qty))}"></div>
+          <div><label class="f">${esc(t('pu.price_note'))}</label><input class="input num" inputmode="numeric" data-rule="num" data-pu-cost="${i}" value="${l.cost ? esc(fmtNum(l.cost)) : ''}"></div>
           <button class="icon-btn" data-act="pu-del" data-i="${i}" aria-label="${esc(t('delete'))}" style="color:var(--redd)">${ic('trash')}</button></div>
           <div class="noteq" role="status">${bad ? esc(t('pu.line_diff', { typed: fmtQty(l.qty), note: fmtQty(it.qty) })) : ''}</div></div>`;
       }).join('') || `<div class="empty">${esc(t('pu.empty_hint'))}</div>`}</div>
       <div class="field" style="margin-top:6px"><label class="f" for="pu-q">${esc(t('pu.add_product'))}</label><div class="search">${ic('search')}<input class="input" id="pu-q" type="search" autocomplete="off" placeholder="${esc(t('sell.search_ph'))}" value="${esc(PU.q)}"></div><div class="list" id="pu-sug" style="margin-top:6px"></div></div>
+      <div class="card pad" id="pu-carrier" style="margin:10px 0;background:var(--pll)">${carrierHTML('pu', PU.carrier)}</div>
       <div class="sumrow" style="font-weight:900;font-size:19px"><span>${esc(t('pu.total_note'))}</span><span class="num" id="pu-total">${fmtRp(total)}</span></div>
       <div id="pu-match"></div>
       <div class="small" id="pu-block" style="color:var(--warn);font-weight:800">${PU.lines.length ? esc(block) : ''}</div>
@@ -4019,6 +4327,7 @@ RENDER.masuk = function (force) {
   $$('[data-pu-qty]', v).forEach(i => i.oninput = () => { const k = +i.dataset.puQty; PU.lines[k].qty = qtyVal(i.value); recalc(); drawPuLine(k); drawPuMatch(); });
   $$('[data-pu-cost]', v).forEach(i => i.oninput = () => { PU.lines[+i.dataset.puCost].cost = moneyVal(i.value); recalc(); });
   $$('[data-pu-prod]', v).forEach(sel => sel.onchange = () => { const l = PU.lines[+sel.dataset.puProd]; l.product_id = sel.value ? Number(sel.value) || sel.value : null; savePuDraft(); RENDER.masuk(); });
+  bindCarrier(v, 'pu', PU.carrier, () => { savePuDraft(); RENDER.masuk(); }, savePuDraft);
   drawPuMatch();
   drawPuHist();
   if (force || (!PUH.groups && !PUH.loading && !PUH.err)) loadPuHistory();
@@ -4065,6 +4374,8 @@ async function savePurchase(reason) {
   if (block) { if (err) err.textContent = block; return; }
   const items = PU.lines.map(l => { const it = { product_id: l.product_id, qty: roundQty(l.qty), cost_price: int(l.cost) }; if (hasIdx(l)) it.photo_index = int(l.photo_index); return it; });
   if (items.some(i => !(i.qty > 0))) { if (err) err.textContent = t('pu.bad_qty'); return; }
+  const cchk = carrierCheck(PU.carrier, carrierRequired());
+  if (cchk) { carrierShow($('#v-masuk'), 'pu', cchk); if (err) err.textContent = cchk.msg; return; }
   if (!reason && items.some(i => !(i.cost_price > 0))) { const ok = await confirmBox(t('pu.zero_cost')); if (!ok.ok) return; }
   const btn = $('#pu-save'); if (btn) { btn.disabled = true; btn.textContent = t('saving'); }
   const mmBtn = $('#pu-mm-save'); if (mmBtn) mmBtn.disabled = true;
@@ -4075,6 +4386,7 @@ async function savePurchase(reason) {
     const data = { purchase_date: PU.date || today(), supplier: PU.supplier.trim(), note: PU.note.trim(), items };
     if (PU.photo_id) data.photo_id = PU.photo_id;
     if (reason) data.mismatch_reason = reason;
+    const car = carrierPayload(PU.carrier); if (car) data.carrier = car;
     const r = await api('save_purchase', data);
     applyStock(r.stock);
     const m = r.match || { status: PU.photo_id ? 'perlu_cek' : 'tanpa_foto', diffs: [] }, no = r.purchase_no || '';
@@ -4088,7 +4400,7 @@ async function savePurchase(reason) {
       <div class="row wrap" style="margin-top:8px"><button class="btn primary sm" data-act="pu-move-now" id="pu-res-move">${ic('truck')} ${esc(t('mv.now'))}</button>
       ${no ? `<button class="btn sm" data-act="pu-fix" data-no="${esc(no)}" id="pu-res-fix">${esc(t('pu.fix_btn'))}</button>` : ''}</div></div>`;
     PU.lastIn = lines.slice();
-    Object.assign(PU, { lines: [], note: '', photo_id: '', thumb: '', scan: null, supplier: '' }); savePuDraft();
+    Object.assign(PU, { lines: [], note: '', photo_id: '', thumb: '', scan: null, supplier: '', carrier: { type: '' } }); savePuDraft();
     const mm = $('#pu-mismatch'); if (mm) dropModal(mm);
     toast(t('saved'), 'ok');
     PUH.groups = null;
@@ -4097,6 +4409,7 @@ async function savePurchase(reason) {
     if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = t('pu.save'); }
     if (mmBtn && mmBtn.isConnected) mmBtn.disabled = false;
     if (e.code === 'MISMATCH') { openPuMismatch((e.res && e.res.match) || puMatchNow() || { diffs: [] }); return; }
+    if (e.code === 'CARRIER_REQUIRED') { const mm = $('#pu-mismatch'); if (mm) dropModal(mm); carrierShow($('#v-masuk'), 'pu', { msg: e.message || t('car.need') }); if (err) err.textContent = e.message || t('car.need'); return; }
     const msg = errMsg(e), mmErr = $('#pu-mm-err');
     if (mmErr) mmErr.textContent = msg; else if (err) err.textContent = msg;
   } finally { puSaving = false; }
@@ -4128,6 +4441,12 @@ function openPuMismatch(match) {
 /* ---- History of goods-in (last 14 days), grouped by purchase_no; corrections only through a request ---- */
 function groupPurchases(rows) {
   const g = new Map();
+  PUH.returned = {};
+  rows.filter(r => r.purchase_no && r.match_status === 'retur').forEach(r => {
+    const m = /dari (\S+)/.exec(String(r.note || '')); if (!m) return;
+    const x = PUH.returned[m[1]] = PUH.returned[m[1]] || {};
+    x[String(r.product_id)] = roundQty((x[String(r.product_id)] || 0) + Math.abs(num(r.qty)));
+  });
   rows.filter(r => r.purchase_no).forEach(r => {
     let x = g.get(r.purchase_no);
     if (!x) { x = { no: r.purchase_no, date: r.purchase_date, supplier: r.supplier || '', user: r.user || '', match: '', notes: '', lines: new Map(), fixes: 0, base: false, order: 0 }; g.set(r.purchase_no, x); }
@@ -4158,7 +4477,7 @@ function drawPuHist() {
     return `<div class="hist" data-no="${esc(g.no)}"><div class="h"><b class="num">${esc(g.no)}</b><span class="badge ${MATCH_BADGE[g.match] || 'gray'}">${esc(t('pu.m_' + (g.match || 'tanpa_foto')))}</span>${g.fixes ? `<span class="badge">${esc(t('pu.n_fixes', { n: g.fixes }))}</span>` : ''}${pend ? `<span class="badge warn" data-pending="${esc(pend.id)}">${esc(t('pu.fix_waiting'))}</span>` : ''}</div>
       <div class="small muted">${esc(fmtDate(g.date))}${g.supplier ? ' · ' + esc(g.supplier) : ''}${g.user ? ' · ' + esc(g.user) : ''}</div>
       ${g.lines.map(l => { const p = prodById(l.product_id); return `<div class="hl"><span>${esc(p ? p.name : l.name)}</span><b class="num">${fmtQty(l.qty)} ${esc(p ? p.unit || '' : '')}</b></div>`; }).join('')}
-      <div class="row" style="justify-content:space-between;margin-top:6px"><span class="lockline" style="margin:0">${ic('lock')} ${esc(t('pu.locked_short'))}</span><button class="btn xs" data-act="pu-fix" data-no="${esc(g.no)}" ${pend ? 'disabled' : ''}>${esc(t('pu.fix_btn'))}</button></div></div>`;
+      ${g.match === 'retur' ? '' : `<div class="row wrap" style="justify-content:space-between;margin-top:6px"><span class="lockline" style="margin:0">${ic('lock')} ${esc(t('pu.locked_short'))}</span><span class="row" style="gap:6px"><button class="btn xs" data-act="pu-retur" data-no="${esc(g.no)}">${esc(t('sr.btn'))}</button><button class="btn xs" data-act="pu-fix" data-no="${esc(g.no)}" ${pend ? 'disabled' : ''}>${esc(t('pu.fix_btn'))}</button></span></div>`}</div>`;
   }).join('') : `<div class="muted small">${esc(t('pu.hist_none'))}</div>`;
 }
 async function openPuFix(no) {
@@ -4171,7 +4490,7 @@ async function openPuFix(no) {
     body: `<p style="margin-top:0"><b class="num">${esc(no)}</b> · ${esc(fmtDate(g.date))}${g.supplier ? ' · ' + esc(g.supplier) : ''}</p>
       <p class="small muted">${esc(t(direct ? 'pu.fix_hint_mgr' : 'pu.fix_hint'))}</p>
       <div class="list" id="fx-lines">${g.lines.map(l => { const p = prodById(l.product_id); return `<div class="li" data-fix-line="${esc(l.product_id)}" style="min-height:0;padding:8px 10px"><div class="grow"><div class="t">${esc(p ? p.name : l.name)}</div><div class="s">${esc(t('pu.fix_now', { qty: fmtQty(l.qty), unit: p ? p.unit || '' : '' }))}</div></div>
-        <label class="sr-only" for="fx-q-${esc(l.product_id)}">${esc(t('pu.fix_new'))}</label><input class="input num" id="fx-q-${esc(l.product_id)}" data-fix-qty="${esc(l.product_id)}" inputmode="decimal" autocomplete="off" style="width:104px;font-weight:800;font-size:18px" value="${esc(fmtQtyInput(l.qty))}"></div>`; }).join('')}</div>
+        <label class="sr-only" for="fx-q-${esc(l.product_id)}">${esc(t('pu.fix_new'))}</label><input class="input num" id="fx-q-${esc(l.product_id)}" data-rule="num" data-fix-qty="${esc(l.product_id)}" inputmode="decimal" autocomplete="off" style="width:104px;font-weight:800;font-size:18px" value="${esc(fmtQtyInput(l.qty))}"></div>`; }).join('')}</div>
       <div class="field" style="margin-top:12px"><label class="f" for="fx-reason">${esc(t('reason'))} *</label><textarea class="input" id="fx-reason" rows="2" maxlength="300" placeholder="${esc(t('pu.fix_reason_ph'))}"></textarea></div>
       <div class="err" id="fx-err" role="alert"></div><div id="fx-res"></div>`,
     foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button><button class="btn primary" id="fx-send">${ic('send')} ${esc(t(direct ? 'pu.fix_apply' : 'pu.fix_send'))}</button>`
@@ -4204,6 +4523,291 @@ async function openPuFix(no) {
   };
 }
 
+/* ========== v16 who brought the goods (goods-in) / who takes them away (supplier return) ==========
+   Kendaraan umum (kind + vehicle number, required) · Teman (name, required) · Sopir pemasok (name / plate optional) ·
+   Karyawan (name, required); a phone number is optional. Sent as data.carrier. */
+const CARRIER_TYPES = ['umum', 'teman', 'pemasok', 'karyawan'];
+const CARRIER_KINDS = ['ojek', 'angkot', 'taksi', 'truk', 'lainnya'];
+const carrierRequired = () => settings().require_carrier !== false;
+function carrierHTML(px, c, titleKey = 'car.title') {
+  const ty = c.type || '', fld = (id, label, rule, val, req, ph = '') => `<div class="field"><label class="f" for="${px}-car-${id}">${esc(label)}${req ? ' *' : ''}</label><input class="input" id="${px}-car-${id}" data-car-f="${id}" data-rule="${rule}" autocomplete="off" value="${esc(val || '')}" ${ph ? `placeholder="${esc(ph)}"` : ''}${rule === 'phone' ? ' type="tel"' : ''}></div>`;
+  let fields = '';
+  if (ty === 'umum') fields = `<div class="grid2"><div class="field"><label class="f" for="${px}-car-kind">${esc(t('car.kind'))}</label><select class="input" id="${px}-car-kind" data-car-f="kind">${CARRIER_KINDS.map(k => `<option value="${k}" ${(c.kind || 'ojek') === k ? 'selected' : ''}>${esc(t('car.k_' + k))}</option>`).join('')}</select></div>${fld('vehicle', t('car.vehicle'), 'doc', c.vehicle, true, 'B 1234 XYZ')}</div>`;
+  else if (ty === 'teman' || ty === 'karyawan') fields = fld('name', t('car.name'), 'name', c.name, true);
+  else if (ty === 'pemasok') fields = `<div class="grid2">${fld('name', t('car.driver') + ' ' + t('car.optional'), 'name', c.name, false)}${fld('vehicle', t('car.plate') + ' ' + t('car.optional'), 'doc', c.vehicle, false, 'B 1234 XYZ')}</div>`;
+  return `<div class="carrier" id="${px}-car" data-type="${esc(ty)}"><div class="f" style="font-weight:800;margin-bottom:6px">${esc(t(titleKey))}${carrierRequired() || px === 'sr' ? ' *' : ''}</div>
+    <div class="seg seg2" id="${px}-car-types" role="group" aria-label="${esc(t(titleKey))}">${CARRIER_TYPES.map(x => `<button type="button" data-car="${x}" id="${px}-car-${x}" class="${ty === x ? 'on' : ''}" aria-pressed="${ty === x}">${esc(t('car.t_' + x))}</button>`).join('')}</div>
+    <div style="margin-top:8px">${ty ? fields + fld('phone', t('car.phone'), 'phone', c.phone, false, '08xx xxxx xxxx') : `<div class="small muted" id="${px}-car-pick">${esc(t('car.pick'))}</div>`}</div>
+    <div class="err" id="${px}-car-err" role="alert"></div></div>`;
+}
+/** Wires the block: a type tap re-renders through redraw(); typed fields go straight into c. */
+function bindCarrier(root, px, c, redraw, onInput) {
+  const box = $(`#${px}-car`, root); if (!box) return;
+  $(`#${px}-car-types`, box).onclick = e => { const b = e.target.closest('[data-car]'); if (!b) return; if (c.type !== b.dataset.car) { c.type = b.dataset.car; if (c.type === 'umum' && !c.kind) c.kind = 'ojek'; } redraw(); };
+  box.addEventListener('input', e => { const f = e.target.dataset.carF; if (!f) return; c[f] = e.target.value; $(`#${px}-car-err`, box).textContent = ''; if (onInput) onInput(); });
+  box.addEventListener('change', e => { const f = e.target.dataset.carF; if (f) { c[f] = e.target.value; if (onInput) onInput(); } });
+}
+/** The server's rules (readCarrier): '' when fine, else the message; focus = the field to fix. */
+function carrierCheck(c, required) {
+  if (!c || !CARRIER_TYPES.includes(c.type)) return required ? { msg: t('car.need') } : null;
+  const nm = String(c.name || '').trim(), veh = String(c.vehicle || '').trim(), ph = String(c.phone || '').trim();
+  if (ph && !normPhone(ph)) return { msg: t('car.bad_phone'), focus: 'phone' };
+  if (c.type === 'umum' && !veh) return { msg: t('car.need_vehicle'), focus: 'vehicle' };
+  if ((c.type === 'teman' || c.type === 'karyawan') && !nm) return { msg: t('car.need_name'), focus: 'name' };
+  if (nm && !/^[\p{L}\p{M}]/u.test(nm)) return { msg: t('rule.name'), focus: 'name' };
+  return null;
+}
+const carrierPayload = c => c && c.type ? { type: c.type, kind: c.type === 'umum' ? c.kind || 'ojek' : '', name: String(c.name || '').trim(), vehicle: String(c.vehicle || '').trim(), phone: String(c.phone || '').trim() } : undefined;
+function carrierShow(root, px, chk) {
+  const err = $(`#${px}-car-err`, root); if (err) err.textContent = chk ? chk.msg : '';
+  if (chk && chk.focus) { const i = $(`#${px}-car-${chk.focus}`, root); if (i) { i.focus(); i.scrollIntoView({ block: 'center' }); } }
+  else if (chk) { const b = $(`#${px}-car`, root); if (b) b.scrollIntoView({ block: 'center' }); }
+}
+
+/* ========== v16 Retur pelanggan: invoice → lines (≤ bought − returned) → reason, who brings it back, how the money goes back ==========
+   request_return → the manager approves (the owner above the limit) → the return note (RT number = entry note for the goods). */
+const RETURN_REASONS = ['tidak_sesuai', 'rusak', 'kadaluarsa', 'salah_kirim', 'kualitas_buruk', 'berubah_pikiran', 'lainnya'];
+const invoiceDate = inv => { const m = /^[A-Z]{1,4}(\d{2})(\d{2})(\d{2})-/.exec(String(inv || '')); return m ? `20${m[1]}-${m[2]}-${m[3]}` : ''; };
+const returnFeePct = () => Math.min(50, Math.max(0, num(settings().return_fee_pct)));
+/** Quantities of one invoice / goods-in already returned or waiting (list_returns: approved + pending). */
+async function returnedOf(ref, from) {
+  const q = {};
+  try {
+    const r = await api('list_returns', { from: from || addDays(today(), -90), to: today() });
+    (r.returns || []).filter(x => x.ref === ref && (x.status === 'approved' || x.status === 'pending')).forEach(x => (Array.isArray(x.lines) ? x.lines : []).forEach(l => { q[String(l.product_id)] = roundQty((q[String(l.product_id)] || 0) + num(l.qty)); }));
+  } catch (e) { if (e instanceof NetError) throw e; }
+  return q;
+}
+async function loadSaleForReturn(inv) {
+  const d = invoiceDate(inv);
+  const r = await api('get_sales', { from: d || addDays(today(), -60), to: d || today() });
+  const sale = (r.sales || []).find(s => s.invoice_no === inv);
+  if (!sale) return null;
+  return { sale, items: (r.items || []).filter(i => i.invoice_no === inv), ret: await returnedOf(inv, sale.sale_date) };
+}
+function openReturn(pre = {}) {
+  const R = { sale: null, lines: [], reason: '', note: '', by: '', phone: '', method: 'tunai', sent: null };
+  const el = openModal({
+    title: t('rt.title'), id: 'retur', focus: false,
+    body: `<p class="small muted" style="margin-top:0">${esc(t('rt.hint'))}</p>
+      <div class="row" style="align-items:flex-end"><div class="field grow" style="margin:0"><label class="f" for="rt-inv">${esc(t('rt.inv'))} *</label><input class="input" id="rt-inv" data-rule="doc" autocomplete="off" placeholder="${esc(t('rt.inv_ph'))}" value="${esc(pre.invoice || '')}"></div>
+      ${'BarcodeDetector' in window ? `<button class="icon-btn" id="rt-scan" type="button" aria-label="${esc(t('rt.scan'))}">${ic('camera')}</button>` : ''}<button class="btn primary" id="rt-find" type="button">${ic('search')} ${esc(t('rt.find'))}</button></div>
+      <div class="err" id="rt-find-err" role="alert"></div><div id="rt-body"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button><button class="btn primary" id="rt-send" hidden>${ic('send')} ${esc(t('rt.send'))}</button>`
+  });
+  const inv = $('#rt-inv', el), body = $('#rt-body', el), send = $('#rt-send', el), ferr = $('#rt-find-err', el);
+  let poll = null;
+  const stopPoll = () => { if (poll) clearInterval(poll); poll = null; };
+  const cust = () => R.sale && R.sale.customer_id != null ? custById(R.sale.customer_id) : null;
+  const calc = () => {
+    const gross = sum(R.lines, l => Math.round(num(l.qty) * l.unitNet)), fee = Math.round(gross * returnFeePct() / 100);
+    return { gross, fee, refund: gross - fee };
+  };
+  const drawRefund = () => {
+    const c = calc(), box = $('#rt-refund', el); if (!box) return;
+    const lbl = R.method === 'potong_hutang' ? t('rt.refund_debt') : R.method === 'tukar' ? t('rt.refund_tukar') : t('rt.refund');
+    box.innerHTML = `<div class="sumrow"><span>${esc(t('rt.value'))}</span><b class="num" id="rt-gross">${fmtRp(c.gross)}</b></div>
+      ${c.fee ? `<div class="sumrow"><span>${esc(t('rt.fee', { pct: fmtPct1(returnFeePct()) }))}</span><b class="num red" id="rt-fee">-${fmtRp(c.fee)}</b></div>` : ''}
+      <div class="sumrow" style="font-size:19px;font-weight:900"><span>${esc(lbl)}${R.method === 'tunai' || R.method === 'transfer' ? ` (${esc(t('rt.m_' + R.method))})` : ''}</span><span class="num" id="rt-amount">${fmtRp(c.refund)}</span></div>`;
+  };
+  const draw = () => {
+    if (!R.sale) { body.innerHTML = ''; send.hidden = true; return; }
+    const s = R.sale, c = cust(), debt = c ? int(c.debt_balance) : 0;
+    const methods = ['tunai', 'transfer'].concat(debt > 0 ? ['potong_hutang'] : [], ['tukar']);
+    if (!methods.includes(R.method)) R.method = 'tunai';
+    body.innerHTML = `<div class="card pad" id="rt-sale" data-inv="${esc(s.invoice_no)}" style="margin:10px 0">
+        <div class="row wrap"><b class="num grow" style="font-size:17px">${esc(s.invoice_no)}</b><span class="badge">${esc(fmtDateTime(s.sale_time, s.sale_date))}</span></div>
+        <div class="sumrow"><span>${esc(t('rt.buyer'))}</span><b id="rt-buyer">${esc(s.customer_name || t('sell.walkin'))}</b></div>
+        <div class="sumrow"><span>${esc(t('rc.cashier'))}</span><span>${esc(s.cashier || '')}</span></div>
+        <div class="sumrow"><span>${esc(t('total'))}</span><b class="num">${fmtRp(s.total)}</b></div>${int(s.discount) ? `<div class="small muted">${esc(t('rt.disc_note', { amt: fmtRp(s.discount) }))}</div>` : ''}</div>
+      <h3 style="font-size:16px;margin:12px 0 6px">${esc(t('rt.lines'))}</h3>
+      <div class="list" id="rt-lines">${R.lines.map(l => `<div class="li rt-line" data-rt-line="${esc(l.product_id)}" style="min-height:0;padding:10px;flex-wrap:wrap;gap:8px">
+          <div class="grow" style="min-width:150px"><div class="t">${esc(l.name)}</div><div class="s">${esc(t('rt.bought', { n: fmtQty(l.sold), r: fmtQty(l.ret), l: fmtQty(l.left), unit: l.unit }))} · ${fmtRp(Math.round(l.unitNet))}/${esc(l.unit || 'pcs')}</div></div>
+          <input class="input num" style="width:84px;font-weight:800;font-size:18px" data-rt-qty="${esc(l.product_id)}" data-rule="num" inputmode="decimal" autocomplete="off" value="${l.qty ? esc(fmtQtyInput(l.qty)) : ''}" placeholder="0" aria-label="${esc(t('qty'))} ${esc(l.name)}" ${l.left > 0 ? '' : 'disabled'}>
+          <div class="seg" data-rt-cond="${esc(l.product_id)}" style="width:100%">${['baik', 'rusak'].map(k => `<button type="button" data-c="${k}" class="${l.cond === k ? 'on' : ''}" aria-pressed="${l.cond === k}" ${l.left > 0 ? '' : 'disabled'}>${esc(t('rt.cond_' + k))}</button>`).join('')}</div></div>`).join('')}</div>
+      <div class="grid2" style="margin-top:10px"><div class="field"><label class="f" for="rt-reason">${esc(t('rt.reason'))} *</label><select class="input" id="rt-reason"><option value="">${esc(t('rt.pick_reason'))}</option>${RETURN_REASONS.map(k => `<option value="${k}" ${R.reason === k ? 'selected' : ''}>${esc(t('rt.r_' + k))}</option>`).join('')}</select></div>
+      <div class="field"><label class="f" for="rt-note">${esc(t(R.reason === 'lainnya' ? 'rt.note_req' : 'notes'))}</label><input class="input" id="rt-note" maxlength="300" autocomplete="off" value="${esc(R.note)}"></div></div>
+      <div class="grid2"><div class="field"><label class="f" for="rt-by">${esc(t('rt.by'))}</label><input class="input" id="rt-by" data-rule="name" autocomplete="off" value="${esc(R.by)}"></div>
+      <div class="field"><label class="f" for="rt-phone">${esc(t('rt.by_phone'))}</label><input class="input" id="rt-phone" data-rule="phone" type="tel" autocomplete="off" placeholder="08xx xxxx xxxx" value="${esc(R.phone)}"></div></div>
+      <div class="f" style="font-weight:800;margin-bottom:6px">${esc(t('rt.method'))}</div>
+      <div class="seg seg2" id="rt-method">${methods.map(m => `<button type="button" data-m="${m}" id="rt-m-${m}" class="${R.method === m ? 'on' : ''}" aria-pressed="${R.method === m}">${esc(t('rt.m_' + m))}</button>`).join('')}</div>
+      ${debt > 0 ? `<div class="small muted" style="margin-top:4px" id="rt-debt">${esc(t('rt.debt_now', { amt: fmtRp(debt) }))}</div>` : ''}
+      <div id="rt-refund" class="card pad" style="margin-top:10px"></div>
+      <div class="small muted" style="margin-top:6px">${esc(t('rt.stock_rule'))}</div>
+      <div class="err" id="rt-err" role="alert"></div>`;
+    send.hidden = false; send.disabled = false;
+    drawRefund();
+  };
+  const find = async () => {
+    const no = inv.value.trim().toUpperCase();
+    ferr.textContent = ''; stopPoll();
+    if (!no) { ferr.textContent = t('required') + ': ' + t('rt.inv'); inv.focus(); return; }
+    if (/^OFFLINE-/.test(no)) { ferr.textContent = t('rt.pending_inv'); return; }
+    body.innerHTML = `<div class="spinner"></div>`; send.hidden = true;
+    try {
+      const x = await loadSaleForReturn(no);
+      if (!x) { R.sale = null; body.innerHTML = ''; ferr.textContent = t('rt.not_found', { inv: no }); return; }
+      if (x.sale.status === 'void') { R.sale = null; body.innerHTML = ''; ferr.textContent = t('rt.void'); return; }
+      const discRatio = int(x.sale.subtotal) > 0 ? Math.min(1, int(x.sale.discount) / int(x.sale.subtotal)) : 0;
+      const agg = new Map();
+      x.items.forEach(it => { const k = String(it.product_id), a = agg.get(k) || { product_id: it.product_id, name: it.name, sold: 0, value: 0 }; a.sold = roundQty(a.sold + num(it.qty)); a.value += int(it.line_total); agg.set(k, a); });
+      R.sale = x.sale;
+      R.lines = [...agg.values()].map(a => { const p = prodById(a.product_id), ret = num(x.ret[String(a.product_id)]); return { product_id: a.product_id, name: p ? p.name : a.name, unit: p ? p.unit || '' : '', sold: a.sold, ret, left: roundQty(Math.max(0, a.sold - ret)), unitNet: a.sold > 0 ? a.value / a.sold * (1 - discRatio) : 0, qty: 0, cond: 'baik' }; });
+      const c = cust();
+      R.by = c ? c.name : (x.sale.customer_name && x.sale.customer_name !== 'Umum' ? x.sale.customer_name : '');
+      R.by = String(R.by || '').replace(/[^\p{L}\p{M}\p{N} .,'-]/gu, '').slice(0, 60);
+      R.phone = c && c.phone ? String(c.phone).replace(/\D/g, '') : '';
+      draw();
+      if (!R.lines.some(l => l.left > 0)) { $('#rt-err', el).textContent = t('rt.none_left'); send.disabled = true; }
+    } catch (e) { R.sale = null; body.innerHTML = ''; ferr.textContent = e instanceof NetError ? t('rt.need_online') : errMsg(e); }
+  };
+  $('#rt-find', el).onclick = find;
+  inv.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); find(); } });
+  const sc = $('#rt-scan', el); if (sc) sc.onclick = () => cameraScan(code => { inv.value = String(code).toUpperCase(); find(); });
+  body.addEventListener('input', e => {
+    const q = e.target.closest('[data-rt-qty]');
+    if (q) { const l = R.lines.find(x => String(x.product_id) === q.dataset.rtQty); if (l) l.qty = q.value.trim() === '' ? 0 : qtyVal(q.value); $('#rt-err', el).textContent = ''; drawRefund(); return; }
+    if (e.target.id === 'rt-note') R.note = e.target.value;
+    if (e.target.id === 'rt-by') R.by = e.target.value;
+    if (e.target.id === 'rt-phone') R.phone = e.target.value;
+    $('#rt-err', el).textContent = '';
+  });
+  body.addEventListener('change', e => { if (e.target.id === 'rt-reason') { R.reason = e.target.value; $('label[for="rt-note"]', el).textContent = t(R.reason === 'lainnya' ? 'rt.note_req' : 'notes'); } });
+  body.addEventListener('click', e => {
+    const cb = e.target.closest('[data-rt-cond] [data-c]');
+    if (cb) { const l = R.lines.find(x => String(x.product_id) === cb.closest('[data-rt-cond]').dataset.rtCond); if (l) { l.cond = cb.dataset.c; $$('button', cb.parentNode).forEach(b => { b.classList.toggle('on', b === cb); b.setAttribute('aria-pressed', b === cb); }); } return; }
+    const mb = e.target.closest('#rt-method [data-m]');
+    if (mb) { R.method = mb.dataset.m; $$('#rt-method button', el).forEach(b => { b.classList.toggle('on', b === mb); b.setAttribute('aria-pressed', b === mb); }); drawRefund(); }
+  });
+  send.onclick = async () => {
+    const err = $('#rt-err', el); if (!R.sale || !err) return;
+    const lines = R.lines.filter(l => l.qty > 0);
+    if (!lines.length) { err.textContent = t('rt.err_qty'); return; }
+    const over = lines.find(l => l.qty > l.left + 1e-9);
+    if (over) { err.textContent = t('rt.err_over', { name: over.name, n: fmtQty(over.left) }); return; }
+    if (!R.reason) { err.textContent = t('rt.err_reason'); $('#rt-reason', el).focus(); return; }
+    if (R.reason === 'lainnya' && !R.note.trim()) { err.textContent = t('rt.err_note'); $('#rt-note', el).focus(); return; }
+    if (R.phone.trim() && !normPhone(R.phone)) { err.textContent = t('car.bad_phone'); $('#rt-phone', el).focus(); return; }
+    send.disabled = true; err.textContent = '';
+    try {
+      const r = await api('request_return', { kind: 'pelanggan', invoice_no: R.sale.invoice_no, lines: lines.map(l => ({ product_id: l.product_id, qty: l.qty, condition: l.cond })), reason_code: R.reason, reason_note: R.note.trim(),
+        returned_by: R.by.trim(), returned_by_phone: R.phone.trim(), refund_method: R.method, client_id: uuid() });
+      const id = r.request_id || (r.approval || {}).request_id;
+      trackMyRequest(id, 'retur', t('req.retur', { inv: R.sale.invoice_no }), r.return_id);
+      R.sent = { id, rid: r.return_id, role: r.approver_role };
+      $('#rt-find', el).disabled = true; inv.disabled = true; send.hidden = true;
+      showReturnWait(el, body, R.sent, 'pelanggan');
+      poll = setInterval(() => { if (!el.isConnected) { stopPoll(); return; } checkReturn(el, body, R.sent, stopPoll); }, 4000);
+    } catch (e) { send.disabled = false; err.textContent = e instanceof NetError ? t('rt.need_online') : errMsg(e); }
+  };
+  if (pre.invoice) find(); else setTimeout(() => { if (!isTouch()) inv.focus(); }, 30);
+}
+function showReturnWait(el, body, info, kind) {
+  body.innerHTML = `<div class="status perlu_cek" id="${kind === 'pemasok' ? 'sr-wait' : 'rt-wait'}" data-rid="${esc(info.rid || '')}" style="margin-top:10px"><div class="st">${ic('lock')} ${esc(t('rt.sent'))}</div>
+    <div>${esc(t('rt.no'))}: <b class="num" id="${kind === 'pemasok' ? 'sr-id' : 'rt-id'}">${esc(info.rid || '')}</b> · ${esc(t('apr.request_id'))}: <b class="num">${esc(info.id || '')}</b></div>
+    <div class="small" data-approver="${esc(info.role || 'manager')}">${esc(t(info.role === 'owner' ? 'rt.wait_owner' : 'rt.wait_mgr'))}</div><div class="small muted">${esc(t('rt.owner_told'))}</div></div><div id="rt-result"></div>`;
+}
+async function checkReturn(el, body, info, stop) {
+  try {
+    const a = (await api('check_approval', { request_id: info.id })).approval || {};
+    if (!a.status || a.status === 'pending') return;
+    stop(); updateMyRequest(a); KS.set('my_requests', MYREQ.list);
+    const box = $('#rt-result', el); if (!box) return;
+    if (a.status === 'rejected') box.innerHTML = `<div class="status tidak_cocok" id="rt-rejected" style="margin-top:8px"><div class="st">${esc(t('rt.rejected'))}</div>${a.decided_by ? `<div>${esc(a.decided_by)}${a.note ? ` · “${esc(a.note)}”` : ''}</div>` : ''}</div>`;
+    else { box.innerHTML = `<div class="status cocok" id="rt-approved" style="margin-top:8px"><div class="st">${ic('check')} ${esc(t('rt.approved'))} · ${esc(a.decided_by || '')}</div></div><div style="margin-top:8px">${returnNoteHTML(aprPayload(a), a)}</div>
+      <div class="row" style="margin-top:8px"><button class="btn sm" id="rt-print">${ic('print')} ${esc(t('print'))}</button></div>`;
+      $('#rt-print', el).onclick = () => printHTML(returnNoteHTML(aprPayload(a), a)); }
+  } catch (e) { }
+}
+/** The return note: RT number (the entry note for returned goods), the invoice / goods-in, lines, money (customer only). */
+function returnNoteHTML(rec, a = {}) {
+  const st = settings(), sup = rec.kind === 'pemasok', lines = Array.isArray(rec.lines) ? rec.lines : [];
+  const r2 = (k, v, id = '') => `<div class="r2"${id ? ` id="${id}"` : ''}><span>${esc(k)}</span><span>${esc(v)}</span></div>`;
+  return `<div class="receipt w${paperW()}" id="rt-slip" data-rid="${esc(rec.return_id || '')}"><div class="c b">${esc(st.store_name || 'Khair Mart')}</div>${st.address ? `<div class="c">${esc(st.address)}</div>` : ''}<div class="ln"></div>
+    <div class="c b" style="font-size:1.15em">${esc(t('rt.slip_title'))}</div><div class="c b num" id="rt-slip-no">${esc(rec.return_id || '')}</div><div class="ln"></div>
+    ${r2(t('rc.date'), fmtDateTime(a.decided_at || a.created_at || new Date().toISOString()))}
+    ${sup ? r2(t('sr.from'), rec.ref || '') + r2(t('sr.supplier'), rec.party_name || '') + r2(t('sr.doc'), rec.out_doc_no || '') : r2(t('rt.inv'), rec.ref || '') + r2(t('rt.buyer'), rec.bought_by || rec.party_name || '')}
+    ${r2(sup ? t('sr.carrier') : t('rt.by'), [rec.returned_by, rec.carrier_vehicle, rec.returned_by_phone].filter(Boolean).join(' · '))}<div class="ln"></div>
+    ${lines.map(l => `<div class="r2"><span>${esc(l.name)} ×${fmtQty(l.qty)} ${esc(l.unit || '')}${l.condition === 'rusak' ? ` (${esc(t('rt.cond_rusak'))})` : ''}</span><span class="num">${!sup && l.value != null ? fmtRp(l.value) : ''}</span></div>`).join('')}<div class="ln"></div>
+    ${sup ? '' : r2(t('rt.value'), fmtRp(rec.value)) + (int(rec.fee) ? r2(t('rt.fee', { pct: fmtPct1(rec.fee_pct) }), '-' + fmtRp(rec.fee)) : '') + `<div class="r2 b" id="rt-slip-refund"><span>${esc(rec.refund_method === 'potong_hutang' ? t('rt.refund_debt') : rec.refund_method === 'tukar' ? t('rt.refund_tukar') : t('rt.refund'))} (${esc(t('rt.m_' + (rec.refund_method || 'tunai')))})</span><span class="num">${fmtRp(rec.refund)}</span></div>`}
+    ${r2(t('rt.reason'), t('rt.r_' + (rec.reason_code || 'lainnya')) + (rec.reason_note ? ': ' + rec.reason_note : ''))}
+    ${a.decided_by ? r2(t('rt.approved_by'), a.decided_by) : ''}${a.cashier ? r2(t('rc.cashier'), a.cashier) : ''}<div class="ln"></div><div class="c small">${esc(t(sup ? 'sr.slip_foot' : 'rt.slip_foot'))}</div></div>`;
+}
+async function openReturnNote(id) {
+  try {
+    const a = (await api('check_approval', { request_id: id })).approval || {};
+    const html = returnNoteHTML(aprPayload(a), a);
+    const el = openModal({ title: t('rt.slip'), id: 'rt-note', body: html, foot: `<button class="btn" id="rtn-print">${ic('print')} ${esc(t('print'))}</button><button class="btn primary" data-act="modal-close">${esc(t('close'))}</button>` });
+    $('#rtn-print', el).onclick = () => printHTML(html);
+  } catch (e) { toast(e instanceof NetError ? t('rt.need_online') : errMsg(e), 'err'); }
+}
+
+/* ========== v16 Retur ke pemasok: from a goods-in (purchase_no) — quantities (≤ received − returned, ≤ stock), reason,
+   outgoing note / delivery-order number, photo of the goods leaving (scan_purchase upload), who takes them. No values here. ========== */
+function openSupReturn(no) {
+  const g = (PUH.groups || []).find(x => x.no === no);
+  if (!g) { toast(PUH.err || t('err.NOT_FOUND'), 'err'); return; }
+  const back = (PUH.returned && PUH.returned[no]) || {};
+  const R = { lines: g.lines.filter(l => num(l.qty) > 0).map(l => { const p = prodById(l.product_id), ret = num(back[String(l.product_id)]); return { product_id: l.product_id, name: p ? p.name : l.name, unit: p ? p.unit || '' : '', got: num(l.qty), ret, stock: p ? num(p.stock) : 0, left: roundQty(Math.max(0, Math.min(num(l.qty) - ret, p ? num(p.stock) : 0))), qty: 0 }; }),
+    reason: '', note: '', doc: '', photo_id: '', thumb: '', uploading: false, carrier: { type: '' } };
+  const el = openModal({ title: t('sr.title', { no }), id: 'sup-retur', focus: false, body: `<div id="sr-body"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button><button class="btn primary" id="sr-send">${ic('send')} ${esc(t('rt.send'))}</button>` });
+  const body = $('#sr-body', el), send = $('#sr-send', el);
+  const draw = () => {
+    body.innerHTML = `<p style="margin-top:0"><b class="num">${esc(no)}</b> · ${esc(fmtDate(g.date))}${g.supplier ? ' · ' + esc(g.supplier) : ''}</p><p class="small muted">${esc(t('sr.hint'))}</p>
+      <div class="list" id="sr-lines">${R.lines.map(l => `<div class="li" data-sr-line="${esc(l.product_id)}" style="min-height:0;padding:8px 10px"><div class="grow"><div class="t">${esc(l.name)}</div><div class="s">${esc(t('sr.line', { in: fmtQty(l.got), r: fmtQty(l.ret), s: fmtQty(l.stock), unit: l.unit }))}</div></div>
+        <input class="input num" style="width:90px;font-weight:800;font-size:18px" data-sr-qty="${esc(l.product_id)}" data-rule="num" inputmode="decimal" autocomplete="off" placeholder="0" value="${l.qty ? esc(fmtQtyInput(l.qty)) : ''}" aria-label="${esc(t('qty'))} ${esc(l.name)}" ${l.left > 0 ? '' : 'disabled'}></div>`).join('')}</div>
+      <div class="grid2" style="margin-top:10px"><div class="field"><label class="f" for="sr-reason">${esc(t('rt.reason'))} *</label><select class="input" id="sr-reason"><option value="">${esc(t('rt.pick_reason'))}</option>${RETURN_REASONS.filter(k => k !== 'berubah_pikiran').map(k => `<option value="${k}" ${R.reason === k ? 'selected' : ''}>${esc(t('rt.r_' + k))}</option>`).join('')}</select></div>
+      <div class="field"><label class="f" for="sr-note">${esc(t(R.reason === 'lainnya' ? 'rt.note_req' : 'notes'))}</label><input class="input" id="sr-note" maxlength="300" autocomplete="off" value="${esc(R.note)}"></div></div>
+      <div class="field"><label class="f" for="sr-doc">${esc(t('sr.doc'))} *</label><input class="input" id="sr-doc" data-rule="doc" autocomplete="off" placeholder="${esc(t('sr.doc_ph'))}" value="${esc(R.doc)}"></div>
+      <div class="step card pad" style="margin-bottom:10px">${R.thumb ? `<img class="thumb" id="sr-thumb" src="${esc(R.thumb)}" alt="${esc(t('sr.photo'))}">` : `<div class="thumb">${ic('camera')}</div>`}
+        <div class="grow" style="min-width:150px"><div style="font-weight:800">${esc(t('sr.photo'))} *</div><div id="sr-photo-st">${R.uploading ? `<span class="muted">${esc(t('saving'))}</span>` : R.photo_id ? `<b class="okc" id="sr-photo-ok">${esc(t('sr.photo_ok'))}</b>` : `<span class="muted small">${esc(t('sr.photo_hint'))}</span>`}</div></div>
+        <label class="btn ${R.photo_id ? '' : 'primary'}" for="sr-photo" id="sr-photo-btn">${ic('camera')} ${esc(t(R.photo_id ? 'pu.photo_retake' : 'sr.photo_take'))}</label>${PHOTO_INPUT('sr-photo')}</div>
+      ${carrierHTML('sr', R.carrier, 'car.title_out')}
+      <div class="small muted" style="margin-top:6px">${esc(t('sr.no_value'))}</div>
+      <div class="err" id="sr-err" role="alert"></div>`;
+    bindCarrier(body, 'sr', R.carrier, draw);
+    $('#sr-photo', body).onchange = async e => {
+      const f = e.target.files[0]; if (!f) return;
+      R.uploading = true; draw();
+      try { const img = await imageToJpeg(f); R.thumb = img.thumb; const r = await apiPhoto('scan_purchase', { image_base64: img.base64, mime: img.mime }); R.photo_id = r.photo_id || ''; }
+      catch (e2) { R.uploading = false; draw(); $('#sr-err', el).textContent = e2 instanceof NetError ? t('rt.need_online') : errMsg(e2); return; }
+      R.uploading = false; draw();
+    };
+  };
+  body.addEventListener('input', e => {
+    const q = e.target.closest('[data-sr-qty]');
+    if (q) { const l = R.lines.find(x => String(x.product_id) === q.dataset.srQty); if (l) l.qty = q.value.trim() === '' ? 0 : qtyVal(q.value); }
+    if (e.target.id === 'sr-note') R.note = e.target.value;
+    if (e.target.id === 'sr-doc') R.doc = e.target.value;
+    const er = $('#sr-err', el); if (er) er.textContent = '';
+  });
+  body.addEventListener('change', e => { if (e.target.id === 'sr-reason') { R.reason = e.target.value; $('label[for="sr-note"]', el).textContent = t(R.reason === 'lainnya' ? 'rt.note_req' : 'notes'); } });
+  send.onclick = async () => {
+    const err = $('#sr-err', el);
+    const lines = R.lines.filter(l => l.qty > 0);
+    if (!lines.length) { err.textContent = t('rt.err_qty'); return; }
+    const over = lines.find(l => l.qty > l.left + 1e-9);
+    if (over) { err.textContent = t('rt.err_over', { name: over.name, n: fmtQty(over.left) }); return; }
+    if (!R.reason) { err.textContent = t('rt.err_reason'); $('#sr-reason', el).focus(); return; }
+    if (R.reason === 'lainnya' && !R.note.trim()) { err.textContent = t('rt.err_note'); $('#sr-note', el).focus(); return; }
+    if (!/^[A-Z0-9][A-Z0-9 /.-]{0,39}$/.test(R.doc.trim().toUpperCase())) { err.textContent = t('sr.err_doc'); $('#sr-doc', el).focus(); return; }
+    if (settings().require_return_photo !== false && !R.photo_id) { err.textContent = t('sr.err_photo'); return; }
+    const chk = carrierCheck(R.carrier, true);
+    if (chk) { carrierShow(body, 'sr', chk); err.textContent = chk.msg; return; }
+    send.disabled = true; err.textContent = '';
+    try {
+      const r = await api('request_return', { kind: 'pemasok', purchase_no: no, lines: lines.map(l => ({ product_id: l.product_id, qty: l.qty })), reason_code: R.reason, reason_note: R.note.trim(),
+        out_doc_no: R.doc.trim().toUpperCase(), photo_id: R.photo_id, carrier: carrierPayload(R.carrier), client_id: uuid() });
+      const id = r.request_id || (r.approval || {}).request_id;
+      trackMyRequest(id, 'retur', t('req.retur_sup', { no }), r.return_id);
+      send.hidden = true;
+      showReturnWait(el, body, { id, rid: r.return_id, role: r.approver_role }, 'pemasok');
+      PUH.groups = null; loadPuHistory();
+    } catch (e) { send.disabled = false; err.textContent = e instanceof NetError ? t('rt.need_online') : errMsg(e); }
+  };
+  draw();
+}
 /* ========== v16 "Pindah ke rak": warehouse → shop shelf (or back) with move_stock ==========
    Goods-in lands in the warehouse; the cashier moves what goes on the shelf. Lines: product + quantity (≤ what is there). */
 function openMoveStock(pre = {}) {
@@ -4230,7 +4834,7 @@ function openMoveStock(pre = {}) {
     $('#mv-sug', el).innerHTML = cand.map(p => `<button class="li" type="button" data-mv-add="${esc(p.id)}" style="min-height:52px;padding:8px 12px"><div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${esc(t('shelf.gudang'))} ${fmtQty(gudangOf(p))} · ${esc(t('shelf.rak'))} ${fmtQty(shelfOf(p))} ${esc(p.unit || '')}</div></div>${ic('plus')}</button>`).join('')
       || (q || !M.lines.length ? `<div class="small muted" id="mv-none">${esc(t(q ? 'sell.no_match' : 'mv.none_' + M.to))}</div>` : '');
     $('#mv-lines', el).innerHTML = M.lines.map(l => { const p = prodById(l.product_id); return `<div class="li" data-mv-line="${esc(p.id)}" style="min-height:0;padding:8px 10px"><div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${esc(t(M.to === 'toko' ? 'mv.in_gudang' : 'mv.on_shelf', { qty: fmtQty(avail(p)), unit: p.unit || '' }))}</div></div>
-      <input class="input num" style="width:96px;font-weight:800;font-size:18px" data-mv-qty="${esc(p.id)}" inputmode="decimal" autocomplete="off" value="${esc(fmtQtyInput(l.qty))}" aria-label="${esc(t('qty'))} ${esc(p.name)}">
+      <input class="input num" style="width:96px;font-weight:800;font-size:18px" data-rule="num" data-mv-qty="${esc(p.id)}" inputmode="decimal" autocomplete="off" value="${esc(fmtQtyInput(l.qty))}" aria-label="${esc(t('qty'))} ${esc(p.name)}">
       <button class="icon-btn ghost sm" type="button" data-mv-del="${esc(p.id)}" aria-label="${esc(t('delete'))}">${ic('x')}</button></div>`; }).join('');
     $('#mv-head', el).textContent = t('mv.lines', { n: M.lines.length });
     $('span', $('#mv-ok', el)).textContent = t('mv.ok_' + M.to, { n: M.lines.length });
@@ -4318,7 +4922,7 @@ RENDER.kas = function () {
 function openCashMove(type) {
   const el = openModal({
     title: type === 'in' ? t('kas.btn_in') : t('kas.btn_out'), id: 'cash-move',
-    body: `<div class="field"><label class="f" for="cm-amt">${esc(t('amount'))} (Rp)</label><input class="input money" id="cm-amt" inputmode="numeric" autofocus></div>
+    body: `<div class="field"><label class="f" for="cm-amt">${esc(t('amount'))} (Rp)</label><input class="input money" data-rule="num" id="cm-amt" inputmode="numeric" autofocus></div>
       <div class="field"><label class="f" for="cm-note">${esc(t('notes'))} *</label><input class="input" id="cm-note" placeholder="${esc(type === 'in' ? t('kas.in_ph') : t('kas.out_ph'))}"></div><div class="err" id="cm-err" role="alert"></div>`,
     foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="cm-ok">${esc(t('save'))}</button>`
   });
@@ -4341,7 +4945,7 @@ function openExpense() {
   const el = openModal({
     title: t('kas.btn_exp'), id: 'expense',
     body: `<div class="field"><label class="f" for="ex-cat">${esc(t('ex.category'))}</label><select class="input" id="ex-cat">${EXP_CATS.map(c => `<option value="${c}" ${c === 'lain' ? 'selected' : ''}>${esc(t('excat.' + c))}</option>`).join('')}</select></div>
-      <div class="field"><label class="f" for="ex-amt">${esc(t('amount'))} (Rp)</label><input class="input money" id="ex-amt" inputmode="numeric" autofocus></div>
+      <div class="field"><label class="f" for="ex-amt">${esc(t('amount'))} (Rp)</label><input class="input money" data-rule="num" id="ex-amt" inputmode="numeric" autofocus></div>
       <div class="field"><label class="f" for="ex-note">${esc(t('notes'))}</label><input class="input" id="ex-note"></div>
       <div class="field"><label class="f">${esc(t('ex.paid_from'))}</label><div class="seg" id="ex-from">${['kas', 'lain'].map(f => `<button type="button" data-f="${f}" class="${from === f ? 'on' : ''}" ${f === 'kas' && !S.shift ? 'disabled' : ''}>${esc(t('ex.from_' + f))}</button>`).join('')}</div></div>
       <div class="err" id="ex-err" role="alert"></div>`,
@@ -4371,7 +4975,7 @@ async function openCloseShift() {
   const el = openModal({
     title: t('kas.btn_close'), id: 'shift-close',
     body: `<p class="small muted" style="margin-top:0">${ic('lock')} ${esc(t('kas.blind_close'))}</p>
-      <div class="field"><label class="f" for="cs-counted">${esc(t('kas.counted'))} (Rp)</label><input class="input money" id="cs-counted" inputmode="numeric" autofocus></div>
+      <div class="field"><label class="f" for="cs-counted">${esc(t('kas.counted'))} (Rp)</label><input class="input money" data-rule="num" id="cs-counted" inputmode="numeric" autofocus></div>
       <div class="field"><label class="f" for="cs-note">${esc(t('notes'))}</label><input class="input" id="cs-note"></div><div class="err" id="cs-err" role="alert"></div>`,
     foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="cs-ok">${ic('lock')} ${esc(t('kas.btn_close'))}</button>`
   });
@@ -4466,6 +5070,7 @@ RENDER.more = function () {
     <div class="list" id="more-list">
       <button class="li" data-act="member-new" id="m-member">${ic('user')}<div class="grow"><div class="t">${esc(t('mem.new'))}</div><div class="s">${esc(t('mem.new_s'))}</div></div></button>
       <button class="li" data-act="debt-pay" id="m-debt">${ic('wallet')}<div class="grow"><div class="t">${esc(t('more.debt_pay'))}</div><div class="s">${esc(t('more.debt_pay_s'))}</div></div></button>
+      <button class="li" data-act="retur-open" id="m-retur">${ic('undo')}<div class="grow"><div class="t">${esc(t('more.retur'))}</div><div class="s">${esc(t('more.retur_s'))}</div></div></button>
       <button class="li" data-act="void-req" id="m-void">${ic('undo')}<div class="grow"><div class="t">${esc(t('more.void'))}</div><div class="s">${esc(t('more.void_s'))}</div></div></button>
       <button class="li" data-act="price-req" id="m-price">${ic('tag')}<div class="grow"><div class="t">${esc(t('more.price'))}</div><div class="s">${esc(S.role === 'kasir' ? t('more.price_s') : t('more.price_s_mgr'))}</div></div></button>
       <button class="li" data-act="stock-count" id="m-count">${ic('count')}<div class="grow"><div class="t">${esc(t('more.count'))}</div><div class="s">${esc(t('more.count_s'))}</div></div></button>
@@ -4507,10 +5112,10 @@ function openPayment(c) {
           : P.photo_id ? `<b class="okc" id="py-slip-ok">${esc(t('py.slip_ok'))}</b><div class="small" id="py-sender">${esc(t('py.sender'))}: <b>${esc(sl.sender_name || '—')}</b></div><div class="small muted">${esc([sl.bank, sl.transfer_ref, sl.date ? fmtDate(parseAnyDate(sl.date) || sl.date) : ''].filter(Boolean).join(' · '))}${slipAmt() ? ' · ' + fmtRp(slipAmt()) : ''}</div>${sl.readable === false ? `<div class="small" style="color:var(--warn);font-weight:800">${esc(t('py.unreadable'))}</div>` : ''}`
           : P.scanErr ? `<span class="red small">${esc(P.scanErr)}</span>` : `<b>${esc(t('py.slip'))}</b><div class="small muted">${esc(t('py.slip_hint'))}</div>`}</div>
         <label class="btn ${P.photo_id ? 'sm' : 'primary'}" for="py-photo" id="py-photo-btn" ${P.scanning ? 'aria-disabled="true" style="pointer-events:none"' : ''}>${ic('camera')} ${esc(P.photo_id ? t('pu.photo_retake') : t('py.slip_take'))}</label>${PHOTO_INPUT('py-photo')}</div>
-        <div class="grid2"><div class="field"><label class="f" for="py-bank">${esc(t('py.bank'))}</label><input class="input" id="py-bank" maxlength="40" autocomplete="off" value="${esc(P.bank)}"></div>
+        <div class="grid2"><div class="field"><label class="f" for="py-bank">${esc(t('py.bank'))}</label><input class="input" data-rule="pname" id="py-bank" maxlength="40" autocomplete="off" value="${esc(P.bank)}"></div>
           <div class="field"><label class="f" for="py-ref">${esc(t('py.ref'))}</label><input class="input" id="py-ref" maxlength="60" autocomplete="off" value="${esc(P.ref)}"></div></div>
         ${accts.length > 1 ? `<div class="field"><label class="f" for="py-acct">${esc(t('py.account'))}</label><select class="input" id="py-acct">${accts.map(a => `<option value="${esc(a.id)}" ${a.id === P.account_id ? 'selected' : ''}>${esc([a.bank, a.account_no, a.holder].filter(Boolean).join(' · '))}</option>`).join('')}</select></div>` : ''}`}
-      <div class="grid2"><div class="field"><label class="f" for="py-amt">${esc(t('amount'))} (Rp)</label><input class="input money" id="py-amt" inputmode="numeric" autocomplete="off" value="${esc(fmtNum(P.amount))}"></div>
+      <div class="grid2"><div class="field"><label class="f" for="py-amt">${esc(t('amount'))} (Rp)</label><input class="input money" data-rule="num" id="py-amt" inputmode="numeric" autocomplete="off" value="${esc(fmtNum(P.amount))}"></div>
         <div class="field"><label class="f" for="py-date">${esc(t('date'))}</label><input class="input" type="date" id="py-date" value="${esc(P.date)}"></div></div>
       <div id="py-mm"></div>
       <div class="card pad" id="py-alloc" style="margin:4px 0 12px;box-shadow:none"></div>
@@ -4546,7 +5151,7 @@ function openPayment(c) {
     box.innerHTML = head + (all.length ? `<div id="py-docs">${docs.map(d => { const on = P.alloc[d.ref] != null; return `<label class="al ${on ? 'on' : ''}" data-ref="${esc(d.ref)}">
         <input type="checkbox" data-al-chk="${esc(d.ref)}" ${on ? 'checked' : ''} aria-label="${esc(t('py.part_of', { no: d.ref }))}">
         <span><span class="t num">${esc(d.ref)}</span><br><span class="s">${esc(fmtDate(d.date))} · ${esc(t('py.rest'))} <b class="num">${fmtRp(d.remaining)}</b> / ${fmtRp(d.total)}</span></span>
-        <input class="input num" data-al-amt="${esc(d.ref)}" inputmode="numeric" autocomplete="off" ${on ? '' : 'disabled'} value="${on ? esc(fmtNum(P.alloc[d.ref])) : ''}" aria-label="${esc(t('amount'))} ${esc(d.ref)}"></label>`; }).join('')}</div>
+        <input class="input num" data-rule="num" data-al-amt="${esc(d.ref)}" inputmode="numeric" autocomplete="off" ${on ? '' : 'disabled'} value="${on ? esc(fmtNum(P.alloc[d.ref])) : ''}" aria-label="${esc(t('amount'))} ${esc(d.ref)}"></label>`; }).join('')}</div>
       ${all.length > docs.length ? `<button type="button" class="btn xs block" id="py-docs-more">${esc(t('show_more', { n: all.length - docs.length }))}</button>` : ''}
       <div class="alsum" id="py-alloc-sum"></div>` : `<div class="small muted" id="py-no-docs">${esc(t('py.no_docs'))}</div>`);
     const auto = $('#py-auto', box); if (auto) auto.onclick = () => { autoFill(); drawAlloc(); };
@@ -4654,8 +5259,8 @@ function openPriceChange(p) {
   const el = openModal({
     title: t('more.price'), id: 'price-change',
     body: `<p style="margin-top:0"><b>${esc(p.name)}</b><br><span class="small muted">${esc(t('price.now'))}: ${esc(t('eceran'))} ${fmtRp(p.retail_price)} · ${esc(t('grosir'))} ${fmtRp(p.wholesale_price)} (≥${fmtQty(p.wholesale_min_qty)})</span></p>
-      <div class="grid2"><div class="field"><label class="f" for="pc-retail">${esc(t('price.retail'))}</label><input class="input num" id="pc-retail" inputmode="numeric" value="${esc(fmtNum(p.retail_price))}"></div>
-      <div class="field"><label class="f" for="pc-whole">${esc(t('price.wholesale'))}</label><input class="input num" id="pc-whole" inputmode="numeric" value="${esc(fmtNum(p.wholesale_price))}"></div></div>
+      <div class="grid2"><div class="field"><label class="f" for="pc-retail">${esc(t('price.retail'))}</label><input class="input num" data-rule="num" id="pc-retail" inputmode="numeric" value="${esc(fmtNum(p.retail_price))}"></div>
+      <div class="field"><label class="f" for="pc-whole">${esc(t('price.wholesale'))}</label><input class="input num" data-rule="num" id="pc-whole" inputmode="numeric" value="${esc(fmtNum(p.wholesale_price))}"></div></div>
       <div class="field"><label class="f" for="pc-reason">${esc(t('reason'))} *</label><input class="input" id="pc-reason" placeholder="${esc(t('price.reason_ph'))}"></div>
       <p class="small muted">${esc(S.role === 'kasir' ? t('price.hint_kasir') : t('price.hint_mgr'))}</p>
       <div id="pc-res"></div><div class="err" id="pc-err" role="alert"></div>`,
@@ -4718,7 +5323,7 @@ function openMyRequests() {
 }
 function drawMyRequests(el) {
   const list = MYREQ.list.filter(r => r.user === S.user).slice().reverse();
-  $('.modal-b', el).innerHTML = list.length ? `<div class="list">${list.map(r => `<div class="li" data-req="${esc(r.id)}"><div class="grow"><div class="t">${esc(r.label)}</div><div class="s">${esc(r.id)} · ${esc(fmtDateTime(new Date(r.at).toISOString()))}${r.by ? ' · ' + esc(r.by) : ''}${r.note ? ` · “${esc(r.note)}”` : ''}</div></div><span class="badge ${REQ_BADGE[r.status] || 'gray'}" data-status="${esc(r.status)}">${esc(t('req.st_' + r.status))}</span></div>`).join('')}</div>`
+  $('.modal-b', el).innerHTML = list.length ? `<div class="list">${list.map(r => `<div class="li" data-req="${esc(r.id)}"><div class="grow"><div class="t">${esc(r.label)}</div><div class="s">${esc(r.id)} · ${esc(fmtDateTime(new Date(r.at).toISOString()))}${r.by ? ' · ' + esc(r.by) : ''}${r.note ? ` · “${esc(r.note)}”` : ''}</div>${r.kind === 'retur' && (r.status === 'approved' || r.status === 'used') ? `<button class="btn xs" style="margin-top:6px" data-act="rt-slip" data-id="${esc(r.id)}">${ic('receipt')} ${esc(t('rt.slip_btn'))}${r.ref ? ' ' + esc(r.ref) : ''}</button>` : ''}</div><span class="badge ${REQ_BADGE[r.status] || 'gray'}" data-status="${esc(r.status)}">${esc(t('req.st_' + r.status))}</span></div>`).join('')}</div>`
     : `<div class="empty">${esc(t('no_data'))}</div>`;
 }
 
@@ -4771,6 +5376,17 @@ function aprBodyHTML(a) {
     return head(t('apr.kind_pfix', { no: a.ref }), 'warn') + `<table class="tbl" style="margin:8px 0" data-pfix-lines><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('price.old'))}</th><th class="r">${esc(t('price.new'))}</th></tr></thead><tbody>${rows}</tbody></table>
       <div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason || a.note || '')}”</b></div><div class="small muted" style="margin-bottom:8px">${esc(t('apr.pfix_hint'))}</div>`;
   }
+  if (kind === 'retur') {
+    // customer return: the refund; supplier return: quantities only (values are the owner's)
+    const sup = pl.kind === 'pemasok', lines = Array.isArray(pl.lines) ? pl.lines : [];
+    const rows = lines.map(l => `<tr><td>${esc(l.name)}</td><td class="r num">${fmtQty(l.qty)} ${esc(l.unit || '')}</td>${sup ? '' : `<td class="r"><span class="badge ${l.condition === 'rusak' ? 'red' : 'ok'}">${esc(t('rt.cond_' + (l.condition || 'baik')))}</span></td>`}</tr>`).join('');
+    return head(t(sup ? 'apr.kind_retur_s' : 'apr.kind_retur_c', { name: pl.party_name || a.customer_name || t('sell.walkin') }), sup ? '' : 'warn') + `<div class="small" style="margin-top:4px" data-retur="${sup ? 'pemasok' : 'pelanggan'}">${esc(sup ? t('apr.retur_from', { no: pl.ref || '', doc: pl.out_doc_no || '' }) : t('apr.retur_inv', { inv: pl.ref || '', date: pl.bought_date ? fmtDate(pl.bought_date) : '' }))} · <b class="num">${esc(pl.return_id || a.ref || '')}</b></div>
+      <div class="small">${esc(t(sup ? 'sr.carrier' : 'rt.by'))}: <b>${esc([pl.returned_by, pl.carrier_vehicle, pl.returned_by_phone].filter(Boolean).join(' · '))}</b></div>
+      <table class="tbl" style="margin:8px 0" data-retur-lines><tbody>${rows}</tbody></table>
+      <div style="margin-bottom:6px">${esc(t('rt.reason'))}: <b>${esc(t('rt.r_' + (pl.reason_code || 'lainnya')))}${pl.reason_note ? ` — “${esc(pl.reason_note)}”` : ''}</b></div>
+      ${sup ? '' : `<div class="apr-sum" style="grid-template-columns:1fr 1fr" data-refund><div><div class="k">${esc(t('rt.method'))}</div><div class="v">${esc(t('rt.m_' + (pl.refund_method || 'tunai')))}</div></div><div><div class="k">${esc(pl.refund_method === 'potong_hutang' ? t('rt.refund_debt') : t('rt.refund'))}</div><div class="v num">${fmtRp(pl.refund != null ? pl.refund : a.total)}</div></div></div>${int(pl.fee) ? `<div class="small muted">${esc(t('rt.fee', { pct: fmtPct1(pl.fee_pct) }))}: -${fmtRp(pl.fee)}</div>` : ''}`}
+      <div class="small muted" style="margin-bottom:8px">${esc(t(sup ? 'apr.retur_hint_s' : 'apr.retur_hint_c'))}</div>`;
+  }
   if (kind === 'void') return head(t('apr.kind_void', { inv: a.ref }), 'red') + `<div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('rc.customer'))}</div><div class="v">${esc(a.customer_name || t('sell.walkin'))}</div></div><div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(a.total)}</div></div></div><div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason || a.summary || '')}”</b></div>`;
   if (kind === 'price') {
     const rows = Object.entries(pl.changes || {}).filter(([f]) => f !== 'cost_price').map(([f, ch]) => `<tr><td>${esc(t('price.f_' + f))}</td><td class="r num">${ch.from == null ? '—' : fmtRp(ch.from)}</td><td class="r num"><b>${ch.to == null ? '—' : fmtRp(ch.to)}</b></td></tr>`).join('');
@@ -4810,7 +5426,8 @@ async function decideApproval(id, decision, btn) {
     toast(decision === 'approved' ? t('apr.done_ok', { id }) : t('apr.done_rej', { id }), decision === 'approved' ? 'ok' : 'warn');
     if (r.product) { const p = prodById(r.product.id); if (p) Object.assign(p, noCost(Object.assign({}, r.product)), { stock: p.stock }); saveCache(); renderGrid(); }
     if (r.sale) refreshData(true);
-    if (r.stock) { r.stock.forEach(x => { const p = prodById(x.product_id); if (p) p.stock = roundQty(num(x.stock) - pendingQty(p.id)); }); saveCache(); renderGrid(); }
+    if (r.stock) { applyStock(r.stock); renderGrid(); }
+    if (r.return_id && S.view === 'masuk') { PUH.groups = null; loadPuHistory(); }
   } catch (e) { toast(e.code === 'NEEDS_OWNER' ? t('err.NEEDS_OWNER') : errMsg(e), 'err'); $$('button', card).forEach(b => b.disabled = false); pollApprovals(); }
 }
 
@@ -4883,7 +5500,10 @@ const ACT = {
   /* masuk */
   'pu-add': el => puAdd(prodById(el.dataset.id)),
   'pu-del': el => { PU.lines.splice(+el.dataset.i, 1); savePuDraft(); RENDER.masuk(); },
-  'pu-clear': () => { Object.assign(PU, { lines: [], photo_id: '', thumb: '', scan: null, result: null, scanErr: '' }); savePuDraft(); RENDER.masuk(); },
+  'pu-clear': () => { Object.assign(PU, { lines: [], photo_id: '', thumb: '', scan: null, result: null, scanErr: '', carrier: { type: '' } }); savePuDraft(); RENDER.masuk(); },
+  'pu-retur': el => openSupReturn(el.dataset.no),
+  'retur-open': () => openReturn(),
+  'rt-slip': el => openReturnNote(el.dataset.id),
   'pu-save': () => savePurchase(),
   'pu-fix': el => openPuFix(el.dataset.no),
   'move-open': () => openMoveStock({ to: 'toko' }),
@@ -5166,7 +5786,7 @@ function openStockCount() {
   const head = () => { $('#sc-head', el).textContent = t('sc.counted', { n: filled().length, total: D.lines.length }); $('span', send).textContent = t('sc.send', { n: filled().length }); send.disabled = !filled().length; };
   const drawLines = () => {
     box.innerHTML = D.lines.map(l => { const p = prodById(l.id); if (!p) return ''; return `<div class="li" data-line="${esc(p.id)}" style="min-height:0;padding:8px 10px"><div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${esc(p.sku || '')} · ${esc(p.unit || '')}</div></div>
-      <input class="input num" style="width:96px;font-weight:800;font-size:18px" data-sc="${esc(p.id)}" type="text" inputmode="${isWeightUnit(p.unit) ? 'decimal' : 'numeric'}" autocomplete="off" enterkeyhint="next" value="${esc(l.c || '')}" aria-label="${esc(t('sc.qty'))} ${esc(p.name)}">
+      <input class="input num" style="width:96px;font-weight:800;font-size:18px" data-rule="num" data-sc="${esc(p.id)}" type="text" inputmode="${isWeightUnit(p.unit) ? 'decimal' : 'numeric'}" autocomplete="off" enterkeyhint="next" value="${esc(l.c || '')}" aria-label="${esc(t('sc.qty'))} ${esc(p.name)}">
       <button class="icon-btn ghost sm" type="button" data-sc-del="${esc(p.id)}" aria-label="${esc(t('delete'))}">${ic('x')}</button></div>`; }).join('') || `<div class="empty" id="sc-empty">${esc(t('sc.empty'))}</div>`;
     head();
   };
@@ -5390,6 +6010,74 @@ Object.assign(I18N.ar, {
   'mv.on_shelf': 'على الرف: {qty} {unit}', 'mv.lines': 'للنقل: {n} أصناف', 'mv.ok_toko': 'النقل إلى الرف ({n})', 'mv.ok_gudang': 'الإعادة إلى المستودع ({n})',
   'mv.too_much_gudang': '{name}: في المستودع {qty} فقط', 'mv.too_much_rak': '{name}: على الرف {qty} فقط', 'mv.done_toko': 'نُقل {n} صنف إلى الرف', 'mv.done_gudang': 'أُعيد {n} صنف إلى المستودع',
   'mv.need_online': 'نقل المخزون يحتاج إلى الإنترنت', 'mv.now': 'انقل إلى الرف الآن'
+});
+Object.assign(I18N.id, {
+  'rule.name': 'Hanya huruf, angka, spasi dan . , \' -', 'rule.pname': 'Hanya huruf, angka, spasi dan . , \' & ( ) / % + # -', 'rule.phone': 'Nomor HP: angka saja',
+  'rule.email': 'Alamat e-mail tanpa spasi', 'rule.doc': 'Hanya huruf, angka, spasi dan / - .', 'rule.num': 'Angka saja', 'rule.pin': 'Angka saja',
+  'rule.search': 'Tanda < > tidak boleh', 'rule.text': 'Tanda < > tidak boleh', 'rule.long': 'Tanda < > tidak boleh',
+  'car.title': 'Siapa yang membawa barang?', 'car.title_out': 'Siapa yang membawa barang keluar?', 'car.t_umum': 'Kendaraan umum', 'car.t_teman': 'Teman', 'car.t_pemasok': 'Sopir pemasok', 'car.t_karyawan': 'Karyawan',
+  'car.pick': 'Pilih salah satu.', 'car.kind': 'Jenis kendaraan', 'car.k_ojek': 'Ojek', 'car.k_angkot': 'Angkot', 'car.k_taksi': 'Taksi', 'car.k_truk': 'Truk', 'car.k_lainnya': 'Lainnya',
+  'car.vehicle': 'Nomor kendaraan / angkot', 'car.plate': 'Plat nomor', 'car.name': 'Nama', 'car.driver': 'Nama sopir', 'car.optional': '(boleh kosong)', 'car.phone': 'No. HP (boleh kosong)',
+  'car.need': 'Pilih siapa yang membawa barang', 'car.need_vehicle': 'Tulis nomor kendaraannya (plat / nomor angkot)', 'car.need_name': 'Tulis nama orang yang membawa barang', 'car.bad_phone': 'Nomor HP tidak valid',
+  'err.CARRIER_REQUIRED': 'Pembawa barang wajib diisi',
+  'more.retur': 'Retur pelanggan', 'more.retur_s': 'Barang dikembalikan — disetujui manajer',
+  'rt.title': 'Retur pelanggan', 'rt.hint': 'Cari faktur pembelian pelanggan, lalu pilih barang dan jumlah yang dikembalikan.', 'rt.inv': 'Nomor faktur', 'rt.inv_ph': 'contoh KM261006-0001',
+  'rt.find': 'Cari', 'rt.scan': 'Scan faktur', 'rt.not_found': 'Faktur tidak ditemukan: {inv}', 'rt.void': 'Faktur ini sudah dibatalkan', 'rt.pending_inv': 'Struk ini belum terkirim (offline) — retur bisa setelah tersimpan',
+  'rt.buyer': 'Pembeli', 'rt.disc_note': 'Faktur ini diberi diskon {amt}: nilai retur dihitung setelah diskon.', 'rt.lines': 'Barang yang dikembalikan',
+  'rt.bought': 'Dibeli {n} · sudah diretur {r} · bisa {l} {unit}', 'rt.none_left': 'Semua barang di faktur ini sudah diretur.', 'rt.cond_baik': 'Baik', 'rt.cond_rusak': 'Rusak',
+  'rt.reason': 'Alasan', 'rt.pick_reason': '— pilih alasan —', 'rt.r_tidak_sesuai': 'Tidak sesuai spesifikasi', 'rt.r_rusak': 'Rusak / cacat', 'rt.r_kadaluarsa': 'Kedaluwarsa',
+  'rt.r_salah_kirim': 'Salah kirim / salah barang', 'rt.r_kualitas_buruk': 'Kualitas buruk', 'rt.r_berubah_pikiran': 'Pelanggan berubah pikiran', 'rt.r_lainnya': 'Lainnya',
+  'rt.note_req': 'Catatan (wajib untuk "Lainnya")', 'rt.by': 'Yang mengembalikan', 'rt.by_phone': 'No. HP yang mengembalikan', 'rt.method': 'Cara uang kembali',
+  'rt.m_tunai': 'Tunai', 'rt.m_transfer': 'Transfer', 'rt.m_potong_hutang': 'Potong hutang', 'rt.m_tukar': 'Tukar barang', 'rt.debt_now': 'Hutang pelanggan sekarang {amt}',
+  'rt.value': 'Nilai barang', 'rt.fee': 'Potongan retur {pct}', 'rt.refund': 'Uang kembali', 'rt.refund_debt': 'Hutang berkurang', 'rt.refund_tukar': 'Nilai tukar barang',
+  'rt.stock_rule': 'Barang baik masuk gudang (dicek dulu sebelum ke rak); barang rusak tidak masuk stok.', 'rt.send': 'Kirim permintaan retur',
+  'rt.err_qty': 'Isi jumlah barang yang dikembalikan', 'rt.err_over': '{name}: paling banyak {n}', 'rt.err_reason': 'Pilih alasan retur', 'rt.err_note': 'Tulis alasan retur',
+  'rt.need_online': 'Retur perlu internet', 'rt.sent': 'Permintaan retur terkirim', 'rt.no': 'No. retur', 'rt.wait_mgr': 'Menunggu persetujuan manajer.',
+  'rt.wait_owner': 'Nilai retur di atas batas — menunggu persetujuan pemilik.', 'rt.owner_told': 'Pemilik selalu diberi tahu.', 'rt.approved': 'Retur disetujui', 'rt.rejected': 'Retur ditolak',
+  'rt.slip': 'Nota retur', 'rt.slip_title': 'NOTA RETUR', 'rt.slip_btn': 'Nota retur', 'rt.approved_by': 'Disetujui',
+  'rt.slip_foot': 'Nomor retur ini adalah nota masuk barang retur. Barang baik masuk gudang dulu dan dicek sebelum ke rak.', 'rt.from_receipt': 'Retur',
+  'sr.btn': 'Retur ke pemasok', 'sr.title': 'Retur ke pemasok {no}', 'sr.hint': 'Barang dikembalikan ke pemasok: isi jumlah, alasan, nomor surat jalan, foto bukti dan pembawa. Manajer menyetujui.',
+  'sr.line': 'Masuk {in} · sudah diretur {r} · stok {s} {unit}', 'sr.doc': 'No. nota / surat jalan barang keluar', 'sr.doc_ph': 'contoh SJK-0012',
+  'sr.photo': 'Foto bukti barang keluar', 'sr.photo_take': 'Foto bukti', 'sr.photo_ok': 'Foto tersimpan', 'sr.photo_hint': 'Foto barang / tanda terima saat dibawa keluar',
+  'sr.err_doc': 'Tulis nomor nota / surat jalan barang keluar (huruf, angka, / - .)', 'sr.err_photo': 'Foto bukti barang keluar wajib', 'sr.no_value': 'Nilai retur ke pemasok hanya dilihat pemilik.',
+  'sr.from': 'Barang masuk', 'sr.supplier': 'Pemasok', 'sr.carrier': 'Dibawa oleh', 'sr.slip_foot': 'Barang keluar ke pemasok. Stok berkurang; hutang ke pemasok berkurang (nota kredit).',
+  'req.retur': 'Retur faktur {inv}', 'req.retur_sup': 'Retur ke pemasok {no}', 'pu.m_retur': 'Retur ke pemasok',
+  'apr.kind_retur_c': 'Retur pelanggan · {name}', 'apr.kind_retur_s': 'Retur ke pemasok · {name}', 'apr.retur_inv': 'Faktur {inv} ({date})', 'apr.retur_from': 'Dari barang masuk {no} · nota keluar {doc}',
+  'apr.retur_hint_c': 'Jika disetujui: barang baik masuk gudang, barang rusak tidak jadi stok, uang kembali sesuai cara di atas.', 'apr.retur_hint_s': 'Jika disetujui: stok berkurang dan hutang ke pemasok berkurang (nota kredit).'
+});
+Object.assign(I18N.ar, {
+  'rule.name': 'حروف وأرقام ومسافة و . , \' - فقط', 'rule.pname': 'حروف وأرقام ومسافة و . , \' & ( ) / % + # - فقط', 'rule.phone': 'رقم الهاتف: أرقام فقط',
+  'rule.email': 'البريد الإلكتروني بدون مسافات', 'rule.doc': 'حروف وأرقام ومسافة و / - . فقط', 'rule.num': 'أرقام فقط', 'rule.pin': 'أرقام فقط',
+  'rule.search': 'العلامتان < > غير مسموحتين', 'rule.text': 'العلامتان < > غير مسموحتين', 'rule.long': 'العلامتان < > غير مسموحتين',
+  'car.title': 'من أحضر البضاعة؟', 'car.title_out': 'من يأخذ البضاعة إلى الخارج؟', 'car.t_umum': 'مواصلات عامة', 'car.t_teman': 'صديق', 'car.t_pemasok': 'سائق المورد', 'car.t_karyawan': 'موظف',
+  'car.pick': 'اختر واحدًا.', 'car.kind': 'نوع المركبة', 'car.k_ojek': 'دراجة أجرة', 'car.k_angkot': 'حافلة صغيرة', 'car.k_taksi': 'سيارة أجرة', 'car.k_truk': 'شاحنة', 'car.k_lainnya': 'أخرى',
+  'car.vehicle': 'رقم المركبة / الحافلة', 'car.plate': 'رقم اللوحة', 'car.name': 'الاسم', 'car.driver': 'اسم السائق', 'car.optional': '(اختياري)', 'car.phone': 'رقم الهاتف (اختياري)',
+  'car.need': 'اختر من أحضر البضاعة', 'car.need_vehicle': 'اكتب رقم المركبة (اللوحة / رقم الحافلة)', 'car.need_name': 'اكتب اسم الشخص الذي أحضر البضاعة', 'car.bad_phone': 'رقم الهاتف غير صالح',
+  'err.CARRIER_REQUIRED': 'يجب تحديد من أحضر البضاعة',
+  'more.retur': 'مرتجع عميل', 'more.retur_s': 'بضاعة مُعادة — بموافقة المدير',
+  'rt.title': 'مرتجع عميل', 'rt.hint': 'ابحث عن فاتورة شراء العميل، ثم اختر الأصناف والكميات المُعادة.', 'rt.inv': 'رقم الفاتورة', 'rt.inv_ph': 'مثال KM261006-0001',
+  'rt.find': 'بحث', 'rt.scan': 'مسح الفاتورة', 'rt.not_found': 'الفاتورة غير موجودة: {inv}', 'rt.void': 'هذه الفاتورة ملغاة', 'rt.pending_inv': 'هذا الإيصال لم يُرسل بعد (دون اتصال) — المرتجع بعد الحفظ',
+  'rt.buyer': 'المشتري', 'rt.disc_note': 'على هذه الفاتورة خصم {amt}: قيمة المرتجع بعد الخصم.', 'rt.lines': 'الأصناف المُعادة',
+  'rt.bought': 'المشترى {n} · المُعاد سابقًا {r} · المتاح {l} {unit}', 'rt.none_left': 'كل أصناف هذه الفاتورة أُعيدت.', 'rt.cond_baik': 'سليم', 'rt.cond_rusak': 'تالف',
+  'rt.reason': 'السبب', 'rt.pick_reason': '— اختر السبب —', 'rt.r_tidak_sesuai': 'غير مطابق للمواصفات', 'rt.r_rusak': 'تالف / معيب', 'rt.r_kadaluarsa': 'منتهي الصلاحية',
+  'rt.r_salah_kirim': 'إرسال خاطئ / صنف خاطئ', 'rt.r_kualitas_buruk': 'جودة رديئة', 'rt.r_berubah_pikiran': 'العميل غيّر رأيه', 'rt.r_lainnya': 'أخرى',
+  'rt.note_req': 'ملاحظة (إلزامية مع "أخرى")', 'rt.by': 'من أعاد البضاعة', 'rt.by_phone': 'هاتف من أعادها', 'rt.method': 'طريقة رد المبلغ',
+  'rt.m_tunai': 'نقدًا', 'rt.m_transfer': 'تحويل', 'rt.m_potong_hutang': 'خصم من الدَّين', 'rt.m_tukar': 'استبدال', 'rt.debt_now': 'دَين العميل الآن {amt}',
+  'rt.value': 'قيمة البضاعة', 'rt.fee': 'خصم المرتجع {pct}', 'rt.refund': 'المبلغ المُعاد', 'rt.refund_debt': 'يقل الدَّين', 'rt.refund_tukar': 'قيمة الاستبدال',
+  'rt.stock_rule': 'السليم يدخل المستودع (يُفحص قبل الرف)؛ التالف لا يدخل المخزون.', 'rt.send': 'إرسال طلب المرتجع',
+  'rt.err_qty': 'أدخل كمية الأصناف المُعادة', 'rt.err_over': '{name}: الحد الأقصى {n}', 'rt.err_reason': 'اختر سبب المرتجع', 'rt.err_note': 'اكتب سبب المرتجع',
+  'rt.need_online': 'المرتجع يحتاج إلى الإنترنت', 'rt.sent': 'أُرسل طلب المرتجع', 'rt.no': 'رقم المرتجع', 'rt.wait_mgr': 'بانتظار موافقة المدير.',
+  'rt.wait_owner': 'القيمة فوق الحد — بانتظار موافقة المالك.', 'rt.owner_told': 'المالك يُبلَّغ دائمًا.', 'rt.approved': 'تمت الموافقة على المرتجع', 'rt.rejected': 'رُفض المرتجع',
+  'rt.slip': 'إيصال المرتجع', 'rt.slip_title': 'إيصال مرتجع', 'rt.slip_btn': 'إيصال المرتجع', 'rt.approved_by': 'وافق',
+  'rt.slip_foot': 'رقم المرتجع هذا هو إيصال دخول البضاعة المُعادة. السليم يدخل المستودع ويُفحص قبل الرف.', 'rt.from_receipt': 'مرتجع',
+  'sr.btn': 'مرتجع إلى المورد', 'sr.title': 'مرتجع إلى المورد {no}', 'sr.hint': 'بضاعة تُعاد إلى المورد: الكمية والسبب ورقم إذن الخروج وصورة الإثبات ومن يحملها. المدير يوافق.',
+  'sr.line': 'المستلم {in} · المُعاد {r} · المخزون {s} {unit}', 'sr.doc': 'رقم فاتورة / إذن خروج البضاعة', 'sr.doc_ph': 'مثال SJK-0012',
+  'sr.photo': 'صورة إثبات خروج البضاعة', 'sr.photo_take': 'صورة الإثبات', 'sr.photo_ok': 'حُفظت الصورة', 'sr.photo_hint': 'صوّر البضاعة / إيصال الاستلام عند الخروج',
+  'sr.err_doc': 'اكتب رقم فاتورة / إذن الخروج (حروف وأرقام و / - .)', 'sr.err_photo': 'صورة إثبات الخروج إلزامية', 'sr.no_value': 'قيمة المرتجع إلى المورد يراها المالك فقط.',
+  'sr.from': 'الاستلام', 'sr.supplier': 'المورد', 'sr.carrier': 'حملها', 'sr.slip_foot': 'بضاعة خرجت إلى المورد. يقل المخزون ويقل ما ندين به للمورد (إشعار دائن).',
+  'req.retur': 'مرتجع الفاتورة {inv}', 'req.retur_sup': 'مرتجع إلى المورد {no}', 'pu.m_retur': 'مرتجع إلى المورد',
+  'apr.kind_retur_c': 'مرتجع عميل · {name}', 'apr.kind_retur_s': 'مرتجع إلى المورد · {name}', 'apr.retur_inv': 'الفاتورة {inv} ({date})', 'apr.retur_from': 'من الاستلام {no} · إذن الخروج {doc}',
+  'apr.retur_hint_c': 'عند الموافقة: السليم إلى المستودع، والتالف لا يُحتسب مخزونًا، ويُرد المبلغ بالطريقة أعلاه.', 'apr.retur_hint_s': 'عند الموافقة: يقل المخزون ويقل الدَّين للمورد (إشعار دائن).'
 });
 /* ========== Boot ========== */
 /* ========== Trial links (?demo=1 / ?mock=1) can be closed by the owner ==========

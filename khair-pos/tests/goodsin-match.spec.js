@@ -1,7 +1,7 @@
 // v12 Goods-in checked against the photographed supplier note; locked after saving; corrections with approval.
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, login, getDb, productByName, nav, photoFile, asUser, typePin } = require('./helpers');
+const { SHOTS, login, getDb, productByName, nav, photoFile, asUser, typePin, pickCarrier, CARRIER } = require('./helpers');
 
 const NOTE = { supplier: 'PT Kurma Nusantara', date: null, invoice_no: 'KN-7781', total: 2450000,
   items: [{ name: 'KURMA MEDJOOL JUMBO 1KG', qty: 10, unit: 'kg', unit_price: 170000, total: 1700000 }, { name: 'GULA PASIR 1 KG', qty: 50, unit: 'pak', unit_price: 15000, total: 750000 }] };
@@ -24,6 +24,7 @@ test('live comparison with the note; MISMATCH shows the differences; fix quantit
   await expect(page.locator('#pu-cmp tr[data-cmp="diff"]')).toContainText('KURMA MEDJOOL');
   // the app sends photo_index with every line
   await page.evaluate(() => { window.__bodies = []; const o = MockServer.request; MockServer.request = (b, x) => { window.__bodies.push(JSON.parse(JSON.stringify(b))); return o(b, x); }; });
+  await pickCarrier(page);
   await page.click('#pu-save');
   await expect(page.locator('#pu-mismatch')).toBeVisible();
   await expect(page.locator('#pu-mm-diffs tbody tr.diff')).toHaveCount(1);
@@ -39,6 +40,7 @@ test('live comparison with the note; MISMATCH shows the differences; fix quantit
   await page.locator('#pu-cmp [data-act="pu-usenote"]').click();
   await expect(page.locator('[data-pu-qty="0"]')).toHaveValue('10');
   await expect(page.locator('#pu-cmp-panel')).toHaveAttribute('data-status', 'cocok');
+  await pickCarrier(page);
   await page.click('#pu-save');
   await expect(page.locator('#pu-res')).toBeVisible();
   await expect(page.locator('#pu-match-badge')).toHaveAttribute('data-status', 'cocok');
@@ -57,6 +59,7 @@ test('"Simpan dengan alasan" saves a different quantity as tidak_cocok with the 
   const gula = productByName(await getDb(page), /Gula Pasir/);
   await scanNote(page);
   await page.locator('[data-pu-qty="1"]').fill('52');
+  await pickCarrier(page);
   await page.click('#pu-save');
   await expect(page.locator('#pu-mismatch')).toBeVisible();
   await page.fill('#pu-reason', '2 pak bonus dari sales');
@@ -94,6 +97,7 @@ test('a cashier\'s correction waits for the manager: before → after card witho
   await login(page, 'Pemilik', '1234', '', { stay: true });
   const med = productByName(await getDb(page), /Medjool/);
   await scanNote(page);
+  await pickCarrier(page);
   await page.click('#pu-save');
   const no = await page.locator('#pu-no').textContent();
   // locked: the kasir can only ask

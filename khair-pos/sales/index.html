@@ -1120,6 +1120,18 @@ const MockServer = (() => {
     }
   }
 
+  /* v16 as on the server (process.js): everything sent is plain text — control / direction-override characters and < >
+     (and tags) removed, __proto__ / constructor / prototype keys dropped, strings cut at 4000 characters.
+     (The field actions go to backend/field, which has no such step.) */
+  function cleanInput(o, depth) {
+    if (!o || typeof o !== 'object' || depth > 6) return;
+    Object.keys(o).forEach(k => {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') { delete o[k]; return; }
+      const v = o[k];
+      if (typeof v === 'string') o[k] = v.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g, '').replace(/<[^>]*>/g, '').replace(/[<>]/g, '').slice(0, 4000);
+      else if (v && typeof v === 'object') cleanInput(v, depth + 1);
+    });
+  }
   async function request(body) {
     await ensure();
     await sleep(30 + Math.random() * 50);
@@ -1136,6 +1148,7 @@ const MockServer = (() => {
     let res;
     try {
       const role = (db.users.find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase() && x.pin_hash === body.pin_hash) || {}).role;
+      if (body.data && typeof body.data === 'object' && !/^scan_/.test(body.action) && !(window.KhairFieldMock && KhairFieldMock.actions.includes(body.action))) { body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); }
       res = handle(db, body);
       if (fieldSeeded || dirty || !(READ_ONLY.includes(body.action) || ['field_bootstrap', 'list_field', 'product_images'].includes(body.action))) save(db);
       res = Object.assign({ ok: true }, role === 'owner' || ['users', 'setup'].includes(body.action) ? res : strip(res));
@@ -1382,6 +1395,73 @@ function setLang(l) {
 const ic = (name, cls = '') => `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
 /* ========== Toasts & modals (as in the cashier app) ========== */
+/* ========== v16 plain-text inputs: every field accepts only what the server accepts ==========
+   data-rule on an input / textarea: name (person), pname (product / customer / shop / supplier), phone, email, doc (document /
+   vehicle number), num (quantity / money), pin, search, text (default), long (textarea default). Characters a field does not
+   take are dropped while typing (with a short hint); maxlength / inputmode are set on every field. User text is never HTML. */
+const INPUT_CTRL = /[<>\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F‪-‮⁦-⁩]/g;
+const INPUT_RULES = {
+  name: { drop: /[^\p{L}\p{M}\p{N} .,'-]/gu, max: 60 },
+  pname: { drop: /[^\p{L}\p{M}\p{N} .,'&()\/%+#-]/gu, max: 80 },
+  phone: { drop: /[^0-9]/g, max: 20, mode: 'tel', digits: true }, // room for a pasted "+62 812-…" before it is cleaned
+  email: { drop: /[\s<>"',;()]/g, max: 120, mode: 'email' },
+  doc: { drop: /[^A-Z0-9 \/.-]/g, max: 40, upper: true },
+  num: { drop: /[^0-9.,]/g, max: 15, mode: 'decimal', digits: true },
+  pin: { drop: /[^0-9]/g, max: 8, mode: 'numeric', digits: true },
+  search: { drop: INPUT_CTRL, max: 80 },
+  text: { drop: INPUT_CTRL, max: 200 },
+  long: { drop: INPUT_CTRL, max: 300 }
+};
+const SKIP_TYPES = ['checkbox', 'radio', 'file', 'date', 'time', 'hidden', 'range', 'color', 'button', 'submit'];
+const ruleName = el => el.dataset.rule && INPUT_RULES[el.dataset.rule] ? el.dataset.rule : el.tagName === 'TEXTAREA' ? 'long' : el.type === 'search' ? 'search' : 'text';
+const asciiDigits = v => v.replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x660)).replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x6F0));
+function cleanByRule(v, rule) {
+  const r = INPUT_RULES[rule] || INPUT_RULES.text;
+  let x = String(v == null ? '' : v);
+  if (r.digits) x = asciiDigits(x);
+  if (r.upper) x = x.toUpperCase();
+  x = x.replace(INPUT_CTRL, '');
+  if (r.drop !== INPUT_CTRL) x = x.replace(r.drop, '');
+  return x;
+}
+/** maxlength / inputmode / autocapitalize on every text field under root (new screens are covered by the observer below). */
+function applyInputRules(root) {
+  const list = root && root.matches && root.matches('input, textarea') ? [root] : root && root.querySelectorAll ? root.querySelectorAll('input, textarea') : [];
+  for (const el of list) {
+    if (el.tagName === 'INPUT' && SKIP_TYPES.includes(el.type)) continue;
+    const rn = ruleName(el), r = INPUT_RULES[rn];
+    if (!el.dataset.rule) el.dataset.rule = rn;
+    if (!el.hasAttribute('maxlength')) el.setAttribute('maxlength', String(r.max));
+    if (r.mode && !el.hasAttribute('inputmode')) el.setAttribute('inputmode', r.mode);
+    if (rn === 'doc') el.setAttribute('autocapitalize', 'characters');
+    if (rn === 'phone' || rn === 'email' || rn === 'pin') { el.setAttribute('autocapitalize', 'off'); el.setAttribute('spellcheck', 'false'); }
+  }
+}
+/** A short hint right under the field (not a toast: it must not cover the form being typed in). */
+function showRuleHint(el, msg) {
+  let h = document.getElementById('rule-hint');
+  if (!h) { h = document.createElement('div'); h.id = 'rule-hint'; h.setAttribute('role', 'status'); h.setAttribute('aria-live', 'polite'); document.body.appendChild(h); }
+  const r = el.getBoundingClientRect(), w = Math.min(320, innerWidth - 16);
+  h.textContent = msg;
+  h.style.cssText = `position:fixed;z-index:9999;top:${Math.round(Math.min(r.bottom + 4, innerHeight - 44))}px;left:${Math.round(Math.max(8, Math.min(r.left, innerWidth - w - 8)))}px;max-width:${w}px;background:#7C2D12;color:#fff;font-size:13px;font-weight:700;line-height:1.3;padding:6px 10px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.2);pointer-events:none`;
+  h.hidden = false;
+  clearTimeout(showRuleHint.tm); showRuleHint.tm = setTimeout(() => { h.hidden = true; }, 2400);
+}
+function enforceRule(el) {
+  if (!el || !el.matches || !el.matches('input, textarea') || (el.tagName === 'INPUT' && SKIP_TYPES.includes(el.type))) return;
+  const rn = ruleName(el), before = el.value, after = cleanByRule(before, rn);
+  if (after === before) return;
+  let pos = null; try { pos = el.selectionStart; } catch (e) { pos = null; }
+  el.value = after;
+  if (pos != null) { const p = cleanByRule(before.slice(0, pos), rn).length; try { el.setSelectionRange(p, p); } catch (e) { } }
+  // a hint only when a character was refused (not for upper-casing)
+  if (after.length < before.length && typeof t === 'function') showRuleHint(el, t('rule.' + rn));
+}
+document.addEventListener('input', e => { if (!e.isComposing) enforceRule(e.target); }, true);
+document.addEventListener('compositionend', e => enforceRule(e.target), true);
+document.addEventListener('focusin', e => { if (e.target && e.target.matches && e.target.matches('input, textarea')) applyInputRules(e.target); }, true);
+document.addEventListener('focusout', () => { const h = document.getElementById('rule-hint'); if (h) h.hidden = true; }, true);
+new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) applyInputRules(n); }).observe(document.documentElement, { childList: true, subtree: true });
 function toast(msg, type = '', ms = 2800) {
   const el = document.createElement('div');
   el.className = 'toast ' + type; el.textContent = msg;
@@ -2091,10 +2171,10 @@ RENDER.visit = function () {
         ${selDist != null && selDist > NEAR_M ? `<div class="small" style="color:var(--warn);font-weight:800;margin-top:6px">${esc(t('visit.far', { d: fmtDist(selDist) }))}</div>` : ''}
         <div class="row wrap" style="gap:4px 10px;margin-top:6px" id="ci-type-row"><span class="small muted tl" id="ci-type-now" data-type="${esc(sel.type || 'lainnya')}"><i class="gdot" style="--g:${shopColor(sel)}"></i>${esc(shopLabel(sel))}</span>${CI.re ? '' : `<button type="button" class="linkbtn" data-act="ci-recat" id="ci-recat">${esc(t('visit.recat'))}</button>`}</div>
         ${CI.re ? `<div class="recat" id="ci-recat-box"><div class="tp-head"><span class="grow">${esc(t('visit.recat'))}</span><button type="button" class="btn xs" data-act="ci-recat-cancel" id="ci-recat-cancel">${esc(t('cancel'))}</button></div><div id="tp">${tpHTML()}</div><div class="small muted" style="margin-top:8px">${esc(t('visit.recat_hint'))}</div></div>` : ''}`
-      : CI.isNew ? `<div id="ci-new-form"><div class="field"><label class="f" for="ci-name">${esc(t('shop.name'))} *</label><input class="input" id="ci-name" value="${esc(f.name || '')}"></div>
-          <div class="grid2"><div class="field"><label class="f" for="ci-owner">${esc(t('shop.owner'))}</label><input class="input" id="ci-owner" value="${esc(f.owner_name || '')}"></div><div class="field"><label class="f" for="ci-phone">${esc(t('phone'))}</label><input class="input" id="ci-phone" inputmode="tel" value="${esc(f.phone || '')}"></div></div>
+      : CI.isNew ? `<div id="ci-new-form"><div class="field"><label class="f" for="ci-name">${esc(t('shop.name'))} *</label><input class="input" data-rule="pname" id="ci-name" value="${esc(f.name || '')}"></div>
+          <div class="grid2"><div class="field"><label class="f" for="ci-owner">${esc(t('shop.owner'))}</label><input class="input" data-rule="name" id="ci-owner" value="${esc(f.owner_name || '')}"></div><div class="field"><label class="f" for="ci-phone">${esc(t('phone'))}</label><input class="input" data-rule="phone" id="ci-phone" type="tel" inputmode="tel" value="${esc(f.phone || '')}"></div></div>
           <div class="field"><label class="f" for="ci-address">${esc(t('shop.address'))}</label><input class="input" id="ci-address" value="${esc(f.address || '')}"></div>
-          <div class="field"><label class="f" for="ci-area">${esc(t('shop.area'))}</label><input class="input" id="ci-area" value="${esc(f.area || '')}" list="dl-area"><datalist id="dl-area">${[...new Set(S.shops.map(s => s.area).filter(Boolean))].map(a => `<option value="${esc(a)}">`).join('')}</datalist></div>
+          <div class="field"><label class="f" for="ci-area">${esc(t('shop.area'))}</label><input class="input" data-rule="pname" id="ci-area" value="${esc(f.area || '')}" list="dl-area"><datalist id="dl-area">${[...new Set(S.shops.map(s => s.area).filter(Boolean))].map(a => `<option value="${esc(a)}">`).join('')}</datalist></div>
           <div class="field"><label class="f" id="tp-label" for="tp-q">${esc(t('tp.title'))} *</label><div id="tp">${tpHTML()}</div></div>
           <button class="btn ghost sm" data-act="ci-unpick">${esc(t('visit.back_list'))}</button></div>`
       : `<div class="list" id="ci-near">${near.map(s => `<button class="li" data-act="ci-pick" data-id="${esc(s.shop_id)}">${ic('store')}<div class="grow"><div class="t">${esc(s.name)}</div><div class="s">${esc([s.owner_name, s.area, shopLabel(s)].filter(Boolean).join(' · '))}</div></div><span class="dist" style="font-weight:900;color:var(--pd)">${fmtDist(s._d)}</span></button>`).join('') || `<div class="muted small">${esc(CI.fix ? t('visit.none_near') : t('visit.need_fix'))}</div>`}</div>
@@ -2156,9 +2236,9 @@ function tpHTML() {
   const ty = KST.BY_ID[st.type], u = gUI(ty.group), ch = KST.chains(st.type);
   const known = [...new Set(ch.concat(S.shops.filter(x => x.type === st.type && x.chain).map(x => x.chain)))];
   return `<div class="tp-sel" id="tp-sel" data-type="${esc(st.type)}" style="--g:${u.c}"><span class="e" aria-hidden="true">${u.e}</span><div class="grow"><div class="t">${esc(KST.typeLabel(st.type, S.lang))}</div><div class="s">${esc(KST.groupLabel(ty.group, S.lang))}</div></div><button type="button" class="btn xs" data-act="tp-change" id="tp-change">${esc(t('tp.change'))}</button></div>
-    ${st.type === 'lainnya' ? `<div class="field" style="margin-top:10px;margin-bottom:0"><label class="f" for="tp-other">${esc(t('tp.other'))} *</label><input class="input" id="tp-other" maxlength="60" value="${esc(st.type_other)}" placeholder="${esc(t('tp.other_ph'))}"></div>` : ''}
+    ${st.type === 'lainnya' ? `<div class="field" style="margin-top:10px;margin-bottom:0"><label class="f" for="tp-other">${esc(t('tp.other'))} *</label><input class="input" data-rule="pname" id="tp-other" maxlength="60" value="${esc(st.type_other)}" placeholder="${esc(t('tp.other_ph'))}"></div>` : ''}
     ${ch.length ? `<div class="field" style="margin-top:10px;margin-bottom:0"><label class="f" for="tp-chain">${esc(t('tp.chain'))}</label><div class="chips" id="tp-chains">${ch.map(c => `<button type="button" class="chip ${st.chain === c ? 'on' : ''}" data-act="tp-chain" data-c="${esc(c)}">${esc(c)}</button>`).join('')}</div>
-      <input class="input" id="tp-chain" maxlength="40" list="dl-chain" autocomplete="off" value="${esc(st.chain)}" placeholder="${esc(t('tp.chain_ph'))}"><datalist id="dl-chain">${known.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>` : ''}`;
+      <input class="input" data-rule="pname" id="tp-chain" maxlength="40" list="dl-chain" autocomplete="off" value="${esc(st.chain)}" placeholder="${esc(t('tp.chain_ph'))}"><datalist id="dl-chain">${known.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>` : ''}`;
 }
 function drawTP() { const el = $('#tp'); if (el) el.innerHTML = tpHTML(); }
 function tpInput(e) {
@@ -2356,7 +2436,7 @@ RENDER.order = function () {
       <div class="search" style="margin-top:12px">${ic('search')}<input class="input" id="po-q" type="search" placeholder="${esc(t('order.add'))}" autocomplete="off"></div><div class="list" id="po-sug" style="margin-top:6px"></div>
       <button class="btn sm" style="margin-top:8px" data-act="tab" data-v="catalog">${ic('grid')} ${esc(t('order.from_catalog'))}</button>
       <div id="po-lines" style="margin-top:10px">${lines.map(l => `<div class="oline" data-line="${l.i}"><div class="grow"><b>${esc(l.p.name)}</b><div class="small muted num"><span data-ref="up">${fmtRp(l.unit_price)}</span> · <span class="pt ${l.price_type}" data-ref="pt">${esc(t(l.price_type))}</span></div></div>
-        <div class="qty"><button data-act="po-dec" data-i="${l.i}">−</button><input data-po-qty="${l.i}" inputmode="decimal" value="${esc(String(l.qty).replace('.', ','))}" aria-label="${esc(t('qty'))}"><button data-act="po-inc" data-i="${l.i}">+</button></div>
+        <div class="qty"><button data-act="po-dec" data-i="${l.i}">−</button><input data-rule="num" data-po-qty="${l.i}" inputmode="decimal" value="${esc(String(l.qty).replace('.', ','))}" aria-label="${esc(t('qty'))}"><button data-act="po-inc" data-i="${l.i}">+</button></div>
         <b class="num" style="min-width:90px;text-align:end" data-ref="lt">${fmtRp(l.total)}</b></div>`).join('') || `<div class="muted small">${esc(t('order.empty'))}</div>`}</div>
       <div class="total-row" style="margin-top:8px"><span>${esc(t('total'))}</span><span class="num" id="po-total">${fmtRp(total)}</span></div>
       <p class="small muted" style="margin:0 0 10px">${esc(t('order.price_note'))}</p>
@@ -2759,6 +2839,16 @@ function showDemoClosed() {
     + '<p style="margin:0 0 12px;color:#55607a">Terima kasih sudah mencoba Khair Mart. Hubungi pemilik toko untuk akses.</p>'
     + '<p dir="rtl" style="margin:0;color:#55607a">انتهت فترة التجربة وتم إغلاق هذا الرابط. شكرًا لكم.</p></div></div>';
 }
+Object.assign(I18N.id, {
+  'rule.name': 'Hanya huruf, angka, spasi dan . , \' -', 'rule.pname': 'Hanya huruf, angka, spasi dan . , \' & ( ) / % + # -', 'rule.phone': 'Nomor HP: angka saja',
+  'rule.email': 'Alamat e-mail tanpa spasi', 'rule.doc': 'Hanya huruf, angka, spasi dan / - .', 'rule.num': 'Angka saja', 'rule.pin': 'Angka saja',
+  'rule.search': 'Tanda < > tidak boleh', 'rule.text': 'Tanda < > tidak boleh', 'rule.long': 'Tanda < > tidak boleh'
+});
+Object.assign(I18N.ar, {
+  'rule.name': 'حروف وأرقام ومسافة و . , \' - فقط', 'rule.pname': 'حروف وأرقام ومسافة و . , \' & ( ) / % + # - فقط', 'rule.phone': 'رقم الهاتف: أرقام فقط',
+  'rule.email': 'البريد الإلكتروني بدون مسافات', 'rule.doc': 'حروف وأرقام ومسافة و / - . فقط', 'rule.num': 'أرقام فقط', 'rule.pin': 'أرقام فقط',
+  'rule.search': 'العلامتان < > غير مسموحتين', 'rule.text': 'العلامتان < > غير مسموحتين', 'rule.long': 'العلامتان < > غير مسموحتين'
+});
 async function init() {
   applyLangAttrs();
   if (MOCK && !(await demoStillOpen())) { showDemoClosed(); return; }

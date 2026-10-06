@@ -100,9 +100,16 @@ async function photoFile(page, name = 'foto.png') {
 async function closeModals(page) {
   while (await page.locator('.modal-bg').count()) await page.locator('.modal-bg').last().locator('[data-act="modal-close"]').first().click();
 }
+/** v16 "Siapa yang membawa barang?" (goods-in px 'pu', supplier return px 'sr'): type + optional fields. */
+async function pickCarrier(page, type = 'pemasok', f = {}, px = 'pu') {
+  await page.click(`#${px}-car-${type}`);
+  await expect(page.locator(`#${px}-car`)).toHaveAttribute('data-type', type);
+  if (f.kind) await page.selectOption(`#${px}-car-kind`, f.kind);
+  for (const k of ['vehicle', 'name', 'phone']) if (f[k] != null) await page.fill(`#${px}-car-${k}`, f[k]);
+}
 async function tab(page, v) {
   await page.click(`#tab-${v}`);
   await expect(page.locator(`#v-${v}`)).toBeVisible();
 }
 
-module.exports = { presetDeviceConsent, rp, sha, SHOTS, shot, PHONE, TABLET, openKasir, enterKey, typePin, login, getDb, setDb, productByName, addItem, confirmQty, openCart, pay, photoFile, closeModals, tab };
+module.exports = { pickCarrier, presetDeviceConsent, rp, sha, SHOTS, shot, PHONE, TABLET, openKasir, enterKey, typePin, login, getDb, setDb, productByName, addItem, confirmQty, openCart, pay, photoFile, closeModals, tab };

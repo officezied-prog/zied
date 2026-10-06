@@ -576,6 +576,12 @@ tr.shelf-empty td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 [dir="rtl"] tr.shelf-empty td:first-child{box-shadow:inset -3px 0 0 var(--warn)}
 .who .badge#tb-master{margin-inline-start:4px;font-size:11px}
 @media (max-width:760px){.who .badge#tb-master{display:none}}
+/* v16 returns */
+.rt-list{display:grid;gap:10px}
+.rt-card.pending{border-color:var(--warn)}
+.rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:4px 16px;margin-top:8px}
+.rt-kv{display:flex;flex-direction:column;font-size:14px}.rt-kv .k{font-size:12px;color:var(--muted)}
+.carrier .seg button{min-width:0}
 </style>
 <style id="page-style"></style>
 </head>
@@ -620,6 +626,7 @@ tr.shelf-empty td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
     <section class="view" id="view-suppliers" hidden></section>
     <section class="view" id="view-bank" hidden></section>
     <section class="view" id="view-members" hidden></section>
+    <section class="view" id="view-retur" hidden></section>
     <section class="view" id="view-activity" hidden></section>
     <section class="view" id="view-devices" hidden></section>
     <section class="view" id="view-settings" hidden></section>
@@ -638,6 +645,7 @@ tr.shelf-empty td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
   <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></symbol>
   <symbol id="i-warehouse" viewBox="0 0 24 24"><path d="M3 21V9l9-5 9 5v12"/><path d="M7 21v-8h10v8M7 17h10"/></symbol>
   <symbol id="i-truck" viewBox="0 0 24 24"><path d="M3 6h11v10H3zM14 10h4l3 3v3h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+  <symbol id="i-return" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></symbol>
   <symbol id="i-member" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><circle cx="9" cy="11" r="2.3"/><path d="M5.8 16.2c.5-1.7 1.8-2.6 3.2-2.6s2.7.9 3.2 2.6M14.5 10h4M14.5 13.5h3"/></symbol>
   <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.5 3.3-5.5 6.5-5.5s5.9 2 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18.5 14.8c1.8.8 2.8 2.6 3 5.2"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
@@ -957,7 +965,7 @@ const MockServer = (() => {
   const DBKEY = 'kmock.db';
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
-  const READ_ONLY = ['users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos', 'field_bootstrap', 'list_field', 'product_images', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon'];
+  const READ_ONLY = ['list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos', 'field_bootstrap', 'list_field', 'product_images', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon'];
   class MockErr extends Error { constructor(code, message, extra) { super(message || code); this.code = code; this.extra = extra || null; } }
   const E = (code, msg, extra) => new MockErr(code, msg, extra);
   let ready = null;
@@ -973,7 +981,7 @@ const MockServer = (() => {
   }
   function strip(o) {
     if (o && typeof o === 'object' && !Array.isArray(o) && typeof o.payload === 'string' && o.kind === 'price') o = Object.assign({}, o, { payload: stripPayload(o.payload) });
-    if (o && typeof o === 'object' && !Array.isArray(o) && o.request_id && (o.kind === 'purchase_fix' || o.kind === 'discount')) o = aprOut(o);
+    if (o && typeof o === 'object' && !Array.isArray(o) && o.request_id && (o.kind === 'purchase_fix' || o.kind === 'discount' || o.kind === 'retur')) o = aprOut(o);
     if (Array.isArray(o)) return o.map(strip);
     if (o && typeof o === 'object') { const r = {}; for (const k in o) if (!COST_KEYS.includes(k)) r[k] = strip(o[k]); return r; }
     return o;
@@ -1129,7 +1137,7 @@ const MockServer = (() => {
   /* ---- v16: shelf (toko) vs warehouse (gudang), discount limit, members, owner master code, own PINs ---- */
   const isHash = v => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
   const wibTime = iso => new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(11, 16) + ' WIB';
-  const V16_DEFAULTS = { max_discount_pct: 3, sell_from_shop_only: true, member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
+  const V16_DEFAULTS = { max_discount_pct: 3, sell_from_shop_only: true, return_owner_min_value: 1000000, return_owner_min_qty: 0, return_fee_pct: 0, require_return_photo: true, require_carrier: true, member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
   const setting = (db, k) => db.settings && db.settings[k] !== undefined ? db.settings[k] : V16_DEFAULTS[k];
   /** stock = total, shop_stock = on the shelf; a row without shop_stock (before v16) counts all its stock as on the shelf */
   const shopOf = p => p.shop_stock === undefined || p.shop_stock === null || p.shop_stock === '' ? num(p.stock) : num(p.shop_stock);
@@ -1170,6 +1178,11 @@ const MockServer = (() => {
       o.summary = strv(o.summary).replace(/ \(Rp -?\d+→-?\d+\)/g, ''); o.total = 0;
       return o;
     }
+    if (a.kind === 'retur') {
+      const o = Object.assign({}, a);
+      try { const pl = JSON.parse(a.payload || '{}'); if (pl.kind === 'pemasok') { delete pl.value; delete pl.refund; (pl.lines || []).forEach(l => { delete l.unit_price; delete l.value; }); o.payload = JSON.stringify(pl); o.total = 0; o.summary = strv(o.summary).replace(/ \| nilai Rp -?\d+/g, ''); } } catch (e) { o.payload = ''; }
+      return o;
+    }
     if (a.kind === 'discount') {
       const o = Object.assign({}, a);
       try { const pl = JSON.parse(a.payload || '{}'); ['profit_before', 'profit_after', 'margin_before', 'margin_after', 'cost'].forEach(k => delete pl[k]); o.payload = JSON.stringify(pl); } catch (e) { o.payload = ''; }
@@ -1177,6 +1190,54 @@ const MockServer = (() => {
       return o;
     }
     return a;
+  }
+  /* ---- v16 returns (retur), who brought the goods (carrier), plain-text input — as on the server ---- */
+  function cleanInput(o, depth) {
+    if (!o || typeof o !== 'object' || depth > 6) return;
+    Object.keys(o).forEach(k => {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') { delete o[k]; return; }
+      const v = o[k];
+      if (typeof v === 'string') o[k] = v.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F‪-‮⁦-⁩]/g, '').replace(/<[^>]*>/g, '').replace(/[<>]/g, '').slice(0, 4000);
+      else if (v && typeof v === 'object') cleanInput(v, depth + 1);
+    });
+  }
+  const RETURN_REASONS = ['tidak_sesuai', 'rusak', 'kadaluarsa', 'salah_kirim', 'kualitas_buruk', 'berubah_pikiran', 'lainnya'];
+  const RETURN_REASON_TEXT = { tidak_sesuai: 'Tidak sesuai spesifikasi', rusak: 'Rusak / cacat', kadaluarsa: 'Kedaluwarsa', salah_kirim: 'Salah kirim / salah barang', kualitas_buruk: 'Kualitas buruk', berubah_pikiran: 'Pelanggan berubah pikiran', lainnya: 'Lainnya' };
+  const personName = v => { const x = strv(v).replace(/\s+/g, ' '); return /^[\p{L}\p{M}][\p{L}\p{M}\p{N} .,'-]{0,59}$/u.test(x) ? x : ''; };
+  const safeName = (v, max) => { const x = strv(v).replace(/\s+/g, ' '); return x.length <= (max || 80) && /^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N} .,'&()\/%+#-]*$/u.test(x) ? x : ''; };
+  const docNo = v => { const x = strv(v).toUpperCase().replace(/\s+/g, ' '); return /^[A-Z0-9][A-Z0-9 \/.-]{0,39}$/.test(x) ? x : ''; };
+  const CARRIER_TYPES = ['umum', 'teman', 'pemasok', 'karyawan'];
+  function readCarrier(c, required) {
+    c = c && typeof c === 'object' ? c : {};
+    const type = CARRIER_TYPES.indexOf(c.type) >= 0 ? c.type : '';
+    if (!type) return required ? { error: 'Pilih siapa yang membawa barang (kendaraan umum / teman / sopir pemasok / karyawan)' } : { type: '', name: '', vehicle: '', phone: '' };
+    const name = strv(c.name) ? personName(c.name) : '';
+    if (strv(c.name) && !name) return { error: 'Nama pembawa barang hanya boleh huruf' };
+    const vehicle = strv(c.vehicle) ? docNo(c.vehicle) : '';
+    if (strv(c.vehicle) && !vehicle) return { error: 'Nomor kendaraan hanya boleh huruf dan angka' };
+    const phone = strv(c.phone) ? normPhone(c.phone) : '';
+    if (strv(c.phone) && !phone) return { error: 'Nomor HP pembawa tidak valid' };
+    if (type === 'umum' && !vehicle) return { error: 'Kendaraan umum: tulis nomor kendaraannya (plat / nomor angkot)' };
+    if ((type === 'teman' || type === 'karyawan') && !name) return { error: 'Tulis nama orang yang membawa barang' };
+    const kindText = strv(c.kind) ? strv(c.kind).replace(/[^\p{L}\p{N} -]/gu, '').slice(0, 30) : '';
+    return { type, name: name || kindText, vehicle, phone };
+  }
+  const CARRIER_TEXT = { umum: 'kendaraan umum', teman: 'teman', pemasok: 'sopir pemasok', karyawan: 'karyawan' };
+  /** quantities already returned (approved returns + pending requests) for one invoice / goods-in note */
+  function returnedBefore(db, ref) {
+    const q = {};
+    const add = lines => (Array.isArray(lines) ? lines : []).forEach(l => { const k = String(l.product_id); q[k] = roundQty((q[k] || 0) + num(l.qty)); });
+    (db.returns || []).filter(r => strv(r.ref) === ref && r.status === 'approved').forEach(r => { let l = []; try { l = typeof r.lines === 'string' ? JSON.parse(r.lines || '[]') : r.lines; } catch (e) { l = []; } add(l); });
+    db.approvals.filter(a => a.kind === 'retur' && a.status === 'pending').forEach(a => { let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; } if (strv(pl.ref) === ref) add(pl.lines); });
+    return q;
+  }
+  function returnOut(r, role) {
+    if (!r) return null;
+    const o = JSON.parse(JSON.stringify(r)); delete o.id;
+    if (typeof o.lines === 'string') { try { o.lines = JSON.parse(o.lines); } catch (e) { o.lines = []; } }
+    if (role === 'kasir' && o.kind === 'pemasok') return null;
+    if (role !== 'owner' && o.kind === 'pemasok') { delete o.value; delete o.refund; (o.lines || []).forEach(l => { delete l.unit_price; delete l.value; }); }
+    return o;
   }
   /* devices (v11): written only when something changed or every 10 minutes */
   const isCoord = (lat, lng) => lat !== null && lat !== '' && lat !== undefined && lng !== null && lng !== '' && lng !== undefined && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) && Math.abs(Number(lat)) <= 90 && Math.abs(Number(lng)) <= 180 && !(Number(lat) === 0 && Number(lng) === 0);
@@ -1692,7 +1753,7 @@ const MockServer = (() => {
         logAct(db, u, 'pindah_stok', (toShop ? 'Gudang → toko: ' : 'Toko → gudang: ') + mv.map(x => x.p.name + ' ' + fmtN(x.q) + ' ' + strv(x.p.unit)).join('; ') + (mnote ? ' | ' + mnote : ''), '', 0, 'info');
         return { stock: mv.map(x => ({ product_id: x.p.id, stock: num(x.p.stock), shop_stock: x.sh, gudang_stock: roundQty(num(x.p.stock) - x.sh) })) };
       }
-      case 'bootstrap': return { products: db.products.map(prodOut), customers: db.customers, settings: Object.assign({}, V16_DEFAULTS, db.settings), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
+      case 'bootstrap': return { user: { name: u.name, role: roleOf(u) }, products: db.products.map(prodOut), customers: db.customers, settings: Object.assign({}, V16_DEFAULTS, db.settings), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
         users: db.users.map(x => owner ? { name: x.name, role: x.role, active: x.active, must_change: x.must_change === true, locked: Date.parse(x.locked_until) > Date.now(), has_master: x.role === 'owner' && isHash(x.master_hash) } : { name: x.name, role: x.role, active: x.active }), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
         shift: blind(shiftSummary(db, openShiftOf(db, u.name)), u.role), open_shifts: ['owner', 'manager'].includes(u.role) ? db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)) : [],
         activity_recent: owner ? db.activity.filter(a => a.act_date >= addDays(jktDate(), -7) && a.act_date <= jktDate()).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 100) : [] };
@@ -1811,6 +1872,100 @@ const MockServer = (() => {
         db.approvals.push(approval);
         return { request_id: approval.request_id, approval };
       }
+      case 'request_return': {
+        if (!['owner', 'manager', 'kasir'].includes(u.role)) throw E('FORBIDDEN', 'Tidak diizinkan');
+        const kind = data.kind === 'pemasok' ? 'pemasok' : 'pelanggan';
+        const st = Object.assign({}, V16_DEFAULTS, db.settings);
+        const reasonCode = RETURN_REASONS.indexOf(data.reason_code) >= 0 ? data.reason_code : '';
+        if (!reasonCode) throw E('INVALID', 'Pilih alasan retur');
+        const reasonNote = strv(data.reason_note).slice(0, 300);
+        if (reasonCode === 'lainnya' && !reasonNote) throw E('INVALID', 'Tulis alasan retur');
+        const rlines = Array.isArray(data.lines) ? data.lines.slice(0, 100) : [];
+        if (!rlines.length) throw E('INVALID', 'Pilih barang yang diretur');
+        const agg = {};
+        for (const l0 of rlines) {
+          const l = l0 || {}, p = prodById(l.product_id);
+          if (!p) throw E('NOT_FOUND', 'Produk tidak ditemukan: ' + l.product_id);
+          const q = roundQty(l.qty);
+          if (!(q > 0)) throw E('INVALID', 'Jumlah tidak valid: ' + strv(p.name));
+          const cond = l.condition === 'rusak' ? 'rusak' : 'baik', k = String(p.id) + '|' + (kind === 'pelanggan' ? cond : '');
+          if (!agg[k]) agg[k] = { product_id: p.id, name: strv(p.name), unit: strv(p.unit), qty: 0, condition: kind === 'pelanggan' ? cond : '' };
+          agg[k].qty = roundQty(agg[k].qty + q);
+        }
+        const list = Object.keys(agg).map(k => agg[k]), qtyByPid = {};
+        list.forEach(l => { qtyByPid[String(l.product_id)] = roundQty((qtyByPid[String(l.product_id)] || 0) + l.qty); });
+        const ref = kind === 'pelanggan' ? strv(data.invoice_no) : strv(data.purchase_no);
+        if (!ref) throw E('INVALID', kind === 'pelanggan' ? 'Nomor faktur pembelian wajib' : 'Nomor barang masuk (nota pemasok) wajib');
+        const before = returnedBefore(db, ref);
+        const returnId = 'RT' + jktDate().replace(/-/g, '').slice(2) + '-' + randId(4);
+        let rec;
+        if (kind === 'pelanggan') {
+          const sale = db.sales.find(x => x.invoice_no === ref);
+          if (!sale) throw E('NOT_FOUND', 'Faktur tidak ditemukan: ' + ref);
+          if (sale.status === 'void') throw E('INVALID', 'Faktur ini sudah dibatalkan');
+          const sold = {}, value = {};
+          db.items.filter(it => it.invoice_no === ref).forEach(it => { const k = String(it.product_id); sold[k] = (sold[k] || 0) + num(it.qty); value[k] = (value[k] || 0) + int(it.line_total); });
+          const discRatio = int(sale.subtotal) > 0 ? Math.min(1, int(sale.discount) / int(sale.subtotal)) : 0;
+          const over = [];
+          Object.keys(qtyByPid).forEach(pid => { const left = roundQty((sold[pid] || 0) - (before[pid] || 0)); if (qtyByPid[pid] > left + 1e-9) over.push(strv(prodById(pid).name) + ': dibeli ' + fmtN(sold[pid] || 0) + ', sudah diretur ' + fmtN(before[pid] || 0)); });
+          if (over.length) throw E('INVALID', 'Jumlah retur melebihi yang dibeli di faktur ini: ' + over.join('; '));
+          list.forEach(l => { const pid = String(l.product_id), unitNet = sold[pid] > 0 ? (value[pid] / sold[pid]) * (1 - discRatio) : 0; l.unit_price = Math.round(unitNet); l.value = Math.round(l.qty * unitNet); });
+          const gross = sum(list, l => l.value), feePct = Math.min(50, Math.max(0, num(st.return_fee_pct))), fee = Math.round(gross * feePct / 100);
+          const method = ['tunai', 'transfer', 'potong_hutang', 'tukar'].includes(data.refund_method) ? data.refund_method : 'tunai';
+          const cust = sale.customer_id ? custById(sale.customer_id) || null : null;
+          if (method === 'potong_hutang' && !(cust && int(cust.debt_balance) > 0)) throw E('INVALID', 'Pelanggan ini tidak punya hutang untuk dipotong');
+          if (strv(data.returned_by) && !personName(data.returned_by)) throw E('INVALID', 'Nama orang yang mengembalikan hanya boleh huruf');
+          if (strv(data.returned_by_phone) && !normPhone(data.returned_by_phone)) throw E('INVALID', 'Nomor HP orang yang mengembalikan tidak valid');
+          const by = personName(data.returned_by) || (cust ? strv(cust.name) : strv(sale.customer_name));
+          if (!by) throw E('INVALID', 'Nama orang yang mengembalikan wajib');
+          rec = { return_id: returnId, kind, ref, party_id: cust ? cust.id : 0, party_name: strv(sale.customer_name), bought_by: strv(sale.customer_name), bought_date: strv(sale.sale_date),
+            returned_by: by, returned_by_phone: normPhone(data.returned_by_phone), lines: list, qty_total: roundQty(sum(list, l => l.qty)), value: gross, fee_pct: feePct, fee,
+            refund: gross - fee, refund_method: method, reason_code: reasonCode, reason_note: reasonNote, photo_id: '', out_doc_no: '', carrier_type: '', carrier_name: '', carrier_vehicle: '', carrier_phone: '' };
+        } else {
+          const prows = db.purchases.filter(x => strv(x.purchase_no) === ref && num(x.qty) > 0);
+          if (!prows.length) throw E('NOT_FOUND', 'Barang masuk tidak ditemukan: ' + ref);
+          const bought = {}, cost = {};
+          prows.forEach(x => { const k = String(x.product_id); bought[k] = (bought[k] || 0) + num(x.qty); cost[k] = int(x.cost_price); });
+          const over = [];
+          Object.keys(qtyByPid).forEach(pid => {
+            const left = roundQty((bought[pid] || 0) - (before[pid] || 0));
+            if (!bought[pid]) over.push(strv(prodById(pid).name) + ': tidak ada di nota ' + ref);
+            else if (qtyByPid[pid] > left + 1e-9) over.push(strv(prodById(pid).name) + ': masuk ' + fmtN(bought[pid]) + ', sudah diretur ' + fmtN(before[pid] || 0));
+            else if (qtyByPid[pid] > num(prodById(pid).stock) + 1e-9) over.push(strv(prodById(pid).name) + ': stok hanya ' + fmtN(prodById(pid).stock));
+          });
+          if (over.length) throw E('INVALID', 'Retur ke pemasok tidak bisa: ' + over.join('; '));
+          const outDoc = docNo(data.out_doc_no);
+          if (!outDoc) throw E('INVALID', 'Nomor nota / surat jalan barang keluar wajib (huruf, angka, / - . saja)');
+          const photoId = strv(data.photo_id), ph = photoId ? db.photos.find(x => x.photo_id === photoId) : null;
+          if (st.require_return_photo !== false && !ph) throw E('INVALID', 'Foto bukti barang keluar wajib');
+          const carrier = readCarrier(data.carrier, true);
+          if (carrier.error) throw E('INVALID', carrier.error);
+          list.forEach(l => { l.unit_price = cost[String(l.product_id)] || 0; l.value = Math.round(l.qty * l.unit_price); });
+          const gross = sum(list, l => l.value);
+          rec = { return_id: returnId, kind, ref, party_id: 0, party_name: strv(prows[0].supplier), bought_by: '', bought_date: strv(prows[0].purchase_date), returned_by: carrier.name || u.name, returned_by_phone: carrier.phone,
+            lines: list, qty_total: roundQty(sum(list, l => l.qty)), value: gross, fee_pct: 0, fee: 0, refund: gross, refund_method: 'nota_kredit', reason_code: reasonCode, reason_note: reasonNote,
+            photo_id: ph ? photoId : '', out_doc_no: outDoc, carrier_type: carrier.type, carrier_name: carrier.name, carrier_vehicle: carrier.vehicle, carrier_phone: carrier.phone };
+        }
+        const minVal = num(st.return_owner_min_value) > 0 ? num(st.return_owner_min_value) : 1000000, minQty = num(st.return_owner_min_qty);
+        const ownerNeeded = rec.value >= minVal || (minQty > 0 && rec.qty_total >= minQty);
+        const summary = (kind === 'pelanggan' ? 'Retur pelanggan ' + rec.party_name + ' (dikembalikan ' + rec.returned_by + ') faktur ' + ref : 'Retur ke pemasok ' + rec.party_name + ' dari ' + ref + ', nota keluar ' + rec.out_doc_no) +
+          ': ' + list.map(l => l.name + ' ' + fmtN(l.qty) + ' ' + l.unit + (l.condition === 'rusak' ? ' (rusak)' : '')).join('; ') + ' | ' + RETURN_REASON_TEXT[reasonCode] + (reasonNote ? ': ' + reasonNote : '') +
+          (kind === 'pelanggan' ? ' | uang kembali Rp ' + rec.refund + ' (' + rec.refund_method + ')' + (rec.fee ? ', potongan retur Rp ' + rec.fee : '') : ' | nilai Rp ' + rec.value);
+        const ap = newApproval(db, u, { kind: 'retur', approver_role: ownerNeeded ? 'owner' : 'manager', ref: returnId, client_id: strv(data.client_id).slice(0, 60),
+          customer_id: rec.party_id, customer_name: rec.party_name, total: kind === 'pelanggan' ? rec.refund : rec.value, debt_amount: 0, summary: summary.slice(0, 1500), note: reasonNote, payload: JSON.stringify(rec) });
+        logAct(db, u, 'minta_retur', summary + (ownerNeeded ? ' — butuh persetujuan pemilik' : ' — menunggu manajer'), returnId, ap.total, 'warn');
+        return { request_id: ap.request_id, return_id: returnId, approver_role: ap.approver_role, approval: ap };
+      }
+      case 'list_returns': {
+        if (!['owner', 'manager', 'kasir'].includes(u.role)) throw E('FORBIDDEN', 'Tidak diizinkan');
+        const inR = d => (!isYmd(data.from) || strv(d) >= data.from) && (!isYmd(data.to) || strv(d) <= data.to);
+        const done1 = db.returns.filter(r => inR(r.return_date)).map(r => returnOut(r, u.role)).filter(Boolean);
+        const pending = db.approvals.filter(a => a.kind === 'retur' && a.status === 'pending').map(a => {
+          let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+          return returnOut(Object.assign({}, pl, { status: 'pending', request_id: a.request_id, approver_role: a.approver_role, return_date: strv(a.created_at).slice(0, 10), user: strv(a.cashier) }), u.role);
+        }).filter(Boolean);
+        return { returns: pending.concat(done1.sort((x, y) => String(y.at).localeCompare(String(x.at)))) };
+      }
       case 'check_approval': {
         const ap = db.approvals.find(x => x.request_id === data.request_id);
         if (!ap) throw E('NOT_FOUND', 'approval');
@@ -1847,6 +2002,39 @@ const MockServer = (() => {
           const pf = purchaseFixChanges(db, no, pl.lines);
           if (!pf.found) throw E('INVALID', 'Kirim purchase_no barang masuk yang dikoreksi');
           out.stock = applyPurchaseFix(db, no, pf.changes, strv(pl.reason) + ' (diminta ' + ap.cashier + ', disetujui ' + u.name + ')', u.name);
+        }
+        if (ap.kind === 'retur') {
+          let rec = {}; try { rec = JSON.parse(ap.payload || '{}'); } catch (e) { rec = {}; }
+          const rl = Array.isArray(rec.lines) ? rec.lines : [];
+          if (data.decision === 'approved') {
+            const back = {};
+            rl.forEach(l => { const pid = String(l.product_id); if (rec.kind === 'pemasok') back[pid] = (back[pid] || 0) - num(l.qty); else if (l.condition !== 'rusak') back[pid] = (back[pid] || 0) + num(l.qty); });
+            // good returned goods go back to the warehouse (checked before they return to the shelf); damaged ones are not stock
+            out.stock = [];
+            Object.keys(back).forEach(pid => {
+              const p = prodById(pid); if (!p || !back[pid]) return;
+              const ns = roundQty(num(p.stock) + back[pid]);
+              if (back[pid] < 0) db._shopSet[p.id] = Math.min(shopOf(p), Math.max(0, ns));
+              p.stock = ns; out.stock.push({ product_id: p.id, stock: ns });
+            });
+            if (rec.kind === 'pemasok') {
+              rl.forEach(l => db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: jktDate(), supplier: strv(rec.party_name), product_id: l.product_id, name: strv(l.name), qty: -num(l.qty), cost_price: int(l.unit_price), total: -int(l.value),
+                note: 'RETUR ' + strv(rec.return_id) + ' dari ' + strv(rec.ref) + ' — ' + (RETURN_REASON_TEXT[rec.reason_code] || '') + (rec.reason_note ? ': ' + strv(rec.reason_note) : ''), user: strv(ap.cashier), photo_id: strv(rec.photo_id), exp_date: '',
+                purchase_no: strv(rec.return_id), match_status: 'retur', match_notes: 'nota keluar ' + strv(rec.out_doc_no) }));
+            } else {
+              const cust = rec.party_id ? custById(rec.party_id) : null, refund = int(rec.refund);
+              if (rec.refund_method === 'potong_hutang' && cust) cust.debt_balance = Math.max(0, int(cust.debt_balance) - refund);
+              else if ((rec.refund_method === 'tunai' || rec.refund_method === 'transfer') && refund > 0) {
+                db.payments.push({ id: nextId(db, 'payment'), pay_id: 'PY' + randId(7), pay_date: jktDate(), pay_time: new Date().toISOString(), direction: 'out', party_type: 'customer', customer_id: rec.party_id || 0, customer_name: strv(rec.party_name), supplier: '',
+                  amount: refund, method: rec.refund_method, account_id: payAccount(db, data, rec.refund_method), slip_date: '', bank: '', transfer_ref: '', proof_photo_id: '', alloc: '[]', match_status: 'retur', note: 'Uang kembali retur ' + strv(rec.return_id) + ' faktur ' + strv(rec.ref), cashier: strv(ap.cashier) });
+                const sh = rec.refund_method === 'tunai' ? openShiftOf(db, ap.cashier) : null;
+                if (sh) db.cash_moves.push({ id: nextId(db, 'move'), shift_id: sh.shift_id, type: 'out', amount: refund, note: 'Retur ' + strv(rec.return_id), user: u.name, time: jktISO() });
+              }
+            }
+          }
+          db.returns.push(Object.assign({}, rec, { id: nextId(db, 'return'), lines: JSON.stringify(rl), status: data.decision, user: strv(ap.cashier), approved_by: u.name, return_date: jktDate(), at: new Date().toISOString(), request_id: ap.request_id }));
+          logAct(db, u, 'retur', (data.decision === 'approved' ? 'Retur disetujui ' : 'Retur ditolak ') + u.name + ': ' + strv(ap.summary).slice(0, 600), strv(rec.return_id), int(ap.total), 'warn');
+          out.return_id = strv(rec.return_id);
         }
         logAct(db, u, 'keputusan', (data.decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + (ap.kind || 'credit') + ', diminta ' + ap.cashier + '): ' + strv(ap.summary).slice(0, 600) + (strv(data.note) ? ' | ' + strv(data.note) : ''), ap.request_id, int(ap.total), data.decision === 'approved' ? 'info' : 'warn');
         Object.assign(ap, { status: data.decision, decided_by: u.name, decided_at: jktISO(), note: String(data.note || '') });
@@ -1995,9 +2183,13 @@ const MockServer = (() => {
       }
       case 'save_product': {
         needOwner();
-        const name = String(data.name || '').trim();
-        if (!name) throw E('INVALID', 'name required');
+        const name = safeName(data.name, 80);
+        if (!name) throw E('INVALID', strv(data.name) ? 'Nama produk hanya boleh huruf, angka dan . , \' & ( ) / % + # -' : 'Nama produk wajib');
         const sku = String(data.sku || '').trim();
+        if (sku && !/^[A-Za-z0-9._-]{1,40}$/.test(sku)) throw E('INVALID', 'SKU / barcode hanya boleh huruf, angka, titik, garis');
+        if (strv(data.category) && !safeName(data.category, 40)) throw E('INVALID', 'Kategori hanya boleh huruf dan angka');
+        if (strv(data.unit) && !/^[\p{L}\p{N} .\/-]{1,15}$/u.test(strv(data.unit))) throw E('INVALID', 'Satuan tidak valid');
+        if (strv(data.supplier) && !safeName(data.supplier, 80)) throw E('INVALID', 'Nama pemasok hanya boleh huruf dan angka');
         if (sku && db.products.some(p => p.sku === sku && p.id !== Number(data.id))) throw E('INVALID', 'SKU already used');
         if (data.id && !prodById(data.id)) throw E('NOT_FOUND', 'product');
         // repacked in the shop: made from a bulk product (repack_from), repack_qty of the bulk unit per piece
@@ -2059,8 +2251,12 @@ const MockServer = (() => {
       case 'save_customer': {
         // name is optional with a phone ("Pelanggan 1234"); without an id, the same normalised phone updates that customer
         const phone = String(data.phone || '').trim(), pn = normPhone(phone);
-        const name = String(data.name || '').trim();
-        if (!name && !pn) throw E('INVALID', 'name required');
+        if (data.id && !custById(data.id)) throw E('NOT_FOUND', 'Pelanggan tidak ditemukan');
+        if (strv(data.name) && !safeName(data.name, 80)) throw E('INVALID', 'Nama pelanggan hanya boleh huruf, angka dan . , \' & ( ) / -');
+        if (strv(data.phone) && !/^[0-9+ ().-]{3,20}$/.test(strv(data.phone))) throw E('INVALID', 'Nomor HP hanya boleh angka (contoh 0812xxxxxxx)');
+        if (strv(data.address).length > 200 || strv(data.notes).length > 300) throw E('INVALID', 'Alamat / catatan terlalu panjang');
+        const name = safeName(data.name, 80);
+        if (!name && !pn && !data.id) throw E('INVALID', 'Nama pelanggan wajib');
         const defName = pn ? 'Pelanggan ' + pn.slice(-4) : '';
         const optin = data.wa_optin === undefined || data.wa_optin === null ? undefined : (data.wa_optin === true || data.wa_optin === 'true');
         const source = String(data.source || '').trim().slice(0, 20);
@@ -2132,8 +2328,8 @@ const MockServer = (() => {
       }
       case 'pay_supplier': {
         if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
-        const sup = strv(data.supplier).slice(0, 80);
-        if (!sup) throw E('INVALID', 'Nama pemasok wajib');
+        const sup = safeName(data.supplier, 80);
+        if (!sup) throw E('INVALID', 'Nama pemasok wajib (huruf dan angka saja)');
         const amount = int(data.amount);
         if (!(amount > 0)) throw E('INVALID', 'Jumlah pembayaran tidak valid');
         const method = ['tunai', 'transfer', 'qris'].includes(data.method) ? data.method : 'transfer';
@@ -2276,14 +2472,21 @@ const MockServer = (() => {
         rep.cash = { sales: byMethod.tunai, payments_in: rep.payments_in.tunai, payments_out: rep.payments_out.tunai, expenses_from_kas: rep.expenses.from_kas,
           expected_total: sum(shifts, x => x.expected_cash), counted_total: sum(shifts.filter(x => x.status === 'closed'), x => x.counted_cash), difference_total: sum(shifts.filter(x => x.status === 'closed'), x => x.difference) };
         if (owner) rep.profit = sum(okSales, x => int(x.profit));
+        const rets = (db.returns || []).filter(x => x.status === 'approved' && x.return_date === day), custRets = rets.filter(x => x.kind !== 'pemasok');
+        rep.returns = { customer: { count: custRets.length, refund: sum(custRets, x => int(x.refund)), tunai: sum(custRets.filter(x => x.refund_method === 'tunai'), x => int(x.refund)) }, supplier: { count: rets.length - custRets.length } };
+        if (owner) rep.returns.supplier.value = sum(rets.filter(x => x.kind === 'pemasok'), x => int(x.value));
         const st = db.settings;
         return { report: rep, send_to: { company: strv(st.wa_shop_number), manager: strv(st.wa_manager_number), owner: strv(st.wa_owner_number) } };
       }
       case 'save_purchase': {
-        if (!Array.isArray(data.items) || !data.items.length) throw E('INVALID', 'items required');
+        if (!Array.isArray(data.items) || !data.items.length) throw E('INVALID', 'Tidak ada barang');
+        if (strv(data.supplier) && !safeName(data.supplier, 80)) throw E('INVALID', 'Nama pemasok hanya boleh huruf dan angka');
+        // who brought the goods: public transport (+ its number), a friend (name), the supplier's driver or our staff
+        const carrier = readCarrier(data.carrier, setting(db, 'require_carrier') !== false);
+        if (carrier.error) throw E('CARRIER_REQUIRED', carrier.error);
         const photo = data.photo_id ? db.photos.find(x => x.photo_id === data.photo_id && x.kind === 'masuk') : null;
-        if (data.photo_id && !photo) throw E('INVALID', 'photo_id not found');
-        if (!photo && db.settings.require_purchase_photo !== false) throw E('INVALID', 'Purchase photo (photo_id) required');
+        if (data.photo_id && !photo) throw E('INVALID', 'Foto barang masuk tidak ditemukan');
+        if (!photo && db.settings.require_purchase_photo !== false) throw E('PHOTO_REQUIRED', 'Barang masuk wajib foto nota / barang');
         const pdate = isYmd(data.purchase_date) ? data.purchase_date : jktDate();
         // check what was typed against the photographed supplier note before anything is saved
         const typed = data.items.map(it => { const p0 = prodById(it.product_id); return { name: p0 ? p0.name : strv(it.product_id), qty: roundQty(it.qty), photo_index: it.photo_index }; });
@@ -2303,12 +2506,12 @@ const MockServer = (() => {
           p.cost_price = old + qty > 0 ? Math.round((old * p.cost_price + qty * cost) / (old + qty)) : cost;
           p.stock = roundQty(p.stock + qty);
           db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: pdate, supplier: String(data.supplier || ''), product_id: p.id, name: p.name, qty, cost_price: cost, total: Math.round(qty * cost), note: String(data.note || ''), user: u.name, photo_id: photo ? photo.photo_id : '', exp_date: exp,
-            purchase_no, match_status: match.status, match_notes: matchNotes.slice(0, 500) });
+            purchase_no, match_status: match.status, match_notes: matchNotes.slice(0, 500), carrier_type: carrier.type, carrier_name: carrier.name, carrier_vehicle: carrier.vehicle, carrier_phone: carrier.phone });
           const o = out.find(x => x.product_id === p.id); if (o) Object.assign(o, { stock: p.stock, cost_price: p.cost_price }); else out.push({ product_id: p.id, stock: p.stock, cost_price: p.cost_price });
         }
         if (photo) photo.ref = [photo.ref, String(data.supplier || '')].filter(Boolean).join(' ') || 'masuk';
         const sumTotal = sum(checked, x => Math.round(x.qty * x.cost));
-        logAct(db, u, 'masuk', 'Barang masuk ' + purchase_no + (strv(data.supplier) ? ' dari ' + strv(data.supplier) : '') + ': ' + data.items.length + ' baris, Rp ' + sumTotal + ' — nota: ' + match.status + (matchNotes ? ' (' + matchNotes + ')' : ''), purchase_no, sumTotal, match.status === 'cocok' ? 'info' : 'warn');
+        logAct(db, u, 'masuk', 'Barang masuk ' + purchase_no + (strv(data.supplier) ? ' dari ' + strv(data.supplier) : '') + ': ' + data.items.length + ' baris, Rp ' + sumTotal + ' — nota: ' + match.status + (matchNotes ? ' (' + matchNotes + ')' : '') + (carrier.type ? ' — dibawa ' + CARRIER_TEXT[carrier.type] + (carrier.name ? ' ' + carrier.name : '') + (carrier.vehicle ? ' ' + carrier.vehicle : '') : ''), purchase_no, sumTotal, match.status === 'cocok' ? 'info' : 'warn');
         return { stock: out, purchase_no, match };
       }
       case 'request_purchase_fix': {
@@ -2389,8 +2592,8 @@ const MockServer = (() => {
       }
       case 'save_user': {
         needOwner();
-        const name = String(data.name || '').trim();
-        if (!name) throw E('INVALID', 'name required');
+        const name = personName(data.name);
+        if (!name) throw E('INVALID', strv(data.name) ? 'Nama pengguna hanya boleh huruf, spasi dan . \' -' : 'Nama wajib');
         const role = ['owner', 'manager', 'sales'].includes(data.role) ? data.role : 'kasir';
         if (data.pin_hash && !/^[0-9a-f]{64}$/.test(data.pin_hash)) throw E('INVALID', 'pin_hash');
         let x = db.users.find(v => v.name.toLowerCase() === name.toLowerCase());
@@ -2455,6 +2658,8 @@ const MockServer = (() => {
     if (ensureV12(db)) save(db);
     if (ensureV16(db)) save(db);
     let res;
+    if (body.data && typeof body.data === 'object' && !/^scan_/.test(body.action)) { body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); }
+    db.returns = db.returns || [];
     const snap = new Map((db.products || []).map(p => [p.id, { stock: num(p.stock), shop: shopOf(p) }]));
     db._shopSet = {};
     try {
@@ -2774,6 +2979,7 @@ const VIEWS = [
   { id: 'products', icon: 'box', label: 'nav.products' },
   { id: 'purchases', icon: 'truck', label: 'nav.purchases' },
   { id: 'gudang', icon: 'warehouse', label: 'nav.gudang', approver: true },
+  { id: 'retur', icon: 'return', label: 'nav.retur', approver: true },
   { id: 'expenses', icon: 'wallet', label: 'nav.expenses' },
   { id: 'kas', icon: 'cash', label: 'nav.kas' },
   { id: 'customers', icon: 'users', label: 'nav.customers' },
@@ -3892,6 +4098,7 @@ function showReceipt(rc, opts = {}) {
     title: rc.pending ? t('rc.title_pending') : t('rc.title'), cls: 'narrow',
     body: `${opts.fromSale ? `<div class="row" style="justify-content:center;margin-bottom:10px"><span class="badge ${rc.pending ? 'amber' : 'green'}" style="font-size:14px;padding:6px 12px">${esc(rc.pending ? t('outbox.queued_short') : t('pos.saved_ok'))}</span></div>` : ''}<div id="exit-wrap"></div>${opts.sale ? '' : '<div id="wa-wrap"></div>'}${receiptHTML(rc)}`,
     foot: `${canVoid ? `<button class="btn danger" data-act="void-sale" data-inv="${esc(rc.invoice_no)}">${esc(t('hist.void'))}</button>` : ''}${opts.sale && !isOwner() && rc.status !== 'void' && !rc.pending ? `<button class="btn danger sm" data-act="void-request" data-inv="${esc(rc.invoice_no)}">${esc(t('void.request'))}</button>` : ''}
+      ${opts.sale && isApprover() && rc.status !== 'void' && !rc.pending ? `<button class="btn sm" data-act="rt-cust" data-inv="${esc(rc.invoice_no)}" id="rc-retur">${ic('return')} ${esc(t('rt.btn'))}</button>` : ''}
       <button class="btn sm" data-act="rc-print">${ic('print')} ${esc(t('print'))}</button>
       <button class="btn sm" data-act="rc-copy">${ic('copy')} ${esc(t('copy'))}</button>
       <a class="btn sm" id="rc-wa" target="_blank" rel="noopener" href="${esc(waLink(rc.customer_phone, receiptText(rc)))}">${ic('wa')} WhatsApp</a>
@@ -4135,7 +4342,7 @@ async function pollApprovals() {
     AP.fresh = new Set(fresh.map(a => a.request_id));
     if (fresh.length) {
       beep(); try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) { }
-      toast(t(fresh[0].kind === 'opname' ? 'gd.new_toast' : fresh[0].kind === 'purchase_fix' ? 'apr.new_fix' : fresh[0].kind === 'buka_kas' ? 'apr.new_bukakas' : fresh[0].kind === 'discount' ? 'apr.new_disc' : 'apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name, no: fresh[0].ref }), 'warn', 6000);
+      toast(t(fresh[0].kind === 'opname' ? 'gd.new_toast' : fresh[0].kind === 'purchase_fix' ? 'apr.new_fix' : fresh[0].kind === 'buka_kas' ? 'apr.new_bukakas' : fresh[0].kind === 'discount' ? 'apr.new_disc' : fresh[0].kind === 'retur' ? 'apr.new_retur' : 'apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name, no: fresh[0].ref }), 'warn', 6000);
     }
     updateApprovalBadge();
     if (S.view === 'approvals') drawApprovals();
@@ -4155,6 +4362,7 @@ function aprBodyHTML(a) {
   if (kind === 'purchase_fix') return purchaseFixAprHTML(a, pl);
   if (kind === 'buka_kas') return bukaKasAprHTML(a, pl);
   if (kind === 'discount') return discountAprHTML(a, pl);
+  if (kind === 'retur') return returAprHTML(a, pl);
   if (kind === 'void') return `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(t('apr.kind_void', { inv: a.ref }))}</b><span class="badge red">${esc(a.request_id)}</span></div>
     <div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))}</div>
     <div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('rc.customer'))}</div><div class="v">${esc(a.customer_name || t('pos.walkin'))}</div></div><div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(a.total)}</div></div></div>
@@ -4202,6 +4410,7 @@ async function decideApproval(id, decision, btn) {
     toast(decision === 'approved' ? t('apr.done_ok', { id }) : t('apr.done_rej', { id }), decision === 'approved' ? 'ok' : 'warn');
     if (r.product) { upsertLocal(S.products, r.product); applyData({ products: S.products }); applyPendingStockFor(r.product.id); saveCache(); }
     if (r.stock) gdAfterStockChange(r.stock);
+    if (r.return_id) { RT.list = null; if (ap.kind === 'retur') { Object.keys(salesCache).forEach(k => delete salesCache[k]); } }
     if (r.sale) {
       Object.keys(salesCache).forEach(k => delete salesCache[k]);
       await refreshData(true);
@@ -5345,6 +5554,10 @@ function openProductEditor(p, after) {
     if (p.id) data.id = p.id; else data.stock = qtyVal(val('stock'));
     const err = $('#pf-err', el);
     if (!data.name) { err.textContent = t('required') + ': ' + t('name'); return; }
+    if (!ruleOk.pname(data.name)) { err.textContent = t('rule.pname'); $('#pf-name', el).focus(); return; }
+    if (data.sku && !ruleOk.sku(data.sku)) { err.textContent = t('rule.sku'); $('#pf-sku', el).focus(); return; }
+    if (data.category && !ruleOk.pname(data.category)) { err.textContent = t('rule.pname'); return; }
+    if (data.supplier && !ruleOk.pname(data.supplier)) { err.textContent = t('rule.pname'); return; }
     if (data.sku && S.products.some(x => x.sku === data.sku && x.id != p.id)) { err.textContent = t('prod.sku_used'); return; }
     const btn = $('#pf-save', el); btn.disabled = true; err.textContent = '';
     try {
@@ -5532,14 +5745,16 @@ const presetRange = p => {
 };
 
 /* ========== Purchases (Barang Masuk) — photo first, AI-read lines ========== */
-const PU = Object.assign({ supplier: '', date: '', note: '', lines: [], photo_id: '', thumb: '', scan: null }, store.get('purchase_draft', null) || {});
+const PU = Object.assign({ supplier: '', date: '', note: '', lines: [], photo_id: '', thumb: '', scan: null, carrier: { type: '' } }, store.get('purchase_draft', null) || {});
+if (!PU.carrier || typeof PU.carrier !== 'object') PU.carrier = { type: '' };
 PU.result = null; PU.q = ''; PU.scanning = false; PU.scanErr = ''; PU.mismatch = null;
-const savePuDraft = () => store.set('purchase_draft', { supplier: PU.supplier, date: PU.date, note: PU.note, lines: PU.lines, photo_id: PU.photo_id, thumb: PU.thumb, scan: PU.scan });
+const savePuDraft = () => store.set('purchase_draft', { supplier: PU.supplier, date: PU.date, note: PU.note, lines: PU.lines, photo_id: PU.photo_id, thumb: PU.thumb, scan: PU.scan, carrier: PU.carrier });
 const purchasePhotoRequired = () => settings().require_purchase_photo !== false;
 function puBlockReason() {
   if (!PU.lines.length) return t('pu.empty');
   if (purchasePhotoRequired() && !PU.photo_id) return t('pu.need_photo');
   if (PU.lines.some(l => !prodById(l.product_id))) return t('pu.need_match');
+  if (carrierRequired() && !CARRIER_TYPES.includes(PU.carrier.type)) return t('car.need');
   return '';
 }
 function parseAnyDate(v) {
@@ -5575,6 +5790,7 @@ RENDER.purchases = function () {
         <div class="field"><label class="f" for="pu-date">${esc(t('date'))}</label><input class="input" type="date" id="pu-date" value="${esc(PU.date)}"></div>
         <div class="field"><label class="f" for="pu-note">${esc(t('notes'))}</label><input class="input" id="pu-note" value="${esc(PU.note)}"></div>
       </div>
+      <div class="card pad" id="pu-carrier" style="margin:0 0 12px">${carrierHTML('pu', PU.carrier, 'car.title', carrierRequired())}</div>
       <div class="field" style="position:relative"><label class="f" for="pu-q">${esc(t('pu.add_product'))}</label>
         <div class="search-box">${ic('search')}<input class="input" id="pu-q" type="search" autocomplete="off" placeholder="${esc(t('pos.search_ph'))}" value="${esc(PU.q)}"></div>
         <div class="list" id="pu-sug" style="margin-top:6px"></div></div>
@@ -5606,6 +5822,7 @@ RENDER.purchases = function () {
     <div class="panel"><h3>${esc(t('pu.history'))}</h3><div id="pu-recent" class="pb"><div class="muted">${esc(t('loading'))}</div></div></div>`;
   const v = $('#view-purchases');
   $('#pu-photo', v).onchange = e => { const f = e.target.files[0]; if (f) scanPurchasePhoto(f); };
+  bindCarrier(v, 'pu', PU.carrier, () => { savePuDraft(); RENDER.purchases(); }, savePuDraft);
   $('#pu-sup', v).oninput = e => { PU.supplier = e.target.value; savePuDraft(); };
   $('#pu-date', v).onchange = e => { PU.date = e.target.value; savePuDraft(); };
   $('#pu-note', v).oninput = e => { PU.note = e.target.value; savePuDraft(); };
@@ -5671,6 +5888,9 @@ async function savePurchase(mismatchReason) {
   if (block) { err.textContent = block; return; }
   const items = PU.lines.map(l => Object.assign({ product_id: l.product_id, qty: roundQty(l.qty), cost_price: int(l.cost) }, /^\d{4}-\d{2}-\d{2}$/.test(l.exp || '') ? { exp_date: l.exp } : {}, l.photo_index != null && PU.photo_id ? { photo_index: l.photo_index } : {}));
   if (items.some(i => !(i.qty > 0))) { err.textContent = t('pu.bad_qty'); return; }
+  if (PU.supplier.trim() && !ruleOk.pname(PU.supplier)) { err.textContent = t('rule.pname'); return; }
+  const cchk = carrierCheck(PU.carrier, carrierRequired());
+  if (cchk) { carrierShow($('#view-purchases'), 'pu', cchk); err.textContent = cchk.msg; return; }
   if (!mismatchReason && items.some(i => !(i.cost_price > 0))) { const ok = await confirmBox(t('pu.zero_cost')); if (!ok.ok) return; }
   const btn = $('#pu-save'); btn.disabled = true; btn.textContent = t('saving');
   const before = new Map(PU.lines.map(l => { const p = prodById(l.product_id); return [l.product_id, p ? { stock: p.stock, cost: p.cost_price } : {}]; }));
@@ -5678,6 +5898,7 @@ async function savePurchase(mismatchReason) {
     const data = { purchase_date: PU.date || today(), supplier: PU.supplier.trim(), note: PU.note.trim(), items };
     if (PU.photo_id) data.photo_id = PU.photo_id;
     if (mismatchReason) data.mismatch_reason = mismatchReason;
+    const car = carrierPayload(PU.carrier); if (car) data.carrier = car;
     const r = await api('save_purchase', data);
     PU.mismatch = null;
     applyStock(r.stock);
@@ -5686,7 +5907,7 @@ async function savePurchase(mismatchReason) {
     const mst = (r.match || {}).status || (PU.photo_id ? '' : 'tanpa_foto');
     PU.result = `<div class="panel" style="margin-bottom:16px;border-color:var(--ok)" id="pu-res" data-no="${esc(r.purchase_no || '')}"><h3>${ic('box')} ${esc(t('pu.saved'))}${r.purchase_no ? ` · <b id="pu-no">${esc(r.purchase_no)}</b>` : ''} ${matchBadge(mst, 'pu-match-badge')}</h3><div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('stock'))}</th>${own ? `<th class="r">${esc(t('pu.new_cost'))}</th>` : ''}</tr></thead><tbody>
       ${(r.stock || []).map(s => { const p = prodById(s.product_id) || {}; const b = before.get(s.product_id) || before.get(Number(s.product_id)) || {}; return `<tr><td>${esc(p.name || s.product_id)}</td><td class="r num">${fmtQty(b.stock)} → <b>${fmtQty(s.stock)}</b></td>${own ? `<td class="r num" data-newcost="${esc(s.product_id)}">${b.cost != null ? fmtRp(b.cost) + ' → ' : ''}<b>${fmtRp(s.cost_price)}</b></td>` : ''}</tr>`; }).join('')}</tbody></table></div></div>`;
-    Object.assign(PU, { lines: [], note: '', photo_id: '', thumb: '', scan: null, supplier: PU.supplier }); savePuDraft();
+    Object.assign(PU, { lines: [], note: '', photo_id: '', thumb: '', scan: null, supplier: PU.supplier, carrier: { type: '' } }); savePuDraft();
     Object.keys(salesCache).forEach(k => delete salesCache[k]); gdInvalidate();
     toast(t('saved'), 'ok');
     RENDER.purchases();
@@ -5699,6 +5920,7 @@ async function savePurchase(mismatchReason) {
       const r0 = $('#pu-reason-err'); if (r0 && mismatchReason) r0.textContent = errMsg(e);
       return;
     }
+    if (e.code === 'CARRIER_REQUIRED') { carrierShow($('#view-purchases'), 'pu', { msg: e.message || t('car.need') }); }
     err.textContent = errMsg(e);
   }
 }
@@ -5760,6 +5982,8 @@ function openCustomerEditor(c, after) {
     const data = readCustomerForm(el);
     if (!data.name) { $('#ce-err', el).textContent = t('required') + ': ' + t('name'); return; }
     if (data.email && !/^[^\s@<>"',;]+@[^\s@<>"',;]+\.[a-z]{2,}$/i.test(data.email)) { $('#ce-err', el).textContent = t('mem.email_bad'); return; }
+    if (!ruleOk.pname(data.name)) { $('#ce-err', el).textContent = t('rule.pname'); return; }
+    if (data.phone && !/^[0-9+ ().-]{3,20}$/.test(data.phone)) { $('#ce-err', el).textContent = t('rule.phone'); return; }
     if (c.id) data.id = c.id;
     $('#ce-save', el).disabled = true;
     try {
@@ -6566,6 +6790,7 @@ RENDER.settings = function () {
 
     ${settingsExtraHTML()}
     ${settingsV16HTML()}
+    ${settingsReturHTML()}
     <div class="panel"><h3>${esc(t('set.users'))}</h3><div class="pb">
       <div class="tbl-wrap" style="margin-bottom:12px"><table class="tbl" id="st-users"><tbody>${S.users.map(u => `<tr><td><b>${esc(u.name)}</b> <span class="badge ${u.role === 'owner' ? 'gold' : u.role === 'manager' ? 'blue' : 'gray'}">${esc(t('role.' + u.role))}</span> ${u.active === false ? `<span class="badge red">${esc(t('inactive'))}</span>` : ''}${u.must_change ? ` <span class="badge amber" data-must="1">${esc(t('usr.must_change'))}</span>` : ''}${u.locked ? ` <span class="badge red" data-locked="1">${esc(t('usr.locked'))}</span>` : ''}${u.has_master ? ` <span class="badge gold" data-has-master="1">${ic('lock')} ${esc(t('mc.has'))}</span>` : ''}<br><select class="input" style="width:auto;min-height:32px;padding:2px 6px;margin-top:4px" data-user-role="${esc(u.name)}" aria-label="${esc(t('set.role'))}">${['kasir', 'sales', 'manager', 'owner'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${esc(t('role.' + r))}</option>`).join('')}</select></td>
         <td class="r"><button class="btn xs" data-act="user-pin" data-name="${esc(u.name)}">${esc(t('set.reset_pin'))}</button> <button class="btn xs ${u.active === false ? '' : 'danger'}" data-act="user-toggle" data-name="${esc(u.name)}">${esc(u.active === false ? t('set.activate') : t('set.deactivate'))}</button></td></tr>`).join('')}</tbody></table></div>
@@ -6817,6 +7042,7 @@ const ACT = {
   'user-add': async () => {
     const name = $('#nu-name').value.trim(), role = $('#nu-role').value, a = $('#nu-pin').value, b = $('#nu-pin2').value, err = $('#nu-err');
     if (!name) { err.textContent = t('required') + ': ' + t('name'); return; }
+    if (!ruleOk.name(name)) { err.textContent = t('rule.name'); return; }
     if (S.users.some(u => u.name.toLowerCase() === name.toLowerCase())) { err.textContent = t('set.user_exists'); return; }
     const pe = pinError(a, b); if (pe) { err.textContent = pe; return; }
     if (await saveUser({ name, role, pin_hash: await pinHash(S.key, name, a), active: true }, err)) { ST.tempPin = name; RENDER.settings(); }
@@ -7650,11 +7876,11 @@ function openDeviceDetail(id) {
 
 /* ========== Activity log (v12, owner) ========== */
 const ACTV = { recent: [], preset: '7d', from: '', to: '', group: '', user: '', q: '', data: null, err: '' };
-const ACT_GROUPS = { masuk: ['masuk', 'minta_koreksi', 'koreksi_masuk'], harga: ['harga', 'minta_harga'], stok: ['stok', 'opname', 'minta_opname', 'kemas_ulang', 'produk', 'produk_baru', 'impor', 'pindah_stok', 'jual_tanpa_rak'],
+const ACT_GROUPS = { masuk: ['masuk', 'minta_koreksi', 'koreksi_masuk'], harga: ['harga', 'minta_harga'], stok: ['stok', 'opname', 'minta_opname', 'kemas_ulang', 'produk', 'produk_baru', 'impor', 'pindah_stok', 'jual_tanpa_rak'], retur: ['minta_retur', 'retur'],
   kas: ['biaya', 'kas', 'tutup_kas', 'buka_kas'], jual: ['batal', 'minta_batal', 'hutang', 'minta_diskon', 'diskon', 'member_baru', 'member_berhenti'], bayar: ['bayar_masuk', 'bayar_keluar', 'alokasi', 'rekening'], pengguna: ['pengguna', 'pengaturan', 'masuk_master', 'ganti_pin', 'kode_pemilik'], perangkat: ['perangkat_baru'] };
-const ACT_ICON = { masuk: 'truck', harga: 'tag', stok: 'warehouse', kas: 'cash', jual: 'cart', bayar: 'wallet', pengguna: 'gear', perangkat: 'device', lain: 'activity' };
+const ACT_ICON = { retur: 'return', masuk: 'truck', harga: 'tag', stok: 'warehouse', kas: 'cash', jual: 'cart', bayar: 'wallet', pengguna: 'gear', perangkat: 'device', lain: 'activity' };
 function actGroup(a) {
-  if (a.kind === 'keputusan') { const m = /\((\w+)/.exec(a.summary || ''); return { credit: 'jual', void: 'jual', discount: 'jual', price: 'harga', opname: 'stok', purchase_fix: 'masuk', buka_kas: 'kas' }[m ? m[1] : 'credit'] || 'jual'; }
+  if (a.kind === 'keputusan') { const m = /\((\w+)/.exec(a.summary || ''); return { credit: 'jual', void: 'jual', discount: 'jual', retur: 'retur', price: 'harga', opname: 'stok', purchase_fix: 'masuk', buka_kas: 'kas' }[m ? m[1] : 'credit'] || 'jual'; }
   for (const [g, ks] of Object.entries(ACT_GROUPS)) if (ks.includes(a.kind)) return g;
   return 'lain';
 }
@@ -7874,7 +8100,7 @@ async function loadRepackHistory() {
 }
 
 /* ========== Barang Masuk vs the photographed note (v12) ========== */
-const PU_ST_CLS = { cocok: 'green', tidak_cocok: 'red', perlu_cek: 'amber', tanpa_foto: 'gray', koreksi: 'blue' };
+const PU_ST_CLS = { cocok: 'green', tidak_cocok: 'red', perlu_cek: 'amber', tanpa_foto: 'gray', koreksi: 'blue', retur: 'gold' };
 const matchBadge = (st, id) => st ? `<span class="badge ${PU_ST_CLS[st] || 'gray'}" ${id ? `id="${id}"` : ''} data-status="${esc(st)}">${esc(t('mt.' + st))}</span>` : '';
 const nNorm = x => String(x == null ? '' : x).trim().toLowerCase().replace(/(\d+)[.,]?(\d*)\s*(kg|gr|gram|g|ml|ltr|l|pcs|pc)\b/g, '$1$2$3').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 const nTok = x => nNorm(x).split(' ').filter(w => w.length > 1);
@@ -7933,7 +8159,7 @@ function purchaseNotes(purchases) {
   purchases.filter(r => !isInternalRow(r)).forEach(r => {
     const k = r.purchase_no || `${r.purchase_date}|${r.supplier}|${r.photo_id || ''}`;
     let n = m.get(k);
-    if (!n) m.set(k, n = { key: k, no: r.purchase_no || '', date: '', supplier: r.supplier || '', rows: [], status: '', notes: '', user: '', fixed: false, total: 0, id: 0 });
+    if (!n) m.set(k, n = { key: k, no: r.purchase_no || '', date: '', supplier: r.supplier || '', rows: [], status: '', notes: '', user: '', fixed: false, total: 0, id: 0, carrier: carrierText(r) });
     n.rows.push(r); n.total += int(r.total); n.id = Math.max(n.id, num(r.id));
     if (r.match_status === 'koreksi') n.fixed = true;
     else { if (!n.date || r.purchase_date < n.date) n.date = r.purchase_date; n.status = r.match_status || n.status || (r.photo_id ? '' : 'tanpa_foto'); n.notes = r.match_notes || n.notes; n.user = r.user || n.user; }
@@ -7950,10 +8176,10 @@ function drawPurchaseHistory() {
   const el = $('#pu-recent'); if (!el || !PH.data) return;
   const notes = purchaseNotes(PH.data.purchases).slice(0, 60);
   el.innerHTML = notes.length ? `<div class="tbl-wrap"><table class="tbl" id="pu-hist"><thead><tr><th>${esc(t('date'))}</th><th>${esc(t('pu.no'))}</th><th>${esc(t('pu.supplier'))}</th><th class="hide-phone">${esc(t('items'))}</th><th class="r">${esc(t('total'))}</th><th>${esc(t('status'))}</th><th></th></tr></thead><tbody>
-    ${notes.map(n => `<tr data-no="${esc(n.no)}"><td class="num">${esc(fmtDate(n.date))}</td><td class="small"><b>${esc(n.no || '—')}</b></td><td>${esc(n.supplier || '—')}</td>
+    ${notes.map(n => `<tr data-no="${esc(n.no)}"><td class="num">${esc(fmtDate(n.date))}</td><td class="small"><b>${esc(n.no || '—')}</b></td><td>${esc(n.supplier || '—')}${n.carrier ? `<div class="small muted" data-carrier>${ic('truck')} ${esc(n.carrier)}</div>` : ''}</td>
       <td class="hide-phone small">${noteProducts(n).slice(0, 4).map(a => `${esc(a.name)} <b class="num">×${fmtQty(a.qty)}</b>`).join(', ')}${noteProducts(n).length > 4 ? ' …' : ''}</td>
       <td class="r num">${fmtRp(n.total)}</td><td>${matchBadge(n.status)}${n.fixed ? ' ' + matchBadge('koreksi') : ''}${n.notes && n.status === 'tidak_cocok' ? `<div class="small muted">${esc(n.notes)}</div>` : ''}</td>
-      <td class="r">${n.no ? `<button class="btn xs" data-act="pu-fix" data-no="${esc(n.no)}">${ic('edit')} ${esc(t('fix.button'))}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
+      <td class="r" style="white-space:nowrap">${n.no && n.status !== 'retur' ? `<button class="btn xs" data-act="pu-fix" data-no="${esc(n.no)}">${ic('edit')} ${esc(t('fix.button'))}</button>${isApprover() ? ` <button class="btn xs" data-act="pu-retur" data-no="${esc(n.no)}">${ic('return')} ${esc(t('rt.btn'))}</button>` : ''}` : ''}</td></tr>`).join('')}</tbody></table></div>
     <p class="small muted">${esc(t('pu.locked_hint'))}</p>` : `<div class="muted">${esc(t('no_data'))}</div>`;
 }
 function openPurchaseFix(no) {
@@ -8563,6 +8789,7 @@ function drawDaily() {
       <div class="panel" id="dr-bank"><h3>${ic('bank')} ${esc(t('dr.bank'))}</h3><div class="pb">${row(t('dr.b_sales_tf'), fmtRp(bank.sales_transfer), 'b-stf')}${row(t('dr.b_sales_qris'), fmtRp(bank.sales_qris), 'b-sqr')}${row(t('dr.b_pay_tf'), fmtRp(bank.payments_transfer), 'b-ptf')}${row(t('dr.b_pay_qris'), fmtRp(bank.payments_qris), 'b-pqr')}${row(t('dr.b_in_total'), fmtRp(bank.in_total), 'b-in', 'green')}${row(t('dr.b_out'), fmtRp(bank.out_transfer), 'b-out', bank.out_transfer ? 'red' : '')}</div></div>
       <div class="panel" id="dr-cash"><h3>${ic('cash')} ${esc(t('dr.cash'))}</h3><div class="pb">${row(t('dr.c_sales'), fmtRp(cash.sales), 'c-sales')}${row(t('dr.c_pin'), fmtRp(cash.payments_in), 'c-pin')}${row(t('dr.c_pout'), fmtRp(cash.payments_out), 'c-pout')}${row(t('dr.c_exp'), fmtRp(cash.expenses_from_kas), 'c-exp')}${row(t('shift.expected'), fmtRp(cash.expected_total), 'c-exp-total')}${row(t('shift.counted'), fmtRp(cash.counted_total), 'c-counted')}${row(t('shift.difference'), fmtRp(cash.difference_total), 'c-diff', cash.difference_total ? 'red' : 'green')}</div></div>
       <div class="panel" id="dr-pay"><h3>${ic('wallet')} ${esc(t('dr.payments'))}</h3><div class="pb">${row(t('dr.pin'), `${fmtNum(pin.count)} · ${fmtRp(pin.total)}`, 'pin')}${row(t('dr.pout'), `${fmtNum(pout.count)} · ${fmtRp(pout.total)}`, 'pout')}${row(t('dr.expenses'), `${fmtNum(ex.count)} · ${fmtRp(ex.total)}`, 'exp')}</div></div>
+      ${(() => { const rt = R.returns || {}, rc0 = rt.customer || {}, rs = rt.supplier || {}; return `<div class="panel" id="dr-returns"><h3>${ic('return')} ${esc(t('nav.retur'))}</h3><div class="pb">${row(t('dr.ret_cust'), `${fmtNum(rc0.count)} · ${fmtRp(rc0.refund)}`, 'ret-cust', rc0.count ? 'amber' : '')}${row(t('dr.ret_cash'), fmtRp(rc0.tunai), 'ret-cash', rc0.tunai ? 'red' : '')}${row(t('dr.ret_sup'), `${fmtNum(rs.count)}${own && rs.value != null ? ' · ' + fmtRp(rs.value) : ''}`, 'ret-sup')}</div></div>`; })()}
     </div>
     <div class="panel" style="margin-bottom:14px" id="dr-shifts"><h3>${ic('cash')} ${esc(t('dr.drawers'))}</h3><div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl"><thead><tr><th>${esc(t('rc.cashier'))}</th><th class="r">${esc(t('shift.opening'))}</th><th class="r">${esc(t('shift.expected'))}</th><th class="r">${esc(t('shift.counted'))}</th><th class="r">${esc(t('shift.difference'))}</th></tr></thead><tbody>
       ${(R.shifts || []).map(x => `<tr data-shift="${esc(x.shift_id || x.cashier)}"><td>${esc(x.cashier)} ${x.status === 'open' ? `<span class="badge amber">${esc(t('shift.status_open'))}</span>` : ''}</td><td class="r num">${fmtRp(x.opening_cash)}</td><td class="r num">${fmtRp(x.expected_cash)}</td><td class="r num">${x.counted_cash == null ? '—' : fmtRp(x.counted_cash)}</td><td class="r num ${x.difference ? 'red' : ''}">${x.difference == null ? '—' : (x.difference > 0 ? '+' : '') + fmtRp(x.difference)}</td></tr>`).join('') || `<tr><td colspan="5" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div></div>
@@ -8587,6 +8814,9 @@ function dailyText(R, withProfit) {
     `Kas laci: seharusnya ${fmtRp(cash.expected_total)}, dihitung ${fmtRp(cash.counted_total)}, selisih ${fmtRp(cash.difference_total)}`];
   (R.shifts || []).forEach(x => L.push(`- ${x.cashier}: modal ${fmtRp(x.opening_cash)}, seharusnya ${fmtRp(x.expected_cash)}, ${x.counted_cash == null ? 'belum ditutup' : `dihitung ${fmtRp(x.counted_cash)}, selisih ${fmtRp(x.difference)}`}`));
   if ((s0.voids || {}).count) L.push(`Batal: ${fmtNum(s0.voids.count)} faktur (${fmtRp(s0.voids.total)})`);
+  const rt = R.returns || {}, rc0 = rt.customer || {}, rs = rt.supplier || {};
+  if (rc0.count) L.push(`Retur pelanggan: ${fmtNum(rc0.count)} (uang kembali ${fmtRp(rc0.refund)}, tunai ${fmtRp(rc0.tunai)})`);
+  if (rs.count) L.push(`Retur ke pemasok: ${fmtNum(rs.count)}${withProfit && rs.value != null ? ` (nilai ${fmtRp(rs.value)})` : ''}`);
   if (withProfit && R.profit != null) L.push(`Laba kotor: ${fmtRp(R.profit)}`);
   return L.join('\n');
 }
@@ -8854,7 +9084,7 @@ function lockLeft(user) {
 const PC = { need: false, pin: '', first: '', err: '', busy: false };
 const ownPinLen = () => S.role === 'owner' || S.role === 'manager' ? 6 : 4;
 function showPinChange() {
-  if (!S.user || S.viaMaster) return;
+  if (!S.user || S.viaMaster || !S.pin_hash) return; // locked / logged out meanwhile: a late answer must not reopen it
   PC.need = true; PC.pin = ''; PC.first = ''; PC.busy = false;
   closeModal(true);
   $('#app').hidden = true; $('#login').hidden = true;
@@ -9225,6 +9455,409 @@ Object.assign(I18N.ar, {
   'led.auto': 'تلقائي {n}', 'led.auto_hint': 'الدفعات دون فاتورة تُخصم من أقدم الفواتير أولاً',
   'ak.minta_diskon': 'طلب خصم', 'ak.diskon': 'خصم', 'ak.member_baru': 'عضو جديد', 'ak.member_berhenti': 'إلغاء عضوية', 'ak.masuk_master': 'دخول برمز المالك', 'ak.ganti_pin': 'تغيير الرقم السري', 'ak.kode_pemilik': 'رمز المالك',
   'ak.pindah_stok': 'نقل مخزون مستودع/رف', 'ak.jual_tanpa_rak': 'بيع يتجاوز مخزون الرف'
+});
+
+/* ========== v16: who brought the goods (carrier), returns (retur), strict plain-text inputs ========== */
+/* ---- Input rules (same as the server): characters outside the rule are dropped while typing; maxlength on every field ---- */
+const INPUT_RULES = {
+  name: { re: /[^\p{L}\p{M}\p{N} .,'-]/gu, max: 60 },                 // person names
+  pname: { re: /[^\p{L}\p{M}\p{N} .,'&()\/%+#-]/gu, max: 80 },        // product / customer / supplier names
+  cat: { re: /[^\p{L}\p{M}\p{N} .,'&()\/%+#-]/gu, max: 40 },
+  unit: { re: /[^\p{L}\p{N} .\/-]/gu, max: 15 },
+  sku: { re: /[^A-Za-z0-9._-]/g, max: 40 },
+  phone: { re: /[^0-9+ ().-]/g, max: 20 },
+  email: { re: /[\s<>"',;]/g, max: 120 },
+  doc: { re: /[^A-Za-z0-9 \/.-]/g, max: 40, upper: true },
+  num: { re: /[^0-9.,-]/g, max: 18 },
+  text: { re: /[<>\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F‪-‮⁦-⁩]/g, max: 300 }
+};
+const ruleOk = {
+  name: v => /^[\p{L}\p{M}][\p{L}\p{M}\p{N} .,'-]{0,59}$/u.test(String(v).trim()),
+  pname: v => /^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N} .,'&()\/%+#-]{0,79}$/u.test(String(v).trim()),
+  sku: v => /^[A-Za-z0-9._-]{1,40}$/.test(String(v).trim()),
+  doc: v => /^[A-Z0-9][A-Z0-9 \/.-]{0,39}$/.test(String(v).trim().toUpperCase()),
+  email: v => /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[a-z]{2,}$/i.test(String(v).trim())
+};
+function applyRule(el) {
+  const r = INPUT_RULES[el.dataset.rule]; if (!r) return;
+  let v = el.value, nv = v.replace(r.re, '');
+  if (r.upper) nv = nv.toUpperCase();
+  if (nv.length > r.max) nv = nv.slice(0, r.max);
+  if (nv !== v) { const pos = Math.max(0, (el.selectionStart || nv.length) - (v.length - nv.length)); el.value = nv; try { el.setSelectionRange(pos, pos); } catch (e) { } }
+}
+document.addEventListener('input', e => { const el = e.target; if (el && el.dataset && el.dataset.rule) applyRule(el); }, true);
+/** Every text field gets a maxlength (its rule's, or 300 / 4000) and the right keyboard; set when it appears. */
+const DEF_MAX = { text: 300, search: 120, tel: 20, email: 120, number: 18, password: 8 };
+function stampInputs(root) {
+  const all = $$('input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=date]):not([type=month]):not([type=time]), textarea', root || document);
+  if (root && root.matches && root.matches('input, textarea')) all.push(root);
+  all.forEach(el => {
+    if (/^(checkbox|radio|file|date|month|time)$/.test(el.type)) return;
+    const r = INPUT_RULES[el.dataset.rule];
+    if (!el.hasAttribute('maxlength')) el.setAttribute('maxlength', String(r ? r.max : el.tagName === 'TEXTAREA' ? 2000 : DEF_MAX[el.type] || 300));
+    if (r && !el.hasAttribute('inputmode')) el.setAttribute('inputmode', el.dataset.rule === 'phone' ? 'tel' : el.dataset.rule === 'email' ? 'email' : el.dataset.rule === 'num' ? 'decimal' : 'text');
+  });
+}
+/** Marks known fields with their rule (forms built before this module). */
+const RULE_FIELDS = { '#pf-name': 'pname', '#pf-sku': 'sku', '#pf-category': 'cat', '#pf-unit': 'unit', '#pf-supplier': 'pname', '#pu-sup': 'pname', '#nu-name': 'name', '[name="c_name"]': 'pname', '[name="c_phone"]': 'phone',
+  '[name="c_email"]': 'email', '#mb-name': 'pname', '#mb-phone': 'phone', '#mb-email': 'email', '#py-ref': 'doc', '#st-wa-company': 'phone', '#st-wa-manager': 'phone', '#st-wa-owner': 'phone', '#st-wa-shop': 'phone', '#st-phone': 'text', '#sp-name': 'pname' };
+const RULE_SEL = Object.keys(RULE_FIELDS).join(',');
+function stampRules(root) {
+  const els = $$(RULE_SEL, root); if (root.matches && root.matches(RULE_SEL)) els.push(root);
+  els.forEach(el => { if (el.dataset.rule) return; const r = Object.entries(RULE_FIELDS).find(([sel]) => el.matches(sel)); if (r) { el.dataset.rule = r[1]; el.removeAttribute('maxlength'); } });
+  stampInputs(root);
+}
+try { new MutationObserver(ms => { for (const m of ms) m.addedNodes.forEach(n => { if (n.nodeType === 1 && (n.tagName === 'INPUT' || n.tagName === 'TEXTAREA' || n.firstElementChild)) stampRules(n); }); }).observe(document.documentElement, { childList: true, subtree: true }); } catch (e) { }
+
+/* ---- Who brought the goods (goods-in) / who takes them away (supplier return) ---- */
+const CARRIER_TYPES = ['umum', 'teman', 'pemasok', 'karyawan'];
+const CARRIER_KINDS = ['ojek', 'angkot', 'taksi', 'truk', 'lainnya'];
+const carrierRequired = () => settings().require_carrier !== false;
+function carrierHTML(px, c, titleKey = 'car.title', required) {
+  const ty = c.type || '', fld = (id, label, rule, val, req, ph = '') => `<div class="field"><label class="f" for="${px}-car-${id}">${esc(label)}${req ? ' *' : ''}</label><input class="input" id="${px}-car-${id}" data-car-f="${id}" data-rule="${rule}" autocomplete="off" value="${esc(val || '')}" ${ph ? `placeholder="${esc(ph)}"` : ''}${rule === 'phone' ? ' type="tel"' : ''}></div>`;
+  let fields = '';
+  if (ty === 'umum') fields = `<div class="grid2"><div class="field"><label class="f" for="${px}-car-kind">${esc(t('car.kind'))}</label><select class="input" id="${px}-car-kind" data-car-f="kind">${CARRIER_KINDS.map(k => `<option value="${k}" ${(c.kind || 'ojek') === k ? 'selected' : ''}>${esc(t('car.k_' + k))}</option>`).join('')}</select></div>${fld('vehicle', t('car.vehicle'), 'doc', c.vehicle, true, 'B 1234 XYZ')}</div>`;
+  else if (ty === 'teman' || ty === 'karyawan') fields = fld('name', t('car.name'), 'name', c.name, true);
+  else if (ty === 'pemasok') fields = `<div class="grid2">${fld('name', t('car.driver') + ' ' + t('car.optional'), 'name', c.name, false)}${fld('vehicle', t('car.plate') + ' ' + t('car.optional'), 'doc', c.vehicle, false, 'B 1234 XYZ')}</div>`;
+  return `<div class="carrier" id="${px}-car" data-type="${esc(ty)}"><div class="f" style="font-weight:800;margin-bottom:6px">${esc(t(titleKey))}${required ? ' *' : ''}</div>
+    <div class="seg" id="${px}-car-types" role="group" aria-label="${esc(t(titleKey))}" style="flex-wrap:wrap">${CARRIER_TYPES.map(x => `<button type="button" data-car="${x}" id="${px}-car-${x}" class="${ty === x ? 'on' : ''}" aria-pressed="${ty === x}">${esc(t('car.t_' + x))}</button>`).join('')}</div>
+    <div style="margin-top:8px">${ty ? fields + fld('phone', t('car.phone'), 'phone', c.phone, false, '08xx xxxx xxxx') : `<div class="small muted" id="${px}-car-pick">${esc(t('car.pick'))}</div>`}</div>
+    <div class="red small" id="${px}-car-err" role="alert"></div></div>`;
+}
+function bindCarrier(root, px, c, redraw, onInput) {
+  const box = $(`#${px}-car`, root); if (!box) return;
+  $(`#${px}-car-types`, box).onclick = e => { const b = e.target.closest('[data-car]'); if (!b) return; if (c.type !== b.dataset.car) { c.type = b.dataset.car; if (c.type === 'umum' && !c.kind) c.kind = 'ojek'; } redraw(); };
+  box.addEventListener('input', e => { const f = e.target.dataset.carF; if (!f) return; c[f] = e.target.value; $(`#${px}-car-err`, box).textContent = ''; if (onInput) onInput(); });
+  box.addEventListener('change', e => { const f = e.target.dataset.carF; if (f) { c[f] = e.target.value; if (onInput) onInput(); } });
+}
+function carrierCheck(c, required) {
+  if (!c || !CARRIER_TYPES.includes(c.type)) return required ? { msg: t('car.need') } : null;
+  const nm = String(c.name || '').trim(), veh = String(c.vehicle || '').trim(), ph = String(c.phone || '').trim();
+  if (ph && !normPhone(ph)) return { msg: t('car.bad_phone'), focus: 'phone' };
+  if (c.type === 'umum' && !veh) return { msg: t('car.need_vehicle'), focus: 'vehicle' };
+  if ((c.type === 'teman' || c.type === 'karyawan') && !nm) return { msg: t('car.need_name'), focus: 'name' };
+  if (nm && !ruleOk.name(nm)) return { msg: t('rule.name'), focus: 'name' };
+  if (veh && !ruleOk.doc(veh)) return { msg: t('rule.doc'), focus: 'vehicle' };
+  return null;
+}
+const carrierPayload = c => c && c.type ? { type: c.type, kind: c.type === 'umum' ? c.kind || 'ojek' : '', name: String(c.name || '').trim(), vehicle: String(c.vehicle || '').trim().toUpperCase(), phone: String(c.phone || '').trim() } : undefined;
+function carrierShow(root, px, chk) {
+  const err = $(`#${px}-car-err`, root); if (err) err.textContent = chk ? chk.msg : '';
+  if (chk && chk.focus) { const i = $(`#${px}-car-${chk.focus}`, root); if (i) { i.focus(); i.scrollIntoView({ block: 'center' }); } }
+  else if (chk) { const b = $(`#${px}-car`, root); if (b) b.scrollIntoView({ block: 'center' }); }
+}
+/** "Kendaraan umum ojek B 1234 XYZ · 0812…" from a goods-in row / return record. */
+function carrierText(r) {
+  const ty = r.carrier_type || ''; if (!ty) return '';
+  return [t('car.t_' + ty), r.carrier_name, r.carrier_vehicle, r.carrier_phone].filter(Boolean).join(' · ');
+}
+
+/* ---- Returns (retur): customers and suppliers; every return is an approval kind "retur" ---- */
+const RETURN_REASONS = ['tidak_sesuai', 'rusak', 'kadaluarsa', 'salah_kirim', 'kualitas_buruk', 'berubah_pikiran', 'lainnya'];
+const REFUND_METHODS = ['tunai', 'transfer', 'potong_hutang', 'tukar'];
+const RT = { tab: 'menunggu', from: '', to: '', list: null, err: '', seq: 0, photos: {} };
+const RT_ST = { pending: 'amber', approved: 'green', rejected: 'red' };
+async function loadReturns(from, to) { const r = await api('list_returns', { from, to }); return r.returns || []; }
+RENDER.retur = function () {
+  if (!isApprover()) { go('pos'); return; }
+  if (!RT.from) { RT.to = today(); RT.from = addDays(RT.to, -29); }
+  $('#view-retur').innerHTML = `<div class="view-head"><h1>${esc(t('nav.retur'))}</h1>
+      <button class="btn" data-act="rt-new-cust" id="rt-new-cust">${ic('return')} ${esc(t('rt.new_cust'))}</button><button class="btn" data-act="rt-new-sup" id="rt-new-sup">${ic('truck')} ${esc(t('rt.new_sup'))}</button></div>
+    <p class="muted small" style="margin-top:0">${esc(t('rt.hint', { n: fmtRp(settings().return_owner_min_value ?? 1000000) }))}</p>
+    <div class="toolbar"><input class="input" type="date" id="rt-from" value="${esc(RT.from)}" aria-label="${esc(t('from'))}"><input class="input" type="date" id="rt-to" value="${esc(RT.to)}" aria-label="${esc(t('to'))}">
+      <div class="chips" id="rt-tabs" role="tablist">${['menunggu', 'pelanggan', 'pemasok'].map(k => `<button class="chip ${RT.tab === k ? 'on' : ''}" role="tab" data-act="rt-tab" data-tab="${k}">${esc(t('rt.tab_' + k))} <span class="num" data-rt-n="${k}"></span></button>`).join('')}</div></div>
+    <div id="rt-list"><div class="muted">${esc(t('loading'))}</div></div>`;
+  $('#rt-from').onchange = e => { RT.from = e.target.value; loadReturnView(); };
+  $('#rt-to').onchange = e => { RT.to = e.target.value; loadReturnView(); };
+  loadReturnView();
+};
+async function loadReturnView() {
+  const seq = ++RT.seq;
+  try {
+    const list = await loadReturns(RT.from, RT.to);
+    if (seq !== RT.seq) return;
+    RT.list = list; RT.err = '';
+    apiPhoto('list_photos', { from: addDays(RT.from, -30), to: RT.to }).then(r => { (r.photos || []).forEach(ph => { RT.photos[ph.photo_id] = ph; }); if (seq === RT.seq) drawReturns(); }).catch(() => { });
+  } catch (e) { if (seq !== RT.seq) return; RT.list = null; RT.err = errMsg(e); }
+  drawReturns();
+}
+const rtTabOf = r => r.status === 'pending' ? 'menunggu' : r.kind === 'pemasok' ? 'pemasok' : 'pelanggan';
+function returnCardHTML(r, own) {
+  const sup = r.kind === 'pemasok', ph = r.photo_id ? RT.photos[r.photo_id] : null;
+  const lines = Array.isArray(r.lines) ? r.lines : [];
+  const kv = (k, v, attr = '') => v === '' || v == null ? '' : `<div class="rt-kv" ${attr}><span class="k">${esc(k)}</span><span class="v">${v}</span></div>`;
+  return `<div class="card pad rt-card ${r.status === 'pending' ? 'pending' : ''}" data-rt="${esc(r.return_id)}" data-kind="${esc(r.kind)}" data-status="${esc(r.status)}">
+    <div class="row wrap" style="gap:6px 10px"><b class="num">${esc(r.return_id)}</b><span class="badge ${sup ? 'blue' : 'gold'}">${esc(t(sup ? 'rt.k_pemasok' : 'rt.k_pelanggan'))}</span>
+      <span class="badge ${RT_ST[r.status] || 'gray'}" data-rt-status>${esc(t('rt.st_' + r.status))}</span>${r.status === 'pending' && r.approver_role === 'owner' ? `<span class="badge gold" data-needs-owner>${ic('lock')} ${esc(t('rt.needs_owner'))}</span>` : ''}
+      <span class="grow"></span><span class="small muted num">${esc(fmtDate(r.return_date))}</span></div>
+    <div class="rt-grid">
+      ${kv(t(sup ? 'rt.ref_sup' : 'rt.ref_cust'), `<b class="num">${esc(r.ref)}</b>${r.bought_date ? ` <span class="small muted">${esc(fmtDate(r.bought_date))}</span>` : ''}`, 'data-ref')}
+      ${kv(t(sup ? 'pu.supplier' : 'rt.bought_by'), esc(sup ? r.party_name : r.bought_by || r.party_name))}
+      ${kv(t(sup ? 'rt.taken_by' : 'rt.returned_by'), esc([r.returned_by, r.carrier_vehicle, r.returned_by_phone].filter(Boolean).join(' · ')), 'data-returned-by')}
+      ${sup ? kv(t('rt.carrier'), esc(carrierText(r))) + kv(t('rt.out_doc'), `<b class="num">${esc(r.out_doc_no)}</b>`, 'data-out-doc') : ''}
+      ${kv(t('rt.reason'), esc(t('rt.r_' + r.reason_code)) + (r.reason_note ? ` — “${esc(r.reason_note)}”` : ''), 'data-reason')}
+      ${!sup ? kv(t('rt.refund'), `<b class="num" data-refund>${fmtRp(r.refund)}</b> · ${esc(t('rt.m_' + r.refund_method))}${int(r.fee) ? ` <span class="small muted">(${esc(t('rt.fee'))} ${fmtRp(r.fee)})</span>` : ''}`) : own && r.value != null ? kv(t('rt.value_cost'), `<b class="num" data-value>${fmtRp(r.value)}</b>`) : ''}
+      ${kv(t('rt.requested_by'), esc(r.user || ''))}${r.approved_by ? kv(t(r.status === 'rejected' ? 'rt.rejected_by' : 'rt.approved_by'), esc(r.approved_by), 'data-approved-by') : ''}
+      ${r.photo_id ? kv(t('rt.photo'), ph && ph.drive_url ? `<a href="${esc(safeUrl(ph.drive_url))}" target="_blank" rel="noopener" data-photo="${esc(r.photo_id)}">${esc(t('photo.open'))}</a>` : ph && ph.thumb ? `<button class="btn xs" data-act="rt-photo" data-photo="${esc(r.photo_id)}">${ic('camera')} ${esc(t('photo.open'))}</button>` : `<span class="small muted" data-photo="${esc(r.photo_id)}">${esc(r.photo_id)}</span>`) : ''}
+    </div>
+    <table class="tbl" style="margin-top:6px" data-rt-lines><tbody>${lines.map(l => `<tr><td>${esc(l.name)}</td><td class="r num">${fmtQty(num(l.qty))} ${esc(l.unit || '')}</td>${sup ? '' : `<td><span class="badge ${l.condition === 'rusak' ? 'red' : 'green'}" data-cond="${esc(l.condition)}">${esc(t('rt.c_' + (l.condition || 'baik')))}</span></td>`}${(!sup || own) && l.value != null ? `<td class="r num">${fmtRp(l.value)}</td>` : ''}</tr>`).join('')}</tbody></table>
+    ${r.status === 'pending' && r.request_id ? `<div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn sm" data-act="go" data-view="approvals">${esc(t('rt.to_inbox'))} →</button></div>` : ''}</div>`;
+}
+function drawReturns() {
+  const box = $('#rt-list'); if (!box) return;
+  if (!RT.list) { box.innerHTML = RT.err ? `<div class="red">${esc(RT.err)}</div>` : `<div class="muted">${esc(t('loading'))}</div>`; return; }
+  const own = isOwner();
+  ['menunggu', 'pelanggan', 'pemasok'].forEach(k => { const n = $(`[data-rt-n="${k}"]`); if (n) n.textContent = `(${RT.list.filter(r => rtTabOf(r) === k).length})`; });
+  $$('#rt-tabs .chip').forEach(c => c.classList.toggle('on', c.dataset.tab === RT.tab));
+  const list = RT.list.filter(r => rtTabOf(r) === RT.tab);
+  box.innerHTML = list.length ? `<div class="rt-list">${list.map(r => returnCardHTML(r, own)).join('')}</div>` : `<div class="empty">${esc(t('rt.none'))}</div>`;
+}
+/** Approval card for kind "retur": customer → refund; supplier → value only for the owner. */
+function returAprHTML(a, pl) {
+  const sup = pl.kind === 'pemasok', own = isOwner(), lines = Array.isArray(pl.lines) ? pl.lines : [];
+  return `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(t(sup ? 'apr.kind_rt_sup' : 'apr.kind_rt_cust', { name: pl.party_name || a.customer_name || '' }))}</b>${a.approver_role === 'owner' ? `<span class="badge gold" data-needs-owner>${ic('lock')} ${esc(t('rt.needs_owner'))}</span>` : ''}<span class="badge amber">${esc(a.request_id)}</span></div>
+    <div class="small muted">${esc(t('rt.requested_by'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))} · <span class="num">${esc(pl.return_id || a.ref)}</span></div>
+    <div class="apr-sum" data-retur style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr))">
+      <div><div class="k">${esc(t(sup ? 'rt.ref_sup' : 'rt.ref_cust'))}</div><div class="v num" data-v="ref">${esc(pl.ref || '')}</div></div>
+      <div><div class="k">${esc(t(sup ? 'rt.taken_by' : 'rt.returned_by'))}</div><div class="v" data-v="by">${esc([pl.returned_by, pl.carrier_vehicle, pl.returned_by_phone].filter(Boolean).join(' · '))}</div></div>
+      ${sup ? `<div><div class="k">${esc(t('rt.out_doc'))}</div><div class="v num" data-v="doc">${esc(pl.out_doc_no || '')}</div></div>${own && pl.value != null ? `<div><div class="k">${esc(t('rt.value_cost'))}</div><div class="v num" data-v="value">${fmtRp(pl.value)}</div></div>` : ''}`
+        : `<div><div class="k">${esc(t('rt.refund'))}</div><div class="v num red" data-v="refund">${fmtRp(pl.refund)}</div><div class="small">${esc(t('rt.m_' + (pl.refund_method || 'tunai')))}</div></div>`}</div>
+    <table class="tbl" style="margin:6px 0" data-rt-lines><tbody>${lines.map(l => `<tr><td>${esc(l.name)}</td><td class="r num">${fmtQty(num(l.qty))} ${esc(l.unit || '')}</td>${sup ? '' : `<td><span class="badge ${l.condition === 'rusak' ? 'red' : 'green'}">${esc(t('rt.c_' + (l.condition || 'baik')))}</span></td>`}</tr>`).join('')}</tbody></table>
+    <div style="margin-bottom:8px">${esc(t('rt.reason'))}: <b>${esc(t('rt.r_' + (pl.reason_code || 'lainnya')))}</b>${pl.reason_note ? ` — “${esc(pl.reason_note)}”` : ''}</div>
+    ${sup ? `<div class="small muted" style="margin-bottom:8px">${esc(t('rt.carrier'))}: ${esc(carrierText(pl) || '—')}${pl.photo_id ? ` · ${esc(t('rt.photo'))} ${esc(pl.photo_id)}` : ''}</div>` : `<div class="small muted" style="margin-bottom:8px">${esc(t('rt.stock_hint'))}</div>`}`;
+}
+/** Quantities already returned (approved + pending) per product for one invoice / goods-in note. */
+async function returnedFor(ref) {
+  const list = await loadReturns(addDays(today(), -400), today());
+  const q = {};
+  list.filter(r => r.ref === ref && (r.status === 'approved' || r.status === 'pending')).forEach(r => (r.lines || []).forEach(l => { q[String(l.product_id)] = roundQty((q[String(l.product_id)] || 0) + num(l.qty)); }));
+  return q;
+}
+async function findSale(inv) {
+  const sources = [HI.data].concat(Object.values(salesCache).map(c => c.data)).filter(Boolean);
+  for (const d of sources) { const s = d.sales.find(x => x.invoice_no === inv); if (s) return { sale: s, items: d.items.filter(i => i.invoice_no === inv) }; }
+  const m = /^[A-Z]{1,4}(\d{2})(\d{2})(\d{2})-/.exec(String(inv || '')), day = m ? `20${m[1]}-${m[2]}-${m[3]}` : '';
+  const d = day ? await loadSales(day, day, true) : await loadSales(addDays(today(), -60), today(), true);
+  const s = d.sales.find(x => x.invoice_no === inv);
+  return s ? { sale: s, items: d.items.filter(i => i.invoice_no === inv) } : null;
+}
+/** Customer return (owner app): from the sales history receipt or the Retur screen (invoice number). */
+async function openCustReturn(inv) {
+  if (!inv) {
+    const r0 = await confirmBox(t('rt.ask_inv'), { input: { label: t('rt.ref_cust'), value: '' }, ok: t('next') });
+    if (!r0.ok) return; inv = String(r0.value || '').trim().toUpperCase();
+  }
+  let found = null;
+  try { found = await findSale(inv); } catch (e) { toast(errMsg(e), 'err'); return; }
+  if (!found) { toast(t('rt.inv_not_found', { inv }), 'err'); return; }
+  if (found.sale.status === 'void') { toast(t('rt.inv_void'), 'err'); return; }
+  let back = {}; try { back = await returnedFor(inv); } catch (e) { }
+  const sale = found.sale, cust = custById(sale.customer_id);
+  const by = new Map();
+  found.items.forEach(i => { const k = String(i.product_id); const a = by.get(k) || { product_id: i.product_id, name: i.name, qty: 0 }; a.qty = roundQty(a.qty + num(i.qty)); by.set(k, a); });
+  const R = { lines: [...by.values()].map(a => { const ret = num(back[String(a.product_id)]); return Object.assign(a, { ret, left: roundQty(Math.max(0, a.qty - ret)), q: 0, cond: 'baik' }); }),
+    reason: '', note: '', by: '', phone: '', method: 'tunai' };
+  const el = openModal({ title: t('rt.cust_title', { inv }), id: 'cust-retur', body: '<div id="cr-body"></div>',
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="cr-send">${ic('send')} ${esc(t('rt.send'))}</button>` });
+  const body = $('#cr-body', el);
+  const draw = () => {
+    body.innerHTML = `<p style="margin-top:0"><b>${esc(sale.customer_name || t('pos.walkin'))}</b> · ${esc(fmtDate(sale.sale_date))} · ${fmtRp(sale.total)}</p>
+      <div class="list" id="cr-lines">${R.lines.map(l => `<div class="li" data-cr-line="${esc(l.product_id)}" style="min-height:0;padding:8px 10px;flex-wrap:wrap"><div class="grow"><div class="t">${esc(l.name)}</div><div class="s">${esc(t('rt.line', { b: fmtQty(l.qty), r: fmtQty(l.ret) }))}</div></div>
+        <input class="input num" style="width:80px" data-cr-qty="${esc(l.product_id)}" data-rule="num" inputmode="decimal" placeholder="0" value="${l.q ? esc(fmtQtyInput(l.q)) : ''}" aria-label="${esc(t('qty'))} ${esc(l.name)}" ${l.left > 0 ? '' : 'disabled'}>
+        <select class="input" style="width:auto" data-cr-cond="${esc(l.product_id)}" aria-label="${esc(t('rt.cond'))}">${['baik', 'rusak'].map(c => `<option value="${c}" ${l.cond === c ? 'selected' : ''}>${esc(t('rt.c_' + c))}</option>`).join('')}</select></div>`).join('')}</div>
+      <div class="grid2" style="margin-top:10px"><div class="field"><label class="f" for="cr-reason">${esc(t('rt.reason'))} *</label><select class="input" id="cr-reason"><option value="">${esc(t('rt.pick_reason'))}</option>${RETURN_REASONS.map(k => `<option value="${k}" ${R.reason === k ? 'selected' : ''}>${esc(t('rt.r_' + k))}</option>`).join('')}</select></div>
+        <div class="field"><label class="f" for="cr-note">${esc(t(R.reason === 'lainnya' ? 'rt.note_req' : 'notes'))}</label><input class="input" id="cr-note" data-rule="text" value="${esc(R.note)}"></div></div>
+      <div class="grid2"><div class="field"><label class="f" for="cr-by">${esc(t('rt.returned_by'))}</label><input class="input" id="cr-by" data-rule="name" placeholder="${esc(sale.customer_name || '')}" value="${esc(R.by)}"></div>
+        <div class="field"><label class="f" for="cr-phone">${esc(t('phone'))}</label><input class="input" id="cr-phone" type="tel" data-rule="phone" value="${esc(R.phone)}"></div></div>
+      <div class="field"><label class="f">${esc(t('rt.refund_how'))}</label><div class="seg" id="cr-method" style="flex-wrap:wrap">${REFUND_METHODS.map(m => `<button type="button" data-m="${m}" class="${R.method === m ? 'on' : ''}" ${m === 'potong_hutang' && !(cust && int(cust.debt_balance) > 0) ? 'disabled' : ''}>${esc(t('rt.m_' + m))}</button>`).join('')}</div></div>
+      <p class="small muted">${esc(t('rt.stock_hint'))}${num(settings().return_fee_pct) ? ' ' + esc(t('rt.fee_hint', { pct: num(settings().return_fee_pct) })) : ''}</p>
+      <div class="red" id="cr-err" role="alert"></div>`;
+    $('#cr-method', body).onclick = e => { const b = e.target.closest('[data-m]'); if (!b || b.disabled) return; R.method = b.dataset.m; draw(); };
+  };
+  body.addEventListener('input', e => {
+    const q = e.target.closest('[data-cr-qty]'); if (q) { const l = R.lines.find(x => String(x.product_id) === q.dataset.crQty); if (l) l.q = q.value.trim() === '' ? 0 : qtyVal(q.value); }
+    if (e.target.id === 'cr-note') R.note = e.target.value; if (e.target.id === 'cr-by') R.by = e.target.value; if (e.target.id === 'cr-phone') R.phone = e.target.value;
+    const er = $('#cr-err', el); if (er) er.textContent = '';
+  });
+  body.addEventListener('change', e => { const c = e.target.closest('[data-cr-cond]'); if (c) { const l = R.lines.find(x => String(x.product_id) === c.dataset.crCond); if (l) l.cond = c.value; } if (e.target.id === 'cr-reason') { R.reason = e.target.value; draw(); } });
+  draw();
+  $('#cr-send', el).onclick = async () => {
+    const err = $('#cr-err', el), lines = R.lines.filter(l => l.q > 0);
+    if (!lines.length) { err.textContent = t('rt.err_qty'); return; }
+    const over = lines.find(l => l.q > l.left + 1e-9); if (over) { err.textContent = t('rt.err_over', { name: over.name, n: fmtQty(over.left) }); return; }
+    if (!R.reason) { err.textContent = t('rt.err_reason'); return; }
+    if (R.reason === 'lainnya' && !R.note.trim()) { err.textContent = t('rt.err_note'); return; }
+    if (R.by.trim() && !ruleOk.name(R.by)) { err.textContent = t('rule.name'); return; }
+    if (R.phone.trim() && !normPhone(R.phone)) { err.textContent = t('car.bad_phone'); return; }
+    $('#cr-send', el).disabled = true;
+    try {
+      const r = await api('request_return', { kind: 'pelanggan', invoice_no: inv, lines: lines.map(l => ({ product_id: l.product_id, qty: l.q, condition: l.cond })), reason_code: R.reason, reason_note: R.note.trim(),
+        returned_by: R.by.trim(), returned_by_phone: R.phone.trim(), refund_method: R.method, client_id: uuid() });
+      closeModal(true); afterReturnRequest(r);
+    } catch (e) { $('#cr-send', el).disabled = false; err.textContent = errMsg(e); }
+  };
+}
+/** Supplier return (owner app): from a goods-in note in the history (or the Retur screen: pick the note). */
+async function openSupReturn(no) {
+  if (!no) {
+    const r0 = await confirmBox(t('rt.ask_no'), { input: { label: t('rt.ref_sup'), value: '' }, ok: t('next') });
+    if (!r0.ok) return; no = String(r0.value || '').trim().toUpperCase();
+  }
+  let d; try { d = PH.data || await loadSales(addDays(today(), -120), today(), true); } catch (e) { toast(errMsg(e), 'err'); return; }
+  let rows = d.purchases.filter(r => r.purchase_no === no && num(r.qty) > 0);
+  if (!rows.length) { try { const d2 = await loadSales(addDays(today(), -365), today(), true); rows = d2.purchases.filter(r => r.purchase_no === no && num(r.qty) > 0); } catch (e) { } }
+  if (!rows.length) { toast(t('rt.no_not_found', { no }), 'err'); return; }
+  let back = {}; try { back = await returnedFor(no); } catch (e) { }
+  const by = new Map();
+  rows.forEach(r => { const k = String(r.product_id); const a = by.get(k) || { product_id: r.product_id, name: r.name, qty: 0 }; a.qty = roundQty(a.qty + num(r.qty)); by.set(k, a); });
+  const R = { lines: [...by.values()].map(a => { const p = prodById(a.product_id), ret = num(back[String(a.product_id)]), stock = p ? num(p.stock) : 0; return Object.assign(a, { unit: p ? p.unit || '' : '', ret, stock, left: roundQty(Math.max(0, Math.min(a.qty - ret, stock))), q: 0 }); }),
+    reason: '', note: '', doc: '', photo_id: '', thumb: '', uploading: false, carrier: { type: '' } };
+  const el = openModal({ title: t('rt.sup_title', { no }), id: 'sup-retur', body: '<div id="sr-body"></div>',
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="sr-send">${ic('send')} ${esc(t('rt.send'))}</button>` });
+  const body = $('#sr-body', el);
+  const draw = () => {
+    body.innerHTML = `<p style="margin-top:0"><b class="num">${esc(no)}</b> · ${esc(fmtDate(rows[0].purchase_date))} · ${esc(rows[0].supplier || '—')}</p><p class="small muted">${esc(t('rt.sup_hint'))}</p>
+      <div class="list" id="sr-lines">${R.lines.map(l => `<div class="li" data-sr-line="${esc(l.product_id)}" style="min-height:0;padding:8px 10px"><div class="grow"><div class="t">${esc(l.name)}</div><div class="s">${esc(t('rt.sup_line', { in: fmtQty(l.qty), r: fmtQty(l.ret), s: fmtQty(l.stock), unit: l.unit }))}</div></div>
+        <input class="input num" style="width:90px" data-sr-qty="${esc(l.product_id)}" data-rule="num" inputmode="decimal" placeholder="0" value="${l.q ? esc(fmtQtyInput(l.q)) : ''}" aria-label="${esc(t('qty'))} ${esc(l.name)}" ${l.left > 0 ? '' : 'disabled'}></div>`).join('')}</div>
+      <div class="grid2" style="margin-top:10px"><div class="field"><label class="f" for="sr-reason">${esc(t('rt.reason'))} *</label><select class="input" id="sr-reason"><option value="">${esc(t('rt.pick_reason'))}</option>${RETURN_REASONS.filter(k => k !== 'berubah_pikiran').map(k => `<option value="${k}" ${R.reason === k ? 'selected' : ''}>${esc(t('rt.r_' + k))}</option>`).join('')}</select></div>
+        <div class="field"><label class="f" for="sr-note">${esc(t(R.reason === 'lainnya' ? 'rt.note_req' : 'notes'))}</label><input class="input" id="sr-note" data-rule="text" value="${esc(R.note)}"></div></div>
+      <div class="field"><label class="f" for="sr-doc">${esc(t('rt.out_doc'))} *</label><input class="input" id="sr-doc" data-rule="doc" placeholder="SJ-0001" value="${esc(R.doc)}"></div>
+      <div class="step card pad" style="margin-bottom:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">${R.thumb ? `<img class="thumb" id="sr-thumb" src="${esc(R.thumb)}" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:8px">` : ic('camera')}
+        <div class="grow" style="min-width:150px"><div style="font-weight:800">${esc(t('rt.photo'))}${settings().require_return_photo !== false ? ' *' : ''}</div><div id="sr-photo-st">${R.uploading ? `<span class="muted">${esc(t('saving'))}</span>` : R.photo_id ? `<b class="green" id="sr-photo-ok">${esc(t('rt.photo_ok'))}</b>` : `<span class="muted small">${esc(t('rt.photo_hint'))}</span>`}</div></div>
+        <label class="btn ${R.photo_id ? '' : 'primary'}" for="sr-photo">${ic('camera')} ${esc(t(R.photo_id ? 'pu.photo_retake' : 'rt.photo_take'))}</label>${PHOTO_INPUT('sr-photo')}</div>
+      ${carrierHTML('sr', R.carrier, 'car.title_out', true)}
+      ${isOwner() ? '' : `<div class="small muted" style="margin-top:6px">${esc(t('rt.no_value'))}</div>`}
+      <div class="red" id="sr-err" role="alert"></div>`;
+    bindCarrier(body, 'sr', R.carrier, draw);
+    $('#sr-photo', body).onchange = async e => {
+      const f = e.target.files[0]; if (!f) return;
+      R.uploading = true; draw();
+      try { const img = await imageToJpeg(f); R.thumb = img.thumb; const r = await apiPhoto('scan_purchase', { image_base64: img.base64, mime: img.mime }); R.photo_id = r.photo_id || ''; }
+      catch (e2) { R.uploading = false; draw(); $('#sr-err', el).textContent = errMsg(e2); return; }
+      R.uploading = false; draw();
+    };
+  };
+  body.addEventListener('input', e => {
+    const q = e.target.closest('[data-sr-qty]'); if (q) { const l = R.lines.find(x => String(x.product_id) === q.dataset.srQty); if (l) l.q = q.value.trim() === '' ? 0 : qtyVal(q.value); }
+    if (e.target.id === 'sr-note') R.note = e.target.value; if (e.target.id === 'sr-doc') R.doc = e.target.value;
+    const er = $('#sr-err', el); if (er) er.textContent = '';
+  });
+  body.addEventListener('change', e => { if (e.target.id === 'sr-reason') { R.reason = e.target.value; const lb = $('label[for="sr-note"]', el); if (lb) lb.textContent = t(R.reason === 'lainnya' ? 'rt.note_req' : 'notes'); } });
+  draw();
+  $('#sr-send', el).onclick = async () => {
+    const err = $('#sr-err', el), lines = R.lines.filter(l => l.q > 0);
+    if (!lines.length) { err.textContent = t('rt.err_qty'); return; }
+    const over = lines.find(l => l.q > l.left + 1e-9); if (over) { err.textContent = t('rt.err_over', { name: over.name, n: fmtQty(over.left) }); return; }
+    if (!R.reason) { err.textContent = t('rt.err_reason'); return; }
+    if (R.reason === 'lainnya' && !R.note.trim()) { err.textContent = t('rt.err_note'); return; }
+    if (!ruleOk.doc(R.doc)) { err.textContent = t('rule.doc'); $('#sr-doc', el).focus(); return; }
+    if (settings().require_return_photo !== false && !R.photo_id) { err.textContent = t('rt.err_photo'); return; }
+    const chk = carrierCheck(R.carrier, true); if (chk) { carrierShow(body, 'sr', chk); err.textContent = chk.msg; return; }
+    $('#sr-send', el).disabled = true;
+    try {
+      const r = await api('request_return', { kind: 'pemasok', purchase_no: no, lines: lines.map(l => ({ product_id: l.product_id, qty: l.q })), reason_code: R.reason, reason_note: R.note.trim(),
+        out_doc_no: R.doc.trim().toUpperCase(), photo_id: R.photo_id, carrier: carrierPayload(R.carrier), client_id: uuid() });
+      closeModal(true); afterReturnRequest(r);
+    } catch (e) { $('#sr-send', el).disabled = false; err.textContent = errMsg(e); }
+  };
+}
+function afterReturnRequest(r) {
+  toast(t(r.approver_role === 'owner' ? 'rt.sent_owner' : 'rt.sent_mgr', { id: r.return_id }), 'ok', 5000);
+  AP.loaded = false; pollApprovals();
+  RT.tab = 'menunggu';
+  if (S.view === 'retur') loadReturnView(); else go('retur');
+}
+
+/* ---- Settings (owner): returns + carrier ---- */
+function settingsReturHTML() {
+  if (!isOwner()) return '';
+  const st = settings();
+  return `<div class="panel" id="st-retur"><h3>${ic('return')} ${esc(t('set.rt_title'))}</h3><div class="pb">
+    <div class="field"><label class="f" for="st-rt-minval">${esc(t('set.rt_minval'))}</label><input class="input num" id="st-rt-minval" data-rule="num" inputmode="numeric" value="${esc(fmtNum(st.return_owner_min_value ?? 1000000))}">
+      <div class="small muted" style="margin-top:4px">${esc(t('set.rt_minval_hint'))}</div></div>
+    <div class="grid2"><div class="field"><label class="f" for="st-rt-minqty">${esc(t('set.rt_minqty'))}</label><input class="input num" id="st-rt-minqty" data-rule="num" inputmode="decimal" value="${esc(String(st.return_owner_min_qty ?? 0))}"><div class="small muted">${esc(t('set.rt_minqty_hint'))}</div></div>
+      <div class="field"><label class="f" for="st-rt-fee">${esc(t('set.rt_fee'))}</label><input class="input num" id="st-rt-fee" data-rule="num" inputmode="decimal" value="${esc(String(st.return_fee_pct ?? 0))}"><div class="small muted">${esc(t('set.rt_fee_hint'))}</div></div></div>
+    <label class="check"><input type="checkbox" id="st-rt-photo" ${st.require_return_photo !== false ? 'checked' : ''}> ${esc(t('set.rt_photo'))}</label>
+    <label class="check"><input type="checkbox" id="st-rt-carrier" ${st.require_carrier !== false ? 'checked' : ''}> <span>${esc(t('set.rt_carrier'))}<br><span class="small muted">${esc(t('set.rt_carrier_hint'))}</span></span></label>
+    <div class="red" id="st-rt-err"></div><button class="btn primary" data-act="set-save-retur">${esc(t('save'))}</button></div></div>`;
+}
+
+Object.assign(ACT, {
+  'rt-tab': el => { RT.tab = el.dataset.tab; drawReturns(); },
+  'rt-new-cust': () => openCustReturn(''),
+  'rt-new-sup': () => openSupReturn(''),
+  'rt-cust': el => { closeModal(); openCustReturn(el.dataset.inv); },
+  'pu-retur': el => openSupReturn(el.dataset.no),
+  'rt-photo': el => { const ph = RT.photos[el.dataset.photo]; if (ph && ph.thumb) photoZoom(ph.thumb); },
+  'set-save-retur': () => {
+    const err = $('#st-rt-err'), minval = moneyVal($('#st-rt-minval').value), minqty = Number(String($('#st-rt-minqty').value).replace(',', '.')), fee = Number(String($('#st-rt-fee').value).replace(',', '.'));
+    if (!(minval > 0)) { err.textContent = t('set.rt_bad_minval'); return; }
+    if (!(minqty >= 0)) { err.textContent = t('set.rt_bad_qty'); return; }
+    if (!(fee >= 0 && fee <= 50)) { err.textContent = t('set.rt_bad_fee'); return; }
+    err.textContent = '';
+    saveSettings({ return_owner_min_value: minval, return_owner_min_qty: minqty, return_fee_pct: Math.round(fee * 10) / 10, require_return_photo: $('#st-rt-photo').checked, require_carrier: $('#st-rt-carrier').checked }, err);
+  }
+});
+
+Object.assign(I18N.id, {
+  'err.PHOTO_REQUIRED': 'Barang masuk wajib foto nota', 'err.CARRIER_REQUIRED': 'Pilih siapa yang membawa barang',
+  'nav.retur': 'Retur', 'navs.retur': 'Retur', 'actg.retur': 'Retur', 'ak.minta_retur': 'Minta retur', 'ak.retur': 'Retur diputuskan', 'mt.retur': 'retur ke pemasok',
+  'car.title': 'Siapa yang membawa barang?', 'car.title_out': 'Siapa yang membawa barang keluar?', 'car.kind': 'Jenis kendaraan', 'car.vehicle': 'Nomor kendaraan (plat / angkot)', 'car.name': 'Nama', 'car.driver': 'Nama sopir', 'car.optional': '(boleh kosong)',
+  'car.plate': 'Plat nomor', 'car.phone': 'No. HP (boleh kosong)', 'car.pick': 'Pilih salah satu.', 'car.t_umum': 'Kendaraan umum', 'car.t_teman': 'Teman', 'car.t_pemasok': 'Sopir pemasok', 'car.t_karyawan': 'Karyawan',
+  'car.k_ojek': 'Ojek', 'car.k_angkot': 'Angkot', 'car.k_taksi': 'Taksi', 'car.k_truk': 'Truk / pikap', 'car.k_lainnya': 'Lainnya',
+  'car.need': 'Pilih siapa yang membawa barang', 'car.bad_phone': 'Nomor HP pembawa tidak valid', 'car.need_vehicle': 'Kendaraan umum: tulis nomor kendaraannya', 'car.need_name': 'Tulis nama orang yang membawa barang',
+  'rule.name': 'Nama hanya boleh huruf, angka, spasi dan . , \' -', 'rule.pname': 'Nama hanya boleh huruf, angka, spasi dan . , \' & ( ) / % + # -', 'rule.sku': 'SKU / barcode hanya boleh huruf, angka, titik, garis bawah dan garis',
+  'rule.doc': 'Nomor dokumen / kendaraan hanya boleh huruf, angka, spasi dan / - .', 'rule.phone': 'Nomor HP hanya boleh angka (contoh 0812xxxxxxx)',
+  'rt.btn': 'Retur', 'rt.new_cust': 'Retur pelanggan', 'rt.new_sup': 'Retur ke pemasok', 'rt.hint': 'Setiap retur disetujui manajer; nilai mulai {n} hanya oleh pemilik. Pemilik selalu diberi tahu di Aktivitas.',
+  'rt.tab_menunggu': 'Menunggu', 'rt.tab_pelanggan': 'Pelanggan', 'rt.tab_pemasok': 'Pemasok', 'rt.k_pemasok': 'ke pemasok', 'rt.k_pelanggan': 'dari pelanggan',
+  'rt.st_pending': 'menunggu persetujuan', 'rt.st_approved': 'disetujui', 'rt.st_rejected': 'ditolak', 'rt.needs_owner': 'butuh pemilik',
+  'rt.ref_sup': 'Barang masuk (nota)', 'rt.ref_cust': 'Faktur pembelian', 'rt.bought_by': 'Dibeli oleh', 'rt.taken_by': 'Dibawa oleh', 'rt.returned_by': 'Dikembalikan oleh', 'rt.carrier': 'Pembawa', 'rt.out_doc': 'No. nota / surat jalan keluar',
+  'rt.reason': 'Alasan', 'rt.refund': 'Uang kembali', 'rt.fee': 'potongan', 'rt.value_cost': 'Nilai (harga beli)', 'rt.requested_by': 'Diminta', 'rt.approved_by': 'Disetujui', 'rt.rejected_by': 'Ditolak', 'rt.photo': 'Foto barang keluar',
+  'rt.c_baik': 'baik', 'rt.c_rusak': 'rusak', 'rt.to_inbox': 'Buka Persetujuan', 'rt.none': 'Tidak ada retur di sini.',
+  'rt.r_tidak_sesuai': 'Tidak sesuai spesifikasi', 'rt.r_rusak': 'Rusak / cacat', 'rt.r_kadaluarsa': 'Kedaluwarsa', 'rt.r_salah_kirim': 'Salah kirim / salah barang', 'rt.r_kualitas_buruk': 'Kualitas buruk', 'rt.r_berubah_pikiran': 'Pelanggan berubah pikiran', 'rt.r_lainnya': 'Lainnya',
+  'rt.m_tunai': 'Tunai dari kas', 'rt.m_transfer': 'Transfer', 'rt.m_potong_hutang': 'Potong hutang', 'rt.m_tukar': 'Tukar barang', 'rt.m_nota_kredit': 'Nota kredit pemasok',
+  'rt.stock_hint': 'Barang baik masuk ke gudang (dicek dulu sebelum ke rak); barang rusak tidak masuk stok.', 'rt.ask_inv': 'Nomor faktur pembelian pelanggan', 'rt.inv_not_found': 'Faktur {inv} tidak ditemukan', 'rt.inv_void': 'Faktur ini sudah dibatalkan',
+  'rt.cust_title': 'Retur pelanggan · {inv}', 'rt.line': 'dibeli {b} · sudah diretur {r}', 'rt.cond': 'Kondisi', 'rt.pick_reason': '— pilih alasan —', 'rt.note_req': 'Tulis alasannya *', 'rt.refund_how': 'Uang dikembalikan dengan',
+  'rt.fee_hint': 'Potongan retur {pct}% dari nilai barang.', 'rt.send': 'Kirim untuk persetujuan', 'rt.err_qty': 'Isi jumlah barang yang diretur', 'rt.err_over': '{name}: paling banyak {n}', 'rt.err_reason': 'Pilih alasan retur', 'rt.err_note': 'Tulis alasan retur',
+  'rt.ask_no': 'Nomor barang masuk (PB…)', 'rt.no_not_found': 'Barang masuk {no} tidak ditemukan', 'rt.sup_title': 'Retur ke pemasok · {no}', 'rt.sup_hint': 'Paling banyak: yang masuk dengan nota ini dikurangi retur sebelumnya, dan tidak lebih dari stok.',
+  'rt.sup_line': 'masuk {in} · sudah diretur {r} · stok {s} {unit}', 'rt.photo_ok': 'Foto tersimpan', 'rt.photo_hint': 'Foto barang yang keluar / tanda terima pemasok', 'rt.photo_take': 'Ambil foto', 'rt.no_value': 'Nilai (harga beli) hanya terlihat oleh pemilik.',
+  'rt.err_photo': 'Foto bukti barang keluar wajib', 'rt.sent_owner': 'Retur {id} dikirim — butuh persetujuan pemilik', 'rt.sent_mgr': 'Retur {id} dikirim — menunggu persetujuan manajer',
+  'apr.kind_rt_sup': 'Retur ke pemasok: {name}', 'apr.kind_rt_cust': 'Retur pelanggan: {name}', 'apr.new_retur': 'Permintaan retur dari {cashier} →',
+  'set.rt_title': 'Retur & pembawa barang', 'set.rt_minval': 'Retur mulai nilai ini hanya disetujui pemilik (Rp)', 'set.rt_minval_hint': 'Di atas nilai ini hanya pemilik yang menyetujui; di bawahnya manajer menyetujui dan pemilik tetap diberi tahu (Aktivitas).',
+  'set.rt_minqty': 'Atau mulai jumlah barang', 'set.rt_minqty_hint': '0 = tidak dipakai', 'set.rt_fee': 'Potongan retur pelanggan (%)', 'set.rt_fee_hint': 'Dipotong dari uang kembali (0 = tanpa potongan).',
+  'set.rt_photo': 'Retur ke pemasok wajib foto barang keluar', 'set.rt_carrier': 'Barang masuk wajib mengisi siapa yang membawa', 'set.rt_carrier_hint': 'Kendaraan umum + nomor, teman (nama), sopir pemasok atau karyawan.',
+  'set.rt_bad_minval': 'Isi nilai lebih dari 0', 'set.rt_bad_qty': 'Jumlah tidak valid', 'set.rt_bad_fee': 'Potongan 0–50%',
+  'dr.ret_cust': 'Retur pelanggan', 'dr.ret_cash': 'Uang kembali tunai', 'dr.ret_sup': 'Retur ke pemasok'
+});
+Object.assign(I18N.ar, {
+  'err.PHOTO_REQUIRED': 'الوارد يتطلب صورة الفاتورة', 'err.CARRIER_REQUIRED': 'اختر من أحضر البضاعة',
+  'nav.retur': 'المرتجعات', 'navs.retur': 'المرتجعات', 'actg.retur': 'المرتجعات', 'ak.minta_retur': 'طلب إرجاع', 'ak.retur': 'قرار إرجاع', 'mt.retur': 'مرتجع للمورد',
+  'car.title': 'من أحضر البضاعة؟', 'car.title_out': 'من أخرج البضاعة؟', 'car.kind': 'نوع المركبة', 'car.vehicle': 'رقم المركبة', 'car.name': 'الاسم', 'car.driver': 'اسم السائق', 'car.optional': '(اختياري)',
+  'car.plate': 'رقم اللوحة', 'car.phone': 'الهاتف (اختياري)', 'car.pick': 'اختر واحداً.', 'car.t_umum': 'مواصلات عامة', 'car.t_teman': 'صديق', 'car.t_pemasok': 'سائق المورد', 'car.t_karyawan': 'موظف',
+  'car.k_ojek': 'دراجة أجرة', 'car.k_angkot': 'حافلة صغيرة', 'car.k_taksi': 'تاكسي', 'car.k_truk': 'شاحنة', 'car.k_lainnya': 'أخرى',
+  'car.need': 'اختر من أحضر البضاعة', 'car.bad_phone': 'رقم الهاتف غير صحيح', 'car.need_vehicle': 'المواصلات العامة: اكتب رقم المركبة', 'car.need_name': 'اكتب اسم من أحضر البضاعة',
+  'rule.name': 'الاسم: حروف وأرقام ومسافة و . , \' - فقط', 'rule.pname': 'الاسم: حروف وأرقام ومسافة و . , \' & ( ) / % + # - فقط', 'rule.sku': 'الرمز: حروف وأرقام ونقطة وشرطة فقط',
+  'rule.doc': 'رقم المستند / المركبة: حروف وأرقام ومسافة و / - . فقط', 'rule.phone': 'رقم الهاتف أرقام فقط',
+  'rt.btn': 'إرجاع', 'rt.new_cust': 'مرتجع عميل', 'rt.new_sup': 'إرجاع للمورد', 'rt.hint': 'كل مرتجع يوافق عليه المدير؛ من قيمة {n} المالك فقط. يُبلَّغ المالك دائماً في سجل النشاط.',
+  'rt.tab_menunggu': 'بانتظار', 'rt.tab_pelanggan': 'العملاء', 'rt.tab_pemasok': 'الموردون', 'rt.k_pemasok': 'إلى المورد', 'rt.k_pelanggan': 'من عميل',
+  'rt.st_pending': 'بانتظار الموافقة', 'rt.st_approved': 'تمت الموافقة', 'rt.st_rejected': 'مرفوض', 'rt.needs_owner': 'يحتاج المالك',
+  'rt.ref_sup': 'فاتورة الوارد', 'rt.ref_cust': 'فاتورة الشراء', 'rt.bought_by': 'اشتراها', 'rt.taken_by': 'حملها', 'rt.returned_by': 'أعادها', 'rt.carrier': 'الناقل', 'rt.out_doc': 'رقم إذن الخروج',
+  'rt.reason': 'السبب', 'rt.refund': 'المبلغ المعاد', 'rt.fee': 'خصم', 'rt.value_cost': 'القيمة (سعر الشراء)', 'rt.requested_by': 'طلبه', 'rt.approved_by': 'وافق', 'rt.rejected_by': 'رفض', 'rt.photo': 'صورة البضاعة الخارجة',
+  'rt.c_baik': 'سليم', 'rt.c_rusak': 'تالف', 'rt.to_inbox': 'فتح الموافقات', 'rt.none': 'لا توجد مرتجعات هنا.',
+  'rt.r_tidak_sesuai': 'غير مطابق للمواصفات', 'rt.r_rusak': 'تالف / معيب', 'rt.r_kadaluarsa': 'منتهي الصلاحية', 'rt.r_salah_kirim': 'إرسال خاطئ', 'rt.r_kualitas_buruk': 'جودة رديئة', 'rt.r_berubah_pikiran': 'العميل غيّر رأيه', 'rt.r_lainnya': 'أخرى',
+  'rt.m_tunai': 'نقداً من الصندوق', 'rt.m_transfer': 'تحويل', 'rt.m_potong_hutang': 'خصم من الدَّين', 'rt.m_tukar': 'استبدال', 'rt.m_nota_kredit': 'إشعار دائن من المورد',
+  'rt.stock_hint': 'السليم يعود إلى المستودع (يُفحص قبل الرف)؛ التالف لا يدخل المخزون.', 'rt.ask_inv': 'رقم فاتورة شراء العميل', 'rt.inv_not_found': 'الفاتورة {inv} غير موجودة', 'rt.inv_void': 'هذه الفاتورة ملغاة',
+  'rt.cust_title': 'مرتجع عميل · {inv}', 'rt.line': 'اشترى {b} · أُرجع {r}', 'rt.cond': 'الحالة', 'rt.pick_reason': '— اختر السبب —', 'rt.note_req': 'اكتب السبب *', 'rt.refund_how': 'طريقة إعادة المبلغ',
+  'rt.fee_hint': 'خصم إرجاع {pct}% من القيمة.', 'rt.send': 'إرسال للموافقة', 'rt.err_qty': 'أدخل الكمية المرتجعة', 'rt.err_over': '{name}: الحد الأقصى {n}', 'rt.err_reason': 'اختر سبب الإرجاع', 'rt.err_note': 'اكتب سبب الإرجاع',
+  'rt.ask_no': 'رقم الوارد (PB…)', 'rt.no_not_found': 'الوارد {no} غير موجود', 'rt.sup_title': 'إرجاع للمورد · {no}', 'rt.sup_hint': 'الحد الأقصى: ما ورد بهذه الفاتورة ناقص المرتجع سابقاً، ولا يزيد عن المخزون.',
+  'rt.sup_line': 'ورد {in} · أُرجع {r} · المخزون {s} {unit}', 'rt.photo_ok': 'حُفظت الصورة', 'rt.photo_hint': 'صورة البضاعة الخارجة / إيصال المورد', 'rt.photo_take': 'التقط صورة', 'rt.no_value': 'القيمة (سعر الشراء) يراها المالك فقط.',
+  'rt.err_photo': 'صورة البضاعة الخارجة مطلوبة', 'rt.sent_owner': 'أُرسل المرتجع {id} — يحتاج موافقة المالك', 'rt.sent_mgr': 'أُرسل المرتجع {id} — بانتظار موافقة المدير',
+  'apr.kind_rt_sup': 'إرجاع للمورد: {name}', 'apr.kind_rt_cust': 'مرتجع عميل: {name}', 'apr.new_retur': 'طلب إرجاع من {cashier} ←',
+  'set.rt_title': 'المرتجعات وناقل البضاعة', 'set.rt_minval': 'المرتجع من هذه القيمة يوافق عليه المالك فقط (روبية)', 'set.rt_minval_hint': 'فوق هذه القيمة المالك فقط؛ ما دونها يوافق المدير ويُبلَّغ المالك (سجل النشاط).',
+  'set.rt_minqty': 'أو من هذه الكمية', 'set.rt_minqty_hint': '0 = غير مستخدم', 'set.rt_fee': 'خصم مرتجع العميل (%)', 'set.rt_fee_hint': 'يُخصم من المبلغ المعاد (0 = بلا خصم).',
+  'set.rt_photo': 'الإرجاع للمورد يتطلب صورة البضاعة الخارجة', 'set.rt_carrier': 'الوارد يتطلب ذكر من أحضر البضاعة', 'set.rt_carrier_hint': 'مواصلات عامة + الرقم، صديق (الاسم)، سائق المورد أو موظف.',
+  'set.rt_bad_minval': 'أدخل قيمة أكبر من 0', 'set.rt_bad_qty': 'كمية غير صحيحة', 'set.rt_bad_fee': 'الخصم 0–50%',
+  'dr.ret_cust': 'مرتجعات العملاء', 'dr.ret_cash': 'مبالغ معادة نقداً', 'dr.ret_sup': 'إرجاع للموردين'
 });
 
 /* ========== Boot ========== */

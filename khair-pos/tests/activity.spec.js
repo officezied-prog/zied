@@ -1,7 +1,7 @@
 // v12 Activity log for the owner: entries for price changes, goods-in and corrections; unread badge; filters.
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, login, getDb, productByName, nav, asUser } = require('./helpers');
+const { SHOTS, login, getDb, productByName, nav, asUser, CARRIER } = require('./helpers');
 
 test('price change, goods-in and correction by the manager reach the owner: unread badge, Beranda note, feed with filters', async ({ page }) => {
   await login(page, 'Pemilik', '1234', '', { stay: true });
@@ -15,7 +15,7 @@ test('price change, goods-in and correction by the manager reach the owner: unre
   const pc = await asUser(page, 'Jihan', '2222', 'change_price', { product_id: gula.id, wholesale_price: gula.wholesale_price + 500, reason: 'Harga pasar naik' });
   expect(pc.applied).toBe(true);
   const ph = await asUser(page, 'Jihan', '2222', 'scan_purchase', { image_base64: 'AAAA', mime: 'image/jpeg' });
-  const pu = await asUser(page, 'Jihan', '2222', 'save_purchase', { supplier: 'Agen Sembako Pasar Induk', photo_id: ph.photo_id, items: [{ product_id: gula.id, qty: 50, cost_price: 15000, photo_index: 1 }], mismatch_reason: 'Kurma dan madu menyusul' });
+  const pu = await asUser(page, 'Jihan', '2222', 'save_purchase', { carrier: CARRIER, supplier: 'Agen Sembako Pasar Induk', photo_id: ph.photo_id, items: [{ product_id: gula.id, qty: 50, cost_price: 15000, photo_index: 1 }], mismatch_reason: 'Kurma dan madu menyusul' });
   const fx = await asUser(page, 'Jihan', '2222', 'request_purchase_fix', { purchase_no: pu.purchase_no, lines: [{ product_id: gula.id, qty: 48 }], reason: '2 pak sobek' });
   expect(fx.applied).toBe(true);
 

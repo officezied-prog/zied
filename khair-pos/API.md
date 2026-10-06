@@ -496,3 +496,10 @@ Before any action the server cleans `data`: control and direction-override chara
 product / customer / supplier names (letters, digits, `. , ' & ( ) / % + # -`), SKU / barcode (`A-Z 0-9 . _ -`), units, phone (digits),
 e-mail, dates (`YYYY-MM-DD`), document and vehicle numbers. A field that does not fit is refused with a message saying what is allowed.
 The apps must use the same rules in their inputs (`maxlength`, `inputmode`, `pattern`) and show the server message.
+
+### Small v16 additions
+- `get_sale` `{invoice_no}` (any app user except sales): `sale`, `items`, `returned` (qty per product already returned or pending),
+  `customer_debt` — used to start a customer return at the counter.
+- `LOCKED` answers carry `locked_until` (ISO time). Sales accounts may call `change_pin` (forced new PIN).
+- Field and photo workflows accept the owner master code, refuse locked accounts and `must_change` users (PIN_CHANGE_REQUIRED),
+  and the field workflow cleans its input the same way (photos as `data:` URLs are left alone).

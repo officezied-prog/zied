@@ -150,3 +150,10 @@ test('Pengaturan: shop location + "Wajibkan lokasi" → the manager sees a block
   expect(await page.evaluate(() => KPOS.DEV.status)).toBe('granted');
   await ctx.close();
 });
+
+test('device id: kept as a raw string in kpos.device_id; a JSON-encoded id written by another app is read and rewritten raw', async ({ page }) => {
+  await page.addInitScript(() => { if (!sessionStorage.getItem('dv')) { sessionStorage.setItem('dv', '1'); localStorage.setItem('kpos.device_id', JSON.stringify('dSHAREDKASIR0000001')); } });
+  await login(page, 'Pemilik', '1234', '', { stay: true });
+  expect(await page.evaluate(() => KPOS.devicePayload().id)).toBe('dSHAREDKASIR0000001');
+  expect(await page.evaluate(() => localStorage.getItem('kpos.device_id'))).toBe('dSHAREDKASIR0000001');
+});
