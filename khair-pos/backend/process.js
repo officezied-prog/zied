@@ -853,7 +853,7 @@ switch (req.action) {
       const newStock = Math.round((num(p.stock) - c.qtyByProduct[pid]) * 1000) / 1000;
       shopSet[String(p.id)] = Math.round((shopOf(p) - c.qtyByProduct[pid]) * 1000) / 1000;
       ops.products.push(forWrite(Object.assign({}, p, { stock: newStock }), p.id));
-      stockOut.push({ product_id: p.id, stock: newStock, shop_stock: Math.min(newStock, shopSet[String(p.id)]) });
+      stockOut.push({ product_id: p.id, stock: newStock, shop_stock: newStock >= 0 ? Math.max(0, Math.min(newStock, shopSet[String(p.id)])) : newStock });
     });
     if (c.customer) {
       ops.customers.push(forWrite(Object.assign({}, c.customer, {
