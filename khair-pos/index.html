@@ -303,6 +303,8 @@ tr.unmatched td{background:var(--amber-l)}
 tr.diff td{background:#FFF8F7}
 .nav-btn{min-height:56px}
 
+.mute-btn.on{background:var(--red-l);color:var(--red)}
+
 /* ========== Busy bar ========== */
 body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-index:300;background:linear-gradient(90deg,transparent,var(--gold),transparent);background-size:40% 100%;background-repeat:no-repeat;animation:busy 1s linear infinite}
 @keyframes busy{from{background-position:-40% 0}to{background-position:140% 0}}
@@ -432,6 +434,8 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
   <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></symbol>
   <symbol id="i-cash" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9v.01M18 15v.01"/></symbol>
   <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></symbol>
+  <symbol id="i-speaker" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
+  <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="m17 9 5 6M22 9l-5 6"/></symbol>
   <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></symbol>
 </svg>
 
@@ -1363,7 +1367,7 @@ function openModal({ title, body, foot = '', cls = '', onClose, id = '' }) {
     <div class="modal-b">${body}</div>${foot ? `<div class="modal-f">${foot}</div>` : ''}</div>`;
   $('#modals').appendChild(bg);
   modalStack.push({ el: bg, onClose });
-  setTimeout(() => { const f = bg.querySelector('[autofocus]'); if (f) f.focus(); else { const b = bg.querySelector('.modal-b input, .modal-b select, .modal-b textarea'); if (b && !isTouch()) b.focus(); } }, 30);
+  setTimeout(() => { if (bg.contains(document.activeElement)) return; const f = bg.querySelector('[autofocus]'); if (f) f.focus(); else { const b = bg.querySelector('.modal-b input, .modal-b select, .modal-b textarea'); if (b && !isTouch()) b.focus(); } }, 30);
   return bg;
 }
 function closeModal(all) {
@@ -1643,6 +1647,7 @@ function addToCart(p, qty = 1) {
   const ex = S.cart.lines.find(l => l.product_id == p.id);
   if (ex) ex.qty = roundQty(ex.qty + qty); else S.cart.lines.push({ product_id: p.id, name: p.name, qty, override: null });
   saveCart(); renderCart(p.id);
+  speakAdded(p, ex ? ex.qty : qty);
   const stockLeft = num(p.stock) - (ex ? ex.qty : qty);
   if (stockLeft < 0) toast(t('pos.stock_low', { name: p.name }), 'warn', 2000);
 }
@@ -1663,6 +1668,49 @@ function filterProducts(q, cat, opts = {}) {
 }
 const categories = () => [...new Set(S.products.filter(p => p.category).map(p => p.category))].sort();
 const isLow = p => num(p.stock) <= num(p.min_stock);
+
+/* ========== Cashier voice: speak each item so the customer hears the count ==========
+   Only product names and quantities are ever spoken — never prices, totals, discounts,
+   customer names, debts or payment methods. */
+const VOICE = { on: store.get('voice_on', true) !== false, lang: store.get('voice_lang', 'id-ID') === 'ar-SA' ? 'ar-SA' : 'id-ID', timer: null };
+const UNIT_WORDS = { kg: 'kilo', kilo: 'kilo', gr: 'gram', g: 'gram', gram: 'gram', ml: 'mili', ltr: 'liter', lt: 'liter', l: 'liter', liter: 'liter' };
+function speakableName(name) {
+  let s = ' ' + String(name || '') + ' ';
+  s = s.replace(/\[[^\]]*\]|\([^)]*\)|\{[^}]*\}/g, ' ');
+  s = s.replace(/\b(?:sku|kode|code)\s*[:#]?\s*[\w-]+/gi, ' ');
+  s = s.replace(/\b\d{6,}\b/g, ' ');
+  s = s.replace(/\b[A-Z]{1,4}-?\d{3,}[\w-]*\b/g, ' ');
+  s = s.replace(/(\d+(?:[.,]\d+)?)\s*(kg|kilo|gr|gram|g|ml|ltr|lt|liter|l)(?![a-z])/gi, (m, n, u) => `${n} ${UNIT_WORDS[u.toLowerCase()]}`);
+  s = s.replace(/\b(pcs|pc)\b/gi, ' ');
+  return s.replace(/\s+/g, ' ').trim();
+}
+const spokenQty = q => String(roundQty(q)).replace('.', VOICE.lang === 'ar-SA' ? '.' : ',');
+function pickVoice(ss) {
+  try { const vs = ss.getVoices() || []; if (!vs.length) return undefined; const pre = VOICE.lang.slice(0, 2); return vs.find(v => v.lang === VOICE.lang) || vs.find(v => String(v.lang).toLowerCase().startsWith(pre)) || null; } catch (e) { return undefined; }
+}
+function speak(text) {
+  if (!VOICE.on || !text || (S.cart && S.cart.muted)) return;
+  try {
+    const ss = window.speechSynthesis, U = window.SpeechSynthesisUtterance;
+    if (!ss || !U) return;
+    const voice = pickVoice(ss);
+    if (voice === null) return; // voices known but none for this language → stay silent
+    ss.cancel();
+    const u = new U(text); u.lang = VOICE.lang; u.rate = 1.1; if (voice) u.voice = voice;
+    ss.speak(u);
+  } catch (e) { }
+}
+function speakAdded(p, qty) { clearTimeout(VOICE.timer); speak(`${speakableName(p.name)}, ${spokenQty(qty)}`); }
+/** Quantity changed (stepper or typed): say "jumlah N" 500 ms after the last change. */
+function speakQtyLater(pid) {
+  clearTimeout(VOICE.timer);
+  VOICE.timer = setTimeout(() => { const l = S.cart.lines.find(x => x.product_id == pid); if (l) speak(`${VOICE.lang === 'ar-SA' ? 'الكمية' : 'jumlah'} ${spokenQty(l.qty)}`); }, 500);
+}
+function toggleSaleMute() {
+  S.cart.muted = !S.cart.muted; saveCart();
+  if (S.cart.muted) { clearTimeout(VOICE.timer); try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) { } }
+  const b = $('#cart-mute'); if (b) { b.classList.toggle('on', !!S.cart.muted); b.innerHTML = ic(S.cart.muted ? 'mute' : 'speaker'); b.setAttribute('aria-pressed', S.cart.muted ? 'true' : 'false'); b.title = t(S.cart.muted ? 'voice.unmute' : 'voice.mute'); }
+}
 
 /* ========== POS: rendering ========== */
 const POS = { q: '', cat: '', limit: 60, keyTimes: [] };
@@ -1742,6 +1790,7 @@ function renderCart(flashId) {
         ${cust ? `<span class="badge ${cust.type === 'grosir' ? 'gold' : 'gray'}">${esc(t('type.' + cust.type))}</span>` : ''}
       </button>
       ${cust ? `<button class="icon-btn ghost sm" data-act="clear-customer" aria-label="${esc(t('pos.walkin'))}">${ic('x')}</button>` : ''}
+      ${VOICE.on ? `<button class="icon-btn ghost sm mute-btn ${c.muted ? 'on' : ''}" id="cart-mute" data-act="sale-mute" aria-pressed="${c.muted ? 'true' : 'false'}" title="${esc(t(c.muted ? 'voice.unmute' : 'voice.mute'))}" aria-label="${esc(t('voice.mute'))}">${ic(c.muted ? 'mute' : 'speaker')}</button>` : ''}
     </div>
     <div class="cart-lines" id="cart-lines">${v.lines.length ? v.lines.map((l, i) => `
       <div class="cline" data-line="${i}">
@@ -1814,7 +1863,7 @@ function refreshCartNumbers() {
 }
 function bindCartInputs() {
   $$('#cart [data-qty]').forEach(inp => {
-    inp.addEventListener('input', () => { const q = qtyVal(inp.value); if (q > 0) { S.cart.lines[+inp.dataset.qty].qty = q; saveCart(); refreshCartNumbers(); } });
+    inp.addEventListener('input', () => { const q = qtyVal(inp.value); if (q > 0) { const l = S.cart.lines[+inp.dataset.qty]; l.qty = q; saveCart(); refreshCartNumbers(); speakQtyLater(l.product_id); } });
     inp.addEventListener('change', () => {
       const i = +inp.dataset.qty, q = qtyVal(inp.value);
       if (!(q > 0)) { S.cart.lines.splice(i, 1); saveCart(); renderCart(); return; }
@@ -4098,6 +4147,8 @@ Object.assign(I18N.ar, {
   'err.SHIFT_REQUIRED': 'افتح الصندوق قبل البيع.'
 });
 
+Object.assign(I18N.id, { 'voice.title': 'Suara kasir (sebut nama & jumlah barang)', 'voice.on': 'Nyala', 'voice.off': 'Mati', 'voice.lang': 'Bahasa suara', 'voice.mute': 'Bisukan suara untuk transaksi ini', 'voice.unmute': 'Nyalakan suara lagi', 'voice.hint': 'Hanya nama barang dan jumlah yang diucapkan — tidak pernah harga, total, nama pelanggan, hutang atau cara bayar. Pengaturan per perangkat.' });
+Object.assign(I18N.ar, { 'voice.title': 'صوت الكاشير (نطق اسم الصنف والكمية)', 'voice.on': 'تشغيل', 'voice.off': 'إيقاف', 'voice.lang': 'لغة الصوت', 'voice.mute': 'كتم الصوت لهذه العملية', 'voice.unmute': 'إعادة تشغيل الصوت', 'voice.hint': 'يُنطق اسم الصنف والكمية فقط — لا الأسعار ولا الإجمالي ولا اسم العميل ولا الدَّين ولا طريقة الدفع. إعداد خاص بهذا الجهاز.' });
 /* ========== Settings (Pengaturan) ========== */
 const ST = { qs: null };
 RENDER.settings = function () {
@@ -4143,6 +4194,9 @@ RENDER.settings = function () {
 
     <div class="panel"><h3>${esc(t('set.app'))}</h3><div class="pb">
       <div class="field"><label class="f">${esc(t('set.language'))}</label><div class="seg"><button type="button" data-act="set-lang" data-lang="id" class="${S.lang === 'id' ? 'on' : ''}">Bahasa Indonesia</button><button type="button" data-act="set-lang" data-lang="ar" class="${S.lang === 'ar' ? 'on' : ''}">العربية</button></div></div>
+      <div class="field"><label class="f">${esc(t('voice.title'))}</label><div class="seg" style="max-width:360px">${[['1', 'voice.on'], ['0', 'voice.off']].map(([v, k]) => `<button type="button" data-act="voice-on" data-v="${v}" class="${(VOICE.on ? '1' : '0') === v ? 'on' : ''}">${esc(t(k))}</button>`).join('')}</div>
+        <select class="input" id="st-voice-lang" style="margin-top:6px;max-width:360px" aria-label="${esc(t('voice.lang'))}"><option value="id-ID" ${VOICE.lang === 'id-ID' ? 'selected' : ''}>${esc(t('voice.lang'))}: Bahasa Indonesia (id-ID)</option><option value="ar-SA" ${VOICE.lang === 'ar-SA' ? 'selected' : ''}>${esc(t('voice.lang'))}: العربية (ar-SA)</option></select>
+        <div class="small muted" style="margin-top:4px">${esc(t('voice.hint'))}</div></div>
       <div class="field"><label class="f" for="st-lock">${esc(t('set.autolock'))}</label><select class="input" id="st-lock">${[5, 10, 15, 30, 60, 120, 0].map(m => `<option value="${m}" ${S.lockMinutes === m || (!S.lockMinutes && !m) ? 'selected' : ''}>${m ? esc(t('minutes', { n: m })) : esc(t('never'))}</option>`).join('')}</select></div>
       <div class="row wrap"><button class="btn" data-act="lock">${ic('lock')} ${esc(t('lock'))}</button><button class="btn" data-act="refresh-data">${ic('refresh')} ${esc(t('set.reload_data'))}</button><button class="btn danger" data-act="logout-store">${esc(t('set.logout_store'))}</button></div>
       ${MOCK ? `<div class="hr"></div><p class="small muted">${esc(t('set.mock_hint'))}</p><button class="btn danger sm" data-act="mock-reset">${esc(t('set.mock_reset'))}</button>` : ''}
@@ -4153,6 +4207,7 @@ RENDER.settings = function () {
       <div class="row wrap" style="margin-top:10px"><button class="btn primary" data-act="outbox-sync" ${S.outbox.length ? '' : 'disabled'}>${ic('send')} ${esc(t('outbox.resend'))}</button>${S.outbox.length ? `<button class="btn sm" data-act="outbox-copy">${ic('copy')} ${esc(t('outbox.copy'))}</button>` : ''}</div>
       <p class="small muted">${esc(t('outbox.hint'))}</p></div></div>
   </div>`;
+  const vl = $('#st-voice-lang'); if (vl) vl.onchange = () => { VOICE.lang = vl.value === 'ar-SA' ? 'ar-SA' : 'id-ID'; store.set('voice_lang', VOICE.lang); toast(t('saved'), 'ok'); };
   const lk = $('#st-lock'); if (lk) lk.onchange = () => { S.lockMinutes = int(lk.value); store.set('lock_minutes', S.lockMinutes); toast(t('saved'), 'ok'); };
   const pp = $('#st-paper'); if (pp) pp.onclick = e => { const b = e.target.closest('[data-p]'); if (!b) return; $$('#st-paper button').forEach(x => x.classList.toggle('on', x === b)); };
   $$('[data-user-role]').forEach(sel => sel.onchange = () => { const u = S.users.find(x => x.name === sel.dataset.userRole); if (u) saveUser({ name: u.name, role: sel.value, active: u.active !== false }); });
@@ -4271,8 +4326,10 @@ const ACT = {
   'pick-customer': () => openCustomerPicker(c => { S.cart.customer_id = c ? c.id : null; saveCart(); renderCart(); }),
   'clear-customer': () => { S.cart.customer_id = null; if (S.cart.method === 'hutang') S.cart.method = 'tunai'; saveCart(); renderCart(); focusSearch(); },
   'line-del': el => { S.cart.lines.splice(+el.dataset.i, 1); saveCart(); renderCart(); focusSearch(); },
-  'qty-inc': el => { const l = S.cart.lines[+el.dataset.i]; l.qty = roundQty(Math.floor(l.qty + 1e-9) + 1); saveCart(); renderCart(); },
-  'qty-dec': el => { const i = +el.dataset.i, l = S.cart.lines[i]; const nq = l.qty > 1 ? roundQty(Math.ceil(l.qty - 1e-9) - 1) : 0; if (nq <= 0) S.cart.lines.splice(i, 1); else l.qty = nq; saveCart(); renderCart(); },
+  'qty-inc': el => { const l = S.cart.lines[+el.dataset.i]; l.qty = roundQty(Math.floor(l.qty + 1e-9) + 1); saveCart(); renderCart(); speakQtyLater(l.product_id); },
+  'qty-dec': el => { const i = +el.dataset.i, l = S.cart.lines[i]; const nq = l.qty > 1 ? roundQty(Math.ceil(l.qty - 1e-9) - 1) : 0; if (nq <= 0) S.cart.lines.splice(i, 1); else l.qty = nq; saveCart(); renderCart(); if (nq > 0) speakQtyLater(l.product_id); },
+  'sale-mute': () => toggleSaleMute(),
+  'voice-on': el => { VOICE.on = el.dataset.v === '1'; store.set('voice_on', VOICE.on); $$('[data-act="voice-on"]').forEach(b => b.classList.toggle('on', b === el)); toast(t('saved'), 'ok'); },
   'ptype': el => {
     const l = S.cart.lines[+el.dataset.i]; const cur = lineCalc(l, custById(S.cart.customer_id));
     const next = cur.type === 'grosir' ? 'eceran' : 'grosir';
