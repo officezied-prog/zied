@@ -356,6 +356,8 @@ tr.diff td{background:var(--danger-l)}
 .nav-btn{min-height:56px}
 
 .mute-btn.on{background:var(--accent-l);color:var(--accent-text)}
+.mute-chip{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;margin:2px 0 6px}
+.mute-chip.on{background:var(--accent-l);color:var(--accent-text);border-color:var(--accent)}
 
 /* charts & receipt brand */
 .c-omzet{fill:var(--brand)} .c-laba{fill:var(--accent)} .c-line{stroke:var(--accent);fill:none} .c-dot{fill:var(--accent)} .c-grid{stroke:var(--chart-grid)} .c-txt{fill:var(--muted)} .c-txt2{fill:var(--accent-text)}
@@ -1872,7 +1874,11 @@ function toggleSaleMute() {
   S.cart.muted = !S.cart.muted; saveCart();
   if (S.cart.muted) { clearTimeout(VOICE.timer); try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) { } }
   const b = $('#cart-mute'); if (b) { b.classList.toggle('on', !!S.cart.muted); b.innerHTML = ic(S.cart.muted ? 'mute' : 'speaker'); b.setAttribute('aria-pressed', S.cart.muted ? 'true' : 'false'); b.title = t(S.cart.muted ? 'voice.unmute' : 'voice.mute'); }
+  const m = !!S.cart.muted;
+  document.querySelectorAll('.mute-chip').forEach(x => { x.classList.toggle('on', m); x.setAttribute('aria-pressed', m ? 'true' : 'false'); x.innerHTML = muteChipHtml(); });
 }
+/** Labelled "Suara / Senyap" button next to the payment, for the customer who prefers silence. */
+function muteChipHtml() { const m = !!(S.cart && S.cart.muted); return `${ic(m ? 'mute' : 'speaker')} ${esc(t(m ? 'voice.silent' : 'voice.sound'))}`; }
 
 /* ========== POS: quantity sheet — a tapped product asks "how many?" (barcode scans still add 1) ==========
    Per-device setting "ask_qty" (default on, shared with Khair Kasir on this device). */
@@ -2037,6 +2043,7 @@ function renderCart(flashId) {
       <div class="sumrow"><label for="cart-disc">${esc(t('discount'))} (Rp)</label><input id="cart-disc" class="input num" inputmode="numeric" value="${c.discount ? esc(fmtNum(c.discount)) : ''}" placeholder="0"></div>
       <div class="badge red" id="cart-exit" hidden style="margin:2px 0">${ic('camera')} ${esc(t('exit.warn'))}</div>
       <div class="sumrow total"><span>${esc(t('total'))}</span><span class="num" data-ref="total" id="cart-total">${fmtRp(v.total)}</span></div>
+      ${VOICE.on ? `<button class="btn sm mute-chip ${c.muted ? 'on' : ''}" id="pay-mute" data-act="sale-mute" aria-pressed="${c.muted ? 'true' : 'false'}" title="${esc(t(c.muted ? 'voice.unmute' : 'voice.mute'))}">${muteChipHtml()}</button>` : ''}
       <div class="seg" role="radiogroup" aria-label="${esc(t('pos.method'))}">${methods.map(m => `<button role="radio" aria-checked="${c.method === m}" class="${c.method === m ? 'on' : ''} ${m === 'hutang' ? 'debt' : ''}" data-act="method" data-m="${m}">${esc(t('pm.' + m))}</button>`).join('')}</div>
       <div class="paybox">
         <div class="sumrow"><label for="cart-paid">${esc(t('pos.paid'))}</label><input id="cart-paid" class="input num" inputmode="numeric" value="${esc(c.paid === '' ? '' : fmtNum(moneyVal(c.paid)))}" placeholder="${esc(c.method === 'hutang' ? '0' : t('pos.exact'))}"></div>
@@ -4920,8 +4927,8 @@ Object.assign(I18N.ar, {
   'err.SHIFT_REQUIRED': 'افتح الصندوق قبل البيع.'
 });
 
-Object.assign(I18N.id, { 'voice.title': 'Suara kasir (sebut nama & jumlah barang)', 'voice.on': 'Nyala', 'voice.off': 'Mati', 'voice.lang': 'Bahasa suara', 'voice.mute': 'Bisukan suara untuk transaksi ini', 'voice.unmute': 'Nyalakan suara lagi', 'voice.hint': 'Hanya nama barang dan jumlah yang diucapkan — tidak pernah harga, total, nama pelanggan, hutang atau cara bayar. Pengaturan per perangkat.' });
-Object.assign(I18N.ar, { 'voice.title': 'صوت الكاشير (نطق اسم الصنف والكمية)', 'voice.on': 'تشغيل', 'voice.off': 'إيقاف', 'voice.lang': 'لغة الصوت', 'voice.mute': 'كتم الصوت لهذه العملية', 'voice.unmute': 'إعادة تشغيل الصوت', 'voice.hint': 'يُنطق اسم الصنف والكمية فقط — لا الأسعار ولا الإجمالي ولا اسم العميل ولا الدَّين ولا طريقة الدفع. إعداد خاص بهذا الجهاز.' });
+Object.assign(I18N.id, { 'voice.title': 'Suara kasir (sebut nama & jumlah barang)', 'voice.on': 'Nyala', 'voice.off': 'Mati', 'voice.lang': 'Bahasa suara', 'voice.mute': 'Bisukan suara untuk transaksi ini', 'voice.unmute': 'Nyalakan suara lagi', 'voice.sound': 'Suara', 'voice.silent': 'Senyap', 'voice.hint': 'Hanya nama barang dan jumlah yang diucapkan — tidak pernah harga, total, nama pelanggan, hutang atau cara bayar. Pengaturan per perangkat.' });
+Object.assign(I18N.ar, { 'voice.title': 'صوت الكاشير (نطق اسم الصنف والكمية)', 'voice.on': 'تشغيل', 'voice.off': 'إيقاف', 'voice.lang': 'لغة الصوت', 'voice.mute': 'كتم الصوت لهذه العملية', 'voice.unmute': 'إعادة تشغيل الصوت', 'voice.sound': 'الصوت', 'voice.silent': 'صامت', 'voice.hint': 'يُنطق اسم الصنف والكمية فقط — لا الأسعار ولا الإجمالي ولا اسم العميل ولا الدَّين ولا طريقة الدفع. إعداد خاص بهذا الجهاز.' });
 Object.assign(I18N.id, {
   'qty.add': 'Tambah', 'qty.change': 'Ubah', 'qty.invalid': 'Jumlah harus lebih dari 0', 'qty.too_big': 'Jumlah terlalu besar',
   'set.ask_qty': 'Tanya jumlah saat pilih barang', 'set.ask_qty_hint': 'Ketuk barang → pilih jumlah. Scan barcode tetap langsung +1. Pengaturan per perangkat.',
