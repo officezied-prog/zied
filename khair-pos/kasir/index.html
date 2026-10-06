@@ -140,6 +140,8 @@ main{overflow:hidden;position:relative;min-width:0}
 .cart-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
 .cart-head h2{flex:1;margin:0;font-size:18px}
 .mute.on{background:var(--redt);color:var(--redd);border-color:#FCA5A5}
+.toggle.mute-chip.on{background:var(--redt);color:var(--redd);border-color:#FCA5A5}
+.pay-mute{margin-top:10px}
 .lines{flex:1;overflow-y:auto;padding:4px 12px}
 .cl{padding:10px 0;border-bottom:1px solid var(--line)}
 .cl:last-child{border-bottom:0}
@@ -1705,7 +1707,13 @@ function speakQtyLater(pid) {
 function toggleSaleMute() {
   S.cart.muted = !S.cart.muted; saveCart();
   if (S.cart.muted) { clearTimeout(VOICE.timer); try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) { } }
-  renderCart();
+  renderCart(); syncMuteChips();
+}
+/** The labelled "Suara / Senyap" buttons (sell screen and payment) for the customer who prefers silence. */
+function muteChipHtml() { const m = !!(S.cart && S.cart.muted); return `${ic(m ? 'mute' : 'speaker')} ${esc(t(m ? 'voice.silent' : 'voice.sound'))}`; }
+function syncMuteChips() {
+  const m = !!(S.cart && S.cart.muted);
+  document.querySelectorAll('.mute-chip').forEach(b => { b.classList.toggle('on', m); b.setAttribute('aria-pressed', m ? 'true' : 'false'); b.innerHTML = muteChipHtml(); b.title = t(m ? 'voice.unmute' : 'voice.mute'); });
 }
 
 /* ========== Quantity sheet: a tapped product asks "how many?" (barcode scans still add 1) ==========
@@ -1786,7 +1794,7 @@ RENDER.sell = function () {
           <div class="search">${ic('search')}<input id="q" class="input" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="${esc(t('sell.search_ph'))}" aria-label="${esc(t('sell.search_ph'))}" value="${esc(SELL.q)}"></div>
           <button class="icon-btn" id="cam" data-act="cam-scan" title="${esc(t('sell.camera'))}" aria-label="${esc(t('sell.camera'))}" ${'BarcodeDetector' in window ? '' : 'hidden'}>${ic('scan')}</button>
         </div>
-        <div class="tools"><button class="toggle" id="grosir" data-act="grosir-toggle" aria-pressed="false">${esc(t('grosir'))}</button><button class="cust-chip" id="cust" data-act="pick-customer"></button><button class="held-chip" id="held-chip" data-act="held-open" hidden></button></div>
+        <div class="tools"><button class="toggle" id="grosir" data-act="grosir-toggle" aria-pressed="false">${esc(t('grosir'))}</button>${VOICE.on ? `<button class="toggle mute-chip" id="mute-chip" data-act="sale-mute" aria-pressed="false">${muteChipHtml()}</button>` : ''}<button class="cust-chip" id="cust" data-act="pick-customer"></button><button class="held-chip" id="held-chip" data-act="held-open" hidden></button></div>
         <div class="grid" id="grid" aria-label="${esc(t('sell.products'))}"></div>
       </div>
       <aside class="cart" id="cart" aria-label="${esc(t('sell.cart'))}"></aside>
@@ -1881,6 +1889,7 @@ function refreshCartNumbers() {
   const hb = $('#btn-hold'); if (hb) hb.hidden = !canHold();
   updateHeldChip();
   const g = $('#grosir'); if (g) { g.setAttribute('aria-pressed', S.cart.grosir ? 'true' : 'false'); g.innerHTML = `${S.cart.grosir ? '✓ ' : ''}${esc(t('grosir'))}`; }
+  syncMuteChips();
   const cb = $('#cust');
   if (cb) { cb.classList.toggle('set', !!v.cust); cb.innerHTML = `${ic('user')}<span class="grow ellipsis">${esc(v.cust ? v.cust.name : t('sell.walkin'))}</span>${v.cust ? `<span class="badge ${v.cust.type === 'grosir' ? '' : 'gray'}">${esc(t('type.' + v.cust.type))}</span>` : ''}`; }
   const bar = $('#paybar-cart');
@@ -2131,6 +2140,7 @@ function drawPay(bg) {
   const body = $('.modal-b', bg); if (!body) return;
   const v = cartView(), c = S.cart, m = c.method, cust = v.cust;
   body.innerHTML = `<div class="pay-total"><div class="k">${esc(t('total'))} · ${esc(t('sell.n_lines', { n: v.lines.length }))}</div><div class="v num" id="pay-total">${fmtRp(v.total)}</div></div>
+    ${VOICE.on ? `<button class="toggle mute-chip pay-mute ${c.muted ? 'on' : ''}" id="pay-mute" data-act="sale-mute" aria-pressed="${c.muted ? 'true' : 'false'}">${muteChipHtml()}</button>` : ''}
     <button class="cust-chip ${cust ? 'set' : ''}" id="pay-cust" data-act="pick-customer">${ic('user')}<span class="grow ellipsis">${esc(cust ? cust.name : t('sell.walkin'))}</span>${cust && cust.debt_balance ? `<span class="badge red num">${esc(t('debt'))} ${fmtRp(cust.debt_balance)}</span>` : ''}</button>
     <div class="seg" id="pay-m" role="radiogroup" aria-label="${esc(t('pay.method'))}" style="margin-top:12px">${['tunai', 'transfer', 'qris', 'hutang'].map(x => `<button role="radio" id="pm-${x}" aria-checked="${m === x}" class="${m === x ? 'on' : ''}" data-act="pay-method" data-m="${x}">${esc(t('pm.' + x))}</button>`).join('')}</div>
     <div id="pay-detail" style="margin-top:12px">${m === 'tunai' ? `<div class="field"><label class="f" for="pay-cash">${esc(t('pay.cash_in'))}</label><input class="input money" id="pay-cash" inputmode="numeric" autocomplete="off" placeholder="${esc(t('pay.exact'))}" value="${c.paid === '' ? '' : esc(fmtNum(moneyVal(c.paid)))}"></div>
@@ -3153,7 +3163,7 @@ const I18N = {
     'sell.cart_empty': 'Keranjang kosong', 'sell.cart_empty_hint': 'Scan barcode atau ketuk barang', 'sell.clear': 'Kosongkan', 'sell.clear_confirm': 'Kosongkan keranjang?',
     'sell.no_match': 'Barang tidak ditemukan', 'sell.no_products': 'Belum ada barang', 'sell.inactive': 'Barang ini tidak aktif', 'sell.stock_low': 'Stok {name} kurang',
     'sell.barcode_nf': 'Barcode {code} tidak dikenal', 'sell.grosir_on': 'Harga grosir untuk semua barang', 'sell.grosir_off': 'Harga otomatis (grosir mulai jumlah minimum)',
-    'voice.mute': 'Matikan suara untuk transaksi ini', 'voice.unmute': 'Nyalakan suara',
+    'voice.mute': 'Matikan suara untuk transaksi ini', 'voice.unmute': 'Nyalakan suara', 'voice.sound': 'Suara', 'voice.silent': 'Senyap',
     'cust.pick': 'Pilih pelanggan', 'cust.search': 'Cari nama / no. HP', 'cust.quick_add': 'Pelanggan baru', 'cust.walkin_hint': 'Tanpa nama (harga eceran)',
     'survey.title': 'Survei pelanggan (opsional)', 'survey.consent': 'Pembeli setuju jawabannya dicatat', 'survey.consent_hint': 'Hanya teks jawaban yang disimpan, suara tidak direkam.',
     'survey.mic': 'Rekam jawaban dengan suara (ketuk lagi untuk berhenti)', 'survey.mic_denied': 'Mikrofon tidak diizinkan — silakan ketik jawabannya', 'survey.no_speech': 'Pengenalan suara tidak tersedia di browser ini — ketik jawabannya.',
@@ -3244,7 +3254,7 @@ const I18N = {
     'sell.cart_empty': 'السلة فارغة', 'sell.cart_empty_hint': 'امسح الباركود أو اضغط على صنف', 'sell.clear': 'إفراغ', 'sell.clear_confirm': 'إفراغ السلة؟',
     'sell.no_match': 'لا يوجد صنف مطابق', 'sell.no_products': 'لا توجد أصناف', 'sell.inactive': 'هذا الصنف غير نشط', 'sell.stock_low': 'مخزون {name} غير كافٍ',
     'sell.barcode_nf': 'الباركود {code} غير معروف', 'sell.grosir_on': 'سعر الجملة لكل الأصناف', 'sell.grosir_off': 'سعر تلقائي (الجملة من الحد الأدنى)',
-    'voice.mute': 'كتم الصوت لهذه العملية', 'voice.unmute': 'تشغيل الصوت',
+    'voice.mute': 'كتم الصوت لهذه العملية', 'voice.unmute': 'تشغيل الصوت', 'voice.sound': 'الصوت', 'voice.silent': 'صامت',
     'cust.pick': 'اختر العميل', 'cust.search': 'ابحث بالاسم / الهاتف', 'cust.quick_add': 'عميل جديد', 'cust.walkin_hint': 'بدون اسم (سعر التجزئة)',
     'survey.title': 'استبيان العميل (اختياري)', 'survey.consent': 'العميل موافق على تسجيل إجاباته', 'survey.consent_hint': 'يُحفظ النص فقط، ولا يُسجَّل الصوت.',
     'survey.mic': 'سجّل الإجابة بالصوت (اضغط مرة أخرى للإيقاف)', 'survey.mic_denied': 'الميكروفون غير مسموح — اكتب الإجابة', 'survey.no_speech': 'التعرف على الصوت غير متاح في هذا المتصفح — اكتب الإجابة.',

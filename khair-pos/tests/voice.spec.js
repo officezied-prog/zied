@@ -112,3 +112,20 @@ test('no speechSynthesis available → selling still works silently', async ({ p
   await checkoutSkip(page);
   expect(errors).toEqual([]);
 });
+
+test('"Senyap" button next to the payment mutes this sale only', async ({ page }) => {
+  await login(page);
+  await addBySearch(page, 'ajwa');
+  await expect.poll(async () => (await spoken(page)).length).toBe(1);
+  await page.click('#pay-mute');
+  await expect(page.locator('#pay-mute')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#pay-mute')).toContainText('Senyap');
+  await expect(page.locator('#cart-mute')).toHaveAttribute('aria-pressed', 'true');
+  await addBySearch(page, 'minyak goreng');
+  await page.waitForTimeout(700);
+  expect((await spoken(page)).length).toBe(1);
+  await page.click('#pay-mute');
+  await expect(page.locator('#pay-mute')).toContainText('Suara');
+  await addBySearch(page, 'pistachio');
+  await expect.poll(async () => (await spoken(page)).length).toBe(2);
+});

@@ -52,3 +52,36 @@ test('speaks name + qty on add and on qty change; never prices, totals or custom
   await page.click('#voice-off');
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('kpos.mock.voice_on')))).toBe(false);
 });
+
+test('customer asks for silence: "Senyap" on the sell screen or in payment mutes this sale only', async ({ page }) => {
+  await H.login(page);
+  // before the first item: tap the labelled chip on the sell screen
+  await page.click('#mute-chip');
+  await expect(page.locator('#mute-chip')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#mute-chip')).toContainText('Senyap');
+  await H.addItem(page, 'ajwa');
+  await H.addItem(page, 'minyak goreng');
+  await page.waitForTimeout(600);
+  expect(await spoken(page)).toEqual([]);
+  // the payment window shows the same state and can switch it back
+  await H.openCart(page);
+  await page.click('#btn-pay');
+  await expect(page.locator('#pay-mute')).toHaveAttribute('aria-pressed', 'true');
+  await H.shot(page, 'phone-28-pay-silent', false, { noToasts: true });
+  await page.click('[data-act="modal-close"]');
+  await H.shot(page, 'phone-29-sell-silent', false, { noToasts: true });
+  await H.openCart(page);
+  await page.click('#btn-pay');
+  await page.click('#pay-mute');
+  await expect(page.locator('#pay-mute')).toContainText('Suara');
+  await page.click('#pay-mute');
+  await page.fill('#pay-cash', '1000000');
+  await page.click('#pay-ok');
+  await expect(page.locator('#rc-modal #receipt')).toBeVisible();
+  expect(await spoken(page)).toEqual([]);
+  // next customer: sound is back on by default
+  await page.click('#rc-new');
+  await expect(page.locator('#mute-chip')).toHaveAttribute('aria-pressed', 'false');
+  await H.addItem(page, 'pistachio');
+  await expect.poll(async () => (await spoken(page)).length).toBe(1);
+});
