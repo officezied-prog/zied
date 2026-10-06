@@ -58,3 +58,59 @@ test('sales reps (Khair Sales accounts) are hidden here and cannot use the cashi
   const r = await page.evaluate(async h => { try { await apiRaw('bootstrap', {}, { key: 'demo', user: 'Ahmad', pin_hash: h }); await apiRaw('save_sale', { items: [] }, { key: 'demo', user: 'Ahmad', pin_hash: h }); return 'ok'; } catch (e) { return e.code; } }, H.sha('demo:ahmad:4444'));
   expect(r).toBe('FORBIDDEN');
 });
+
+test('on-site approval is never queued offline: "Butuh internet…", nothing with the approver PIN on the device', async ({ page }) => {
+  await H.login(page);
+  await H.addItem(page, 'kismis hijau');
+  await H.pay(page);
+  await page.click('#pm-hutang');
+  await page.locator('#cp-list [data-pick]').filter({ hasText: 'Warung Bu Halimah' }).click();
+  await page.click('#pay-ok');
+  await page.click('#ap-here');
+  await page.click('#ap-users [data-n="Jihan"]');
+  await page.evaluate(() => localStorage.setItem('kmock.offline', '1')); // the request fails like a dropped connection
+  await page.fill('#ap-pin', '2222');
+  await page.click('#ap-ok');
+  await expect(page.locator('#ap-err')).toContainText('Butuh internet untuk persetujuan di tempat');
+  await expect(page.locator('#ap-pin')).toHaveValue('');
+  expect(await page.evaluate(() => window.KASIR.S.outbox.length)).toBe(0);
+  const approverHash = H.sha('demo:jihan:2222');
+  expect(JSON.stringify(await page.evaluate(() => Object.keys(localStorage).filter(k => !k.startsWith('kmock.')).map(k => localStorage.getItem(k)).concat(Object.keys(sessionStorage).map(k => sessionStorage.getItem(k)))))).not.toContain(approverHash);
+  // back online: the same approval works
+  await page.evaluate(() => localStorage.removeItem('kmock.offline'));
+  await page.fill('#ap-pin', '2222');
+  await page.click('#ap-ok');
+  await expect(page.locator('#rc-modal #receipt')).toContainText('Jihan');
+});
+
+test('store key masked; pins keep only an offline verifier; the session hash lives in this tab and is wiped on lock', async ({ page }) => {
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('seeded')) return; sessionStorage.setItem('seeded', '1');
+    // an old device: a reusable hash in pins and in the stored session
+    localStorage.setItem('kpos.mock.pins', JSON.stringify({ pemilik: { h: 'b'.repeat(64), role: 'owner' } }));
+  });
+  await H.login(page);
+  const hash = H.sha('demo:siti:1111');
+  const st = await page.evaluate(() => ({ pins: JSON.parse(localStorage.getItem('kpos.mock.pins')), ls: JSON.parse(localStorage.getItem('kpos.mock.kasir.session')), ss: JSON.parse(sessionStorage.getItem('kpos.mock.kasir.session')) }));
+  expect(st.pins.pemilik).toEqual({ o: H.sha('offline:' + 'b'.repeat(64)), role: 'owner' });
+  expect(st.pins.siti).toEqual({ o: H.sha('offline:' + hash), role: 'kasir' });
+  expect(st.ls).toEqual({ user: 'Siti', role: 'kasir' });
+  expect(st.ss).toMatchObject({ user: 'Siti', pin_hash: hash });
+  // the outbox entries keep their own credentials (offline sales); everything else on the device has no hash
+  expect(JSON.stringify(await page.evaluate(() => Object.keys(localStorage).filter(k => !k.startsWith('kmock.') && !k.endsWith('kasir.outbox')).map(k => localStorage.getItem(k))))).not.toContain(hash);
+  await page.click('#tb-lock');
+  await expect(page.locator('#pin-who')).toHaveText('Siti');
+  expect(await page.evaluate(() => sessionStorage.getItem('kpos.mock.kasir.session'))).toBeNull();
+  await page.reload();
+  await expect(page.locator('#pin-who')).toHaveText('Siti'); // still locked after a reload
+  // offline login works with the verifier
+  await page.evaluate(() => localStorage.setItem('kmock.offline', '1'));
+  await H.typePin(page, '1111');
+  await expect(page.locator('#app')).toBeVisible();
+  await expect(page.locator('.toast.warn')).toContainText('offline');
+  await page.evaluate(() => localStorage.removeItem('kmock.offline'));
+  await page.click('#tb-lock');
+  await page.locator('[data-act="login-back"]').first().click();
+  await expect(page.locator('[data-act="login-change-key"]')).toContainText('(••••demo)');
+  await expect(page.locator('#login')).not.toContainText('(demo)');
+});

@@ -22,7 +22,15 @@ test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true
 const STORE = { latitude: -6.2655, longitude: 106.8605 };
 async function setPos(context, lat, lng, accuracy = 12) { await context.setGeolocation({ latitude: lat, longitude: lng, accuracy }); }
 
-async function openSales(page, query = '') {
+/** The device-location notice (v11) is answered once per browser: tests that are not about it start with "Tidak"
+ *  already answered (opts.devConsent: 'no' default, 'yes', or null = not answered). A rep's work consent still applies. */
+async function presetDeviceConsent(page, choice = 'no') {
+  if (choice === null || page.__devPreset) return;
+  page.__devPreset = true;
+  await page.addInitScript(ok => { if (!localStorage.getItem('kpos.device_consent')) localStorage.setItem('kpos.device_consent', JSON.stringify({ ok, at: new Date().toISOString() })); }, choice === 'yes');
+}
+async function openSales(page, query = '', opts = {}) {
+  await presetDeviceConsent(page, opts.devConsent === undefined ? 'no' : opts.devConsent);
   await page.goto('sales/index.html?mock=1' + query);
   await expect(page.locator('#login .screen-card')).toBeVisible();
 }
@@ -32,7 +40,7 @@ async function typePin(page, pin) {
 }
 /** Store key → name → PIN. */
 async function login(page, user = 'Ahmad', pin = '4444', opts = {}) {
-  if (!opts.noGoto) await openSales(page);
+  if (!opts.noGoto) await openSales(page, '', opts);
   if (await page.locator('#lg-key').isVisible()) { await page.fill('#lg-key', 'demo'); await page.click('[data-act="login-key"]'); }
   if (await page.locator('#pin-who').isVisible() && (await page.locator('#pin-who').textContent()) !== user) await page.locator('[data-act="login-back"]').first().click();
   if (!(await page.locator('#pin-who').isVisible())) await page.click(`#users [data-act="login-user"][data-name="${user}"]`);
@@ -41,7 +49,12 @@ async function login(page, user = 'Ahmad', pin = '4444', opts = {}) {
   await expect(page.locator('#v-today .hero')).toBeVisible();
 }
 const getDb = page => page.evaluate(() => JSON.parse(localStorage.getItem('kmock.db')));
-const setDb = (page, src) => page.evaluate(s => { const db = JSON.parse(localStorage.getItem('kmock.db')); (new Function('db', s))(db); localStorage.setItem('kmock.db', JSON.stringify(db)); }, src);
+/** Changes the mock DB. The code runs here in Node (the app's CSP forbids eval in the page), then the DB is written back. */
+async function setDb(page, src) {
+  const db = await getDb(page);
+  (new Function('db', src))(db);
+  await page.evaluate(s => localStorage.setItem('kmock.db', s), JSON.stringify(db));
+}
 /** Consent (first time) + Mulai kerja. */
 async function startDay(page) {
   await page.click('#day-start');
@@ -62,4 +75,4 @@ async function pickType(page, type) {
 }
 async function closeModals(page) { while (await page.locator('.modal-bg').count()) await page.locator('.modal-bg').last().locator('[data-act="modal-close"]').first().click(); }
 
-module.exports = { test, expect, rp, SHOTS, shot, STORE, setPos, openSales, typePin, login, getDb, setDb, startDay, tab, photoFile, closeModals, pickType };
+module.exports = { presetDeviceConsent, test, expect, rp, SHOTS, shot, STORE, setPos, openSales, typePin, login, getDb, setDb, startDay, tab, photoFile, closeModals, pickType };

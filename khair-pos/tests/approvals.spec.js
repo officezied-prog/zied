@@ -41,7 +41,7 @@ test('remote request → owner approves in the inbox → kasir saves with approv
   const card = page.locator(`.apr-card[data-req="${req.request_id}"]`);
   await expect(card).toContainText('Warung Bu Halimah');
   await expect(card).toContainText('Siti');
-  await expect(page.locator('#tb-appr b')).toHaveText('1');
+  await expect(page.locator('#tb-appr b')).toHaveText(String((await getDb(page)).approvals.filter(a => a.status === 'pending').length));
   await page.screenshot({ path: path.join(SHOTS, 'desktop-approvals-inbox.png') });
   await card.locator('[data-d="approved"]').click();
   await expect(page.locator('.toast.ok').filter({ hasText: req.request_id })).toBeVisible();

@@ -15,7 +15,10 @@ function jktToday(offsetDays = 0) {
   return d.toISOString().slice(0, 10);
 }
 
-async function openApp(page, query = '') {
+/** The location consent bar (v11) is answered "Tidak" for the general suites; devices.spec passes { consent: null } to see it. */
+async function openApp(page, query = '', opts = {}) {
+  const consent = opts.consent === undefined ? 'no' : opts.consent;
+  if (consent && !page.__consentInit) { page.__consentInit = true; await page.addInitScript(c => { try { if (!localStorage.getItem('kpos.loc_consent')) localStorage.setItem('kpos.loc_consent', c); } catch (e) { } }, consent); }
   await page.goto('index.html?mock=1' + query);
   await expect(page.locator('#login')).toBeVisible();
 }
@@ -30,22 +33,15 @@ async function typePin(page, pin) {
   await page.click('[data-act="pin-key"][data-k="ok"]');
 }
 
-/** Logs in. Non-owners are asked to open the cash drawer first ("Buka kasir"); by default the
- *  helper opens it with Rp 500.000 (opts.openShift = false leaves the prompt on screen).
- *  Owner/manager land on Beranda; the helper then goes to the POS screen. */
+/** Logs in. Owner and manager sell without a cash drawer (v15: only kasir accounts open one, in Khair Kasir).
+ *  Owner/manager land on Beranda; the helper then goes to the POS screen unless opts.stay. */
 async function login(page, user = 'Pemilik', pin = '1234', query = '', opts = {}) {
-  await openApp(page, query);
+  await openApp(page, query, opts);
   await enterKey(page);
   await page.click(`[data-act="login-user"][data-name="${user}"]`);
   await typePin(page, pin);
   await expect(page.locator('#app')).toBeVisible();
-  if (user !== 'Pemilik') {
-    await expect(page.locator('#shift-open')).toBeVisible();
-    if (opts.openShift === false) return;
-    await page.fill('#so-cash', String(opts.openingCash ?? 500000));
-    await page.click('#so-ok');
-    await expect(page.locator('#shift-open')).toHaveCount(0);
-  }
+  await expect(page.locator('#shift-open')).toHaveCount(0);
   if (opts.stay) return;
   if (!(await page.locator('#view-pos').isVisible())) await nav(page, 'pos');
   await expect(page.locator('#pos-grid .pcard').first()).toBeVisible();

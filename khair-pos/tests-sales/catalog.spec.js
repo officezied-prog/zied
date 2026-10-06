@@ -62,7 +62,7 @@ test('catalog with images, stock levels (no exact stock, no cost), presentation 
   await expect.poll(() => page.locator('#cat-grid img[data-img]').count()).toBeGreaterThanOrEqual(15);
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('kpos.mock.sales.img_fetches')))).toBe(fetches);
   // owner changes one image → only that one is fetched again
-  await H.setDb(page, `const p = db.products.find(x => x.image_updated); const row = db.product_images.find(x => x.product_id === p.id); row.image_base64 = btoa('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 3"><rect width="4" height="3" fill="red"/></svg>'); p.image_updated = row.image_updated = new Date().toISOString(); window.__changed = p.id;`);
+  await H.setDb(page, `const p = db.products.find(x => x.image_updated); const row = db.product_images.find(x => x.product_id === p.id); row.image_base64 = btoa('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 3"><rect width="4" height="3" fill="red"/></svg>'); p.image_updated = row.image_updated = new Date().toISOString();`);
   await page.reload();
   await H.tab(page, 'catalog');
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('kpos.mock.sales.img_fetches')))).toBe(fetches + 1);

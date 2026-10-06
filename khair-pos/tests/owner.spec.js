@@ -52,6 +52,10 @@ test('purchase (barang masuk) updates stock and weighted average cost; stock adj
   await page.locator('[data-pu-cost="0"]').fill('175.000');
   await expect(page.locator('#pu-total')).toHaveText(rp(1750000));
   await page.click('#pu-save');
+  // the photographed note (3 other lines) does not match what was typed → MISMATCH, saved with a reason
+  await expect(page.locator('#pu-mismatch')).toBeVisible();
+  await page.fill('#pu-reason', 'Nota lain, barang dari stok gudang');
+  await page.click('#pu-save-reason');
   await expect(page.locator('#pu-res')).toBeVisible();
 
   const expectedCost = Math.round((p.stock * p.cost_price + 10 * 175000) / (p.stock + 10));
@@ -93,7 +97,7 @@ test('kasir never receives cost / profit (API as Siti) and is sent to the cashie
   expect(rows.filter(x => bad.some(k => k in x)).length).toBe(0);
   const ph = await asUser(page, 'Siti', '1111', 'scan_purchase', { image_base64: 'AAAA', mime: 'image/jpeg' });
   expect(JSON.stringify(ph)).not.toContain('cost_price');
-  const pr = await asUser(page, 'Siti', '1111', 'save_purchase', { purchase_date: T, supplier: 'x', photo_id: ph.photo_id, items: [{ product_id: 1, qty: 1, cost_price: 100 }] });
+  const pr = await asUser(page, 'Siti', '1111', 'save_purchase', { purchase_date: T, supplier: 'x', photo_id: ph.photo_id, items: [{ product_id: 1, qty: 1, cost_price: 100 }], mismatch_reason: 'uji' });
   expect(pr.stock.some(x => 'cost_price' in x)).toBe(false);
   expect((await asUser(page, 'Siti', '1111', 'void_sale', { invoice_no: r.sales[0].invoice_no, reason: 'x' })).error).toBe('FORBIDDEN');
 
@@ -112,7 +116,7 @@ async function expectReportMatches(page, from, to) {
   const items = db.items.filter(i => inv.has(i.invoice_no));
   const grosir = items.filter(i => i.price_type === 'grosir').reduce((a, i) => a + i.line_total, 0);
   const purchases = db.purchases.filter(p => inR(p.purchase_date) && p.supplier !== 'PENYESUAIAN STOK').reduce((a, p) => a + p.total, 0);
-  const paymentsIn = db.payments.filter(p => inR(p.pay_date)).reduce((a, p) => a + p.amount, 0);
+  const paymentsIn = db.payments.filter(p => inR(p.pay_date) && p.direction !== 'out').reduce((a, p) => a + p.amount, 0);
   const newDebt = ok.reduce((a, s) => a + s.debt_amount, 0);
   const receivable = db.customers.reduce((a, c) => a + c.debt_balance, 0);
   expect(ok.length).toBeGreaterThan(0);

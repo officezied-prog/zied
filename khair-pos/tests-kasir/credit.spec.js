@@ -62,8 +62,11 @@ test('remote request: the manager approves on her phone, the kasir sale saves it
   await p2.addInitScript(() => { localStorage.removeItem('kpos.mock.kasir.session'); });
   await H.login(p2, 'Jihan', '2222');
   await expect(p2.locator('#tb-appr')).toBeVisible();
-  await expect(p2.locator('#tb-appr-n')).toHaveText('1');
+  // the credit request + Siti's opening count (v15: every "Buka kas" goes to the manager)
+  await expect(p2.locator('#tb-appr-n')).toHaveText('2');
+  await expect(p2.locator('#tb-appr')).toBeVisible();
   await p2.click('#tb-appr');
+  await expect(p2.locator('.apr-card[data-kind="buka_kas"]')).toContainText('Siti');
   const card = p2.locator(`.apr-card[data-req="${rid}"]`);
   await expect(card).toContainText('Warung Bu Halimah');
   await expect(card).toContainText(H.rp(86000));
@@ -71,7 +74,7 @@ test('remote request: the manager approves on her phone, the kasir sale saves it
   await card.locator('[data-note]').fill('ok, max 1 minggu');
   await card.locator('[data-d="approved"]').click();
   await expect(p2.locator('.toast.ok', { hasText: rid })).toBeVisible();
-  await expect(p2.locator('#tb-appr-n')).toHaveText('0');
+  await expect(p2.locator('#tb-appr-n')).toHaveText('1');
 
   // the kasir's poll (every 5 s) picks it up and saves with approval_id
   const rc = page.locator('#rc-modal #receipt');
@@ -116,7 +119,7 @@ test('rejected request shows the manager note; void and price requests respect c
   const p2 = await context.newPage();
   await p2.addInitScript(() => { localStorage.removeItem('kpos.mock.kasir.session'); });
   await H.login(p2, 'Jihan', '2222');
-  await expect(p2.locator('#tb-appr-n')).toHaveText('3');
+  await expect(p2.locator('#tb-appr-n')).toHaveText('4'); // + Siti's opening count (buka_kas)
   await p2.click('#tb-appr');
   const v = p2.locator('.apr-card[data-kind="void"]');
   await expect(v).toContainText(inv);

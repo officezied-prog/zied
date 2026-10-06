@@ -77,7 +77,12 @@ test('barang masuk: photo of the supplier note → AI lines → map products →
   const tl = page.locator('#pu-lines .pu-line').nth(2);
   await tl.locator('[data-pu-qty]').fill('10');
   await tl.locator('[data-pu-cost]').fill('15000');
+  // the note says 6 × Madu and nothing about Tasbih → the live check and the server both say "Beda dengan nota"
+  await expect(page.locator('#pu-match-box')).toHaveAttribute('data-status', 'tidak_cocok');
   await page.click('#pu-save');
+  await expect(page.locator('#pu-mismatch #pu-mm-diffs tr.bad')).toHaveCount(2);
+  await page.fill('#pu-mm-reason', 'Madu belum dikirim, tasbih titipan');
+  await page.click('#pu-mm-save');
   await expect(page.locator('#pu-res')).toContainText('Barang masuk tersimpan');
   await expect(page.locator('#pu-res')).not.toContainText(/modal|cost|HPP/i);
   const db = await H.getDb(page);

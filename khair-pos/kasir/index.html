@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- security M8: CSP (GitHub Pages cannot send headers). connect-src = the n8n webhooks only. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://ziedapp.app.n8n.cloud; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="theme-color" content="#1E40AF">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -340,6 +342,41 @@ table.tbl{width:100%;border-collapse:collapse;font-size:14.5px;background:#fff}
 .kas-big .btn svg.i{width:26px;height:26px;color:var(--p)}
 .kas-big .btn.primary svg.i{color:#fff}
 
+/* ========== Devices (v11), goods-in vs the supplier note (v12), payments with the transfer slip (v13) ========== */
+.pill.loc{background:#fff;color:var(--pd);min-height:32px;padding:0 9px;font-size:15px}
+#locblock{z-index:55}
+.lb-ic{font-size:46px;text-align:center;line-height:1;margin-bottom:6px}
+.dev-note{display:flex;gap:12px;align-items:flex-start;padding:12px;border-radius:12px;background:var(--pll);font-weight:700;margin-bottom:10px}
+.dev-note .e{font-size:30px;line-height:1}
+.pu-line.diff{border-color:#FCA5A5;background:#FFF5F5}
+.pu-line .noteq{font-size:13px;font-weight:800;color:var(--redd);margin-top:6px}
+tr.bad td{background:var(--redt);color:var(--redd);font-weight:800}
+.pu-match{margin:10px 0}
+.pu-match .st{font-size:17px}
+.hist{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:10px;background:#fff}
+.hist .h{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin-bottom:4px}
+.hist .hl{display:flex;justify-content:space-between;gap:8px;font-size:14.5px;padding:4px 0;border-top:1px dashed var(--line)}
+.lockline{font-size:13px;color:var(--muted);display:flex;gap:6px;align-items:center;margin-top:6px}
+.lockline svg.i{width:16px;height:16px}
+.slip{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:12px;border:2px dashed var(--line2);border-radius:12px;margin-bottom:12px}
+.slip.ok{border-style:solid;border-color:#5EEAD4;background:#F0FDFA}
+.slip .thumb{width:64px;height:64px}
+.al{display:grid;grid-template-columns:auto 1fr 118px;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;background:#fff}
+.al.on{border-color:var(--p);background:var(--pll)}
+.al input[type=checkbox]{width:24px;height:24px;accent-color:var(--p);margin:0}
+.al .input{min-height:42px;padding:6px 8px}
+.al .t{font-weight:800;font-size:14.5px}
+.al .s{font-size:12.5px;color:var(--muted)}
+.alsum{display:flex;justify-content:space-between;gap:8px;font-weight:800;padding:6px 2px;flex-wrap:wrap}
+.mm{border:2px solid #FCA5A5;background:var(--redt);border-radius:12px;padding:12px;margin:10px 0}
+.mm .ttl{font-weight:900;color:var(--redd)}
+.mm .two{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}
+.mm .two div{background:#fff;border-radius:8px;padding:6px 10px}
+.mm .k{font-size:12px;color:var(--muted);font-weight:700}
+.mm .v{font-weight:900;font-size:18px}
+
+/* v15: closing reminder */
+.rep-banner{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border-radius:12px;background:var(--warnt);color:#78350F;font-weight:800;font-size:14.5px;margin-bottom:8px;border:1px solid #FCD34D}
 /* ========== Busy bar ========== */
 body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-index:300;background:linear-gradient(90deg,transparent,#F59E0B,transparent);background-size:40% 100%;background-repeat:no-repeat;animation:busy 1s linear infinite}
 @keyframes busy{from{background-position:-40% 0}to{background-position:140% 0}}
@@ -360,12 +397,14 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
 
 <div id="login" class="screen" hidden></div>
 <div id="gate" class="screen" hidden></div>
+<div id="locblock" class="screen" hidden></div>
 
 <div id="app" hidden>
   <header class="top">
     <div class="mark" aria-hidden="true">K</div>
     <div class="ttl grow"><b id="tb-store" class="ellipsis">Khair Mart</b><span id="tb-user" class="ellipsis"></span></div>
     <span class="demo" id="tb-demo" hidden>DEMO</span>
+    <span class="pill loc" id="tb-loc" hidden role="status"></span>
     <button class="pill warn" id="tb-outbox" data-act="outbox-open" hidden></button>
     <button class="pill" id="tb-appr" data-act="apr-open" hidden></button>
     <button class="icon-btn" id="tb-lock" data-act="lock" data-i18n-title="lock"><svg class="i"><use href="#i-lock"/></svg></button>
@@ -585,6 +624,29 @@ const KS = {
   del: k => store.del('kasir.' + k)
 };
 
+/* Session (security H2): the live pin_hash stays in this tab only (sessionStorage, memory fallback) and is wiped on lock /
+   logout; localStorage keeps just {user, role} for the PIN screen. Offline login compares a verifier, never a usable hash:
+   store 'pins' = {[user lower]: {o: sha256('offline:' + pin_hash), role}} (same format as the owner app). */
+const SESS_KEY = PREFIX + 'kasir.session';
+let memSess = null;
+const SESS = {
+  get() { try { const v = sessionStorage.getItem(SESS_KEY); if (v) return JSON.parse(v); } catch (e) { } return memSess; },
+  set(v) { memSess = v; try { sessionStorage.setItem(SESS_KEY, JSON.stringify(v)); } catch (e) { } },
+  del() { memSess = null; try { sessionStorage.removeItem(SESS_KEY); } catch (e) { } }
+};
+const offlineVerifier = hash => sha256Hex('offline:' + hash);
+/** Old devices kept {h: pin_hash}: turn them into verifiers, and drop a hash left in the stored session. */
+async function migrateSecrets() {
+  const pins = store.get('pins', {});
+  let changed = false;
+  for (const k of Object.keys(pins || {})) { const e = pins[k]; if (e && e.h) { if (!e.o) e.o = await offlineVerifier(e.h); delete e.h; changed = true; } }
+  if (changed) store.set('pins', pins);
+  const ls = KS.get('session');
+  if (ls && ls.pin_hash !== undefined) { if (ls.pin_hash && !SESS.get()) SESS.set({ user: ls.user, role: ls.role, pin_hash: ls.pin_hash }); KS.set('session', { user: ls.user, role: ls.role }); }
+}
+/** The store key is never shown in full. */
+const maskKey = k => k ? '••••' + String(k).slice(-4) : '';
+
 /* ========== API client (copied from the owner app) ========== */
 class ApiError extends Error { constructor(code, message) { super(message || code); this.code = code || 'SERVER'; } }
 class NetError extends Error { constructor(message) { super(message || 'NETWORK'); this.code = 'NETWORK'; } }
@@ -602,6 +664,8 @@ async function apiRawInner(action, data, cred, opts) {
   if (cred.user) body.user = cred.user;
   if (cred.pin_hash) body.pin_hash = cred.pin_hash;
   body.data = data || {};
+  // v11: every main-API request says where this device is (photo endpoint excluded)
+  if (!opts.photo && cred.user && action !== 'users' && action !== 'setup') { body.data = Object.assign({}, body.data, { device: devicePayload() }); DEV.lastMain = Date.now(); }
   let res;
   if (MOCK) {
     res = await MockServer.request(clone(body));
@@ -619,7 +683,7 @@ async function apiRawInner(action, data, cred, opts) {
     }
     if (Array.isArray(res)) res = res[0];
   }
-  if (!res || res.ok !== true) throw new ApiError((res && res.error) || 'SERVER', res && res.message);
+  if (!res || res.ok !== true) { const err = new ApiError((res && res.error) || 'SERVER', res && res.message); err.res = res || null; throw err; }
   return res;
 }
 /** Authenticated call with the current session; BAD_PIN / BAD_KEY send the user back to login. */
@@ -641,14 +705,78 @@ function errMsg(e) {
   return e.message && e.message !== e.code && S.lang === 'id' ? `${base} (${e.message})` : base;
 }
 
+/* ========== Goods-in vs the photographed supplier note: the server's matchNote rules (v12) ==========
+   Used by the mock backend and by the live "diketik vs nota" comparison before saving. */
+const NoteMatch = (() => {
+  const s = v => v === undefined || v === null ? '' : String(v).trim();
+  const n = v => { const x = Number(v); return isFinite(x) ? x : 0; };
+  const fmtN = v => String(Math.round(n(v) * 1000) / 1000);
+  function normName(x) {
+    return s(x).toLowerCase().replace(/(\d+)[.,]?(\d*)\s*(kg|gr|gram|g|ml|ltr|l|pcs|pc)\b/g, '$1$2$3').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  const tokens = x => normName(x).split(' ').filter(t => t.length > 1);
+  function nearTok(a1, b1) {
+    if (a1 === b1) return true;
+    if (a1.length > 3 && b1.length > 3 && (a1.indexOf(b1) === 0 || b1.indexOf(a1) === 0)) return true;
+    if (a1.length < 5 || b1.length < 5 || Math.abs(a1.length - b1.length) > 1) return false;
+    let i = 0, j = 0, edits = 0;
+    while (i < a1.length && j < b1.length) {
+      if (a1[i] === b1[j]) { i++; j++; continue; }
+      edits++;
+      if (edits > 1) return false;
+      if (a1.length > b1.length) i++; else if (b1.length > a1.length) j++; else { i++; j++; }
+    }
+    return edits + (a1.length - i) + (b1.length - j) <= 1;
+  }
+  function nameScore(a1, b1) {
+    const ta = tokens(a1), tb = tokens(b1);
+    if (!ta.length || !tb.length) return 0;
+    let hit = 0;
+    ta.forEach(t => { if (tb.some(u => nearTok(t, u))) hit++; });
+    return Math.round(((hit / ta.length + hit / tb.length) / 2) * 100) / 100;
+  }
+  /** lines: [{name, qty, photo_index?}], extracted: the note read by the photo workflow (object or JSON string)
+   *  → {status: cocok | tidak_cocok | perlu_cek, diffs: [{name, recorded_qty, photo_qty}], notes} */
+  function match(lines, extracted) {
+    let ex = extracted;
+    if (typeof ex === 'string') { try { ex = JSON.parse(ex || '{}'); } catch (e) { ex = {}; } }
+    ex = ex && typeof ex === 'object' ? ex : {};
+    const pitems = Array.isArray(ex.items) ? ex.items : [];
+    if (ex.readable === false || !pitems.length) return { status: 'perlu_cek', diffs: [], notes: 'Nota tidak terbaca' };
+    const used = {}, diffs = [];
+    let unsure = false;
+    lines.forEach(l => {
+      let idx = -1;
+      const pi = Number(l.photo_index);
+      if (l.photo_index !== undefined && l.photo_index !== null && l.photo_index !== '' && isFinite(pi) && pi >= 0 && pi < pitems.length && !used[pi]) idx = pi;
+      if (idx < 0) {
+        let best = -1, bs = 0;
+        pitems.forEach((it, k) => { if (used[k]) return; const sc = nameScore(it.name, l.name); if (sc > bs) { bs = sc; best = k; } });
+        if (bs >= 0.5) idx = best;
+      }
+      if (idx < 0) { diffs.push({ name: l.name, recorded_qty: l.qty, photo_qty: null }); return; }
+      used[idx] = true;
+      const pq = pitems[idx].qty;
+      if (pq === null || pq === undefined || !isFinite(Number(pq))) { unsure = true; return; }
+      if (Math.abs(n(pq) - n(l.qty)) > 0.001) diffs.push({ name: l.name, recorded_qty: l.qty, photo_qty: n(pq) });
+    });
+    pitems.forEach((it, k) => { if (!used[k] && s(it.name)) diffs.push({ name: s(it.name), recorded_qty: null, photo_qty: it.qty === null || it.qty === undefined ? null : n(it.qty) }); });
+    return { status: diffs.length ? 'tidak_cocok' : (unsure ? 'perlu_cek' : 'cocok'), diffs: diffs.slice(0, 50), notes: '' };
+  }
+  function diffText(diffs) {
+    return diffs.map(d => d.name + ': input ' + (d.recorded_qty === null ? '-' : fmtN(d.recorded_qty)) + ' / nota ' + (d.photo_qty === null ? '-' : fmtN(d.photo_qty))).join('; ');
+  }
+  return { normName, nameScore, match, diffText };
+})();
+
 /* ========== Mock backend (?mock=1) — copied verbatim from the owner app; same localStorage DB key (kmock.db) ========== */
 const MockServer = (() => {
   const DBKEY = 'kmock.db';
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
-  const READ_ONLY = ['users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos'];
+  const READ_ONLY = ['users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos', 'party_ledger'];
   class MockErr extends Error { constructor(code, message) { super(message || code); this.code = code; } }
-  const E = (code, msg) => new MockErr(code, msg);
+  const E = (code, msg, extra) => { const e = new MockErr(code, msg); if (extra) e.extra = extra; return e; };
   let ready = null;
 
   function load() { try { return JSON.parse(localStorage.getItem(DBKEY) || 'null'); } catch (e) { return null; } }
@@ -718,7 +846,12 @@ const MockServer = (() => {
     const cash_in = sum(moves.filter(x => x.type === 'in'), x => int(x.amount));
     const cash_out = sum(moves.filter(x => x.type === 'out'), x => int(x.amount)) + sum(kasExp, x => int(x.amount));
     const list = moves.map(m => ({ type: m.type, amount: m.amount, note: m.note, time: m.time })).concat(kasExp.map(x => ({ type: 'out', amount: x.amount, note: 'Pengeluaran: ' + x.category + (x.note ? ' — ' + x.note : ''), time: x.expense_date })));
+    // v15: sales per method + pieces sold (transfer / QRIS = what was paid that way, hutang = the debt part)
+    const paidOf = x => Math.min(int(x.paid_amount), int(x.total));
+    const invs = new Set(sales.map(x => x.invoice_no));
     return Object.assign({}, sh, { sales_count: sales.length, sales_total: sum(sales, x => int(x.total)), cash_sales, cash_payments, cash_in, cash_out, moves: JSON.stringify(list),
+      transfer_sales: sum(sales.filter(x => x.payment_method === 'transfer'), paidOf), qris_sales: sum(sales.filter(x => x.payment_method === 'qris'), paidOf),
+      debt_sales: sum(sales, x => int(x.debt_amount)), items_qty: roundQty(sum(db.items.filter(i => invs.has(i.invoice_no)), i => num(i.qty))),
       expected_cash: int(sh.opening_cash) + cash_sales + cash_payments + cash_in - cash_out });
   }
   const BLIND = ['cash_sales', 'cash_payments', 'sales_total', 'expected_cash'];
@@ -760,6 +893,10 @@ const MockServer = (() => {
       return { product_id: p.id, name: p.name, unit: p.unit, system, counted, diff: roundQty(counted - system) };
     });
     const note = String(data.note || '').trim();
+    const changed = lines.filter(l => l.diff !== 0);
+    const cnt = 'Stok opname ' + lines.length + ' barang, ' + changed.length + ' selisih: ' + changed.slice(0, 20).map(l => l.name + ' ' + l.system + '→' + l.counted).join('; ');
+    if (u.role === 'owner') logAct(db, u, 'opname', cnt, '', 0, changed.length ? 'warn' : 'info');
+    else logAct(db, u, 'minta_opname', 'Minta ' + cnt, '', 0, 'info');
     if (u.role === 'owner') {
       const stock = lines.map(l => {
         const p = db.products.find(x => x.id === l.product_id);
@@ -789,6 +926,155 @@ const MockServer = (() => {
   function nameScore(a, b) { const A = nameTokens(a), B = new Set(nameTokens(b)); return A.length ? A.filter(w => B.has(w)).length / A.length : 0; }
   const blankProduct = () => ({ sku: '', name: '', category: '', unit: 'pcs', cost_price: 0, retail_price: 0, wholesale_price: 0, wholesale_min_qty: 0, stock: 0, min_stock: 0, active: true, notes: '' });
 
+  /* ---- v11–v13, as on the server: devices (deviceTouch), activity log (logAct), goods-in checked against the note and
+     locked after saving (purchase_no, request_purchase_fix), customer payments matched with the transfer slip ---- */
+  const str = v => v === undefined || v === null ? '' : String(v).trim();
+  const money = v => Math.round(num(v));
+  const fmtN = v => String(Math.round(num(v) * 1000) / 1000);
+  function rand(n) { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (let i = 0; i < n; i++) s += a[Math.floor(Math.random() * a.length)]; return s; }
+  let dirty = false; // read-only actions still save when a device row / activity row was written
+  const LOG = []; // last requests as received (action, user, device) — for the tests
+  function logAct(db, u, kind, summary, ref, amount, level) {
+    db.activity = db.activity || [];
+    db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + rand(8), at: new Date().toISOString(), act_date: jktDate(), user: u.name, role: u.role, kind,
+      summary: str(summary).slice(0, 1000), ref: str(ref).slice(0, 60), amount: money(amount), level: level || 'info' });
+    dirty = true;
+  }
+  const isCoord = (lat, lng) => isFinite(Number(lat)) && isFinite(Number(lng)) && Math.abs(Number(lat)) <= 90 && Math.abs(Number(lng)) <= 180 && !(Number(lat) === 0 && Number(lng) === 0) && lat !== null && lat !== '' && lng !== null && lng !== '' && lat !== undefined && lng !== undefined;
+  function metres(aLat, aLng, bLat, bLng) {
+    const R = 6371000, k = Math.PI / 180, dLat = (bLat - aLat) * k, dLng = (bLng - aLng) * k;
+    const x = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(aLat * k) * Math.cos(bLat * k) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(x)));
+  }
+  /** Written only when something changed (new device, other user, status, moved > 100 m) or every 10 minutes. */
+  function deviceTouch(db, u, dev, force) {
+    if (!dev || typeof dev !== 'object') return null;
+    const id = str(dev.id);
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) return null;
+    db.devices = db.devices || [];
+    const ex = db.devices.find(x => x.device_id === id) || null;
+    const now = new Date().toISOString();
+    const hasLoc = isCoord(dev.lat, dev.lng);
+    const status = ['granted', 'denied', 'unavailable', 'prompt', 'off'].indexOf(dev.loc_status) >= 0 ? dev.loc_status : (hasLoc ? 'granted' : 'unavailable');
+    if (ex && !force) {
+      const moved = hasLoc && (!isCoord(ex.lat, ex.lng) || metres(num(ex.lat), num(ex.lng), num(dev.lat), num(dev.lng)) > 100);
+      const stale = !(Date.parse(ex.last_seen) > Date.now() - 600000);
+      if (!moved && !stale && str(ex.user) === u.name && str(ex.loc_status) === status) return ex;
+    }
+    const row = {
+      device_id: id, user: u.name, role: u.role, app: ['owner', 'kasir', 'sales'].indexOf(dev.app) >= 0 ? dev.app : 'owner',
+      label: str(dev.label).slice(0, 60), ua: str(navigator.userAgent).slice(0, 300), ip: '',
+      lat: hasLoc ? Math.round(num(dev.lat) * 1e6) / 1e6 : (ex ? num(ex.lat) : 0), lng: hasLoc ? Math.round(num(dev.lng) * 1e6) / 1e6 : (ex ? num(ex.lng) : 0),
+      acc: hasLoc ? Math.round(num(dev.acc)) : (ex ? num(ex.acc) : 0), loc_status: status, loc_at: hasLoc ? now : (ex ? str(ex.loc_at) : ''),
+      first_seen: ex ? str(ex.first_seen) || now : now, last_seen: now, pings: (ex ? num(ex.pings) : 0) + 1,
+      battery: isFinite(Number(dev.battery)) && dev.battery !== null && dev.battery !== '' && dev.battery !== undefined ? Math.round(Math.min(1, Math.max(0, num(dev.battery))) * 100) / 100 : (ex ? num(ex.battery) : 0)
+    };
+    if (ex) Object.assign(ex, row); else db.devices.push(Object.assign({ id: nextId(db, 'device') }, row));
+    dirty = true;
+    if (!ex) logAct(db, u, 'perangkat_baru', 'Perangkat baru: ' + (row.label || 'tanpa nama') + ' (' + row.app + ', ' + u.name + ')' + (row.ip ? ' IP ' + row.ip : ''), id, 0, 'info');
+    return row;
+  }
+  /* Purchase correction (only with manager / owner approval): target lines vs what the rows of that note say now. */
+  function purchaseFixChanges(rows, lines) {
+    const cur = {};
+    rows.forEach(r => {
+      const k = String(r.product_id);
+      if (!cur[k]) cur[k] = { qty: 0, total: 0, supplier: str(r.supplier), name: str(r.name) };
+      cur[k].qty = Math.round((cur[k].qty + num(r.qty)) * 1000) / 1000;
+      cur[k].total += money(r.total);
+    });
+    const changes = [];
+    (Array.isArray(lines) ? lines : []).slice(0, 100).forEach(l => {
+      const c = cur[String(l.product_id)];
+      if (!c) return;
+      const qty = Math.round(num(l.qty) * 1000) / 1000;
+      if (qty < 0) return;
+      const cost = l.cost_price === undefined || l.cost_price === null || l.cost_price === '' ? (c.qty > 0 ? Math.round(c.total / c.qty) : 0) : money(l.cost_price);
+      const total = Math.round(qty * cost);
+      const dq = Math.round((qty - c.qty) * 1000) / 1000, dt = total - c.total;
+      if (dq !== 0 || dt !== 0) changes.push({ product_id: Number(l.product_id), name: c.name, supplier: c.supplier, from_qty: c.qty, to_qty: qty, from_total: c.total, to_total: total, cost_price: cost, d_qty: dq, d_total: dt });
+    });
+    return { found: Object.keys(cur).length > 0, changes };
+  }
+  function applyPurchaseFix(db, u, no, changes, reason, byName) {
+    const out = [];
+    changes.forEach(ch => {
+      const p = db.products.find(x => x.id === Number(ch.product_id));
+      if (!p) return;
+      const st = num(p.stock), ns = Math.round((st + ch.d_qty) * 1000) / 1000;
+      const nc = ns > 0 && st + ch.d_qty > 0 ? Math.max(0, Math.round((Math.max(0, st) * money(p.cost_price) + ch.d_total) / Math.max(ns, 0.001))) : money(p.cost_price);
+      p.stock = ns; p.cost_price = nc;
+      db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: jktDate(), supplier: ch.supplier, product_id: p.id, name: str(p.name), qty: ch.d_qty, cost_price: ch.cost_price, total: ch.d_total,
+        note: ('KOREKSI ' + no + ': ' + fmtN(ch.from_qty) + '→' + fmtN(ch.to_qty) + ' | ' + str(reason)).slice(0, 500), user: byName, photo_id: '', exp_date: '',
+        purchase_no: no, match_status: 'koreksi', match_notes: str(reason).slice(0, 300) });
+      const o = { product_id: p.id, stock: ns };
+      if (u.role === 'owner') o.cost_price = nc;
+      out.push(o);
+    });
+    return out;
+  }
+  const fixSummary = (no, changes) => 'Koreksi barang masuk ' + no + ': ' + changes.map(c => c.name + ' ' + fmtN(c.from_qty) + '→' + fmtN(c.to_qty) + (c.d_total ? ' (Rp ' + c.from_total + '→' + c.to_total + ')' : '')).join('; ');
+  /* Payments (v13), as on the server: open documents of a party (customer → sales with debt, total = debt_amount;
+     supplier → goods-in notes), paid = what other payments allocated to them. */
+  const parseAlloc = a => { if (Array.isArray(a)) return a; try { const x = JSON.parse(a || '[]'); return Array.isArray(x) ? x : []; } catch (e) { return []; } };
+  const parseObj = o => { if (o && typeof o === 'object') return o; try { return JSON.parse(o || '{}') || {}; } catch (e) { return {}; } };
+  const payDir = p => str(p.direction) || 'in';
+  function partyDocs(db, pt, key, excludePayId) {
+    const docs = {};
+    if (pt === 'customer') {
+      db.sales.filter(x => Number(x.customer_id) === Number(key) && x.status !== 'void' && money(x.debt_amount) > 0)
+        .forEach(x => { docs[x.invoice_no] = { ref: x.invoice_no, date: str(x.sale_date), total: money(x.debt_amount), paid: 0 }; });
+    } else {
+      db.purchases.filter(x => str(x.supplier) === key).forEach(x => {
+        const ref = str(x.purchase_no) || ('PB-' + str(x.purchase_date));
+        if (!docs[ref]) docs[ref] = { ref, date: str(x.purchase_date), total: 0, paid: 0 };
+        docs[ref].total += money(x.total);
+        if (str(x.purchase_date) < docs[ref].date) docs[ref].date = str(x.purchase_date);
+      });
+    }
+    db.payments.forEach(p => {
+      if (excludePayId && p.pay_id === excludePayId) return;
+      const mine = pt === 'customer' ? (Number(p.customer_id) === Number(key) && payDir(p) === 'in') : (str(p.supplier) === key && payDir(p) === 'out');
+      if (!mine) return;
+      parseAlloc(p.alloc).forEach(a => { if (docs[a.ref]) docs[a.ref].paid += money(a.amount); });
+    });
+    Object.keys(docs).forEach(k => { docs[k].remaining = Math.max(0, docs[k].total - docs[k].paid); });
+    return docs;
+  }
+  function checkAlloc(list, docs, amount) {
+    const out = [], seen = {};
+    let total = 0;
+    const arr = Array.isArray(list) ? list.slice(0, 50) : [];
+    for (let i = 0; i < arr.length; i++) {
+      const a = arr[i] || {};
+      const ref = str(a.ref || a.invoice_no || a.purchase_no), amt = money(a.amount);
+      if (!ref || !(amt > 0)) return { error: 'Alokasi tidak valid' };
+      if (!docs[ref]) return { error: 'Faktur / nota tidak ditemukan untuk pihak ini: ' + ref };
+      if (seen[ref]) return { error: 'Faktur dobel di alokasi: ' + ref };
+      seen[ref] = true;
+      if (amt > docs[ref].remaining) return { error: 'Alokasi ' + ref + ' melebihi sisa (' + docs[ref].remaining + ')' };
+      total += amt;
+      out.push({ ref, amount: amt });
+    }
+    if (total > amount) return { error: 'Total alokasi melebihi jumlah pembayaran' };
+    return { alloc: out, sum: total };
+  }
+  function allocStatus(amount, chk, docs) {
+    if (!chk.alloc.length) return 'belum_dialokasi';
+    if (chk.alloc.some(a => docs[a.ref].remaining - a.amount > 0)) return 'sebagian';
+    if (chk.sum < amount) return 'lebih';
+    return 'lunas';
+  }
+  const dupRef = (db, ref) => !!str(ref) && db.payments.some(p => str(p.transfer_ref) && str(p.transfer_ref).toLowerCase() === str(ref).toLowerCase());
+  const payOut = p => Object.assign({}, p, { alloc: parseAlloc(p.alloc) });
+  function payAccount(db, method, want) {
+    if (method !== 'transfer' && method !== 'qris') return '';
+    const accs = (Array.isArray(db.settings.bank_accounts) ? db.settings.bank_accounts : []).filter(x => x && str(x.id));
+    if (str(want) && accs.some(x => str(x.id) === str(want))) return str(want);
+    const act = accs.filter(x => x.active !== false);
+    return act.length ? str(act[0].id) : '';
+  }
+
   function handle(db, body) {
     const { action, key, user, pin_hash } = body;
     const data = body.data || {};
@@ -804,7 +1090,8 @@ const MockServer = (() => {
     if (!db.users.length) throw E('NO_USERS', 'Run setup first');
     const u = db.users.find(x => x.active && x.name.toLowerCase() === String(user || '').toLowerCase());
     if (!u || u.pin_hash !== pin_hash) throw E('BAD_PIN', 'Wrong user or PIN');
-    if (u.role === 'sales' && !['login', 'bootstrap'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
+    if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
+    if (action !== 'device_ping') deviceTouch(db, u, data.device, false);
     const owner = u.role === 'owner';
     const needOwner = () => { if (!owner) throw E('FORBIDDEN', 'Owner only'); };
     const prodById = id => db.products.find(p => p.id === Number(id));
@@ -812,6 +1099,10 @@ const MockServer = (() => {
 
     switch (action) {
       case 'login': return { user: { name: u.name, role: u.role } };
+      case 'device_ping': {
+        if (!deviceTouch(db, u, data.device, true)) throw E('INVALID', 'device.id tidak valid');
+        return { require_location: db.settings.require_device_location === true, server_time: new Date().toISOString() };
+      }
       case 'bootstrap': return { products: db.products, customers: db.customers, settings: db.settings, users: db.users.map(x => ({ name: x.name, role: x.role, active: x.active })), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
         shift: blind(shiftSummary(db, openShiftOf(db, u.name)), u.role), open_shifts: ['owner', 'manager'].includes(u.role) ? db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)) : [] };
 
@@ -825,7 +1116,7 @@ const MockServer = (() => {
           return { invoice_no: ex.invoice_no, sale: exOut, stock: ids.map(id => ({ product_id: id, stock: prodById(id) ? prodById(id).stock : 0 })), duplicate: true, exit_photo_required: ex.exit_photo === 'required' };
         }
         const shift = openShiftOf(db, u.name);
-        if (!shift && u.role !== 'owner' && db.settings.require_shift !== false) throw E('SHIFT_REQUIRED', 'Open the cash drawer (open_shift) first');
+        if (!shift && u.role === 'kasir' && db.settings.require_shift !== false) throw E('SHIFT_REQUIRED', 'Buka kasir (shift) dulu'); // v15: only kasir accounts need a drawer
         const P = priceSale(db, data);
         let approved_by = '', usedApproval = null;
         if (P.debt > 0 && u.role === 'kasir') {
@@ -862,6 +1153,7 @@ const MockServer = (() => {
           touched.set(l.p.id, l.p);
         }
         if (cust) cust.debt_balance = int(cust.debt_balance) + debt;
+        if (debt > 0) logAct(db, u, 'hutang', 'Penjualan hutang ' + sale.invoice_no + ' ' + str(sale.customer_name) + ' Rp ' + debt + (approved_by ? ' (disetujui ' + approved_by + ')' : ''), sale.invoice_no, debt, 'info');
         const { id: _omit, ...saleOut } = sale;
         return { invoice_no: sale.invoice_no, sale: saleOut, stock: [...touched.values()].map(p => ({ product_id: p.id, stock: p.stock })), duplicate: false, exit_photo_required: exitReq };
       }
@@ -910,7 +1202,16 @@ const MockServer = (() => {
           out.product = p;
         }
         if (data.decision === 'approved' && ap.kind === 'opname') out.stock = applyOpname(db, ap, u.name);
+        if (data.decision === 'approved' && ap.kind === 'purchase_fix') {
+          const pl = parseObj(ap.payload), no = str(pl.purchase_no);
+          // as on the server: the rows are looked up by data.purchase_no, which must be approval.ref
+          const rows = no && str(data.purchase_no) === no ? db.purchases.filter(r => str(r.purchase_no) === no) : [];
+          const pf = purchaseFixChanges(rows, pl.lines);
+          if (!pf.found) throw E('INVALID', 'Kirim purchase_no barang masuk yang dikoreksi');
+          out.stock = applyPurchaseFix(db, u, no, pf.changes, str(pl.reason) + ' (diminta ' + str(ap.cashier) + ', disetujui ' + u.name + ')', u.name);
+        }
         Object.assign(ap, { status: data.decision, decided_by: u.name, decided_at: jktISO(), note: String(data.note || '') });
+        logAct(db, u, 'keputusan', (data.decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + str(ap.kind || 'credit') + ', diminta ' + str(ap.cashier) + '): ' + str(ap.summary).slice(0, 600) + (str(data.note) ? ' | ' + str(data.note) : ''), ap.request_id, money(ap.total), data.decision === 'approved' ? 'info' : 'warn');
         return Object.assign({ approval: ap }, out);
       }
       case 'scan_purchase': {
@@ -957,6 +1258,8 @@ const MockServer = (() => {
       case 'void_sale': {
         needOwner();
         if (!String(data.reason || '').trim()) throw E('INVALID', 'reason required');
+        const vs = db.sales.find(x => x.invoice_no === data.invoice_no);
+        if (vs && vs.status !== 'void') logAct(db, u, 'batal', 'Faktur dibatalkan ' + vs.invoice_no + ' Rp ' + money(vs.total) + ': ' + str(data.reason), vs.invoice_no, money(vs.total), 'warn');
         return { sale: voidSaleNow(db, data.invoice_no, String(data.reason), u.name) };
       }
       case 'request_void': {
@@ -969,6 +1272,7 @@ const MockServer = (() => {
         if (open) return { request_id: open.request_id, approval: open };
         const approval = newApproval(db, u, { kind: 'void', ref: sale.invoice_no, approver_role: 'owner', customer_id: sale.customer_id, customer_name: sale.customer_name, total: sale.total, debt_amount: sale.debt_amount,
           summary: `${sale.invoice_no} · ${sale.sale_date}`, payload: JSON.stringify({ reason, invoice_no: sale.invoice_no, sale_date: sale.sale_date, total: sale.total }) });
+        logAct(db, u, 'minta_batal', 'Minta batal faktur ' + sale.invoice_no + ': ' + reason, sale.invoice_no, money(sale.total), 'warn');
         return { request_id: approval.request_id, approval };
       }
       case 'change_price': {
@@ -980,21 +1284,34 @@ const MockServer = (() => {
         const direct = u.role === 'owner' || (u.role === 'manager' && !changes.cost_price);
         const payload = JSON.stringify({ changes, product_name: p.name, reason });
         const fields = { kind: 'price', ref: p.id, approver_role: changes.cost_price ? 'owner' : 'manager', customer_id: null, customer_name: '', total: 0, debt_amount: 0, summary: p.name, payload };
+        const psum = 'Ubah harga ' + str(p.name) + ': ' + Object.keys(changes).map(f => f + ' ' + changes[f].from + '→' + changes[f].to).join(', ');
         if (direct) {
           for (const [f, ch] of Object.entries(changes)) p[f] = ch.to;
           newApproval(db, u, Object.assign(fields, { status: 'auto', decided_by: u.name, decided_at: jktISO() }));
+          logAct(db, u, 'harga', psum + (reason ? ' | ' + reason : ''), String(p.id), 0, 'warn');
           return { applied: true, product: p };
         }
         const approval = newApproval(db, u, fields);
+        logAct(db, u, 'minta_harga', 'Minta ' + psum + (reason ? ' | ' + reason : ''), String(p.id), 0, 'info');
         return { applied: false, request_id: approval.request_id, approval };
       }
       case 'open_shift': {
+        // v15: the drawer is opened from kasir accounts only; every opening count goes to the manager / owner to approve
+        if (u.role !== 'kasir') throw E('FORBIDDEN', 'Buka kas hanya dari akun kasir (aplikasi Khair Kasir)');
         const ex = openShiftOf(db, u.name);
         if (ex) return { shift: Object.assign(blind(shiftSummary(db, ex), u.role), { already: true }) };
         if (data.opening_cash === undefined || data.opening_cash === '' || int(data.opening_cash) < 0) throw E('INVALID', 'opening_cash');
-        const sh = { shift_id: 'SH-' + String(nextId(db, 'shift')).padStart(4, '0'), cashier: u.name, shift_date: isYmd(data.shift_date) ? data.shift_date : jktDate(), opened_at: jktISO(), closed_at: '', status: 'open', opening_cash: int(data.opening_cash), counted_cash: null, difference: null, note: String(data.note || '') };
+        const opening = int(data.opening_cash);
+        const sh = { shift_id: 'SH-' + String(nextId(db, 'shift')).padStart(4, '0'), cashier: u.name, shift_date: isYmd(data.shift_date) ? data.shift_date : jktDate(), opened_at: jktISO(), closed_at: '', status: 'open', opening_cash: opening, counted_cash: null, difference: null, note: String(data.note || '') };
+        const last = db.shifts.filter(x => x.status === 'closed').sort((a, b) => String(b.closed_at).localeCompare(String(a.closed_at)))[0] || null;
         db.shifts.push(sh);
-        return { shift: blind(shiftSummary(db, sh), u.role) };
+        const lastTxt = last ? ' — kas terakhir ditutup ' + str(last.closed_at).slice(0, 16).replace('T', ' ') + ' oleh ' + str(last.cashier) + ': dihitung Rp ' + money(last.counted_cash) + ', selisih dengan pembukaan Rp ' + (opening - money(last.counted_cash)) : '';
+        const approval = newApproval(db, u, { kind: 'buka_kas', approver_role: 'manager', ref: sh.shift_id, total: opening,
+          summary: ('Buka kas ' + u.name + ': modal awal dihitung Rp ' + opening + lastTxt).slice(0, 1500), note: str(data.note),
+          payload: JSON.stringify({ shift_id: sh.shift_id, opening_cash: opening, last_counted: last ? money(last.counted_cash) : null, last_cashier: last ? str(last.cashier) : '' }) });
+        logAct(db, u, 'buka_kas', 'Buka kas ' + u.name + ' Rp ' + opening + lastTxt, sh.shift_id, opening, last && money(last.counted_cash) !== opening ? 'warn' : 'info');
+        // PROPOSED (not in the v15 server answer): request_id / approval, so the cashier can follow the approval with check_approval
+        return { already: false, shift: blind(shiftSummary(db, sh), u.role), request_id: approval.request_id, approval };
       }
       case 'cash_move': {
         const sh = openShiftOf(db, u.name); if (!sh) throw E('SHIFT_REQUIRED', 'No open shift');
@@ -1002,6 +1319,7 @@ const MockServer = (() => {
         const amount = int(data.amount); if (amount <= 0) throw E('INVALID', 'amount');
         if (!String(data.note || '').trim()) throw E('INVALID', 'note required');
         db.cash_moves.push({ id: nextId(db, 'move'), shift_id: sh.shift_id, type: data.type, amount, note: String(data.note).trim(), user: u.name, time: jktISO() });
+        logAct(db, u, 'kas', (data.type === 'in' ? 'Kas masuk' : 'Kas keluar') + ' Rp ' + amount + ': ' + str(data.note).slice(0, 300), sh.shift_id, amount, 'info');
         return { shift: blind(shiftSummary(db, sh), u.role) };
       }
       case 'close_shift': {
@@ -1014,6 +1332,7 @@ const MockServer = (() => {
         if (data.counted_cash === undefined || data.counted_cash === '' || int(data.counted_cash) < 0) throw E('INVALID', 'counted_cash');
         const sm = shiftSummary(db, sh);
         Object.assign(sh, sm, { status: 'closed', closed_at: jktISO(), counted_cash: int(data.counted_cash), difference: int(data.counted_cash) - sm.expected_cash, note: [sh.note, String(data.note || '')].filter(Boolean).join(' / '), closed_by: u.name });
+        logAct(db, u, 'tutup_kas', 'Tutup kas ' + str(sh.cashier) + ': dihitung Rp ' + sh.counted_cash + ', seharusnya Rp ' + sm.expected_cash + ', selisih Rp ' + sh.difference, sh.shift_id, sh.difference, sh.difference ? 'warn' : 'info');
         return { shift: sh };
       }
       case 'save_expense': {
@@ -1026,6 +1345,7 @@ const MockServer = (() => {
         if (paid_from === 'kas' && !esh) throw E('SHIFT_REQUIRED', 'paid_from kas needs an open shift');
         const expense = { id: nextId(db, 'expense'), expense_date: isYmd(data.expense_date) ? data.expense_date : jktDate(), category: data.category, amount, note: String(data.note || ''), user: u.name, photo_id: String(data.photo_id || ''), paid_from, shift_id: paid_from === 'kas' ? esh.shift_id : '' };
         db.expenses.push(expense);
+        logAct(db, u, 'biaya', 'Pengeluaran ' + expense.category + ' Rp ' + amount + (expense.note ? ': ' + expense.note : '') + ' (' + paid_from + ')', '', amount, 'info');
         return { expense };
       }
       case 'save_product': {
@@ -1041,10 +1361,13 @@ const MockServer = (() => {
           Object.assign(p, productFields(rest, {}), { name });
           const changes = {}; for (const f in before) if (int(before[f]) !== int(p[f])) changes[f] = { from: int(before[f]), to: int(p[f]) };
           if (Object.keys(changes).length) newApproval(db, u, { kind: 'price', ref: p.id, summary: p.name, status: 'auto', decided_by: u.name, decided_at: jktISO(), payload: JSON.stringify({ changes, product_name: p.name, reason: 'save_product' }) });
+          const ch = Object.keys(changes);
+          logAct(db, u, ch.length ? 'harga' : 'produk', 'Ubah produk ' + name + (ch.length ? ': ' + ch.map(f => f + ' ' + changes[f].from + '→' + changes[f].to).join(', ') : ''), String(p.id), 0, ch.length ? 'warn' : 'info');
           return { product: p };
         }
         const p = Object.assign(productFields(data, blankProduct()), { id: nextId(db, 'product'), name, stock: roundQty(data.stock || 0) });
         db.products.push(p);
+        logAct(db, u, 'produk_baru', 'Produk baru: ' + name + ' (stok ' + fmtN(p.stock) + ' ' + p.unit + ')', sku, 0, 'info');
         return { product: p };
       }
       case 'import_products': {
@@ -1065,6 +1388,7 @@ const MockServer = (() => {
             created++;
           } else skipped++;
         }
+        logAct(db, u, 'impor', 'Impor produk: ' + created + ' baru, ' + updated + ' diubah', '', 0, 'info');
         return { created, updated, skipped };
       }
       case 'stock_adjust': {
@@ -1074,6 +1398,7 @@ const MockServer = (() => {
         if (!Number.isFinite(Number(data.new_stock))) throw E('INVALID', 'new_stock');
         const diff = roundQty(roundQty(data.new_stock) - num(p.stock));
         db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: jktDate(), supplier: ADJUST_SUPPLIER, product_id: p.id, name: p.name, qty: diff, cost_price: p.cost_price, total: 0, note: String(data.reason), user: u.name });
+        logAct(db, u, 'stok', 'Penyesuaian stok ' + str(p.name) + ': ' + fmtN(p.stock) + '→' + fmtN(data.new_stock) + (str(data.reason) ? ' | ' + str(data.reason) : ''), String(p.id), 0, 'warn');
         p.stock = roundQty(data.new_stock);
         return { product: p };
       }
@@ -1105,15 +1430,69 @@ const MockServer = (() => {
         return { customer: c };
       }
       case 'receive_payment': {
-        const c = custById(data.customer_id); if (!c) throw E('NOT_FOUND', 'customer');
-        const amount = int(data.amount);
-        if (amount <= 0) throw E('INVALID', 'amount must be > 0');
-        if (amount > int(c.debt_balance)) throw E('INVALID', 'amount exceeds debt');
+        // v13 as on the server: slip check (photo kind 'bayar'), allocation to invoices, match_status; v14 account_id / slip_date
+        const c = custById(data.customer_id); if (!c) throw E('NOT_FOUND', 'Pelanggan tidak ditemukan');
+        const amount = money(data.amount);
+        if (!(amount > 0)) throw E('INVALID', 'Jumlah pembayaran tidak valid');
+        if (amount > money(c.debt_balance)) throw E('INVALID', 'Pembayaran melebihi hutang');
+        if (dupRef(db, data.transfer_ref)) throw E('INVALID', 'Nomor transfer ini sudah pernah dipakai: ' + str(data.transfer_ref));
+        let sc = null;
+        if (str(data.photo_id)) {
+          const ph = db.photos.find(x => x.photo_id === str(data.photo_id));
+          if (!ph || ph.kind !== 'bayar') throw E('INVALID', 'Foto bukti pembayaran tidak ditemukan');
+          const ex = parseObj(ph.extracted);
+          const slip = ex.amount === null || ex.amount === undefined || !isFinite(Number(ex.amount)) ? null : money(ex.amount);
+          if (slip !== null && slip !== amount && !str(data.mismatch_reason)) throw E('MISMATCH', 'Jumlah tidak sama dengan bukti transfer: input ' + amount + ', bukti ' + slip, { slip_amount: slip, extracted: ex });
+          sc = { slip, ex, ph };
+        }
+        const docs = partyDocs(db, 'customer', c.id, '');
+        const chk = checkAlloc(data.alloc, docs, amount);
+        if (chk.error) throw E('INVALID', chk.error);
         const psh = openShiftOf(db, u.name);
-        const payment = { id: nextId(db, 'payment'), pay_date: isYmd(data.pay_date) ? data.pay_date : jktDate(), customer_id: c.id, customer_name: c.name, amount, method: String(data.method || 'tunai'), note: String(data.note || ''), cashier: u.name, shift_id: psh ? psh.shift_id : '' };
-        db.payments.push(payment);
-        c.debt_balance = int(c.debt_balance) - amount;
-        return { payment, customer: c };
+        const pay = {
+          id: nextId(db, 'payment'), pay_id: 'PY' + rand(7), pay_date: isYmd(data.pay_date) ? data.pay_date : jktDate(), pay_time: new Date().toISOString(),
+          direction: 'in', party_type: 'customer', customer_id: c.id, customer_name: str(c.name), supplier: '', amount,
+          method: ['tunai', 'transfer', 'qris'].includes(data.method) ? data.method : 'tunai',
+          account_id: payAccount(db, data.method, data.account_id), slip_date: sc && sc.ex && sc.ex.date ? str(sc.ex.date) : '',
+          bank: str(data.bank).slice(0, 60), transfer_ref: str(data.transfer_ref).slice(0, 80), proof_photo_id: str(data.photo_id).slice(0, 40),
+          alloc: JSON.stringify(chk.alloc), match_status: allocStatus(amount, chk, docs),
+          note: (str(data.note) + (str(data.mismatch_reason) ? ' | beda dengan bukti: ' + str(data.mismatch_reason) : '')).slice(0, 500), cashier: u.name,
+          shift_id: psh ? psh.shift_id : ''
+        };
+        db.payments.push(pay);
+        c.debt_balance = Math.max(0, money(c.debt_balance) - amount);
+        if (sc) sc.ph.ref = pay.pay_id;
+        const dateOff = pay.slip_date && pay.slip_date !== pay.pay_date;
+        logAct(db, u, 'bayar_masuk', 'Pembayaran ' + str(c.name) + ' Rp ' + amount + ' (' + pay.method + (pay.bank ? ' ' + pay.bank : '') + (pay.transfer_ref ? ', ref ' + pay.transfer_ref : '') + ')' +
+          (chk.alloc.length ? ' untuk ' + chk.alloc.map(a => a.ref + ' Rp ' + a.amount).join(', ') : ' — belum dialokasi') + (str(data.mismatch_reason) ? ' | beda dengan bukti: ' + str(data.mismatch_reason) : '') +
+          (dateOff ? ' | tanggal bukti ' + pay.slip_date + ' ≠ dicatat ' + pay.pay_date : ''),
+          pay.pay_id, amount, str(data.mismatch_reason) || dateOff || pay.match_status === 'belum_dialokasi' ? 'warn' : 'info');
+        return { payment: payOut(pay), customer: c };
+      }
+      case 'party_ledger': {
+        const pt = data.party_type === 'supplier' ? 'supplier' : 'customer';
+        if (pt === 'supplier' && !['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
+        let key, balance;
+        if (pt === 'customer') {
+          const c = custById(data.customer_id); if (!c) throw E('NOT_FOUND', 'Pelanggan tidak ditemukan');
+          key = c.id; balance = money(c.debt_balance);
+        } else { key = str(data.supplier); if (!key) throw E('INVALID', 'Nama pemasok wajib'); }
+        const docs = partyDocs(db, pt, key, '');
+        const pays = db.payments.filter(p => pt === 'customer' ? (Number(p.customer_id) === Number(key) && payDir(p) === 'in') : (str(p.supplier) === key && payDir(p) === 'out'))
+          .map(payOut).sort((a, b) => String((b.pay_date || '') + (b.pay_time || '')).localeCompare(String((a.pay_date || '') + (a.pay_time || ''))));
+        const list = Object.keys(docs).map(k => docs[k]).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+        if (pt === 'supplier') balance = sum(list, d => d.total) - sum(pays, p => money(p.amount));
+        return { party_type: pt, docs: list, payments: pays, balance };
+      }
+      case 'scan_payment': {
+        // photo workflow, kind 'bayar': the AI reads the transfer slip (demo: localStorage kmock.scanpay or a sample slip)
+        if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
+        let extracted = null;
+        try { extracted = JSON.parse(localStorage.getItem('kmock.scanpay') || 'null'); } catch (e) { }
+        if (!extracted) extracted = { date: jktDate(), amount: 500000, sender_name: 'TOKO BERKAH CONDET', receiver_name: 'KHAIR MART', bank: 'BCA', transfer_ref: 'BCA' + jktDate().replace(/-/g, '').slice(2) + '7731', readable: true, notes: '' };
+        const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'bayar', ref: '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted, match_status: '', match_notes: '' };
+        db.photos.push(photo);
+        return { photo_id: photo.photo_id, extracted, drive_url: '' };
       }
       case 'save_purchase': {
         if (!Array.isArray(data.items) || !data.items.length) throw E('INVALID', 'items required');
@@ -1121,21 +1500,53 @@ const MockServer = (() => {
         if (data.photo_id && !photo) throw E('INVALID', 'photo_id not found');
         if (!photo && db.settings.require_purchase_photo !== false) throw E('INVALID', 'Purchase photo (photo_id) required');
         const pdate = isYmd(data.purchase_date) ? data.purchase_date : jktDate();
+        // v12: what was typed is checked against the photographed note before anything is saved
+        const typed = data.items.map(it => { const p0 = prodById(it.product_id); return { name: p0 ? str(p0.name) : str(it.product_id), qty: roundQty(it.qty), photo_index: it.photo_index }; });
+        const match = photo ? NoteMatch.match(typed, photo.extracted) : { status: 'tanpa_foto', diffs: [], notes: '' };
+        const reason = str(data.mismatch_reason).slice(0, 300);
+        if (match.status === 'tidak_cocok' && !reason) throw E('MISMATCH', 'Jumlah tidak sama dengan nota: ' + NoteMatch.diffText(match.diffs), { match });
         const checked = data.items.map(it => {
           const p = prodById(it.product_id); if (!p) throw E('NOT_FOUND', 'product ' + it.product_id);
           const qty = roundQty(it.qty); if (!(qty > 0)) throw E('INVALID', 'qty must be > 0');
           return { p, qty, cost: Math.max(0, int(it.cost_price)), exp: isYmd(it.exp_date) ? it.exp_date : '' };
         });
+        const purchase_no = 'PB' + pdate.replace(/-/g, '').slice(2) + '-' + rand(4);
+        const matchNotes = ((match.diffs.length ? NoteMatch.diffText(match.diffs) : '') + (reason ? ' | alasan: ' + reason : '')).slice(0, 500);
         const out = [];
+        let sumTotal = 0;
         for (const { p, qty, cost, exp } of checked) {
           const old = Math.max(0, num(p.stock));
           p.cost_price = old + qty > 0 ? Math.round((old * p.cost_price + qty * cost) / (old + qty)) : cost;
           p.stock = roundQty(p.stock + qty);
-          db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: pdate, supplier: String(data.supplier || ''), product_id: p.id, name: p.name, qty, cost_price: cost, total: Math.round(qty * cost), note: String(data.note || ''), user: u.name, photo_id: photo ? photo.photo_id : '', exp_date: exp });
-          out.push({ product_id: p.id, stock: p.stock, cost_price: p.cost_price });
+          db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: pdate, supplier: String(data.supplier || ''), product_id: p.id, name: p.name, qty, cost_price: cost, total: Math.round(qty * cost), note: String(data.note || ''), user: u.name, photo_id: photo ? photo.photo_id : '', exp_date: exp,
+            purchase_no, match_status: match.status, match_notes: matchNotes });
+          sumTotal += Math.round(qty * cost);
+          const o = out.find(x => x.product_id === p.id);
+          if (o) Object.assign(o, { stock: p.stock, cost_price: p.cost_price }); else out.push({ product_id: p.id, stock: p.stock, cost_price: p.cost_price });
         }
         if (photo) photo.ref = [photo.ref, String(data.supplier || '')].filter(Boolean).join(' ') || 'masuk';
-        return { stock: out };
+        logAct(db, u, 'masuk', 'Barang masuk ' + purchase_no + (str(data.supplier) ? ' dari ' + str(data.supplier) : '') + ': ' + data.items.length + ' baris, Rp ' + sumTotal + ' — nota: ' + match.status + (matchNotes ? ' (' + matchNotes + ')' : ''), purchase_no, sumTotal, match.status === 'cocok' ? 'info' : 'warn');
+        return { stock: out, purchase_no, match };
+      }
+      case 'request_purchase_fix': {
+        // a saved goods-in can only be corrected with the manager's (or owner's) approval; the owner sees it in the log
+        const no = str(data.purchase_no);
+        if (!no) throw E('INVALID', 'purchase_no wajib');
+        const reason = str(data.reason).slice(0, 300);
+        if (!reason) throw E('INVALID', 'Alasan koreksi wajib diisi');
+        const pf = purchaseFixChanges(db.purchases.filter(r => str(r.purchase_no) === no), data.lines);
+        if (!pf.found) throw E('NOT_FOUND', 'Barang masuk tidak ditemukan');
+        if (!pf.changes.length) throw E('INVALID', 'Tidak ada perubahan');
+        const summary = fixSummary(no, pf.changes);
+        if (['owner', 'manager'].includes(u.role)) {
+          const stock = applyPurchaseFix(db, u, no, pf.changes, reason, u.name);
+          logAct(db, u, 'koreksi_masuk', summary + ' | ' + reason, no, sum(pf.changes, c => c.d_total), 'warn');
+          return { applied: true, changes: pf.changes, stock };
+        }
+        const approval = newApproval(db, u, { kind: 'purchase_fix', approver_role: 'manager', ref: no, note: reason, summary: summary.slice(0, 1500), total: sum(pf.changes, c => c.to_total),
+          payload: JSON.stringify({ purchase_no: no, lines: data.lines, reason, changes: pf.changes }) });
+        logAct(db, u, 'minta_koreksi', 'Minta ' + summary + ' | ' + reason, no, 0, 'warn');
+        return { applied: false, request_id: approval.request_id, approval, changes: pf.changes };
       }
       case 'stock_count': return stockCount(db, u, data);
       case 'get_sales': {
@@ -1151,8 +1562,11 @@ const MockServer = (() => {
         if (s.paper !== undefined && !['58', '80'].includes(String(s.paper))) throw E('INVALID', 'paper');
         if (s.exit_photo_min_total !== undefined) s.exit_photo_min_total = Math.max(0, int(s.exit_photo_min_total));
         if (s.exit_photo_min_qty !== undefined) s.exit_photo_min_qty = Math.max(0, num(s.exit_photo_min_qty));
-        if (s.wa_shop_number !== undefined) s.wa_shop_number = String(s.wa_shop_number || '').replace(/[^\d+]/g, '').slice(0, 20);
+        ['wa_shop_number', 'wa_manager_number', 'wa_owner_number'].forEach(k => { if (s[k] !== undefined) s[k] = String(s[k] || '').replace(/[^\d+]/g, '').slice(0, 20); });
+        if (s.report_time !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(s.report_time))) throw E('INVALID', 'report_time');
         if (s.survey_voice !== undefined) s.survey_voice = !(s.survey_voice === false || s.survey_voice === 'false');
+        const changedKeys = Object.keys(s).filter(k => JSON.stringify(s[k]) !== JSON.stringify(db.settings[k]));
+        if (changedKeys.length) logAct(db, u, 'pengaturan', 'Pengaturan diubah: ' + changedKeys.join(', '), '', 0, 'info');
         Object.assign(db.settings, s);
         return { settings: db.settings };
       }
@@ -1163,6 +1577,7 @@ const MockServer = (() => {
         const role = ['owner', 'manager'].includes(data.role) ? data.role : 'kasir';
         if (data.pin_hash && !/^[0-9a-f]{64}$/.test(data.pin_hash)) throw E('INVALID', 'pin_hash');
         let x = db.users.find(v => v.name.toLowerCase() === name.toLowerCase());
+        const existed = !!x;
         const active = data.active === undefined ? true : !!data.active;
         const ownersLeft = db.users.filter(v => v !== x && v.role === 'owner' && v.active).length + (role === 'owner' && active ? 1 : 0);
         if (!ownersLeft) throw E('INVALID', 'At least one active owner required');
@@ -1171,6 +1586,7 @@ const MockServer = (() => {
           x = { name, role, pin_hash: data.pin_hash, active };
           db.users.push(x);
         } else { x.role = role; x.active = active; if (data.pin_hash) x.pin_hash = data.pin_hash; }
+        logAct(db, u, 'pengguna', (existed ? 'Pengguna diubah: ' : 'Pengguna baru: ') + x.name + ' (' + x.role + (x.active ? '' : ', nonaktif') + ')' + (existed && data.pin_hash ? ', PIN diganti' : ''), x.name, 0, 'warn');
         return { user: { name: x.name, role: x.role, active: x.active } };
       }
       default: throw E('INVALID', 'Unknown action ' + action);
@@ -1184,14 +1600,18 @@ const MockServer = (() => {
     if (!navigator.onLine || forced) throw new NetError('offline (mock)');
     const db = load();
     db.approvals = db.approvals || []; db.photos = db.photos || []; db.expenses = db.expenses || []; db.shifts = db.shifts || []; db.cash_moves = db.cash_moves || [];
+    db.devices = db.devices || []; db.activity = db.activity || [];
+    LOG.push({ action: body.action, user: body.user || '', device: body.data && body.data.device ? JSON.parse(JSON.stringify(body.data.device)) : null, at: Date.now() });
+    if (LOG.length > 300) LOG.shift();
     let res;
+    dirty = false;
     try {
       const role = (db.users.find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase() && x.pin_hash === body.pin_hash) || {}).role;
       res = handle(db, body);
-      if (!READ_ONLY.includes(body.action)) save(db);
+      if (!READ_ONLY.includes(body.action) || dirty) save(db);
       res = Object.assign({ ok: true }, role === 'owner' || ['users', 'setup'].includes(body.action) ? res : strip(res));
     } catch (e) {
-      res = { ok: false, error: e.code || 'SERVER', message: e.message };
+      res = Object.assign({ ok: false, error: e.code || 'SERVER', message: e.message }, e.extra || {});
     }
     return JSON.parse(JSON.stringify(res));
   }
@@ -1396,7 +1816,7 @@ const MockServer = (() => {
       seq: { product: products.length, customer: customers.length, sale: seqSale, payment: seqPay, purchase: seqPur, photo: seqPh, approval: 0, expense: seqExp, shift: seqSh, move: seqMv }
     };
   }
-  return { request, ensure, reset() { try { localStorage.removeItem(DBKEY); } catch (e) { } ready = null; }, DBKEY };
+  return { request, ensure, reset() { try { localStorage.removeItem(DBKEY); } catch (e) { } ready = null; }, DBKEY, log: LOG };
 })();
 
 /* ========== State ========== */
@@ -1440,6 +1860,7 @@ function setLang(l) {
   if (S.inApp) { renderShell(); SELL.built = false; go(S.view, true); }
   if (!$('#login').hidden) renderLogin();
   if (!$('#gate').hidden) renderGate();
+  devCheckBlock();
 }
 const ic = (name, cls = '') => `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
@@ -1504,6 +1925,7 @@ function renderShell() {
   $('#tb-demo').hidden = !MOCK;
   updateApprovalBadge();
   updateOutboxBadge();
+  devIndicator();
   applyLangAttrs();
 }
 function go(view, force) {
@@ -1525,7 +1947,7 @@ function showLogin(step, err) {
   stopSpeech(); stopVoice();
   closeModal(true);
   L.step = step; L.err = err || ''; L.pin = ''; L.busy = false;
-  $('#login').hidden = false; $('#app').hidden = true; $('#gate').hidden = true;
+  $('#login').hidden = false; $('#app').hidden = true; $('#gate').hidden = true; $('#locblock').hidden = true;
   renderLogin();
   if ((step === 'users' || step === 'pin') && !L.users.length) loadUsersForLogin();
 }
@@ -1552,7 +1974,7 @@ function renderLogin() {
   let inner = '';
   if (L.step === 'key') {
     inner = `<h2>${esc(t('login.key_title'))}</h2>
-      <div class="field"><label class="f" for="lg-key">${esc(t('login.key'))}</label><input id="lg-key" class="input" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(S.key || (MOCK ? 'demo' : ''))}"></div>
+      <div class="field"><label class="f" for="lg-key">${esc(t('login.key'))}</label><input id="lg-key" class="input" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(MOCK ? 'demo' : '')}"></div>
       <p class="muted small">${esc(t('login.key_hint'))}</p>
       <div class="err" role="alert">${esc(L.err)}</div>
       <button class="btn primary block big" data-act="login-key" ${L.busy ? 'disabled' : ''}>${esc(L.busy ? t('loading') : t('next'))}</button>`;
@@ -1561,7 +1983,7 @@ function renderLogin() {
     inner = `<h2>${esc(t('login.who'))}</h2>
       <div class="users" id="users">${list.length ? list.map(u => `<button data-act="login-user" data-name="${esc(u.name)}">${esc(u.name)}<span>${esc(t('role.' + u.role))}</span></button>`).join('') : `<div class="muted center" style="grid-column:1/-1">${esc(t('loading'))}</div>`}</div>
       <div class="err" role="alert">${esc(L.err)}</div>
-      <div class="center"><button class="btn ghost sm" data-act="login-change-key">${esc(t('login.change_key'))} (${esc(S.key)})</button></div>`;
+      <div class="center"><button class="btn ghost sm" data-act="login-change-key">${esc(t('login.change_key'))} (${esc(maskKey(S.key))})</button></div>`;
   } else {
     const dots = Array.from({ length: Math.max(4, L.pin.length) }, (_, i) => `<i class="${i < L.pin.length ? 'f' : ''}"></i>`).join('');
     inner = `<div class="who"><button class="icon-btn ghost sm" data-act="login-back" aria-label="${esc(t('login.switch'))}">${ic('back')}</button><b id="pin-who">${esc(L.sel)}</b></div>
@@ -1598,13 +2020,13 @@ async function submitPin() {
   try {
     const r = await apiRaw('login', {}, { key: S.key, user, pin_hash: hash });
     if (r.user.role === 'sales') { const e = new Error('sales'); e.code = 'FORBIDDEN'; throw e; }
-    const pins = store.get('pins', {}); pins[user.toLowerCase()] = { h: hash, role: r.user.role }; store.set('pins', pins);
+    const pins = store.get('pins', {}); pins[user.toLowerCase()] = { o: await offlineVerifier(hash), role: r.user.role }; store.set('pins', pins);
     startSession(r.user.name, r.user.role, hash, false);
   } catch (e) {
     L.busy = false; L.pin = '';
     if (e instanceof NetError) {
       const known = store.get('pins', {})[user.toLowerCase()];
-      if (known && known.h === hash && KS.get('cache')) { startSession(user, known.role, hash, true); return; }
+      if (known && known.o && known.o === await offlineVerifier(hash) && KS.get('cache')) { startSession(user, known.role, hash, true); return; }
     }
     L.err = e.code === 'BAD_PIN' ? t('err.BAD_PIN') : errMsg(e);
     if (e.code === 'BAD_KEY') L.step = 'key';
@@ -1614,7 +2036,7 @@ async function submitPin() {
 function startSession(user, role, hash, offline) {
   const sameUser = S.user === user;
   S.user = user; S.role = role; S.pin_hash = hash; S.lastActivity = Date.now();
-  KS.set('session', { user, role, pin_hash: hash }); store.set('last_user', user);
+  KS.set('session', { user, role }); SESS.set({ user, role, pin_hash: hash }); store.set('last_user', user);
   L.pin = ''; L.busy = false;
   if (!sameUser) { S.view = 'sell'; AP.list = []; AP.count = 0; AP.seen = null; S.cart = null; }
   enterApp(offline);
@@ -1631,24 +2053,25 @@ async function enterApp(offline) {
   syncOutbox();
   checkShiftGate();
   pollApprovals(); checkMyRequests();
+  devBoot();
 }
 function lock() {
   if (!S.inApp || !S.pin_hash) return;
   S.pin_hash = '';
-  KS.set('session', { user: S.user, role: S.role, pin_hash: '' });
+  KS.set('session', { user: S.user, role: S.role }); SESS.del();
   L.sel = S.user;
   showLogin('pin');
 }
 function forceRelogin(e) {
-  if (e.code === 'BAD_KEY' || e.code === 'NO_USERS') { S.pin_hash = ''; KS.del('session'); showLogin('key', t('err.' + e.code)); return; }
+  if (e.code === 'BAD_KEY' || e.code === 'NO_USERS') { S.pin_hash = ''; KS.del('session'); SESS.del(); showLogin('key', t('err.' + e.code)); return; }
   // already locked: a background request that was still in flight must not wipe the PIN being typed
   if (e.code === 'BAD_PIN' && !S.pin_hash && !$('#login').hidden && L.step === 'pin') return;
-  S.pin_hash = ''; KS.set('session', { user: S.user, role: S.role, pin_hash: '' });
+  S.pin_hash = ''; KS.set('session', { user: S.user, role: S.role }); SESS.del();
   L.sel = S.user; L.users = [];
   showLogin('pin', t('err.BAD_PIN_SESSION'));
 }
 function logout() {
-  S.pin_hash = ''; S.user = ''; S.role = ''; S.inApp = false; S.shift = null; S.cart = null; KS.del('session');
+  S.pin_hash = ''; S.user = ''; S.role = ''; S.inApp = false; S.shift = null; S.cart = null; KS.del('session'); SESS.del();
   L.sel = ''; AP.list = []; AP.count = 0;
   showLogin('users');
 }
@@ -1691,6 +2114,7 @@ async function refreshData(quiet) {
     applyPendingToLocal();
     saveCache();
     S.offline = false;
+    devCheckBlock();
     if (S.inApp) { renderShell(); RENDER[S.view] && RENDER[S.view](S.view !== 'sell'); }
     const hl = $('#held-list'); if (hl) drawHeld(hl); // an open held list is re-priced with the fresh data
     return true;
@@ -1702,7 +2126,8 @@ async function refreshData(quiet) {
 }
 
 /* ========== Shift gate ("Buka Kasir") ========== */
-const shiftNeeded = () => S.shiftsSupported && !S.shift && S.role !== 'owner' && settings().require_shift !== false;
+/** v15: only kasir accounts open the drawer; owner and manager sell without one. */
+const shiftNeeded = () => S.shiftsSupported && !S.shift && S.role === 'kasir' && settings().require_shift !== false;
 function checkShiftGate() { if (S.inApp && shiftNeeded()) showGate(); }
 function showGate() { $('#gate').hidden = false; renderGate(); }
 function hideGate() { $('#gate').hidden = true; }
@@ -1726,13 +2151,153 @@ function renderGate() {
       const r = await api('open_shift', { opening_cash: moneyVal(raw), shift_date: today(), note: $('#so-note', g).value.trim() });
       S.shift = r.shift; S.shiftsSupported = true; saveCache();
       hideGate();
-      toast(r.shift && r.shift.already ? t('gate.already') : t('gate.opened', { amount: fmtRp(r.shift ? r.shift.opening_cash : moneyVal(raw)) }), 'ok');
+      const amount = fmtRp(r.shift ? r.shift.opening_cash : moneyVal(raw)), rid = r.request_id || (r.approval || {}).request_id;
+      // v15: the opening count goes to the manager / owner for approval; selling is not blocked meanwhile
+      if (rid && r.shift && !r.shift.already) trackMyRequest(rid, 'buka_kas', t('req.buka_kas', { amount }), r.shift.shift_id);
+      toast(r.shift && r.shift.already ? t('gate.already') : t('gate.opened', { amount }) + ' · ' + t('kas.apr_pending'), 'ok', 4000);
       go('sell', true);
     } catch (e) { $('#so-err', g).textContent = e instanceof NetError ? t('gate.need_online') : errMsg(e); $('#so-ok', g).disabled = false; }
   };
   $('#so-ok', g).onclick = open;
   $('#so-cash', g).addEventListener('keydown', e => { if (e.key === 'Enter') open(); });
   setTimeout(() => { if (!isTouch()) $('#so-cash', g).focus(); }, 30);
+}
+
+/* ========== Devices (v11): where this phone / tablet / computer is while the app is open ==========
+   A one-time notice on this device (Setuju / Tidak, remembered for every app on this browser) comes before the first
+   location request. With consent the location is watched while the app is open (high accuracy, fixes up to 60 s old) and
+   goes with EVERY main-API request as data.device (see apiRawInner); device_ping on open/login and every 30 min while the
+   app is visible and nothing else was sent. The device id (kpos.device_id) is shared by the apps on this browser.
+   settings.require_device_location: a kasir/manager cannot use the app until location is allowed (owner never blocked). */
+const DEV_ID_KEY = 'kpos.device_id', DEV_CONSENT_KEY = 'kpos.device_consent', DEV_PING_MS = 30 * 60000;
+const DEV = { app: 'kasir', id: '', label: '', fix: null, status: 'prompt', watch: null, lastMain: 0, battery: null, require: false, booted: false, asking: false, waiters: [], pinged: false, pingedFix: false };
+function deviceId() {
+  if (DEV.id) return DEV.id;
+  let id = '';
+  try { id = String(localStorage.getItem(DEV_ID_KEY) || ''); } catch (e) { }
+  if (/^"[^"]*"$/.test(id)) id = id.slice(1, -1); // tolerate a JSON-encoded value
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) { id = 'dv' + uuid().replace(/-/g, '').slice(0, 22); try { localStorage.setItem(DEV_ID_KEY, id); } catch (e) { } }
+  return (DEV.id = id);
+}
+/** "Android · Chrome", "iPhone · Safari", "Windows · Edge"… made on the device from the user agent. */
+function deviceLabel(ua = navigator.userAgent || '') {
+  const touchMac = /Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1;
+  const os = /Android/i.test(ua) ? 'Android' : /iPhone|iPod/.test(ua) ? 'iPhone' : /iPad/.test(ua) || touchMac ? 'iPad' : /Windows/.test(ua) ? 'Windows'
+    : /CrOS/.test(ua) ? 'ChromeOS' : /Macintosh|Mac OS X/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : 'Perangkat';
+  const br = /Edg(A|iOS)?\//.test(ua) ? 'Edge' : /OPR\/|Opera/.test(ua) ? 'Opera' : /SamsungBrowser/.test(ua) ? 'Samsung Internet' : /Firefox|FxiOS/.test(ua) ? 'Firefox'
+    : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  return os + ' · ' + br;
+}
+function devicePayload() {
+  const o = { id: deviceId(), app: DEV.app, label: DEV.label || (DEV.label = deviceLabel()), loc_status: DEV.status };
+  if (DEV.fix) { o.lat = DEV.fix.lat; o.lng = DEV.fix.lng; o.acc = DEV.fix.acc; }
+  if (DEV.battery != null) o.battery = DEV.battery;
+  return o;
+}
+function devConsent() { try { const c = JSON.parse(localStorage.getItem(DEV_CONSENT_KEY) || 'null'); return c && typeof c.ok === 'boolean' ? c : null; } catch (e) { return null; } }
+function devSetConsent(ok) { try { localStorage.setItem(DEV_CONSENT_KEY, JSON.stringify({ ok: !!ok, at: new Date().toISOString(), app: DEV.app })); } catch (e) { } }
+/** The notice; resolves true (Setuju), false (Tidak) or null (closed without answering: asked again next time). */
+function askDeviceConsent() {
+  return new Promise(resolve => {
+    let done = false;
+    const el = openModal({
+      title: t('dev.title'), id: 'dev-consent', focus: false,
+      body: `<div class="dev-note"><span class="e" aria-hidden="true">📍</span><span id="dev-text">${esc(t('dev.notice'))}</span></div>
+        <ul class="small muted" style="margin:0;padding-inline-start:20px"><li>${esc(t('dev.n1'))}</li><li>${esc(t('dev.n2'))}</li><li>${esc(t('dev.n3'))}</li></ul>`,
+      foot: `<button class="btn" id="dev-no">${esc(t('dev.no'))}</button><button class="btn primary" id="dev-ok">${esc(t('dev.yes'))}</button>`,
+      onClose: () => { if (!done) resolve(null); }
+    });
+    const fin = ok => { done = true; dropModal(el); resolve(ok); };
+    $('#dev-ok', el).onclick = () => fin(true);
+    $('#dev-no', el).onclick = () => fin(false);
+  });
+}
+function devSetStatus(st) {
+  DEV.status = st;
+  DEV.waiters.splice(0).forEach(f => f());
+  devIndicator(); devCheckBlock();
+}
+function devStopWatch() { if (DEV.watch != null) { try { navigator.geolocation.clearWatch(DEV.watch); } catch (e) { } } DEV.watch = null; }
+function devWatch() {
+  if (DEV.watch != null) return;
+  if (!navigator.geolocation) { devSetStatus('unavailable'); return; }
+  try {
+    DEV.watch = navigator.geolocation.watchPosition(p => {
+      DEV.fix = { lat: Math.round(p.coords.latitude * 1e6) / 1e6, lng: Math.round(p.coords.longitude * 1e6) / 1e6, acc: Math.round(p.coords.accuracy || 0) };
+      devSetStatus('granted');
+      if (DEV.pinged && !DEV.pingedFix) devPing(); // the open-ping went out before the first fix: report it once
+    }, e => {
+      if (e && e.code === 1) { devStopWatch(); DEV.fix = null; devSetStatus('denied'); }
+      else if (!DEV.fix) devSetStatus('unavailable');
+    }, { enableHighAccuracy: true, maximumAge: 60000, timeout: 30000 });
+  } catch (e) { devSetStatus('unavailable'); }
+  try { if (navigator.getBattery) navigator.getBattery().then(b => { const f = () => { DEV.battery = Math.round(b.level * 100) / 100; }; f(); b.onlevelchange = f; }).catch(() => { }); } catch (e) { }
+}
+/** Waits until the browser answered (fix or error), at most ms. */
+function devWaitFix(ms) {
+  if (DEV.status !== 'prompt') return Promise.resolve();
+  return new Promise(res => { const tm = setTimeout(res, ms); DEV.waiters.push(() => { clearTimeout(tm); res(); }); });
+}
+async function devPing() {
+  if (!S.inApp || !S.pin_hash) return;
+  try {
+    const r = await api('device_ping', {});
+    DEV.pinged = true; if (DEV.fix) DEV.pingedFix = true;
+    if (r.require_location != null) DEV.require = !!r.require_location;
+  } catch (e) { }
+  devCheckBlock();
+}
+/** On app open / login: the notice once per device, then watch + device_ping. */
+async function devBoot() {
+  if (!S.inApp || DEV.asking) return;
+  deviceId(); DEV.label = deviceLabel();
+  let c = devConsent();
+  if (!c) {
+    DEV.asking = true;
+    const ok = await askDeviceConsent();
+    DEV.asking = false;
+    if (ok !== null) { devSetConsent(ok); c = { ok }; }
+  }
+  if (c && c.ok) { if (DEV.status === 'off') DEV.status = 'prompt'; devWatch(); await devWaitFix(6000); }
+  else if (c && !c.ok) { devStopWatch(); DEV.fix = null; devSetStatus('off'); }
+  DEV.booted = true;
+  await devPing();
+}
+function devTick() { if (S.inApp && S.pin_hash && document.visibilityState === 'visible' && Date.now() - DEV.lastMain >= DEV_PING_MS) devPing(); }
+setInterval(devTick, 60000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') devTick(); });
+function devIndicator() {
+  const b = $('#tb-loc'); if (!b) return;
+  const on = DEV.status === 'granted' && DEV.watch != null;
+  b.hidden = !on; b.textContent = '📍'; b.title = t('dev.sharing'); b.setAttribute('aria-label', t('dev.sharing'));
+}
+/** Location required by the owner (kasir / manager only): the app stays behind this screen until location works. */
+const devRequired = () => S.role !== 'owner' && (settings().require_device_location === true || DEV.require);
+function devCheckBlock() {
+  const box = $('#locblock'); if (!box) return;
+  const block = S.inApp && !$('#app').hidden && DEV.booted && devRequired() && DEV.status !== 'granted';
+  if (!block) { if (!box.hidden) { box.hidden = true; box.innerHTML = ''; } return; }
+  const why = DEV.status === 'off' ? 'dev.why_off' : DEV.status === 'denied' ? 'dev.why_denied' : DEV.status === 'unavailable' ? 'dev.why_unavailable' : 'dev.why_wait';
+  box.hidden = false;
+  box.innerHTML = `<div class="screen-card" id="loc-required" data-status="${esc(DEV.status)}"><div class="lb-ic" aria-hidden="true">📍</div>
+    <h2>${esc(t('dev.block_title'))}</h2>
+    <p class="center" style="margin-top:0">${esc(t('dev.block_text'))}</p>
+    <div class="dev-note small"><span>${esc(t('dev.notice'))}</span></div>
+    <p class="center" id="lb-why" style="font-weight:800;color:var(--warn)">${esc(t(why))}</p>
+    <button class="btn primary big block" id="lb-allow">${esc(t(DEV.status === 'off' ? 'dev.allow' : 'dev.retry'))}</button>
+    <div class="center" style="margin-top:10px"><button class="btn ghost sm" data-act="logout">${ic('logout')} ${esc(t('more.logout'))}</button></div></div>`;
+  $('#lb-allow', box).onclick = () => devRetry();
+}
+/** "Izinkan lokasi" on the block screen counts as the notice's Setuju (the notice is shown on that screen). */
+async function devRetry() {
+  devSetConsent(true);
+  const b = $('#lb-allow'); if (b) { b.disabled = true; b.textContent = t('dev.locating'); }
+  devStopWatch(); DEV.fix = null; DEV.status = 'prompt'; DEV.pingedFix = false;
+  devWatch();
+  await devWaitFix(10000);
+  if (DEV.status === 'prompt') devSetStatus('unavailable');
+  await devPing();
+  devCheckBlock();
 }
 
 /* ========== Sell: cart model ========== */
@@ -1912,6 +2477,7 @@ RENDER.sell = function () {
           <div class="search">${ic('search')}<input id="q" class="input" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="${esc(t('sell.search_ph'))}" aria-label="${esc(t('sell.search_ph'))}" value="${esc(SELL.q)}"></div>
           <button class="icon-btn" id="cam" data-act="cam-scan" title="${esc(t('sell.camera'))}" aria-label="${esc(t('sell.camera'))}" ${'BarcodeDetector' in window ? '' : 'hidden'}>${ic('scan')}</button>
         </div>
+        <div class="rep-banner" hidden></div>
         <div class="tools"><button class="toggle" id="grosir" data-act="grosir-toggle" aria-pressed="false">${esc(t('grosir'))}</button>${VOICE.on ? `<button class="toggle mute-chip" id="mute-chip" data-act="sale-mute" aria-pressed="false">${muteChipHtml()}</button>` : ''}<button class="cust-chip" id="cust" data-act="pick-customer"></button><button class="held-chip" id="held-chip" data-act="held-open" hidden></button></div>
         <div class="grid" id="grid" aria-label="${esc(t('sell.products'))}"></div>
       </div>
@@ -1929,7 +2495,7 @@ RENDER.sell = function () {
     SELL.built = true;
   }
   $('#paybar').hidden = S.view !== 'sell';
-  renderGrid(); renderCart(); focusSearch();
+  renderGrid(); renderCart(); focusSearch(); updateReportBanner();
 };
 /** Barcode scanners type very fast (< 50 ms per char). */
 function isFastInput() { const k = SELL.keyTimes; if (k.length < 4) return false; return (k[k.length - 1] - k[0]) / (k.length - 1) < 50; }
@@ -2456,7 +3022,9 @@ async function doSave(extra = {}) {
     return 'ok';
   } catch (e) {
     if (isRetryable(e)) {
-      if (pay.debt > 0 && S.role === 'kasir' && !extra.approver && !extra.approval_id) { toast(t('apr.need_online'), 'err', 5000); return 'error'; }
+      // security H1: an on-site approval (the approver's PIN typed here) is never written to the offline outbox
+      if (extra.approver) return 'approval_offline';
+      if (pay.debt > 0 && S.role === 'kasir' && !extra.approval_id) { toast(t('apr.need_online'), 'err', 5000); return 'error'; }
       queueOp('sale', 'save_sale', req, { rc });
       finishSale(Object.assign(rc, { pending: true, invoice_no: 'OFFLINE-' + req.client_id.slice(0, 8).toUpperCase() }));
       toast(t('outbox.queued'), 'warn', 4000);
@@ -2469,6 +3037,7 @@ async function doSave(extra = {}) {
     return 'error';
   } finally {
     saving = false;
+    if (extra.approver) { extra.approver.pin_hash = ''; if (req.approver) req.approver = { user: req.approver.user }; } // the approver hash leaves memory at once
     const b = $('#pay-ok'); if (b) { b.textContent = t('pay.finish'); payResult(b.closest('.modal-bg')); }
   }
 }
@@ -2526,10 +3095,14 @@ function drawOnSite(el) {
   const submit = async () => {
     if (!sel) { err.textContent = t('apr.choose'); return; }
     if (!/^\d{4,6}$/.test(pin.value)) { err.textContent = t('login.pin_len'); return; }
+    if (!navigator.onLine) { err.textContent = t('apr.need_online_here'); pin.value = ''; return; }
     err.textContent = ''; $('#ap-ok', body).disabled = true;
-    const hash = await pinHash(S.key, sel, pin.value);
+    let hash = await pinHash(S.key, sel, pin.value);
+    pin.value = '';
     const res = await doSave({ approver: { user: sel, pin_hash: hash } });
-    if (res === 'approval_error') { err.textContent = t('apr.bad_pin'); pin.value = ''; $('#ap-ok', body).disabled = false; return; }
+    hash = '';
+    if (res === 'approval_offline') { err.textContent = t('apr.need_online_here'); $('#ap-ok', body).disabled = false; return; }
+    if (res === 'approval_error') { err.textContent = t('apr.bad_pin'); $('#ap-ok', body).disabled = false; return; }
     if (res !== 'ok' && res !== 'queued') $('#ap-ok', body).disabled = false;
   };
   $('.pinpad', body).onclick = e => { const b = e.target.closest('[data-k]'); if (!b) return; const k = b.dataset.k; if (k === 'ok') submit(); else if (k === 'del') pin.value = pin.value.slice(0, -1); else if (pin.value.length < 6) pin.value += k; };
@@ -2866,11 +3439,16 @@ function drawOutbox(el) {
     : `<div class="empty">${ic('check')}<div>${esc(t('outbox.empty'))}</div></div>`;
 }
 
-/* ========== Barang masuk: photo of the supplier note → AI lines → confirm → save ========== */
+/* ========== Barang masuk: photo of the supplier note → AI lines → check against the note → save → locked ==========
+   v12: lines pre-filled from the note keep their photo_index; the app compares what is typed with the note live (same rules
+   as the server) and the server refuses a difference without a reason (MISMATCH). A saved goods-in gets a purchase_no and can
+   no longer be edited: "Minta koreksi" sends request_purchase_fix (manager/owner approves; the owner sees it in the log). */
 const PU = Object.assign({ supplier: '', date: '', note: '', lines: [], photo_id: '', thumb: '', scan: null }, KS.get('purchase_draft', null) || {});
 PU.result = null; PU.q = ''; PU.scanning = false; PU.scanErr = '';
+const PUH = { groups: null, loading: false, err: '' };
 const savePuDraft = () => KS.set('purchase_draft', { supplier: PU.supplier, date: PU.date, note: PU.note, lines: PU.lines, photo_id: PU.photo_id, thumb: PU.thumb, scan: PU.scan });
 const purchasePhotoRequired = () => settings().require_purchase_photo !== false;
+const MATCH_BADGE = { cocok: 'ok', tidak_cocok: 'red', perlu_cek: 'warn', tanpa_foto: 'gray', koreksi: '' };
 function puBlockReason() {
   if (!PU.lines.length) return t('pu.empty');
   if (purchasePhotoRequired() && !PU.photo_id) return t('pu.need_photo');
@@ -2883,7 +3461,35 @@ function parseAnyDate(v) {
   m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/.exec(s); if (m) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`; }
   return '';
 }
-RENDER.masuk = function () {
+const hasIdx = l => l.photo_index !== undefined && l.photo_index !== null && l.photo_index !== '';
+/** The note line a typed line came from (photo_index), or null. */
+const noteItem = l => hasIdx(l) && PU.scan && Array.isArray(PU.scan.items) ? PU.scan.items[l.photo_index] || null : null;
+function lineDiffers(l) { const it = noteItem(l); return !!(it && it.qty != null && isFinite(Number(it.qty)) && Math.abs(num(it.qty) - num(l.qty)) > 0.001); }
+/** Live comparison with the note (the server's rules), or null without a read note. */
+function puMatchNow() {
+  if (!PU.photo_id || !PU.scan || !Array.isArray(PU.scan.items)) return null;
+  const typed = PU.lines.filter(l => prodById(l.product_id)).map(l => ({ name: prodById(l.product_id).name, qty: roundQty(l.qty), photo_index: hasIdx(l) ? l.photo_index : undefined }));
+  return NoteMatch.match(typed, { items: PU.scan.items, readable: PU.scan.readable });
+}
+function diffsTableHTML(diffs, id) {
+  const q = v => v === null || v === undefined ? '—' : fmtQty(v);
+  return `<table class="tbl" id="${id}" style="margin-top:8px"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('pu.typed'))}</th><th class="r">${esc(t('pu.on_note_qty'))}</th></tr></thead><tbody>
+    ${diffs.map(d => `<tr class="bad"><td>${esc(d.name)}</td><td class="r num">${q(d.recorded_qty)}</td><td class="r num">${q(d.photo_qty)}</td></tr>`).join('')}</tbody></table>`;
+}
+function drawPuMatch() {
+  const box = $('#pu-match'); if (!box) return;
+  const m = puMatchNow();
+  if (!m || !PU.lines.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="status ${esc(m.status)} pu-match" id="pu-match-box" data-status="${esc(m.status)}"><div class="st">${ic(m.status === 'cocok' ? 'check' : 'receipt')} ${esc(t('pu.m_' + m.status))}${m.diffs.length ? ` (${m.diffs.length})` : ''}</div>
+    <div class="small">${esc(t('pu.mh_' + m.status))}</div>${m.diffs.length ? diffsTableHTML(m.diffs, 'pu-live-diffs') : ''}</div>`;
+}
+function drawPuLine(i) {
+  const row = $(`#pu-lines .pu-line[data-line="${i}"]`), l = PU.lines[i]; if (!row || !l) return;
+  const it = noteItem(l), bad = lineDiffers(l);
+  row.classList.toggle('diff', bad);
+  const nq = $('.noteq', row); if (nq) nq.textContent = bad ? t('pu.line_diff', { typed: fmtQty(l.qty), note: fmtQty(it.qty) }) : '';
+}
+RENDER.masuk = function (force) {
   if (!PU.date) PU.date = today();
   const req = purchasePhotoRequired(), sc = PU.scan, block = puBlockReason();
   const total = sum(PU.lines, l => Math.round(num(l.qty) * int(l.cost)));
@@ -2904,21 +3510,26 @@ RENDER.masuk = function () {
       <div class="grid2"><div class="field"><label class="f" for="pu-sup">${esc(t('pu.supplier'))}</label><input class="input" id="pu-sup" value="${esc(PU.supplier)}"></div>
       <div class="field"><label class="f" for="pu-date">${esc(t('date'))}</label><input class="input" type="date" id="pu-date" value="${esc(PU.date)}"></div></div>
       <div id="pu-lines">${PU.lines.map((l, i) => {
-        const p = prodById(l.product_id);
-        return `<div class="pu-line ${p ? '' : 'unmatched'}" data-line="${i}">
-          ${l.ext ? `<div class="note">${esc(t('pu.on_note'))}: <b>${esc(l.ext.name)}</b>${l.ext.score != null ? ` <span class="badge ${l.ext.score >= 0.75 ? 'ok' : l.ext.score >= 0.5 ? '' : 'warn'}">${Math.round(l.ext.score * 100)}%</span>` : ''}</div>` : ''}
-          ${l.ext ? `<select class="input" data-pu-prod="${i}" aria-label="${esc(t('product'))}">${prodOptions(l.product_id)}</select>${p ? '' : `<div class="small" style="color:var(--warn);font-weight:800;margin-top:4px">${esc(t('pu.unmatched'))}</div>`}` : `<b>${esc(p ? p.name : l.name)}</b>`}
+        const p = prodById(l.product_id), it = noteItem(l), bad = lineDiffers(l);
+        return `<div class="pu-line ${p ? '' : 'unmatched'} ${bad ? 'diff' : ''}" data-line="${i}" ${hasIdx(l) ? `data-idx="${esc(l.photo_index)}"` : ''}>
+          ${l.ext ? `<div class="note">${esc(t('pu.on_note'))}: <b>${esc(l.ext.name)}</b>${it && it.qty != null ? ` · <b class="num" data-note-qty>${esc(fmtQty(it.qty))} ${esc(it.unit || '')}</b>` : ''}${l.ext.score != null ? ` <span class="badge ${l.ext.score >= 0.75 ? 'ok' : l.ext.score >= 0.5 ? '' : 'warn'}">${Math.round(l.ext.score * 100)}%</span>` : ''}</div>` : ''}
+          ${l.ext ? `<select class="input" data-pu-prod="${i}" aria-label="${esc(t('product'))}">${prodOptions(l.product_id)}</select>${p ? '' : `<div class="small" style="color:var(--warn);font-weight:800;margin-top:4px">${esc(t('pu.unmatched'))}</div>`}` : `<b>${esc(p ? p.name : l.name)}</b> <span class="badge gray">${esc(t('pu.manual'))}</span>`}
           <div class="g3"><div><label class="f">${esc(t('qty'))}${p ? ` (${esc(p.unit || '')})` : ''}</label><input class="input num" inputmode="decimal" data-pu-qty="${i}" value="${esc(fmtQtyInput(l.qty))}"></div>
           <div><label class="f">${esc(t('pu.price_note'))}</label><input class="input num" inputmode="numeric" data-pu-cost="${i}" value="${l.cost ? esc(fmtNum(l.cost)) : ''}"></div>
-          <button class="icon-btn" data-act="pu-del" data-i="${i}" aria-label="${esc(t('delete'))}" style="color:var(--redd)">${ic('trash')}</button></div></div>`;
+          <button class="icon-btn" data-act="pu-del" data-i="${i}" aria-label="${esc(t('delete'))}" style="color:var(--redd)">${ic('trash')}</button></div>
+          <div class="noteq" role="status">${bad ? esc(t('pu.line_diff', { typed: fmtQty(l.qty), note: fmtQty(it.qty) })) : ''}</div></div>`;
       }).join('') || `<div class="empty">${esc(t('pu.empty_hint'))}</div>`}</div>
       <div class="field" style="margin-top:6px"><label class="f" for="pu-q">${esc(t('pu.add_product'))}</label><div class="search">${ic('search')}<input class="input" id="pu-q" type="search" autocomplete="off" placeholder="${esc(t('sell.search_ph'))}" value="${esc(PU.q)}"></div><div class="list" id="pu-sug" style="margin-top:6px"></div></div>
       <div class="sumrow" style="font-weight:900;font-size:19px"><span>${esc(t('pu.total_note'))}</span><span class="num" id="pu-total">${fmtRp(total)}</span></div>
+      <div id="pu-match"></div>
       <div class="small" id="pu-block" style="color:var(--warn);font-weight:800">${PU.lines.length ? esc(block) : ''}</div>
       <div class="err" id="pu-err" role="alert"></div>
-      <div class="row"><button class="btn ghost" data-act="pu-clear">${esc(t('sell.clear'))}</button><button class="btn primary big grow" data-act="pu-save" id="pu-save" ${block ? 'disabled' : ''}>${esc(t('pu.save'))}</button></div>
+      <div class="lockline">${ic('lock')} ${esc(t('pu.lock_hint'))}</div>
+      <div class="row" style="margin-top:8px"><button class="btn ghost" data-act="pu-clear">${esc(t('sell.clear'))}</button><button class="btn primary big grow" data-act="pu-save" id="pu-save" ${block ? 'disabled' : ''}>${esc(t('pu.save'))}</button></div>
     </div>
-    <div id="pu-result">${PU.result || ''}</div></div>`;
+    <div id="pu-result">${PU.result || ''}</div>
+    <div class="card pad" id="pu-hist-card" style="margin-top:12px"><div class="row"><b class="grow" style="font-size:17px">${esc(t('pu.hist'))}</b><button class="btn xs" data-act="pu-hist-refresh" aria-label="${esc(t('refresh'))}">${ic('refresh')}</button></div>
+      <div class="small muted">${esc(t('pu.hist_s'))}</div><div id="pu-hist" style="margin-top:8px"></div></div></div>`;
   const v = $('#v-masuk');
   $('#pu-photo', v).onchange = e => { const f = e.target.files[0]; if (f) scanPurchasePhoto(f); };
   $('#pu-sup', v).oninput = e => { PU.supplier = e.target.value; savePuDraft(); };
@@ -2933,9 +3544,12 @@ RENDER.masuk = function () {
   q.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const p = findBySku(q.value) || (filterProducts(q.value).length === 1 ? filterProducts(q.value)[0] : null); if (p) puAdd(p); } });
   sug();
   const recalc = () => { $('#pu-total', v).textContent = fmtRp(sum(PU.lines, l => Math.round(num(l.qty) * int(l.cost)))); savePuDraft(); };
-  $$('[data-pu-qty]', v).forEach(i => i.oninput = () => { PU.lines[+i.dataset.puQty].qty = qtyVal(i.value); recalc(); });
+  $$('[data-pu-qty]', v).forEach(i => i.oninput = () => { const k = +i.dataset.puQty; PU.lines[k].qty = qtyVal(i.value); recalc(); drawPuLine(k); drawPuMatch(); });
   $$('[data-pu-cost]', v).forEach(i => i.oninput = () => { PU.lines[+i.dataset.puCost].cost = moneyVal(i.value); recalc(); });
   $$('[data-pu-prod]', v).forEach(sel => sel.onchange = () => { const l = PU.lines[+sel.dataset.puProd]; l.product_id = sel.value ? Number(sel.value) || sel.value : null; savePuDraft(); RENDER.masuk(); });
+  drawPuMatch();
+  drawPuHist();
+  if (force || (!PUH.groups && !PUH.loading && !PUH.err)) loadPuHistory();
 };
 async function scanPurchasePhoto(file) {
   PU.scanning = true; PU.scanErr = ''; PU.result = null;
@@ -2946,7 +3560,8 @@ async function scanPurchasePhoto(file) {
     const r = await apiPhoto('scan_purchase', { image_base64: img.base64, mime: img.mime });
     const ex = r.extracted || {}, items = Array.isArray(ex.items) ? ex.items : [];
     PU.photo_id = r.photo_id || '';
-    PU.scan = { n: items.length, supplier: ex.supplier || '', invoice_no: ex.invoice_no || '' };
+    PU.scan = { n: items.length, supplier: ex.supplier || '', invoice_no: ex.invoice_no || '', readable: ex.readable !== false,
+      items: items.map(it => ({ name: String(it.name || ''), qty: it.qty === null || it.qty === undefined || it.qty === '' ? null : num(it.qty), unit: it.unit || '' })) };
     if (ex.supplier && !PU.supplier.trim()) PU.supplier = ex.supplier;
     const d = parseAnyDate(ex.date); if (d) PU.date = d;
     if (ex.invoice_no) PU.note = t('pu.note_invoice', { no: ex.invoice_no });
@@ -2956,7 +3571,7 @@ async function scanPurchasePhoto(file) {
       const ok = sg && num(sg.score) >= 0.5 && prodById(sg.product_id);
       const qty = roundQty(num(it.qty) || 1);
       const cost = int(it.unit_price) || (it.total && qty ? Math.round(num(it.total) / qty) : 0);
-      return { product_id: ok ? prodById(sg.product_id).id : null, name: it.name, qty, cost, ext: { name: it.name, unit: it.unit || '', score: sg ? num(sg.score) : null } };
+      return { product_id: ok ? prodById(sg.product_id).id : null, name: it.name, qty, cost, photo_index: index, ext: { name: it.name, unit: it.unit || '', score: sg ? num(sg.score) : null } };
     }));
   } catch (e) {
     PU.scanErr = (e instanceof NetError ? t('pu.scan_net') : errMsg(e)) + ' ' + t('pu.scan_retry');
@@ -2969,28 +3584,150 @@ function puAdd(p) {
   else PU.lines.push({ product_id: p.id, name: p.name, qty: 1, cost: 0 });
   PU.q = ''; PU.result = null; savePuDraft(); RENDER.masuk();
 }
-async function savePurchase() {
+let puSaving = false;
+/** reason = the cashier's explanation after a MISMATCH ("Simpan dengan alasan"). */
+async function savePurchase(reason) {
+  if (puSaving) return;
   const err = $('#pu-err');
   const block = puBlockReason();
-  if (block) { err.textContent = block; return; }
-  const items = PU.lines.map(l => ({ product_id: l.product_id, qty: roundQty(l.qty), cost_price: int(l.cost) }));
-  if (items.some(i => !(i.qty > 0))) { err.textContent = t('pu.bad_qty'); return; }
-  if (items.some(i => !(i.cost_price > 0))) { const ok = await confirmBox(t('pu.zero_cost')); if (!ok.ok) return; }
-  const btn = $('#pu-save'); btn.disabled = true; btn.textContent = t('saving');
+  if (block) { if (err) err.textContent = block; return; }
+  const items = PU.lines.map(l => { const it = { product_id: l.product_id, qty: roundQty(l.qty), cost_price: int(l.cost) }; if (hasIdx(l)) it.photo_index = int(l.photo_index); return it; });
+  if (items.some(i => !(i.qty > 0))) { if (err) err.textContent = t('pu.bad_qty'); return; }
+  if (!reason && items.some(i => !(i.cost_price > 0))) { const ok = await confirmBox(t('pu.zero_cost')); if (!ok.ok) return; }
+  const btn = $('#pu-save'); if (btn) { btn.disabled = true; btn.textContent = t('saving'); }
+  const mmBtn = $('#pu-mm-save'); if (mmBtn) mmBtn.disabled = true;
   const before = new Map(PU.lines.map(l => { const p = prodById(l.product_id); return [String(l.product_id), p ? p.stock : 0]; }));
+  const lines = PU.lines.map(l => ({ product_id: l.product_id, qty: roundQty(l.qty) }));
+  puSaving = true;
   try {
     const data = { purchase_date: PU.date || today(), supplier: PU.supplier.trim(), note: PU.note.trim(), items };
     if (PU.photo_id) data.photo_id = PU.photo_id;
+    if (reason) data.mismatch_reason = reason;
     const r = await api('save_purchase', data);
     applyStock(r.stock);
-    PU.result = `<div class="card pad" id="pu-res" style="border-color:#5EEAD4"><div class="row" style="margin-bottom:8px"><span class="badge ok">${ic('check')} ${esc(t('pu.saved'))}</span></div><table class="tbl"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('stock'))}</th></tr></thead><tbody>
-      ${(r.stock || []).map(s => { const p = prodById(s.product_id) || {}; return `<tr><td>${esc(p.name || s.product_id)}</td><td class="r num">${fmtQty(before.get(String(s.product_id)))} → <b>${fmtQty(s.stock)}</b></td></tr>`; }).join('')}</tbody></table></div>`;
+    const m = r.match || { status: PU.photo_id ? 'perlu_cek' : 'tanpa_foto', diffs: [] }, no = r.purchase_no || '';
+    const qtyOf = new Map(); lines.forEach(l => qtyOf.set(String(l.product_id), roundQty((qtyOf.get(String(l.product_id)) || 0) + l.qty)));
+    PU.result = `<div class="card pad" id="pu-res" data-no="${esc(no)}" data-match="${esc(m.status)}" style="border-color:#5EEAD4">
+      <div class="row wrap" style="margin-bottom:8px"><span class="badge ok">${ic('check')} ${esc(t('pu.saved'))}</span>${no ? `<b class="num" id="pu-res-no">${esc(no)}</b>` : ''}<span class="badge ${MATCH_BADGE[m.status] || 'gray'}" id="pu-res-match">${esc(t('pu.m_' + m.status))}</span></div>
+      ${reason ? `<div class="small" id="pu-res-reason" style="margin-bottom:6px">${esc(t('pu.mm_reason'))}: <b>“${esc(reason)}”</b></div>` : ''}
+      <table class="tbl"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('qty'))}</th><th class="r">${esc(t('stock'))}</th></tr></thead><tbody>
+      ${(r.stock || []).map(s => { const p = prodById(s.product_id) || {}; return `<tr><td>${esc(p.name || s.product_id)}</td><td class="r num">${fmtQty(qtyOf.get(String(s.product_id)))} ${esc(p.unit || '')}</td><td class="r num">${fmtQty(before.get(String(s.product_id)))} → <b>${fmtQty(s.stock)}</b></td></tr>`; }).join('')}</tbody></table>
+      <div class="lockline" id="pu-res-locked">${ic('lock')} ${esc(t('pu.locked'))}</div>
+      ${no ? `<button class="btn sm" data-act="pu-fix" data-no="${esc(no)}" id="pu-res-fix" style="margin-top:8px">${esc(t('pu.fix_btn'))}</button>` : ''}</div>`;
     Object.assign(PU, { lines: [], note: '', photo_id: '', thumb: '', scan: null, supplier: '' }); savePuDraft();
+    const mm = $('#pu-mismatch'); if (mm) dropModal(mm);
     toast(t('saved'), 'ok');
-    RENDER.masuk();
+    PUH.groups = null;
+    RENDER.masuk(true);
   } catch (e) {
-    err.textContent = errMsg(e); btn.disabled = false; btn.textContent = t('pu.save');
-  }
+    if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = t('pu.save'); }
+    if (mmBtn && mmBtn.isConnected) mmBtn.disabled = false;
+    if (e.code === 'MISMATCH') { openPuMismatch((e.res && e.res.match) || puMatchNow() || { diffs: [] }); return; }
+    const msg = errMsg(e), mmErr = $('#pu-mm-err');
+    if (mmErr) mmErr.textContent = msg; else if (err) err.textContent = msg;
+  } finally { puSaving = false; }
+}
+/** Server said MISMATCH: the differences in red; fix the quantities or save with a reason. */
+function openPuMismatch(match) {
+  const old = $('#pu-mismatch'); if (old) dropModal(old);
+  const diffs = match.diffs || [];
+  const el = openModal({
+    title: t('pu.mm_title'), id: 'pu-mismatch', focus: false,
+    body: `<div class="status tidak_cocok" style="margin-bottom:6px"><div class="st">${ic('receipt')} ${esc(t('pu.mm_head', { n: diffs.length }))}</div><div class="small">${esc(t('pu.mm_hint'))}</div></div>
+      ${diffs.length ? diffsTableHTML(diffs, 'pu-mm-diffs') : ''}
+      <div class="field" style="margin-top:12px"><label class="f" for="pu-mm-reason">${esc(t('pu.mm_reason'))} *</label><textarea class="input" id="pu-mm-reason" rows="2" maxlength="300" placeholder="${esc(t('pu.mm_reason_ph'))}"></textarea></div>
+      <div class="err" id="pu-mm-err" role="alert"></div>`,
+    foot: `<button class="btn" id="pu-mm-fix">${ic('back')} ${esc(t('pu.mm_fix'))}</button><button class="btn primary" id="pu-mm-save">${esc(t('pu.mm_save'))}</button>`
+  });
+  $('#pu-mm-fix', el).onclick = () => {
+    dropModal(el);
+    const i = PU.lines.findIndex(lineDiffers); const inp = $(`[data-pu-qty="${i < 0 ? 0 : i}"]`);
+    if (inp) { inp.scrollIntoView({ block: 'center' }); inp.focus(); inp.select(); }
+  };
+  $('#pu-mm-reason', el).addEventListener('input', () => { $('#pu-mm-err', el).textContent = ''; });
+  $('#pu-mm-save', el).onclick = () => {
+    const r = $('#pu-mm-reason', el).value.trim();
+    if (!r) { $('#pu-mm-err', el).textContent = t('required') + ': ' + t('pu.mm_reason'); $('#pu-mm-reason', el).focus(); return; }
+    savePurchase(r);
+  };
+}
+/* ---- History of goods-in (last 14 days), grouped by purchase_no; corrections only through a request ---- */
+function groupPurchases(rows) {
+  const g = new Map();
+  rows.filter(r => r.purchase_no).forEach(r => {
+    let x = g.get(r.purchase_no);
+    if (!x) { x = { no: r.purchase_no, date: r.purchase_date, supplier: r.supplier || '', user: r.user || '', match: '', notes: '', lines: new Map(), fixes: 0, base: false, order: 0 }; g.set(r.purchase_no, x); }
+    if (r.match_status === 'koreksi') x.fixes++;
+    else { if (!x.base || String(r.purchase_date) < String(x.date)) x.date = r.purchase_date; x.base = true; x.match = r.match_status || ''; x.notes = r.match_notes || ''; x.supplier = r.supplier || ''; x.user = r.user || ''; }
+    x.order = Math.max(x.order, num(r.id));
+    const k = String(r.product_id), ln = x.lines.get(k) || { product_id: r.product_id, name: r.name, qty: 0 };
+    ln.qty = roundQty(ln.qty + num(r.qty)); x.lines.set(k, ln);
+  });
+  return [...g.values()].filter(x => x.base).map(x => Object.assign(x, { lines: [...x.lines.values()] }))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.order - a.order || String(b.no).localeCompare(String(a.no)));
+}
+async function loadPuHistory() {
+  if (PUH.loading) return;
+  PUH.loading = true; drawPuHist();
+  try {
+    const r = await api('get_sales', { from: addDays(today(), -13), to: today() });
+    PUH.groups = groupPurchases(r.purchases || []); PUH.err = '';
+  } catch (e) { PUH.err = e instanceof NetError ? t('pu.hist_offline') : errMsg(e); }
+  PUH.loading = false; drawPuHist();
+}
+const pendingFix = no => MYREQ.list.find(r => r.kind === 'purchase_fix' && r.ref === no && r.user === S.user && r.status === 'pending');
+function drawPuHist() {
+  const box = $('#pu-hist'); if (!box) return;
+  if (!PUH.groups) { box.innerHTML = PUH.err ? `<div class="small red">${esc(PUH.err)}</div>` : `<div class="spinner"></div>`; return; }
+  box.innerHTML = PUH.groups.length ? PUH.groups.slice(0, 40).map(g => {
+    const pend = pendingFix(g.no);
+    return `<div class="hist" data-no="${esc(g.no)}"><div class="h"><b class="num">${esc(g.no)}</b><span class="badge ${MATCH_BADGE[g.match] || 'gray'}">${esc(t('pu.m_' + (g.match || 'tanpa_foto')))}</span>${g.fixes ? `<span class="badge">${esc(t('pu.n_fixes', { n: g.fixes }))}</span>` : ''}${pend ? `<span class="badge warn" data-pending="${esc(pend.id)}">${esc(t('pu.fix_waiting'))}</span>` : ''}</div>
+      <div class="small muted">${esc(fmtDate(g.date))}${g.supplier ? ' · ' + esc(g.supplier) : ''}${g.user ? ' · ' + esc(g.user) : ''}</div>
+      ${g.lines.map(l => { const p = prodById(l.product_id); return `<div class="hl"><span>${esc(p ? p.name : l.name)}</span><b class="num">${fmtQty(l.qty)} ${esc(p ? p.unit || '' : '')}</b></div>`; }).join('')}
+      <div class="row" style="justify-content:space-between;margin-top:6px"><span class="lockline" style="margin:0">${ic('lock')} ${esc(t('pu.locked_short'))}</span><button class="btn xs" data-act="pu-fix" data-no="${esc(g.no)}" ${pend ? 'disabled' : ''}>${esc(t('pu.fix_btn'))}</button></div></div>`;
+  }).join('') : `<div class="muted small">${esc(t('pu.hist_none'))}</div>`;
+}
+async function openPuFix(no) {
+  let g = (PUH.groups || []).find(x => x.no === no);
+  if (!g) { await loadPuHistory(); g = (PUH.groups || []).find(x => x.no === no); }
+  if (!g) { toast(PUH.err || t('err.NOT_FOUND'), 'err'); return; }
+  const direct = isApprover();
+  const el = openModal({
+    title: t('pu.fix_title', { no }), id: 'pu-fix', focus: false,
+    body: `<p style="margin-top:0"><b class="num">${esc(no)}</b> · ${esc(fmtDate(g.date))}${g.supplier ? ' · ' + esc(g.supplier) : ''}</p>
+      <p class="small muted">${esc(t(direct ? 'pu.fix_hint_mgr' : 'pu.fix_hint'))}</p>
+      <div class="list" id="fx-lines">${g.lines.map(l => { const p = prodById(l.product_id); return `<div class="li" data-fix-line="${esc(l.product_id)}" style="min-height:0;padding:8px 10px"><div class="grow"><div class="t">${esc(p ? p.name : l.name)}</div><div class="s">${esc(t('pu.fix_now', { qty: fmtQty(l.qty), unit: p ? p.unit || '' : '' }))}</div></div>
+        <label class="sr-only" for="fx-q-${esc(l.product_id)}">${esc(t('pu.fix_new'))}</label><input class="input num" id="fx-q-${esc(l.product_id)}" data-fix-qty="${esc(l.product_id)}" inputmode="decimal" autocomplete="off" style="width:104px;font-weight:800;font-size:18px" value="${esc(fmtQtyInput(l.qty))}"></div>`; }).join('')}</div>
+      <div class="field" style="margin-top:12px"><label class="f" for="fx-reason">${esc(t('reason'))} *</label><textarea class="input" id="fx-reason" rows="2" maxlength="300" placeholder="${esc(t('pu.fix_reason_ph'))}"></textarea></div>
+      <div class="err" id="fx-err" role="alert"></div><div id="fx-res"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button><button class="btn primary" id="fx-send">${ic('send')} ${esc(t(direct ? 'pu.fix_apply' : 'pu.fix_send'))}</button>`
+  });
+  $('#fx-reason', el).addEventListener('input', () => { $('#fx-err', el).textContent = ''; });
+  $('#fx-send', el).onclick = async () => {
+    const err = $('#fx-err', el), reason = $('#fx-reason', el).value.trim();
+    const lines = [];
+    for (const l of g.lines) {
+      const raw = $(`[data-fix-qty="${l.product_id}"]`, el).value.trim(), q = qtyVal(raw);
+      if (raw === '' || !/\d/.test(raw) || !(q >= 0)) { err.textContent = t('sc.bad', { name: l.name }); return; }
+      lines.push({ product_id: l.product_id, qty: q });
+    }
+    if (!lines.some((x, i) => Math.abs(x.qty - g.lines[i].qty) > 0.0005)) { err.textContent = t('pu.fix_nothing'); return; }
+    if (!reason) { err.textContent = t('required') + ': ' + t('reason'); $('#fx-reason', el).focus(); return; }
+    err.textContent = ''; $('#fx-send', el).disabled = true;
+    try {
+      const r = await api('request_purchase_fix', { purchase_no: no, lines, reason });
+      if (r.applied) {
+        applyStock(r.stock); dropModal(el); toast(t('pu.fix_applied'), 'ok', 4000);
+      } else {
+        const id = r.request_id || (r.approval || {}).request_id;
+        trackMyRequest(id, 'purchase_fix', t('req.purchase_fix', { no }), no);
+        $('#fx-res', el).innerHTML = `<div class="status perlu_cek" id="fx-pending"><div class="st">${ic('lock')} ${esc(t('pu.fix_waiting'))}</div><div>${esc(t('apr.request_id'))}: <b>${esc(id)}</b></div><div class="small">${esc(t('pu.fix_owner_sees'))}</div></div>`;
+        $('#fx-send', el).hidden = true;
+        $$('[data-fix-qty], #fx-reason', el).forEach(x => { x.disabled = true; });
+      }
+      PUH.groups = null; loadPuHistory();
+    } catch (e) { err.textContent = e instanceof NetError ? t('apr.need_online') : errMsg(e); $('#fx-send', el).disabled = false; }
+  };
 }
 
 /* ========== Kas: cash in/out, expenses, close shift (blind count) ========== */
@@ -2999,7 +3736,7 @@ RENDER.kas = function () {
   const v = $('#v-kas'), sh = S.shift;
   const pend = S.outbox.filter(e => e.kind === 'cash_move' || e.kind === 'expense');
   let inner;
-  if (!S.shiftsSupported && S.role === 'owner') inner = `<div class="card pad empty">${esc(t('kas.owner_none'))}</div>`;
+  if ((!S.shiftsSupported || S.role !== 'kasir') && !sh) inner = `<div class="card pad empty" id="kas-mgr-none">${esc(t('kas.owner_none'))}</div>`;
   else if (!sh) inner = `<div class="card pad center" id="kas-none"><p style="font-size:18px;margin-top:0"><b>${esc(t('kas.closed'))}</b></p><button class="btn primary big" data-act="gate-open">${ic('cash')} ${esc(t('gate.open'))}</button></div>`;
   else inner = `<div class="card pad" id="kas-mine">
       <div class="row wrap"><b class="grow" style="font-size:18px">${esc(t('kas.open_since', { time: jktTime(sh.opened_at) }))}</b><span class="badge ok">${esc(sh.shift_id || '')}</span></div>
@@ -3010,6 +3747,7 @@ RENDER.kas = function () {
         <div class="sumrow"><span>${esc(t('kas.cash_out'))}</span><b class="num" id="kas-cout">${int(sh.cash_out) ? '-' : ''}${fmtRp(sh.cash_out)}</b></div>
       </div>
       ${sh.expected_cash == null ? `<p class="small muted" id="kas-blind" style="margin:0">${ic('lock')} ${esc(t('kas.blind'))}</p>` : ''}
+      ${openingStatusHTML()}
       ${pend.length ? `<p class="small" style="color:var(--warn);font-weight:800">${esc(t('kas.pending', { n: pend.length }))}</p>` : ''}
       <div class="kas-big">
         <button class="btn" id="kas-in" data-act="cash-move" data-type="in">${ic('in')} ${esc(t('kas.btn_in'))}</button>
@@ -3018,7 +3756,9 @@ RENDER.kas = function () {
         <button class="btn primary" id="kas-close" data-act="shift-close">${ic('lock')} ${esc(t('kas.btn_close'))}</button>
       </div></div>
       <div class="card pad" style="margin-top:12px"><b>${esc(t('kas.moves'))}</b><div class="list" id="kas-moves" style="margin-top:8px">${shiftMoves(sh).slice().reverse().map(m => `<div class="row small"><span class="badge ${m.type === 'in' ? 'ok' : 'gray'}">${m.type === 'in' ? '+' : '−'}</span><span class="grow">${esc(m.note || '')}</span><b class="num">${fmtRp(m.amount)}</b></div>`).join('') || `<div class="muted small">${esc(t('no_data'))}</div>`}</div></div>`;
-  v.innerHTML = `<div class="wrapc"><h1>${esc(t('tab.kas'))}</h1>${inner}</div>`;
+  v.innerHTML = `<div class="wrapc"><h1>${esc(t('tab.kas'))}</h1><div class="rep-banner" hidden></div>${inner}</div>`;
+  updateReportBanner();
+  const or = openingRequest(); if (or && or.status === 'pending' && !RENDER.kasChecking) { RENDER.kasChecking = true; checkMyRequests().finally(() => { RENDER.kasChecking = false; }); }
 };
 function openCashMove(type) {
   const el = openModal({
@@ -3093,34 +3833,75 @@ async function openCloseShift() {
     } catch (e) { $('#cs-err', el).textContent = e instanceof NetError ? t('kas.need_online') : errMsg(e); $('#cs-ok', el).disabled = false; }
   };
 }
+/* v15: the closing report in numbers (transactions, pieces, sales per method, cash) — shown after "Tutup kasir" and sent with one
+   tap per number (shop / manager / owner, settings wa_*_number) through wa.me; the cashier presses Send in WhatsApp.
+   The message is always Indonesian plain text. Never cost or profit. */
+const tid = (k, v) => { let s = I18N.id[k] || k; if (v) s = s.replace(/\{(\w+)\}/g, (m, x) => v[x] != null ? v[x] : m); return s; };
+function shiftMethods(sh) { return { tunai: int(sh.cash_sales), transfer: int(sh.transfer_sales), qris: int(sh.qris_sales), hutang: int(sh.debt_sales) }; }
 function shiftReportHTML(sh) {
-  const st = settings(), d = int(sh.difference);
-  const row = (k, v, b) => `<div class="r2 ${b ? 'b' : ''}"><span>${esc(k)}</span><span>${esc(v)}</span></div>`;
+  const st = settings(), d = int(sh.difference), m = shiftMethods(sh);
+  const row = (k, v, b, id) => `<div class="r2 ${b ? 'b' : ''}" ${id ? `id="${id}"` : ''}><span>${esc(k)}</span><span>${esc(v)}</span></div>`;
   return `<div class="receipt w${paperW()}" id="shift-report"><div class="c b big">${esc(st.store_name)}</div><div class="c b">${esc(t('kas.report'))}</div><div class="ln"></div>
     ${row(t('rc.cashier'), sh.cashier)}${row(t('date'), fmtDate(sh.shift_date))}${row(t('kas.t_open'), fmtDateTime(sh.opened_at))}${row(t('kas.t_close'), sh.closed_at ? fmtDateTime(sh.closed_at) : '—')}
-    <div class="ln"></div>${row(t('kas.n_sales'), fmtNum(sh.sales_count))}${row(t('kas.sales_total'), fmtRp(sh.sales_total))}<div class="ln"></div>
-    ${row(t('kas.opening'), fmtRp(sh.opening_cash))}${row(t('kas.cash_sales'), fmtRp(sh.cash_sales))}${row(t('kas.cash_payments'), fmtRp(sh.cash_payments))}${row(t('kas.cash_in'), fmtRp(sh.cash_in))}${row(t('kas.cash_out'), (int(sh.cash_out) ? '-' : '') + fmtRp(sh.cash_out))}
-    <div class="ln"></div>${row(t('kas.expected'), fmtRp(sh.expected_cash), true)}${row(t('kas.counted'), fmtRp(sh.counted_cash), true)}
+    <div class="ln"></div>${row(t('kas.n_sales'), fmtNum(sh.sales_count), false, 'sr-count')}${row(t('kas.items'), fmtQty(sh.items_qty), false, 'sr-items')}${row(t('kas.sales_total'), fmtRp(sh.sales_total), true, 'sr-total')}
+    <div class="ln"></div><div class="b">${esc(t('kas.by_method'))}</div>
+    ${row(t('pm.tunai'), fmtRp(m.tunai), false, 'sr-m-tunai')}${row(t('pm.transfer'), fmtRp(m.transfer), false, 'sr-m-transfer')}${row(t('pm.qris'), fmtRp(m.qris), false, 'sr-m-qris')}${row(t('pm.hutang'), fmtRp(m.hutang), false, 'sr-m-hutang')}
+    <div class="ln"></div>${row(t('kas.opening'), fmtRp(sh.opening_cash))}${row(t('kas.cash_sales'), fmtRp(sh.cash_sales))}${row(t('kas.cash_payments'), fmtRp(sh.cash_payments), false, 'sr-cpay')}${row(t('kas.cash_in'), fmtRp(sh.cash_in))}${row(t('kas.cash_out'), (int(sh.cash_out) ? '-' : '') + fmtRp(sh.cash_out))}
+    <div class="ln"></div>${row(t('kas.expected'), fmtRp(sh.expected_cash), true, 'sr-expected')}${row(t('kas.counted'), fmtRp(sh.counted_cash), true, 'sr-counted')}
     <div class="r2 big"><span>${esc(t('kas.difference'))}</span><span id="sr-diff" data-diff="${d}">${d > 0 ? '+' : ''}${esc(fmtRp(d))}</span></div>
     ${sh.note ? `<div class="ln"></div><div>${esc(sh.note)}</div>` : ''}</div>`;
 }
+/** Compact plain text for WhatsApp / copy (Indonesian). */
 function shiftReportText(sh) {
-  const d = int(sh.difference);
-  return [`*${t('kas.report')} — ${settings().store_name}*`, `${t('rc.cashier')}: ${sh.cashier} · ${fmtDate(sh.shift_date)}`, `${t('kas.n_sales')}: ${fmtNum(sh.sales_count)} · ${t('kas.sales_total')}: ${fmtRp(sh.sales_total)}`,
-    `${t('kas.opening')}: ${fmtRp(sh.opening_cash)}`, `${t('kas.cash_sales')}: ${fmtRp(sh.cash_sales)}`, `${t('kas.cash_payments')}: ${fmtRp(sh.cash_payments)}`, `${t('kas.cash_in')}: ${fmtRp(sh.cash_in)}`, `${t('kas.cash_out')}: -${fmtRp(sh.cash_out)}`,
-    `${t('kas.expected')}: *${fmtRp(sh.expected_cash)}*`, `${t('kas.counted')}: *${fmtRp(sh.counted_cash)}*`, `${t('kas.difference')}: *${d > 0 ? '+' : ''}${fmtRp(d)}*`].join('\n');
+  const d = int(sh.difference), m = shiftMethods(sh), tm = x => x ? jktTime(x) : '–';
+  return [
+    tid('rep.head', { store: settings().store_name || 'Khair Mart' }),
+    `${tid('rc.cashier')}: ${sh.cashier} · ${fmtDate(sh.shift_date)} ${tm(sh.opened_at)}–${tm(sh.closed_at)}`,
+    `${tid('kas.n_sales')}: ${fmtNum(sh.sales_count)} · ${tid('kas.items')}: ${fmtQty(sh.items_qty)}`,
+    `${tid('kas.sales_total')}: ${fmtRp(sh.sales_total)}`,
+    `${tid('pm.tunai')}: ${fmtRp(m.tunai)} · ${tid('pm.transfer')}: ${fmtRp(m.transfer)} · ${tid('pm.qris')}: ${fmtRp(m.qris)} · ${tid('pm.hutang')}: ${fmtRp(m.hutang)}`,
+    `${tid('kas.cash_payments')}: ${fmtRp(sh.cash_payments)}`,
+    `${tid('rep.cash')}: ${tid('kas.opening').toLowerCase()} ${fmtRp(sh.opening_cash)}, ${tid('kas.cash_in').toLowerCase()} ${fmtRp(sh.cash_in)}, ${tid('kas.cash_out').toLowerCase()} ${fmtRp(sh.cash_out)}`,
+    `${tid('kas.expected')}: ${fmtRp(sh.expected_cash)} · ${tid('kas.counted')}: ${fmtRp(sh.counted_cash)} · ${tid('kas.difference')}: ${d > 0 ? '+' : ''}${fmtRp(d)}`
+  ].join('\n');
 }
+const waNum = raw => normPhone(raw) || String(raw || '').replace(/\D/g, '');
+const REPORT_TO = [['shop', 'wa_shop_number'], ['manager', 'wa_manager_number'], ['owner', 'wa_owner_number']];
 function showShiftReport(sh) {
   if (!sh) return;
-  const d = int(sh.difference);
+  const d = int(sh.difference), text = shiftReportText(sh), st = settings();
+  const wa = REPORT_TO.map(([k, f]) => [k, waNum(st[f])]).filter(([, n]) => n);
   const el = openModal({
     title: t('kas.report'), id: 'shift-result-modal',
-    body: `<div class="status ${d === 0 ? 'cocok' : 'tidak_cocok'}" id="shift-result"><div class="st">${esc(d === 0 ? t('kas.balanced') : d < 0 ? t('kas.short', { amount: fmtRp(-d) }) : t('kas.over', { amount: fmtRp(d) }))}</div></div>${shiftReportHTML(sh)}`,
+    body: `<div class="status ${d === 0 ? 'cocok' : 'tidak_cocok'}" id="shift-result"><div class="st">${esc(d === 0 ? t('kas.balanced') : d < 0 ? t('kas.short', { amount: fmtRp(-d) }) : t('kas.over', { amount: fmtRp(d) }))}</div></div>
+      <div class="card pad" id="sr-send" style="margin-bottom:12px;box-shadow:none"><b>${esc(t('rep.send_title'))}</b><div class="small muted" style="margin:2px 0 8px">${esc(wa.length ? t('rep.send_hint') : t('rep.no_numbers'))}</div>
+        <div class="list">${wa.map(([k, n]) => `<a class="btn block wa-send" id="sr-wa-${k}" data-to="${k}" target="_blank" rel="noopener" href="${esc(`https://wa.me/${n}?text=${encodeURIComponent(text)}`)}">${ic('wa')} ${esc(t('rep.to_' + k))}</a>`).join('')}
+        <button class="btn block" id="sr-copy-text">${ic('copy')} ${esc(t('rep.copy'))}</button></div></div>
+      ${shiftReportHTML(sh)}`,
     foot: `<button class="btn sm" id="sr-print">${ic('print')} ${esc(t('print'))}</button><button class="btn sm" id="sr-copy">${ic('copy')} ${esc(t('copy'))}</button><button class="btn primary sm grow" data-act="modal-close" id="sr-done">${esc(t('done'))}</button>`,
     onClose: () => checkShiftGate()
   });
   $('#sr-print', el).onclick = () => printHTML(shiftReportHTML(sh));
-  $('#sr-copy', el).onclick = async () => { const ok = await copyText(shiftReportText(sh)); toast(ok ? t('copied') : t('copy_failed'), ok ? 'ok' : 'err'); };
+  const cp = async () => { const ok = await copyText(text); toast(ok ? t('copied') : t('copy_failed'), ok ? 'ok' : 'err'); };
+  $('#sr-copy', el).onclick = cp; $('#sr-copy-text', el).onclick = cp;
+}
+/* "Waktunya tutup kas & kirim laporan": at/after settings.report_time (default 21:00, Jakarta) while a shift is open. */
+const reportTime = () => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(settings().report_time || '')) ? settings().report_time : '21:00';
+function reportDue() { return !!(S.inApp && S.shift && S.shift.status !== 'closed' && jktTime(new Date()) >= reportTime() && !(KS.get('report_snooze', 0) > Date.now())); }
+function updateReportBanner() {
+  const due = reportDue();
+  $$('.rep-banner').forEach(b => {
+    b.hidden = !due;
+    b.innerHTML = due ? `<span aria-hidden="true">🕘</span><span class="grow">${esc(t('rep.banner', { time: reportTime() }))}</span><button class="btn xs" data-act="shift-close">${esc(t('kas.btn_close'))}</button><button class="icon-btn ghost sm" data-act="report-snooze" aria-label="${esc(t('close'))}">${ic('x')}</button>` : '';
+  });
+}
+setInterval(updateReportBanner, 60000);
+/** The opening count's approval (buka_kas) for the open shift, as tracked in "Permintaan saya". */
+const openingRequest = () => S.shift ? MYREQ.list.find(r => r.kind === 'buka_kas' && r.ref === S.shift.shift_id && r.user === S.user) : null;
+function openingStatusHTML() {
+  const r = openingRequest(); if (!r) return '';
+  const st = r.status === 'used' ? 'approved' : r.status;
+  return `<div class="status ${st === 'approved' ? 'cocok' : st === 'rejected' ? 'tidak_cocok' : 'perlu_cek'}" id="kas-open-apr" data-status="${esc(st)}" style="margin:10px 0 0;padding:10px 12px"><div class="small" style="font-weight:800">${esc(t('kas.apr_' + (['approved', 'rejected'].includes(st) ? st : 'pending'), { name: r.by || '', note: r.note || '' }))}</div></div>`;
 }
 
 /* ========== Lainnya ========== */
@@ -3144,30 +3925,149 @@ RENDER.more = function () {
     </div>
     <p class="center small muted" style="margin-top:16px"><a href="${esc(ownerHref())}" class="owner-link">${esc(t('login.owner_app'))}</a><br>Khair Kasir ${esc(APP_VERSION)}${MOCK ? ' · DEMO' : ''}</p></div>`;
 };
+/* ========== Terima bayar hutang (v13): tunai / transfer / QRIS, the transfer slip read by the AI (scan_payment), and
+   which invoices the payment covers ("Bagian dari faktur no. …", partial allowed). An amount different from the slip
+   needs a reason or a correction (server: MISMATCH). Offline: queued in the outbox with all these fields. ========== */
+const payAccounts = () => (Array.isArray(settings().bank_accounts) ? settings().bank_accounts : []).filter(a => a && a.active !== false && a.id);
 function openPayment(c) {
-  let method = 'tunai';
+  const P = { method: 'tunai', amount: int(c.debt_balance), date: today(), bank: '', ref: '', account_id: '', photo_id: '', slip: null, thumb: '', scanning: false, scanErr: '',
+    docs: null, docsErr: '', alloc: {}, reason: '', note: '', saving: false };
   const el = openModal({
-    title: t('more.debt_pay'), id: 'debt-pay',
-    body: `<p style="margin-top:0"><b>${esc(c.name)}</b><br><span class="muted">${esc(t('debt'))}: <b class="red num" id="py-debt">${fmtRp(c.debt_balance)}</b></span></p>
-      <div class="field"><label class="f" for="py-amt">${esc(t('amount'))} (Rp)</label><input class="input money" id="py-amt" inputmode="numeric" value="${esc(fmtNum(c.debt_balance))}" autofocus></div>
-      <div class="field"><label class="f">${esc(t('pay.method'))}</label><div class="seg" id="py-m">${['tunai', 'transfer', 'qris'].map(m => `<button type="button" data-m="${m}" class="${m === method ? 'on' : ''}">${esc(t('pm.' + m))}</button>`).join('')}</div></div>
-      <div class="field"><label class="f" for="py-note">${esc(t('notes'))}</label><input class="input" id="py-note"></div><div class="err" id="py-err" role="alert"></div>`,
+    title: t('more.debt_pay'), id: 'debt-pay', focus: false, body: '',
     foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="py-ok">${esc(t('save'))}</button>`
   });
-  $('#py-m', el).onclick = e => { const b = e.target.closest('[data-m]'); if (!b) return; method = b.dataset.m; $$('#py-m button', el).forEach(x => x.classList.toggle('on', x === b)); };
+  const body = $('.modal-b', el);
+  const slipAmt = () => P.slip ? int(P.slip.amount) : 0;
+  const mismatch = () => P.method !== 'tunai' && !!P.photo_id && slipAmt() > 0 && slipAmt() !== P.amount;
+  const allocList = () => Object.keys(P.alloc).map(ref => ({ ref, amount: int(P.alloc[ref]) }));
+  const allocSum = () => sum(allocList(), a => a.amount);
+  const draw = () => {
+    const accts = payAccounts(), sl = P.slip || {};
+    body.innerHTML = `<p style="margin-top:0"><b id="py-cust">${esc(c.name)}</b><br><span class="muted">${esc(t('debt'))}: <b class="red num" id="py-debt">${fmtRp(c.debt_balance)}</b></span></p>
+      <div class="field"><label class="f">${esc(t('pay.method'))}</label><div class="seg" id="py-m">${['tunai', 'transfer', 'qris'].map(m => `<button type="button" data-m="${m}" id="py-m-${m}" class="${m === P.method ? 'on' : ''}">${esc(t('pm.' + m))}</button>`).join('')}</div></div>
+      ${P.method === 'tunai' ? '' : `<div class="slip ${P.photo_id ? 'ok' : ''}" id="py-slip">
+        ${P.thumb ? `<img class="thumb" src="${esc(P.thumb)}" alt="${esc(t('py.slip'))}">` : `<div class="thumb">${ic('camera')}</div>`}
+        <div class="grow" style="min-width:150px">${P.scanning ? `<div class="row"><div class="spinner" style="width:22px;height:22px;border-width:3px;margin:0"></div><b>${esc(t('py.reading'))}</b></div>`
+          : P.photo_id ? `<b class="okc" id="py-slip-ok">${esc(t('py.slip_ok'))}</b><div class="small" id="py-sender">${esc(t('py.sender'))}: <b>${esc(sl.sender_name || '—')}</b></div><div class="small muted">${esc([sl.bank, sl.transfer_ref, sl.date ? fmtDate(parseAnyDate(sl.date) || sl.date) : ''].filter(Boolean).join(' · '))}${slipAmt() ? ' · ' + fmtRp(slipAmt()) : ''}</div>${sl.readable === false ? `<div class="small" style="color:var(--warn);font-weight:800">${esc(t('py.unreadable'))}</div>` : ''}`
+          : P.scanErr ? `<span class="red small">${esc(P.scanErr)}</span>` : `<b>${esc(t('py.slip'))}</b><div class="small muted">${esc(t('py.slip_hint'))}</div>`}</div>
+        <label class="btn ${P.photo_id ? 'sm' : 'primary'}" for="py-photo" id="py-photo-btn" ${P.scanning ? 'aria-disabled="true" style="pointer-events:none"' : ''}>${ic('camera')} ${esc(P.photo_id ? t('pu.photo_retake') : t('py.slip_take'))}</label>${PHOTO_INPUT('py-photo')}</div>
+        <div class="grid2"><div class="field"><label class="f" for="py-bank">${esc(t('py.bank'))}</label><input class="input" id="py-bank" maxlength="40" autocomplete="off" value="${esc(P.bank)}"></div>
+          <div class="field"><label class="f" for="py-ref">${esc(t('py.ref'))}</label><input class="input" id="py-ref" maxlength="60" autocomplete="off" value="${esc(P.ref)}"></div></div>
+        ${accts.length > 1 ? `<div class="field"><label class="f" for="py-acct">${esc(t('py.account'))}</label><select class="input" id="py-acct">${accts.map(a => `<option value="${esc(a.id)}" ${a.id === P.account_id ? 'selected' : ''}>${esc([a.bank, a.account_no, a.holder].filter(Boolean).join(' · '))}</option>`).join('')}</select></div>` : ''}`}
+      <div class="grid2"><div class="field"><label class="f" for="py-amt">${esc(t('amount'))} (Rp)</label><input class="input money" id="py-amt" inputmode="numeric" autocomplete="off" value="${esc(fmtNum(P.amount))}"></div>
+        <div class="field"><label class="f" for="py-date">${esc(t('date'))}</label><input class="input" type="date" id="py-date" value="${esc(P.date)}"></div></div>
+      <div id="py-mm"></div>
+      <div class="card pad" id="py-alloc" style="margin:4px 0 12px;box-shadow:none"></div>
+      <div class="field"><label class="f" for="py-note">${esc(t('notes'))}</label><input class="input" id="py-note" value="${esc(P.note)}"></div><div class="err" id="py-err" role="alert"></div>`;
+    $('#py-m', body).onclick = e => { const b = e.target.closest('[data-m]'); if (!b) return; P.method = b.dataset.m; draw(); };
+    const ph = $('#py-photo', body); if (ph) ph.onchange = () => { const f = ph.files[0]; if (f) scanSlip(f); };
+    const bind = (id, k, fn) => { const i = $(id, body); if (i) i.addEventListener('input', () => { P[k] = fn ? fn(i.value) : i.value; }); };
+    bind('#py-bank', 'bank', v => v.trim()); bind('#py-ref', 'ref', v => v.trim()); bind('#py-note', 'note');
+    const ac = $('#py-acct', body); if (ac) { if (!P.account_id) P.account_id = ac.value; ac.onchange = () => { P.account_id = ac.value; }; }
+    $('#py-date', body).onchange = e => { P.date = e.target.value || today(); };
+    const amt = $('#py-amt', body);
+    amt.addEventListener('input', () => { P.amount = moneyVal(amt.value); drawMM(); drawAllocSum(); });
+    amt.addEventListener('change', () => { amt.value = fmtNum(P.amount); });
+    drawMM(); drawAlloc();
+  };
+  /* amount ≠ slip: both amounts, a reason (required) or "Pakai jumlah di bukti" */
+  const drawMM = () => {
+    const box = $('#py-mm', body); if (!box) return;
+    if (!mismatch()) { box.innerHTML = ''; return; }
+    box.innerHTML = `<div class="mm" id="py-mismatch"><div class="ttl">${esc(t('py.mm_title'))}</div>
+      <div class="two"><div><div class="k">${esc(t('py.mm_typed'))}</div><div class="v num" id="py-mm-typed">${fmtRp(P.amount)}</div></div><div><div class="k">${esc(t('py.mm_slip'))}</div><div class="v num" id="py-mm-slip">${fmtRp(slipAmt())}</div></div></div>
+      <button type="button" class="btn sm block" id="py-use-slip">${esc(t('py.mm_use'))}</button>
+      <div class="field" style="margin:10px 0 0"><label class="f" for="py-reason">${esc(t('py.mm_reason'))} *</label><input class="input" id="py-reason" maxlength="300" placeholder="${esc(t('py.mm_reason_ph'))}" value="${esc(P.reason)}"></div></div>`;
+    $('#py-use-slip', box).onclick = () => { P.amount = slipAmt(); $('#py-amt', body).value = fmtNum(P.amount); drawMM(); drawAllocSum(); };
+    $('#py-reason', box).addEventListener('input', e => { P.reason = e.target.value.trim(); });
+  };
+  const openDocs = () => (P.docs || []).filter(d => int(d.remaining) > 0);
+  const drawAlloc = () => {
+    const box = $('#py-alloc', body); if (!box) return;
+    const head = `<div class="row wrap"><b class="grow">${esc(t('py.alloc_title'))}</b>${P.docs && openDocs().length ? `<button type="button" class="btn xs" id="py-auto">${esc(t('py.auto'))}</button>` : ''}</div><div class="small muted" style="margin:2px 0 8px">${esc(t('py.alloc_hint'))}</div>`;
+    if (!P.docs) { box.innerHTML = head + (P.docsErr ? `<div class="small" style="color:var(--warn);font-weight:700" id="py-docs-err">${esc(P.docsErr)}</div>` : `<div class="spinner"></div>`); return; }
+    const all = openDocs(), docs = P.allDocs ? all : all.slice(0, 25);
+    box.innerHTML = head + (all.length ? `<div id="py-docs">${docs.map(d => { const on = P.alloc[d.ref] != null; return `<label class="al ${on ? 'on' : ''}" data-ref="${esc(d.ref)}">
+        <input type="checkbox" data-al-chk="${esc(d.ref)}" ${on ? 'checked' : ''} aria-label="${esc(t('py.part_of', { no: d.ref }))}">
+        <span><span class="t num">${esc(d.ref)}</span><br><span class="s">${esc(fmtDate(d.date))} · ${esc(t('py.rest'))} <b class="num">${fmtRp(d.remaining)}</b> / ${fmtRp(d.total)}</span></span>
+        <input class="input num" data-al-amt="${esc(d.ref)}" inputmode="numeric" autocomplete="off" ${on ? '' : 'disabled'} value="${on ? esc(fmtNum(P.alloc[d.ref])) : ''}" aria-label="${esc(t('amount'))} ${esc(d.ref)}"></label>`; }).join('')}</div>
+      ${all.length > docs.length ? `<button type="button" class="btn xs block" id="py-docs-more">${esc(t('show_more', { n: all.length - docs.length }))}</button>` : ''}
+      <div class="alsum" id="py-alloc-sum"></div>` : `<div class="small muted" id="py-no-docs">${esc(t('py.no_docs'))}</div>`);
+    const auto = $('#py-auto', box); if (auto) auto.onclick = () => { autoFill(); drawAlloc(); };
+    const more = $('#py-docs-more', box); if (more) more.onclick = () => { P.allDocs = true; drawAlloc(); };
+    $$('[data-al-chk]', box).forEach(cb => cb.onchange = () => {
+      const d = docs.find(x => x.ref === cb.dataset.alChk);
+      if (cb.checked) { const left = Math.max(0, P.amount - allocSum()); P.alloc[d.ref] = Math.min(int(d.remaining), left) || int(d.remaining); } else delete P.alloc[d.ref];
+      drawAlloc();
+    });
+    $$('[data-al-amt]', box).forEach(i => i.addEventListener('input', () => { P.alloc[i.dataset.alAmt] = moneyVal(i.value); drawAllocSum(); }));
+    drawAllocSum();
+  };
+  /** Oldest invoice first, until the payment is used up. */
+  const autoFill = () => { P.alloc = {}; let left = P.amount; for (const d of openDocs()) { if (left <= 0) break; const x = Math.min(left, int(d.remaining)); P.alloc[d.ref] = x; left -= x; } };
+  const allocError = () => {
+    for (const a of allocList()) {
+      const d = openDocs().find(x => x.ref === a.ref);
+      if (!(a.amount > 0)) return t('py.err_alloc_zero', { no: a.ref });
+      if (d && a.amount > int(d.remaining)) return t('py.err_alloc_rest', { no: a.ref, amount: fmtRp(d.remaining) });
+    }
+    if (allocSum() > P.amount) return t('py.err_alloc_sum');
+    return '';
+  };
+  const drawAllocSum = () => {
+    const box = $('#py-alloc-sum', body); if (!box) return;
+    const used = allocSum(), left = P.amount - used, e = allocError();
+    box.innerHTML = `<span>${esc(t('py.allocated'))}: <span class="num" id="py-allocated">${fmtRp(used)}</span></span><span class="${left < 0 || e ? 'red' : left > 0 ? '' : 'okc'}">${esc(t('py.unallocated'))}: <span class="num" id="py-left">${fmtRp(left)}</span></span>${e ? `<span class="red small" style="flex-basis:100%" id="py-alloc-err">${esc(e)}</span>` : ''}`;
+    $$('.al', body).forEach(r => r.classList.toggle('on', P.alloc[r.dataset.ref] != null));
+  };
+  async function scanSlip(file) {
+    P.scanning = true; P.scanErr = ''; draw();
+    try {
+      const img = await imageToJpeg(file);
+      P.thumb = img.thumb; draw();
+      const r = await apiPhoto('scan_payment', { image_base64: img.base64, mime: img.mime });
+      const ex = r.extracted || {};
+      P.photo_id = r.photo_id || ''; P.slip = ex; P.reason = '';
+      if (int(ex.amount) > 0) P.amount = int(ex.amount);
+      if (ex.bank) P.bank = String(ex.bank).slice(0, 40);
+      if (ex.transfer_ref) P.ref = String(ex.transfer_ref).slice(0, 60);
+      const d = parseAnyDate(ex.date); if (d) P.date = d;
+    } catch (e) { P.scanErr = (e instanceof NetError ? t('pu.scan_net') : errMsg(e)) + ' ' + t('pu.scan_retry'); }
+    P.scanning = false; draw();
+  }
+  (async () => {
+    try { const r = await api('party_ledger', { party_type: 'customer', customer_id: c.id }); P.docs = (r.docs || []).slice().sort((a, b) => String(a.date).localeCompare(String(b.date))); }
+    catch (e) { P.docsErr = e instanceof NetError ? t('py.docs_offline') : errMsg(e); }
+    if (el.isConnected) drawAlloc();
+  })();
+  draw();
   $('#py-ok', el).onclick = async () => {
-    const amount = moneyVal($('#py-amt', el).value), err = $('#py-err', el);
-    if (amount <= 0) { err.textContent = t('amount_invalid'); return; }
-    if (amount > c.debt_balance) { err.textContent = t('more.amount_exceeds'); return; }
-    $('#py-ok', el).disabled = true;
-    const data = { customer_id: c.id, amount, method, note: $('#py-note', el).value.trim(), pay_date: today() };
+    const err = $('#py-err', body);
+    if (P.amount <= 0) { err.textContent = t('amount_invalid'); return; }
+    if (P.amount > c.debt_balance) { err.textContent = t('more.amount_exceeds'); return; }
+    if (mismatch() && !P.reason) { err.textContent = t('py.err_reason'); const r = $('#py-reason', body); if (r) r.focus(); return; }
+    const ae = allocError(); if (ae) { err.textContent = ae; return; }
+    const data = { customer_id: c.id, amount: P.amount, method: P.method, note: String(P.note || '').trim(), pay_date: P.date || today() };
+    if (P.method !== 'tunai') {
+      if (P.bank) data.bank = P.bank;
+      if (P.ref) data.transfer_ref = P.ref;
+      if (P.account_id) data.account_id = P.account_id;
+      if (P.photo_id) data.photo_id = P.photo_id; // the server takes slip_date from the slip it read
+      if (mismatch()) data.mismatch_reason = P.reason;
+    }
+    const alloc = allocList().filter(a => a.amount > 0);
+    if (alloc.length) data.alloc = alloc;
+    $('#py-ok', el).disabled = true; err.textContent = '';
     try {
       const r = await api('receive_payment', data);
-      c.debt_balance = int(r.customer ? r.customer.debt_balance : c.debt_balance - amount); applyPendingToLocalFor(c.id); saveCache();
-      dropModal(el); toast(t('more.paid_ok', { amount: fmtRp(amount), rest: fmtRp(c.debt_balance) }), 'ok', 4000);
+      c.debt_balance = int(r.customer ? r.customer.debt_balance : c.debt_balance - P.amount); applyPendingToLocalFor(c.id); saveCache();
+      const ms = r.payment && r.payment.match_status;
+      dropModal(el); toast(t('more.paid_ok', { amount: fmtRp(P.amount), rest: fmtRp(c.debt_balance) }) + (ms ? ' · ' + t('py.ms_' + ms) : ''), 'ok', 5000);
     } catch (e) {
-      if (isRetryable(e)) { queueOp('payment', 'receive_payment', data); dropModal(el); toast(t('outbox.queued'), 'warn', 4000); }
-      else { err.textContent = errMsg(e); $('#py-ok', el).disabled = false; }
+      if (isRetryable(e)) { queueOp('payment', 'receive_payment', data); dropModal(el); toast(t('outbox.queued'), 'warn', 4000); return; }
+      $('#py-ok', el).disabled = false;
+      if (e.code === 'MISMATCH') { const sa = e.res ? int(e.res.slip_amount) : 0; if (sa) P.slip = Object.assign({}, P.slip || {}, { amount: sa }); drawMM(); err.textContent = t('py.err_reason'); return; }
+      err.textContent = errMsg(e);
     }
   };
 }
@@ -3231,9 +4131,9 @@ function openPriceChange(p) {
 /* ========== My requests (credit / void / price) and their status ========== */
 const MYREQ = { list: KS.get('my_requests', []) };
 const myPendingCount = () => MYREQ.list.filter(r => r.user === S.user && r.status === 'pending').length;
-function trackMyRequest(id, kind, label) {
+function trackMyRequest(id, kind, label, ref) {
   if (!id) return;
-  MYREQ.list = MYREQ.list.filter(r => r.id !== id).concat([{ id, kind, label, user: S.user, at: Date.now(), status: 'pending', by: '', note: '' }]).slice(-40);
+  MYREQ.list = MYREQ.list.filter(r => r.id !== id).concat([{ id, kind, label, ref: ref || '', user: S.user, at: Date.now(), status: 'pending', by: '', note: '' }]).slice(-40);
   KS.set('my_requests', MYREQ.list); renderShell();
 }
 function updateMyRequest(a) {
@@ -3250,7 +4150,7 @@ async function checkMyRequests() {
       if (updateMyRequest(a)) { changed = true; toast(t(a.status === 'rejected' ? 'req.toast_rej' : 'req.toast_ok', { label: r.label, name: a.decided_by || '' }), a.status === 'rejected' ? 'err' : 'ok', 5000); }
     } catch (e) { if (e instanceof NetError) break; if (e.code === 'NOT_FOUND') { r.status = 'gone'; changed = true; } }
   }
-  if (changed) { KS.set('my_requests', MYREQ.list); renderShell(); if (S.view === 'more') RENDER.more(); const m = $('#myreq'); if (m) drawMyRequests(m.closest('.modal-bg')); }
+  if (changed) { KS.set('my_requests', MYREQ.list); renderShell(); if (S.view === 'more') RENDER.more(); if (S.view === 'kas') RENDER.kas(); if (S.view === 'masuk') { PUH.groups = null; loadPuHistory(); } const m = $('#myreq'); if (m) drawMyRequests(m.closest('.modal-bg')); }
 }
 setInterval(() => checkMyRequests(), 30000);
 const REQ_BADGE = { pending: 'warn', approved: 'ok', used: 'ok', auto: 'ok', rejected: 'red', gone: 'gray' };
@@ -3294,6 +4194,19 @@ function aprBodyHTML(a) {
   const kind = a.kind || 'credit', pl = aprPayload(a);
   const head = (title, badge) => `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(title)}</b><span class="badge ${badge}">${esc(a.request_id)}</span></div><div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))}</div>`;
   if (kind === 'opname') { const ls = (pl.lines || []).filter(l => num(l.diff)); return head(t('sc.apr_title', { n: (pl.lines || []).length, d: ls.length }), '') + `<table class="tbl" style="margin:8px 0" data-opname-lines><thead><tr><th></th><th class="r">${esc(t('sc.system'))}</th><th class="r">${esc(t('sc.qty'))}</th><th class="r">${esc(t('sc.diff'))}</th></tr></thead><tbody>${ls.map(l => `<tr><td>${esc(l.name)}</td><td class="r num">${fmtQty(l.system)}</td><td class="r num">${fmtQty(l.counted)}</td><td class="r num"><b>${num(l.diff) > 0 ? '+' : ''}${fmtQty(l.diff)}</b></td></tr>`).join('')}</tbody></table><div class="small muted" style="margin-bottom:8px">${esc(t('sc.apr_hint'))}</div>`; }
+  if (kind === 'buka_kas') {
+    const open = num(pl.opening_cash != null ? pl.opening_cash : a.total), last = pl.last_counted;
+    return head(t('apr.kind_kas', { name: a.cashier }), '') + `<div class="apr-sum" data-buka-kas><div><div class="k">${esc(t('apr.kas_open'))}</div><div class="v num">${fmtRp(open)}</div></div>
+      <div><div class="k">${esc(t('apr.kas_last', { name: pl.last_cashier || '—' }))}</div><div class="v num">${last == null ? '—' : fmtRp(last)}</div></div>
+      <div><div class="k">${esc(t('kas.difference'))}</div><div class="v num ${last != null && open !== num(last) ? 'red' : ''}">${last == null ? '—' : (open - num(last) > 0 ? '+' : '') + fmtRp(open - num(last))}</div></div></div>
+      ${a.note ? `<div class="small" style="margin-bottom:8px">${esc(t('notes'))}: “${esc(a.note)}”</div>` : ''}<div class="small muted" style="margin-bottom:8px">${esc(t('apr.kas_hint'))}</div>`;
+  }
+  if (kind === 'purchase_fix') {
+    // quantities only: the cost / note totals in the payload are never shown in this app
+    const rows = (Array.isArray(pl.changes) ? pl.changes : []).map(c => { const p = prodById(c.product_id); return `<tr><td>${esc(c.name || (p && p.name) || c.product_id)}</td><td class="r num">${fmtQty(c.from_qty)}</td><td class="r num"><b>${fmtQty(c.to_qty)}</b> ${esc(p ? p.unit || '' : '')}</td></tr>`; }).join('');
+    return head(t('apr.kind_pfix', { no: a.ref }), 'warn') + `<table class="tbl" style="margin:8px 0" data-pfix-lines><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('price.old'))}</th><th class="r">${esc(t('price.new'))}</th></tr></thead><tbody>${rows}</tbody></table>
+      <div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason || a.note || '')}”</b></div><div class="small muted" style="margin-bottom:8px">${esc(t('apr.pfix_hint'))}</div>`;
+  }
   if (kind === 'void') return head(t('apr.kind_void', { inv: a.ref }), 'red') + `<div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('rc.customer'))}</div><div class="v">${esc(a.customer_name || t('sell.walkin'))}</div></div><div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(a.total)}</div></div></div><div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason || a.summary || '')}”</b></div>`;
   if (kind === 'price') {
     const rows = Object.entries(pl.changes || {}).filter(([f]) => f !== 'cost_price').map(([f, ch]) => `<tr><td>${esc(t('price.f_' + f))}</td><td class="r num">${ch.from == null ? '—' : fmtRp(ch.from)}</td><td class="r num"><b>${ch.to == null ? '—' : fmtRp(ch.to)}</b></td></tr>`).join('');
@@ -3325,6 +4238,7 @@ async function decideApproval(id, decision, btn) {
   try {
     const data = { request_id: id, decision, note };
     if (ap.kind === 'void') data.invoice_no = ap.ref;
+    if (ap.kind === 'purchase_fix') data.purchase_no = ap.ref;
     const r = await api('decide_approval', data);
     AP.list = AP.list.filter(a => a.request_id !== id); AP.count = AP.list.length;
     updateApprovalBadge();
@@ -3405,11 +4319,14 @@ const ACT = {
   'pu-del': el => { PU.lines.splice(+el.dataset.i, 1); savePuDraft(); RENDER.masuk(); },
   'pu-clear': () => { Object.assign(PU, { lines: [], photo_id: '', thumb: '', scan: null, result: null, scanErr: '' }); savePuDraft(); RENDER.masuk(); },
   'pu-save': () => savePurchase(),
+  'pu-fix': el => openPuFix(el.dataset.no),
+  'pu-hist-refresh': () => { PUH.groups = null; PUH.err = ''; drawPuHist(); loadPuHistory(); },
 
   /* kas */
   'cash-move': el => openCashMove(el.dataset.type),
   'expense': () => openExpense(),
   'shift-close': () => openCloseShift(),
+  'report-snooze': () => { KS.set('report_snooze', Date.now() + 60 * 60000); updateReportBanner(); },
 
   /* lainnya */
   'debt-pay': () => openCustomerPicker(c => { if (c) openPayment(c); }, { onlyDebt: true, noWalkin: true, noAdd: true, title: t('more.debt_pay') }),
@@ -3762,6 +4679,99 @@ Object.assign(I18N.ar, {
   'sc.apr_title': 'جرد المخزون: {n} صنف، {d} فروق', 'sc.system': 'النظام', 'sc.diff': 'الفرق', 'sc.apr_hint': 'عند الموافقة يُضاف الفرق إلى المخزون الحالي.'
 });
 
+/* v11–v13 texts: device location, goods-in checked against the note, payments with the transfer slip */
+Object.assign(I18N.id, {
+  'dev.title': 'Lokasi perangkat', 'dev.notice': 'Lokasi perangkat ini dibagikan ke pemilik toko selama aplikasi dibuka (keamanan & absensi)',
+  'dev.n1': 'Hanya selama aplikasi terbuka di perangkat ini; tanda 📍 terlihat di atas layar.', 'dev.n2': 'Lokasi komputer hanya perkiraan (Wi-Fi/IP).', 'dev.n3': 'Pilihan ini diingat di perangkat ini.',
+  'dev.yes': 'Setuju', 'dev.no': 'Tidak', 'dev.sharing': 'Lokasi perangkat dibagikan ke pemilik toko',
+  'dev.block_title': 'Lokasi wajib aktif', 'dev.block_text': 'Pemilik toko mewajibkan lokasi perangkat untuk memakai Khair Kasir.',
+  'dev.why_off': 'Anda memilih Tidak. Tekan "Izinkan lokasi".', 'dev.why_denied': 'Izin lokasi diblokir di browser: buka pengaturan situs → Lokasi → Izinkan, lalu tekan Coba lagi.',
+  'dev.why_unavailable': 'Lokasi belum didapat. Nyalakan GPS / lokasi lalu tekan Coba lagi.', 'dev.why_wait': 'Menunggu izin lokasi…',
+  'dev.allow': 'Izinkan lokasi', 'dev.retry': 'Coba lagi', 'dev.locating': 'Mencari lokasi…',
+  'pu.typed': 'Diketik', 'pu.on_note_qty': 'Di nota', 'pu.manual': 'manual',
+  'pu.m_cocok': 'Cocok dengan nota', 'pu.m_tidak_cocok': 'Beda dengan nota', 'pu.m_perlu_cek': 'Perlu dicek', 'pu.m_tanpa_foto': 'Tanpa foto nota', 'pu.m_koreksi': 'Koreksi',
+  'pu.mh_cocok': 'Semua barang dan jumlah sama dengan nota.', 'pu.mh_tidak_cocok': 'Perbaiki jumlahnya, atau simpan dengan alasan (mis. "2 dus bonus").', 'pu.mh_perlu_cek': 'Nota kurang jelas atau ada jumlah yang tidak terbaca — cek dengan teliti.',
+  'pu.line_diff': 'Diketik {typed}, di nota {note}', 'pu.lock_hint': 'Setelah disimpan, jumlah tidak bisa diubah lagi (koreksi hanya dengan izin manajer).',
+  'pu.mm_title': 'Jumlah beda dengan nota', 'pu.mm_head': '{n} baris beda dengan nota', 'pu.mm_hint': 'Merah = jumlah yang diketik tidak sama dengan nota. Perbaiki jumlahnya, atau tulis alasannya.',
+  'pu.mm_reason': 'Alasan', 'pu.mm_reason_ph': 'mis. 2 dus bonus dari supplier', 'pu.mm_fix': 'Perbaiki jumlah', 'pu.mm_save': 'Simpan dengan alasan',
+  'pu.locked': 'Jumlah terkunci. Koreksi hanya lewat "Minta koreksi" (disetujui manajer, pemilik diberi tahu).', 'pu.locked_short': 'Terkunci',
+  'pu.hist': 'Riwayat barang masuk', 'pu.hist_s': 'Hari ini dan 13 hari terakhir, per nota', 'pu.hist_offline': 'Riwayat butuh internet.', 'pu.hist_none': 'Belum ada barang masuk.',
+  'pu.n_fixes': '{n} koreksi', 'pu.fix_btn': 'Minta koreksi', 'pu.fix_title': 'Minta koreksi {no}', 'pu.fix_waiting': 'Menunggu persetujuan manajer',
+  'pu.fix_hint': 'Isi jumlah yang benar. Permintaan dikirim ke manajer/pemilik; stok baru berubah setelah disetujui. Pemilik melihat setiap perubahan.',
+  'pu.fix_hint_mgr': 'Isi jumlah yang benar. Sebagai manajer, koreksi langsung diterapkan dan tercatat untuk pemilik.',
+  'pu.fix_now': 'Tercatat: {qty} {unit}', 'pu.fix_new': 'Jumlah benar', 'pu.fix_reason_ph': 'mis. salah hitung, 2 pak rusak', 'pu.fix_send': 'Kirim permintaan', 'pu.fix_apply': 'Simpan koreksi',
+  'pu.fix_nothing': 'Tidak ada jumlah yang berubah', 'pu.fix_applied': 'Koreksi diterapkan, stok diperbarui', 'pu.fix_owner_sees': 'Pemilik diberi tahu tentang perubahan ini.',
+  'req.purchase_fix': 'Koreksi barang masuk {no}', 'apr.kind_pfix': 'Koreksi barang masuk {no}', 'apr.pfix_hint': 'Jika disetujui, selisih jumlah ditambahkan / dikurangi dari stok sekarang.',
+  'apr.inbox_s': 'Hutang, batal nota, harga, koreksi barang masuk',
+  'py.slip': 'Foto bukti transfer', 'py.slip_take': 'Foto bukti transfer', 'py.slip_hint': 'AI membaca jumlah, bank, nomor transfer & tanggal.', 'py.reading': 'AI membaca bukti… (5–20 detik)',
+  'py.slip_ok': 'Bukti transfer terbaca', 'py.sender': 'Pengirim', 'py.unreadable': 'Bukti kurang jelas — cek & isi manual.',
+  'py.bank': 'Bank', 'py.ref': 'Nomor transfer', 'py.account': 'Ke rekening toko',
+  'py.mm_title': 'Jumlah beda dengan bukti transfer', 'py.mm_typed': 'Diketik', 'py.mm_slip': 'Di bukti', 'py.mm_use': 'Pakai jumlah di bukti',
+  'py.mm_reason': 'Alasan beda', 'py.mm_reason_ph': 'mis. sisanya dibayar tunai', 'py.err_reason': 'Jumlah beda dengan bukti: perbaiki jumlahnya atau isi alasan.',
+  'py.alloc_title': 'Bagian dari faktur', 'py.alloc_hint': 'Centang faktur yang dibayar (terlama di atas). Boleh sebagian.', 'py.auto': 'Isi otomatis',
+  'py.part_of': 'Bagian dari faktur no. {no}', 'py.rest': 'sisa', 'py.no_docs': 'Tidak ada faktur terbuka.', 'py.docs_offline': 'Daftar faktur butuh internet — pembayaran tetap bisa disimpan tanpa faktur.',
+  'py.allocated': 'Dialokasikan', 'py.unallocated': 'Sisa belum dialokasikan', 'py.err_alloc_zero': 'Jumlah untuk {no} harus lebih dari 0', 'py.err_alloc_rest': 'Untuk {no} maksimal {amount}',
+  'py.err_alloc_sum': 'Total faktur melebihi jumlah bayar', 'py.ms_lunas': 'faktur lunas', 'py.ms_sebagian': 'sebagian faktur', 'py.ms_belum_dialokasi': 'belum dialokasikan', 'py.ms_lebih': 'ada sisa belum dialokasikan'
+});
+Object.assign(I18N.ar, {
+  'dev.title': 'موقع الجهاز', 'dev.notice': 'يُشارَك موقع هذا الجهاز مع مالك المتجر طوال فتح التطبيق (للأمان والحضور)',
+  'dev.n1': 'فقط أثناء فتح التطبيق على هذا الجهاز؛ تظهر علامة 📍 أعلى الشاشة.', 'dev.n2': 'موقع الحاسوب تقريبي (Wi-Fi/IP).', 'dev.n3': 'يُحفظ اختيارك على هذا الجهاز.',
+  'dev.yes': 'موافق', 'dev.no': 'لا', 'dev.sharing': 'موقع الجهاز مُشارَك مع مالك المتجر',
+  'dev.block_title': 'الموقع مطلوب', 'dev.block_text': 'يشترط مالك المتجر تفعيل موقع الجهاز لاستخدام Khair Kasir.',
+  'dev.why_off': 'اخترت "لا". اضغط "السماح بالموقع".', 'dev.why_denied': 'إذن الموقع محظور في المتصفح: افتح إعدادات الموقع ← الموقع ← سماح، ثم اضغط إعادة المحاولة.',
+  'dev.why_unavailable': 'لم يُحدَّد الموقع بعد. شغّل GPS ثم اضغط إعادة المحاولة.', 'dev.why_wait': 'بانتظار إذن الموقع…',
+  'dev.allow': 'السماح بالموقع', 'dev.retry': 'إعادة المحاولة', 'dev.locating': 'جارٍ تحديد الموقع…',
+  'pu.typed': 'المُدخَل', 'pu.on_note_qty': 'في الفاتورة', 'pu.manual': 'يدوي',
+  'pu.m_cocok': 'مطابق للفاتورة', 'pu.m_tidak_cocok': 'مختلف عن الفاتورة', 'pu.m_perlu_cek': 'يحتاج مراجعة', 'pu.m_tanpa_foto': 'بدون صورة فاتورة', 'pu.m_koreksi': 'تصحيح',
+  'pu.mh_cocok': 'كل الأصناف والكميات مطابقة للفاتورة.', 'pu.mh_tidak_cocok': 'صحّح الكميات أو احفظ مع ذكر السبب (مثل: كرتونتان هدية).', 'pu.mh_perlu_cek': 'الفاتورة غير واضحة أو توجد كمية غير مقروءة — راجع بدقة.',
+  'pu.line_diff': 'المُدخَل {typed}، في الفاتورة {note}', 'pu.lock_hint': 'بعد الحفظ لا يمكن تعديل الكميات (التصحيح بإذن المدير فقط).',
+  'pu.mm_title': 'الكمية تختلف عن الفاتورة', 'pu.mm_head': '{n} سطور تختلف عن الفاتورة', 'pu.mm_hint': 'الأحمر = الكمية المُدخلة لا تطابق الفاتورة. صحّحها أو اكتب السبب.',
+  'pu.mm_reason': 'السبب', 'pu.mm_reason_ph': 'مثل: كرتونتان هدية من المورد', 'pu.mm_fix': 'تصحيح الكمية', 'pu.mm_save': 'حفظ مع السبب',
+  'pu.locked': 'الكميات مقفلة. التصحيح فقط عبر "طلب تصحيح" (بموافقة المدير، ويُبلَّغ المالك).', 'pu.locked_short': 'مقفل',
+  'pu.hist': 'سجل البضاعة المستلمة', 'pu.hist_s': 'اليوم وآخر 13 يومًا، حسب الفاتورة', 'pu.hist_offline': 'السجل يحتاج إلى الإنترنت.', 'pu.hist_none': 'لا توجد بضاعة مستلمة بعد.',
+  'pu.n_fixes': '{n} تصحيح', 'pu.fix_btn': 'طلب تصحيح', 'pu.fix_title': 'طلب تصحيح {no}', 'pu.fix_waiting': 'بانتظار موافقة المدير',
+  'pu.fix_hint': 'أدخل الكمية الصحيحة. يُرسل الطلب إلى المدير/المالك ولا يتغير المخزون إلا بعد الموافقة. يرى المالك كل تغيير.',
+  'pu.fix_hint_mgr': 'أدخل الكمية الصحيحة. بصفتك مديرًا يُطبَّق التصحيح فورًا ويُسجَّل للمالك.',
+  'pu.fix_now': 'المسجَّل: {qty} {unit}', 'pu.fix_new': 'الكمية الصحيحة', 'pu.fix_reason_ph': 'مثل: خطأ في العدّ، عبوتان تالفتان', 'pu.fix_send': 'إرسال الطلب', 'pu.fix_apply': 'حفظ التصحيح',
+  'pu.fix_nothing': 'لم تتغير أي كمية', 'pu.fix_applied': 'طُبّق التصحيح وحُدّث المخزون', 'pu.fix_owner_sees': 'يُبلَّغ المالك بهذا التغيير.',
+  'req.purchase_fix': 'تصحيح استلام {no}', 'apr.kind_pfix': 'تصحيح استلام {no}', 'apr.pfix_hint': 'عند الموافقة يُضاف فرق الكمية إلى المخزون الحالي أو يُخصم منه.',
+  'apr.inbox_s': 'دَين، إلغاء فاتورة، أسعار، تصحيح استلام',
+  'py.slip': 'صورة إيصال التحويل', 'py.slip_take': 'صوّر إيصال التحويل', 'py.slip_hint': 'يقرأ الذكاء الاصطناعي المبلغ والبنك ورقم التحويل والتاريخ.', 'py.reading': 'جارٍ قراءة الإيصال… (5–20 ثانية)',
+  'py.slip_ok': 'تمت قراءة الإيصال', 'py.sender': 'المُرسِل', 'py.unreadable': 'الإيصال غير واضح — راجع وأدخل يدويًا.',
+  'py.bank': 'البنك', 'py.ref': 'رقم التحويل', 'py.account': 'إلى حساب المتجر',
+  'py.mm_title': 'المبلغ يختلف عن إيصال التحويل', 'py.mm_typed': 'المُدخَل', 'py.mm_slip': 'في الإيصال', 'py.mm_use': 'استخدم مبلغ الإيصال',
+  'py.mm_reason': 'سبب الاختلاف', 'py.mm_reason_ph': 'مثل: الباقي دُفع نقدًا', 'py.err_reason': 'المبلغ يختلف عن الإيصال: صحّحه أو اكتب السبب.',
+  'py.alloc_title': 'جزء من الفاتورة', 'py.alloc_hint': 'حدّد الفواتير المدفوعة (الأقدم أولًا). يجوز الدفع الجزئي.', 'py.auto': 'تعبئة تلقائية',
+  'py.part_of': 'جزء من الفاتورة رقم {no}', 'py.rest': 'المتبقي', 'py.no_docs': 'لا توجد فواتير مفتوحة.', 'py.docs_offline': 'قائمة الفواتير تحتاج إلى الإنترنت — يمكن حفظ الدفعة بدون فاتورة.',
+  'py.allocated': 'المُخصَّص', 'py.unallocated': 'غير مُخصَّص', 'py.err_alloc_zero': 'مبلغ {no} يجب أن يكون أكبر من 0', 'py.err_alloc_rest': 'الحد الأقصى لـ {no} هو {amount}',
+  'py.err_alloc_sum': 'مجموع الفواتير أكبر من المبلغ المدفوع', 'py.ms_lunas': 'الفواتير مسددة', 'py.ms_sebagian': 'سداد جزئي', 'py.ms_belum_dialokasi': 'غير مُخصَّص', 'py.ms_lebih': 'يوجد مبلغ غير مُخصَّص'
+});
+
+
+Object.assign(I18N.id, {
+  'apr.need_online_here': 'Butuh internet untuk persetujuan di tempat. Minta persetujuan jarak jauh, atau coba lagi saat online.',
+  'kas.owner_none': 'Buka kas hanya dari akun kasir. Pemilik dan manajer bisa berjualan tanpa buka kas.',
+  'kas.items': 'Barang terjual', 'kas.by_method': 'Per cara bayar',
+  'kas.apr_pending': 'Modal awal menunggu persetujuan manajer', 'kas.apr_approved': 'Modal awal disetujui {name}', 'kas.apr_rejected': 'Modal awal ditolak {name}: {note}',
+  'req.buka_kas': 'Buka kas, modal awal {amount}', 'apr.kind_kas': 'Buka kas: {name}', 'apr.kas_open': 'Modal awal dihitung', 'apr.kas_last': 'Kas terakhir ditutup ({name})',
+  'apr.kas_hint': 'Cek uang awal di laci. Penjualan tetap berjalan sambil menunggu.', 'apr.inbox_s': 'Buka kas, hutang, batal nota, harga, koreksi barang masuk',
+  'rep.head': 'Laporan tutup kas {store}', 'rep.cash': 'Kas', 'rep.send_title': 'Kirim laporan', 'rep.send_hint': 'WhatsApp terbuka dengan laporannya — tekan Kirim di WhatsApp.',
+  'rep.no_numbers': 'Nomor WhatsApp toko/manajer/pemilik belum diisi pemilik — salin teks laporannya.',
+  'rep.to_shop': 'Kirim ke WA Toko', 'rep.to_manager': 'Kirim ke WA Manajer', 'rep.to_owner': 'Kirim ke WA Pemilik', 'rep.copy': 'Salin teks',
+  'rep.banner': 'Sudah jam {time}: waktunya tutup kas & kirim laporan'
+});
+Object.assign(I18N.ar, {
+  'apr.need_online_here': 'الموافقة في المكان تحتاج إلى الإنترنت. اطلب موافقة عن بُعد أو حاول عند الاتصال.',
+  'kas.owner_none': 'فتح الصندوق من حساب الكاشير فقط. المالك والمدير يبيعان دون فتح صندوق.',
+  'kas.items': 'القطع المباعة', 'kas.by_method': 'حسب طريقة الدفع',
+  'kas.apr_pending': 'النقد الابتدائي بانتظار موافقة المدير', 'kas.apr_approved': 'وافق {name} على النقد الابتدائي', 'kas.apr_rejected': 'رفض {name} النقد الابتدائي: {note}',
+  'req.buka_kas': 'فتح الصندوق، النقد الابتدائي {amount}', 'apr.kind_kas': 'فتح الصندوق: {name}', 'apr.kas_open': 'النقد الابتدائي المعدود', 'apr.kas_last': 'آخر إغلاق ({name})',
+  'apr.kas_hint': 'تحقق من النقد الابتدائي في الدرج. البيع مستمر أثناء الانتظار.', 'apr.inbox_s': 'فتح الصندوق، دَين، إلغاء فاتورة، أسعار، تصحيح استلام',
+  'rep.head': 'تقرير إغلاق الصندوق {store}', 'rep.cash': 'النقد', 'rep.send_title': 'إرسال التقرير', 'rep.send_hint': 'يفتح واتساب مع التقرير — اضغط إرسال في واتساب.',
+  'rep.no_numbers': 'لم يُدخل المالك أرقام واتساب المتجر/المدير/المالك — انسخ نص التقرير.',
+  'rep.to_shop': 'إرسال إلى واتساب المتجر', 'rep.to_manager': 'إرسال إلى واتساب المدير', 'rep.to_owner': 'إرسال إلى واتساب المالك', 'rep.copy': 'نسخ النص',
+  'rep.banner': 'الساعة {time}: حان وقت إغلاق الصندوق وإرسال التقرير'
+});
 /* ========== Boot ========== */
 /* ========== Trial links (?demo=1 / ?mock=1) can be closed by the owner ==========
    khair-pos/demo.json {"open": false} (or deleting the file) closes every trial link and wipes the trial data
@@ -3797,19 +4807,20 @@ async function init() {
     navigator.serviceWorker.register('sw.js', { scope: './' }).catch(() => { });
   }
   if (MOCK) { try { await MockServer.ensure(); } catch (e) { console.error(e); } }
-  const sess = KS.get('session');
+  try { await migrateSecrets(); } catch (e) { console.error(e); }
+  const sess = KS.get('session'), live = SESS.get();
   if (DEMO) {
     if (!S.key) { S.key = 'demo'; store.set('key', 'demo'); }
     const want = new URLSearchParams(location.search).get('u');
     if (want && !(sess && sess.user && sess.user.toLowerCase() === want.toLowerCase())) { demoLogin(want); return; }
   }
-  if (S.key && sess && sess.user && sess.pin_hash) { S.user = sess.user; S.role = sess.role; S.pin_hash = sess.pin_hash; enterApp(false); return; }
+  if (S.key && sess && sess.user && live && live.pin_hash && live.user === sess.user) { S.user = sess.user; S.role = sess.role; S.pin_hash = live.pin_hash; enterApp(false); return; }
   // locked session, or a kasir redirected here by the owner app (it remembers last_user) → PIN pad for that name
   const last = (sess && sess.user) || store.get('last_user', '');
   if (S.key) { if (last) { L.sel = last; showLogin('pin'); } else showLogin('users'); return; }
   showLogin('key');
 }
-window.KASIR = { S, MOCK, cartView, pinHash, syncOutbox, lineCalc, speakableName, I18N };
+window.KASIR = { S, MOCK, cartView, pinHash, syncOutbox, lineCalc, speakableName, I18N, DEV, devTick, devicePayload, deviceLabel, NoteMatch, PU, mockLog: () => MockServer.log };
 init();
 </script>
 </body>
