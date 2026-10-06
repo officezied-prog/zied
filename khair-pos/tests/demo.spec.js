@@ -42,7 +42,7 @@ const path = require('path');
 async function serveAs(page, state) {
   await page.route('http://khair.test/**', route => {
     const u = new URL(route.request().url());
-    if (u.pathname === '/demo.json') return state.open === null ? route.fulfill({ status: 404, body: 'nf' }) : route.fulfill({ contentType: 'application/json', body: JSON.stringify({ open: state.open }) });
+    if (u.pathname === '/demo.json') return state.open === null ? route.fulfill({ status: 404, body: 'nf' }) : route.fulfill({ contentType: 'application/json', headers: { date: new Date().toUTCString() }, body: JSON.stringify(state.until ? { open: state.open, until: state.until } : { open: state.open }) });
     let p = path.join(__dirname, '..', decodeURIComponent(u.pathname));
     if (p.endsWith('/')) p += 'index.html';
     if (!fs.existsSync(p)) return route.fulfill({ status: 404, body: 'nf' });
@@ -69,4 +69,22 @@ test('closing demo.json shuts every trial link and wipes the trial data; real mo
   await expect(page.getByText('Link uji coba sudah ditutup')).toBeVisible();
   await page.goto('http://khair.test/index.html');
   await expect(page.locator('#lg-key')).toBeVisible();
+});
+
+test('demo.json "until" closes the trial links by themselves after that time', async ({ page }) => {
+  const state = { open: true, until: new Date(Date.now() + 3600000).toISOString() };
+  await serveAs(page, state);
+  await page.goto('http://khair.test/kasir/index.html?demo=1&u=Siti');
+  await expect(page.locator('#gate #shift-open')).toBeVisible();
+  state.until = new Date(Date.now() - 60000).toISOString();
+  for (const p of ['kasir/index.html?demo=1&u=Siti', 'index.html?demo=1&u=Jihan', 'sales/index.html?demo=1&u=Ahmad']) {
+    await page.goto('http://khair.test/' + p);
+    await expect(page.getByText('Link uji coba sudah ditutup')).toBeVisible();
+  }
+  // offline after expiry: the remembered time still keeps it closed
+  await page.unroute('http://khair.test/**');
+  await serveAs(page, { open: true, until: null });
+  await page.route('http://khair.test/demo.json*', r => r.abort());
+  await page.goto('http://khair.test/kasir/index.html?demo=1&u=Siti');
+  await expect(page.getByText('Link uji coba sudah ditutup')).toBeVisible();
 });

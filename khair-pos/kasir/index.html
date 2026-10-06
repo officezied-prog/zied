@@ -3327,15 +3327,23 @@ const I18N = {
 /* ========== Boot ========== */
 /* ========== Trial links (?demo=1 / ?mock=1) can be closed by the owner ==========
    khair-pos/demo.json {"open": false} (or deleting the file) closes every trial link and wipes the trial data
-   on the phone. Real mode is never affected; a local test server is never closed. */
+   on the phone; {"open": true, "until": "<ISO time>"} closes them by themselves at that time (server clock from
+   the Date header, the phone's clock as fallback; remembered for offline use). Real mode is never affected; a
+   local test server is never closed. */
 async function demoStillOpen() {
   if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) return true;
   try {
     const r = await fetch('../demo.json?t=' + Date.now(), { cache: 'no-store' });
     if (r.status === 404) return false;
     if (!r.ok) return true;
-    return (await r.json()).open === true;
-  } catch (e) { return true; } // offline: cannot check
+    const j = await r.json();
+    try { localStorage.setItem('kdemo.until', j.until ? String(j.until) : ''); } catch (e) { }
+    const now = Date.parse(r.headers.get('date') || '') || Date.now();
+    return j.open === true && !(j.until && now > Date.parse(j.until));
+  } catch (e) { // offline: only the last known expiry can be checked
+    let u = ''; try { u = localStorage.getItem('kdemo.until') || ''; } catch (e2) { }
+    return !(u && Date.now() > Date.parse(u));
+  }
 }
 function showDemoClosed() {
   try { Object.keys(localStorage).filter(k => k.indexOf('kpos.mock.') === 0 || k.indexOf('kmock.') === 0).forEach(k => localStorage.removeItem(k)); } catch (e) { }
