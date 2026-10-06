@@ -14,7 +14,9 @@ return [{ json: {
   pin_hash: String(body.pin_hash || ''),
   data: data,
   client_id: action === 'save_sale' && data.client_id ? String(data.client_id) : '__none__',
-  invoice_no: action === 'void_sale' && data.invoice_no ? String(data.invoice_no) : '__none__',
+  invoice_no: ['void_sale', 'request_void', 'decide_approval'].indexOf(action) >= 0 && data.invoice_no ? String(data.invoice_no) : '__none__',
   from: action === 'get_sales' && isDate(data.from) ? data.from : '9999-12-31',
-  to: action === 'get_sales' && isDate(data.to) ? data.to : '0000-01-01'
+  to: action === 'get_sales' && isDate(data.to) ? data.to : '0000-01-01',
+  approval_id: String(data.approval_id || data.request_id || '__none__'),
+  photo_id: action === 'save_purchase' && data.photo_id ? String(data.photo_id) : '__none__'
 } }];
