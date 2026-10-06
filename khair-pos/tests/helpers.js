@@ -61,11 +61,20 @@ async function nav(page, view) {
   await expect(page.locator(`#view-${view}`)).toBeVisible();
 }
 
-async function addBySearch(page, query) {
+/** Search, tap the first card → quantity sheet (qty, default 1) → Tambah. */
+async function addBySearch(page, query, qty) {
   const s = page.locator('#pos-search');
   await s.fill(query);
   await page.locator('#pos-grid .pcard').first().click();
+  await confirmQty(page, qty);
   await s.fill('');
+}
+/** The quantity sheet is open: optionally type a quantity, then confirm. */
+async function confirmQty(page, qty) {
+  await expect(page.locator('#qty-sheet')).toBeVisible();
+  if (qty != null) await page.fill('#qs-qty', String(qty));
+  await page.click('#qs-ok');
+  await expect(page.locator('#qty-sheet')).toHaveCount(0);
 }
 
 /** Checkout and skip the survey; returns once the receipt is shown. */
@@ -114,4 +123,4 @@ async function closeModals(page) {
   }
 }
 
-module.exports = { rp, pct, sha, SHOTS, jktToday, openApp, enterKey, typePin, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect, editDb, blockMapNetwork };
+module.exports = { rp, pct, sha, SHOTS, jktToday, openApp, enterKey, typePin, login, getDb, productByName, nav, addBySearch, confirmQty, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect, editDb, blockMapNetwork };
