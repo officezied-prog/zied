@@ -516,3 +516,6 @@ The apps must use the same rules in their inputs (`maxlength`, `inputmode`, `pat
   The other party confirms it with `decide_approval` (the proposer cannot; the owner cannot confirm a request meant for the manager).
   On approval the setting changes and setting `limit_agreements` keeps the history `[{key, value, from, proposed_by, confirmed_by, at, note}]`
   (newest first, 50 kept); logged `usul_kesepakatan` / `kesepakatan`.
+- **Manager as cashier (07 Oct):** the manager may also `open_shift` (her own drawer, when everyone else is busy); her opening-count
+  approval goes to the **owner** (`approver_role: "owner"`). Her cash sales then go into her drawer and she closes it like a kasir.
+  Without an open drawer she can still sell (as before). Owner accounts still have no drawer.

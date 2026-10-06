@@ -1048,7 +1048,8 @@ switch (req.action) {
   }
 
   case 'open_shift': {
-    if (role !== 'kasir') return fail('FORBIDDEN', 'Buka kas hanya dari akun kasir (aplikasi Khair Kasir)');
+    // Kasir accounts always; the manager may open her own drawer when she works as cashier (her opening goes to the owner).
+    if (role !== 'kasir' && role !== 'manager') return fail('FORBIDDEN', 'Buka kas hanya dari akun kasir atau manajer (aplikasi Khair Kasir)');
     if (myShift) return done({ ok: true, already: true, shift: shiftOut(myShift) });
     const opening = money(data.opening_cash);
     if (opening < 0) return fail('INVALID', 'Modal awal tidak valid');
@@ -1064,7 +1065,7 @@ switch (req.action) {
     const last = rows('Get Range Shifts').filter(function (x) { return x.status === 'closed'; })
       .sort(function (a1, b1) { return String(b1.closed_at).localeCompare(String(a1.closed_at)); })[0] || null;
     const lastTxt = last ? ' — kas terakhir ditutup ' + str(last.closed_at).slice(0, 16).replace('T', ' ') + ' UTC oleh ' + str(last.cashier) + ': dihitung Rp ' + money(last.counted_cash) + ', selisih dengan pembukaan Rp ' + (opening - money(last.counted_cash)) : '';
-    const bk = newApproval({ kind: 'buka_kas', approver_role: 'manager', ref: sh.shift_id, total: opening,
+    const bk = newApproval({ kind: 'buka_kas', approver_role: role === 'manager' ? 'owner' : 'manager', ref: sh.shift_id, total: opening,
       summary: ('Buka kas ' + me.name + ': modal awal dihitung Rp ' + opening + lastTxt).slice(0, 1500), note: str(data.note),
       payload: JSON.stringify({ shift_id: sh.shift_id, opening_cash: opening, last_counted: last ? money(last.counted_cash) : null, last_cashier: last ? str(last.cashier) : '' }) });
     ops.approvals.push(forWrite(bk, -1));
