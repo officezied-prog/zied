@@ -6,10 +6,9 @@ const { rp, SHOTS, jktToday, login, getDb, productByName, nav, addBySearch, chec
 const copyDb = async (from, to) => { const raw = await from.evaluate(() => localStorage.getItem('kmock.db')); await to.evaluate(r => localStorage.setItem('kmock.db', r), raw); };
 const ctxOpts = { viewport: { width: 1366, height: 768 }, serviceWorkers: 'block' };
 
-test('v15: only a kasir opens the drawer (manager/owner FORBIDDEN, no prompt); kasir sale, kas expense, cash out; manager closes it with the live difference', async ({ page }) => {
+test('v15: a kasir opens the drawer (owner FORBIDDEN, no prompt for owner/manager); kasir sale, kas expense, cash out; manager closes it with the live difference', async ({ page }) => {
   await login(page, 'Jihan', '2222', '', { stay: true });
   await expect(page.locator('#shift-open')).toHaveCount(0);
-  expect((await page.evaluate(async () => { try { await api('open_shift', { opening_cash: 1 }); return 'ok'; } catch (e) { return e.code; } }))).toBe('FORBIDDEN');
   expect((await asUser(page, 'Pemilik', '1234', 'open_shift', { opening_cash: 1 })).error).toBe('FORBIDDEN');
   const gula = productByName(await getDb(page), /Gula Pasir/);
   await asUser(page, 'Siti', '1111', 'open_shift', { opening_cash: 500000 });
@@ -163,4 +162,12 @@ test('notification: the manager is told when the owner approves her cost-price r
   await page.click('#tb-bell');
   await expect(page.locator('#bell-notifs')).toContainText('Ubah harga Air Zamzam 5 L disetujui Pemilik');
   expect(productByName(await getDb(page), /Zamzam/).cost_price).toBe(100000);
+});
+
+test('server 07 Oct: the manager may open her own drawer (when she works as cashier); her opening goes to the owner', async ({ page }) => {
+  await login(page, 'Pemilik', '1234', '', { stay: true });
+  const r = await asUser(page, 'Jihan', '2222', 'open_shift', { opening_cash: 150000 });
+  expect(r.shift.cashier).toBe('Jihan');
+  expect(r.approval).toMatchObject({ kind: 'buka_kas', approver_role: 'owner' });
+  expect((await asUser(page, 'Pemilik', '1234', 'open_shift', { opening_cash: 1 })).error).toBe('FORBIDDEN');
 });

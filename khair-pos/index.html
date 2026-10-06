@@ -1022,13 +1022,17 @@ const MockServer = (() => {
     });
     const subtotal = sum(lines, l => l.line_total);
     const discount = Math.min(subtotal, Math.max(0, int(data.discount)));
-    const total = subtotal - discount;
+    // receipt sent by WhatsApp / e-mail: the first one per customer is free, later ones add receipt_send_fee (default Rp 500)
+    if (data.send_receipt === true && !cust) throw E('INVALID', 'Simpan nomor HP pelanggan dulu untuk kirim struk');
+    const feeSet = setting(db, 'receipt_send_fee'), fee = feeSet === undefined || feeSet === null || feeSet === '' ? 500 : Math.max(0, int(feeSet));
+    const sendFee = data.send_receipt === true ? (num(cust.receipts_sent) >= 1 ? fee : 0) : 0;
+    const total = subtotal - discount + sendFee;
     const total_cost = sum(lines, l => l.line_cost);
     const paid = Math.max(0, int(data.paid_amount));
     const debt = Math.max(0, total - paid);
     if (debt > 0 && !cust && !quote) throw E('INVALID', 'Debt requires customer_id');
     const qtyBy = new Map(); lines.forEach(l => qtyBy.set(l.p.id, roundQty((qtyBy.get(l.p.id) || 0) + l.qty)));
-    return { cust, lines, subtotal, discount, total, total_cost, paid, debt, sale_date: isYmd(data.sale_date) ? data.sale_date : jktDate(), listTotal: sum(lines, l => l.list_total), qtyBy };
+    return { cust, lines, subtotal, discount, total, total_cost, paid, debt, sale_date: isYmd(data.sale_date) ? data.sale_date : jktDate(), listTotal: sum(lines, l => l.list_total), qtyBy, sendFee };
   }
   const openShiftOf = (db, name) => db.shifts.find(x => x.status === 'open' && String(x.cashier).toLowerCase() === String(name).toLowerCase());
   function shiftSummary(db, sh) {
@@ -1139,7 +1143,7 @@ const MockServer = (() => {
   const isHash = v => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
   const AGREED_KEYS = ['return_owner_min_value', 'return_owner_min_qty']; // changed only by owner–manager agreement
   const wibTime = iso => new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(11, 16) + ' WIB';
-  const V16_DEFAULTS = { max_discount_pct: 3, sell_from_shop_only: true, return_owner_min_value: 2000000, return_owner_min_qty: 0, return_fee_pct: 0, require_return_photo: true, require_carrier: true, limit_agreements: [], member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
+  const V16_DEFAULTS = { max_discount_pct: 3, receipt_send_fee: 500, sell_from_shop_only: true, return_owner_min_value: 2000000, return_owner_min_qty: 0, return_fee_pct: 0, require_return_photo: true, require_carrier: true, limit_agreements: [], member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
   const setting = (db, k) => db.settings && db.settings[k] !== undefined ? db.settings[k] : V16_DEFAULTS[k];
   /** stock = total, shop_stock = on the shelf; a row without shop_stock (before v16) counts all its stock as on the shelf */
   const shopOf = p => p.shop_stock === undefined || p.shop_stock === null || p.shop_stock === '' ? num(p.stock) : num(p.shop_stock);
@@ -1167,7 +1171,7 @@ const MockServer = (() => {
     tiers.forEach(x => { const f = num(x && x.from), q = num(x && x.pct); if (f >= 1 && f <= n && q > 0 && q <= 50 && q > pct) pct = q; });
     return { pct, purchase_no: n, member_no: strv(cust.member_no) };
   }
-  const discountOf = P => { const amount = Math.max(0, P.listTotal - P.total); return { amount, pct: P.listTotal > 0 ? Math.round(amount / P.listTotal * 1000) / 10 : 0 }; };
+  const discountOf = P => { const amount = Math.max(0, P.listTotal - (P.total - (P.sendFee || 0))); return { amount, pct: P.listTotal > 0 ? Math.round(amount / P.listTotal * 1000) / 10 : 0 }; };
   const marginPct = (total, cost) => total > 0 ? Math.round((total - cost) / total * 1000) / 10 : 0;
   const isEmail = v => /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[a-z]{2,}$/i.test(v) && v.length <= 120;
   const qtyOnly = c => { const x = Object.assign({}, c); ['cost_price', 'from_total', 'to_total', 'd_total'].forEach(k => delete x[k]); return x; };
@@ -1816,7 +1820,7 @@ const MockServer = (() => {
         const sale = {
           id: nextId(db, 'sale'), invoice_no: invoiceNo(db, sale_date), sale_date, sale_time: data.sale_time || jktISO(),
           cashier: u.name, customer_id: cust ? cust.id : null, customer_name: cust ? cust.name : (data.customer_name || 'Umum'),
-          customer_type: cust ? cust.type : 'eceran', subtotal, discount, total, total_cost, profit: total - total_cost,
+          customer_type: cust ? cust.type : 'eceran', subtotal, discount, send_fee: P.sendFee, total, total_cost, profit: total - total_cost,
           payment_method: data.payment_method, paid_amount: paid, debt_amount: debt, status: 'ok',
           survey: JSON.stringify(data.survey_consent && Array.isArray(data.survey) ? data.survey.filter(x => x && String(x.a || '').trim()).map(x => ({ q: String(x.q), a: String(x.a) })) : []),
           survey_transcript: data.survey_consent === true ? String(data.survey_transcript || '').trim().slice(0, 4000) : '',
@@ -1836,7 +1840,8 @@ const MockServer = (() => {
           p.stock = roundQty(p.stock - q);
           stockOut.push({ product_id: p.id, stock: p.stock, shop_stock: Math.min(p.stock, db._shopSet[p.id]) });
         });
-        if (cust) Object.assign(cust, { debt_balance: int(cust.debt_balance) + debt, visits: Math.max(0, Math.round(num(cust.visits))) + 1, last_visit: sale_date });
+        if (cust) Object.assign(cust, { debt_balance: int(cust.debt_balance) + debt, visits: Math.max(0, Math.round(num(cust.visits))) + 1, last_visit: sale_date,
+          receipts_sent: Math.max(0, Math.round(num(cust.receipts_sent))) + (data.send_receipt === true ? 1 : 0) });
         if (notOnShelf.length) logAct(db, u, 'jual_tanpa_rak', 'Penjualan ' + sale.invoice_no + ' (tersimpan offline) melebihi stok rak: ' + notOnShelf.map(x => x.name + ' perlu ' + fmtN(x.need) + ', rak ' + fmtN(x.shop)).join('; '), sale.invoice_no, 0, 'warn');
         if (discBy) logAct(db, u, 'diskon', 'Diskon ' + disc.pct + '% (Rp ' + disc.amount + ') pada ' + sale.invoice_no + ' oleh ' + u.name + (discBy !== u.name ? ', disetujui ' + discBy : ''), sale.invoice_no, disc.amount, 'warn');
         if (debt > 0) logAct(db, u, 'hutang', 'Penjualan hutang ' + sale.invoice_no + ' ' + sale.customer_name + ' Rp ' + debt + (approved_by ? ' (disetujui ' + approved_by + ')' : ''), sale.invoice_no, debt, 'info');
@@ -2171,7 +2176,7 @@ const MockServer = (() => {
         return { applied: false, request_id: approval.request_id, approval };
       }
       case 'open_shift': {
-        if (roleOf(u) !== 'kasir') throw E('FORBIDDEN', 'Buka kas hanya dari akun kasir (aplikasi Khair Kasir)');
+        if (roleOf(u) !== 'kasir' && roleOf(u) !== 'manager') throw E('FORBIDDEN', 'Buka kas hanya dari akun kasir atau manajer (aplikasi Khair Kasir)');
         const ex = openShiftOf(db, u.name);
         if (ex) return { shift: Object.assign(blind(shiftSummary(db, ex), u.role), { already: true }) };
         if (data.opening_cash === undefined || data.opening_cash === '' || int(data.opening_cash) < 0) throw E('INVALID', 'opening_cash');
@@ -2180,7 +2185,7 @@ const MockServer = (() => {
         const opening = sh.opening_cash;
         const last = db.shifts.filter(x => x.status === 'closed').sort((a, b) => String(b.closed_at).localeCompare(String(a.closed_at)))[0] || null;
         const lastTxt = last ? ' — kas terakhir ditutup ' + String(last.closed_at).slice(0, 16).replace('T', ' ') + ' oleh ' + strv(last.cashier) + ': dihitung Rp ' + int(last.counted_cash) + ', selisih dengan pembukaan Rp ' + (opening - int(last.counted_cash)) : '';
-        const bk = newApproval(db, u, { kind: 'buka_kas', approver_role: 'manager', ref: sh.shift_id, total: opening, summary: ('Buka kas ' + u.name + ': modal awal dihitung Rp ' + opening + lastTxt).slice(0, 1500), note: String(data.note || ''),
+        const bk = newApproval(db, u, { kind: 'buka_kas', approver_role: roleOf(u) === 'manager' ? 'owner' : 'manager', ref: sh.shift_id, total: opening, summary: ('Buka kas ' + u.name + ': modal awal dihitung Rp ' + opening + lastTxt).slice(0, 1500), note: String(data.note || ''),
           payload: JSON.stringify({ shift_id: sh.shift_id, opening_cash: opening, last_counted: last ? int(last.counted_cash) : null, last_cashier: last ? strv(last.cashier) : '' }) });
         logAct(db, u, 'buka_kas', 'Buka kas ' + u.name + ' Rp ' + opening + lastTxt, sh.shift_id, opening, last && int(last.counted_cash) !== opening ? 'warn' : 'info');
         return { shift: blind(shiftSummary(db, sh), u.role), request_id: bk.request_id, approval: bk };
@@ -2308,7 +2313,7 @@ const MockServer = (() => {
           if (was && !member && !isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik / manajer yang bisa menghapus member');
           return { was, f: { email, member, member_no: ex && strv(ex.member_no) ? strv(ex.member_no) : (member ? 'M' + randId(6) : ''),
             member_since: member ? (ex && strv(ex.member_since) && was ? strv(ex.member_since) : jktDate()) : (ex ? strv(ex.member_since) : ''),
-            visits: ex ? Math.max(0, Math.round(num(ex.visits))) : 0, last_visit: ex ? strv(ex.last_visit) : '' } };
+            visits: ex ? Math.max(0, Math.round(num(ex.visits))) : 0, receipts_sent: ex ? Math.max(0, Math.round(num(ex.receipts_sent))) : 0, last_visit: ex ? strv(ex.last_visit) : '' } };
         };
         const memLog = (c, was) => {
           if (c.member && !was) logAct(db, u, 'member_baru', 'Member baru: ' + c.name + ' (' + c.member_no + ')' + (c.phone ? ' ' + c.phone : '') + (c.email ? ' ' + c.email : ''), c.member_no, 0, 'info');
@@ -2638,6 +2643,16 @@ const MockServer = (() => {
         if (data.pin_hash && !/^[0-9a-f]{64}$/.test(data.pin_hash)) throw E('INVALID', 'pin_hash');
         let x = db.users.find(v => v.name.toLowerCase() === name.toLowerCase());
         const active = data.active === undefined ? true : !!data.active;
+        // another person takes this account / role (new name): a new temporary PIN made with the new name
+        let newName = '';
+        if (strv(data.new_name)) {
+          newName = personName(data.new_name);
+          if (!x) throw E('NOT_FOUND', 'Pengguna tidak ditemukan');
+          if (!newName) throw E('INVALID', 'Nama baru hanya boleh huruf, angka, spasi dan . , \' -');
+          if (db.users.some(v => v !== x && v.name.toLowerCase() === newName.toLowerCase())) throw E('INVALID', 'Nama sudah dipakai');
+          if (!isHash(data.pin_hash)) throw E('INVALID', 'Ganti nama butuh PIN sementara baru');
+          if (openShiftOf(db, x.name)) throw E('INVALID', 'Tutup kas ' + x.name + ' dulu sebelum ganti nama');
+        }
         const ownersLeft = db.users.filter(v => v !== x && v.role === 'owner' && v.active).length + (role === 'owner' && active ? 1 : 0);
         if (!ownersLeft) throw E('INVALID', 'At least one active owner required');
         if (db.users.some(v => isHash(v.master_hash) && v.master_hash === data.pin_hash)) throw E('INVALID', 'PIN tidak valid');
@@ -2649,9 +2664,11 @@ const MockServer = (() => {
           db.users.push(x);
           logAct(db, u, 'pengguna', 'Pengguna baru: ' + x.name + ' (' + x.role + (x.active ? '' : ', nonaktif') + ')', x.name, 0, 'warn');
         } else {
-          x.role = role; x.active = active; if (data.pin_hash) x.pin_hash = data.pin_hash;
+          const oldName = x.name;
+          x.role = role; x.active = active; if (data.pin_hash) x.pin_hash = data.pin_hash; if (newName) x.name = newName;
           if (newPin) Object.assign(x, { must_change: !self, fail_count: 0, locked_until: '' });
-          logAct(db, u, 'pengguna', 'Pengguna diubah: ' + x.name + ' (' + x.role + (x.active ? '' : ', nonaktif') + ')' + (data.pin_hash ? ', PIN diganti' : ''), x.name, 0, 'warn');
+          if (newName) logAct(db, u, 'pengguna', 'Ganti orang: ' + oldName + ' → ' + newName + ' (' + role + '), PIN sementara baru', newName, 0, 'warn');
+          else logAct(db, u, 'pengguna', 'Pengguna diubah: ' + x.name + ' (' + x.role + (x.active ? '' : ', nonaktif') + ')' + (data.pin_hash ? ', PIN diganti' : ''), x.name, 0, 'warn');
         }
         return { user: { name: x.name, role: x.role, active: x.active, must_change: x.must_change === true } };
       }
@@ -3117,7 +3134,7 @@ function renderLogin() {
     const dots = Array.from({ length: L.master ? 8 : Math.max(4, L.pin.length) }, (_, i) => `<i class="${i < L.pin.length ? 'f' : ''}"></i>`).join('');
     const lk = lockLeft(L.sel), off = lk ? 'disabled' : '';
     inner = `<h2>${esc(S.user && S.inApp ? t('login.locked') : t('login.pick_user'))}</h2>
-      <div class="users-pick" role="radiogroup" aria-label="${esc(t('login.pick_user'))}">${L.users.length ? L.users.map(u => `<button role="radio" aria-checked="${L.sel === u.name}" class="${L.sel === u.name ? 'on' : ''}" data-act="login-user" data-name="${esc(u.name)}">${esc(u.name)}</button>`).join('') : `<span class="muted">${esc(t('loading'))}</span>`}</div>
+      <div class="users-pick" role="radiogroup" aria-label="${esc(t('login.pick_user'))}">${L.users.length ? L.users.map(u => `<button role="radio" aria-checked="${L.sel === u.name}" class="${L.sel === u.name ? 'on' : ''}" data-act="login-user" data-name="${esc(u.name)}">${u.role ? `<span class="small muted">${esc(t('role.' + u.role))} ·</span> ` : ''}${esc(u.name)}</button>`).join('') : `<span class="muted">${esc(t('loading'))}</span>`}</div>
       ${L.master ? `<div class="badge red" id="lg-master-on" style="margin:0 auto 6px">${ic('lock')} ${esc(t('mc.login_title', { name: L.sel || '…' }))}</div>` : ''}
       <div class="pin-dots ${L.master ? 'eight' : ''}" aria-label="PIN">${dots}</div>
       <div class="login-err" role="alert" id="lg-err">${lk ? `<span id="lg-locked">${esc(t('login.locked_until', { time: lk.time }))}</span>` : esc(L.err)}</div>
@@ -3304,14 +3321,18 @@ function cartView(c = S.cart) {
   const subtotal = sum(lines, l => l.total);
   const mem = memberOf(cust), memDisc = mem && mem.pct > 0 ? Math.round(subtotal * mem.pct / 100) : 0; // v16: member discount, applied by the app
   const discount = Math.min(subtotal, Math.max(0, int(c.discount)) + memDisc);
-  const total = subtotal - discount;
+  // receipt by WhatsApp / e-mail (07 Oct): the first one per customer is free (on by default), later ones add receipt_send_fee
+  const canSend = !!(cust && (normPhone(cust.phone) || cust.email)), firstSend = !!cust && !(num(cust.receipts_sent) >= 1);
+  const send = canSend && (c.sendReceipt === undefined || c.sendReceipt === null ? firstSend : !!c.sendReceipt);
+  const sendFee = send && !firstSend ? receiptFee() : 0;
+  const total = subtotal - discount + sendFee;
   const typed = String(c.paid).trim() !== '';
   const paid = typed ? moneyVal(c.paid) : (c.method === 'hutang' ? 0 : total);
   const change = Math.max(0, paid - total), debt = Math.max(0, total - paid);
   const items = sum(c.lines, l => l.qty);
   let error = '';
   if (debt > 0 && !cust) error = c.method === 'hutang' ? t('pos.debt_needs_customer') : t('pos.partial_needs_customer');
-  return { cust, lines, subtotal, discount, total, paid, typed, change, debt, items, error, mem, memDisc };
+  return { cust, lines, subtotal, discount, total, paid, typed, change, debt, items, error, mem, memDisc, canSend, firstSend, send, sendFee };
 }
 /** Adds qty of p (scan, tap with "ask quantity" off); with set=true the line gets exactly qty (quantity sheet). */
 function addToCart(p, qty = 1, set = false) {
@@ -3551,6 +3572,7 @@ function renderCart(flashId) {
     <div class="cart-foot">
       <div class="sumrow"><span>${esc(t('subtotal'))} <span class="muted small" data-ref="items">(${fmtQty(v.items)} ${esc(t('items'))})</span></span><span class="num" data-ref="sub">${fmtRp(v.subtotal)}</span></div>
       <div class="sumrow" id="cart-mem" ${v.memDisc ? '' : 'hidden'}><span data-ref="memlabel">${v.mem ? esc(t('mem.cart_disc', { pct: v.mem.pct, n: v.mem.purchase_no })) : ''}</span><span class="num green" data-ref="memdisc">-${fmtRp(v.memDisc)}</span></div>
+      ${v.canSend ? `<label class="check sumrow" id="cart-send-row" style="min-height:0;margin:2px 0"><input type="checkbox" id="cart-send" ${v.send ? 'checked' : ''}> <span class="grow">${esc(t('rs.send'))} <span class="small ${v.firstSend ? 'green' : 'muted'}" id="cart-send-fee">${esc(v.firstSend ? t('rs.free_first') : t('rs.fee', { n: fmtRp(receiptFee()) }))}</span></span></label>` : ''}
       <div class="sumrow"><label for="cart-disc">${esc(t('discount'))} (Rp)</label><input id="cart-disc" class="input num" inputmode="numeric" value="${c.discount ? esc(fmtNum(c.discount)) : ''}" placeholder="0"></div>
       <div class="badge red" id="cart-exit" hidden style="margin:2px 0">${ic('camera')} ${esc(t('exit.warn'))}</div>
       <div class="sumrow total"><span>${esc(t('total'))}</span><span class="num" data-ref="total" id="cart-total">${fmtRp(v.total)}</span></div>
@@ -3625,6 +3647,7 @@ function bindCartInputs() {
   });
   const disc = $('#cart-disc');
   disc.addEventListener('input', () => { S.cart.discount = moneyVal(disc.value); saveCart(); refreshCartNumbers(); });
+  const sendCb = $('#cart-send'); if (sendCb) sendCb.onchange = () => { S.cart.sendReceipt = sendCb.checked; saveCart(); refreshCartNumbers(); };
   disc.addEventListener('change', () => { disc.value = S.cart.discount ? fmtNum(S.cart.discount) : ''; });
   const promo = $('#cart-promo');
   if (promo) promo.addEventListener('input', () => { S.cart.promo = cleanPromo(promo.value); saveCart(); });
@@ -3963,7 +3986,8 @@ function buildSaleRequest(v) {
     discount: v.discount, payment_method: c.method, paid_amount: Math.min(v.paid, v.total),
     survey: manual ? sv.answers : [], survey_consent: manual || !!vo, survey_transcript: vo ? vsClean(vo.text) : '', // transcript only after the consent tap
     channel: c.channel || 'toko', promo_code: cleanPromo(c.promo),
-    notes: c.notes || ''
+    notes: c.notes || '',
+    ...(v.send ? { send_receipt: true } : {})
   };
 }
 function receiptFromCart(v, req) {
@@ -3971,7 +3995,7 @@ function receiptFromCart(v, req) {
     invoice_no: '', client_id: req.client_id, pending: false, sale_date: req.sale_date, sale_time: req.sale_time, cashier: S.user,
     customer_name: v.cust ? v.cust.name : t('pos.walkin'), customer_phone: v.cust ? v.cust.phone : '', customer_id: v.cust ? v.cust.id : null,
     lines: v.lines.map(l => ({ name: l.p.name, unit: l.p.unit || '', qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type, line_total: l.total })),
-    subtotal: v.subtotal, discount: v.discount, total: v.total, method: S.cart.method, paid: v.paid, change: v.change, debt: v.debt, status: 'ok', promo_code: req.promo_code, channel: req.channel,
+    subtotal: v.subtotal, discount: v.discount, send_fee: v.sendFee, total: v.total, method: S.cart.method, paid: v.paid, change: v.change, debt: v.debt, status: 'ok', promo_code: req.promo_code, channel: req.channel,
     debt_after: v.cust ? int(v.cust.debt_balance) + v.debt : 0
   };
 }
@@ -3994,7 +4018,8 @@ async function doSave(extra = {}, meta = {}) {
     if (r.sale) { rc.total = int(r.sale.total ?? rc.total); rc.debt = int(r.sale.debt_amount ?? rc.debt); if (r.sale.approved_by) rc.approved_by = r.sale.approved_by; }
     if (r.exit_photo_required != null) rc.exit_required = !!r.exit_photo_required;
     applyStock(r.stock);
-    if (v.cust && !r.duplicate) { v.cust.debt_balance = int(v.cust.debt_balance) + rc.debt; }
+    if (v.cust && !r.duplicate) { v.cust.debt_balance = int(v.cust.debt_balance) + rc.debt; if (req.send_receipt) v.cust.receipts_sent = num(v.cust.receipts_sent) + 1; }
+    if (r.sale && r.sale.send_fee != null) rc.send_fee = int(r.sale.send_fee);
     rc.debt_after = v.cust ? v.cust.debt_balance : 0;
     finishSale(rc);
     return 'ok';
@@ -4096,6 +4121,7 @@ function receiptLinesHTML(rc) {
     <div class="ln"></div>${rows}<div class="ln"></div>
     <div class="r2"><span>${esc(t('subtotal'))}</span><span>${esc(NF.format(rc.subtotal))}</span></div>
     ${rc.discount ? `<div class="r2"><span>${esc(t('discount'))}</span><span>-${esc(NF.format(rc.discount))}</span></div>` : ''}
+    ${rc.send_fee ? `<div class="r2" data-send-fee><span>${esc(t('rs.fee_line'))}</span><span>${esc(NF.format(rc.send_fee))}</span></div>` : ''}
     ${rc.promo_code ? `<div class="r2"><span>${esc(t('promo.title'))}</span><span>${esc(rc.promo_code)}</span></div>` : ''}
     <div class="r2 big"><span>${esc(t('total'))}</span><span>${esc(fmtRp(rc.total))}</span></div>
     <div class="r2"><span>${esc(t('rc.paid'))} (${esc(t('pm.' + rc.method))})</span><span>${esc(NF.format(rc.paid))}</span></div>
@@ -4119,6 +4145,7 @@ function receiptText(rc) {
   rc.lines.forEach(l => out.push(`${l.name}${l.price_type === 'grosir' ? ' (grosir)' : ''}`, `  ${fmtQty(l.qty)} x ${fmtRp(l.unit_price)} = ${fmtRp(l.line_total)}`));
   out.push(L2, `${t('subtotal')}: ${fmtRp(rc.subtotal)}`);
   if (rc.discount) out.push(`${t('discount')}: -${fmtRp(rc.discount)}`);
+  if (rc.send_fee) out.push(`${t('rs.fee_line')}: ${fmtRp(rc.send_fee)}`);
   out.push(`*${t('total')}: ${fmtRp(rc.total)}*`, `${t('rc.paid')} (${t('pm.' + rc.method)}): ${fmtRp(rc.paid)}`);
   if (rc.change) out.push(`${t('pos.change')}: ${fmtRp(rc.change)}`);
   if (rc.debt) out.push(`${t('rc.debt')}: ${fmtRp(rc.debt)}`);
@@ -5773,7 +5800,7 @@ function rcFromSale(sale, items) {
   return {
     invoice_no: sale.invoice_no, client_id: sale.client_id, pending: false, sale_date: sale.sale_date, sale_time: sale.sale_time, cashier: sale.cashier,
     customer_name: sale.customer_name || t('pos.walkin'), customer_phone: cust ? cust.phone : '', customer_id: sale.customer_id,
-    lines: lines.length ? lines : (local ? local.lines : []), subtotal: int(sale.subtotal), discount: int(sale.discount), total: int(sale.total),
+    lines: lines.length ? lines : (local ? local.lines : []), subtotal: int(sale.subtotal), discount: int(sale.discount), send_fee: int(sale.send_fee), total: int(sale.total),
     method: sale.payment_method, paid: local ? local.paid : int(sale.paid_amount), change: local ? local.change : 0, debt: int(sale.debt_amount), status: sale.status || 'ok', debt_after: 0, void_reason: sale.void_reason,
     approved_by: sale.approved_by || '', exit_required: !!sale.exit_photo, exit_photo: sale.exit_photo && sale.exit_photo !== 'required' ? sale.exit_photo : '', exit_match: sale.exit_match || (local && local.exit_match) || '', exit_result: local && local.exit_result
   };
@@ -6127,7 +6154,7 @@ function drawHistory() {
   b.innerHTML = `<div id="hi-missing">${HI.missing || ''}</div><p class="muted"><b>${esc(t('rep.tx_count'))}: ${fmtNum(ok.length)}</b> · ${esc(t('total'))}: <b class="num">${fmtRp(sum(ok, s => s.total))}</b>${sales.length - ok.length ? ` · ${esc(t('hist.voided', { n: sales.length - ok.length }))}` : ''}</p>
     <div class="tbl-wrap"><table class="tbl" id="hist-table"><thead><tr><th>${esc(t('rc.no'))}</th><th>${esc(t('time'))}</th><th>${esc(t('rc.customer'))}</th><th class="hide-phone">${esc(t('pos.method'))}</th><th class="r">${esc(t('total'))}</th><th>${esc(t('status'))}</th></tr></thead><tbody>
     ${pend.map(e => `<tr class="click" data-act="outbox-open" data-cid="${esc(e.client_id)}"><td>${esc(e.rc.invoice_no || '—')}</td><td class="num">${esc(fmtDateTime(e.req.sale_time, e.req.sale_date))}</td><td>${esc(e.rc.customer_name)}</td><td class="hide-phone">${esc(t('pm.' + e.req.payment_method))}</td><td class="r num">${fmtRp(e.rc.total)}</td><td><span class="badge amber">${esc(t('outbox.pending'))}</span></td></tr>`).join('')}
-    ${sales.map(s => `<tr class="click ${s.status === 'void' ? 'void' : ''}" data-act="hist-open" data-inv="${esc(s.invoice_no)}"><td>${esc(s.invoice_no)}</td><td class="num">${esc(HI.from === HI.to ? jktTime(s.sale_time) : fmtDateTime(s.sale_time, s.sale_date))}</td><td>${esc(s.customer_name || t('pos.walkin'))}</td><td class="hide-phone">${esc(t('pm.' + s.payment_method))}</td><td class="r num">${fmtRp(s.total)}</td><td>${s.status === 'void' ? `<span class="badge red">${esc(t('void'))}</span>` : s.debt_amount ? `<span class="badge amber">${esc(t('debt'))}</span>${s.approved_by ? `<div class="small muted">✓ ${esc(s.approved_by)}</div>` : ''}` : `<span class="badge">${esc(t('ok_status'))}</span>`}${s.status !== 'void' && s.exit_photo === 'required' ? ` <span class="badge red" data-exit-missing>${ic('camera')}</span>` : ''}${s.exit_match === 'tidak_cocok' ? ` <span class="badge red">${esc(t('exit.tidak_cocok'))}</span>` : ''}</td></tr>`).join('')}
+    ${sales.map(s => `<tr class="click ${s.status === 'void' ? 'void' : ''}" data-act="hist-open" data-inv="${esc(s.invoice_no)}"><td>${esc(s.invoice_no)}</td><td class="num">${esc(HI.from === HI.to ? jktTime(s.sale_time) : fmtDateTime(s.sale_time, s.sale_date))}</td><td>${esc(s.customer_name || t('pos.walkin'))}</td><td class="hide-phone">${esc(t('pm.' + s.payment_method))}</td><td class="r num">${fmtRp(s.total)}${int(s.send_fee) ? `<div class="small muted" data-send-fee>${esc(t('rs.incl', { n: fmtRp(s.send_fee) }))}</div>` : ''}</td><td>${s.status === 'void' ? `<span class="badge red">${esc(t('void'))}</span>` : s.debt_amount ? `<span class="badge amber">${esc(t('debt'))}</span>${s.approved_by ? `<div class="small muted">✓ ${esc(s.approved_by)}</div>` : ''}` : `<span class="badge">${esc(t('ok_status'))}</span>`}${s.status !== 'void' && s.exit_photo === 'required' ? ` <span class="badge red" data-exit-missing>${ic('camera')}</span>` : ''}${s.exit_match === 'tidak_cocok' ? ` <span class="badge red">${esc(t('exit.tidak_cocok'))}</span>` : ''}</td></tr>`).join('')}
     ${!sales.length && !pend.length ? `<tr><td colspan="6" class="empty">${esc(HI.data ? t('no_data') : '')}</td></tr>` : ''}</tbody></table></div>`;
 }
 async function voidSale(inv) {
@@ -6836,9 +6863,9 @@ RENDER.settings = function () {
     ${settingsExtraHTML()}
     ${settingsV16HTML()}
     ${settingsReturHTML()}
+    ${settingsReceiptHTML()}
     <div class="panel"><h3>${esc(t('set.users'))}</h3><div class="pb">
-      <div class="tbl-wrap" style="margin-bottom:12px"><table class="tbl" id="st-users"><tbody>${S.users.map(u => `<tr><td><b>${esc(u.name)}</b> <span class="badge ${u.role === 'owner' ? 'gold' : u.role === 'manager' ? 'blue' : 'gray'}">${esc(t('role.' + u.role))}</span> ${u.active === false ? `<span class="badge red">${esc(t('inactive'))}</span>` : ''}${u.must_change ? ` <span class="badge amber" data-must="1">${esc(t('usr.must_change'))}</span>` : ''}${u.locked ? ` <span class="badge red" data-locked="1">${esc(t('usr.locked'))}</span>` : ''}${u.has_master ? ` <span class="badge gold" data-has-master="1">${ic('lock')} ${esc(t('mc.has'))}</span>` : ''}<br><select class="input" style="width:auto;min-height:32px;padding:2px 6px;margin-top:4px" data-user-role="${esc(u.name)}" aria-label="${esc(t('set.role'))}">${['kasir', 'sales', 'manager', 'owner'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${esc(t('role.' + r))}</option>`).join('')}</select></td>
-        <td class="r"><button class="btn xs" data-act="user-pin" data-name="${esc(u.name)}">${esc(t('set.reset_pin'))}</button> <button class="btn xs ${u.active === false ? '' : 'danger'}" data-act="user-toggle" data-name="${esc(u.name)}">${esc(u.active === false ? t('set.activate') : t('set.deactivate'))}</button></td></tr>`).join('')}</tbody></table></div>
+      <div id="st-users" style="margin-bottom:12px">${usersByRoleHTML()}</div>
       ${ST.tempPin ? `<div class="notice" id="st-temp-pin" role="status">${ic('lock')} <span>${esc(t('usr.temp_notice', { name: ST.tempPin }))}</span></div>` : ''}
       <h4 style="margin:0 0 8px">${esc(t('set.add_user'))}</h4>
       <p class="small muted" style="margin-top:0">${esc(t('usr.temp_hint'))}</p>
@@ -8819,6 +8846,7 @@ function renderDaily(v) {
 async function loadDaily() {
   const seq = ++DR.seq, b = $('#dr-body'); if (b) b.style.opacity = '.55';
   try { const r = await api('daily_report', { date: DR.date }); if (seq !== DR.seq) return; DR.data = r; DR.err = ''; } catch (e) { if (seq !== DR.seq) return; DR.data = null; DR.err = errMsg(e); }
+  try { const d = await loadSales(DR.date, DR.date, true); if (seq === DR.seq && DR.data) { const ok = d.sales.filter(x => x.status !== 'void' && x.sale_date === DR.date); DR.data.send_fees = { count: ok.filter(x => int(x.send_fee) > 0).length, total: sum(ok, x => int(x.send_fee)) }; } } catch (e) { }
   drawDaily();
 }
 function drawDaily() {
@@ -8831,7 +8859,7 @@ function drawDaily() {
   const nums = [['company', to.company], ['manager', to.manager], ['owner', to.owner]].map(([k, n]) => [k, normPhone(n) || String(n || '').replace(/\D/g, '')]).filter(x => x[1]);
   box.innerHTML = `<div class="kpis">${kpi('dr-total', t('dr.sales_total'), fmtRp(s0.total), esc(t('dr.n_tx', { n: fmtNum(s0.count) })), 'hl')}${kpi('dr-items', t('dr.items'), fmtQty(s0.items_qty))}${kpi('dr-bank', t('dr.bank_in'), fmtRp(bank.in_total), '', 'gold')}${own && R.profit != null ? kpi('dr-profit', t('rep.profit'), fmtRp(R.profit)) : ''}</div>
     <div class="dr-grid">
-      <div class="panel" id="dr-methods"><h3>${esc(t('dr.by_method'))}</h3><div class="pb">${row(t('pm.tunai'), fmtRp(bm.tunai), 'tunai')}${row(t('pm.transfer'), fmtRp(bm.transfer), 'transfer')}${row(t('pm.qris'), fmtRp(bm.qris), 'qris')}${row(t('pm.hutang'), fmtRp(s0.debt), 'hutang', s0.debt ? 'amber' : '')}${row(t('dr.discount'), fmtRp(s0.discount), 'discount')}${row(t('dr.voids'), `${fmtNum((s0.voids || {}).count)} · ${fmtRp((s0.voids || {}).total)}`, 'voids', (s0.voids || {}).count ? 'red' : '')}</div></div>
+      <div class="panel" id="dr-methods"><h3>${esc(t('dr.by_method'))}</h3><div class="pb">${row(t('pm.tunai'), fmtRp(bm.tunai), 'tunai')}${row(t('pm.transfer'), fmtRp(bm.transfer), 'transfer')}${row(t('pm.qris'), fmtRp(bm.qris), 'qris')}${row(t('pm.hutang'), fmtRp(s0.debt), 'hutang', s0.debt ? 'amber' : '')}${row(t('dr.discount'), fmtRp(s0.discount), 'discount')}${DR.data.send_fees ? row(t('rs.fee_line'), `${fmtNum(DR.data.send_fees.count)} · ${fmtRp(DR.data.send_fees.total)}`, 'send-fee') : ''}${row(t('dr.voids'), `${fmtNum((s0.voids || {}).count)} · ${fmtRp((s0.voids || {}).total)}`, 'voids', (s0.voids || {}).count ? 'red' : '')}</div></div>
       <div class="panel" id="dr-bank"><h3>${ic('bank')} ${esc(t('dr.bank'))}</h3><div class="pb">${row(t('dr.b_sales_tf'), fmtRp(bank.sales_transfer), 'b-stf')}${row(t('dr.b_sales_qris'), fmtRp(bank.sales_qris), 'b-sqr')}${row(t('dr.b_pay_tf'), fmtRp(bank.payments_transfer), 'b-ptf')}${row(t('dr.b_pay_qris'), fmtRp(bank.payments_qris), 'b-pqr')}${row(t('dr.b_in_total'), fmtRp(bank.in_total), 'b-in', 'green')}${row(t('dr.b_out'), fmtRp(bank.out_transfer), 'b-out', bank.out_transfer ? 'red' : '')}</div></div>
       <div class="panel" id="dr-cash"><h3>${ic('cash')} ${esc(t('dr.cash'))}</h3><div class="pb">${row(t('dr.c_sales'), fmtRp(cash.sales), 'c-sales')}${row(t('dr.c_pin'), fmtRp(cash.payments_in), 'c-pin')}${row(t('dr.c_pout'), fmtRp(cash.payments_out), 'c-pout')}${row(t('dr.c_exp'), fmtRp(cash.expenses_from_kas), 'c-exp')}${row(t('shift.expected'), fmtRp(cash.expected_total), 'c-exp-total')}${row(t('shift.counted'), fmtRp(cash.counted_total), 'c-counted')}${row(t('shift.difference'), fmtRp(cash.difference_total), 'c-diff', cash.difference_total ? 'red' : 'green')}</div></div>
       <div class="panel" id="dr-pay"><h3>${ic('wallet')} ${esc(t('dr.payments'))}</h3><div class="pb">${row(t('dr.pin'), `${fmtNum(pin.count)} · ${fmtRp(pin.total)}`, 'pin')}${row(t('dr.pout'), `${fmtNum(pout.count)} · ${fmtRp(pout.total)}`, 'pout')}${row(t('dr.expenses'), `${fmtNum(ex.count)} · ${fmtRp(ex.total)}`, 'exp')}</div></div>
@@ -8863,6 +8891,7 @@ function dailyText(R, withProfit) {
   const rt = R.returns || {}, rc0 = rt.customer || {}, rs = rt.supplier || {};
   if (rc0.count) L.push(`Retur pelanggan: ${fmtNum(rc0.count)} (uang kembali ${fmtRp(rc0.refund)}, tunai ${fmtRp(rc0.tunai)})`);
   if (rs.count) L.push(`Retur ke pemasok: ${fmtNum(rs.count)}${withProfit && rs.value != null ? ` (nilai ${fmtRp(rs.value)})` : ''}`);
+  if (DR.data && DR.data.report === R && DR.data.send_fees && DR.data.send_fees.total) L.push(`Biaya kirim struk: ${fmtNum(DR.data.send_fees.count)} × (${fmtRp(DR.data.send_fees.total)})`);
   if (withProfit && R.profit != null) L.push(`Laba kotor: ${fmtRp(R.profit)}`);
   return L.join('\n');
 }
@@ -9950,6 +9979,77 @@ Object.assign(I18N.ar, {
   'ag.waiting': 'اقتراحك بانتظار تأكيد {who}: {what} ← {v}', 'ag.bad_value': 'أدخل قيمة صحيحة', 'ag.same': 'القيمة مطابقة للحالية', 'ag.sent': 'أُرسل الاقتراح — بانتظار تأكيد {who}',
   'ag.card_hint': 'وافق إن كنت متفقاً. يتغير الحد بعد التأكيد ويُسجَّل.', 'apr.kind_agree': 'اقتراح اتفاق على حد المرتجعات', 'apr.new_agree': 'اقتراح اتفاق من {cashier} ←',
   'ak.usul_kesepakatan': 'اقتراح اتفاق', 'ak.kesepakatan': 'اتفاق', 'err.AGREEMENT_REQUIRED': 'هذا الحد يتغير باتفاق المالك والمدير'
+});
+
+/* ---- Receipt sending fee (07 Oct): first receipt per customer free, later ones + receipt_send_fee ---- */
+function receiptFee() { const v = settings().receipt_send_fee; return v === undefined || v === null || v === '' ? 500 : Math.max(0, int(v)); }
+function settingsReceiptHTML() {
+  if (!isOwner()) return '';
+  return `<div class="panel" id="st-receipt"><h3>${ic('wa')} ${esc(t('rs.title'))}</h3><div class="pb">
+    <div class="field"><label class="f" for="st-send-fee">${esc(t('rs.setting'))}</label><div class="row"><span>Rp</span><input class="input num" id="st-send-fee" data-rule="num" inputmode="numeric" style="max-width:140px" value="${esc(fmtNum(receiptFee()))}"></div>
+      <div class="small muted" style="margin-top:4px">${esc(t('rs.hint', { n: fmtRp(receiptFee()) }))}</div></div>
+    <div class="red" id="st-send-err"></div><button class="btn primary" data-act="set-save-sendfee">${esc(t('save'))}</button></div></div>`;
+}
+
+/* ---- Users by role; "Ganti orang" (another person takes the role: new name + new temporary PIN) ---- */
+const ROLE_ORDER = ['owner', 'manager', 'kasir', 'sales', 'akuntan'];
+const pinLenFor = role => role === 'owner' || role === 'manager' ? 6 : 4;
+function usersByRoleHTML() {
+  return ROLE_ORDER.map(r => {
+    const list = S.users.filter(u => (u.role || 'kasir') === r);
+    return `<div class="usr-group" data-role-group="${r}"><h4 style="margin:10px 0 6px">${esc(t('usr.group_' + r))} <span class="muted small">(${list.length})</span></h4>
+      ${list.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>${list.map(u => `<tr data-user="${esc(u.name)}"><td><b>${esc(u.name)}</b> ${u.active === false ? `<span class="badge red">${esc(t('inactive'))}</span>` : ''}${u.must_change ? ` <span class="badge amber" data-must="1">${esc(t('usr.must_change'))}</span>` : ''}${u.locked ? ` <span class="badge red" data-locked="1">${esc(t('usr.locked'))}</span>` : ''}${u.has_master ? ` <span class="badge gold" data-has-master="1">${ic('lock')} ${esc(t('mc.has'))}</span>` : ''}<br>
+        <select class="input" style="width:auto;min-height:32px;padding:2px 6px;margin-top:4px" data-user-role="${esc(u.name)}" aria-label="${esc(t('set.role'))}">${['kasir', 'sales', 'manager', 'owner'].map(x => `<option value="${x}" ${u.role === x ? 'selected' : ''}>${esc(t('role.' + x))}</option>`).join('')}</select></td>
+        <td class="r" style="white-space:nowrap"><button class="btn xs" data-act="user-swap" data-name="${esc(u.name)}">${ic('users')} ${esc(t('usr.swap'))}</button> <button class="btn xs" data-act="user-pin" data-name="${esc(u.name)}">${esc(t('set.reset_pin'))}</button> <button class="btn xs ${u.active === false ? '' : 'danger'}" data-act="user-toggle" data-name="${esc(u.name)}">${esc(u.active === false ? t('set.activate') : t('set.deactivate'))}</button></td></tr>`).join('')}</tbody></table></div>`
+      : `<div class="small muted" data-empty-group>${esc(t(r === 'akuntan' ? 'usr.akuntan_note' : 'usr.group_empty'))}</div>`}</div>`;
+  }).join('');
+}
+function openUserSwap(u) {
+  const n = pinLenFor(u.role);
+  const el = openModal({ title: t('usr.swap_title', { role: t('role.' + u.role), name: u.name }), cls: 'narrow', id: 'swap-modal',
+    body: `<p class="small muted" style="margin-top:0">${esc(t('usr.swap_hint', { name: u.name }))}</p>
+      <div class="field"><label class="f" for="sw-name">${esc(t('usr.new_name'))}</label><input class="input" id="sw-name" data-rule="name" autocomplete="off" autofocus></div>
+      <div class="grid2"><div class="field"><label class="f" for="sw-pin">${esc(t('usr.temp_pin', { n: n === 6 ? '6' : '4–6' }))}</label><input class="input" id="sw-pin" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password"></div>
+        <div class="field"><label class="f" for="sw-pin2">${esc(t('pin_again'))}</label><input class="input" id="sw-pin2" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password"></div></div>
+      <div class="notice">${ic('lock')} <span>${esc(t('usr.temp_must'))}</span></div><div class="red" id="sw-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="sw-save">${esc(t('usr.swap'))}</button>` });
+  $('#sw-save', el).onclick = async () => {
+    const err = $('#sw-err', el), nn = $('#sw-name', el).value.trim().replace(/\s+/g, ' '), a = $('#sw-pin', el).value, b = $('#sw-pin2', el).value;
+    if (!nn) { err.textContent = t('required') + ': ' + t('usr.new_name'); return; }
+    if (!ruleOk.name(nn)) { err.textContent = t('rule.name'); return; }
+    if (S.users.some(x => x.name.toLowerCase() === nn.toLowerCase() && x.name !== u.name)) { err.textContent = t('set.user_exists'); return; }
+    if (!(n === 6 ? /^\d{6}$/ : /^\d{4,6}$/).test(a)) { err.textContent = t('pc.len', { n: n === 6 ? '6' : '4–6' }); return; }
+    if (a !== b) { err.textContent = t('pin_mismatch'); return; }
+    $('#sw-save', el).disabled = true;
+    try {
+      const r = await api('save_user', { name: u.name, new_name: nn, role: u.role, active: u.active !== false, pin_hash: await pinHash(S.key, nn, a) }); // hash with the NEW name
+      const i = S.users.findIndex(x => x.name === u.name);
+      if (i >= 0) S.users[i] = Object.assign({}, S.users[i], r.user, { must_change: true, locked: false });
+      saveCache(); closeModal(); ST.tempPin = r.user.name; toast(t('usr.swapped', { a: u.name, b: r.user.name }), 'ok', 5000); RENDER.settings();
+    } catch (e) { err.textContent = errMsg(e); $('#sw-save', el).disabled = false; }
+  };
+}
+Object.assign(ACT, {
+  'user-swap': el => { const u = S.users.find(x => x.name === el.dataset.name); if (u) openUserSwap(u); },
+  'set-save-sendfee': () => {
+    const err = $('#st-send-err'), raw = $('#st-send-fee').value.trim(), v = moneyVal(raw);
+    if (raw === '' || !(v >= 0) || v > 100000) { err.textContent = t('rs.bad'); return; }
+    err.textContent = ''; saveSettings({ receipt_send_fee: v }, err);
+  }
+});
+Object.assign(I18N.id, {
+  'rs.title': 'Kirim struk (WhatsApp / e-mail)', 'rs.setting': 'Biaya kirim struk', 'rs.hint': 'Struk pertama gratis, berikutnya +{n} (ditambahkan ke tagihan). Pelanggan yang tidak mau tetap dapat struk cetak / di layar.',
+  'rs.send': 'Kirim struk ke WA / e-mail', 'rs.free_first': 'gratis (pertama)', 'rs.fee': '+{n}', 'rs.fee_line': 'Biaya kirim struk', 'rs.incl': 'termasuk kirim struk {n}', 'rs.bad': 'Isi biaya 0–100.000',
+  'usr.group_owner': 'Pemilik', 'usr.group_manager': 'Manajer', 'usr.group_kasir': 'Kasir', 'usr.group_sales': 'Sales', 'usr.group_akuntan': 'Akuntan', 'usr.akuntan_note': 'belum ditentukan', 'usr.group_empty': 'Belum ada pengguna.',
+  'usr.swap': 'Ganti orang', 'usr.swap_title': 'Ganti orang · {role} {name}', 'usr.swap_hint': 'Orang lain mengambil peran {name}: tulis nama orang baru dan PIN sementara. Riwayat tetap tercatat; akun lama tidak bisa masuk lagi.',
+  'usr.new_name': 'Nama orang baru', 'usr.temp_pin': 'PIN sementara ({n} angka)', 'usr.temp_must': 'PIN sementara — wajib ganti saat masuk.', 'usr.swapped': '{a} diganti {b}. PIN sementara — wajib ganti saat masuk.'
+});
+Object.assign(I18N.ar, {
+  'rs.title': 'إرسال الإيصال (واتساب / بريد)', 'rs.setting': 'رسوم إرسال الإيصال', 'rs.hint': 'الإيصال الأول مجاني، وما بعده +{n} (يُضاف إلى الفاتورة). من لا يريده يحصل على الإيصال المطبوع / على الشاشة.',
+  'rs.send': 'إرسال الإيصال بالواتساب / البريد', 'rs.free_first': 'مجاناً (الأول)', 'rs.fee': '+{n}', 'rs.fee_line': 'رسوم إرسال الإيصال', 'rs.incl': 'تشمل إرسال الإيصال {n}', 'rs.bad': 'أدخل رسوماً بين 0 و100.000',
+  'usr.group_owner': 'المالك', 'usr.group_manager': 'المدير', 'usr.group_kasir': 'الكاشير', 'usr.group_sales': 'المندوب', 'usr.group_akuntan': 'المحاسب', 'usr.akuntan_note': 'لم يُحدَّد بعد', 'usr.group_empty': 'لا يوجد مستخدمون.',
+  'usr.swap': 'تغيير الشخص', 'usr.swap_title': 'تغيير الشخص · {role} {name}', 'usr.swap_hint': 'شخص آخر يتولى دور {name}: اكتب اسم الشخص الجديد ورقماً سرياً مؤقتاً. يبقى السجل محفوظاً؛ ولا يستطيع الحساب القديم الدخول.',
+  'usr.new_name': 'اسم الشخص الجديد', 'usr.temp_pin': 'رقم سري مؤقت ({n} أرقام)', 'usr.temp_must': 'رقم مؤقت — يجب تغييره عند الدخول.', 'usr.swapped': 'حلّ {b} محل {a}. رقم مؤقت — يجب تغييره عند الدخول.'
 });
 
 /* ========== Boot ========== */

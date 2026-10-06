@@ -227,7 +227,10 @@ main{overflow:hidden;position:relative;min-width:0}
 .screen-card h2{text-align:center;font-size:19px;margin:0 0 14px}
 .users{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .users button{min-height:72px;border-radius:14px;border:2px solid var(--line);background:#fff;font-weight:900;font-size:18px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
-.users button span{font-size:12.5px;font-weight:700;color:var(--muted)}
+.users button span{font-size:14px;font-weight:700;color:var(--muted)}
+.users button{flex-direction:row;flex-wrap:wrap;gap:0 6px;padding:6px 10px;text-align:center}
+.rsbox{margin:8px 0;padding:10px 12px;border-radius:var(--rs);background:var(--pll)}
+.rsbox .toggle{width:100%;justify-content:center}
 .users button:hover{border-color:var(--p)}
 .who{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:6px}
 .who b{font-size:21px}
@@ -789,7 +792,7 @@ const MockServer = (() => {
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
   const READ_ONLY = ['users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos', 'party_ledger', 'list_returns', 'get_sale'];
   /* v16 settings defaults as on the server (an older demo DB lacks them) */
-  const V16_DEFAULTS = { limit_agreements: [], max_discount_pct: 3, sell_from_shop_only: true, return_owner_min_value: 2000000, return_owner_min_qty: 0, return_fee_pct: 0, require_return_photo: true, require_carrier: true, member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
+  const V16_DEFAULTS = { limit_agreements: [], receipt_send_fee: 500, max_discount_pct: 3, sell_from_shop_only: true, return_owner_min_value: 2000000, return_owner_min_qty: 0, return_fee_pct: 0, require_return_photo: true, require_carrier: true, member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
   class MockErr extends Error { constructor(code, message) { super(message || code); this.code = code; } }
   const E = (code, msg, extra) => { const e = new MockErr(code, msg); if (extra) e.extra = extra; return e; };
   let ready = null;
@@ -845,12 +848,20 @@ const MockServer = (() => {
     });
     const subtotal = sum(lines, l => l.line_total);
     const discount = Math.min(subtotal, Math.max(0, int(data.discount)));
-    const total = subtotal - discount;
+    // (07 Oct) receipt sent by WhatsApp / e-mail: the first one per customer is free, later ones add receipt_send_fee
+    if (data.send_receipt === true && !cust) throw E('INVALID', 'Simpan nomor HP pelanggan dulu untuk kirim struk');
+    const sendFee = data.send_receipt === true ? receiptFee(db, cust) : 0;
+    const total = subtotal - discount + sendFee;
     const total_cost = sum(lines, l => l.line_cost);
     const paid = Math.max(0, int(data.paid_amount));
     const debt = Math.max(0, total - paid);
     if (debt > 0 && !cust && !quote) throw E('INVALID', 'Debt requires customer_id');
-    return { cust, lines, subtotal, discount, total, total_cost, paid, debt, sale_date: isYmd(data.sale_date) ? data.sale_date : jktDate(), listTotal: sum(lines, l => l.list_total) };
+    return { cust, lines, subtotal, discount, total, total_cost, paid, debt, sale_date: isYmd(data.sale_date) ? data.sale_date : jktDate(), listTotal: sum(lines, l => l.list_total), sendFee };
+  }
+  function receiptFee(db, cust) {
+    const v = db.settings.receipt_send_fee;
+    const fee = v === undefined || v === null || v === '' ? 500 : Math.max(0, Math.round(num(v)));
+    return cust && num(cust.receipts_sent) >= 1 ? fee : 0;
   }
   const openShiftOf = (db, name) => db.shifts.find(x => x.status === 'open' && String(x.cashier).toLowerCase() === String(name).toLowerCase());
   function shiftSummary(db, sh) {
@@ -1116,7 +1127,7 @@ const MockServer = (() => {
     tiers.forEach(t => { const f = num(t && t.from), q = num(t && t.pct); if (f >= 1 && f <= n && q > 0 && q <= 50 && q > pct) pct = q; });
     return { pct, purchase_no: n, member_no: str(c.member_no) };
   }
-  const discountOf = P => { const amount = Math.max(0, P.listTotal - P.total); return { amount, pct: P.listTotal > 0 ? Math.round(amount / P.listTotal * 1000) / 10 : 0 }; };
+  const discountOf = P => { const amount = Math.max(0, P.listTotal - (P.total - (P.sendFee || 0))); return { amount, pct: P.listTotal > 0 ? Math.round(amount / P.listTotal * 1000) / 10 : 0 }; };
   const marginPct = (total, cost) => total > 0 ? Math.round((total - cost) / total * 1000) / 10 : 0;
   /** What a non-owner may see of an approval: no profit (discount), quantities only (purchase fix). */
   function approvalOut(a, role) {
@@ -1381,7 +1392,7 @@ const MockServer = (() => {
         const sale = {
           id: nextId(db, 'sale'), invoice_no: invoiceNo(db, sale_date), sale_date, sale_time: data.sale_time || jktISO(),
           cashier: u.name, customer_id: cust ? cust.id : null, customer_name: cust ? cust.name : (data.customer_name || 'Umum'),
-          customer_type: cust ? cust.type : 'eceran', subtotal, discount, total, total_cost, profit: total - total_cost,
+          customer_type: cust ? cust.type : 'eceran', subtotal, discount, send_fee: P.sendFee, total, total_cost, profit: total - total_cost,
           payment_method: data.payment_method, paid_amount: paid, debt_amount: debt, status: 'ok',
           survey: JSON.stringify(data.survey_consent && Array.isArray(data.survey) ? data.survey.filter(x => x && String(x.a || '').trim()).map(x => ({ q: String(x.q), a: String(x.a) })) : []),
           survey_transcript: data.survey_consent === true ? String(data.survey_transcript || '').trim().slice(0, 4000) : '',
@@ -1398,7 +1409,7 @@ const MockServer = (() => {
           l.p.stock = roundQty(l.p.stock - l.qty);
           touched.set(l.p.id, l.p);
         }
-        if (cust) { cust.debt_balance = int(cust.debt_balance) + debt; cust.visits = Math.max(0, Math.round(num(cust.visits))) + 1; cust.last_visit = data.sale_date; }
+        if (cust) { cust.debt_balance = int(cust.debt_balance) + debt; cust.visits = Math.max(0, Math.round(num(cust.visits))) + 1; cust.last_visit = data.sale_date; cust.receipts_sent = Math.max(0, Math.round(num(cust.receipts_sent))) + (data.send_receipt === true ? 1 : 0); }
         if (notOnShelf.length) logAct(db, u, 'jual_tanpa_rak', 'Penjualan ' + sale.invoice_no + ' (tersimpan offline) melebihi stok rak: ' + notOnShelf.map(x => x.name + ' perlu ' + fmtN(x.need) + ', rak ' + fmtN(x.shop)).join('; '), sale.invoice_no, 0, 'warn');
         if (discBy) logAct(db, u, 'diskon', 'Diskon ' + disc.pct + '% (Rp ' + disc.amount + ') pada ' + sale.invoice_no + ' oleh ' + u.name + (discBy !== u.name ? ', disetujui ' + discBy : ''), sale.invoice_no, disc.amount, 'warn');
         if (debt > 0) logAct(db, u, 'hutang', 'Penjualan hutang ' + sale.invoice_no + ' ' + str(sale.customer_name) + ' Rp ' + debt + (approved_by ? ' (disetujui ' + approved_by + ')' : ''), sale.invoice_no, debt, 'info');
@@ -1889,6 +1900,7 @@ const MockServer = (() => {
         c.member_no = ex && str(ex.member_no) ? str(ex.member_no) : (member ? 'M' + rand(6) : '');
         c.member_since = member ? (ex && str(ex.member_since) && wasMember ? str(ex.member_since) : jktDate()) : (ex ? str(ex.member_since) : '');
         c.visits = ex ? Math.max(0, Math.round(num(ex.visits))) : 0;
+        c.receipts_sent = ex ? Math.max(0, Math.round(num(ex.receipts_sent))) : 0;
         c.last_visit = ex ? str(ex.last_visit) : '';
         let row;
         if (ex) row = Object.assign(ex, c); else { row = Object.assign({ id: nextId(db, 'customer') }, c); db.customers.push(row); }
@@ -2410,7 +2422,9 @@ function enforceRule(el) {
   el.value = after;
   if (pos != null) { const p = cleanByRule(before.slice(0, pos), rn).length; try { el.setSelectionRange(p, p); } catch (e) { } }
   // a hint only when a character was refused (not for upper-casing)
-  if (after.length < before.length && typeof t === 'function') showRuleHint(el, t('rule.' + rn));
+  // usual number formatting (spaces, - . ( ) +) is dropped quietly; a hint only for a character that does not belong
+  const quiet = (rn === 'phone' || rn === 'num' || rn === 'pin') && !/[^\s\-.,()+\d\u0660-\u0669\u06F0-\u06F9]/.test(before);
+  if (after.length < before.length && !quiet && typeof t === 'function') showRuleHint(el, t('rule.' + rn));
 }
 document.addEventListener('input', e => { if (!e.isComposing) enforceRule(e.target); }, true);
 document.addEventListener('compositionend', e => enforceRule(e.target), true);
@@ -2473,7 +2487,7 @@ const RENDER = {};
 function renderShell() {
   $('#tabs').innerHTML = TABS.map(v => `<button class="tab ${S.view === v.id ? 'on' : ''}" id="tab-${v.id}" data-act="tab" data-v="${v.id}" ${S.view === v.id ? 'aria-current="page"' : ''}>${ic(v.icon)}<span>${esc(t(v.label))}</span>${v.id === 'more' && myPendingCount() ? `<b class="dot">${myPendingCount()}</b>` : ''}</button>`).join('');
   $('#tb-store').textContent = settings().store_name || 'Khair Mart';
-  $('#tb-user').textContent = `${S.user} · ${t('role.' + S.role)}`;
+  $('#tb-user').textContent = `${t('role.' + S.role)} · ${S.user}`;
   $('#tb-demo').hidden = !MOCK;
   $('#tb-master').hidden = !S.viaMaster; $('#tb-master').textContent = t('login.via_master');
   updateApprovalBadge();
@@ -2534,7 +2548,7 @@ function renderLogin() {
   } else if (L.step === 'users') {
     const list = L.users.slice().sort((a, b) => (ROLE_ORDER[a.role] ?? 3) - (ROLE_ORDER[b.role] ?? 3) || a.name.localeCompare(b.name));
     inner = `<h2>${esc(t('login.who'))}</h2>
-      <div class="users" id="users">${list.length ? list.map(u => `<button data-act="login-user" data-name="${esc(u.name)}">${esc(u.name)}<span>${esc(t('role.' + u.role))}</span></button>`).join('') : `<div class="muted center" style="grid-column:1/-1">${esc(t('loading'))}</div>`}</div>
+      <div class="users" id="users">${list.length ? list.map(u => `<button data-act="login-user" data-name="${esc(u.name)}"><span>${esc(t('role.' + u.role))} ·</span> ${esc(u.name)}</button>`).join('') : `<div class="muted center" style="grid-column:1/-1">${esc(t('loading'))}</div>`}</div>
       <div class="err" role="alert">${esc(L.err)}</div>
       <div class="center"><button class="btn ghost sm" data-act="login-change-key">${esc(t('login.change_key'))} (${esc(maskKey(S.key))})</button></div>`;
   } else if (L.step === 'newpin' && L.np) {
@@ -2964,11 +2978,15 @@ function cartView(c = S.cart) {
   const mem = memberOf(cust);
   const memberDisc = mem && mem.pct ? Math.round(subtotal * mem.pct / 100) : 0;
   const manual = Math.max(0, Math.min(moneyVal(c.discount || 0), subtotal - memberDisc));
-  const discount = memberDisc + manual, total = subtotal - discount;
-  const discAmt = Math.max(0, listTotal - total), discPct = listTotal > 0 ? Math.round(discAmt / listTotal * 1000) / 10 : 0;
+  const discount = memberDisc + manual;
+  // (07 Oct) receipt sent by WhatsApp / e-mail: free the first time for this customer, then receipt_send_fee (not part of the discount)
+  const send = !!(c.sendReceipt && cust), sendFee = send ? receiptFeeFor(cust) : 0, total = subtotal - discount + sendFee;
+  const discAmt = Math.max(0, listTotal - (total - sendFee)), discPct = listTotal > 0 ? Math.round(discAmt / listTotal * 1000) / 10 : 0;
   const discLimit = maxDiscPct() + (mem ? mem.pct : 0);
-  return { cust, lines, subtotal, discount, memberDisc, manual, mem, total, listTotal, discAmt, discPct, discLimit, discOver: discPct > discLimit + 1e-9, items: sum(c.lines, l => l.qty) };
+  return { cust, lines, subtotal, discount, memberDisc, manual, mem, total, send, sendFee, listTotal, discAmt, discPct, discLimit, discOver: discPct > discLimit + 1e-9, items: sum(c.lines, l => l.qty) };
 }
+const receiptFeeSetting = () => { const v = settings().receipt_send_fee; return v === undefined || v === null || v === '' ? 500 : Math.max(0, int(v)); };
+const receiptFeeFor = cust => cust && num(cust.receipts_sent) >= 1 ? receiptFeeSetting() : 0;
 /** A kasir above the limit needs an approved request (manager / owner give any discount). */
 const discApproved = v => { const r = S.cart && S.cart.discReq; return !!(r && r.status === 'approved' && int(r.amount) >= v.discAmt); };
 const needDiscApproval = v => S.role === 'kasir' && v.discOver && !discApproved(v);
@@ -3408,6 +3426,7 @@ function openCustomerPicker(onPick, opts = {}) {
   });
 }
 function setCustomer(c) {
+  if (!c || String(S.cart.customer_id) !== String(c.id)) S.cart.sendReceipt = false; // another customer: ask again
   S.cart.customer_id = c ? c.id : null;
   if (!c && S.cart.method === 'hutang') { S.cart.method = 'tunai'; S.cart.paid = ''; }
   saveCart(); renderCart(); renderGrid();
@@ -3608,6 +3627,7 @@ function drawPay(bg) {
     <div class="pay-total"><div class="k">${esc(t('total'))} · ${esc(t('sell.n_lines', { n: v.lines.length }))}</div><div class="v num" id="pay-total">${fmtRp(v.total)}</div></div>
     ${VOICE.on ? `<button class="toggle mute-chip pay-mute ${c.muted ? 'on' : ''}" id="pay-mute" data-act="sale-mute" aria-pressed="${c.muted ? 'true' : 'false'}">${muteChipHtml()}</button>` : ''}
     <button class="cust-chip ${cust ? 'set' : ''}" id="pay-cust" data-act="pick-customer">${ic('user')}<span class="grow ellipsis">${esc(cust ? cust.name : t('sell.walkin'))}</span>${cust && cust.debt_balance ? `<span class="badge red num">${esc(t('debt'))} ${fmtRp(cust.debt_balance)}</span>` : ''}</button>
+    ${rsBoxHTML(v)}
     ${v.mem ? `<div class="mbadge" id="member-badge">${ic('tag')} <span>${esc(t('mem.status', { n: v.mem.n, pct: fmtPct1(v.mem.pct) }))}</span>${v.mem.no ? ` <span class="num small">${esc(v.mem.no)}</span>` : ''}</div>` : ''}
     <div class="discbox" id="pay-disc-box">
       ${v.memberDisc ? `<div class="sumrow" id="pay-mdisc"><span>${esc(t('mem.disc_line', { pct: fmtPct1(v.mem.pct) }))}</span><b class="num">-${fmtRp(v.memberDisc)}</b></div>` : ''}
@@ -3638,8 +3658,44 @@ function drawPay(bg) {
   disc.addEventListener('change', () => { disc.value = S.cart.discount ? fmtNum(moneyVal(S.cart.discount)) : ''; });
   disc.addEventListener('keydown', e => { if (e.key === 'Enter') payOk(); });
   vsShowText(); vsTick();
+  bindRsBox(bg);
   payResult(bg);
   if (cash && !isTouch()) setTimeout(() => cash.focus(), 30);
+}
+/* (07 Oct) "Kirim struk": a new customer gives a phone number (first receipt free → saved as a customer); a known customer
+   who already got one pays receipt_send_fee when the toggle is on (a visible line on the bill). Without it: printed / screen receipt. */
+function rsBoxHTML(v) {
+  const cust = v.cust, fee = receiptFeeSetting();
+  if (!cust || !(cust.phone || cust.email)) return `<div class="rsbox" id="rs-box" data-state="ask"><label class="f" for="rs-phone">${esc(t('rs.ask'))}</label>
+      <div class="row wrap"><input class="input grow" style="min-width:170px;flex:1 1 170px" id="rs-phone" data-rule="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="08xx xxxx xxxx"><button class="btn primary" style="flex:1 1 auto" id="rs-save" type="button">${ic('send')} ${esc(t('rs.save'))}</button></div>
+      <div class="small muted">${esc(t('rs.no_thanks'))}</div><div class="err" id="rs-err" role="alert"></div></div>`;
+  const paid = receiptFeeFor(cust) > 0;
+  return `<div class="rsbox" id="rs-box" data-state="${v.send ? 'on' : 'off'}"><button type="button" class="toggle ${v.send ? 'on' : ''}" id="rs-toggle" aria-pressed="${v.send}">${ic('send')} ${esc(paid ? t('rs.toggle_fee', { fee: '\u2066' + fmtRp(fee) + '\u2069' }) : t('rs.toggle_free'))}</button>
+    ${v.send && v.sendFee ? `<div class="sumrow" id="pay-sendfee"><span>${esc(t('rs.fee_line'))}</span><b class="num">${fmtRp(v.sendFee)}</b></div>` : ''}
+    ${v.send ? `<div class="small muted" id="rs-to">${esc(t('rs.to', { to: [cust.phone ? localPhone(cust.phone) : '', cust.email].filter(Boolean).join(' · ') }))}</div>` : ''}</div>`;
+}
+function bindRsBox(bg) {
+  const box = $('#rs-box', bg); if (!box) return;
+  const tg = $('#rs-toggle', box);
+  if (tg) tg.onclick = () => { S.cart.sendReceipt = !S.cart.sendReceipt; saveCart(); drawPay(bg); };
+  const sv = $('#rs-save', box), ph = $('#rs-phone', box), err = $('#rs-err', box);
+  if (!sv) return;
+  const save = async () => {
+    const raw = ph.value.trim();
+    if (!normPhone(raw)) { err.textContent = t('car.bad_phone'); ph.focus(); return; }
+    sv.disabled = true; err.textContent = '';
+    try {
+      const cur = custById(S.cart.customer_id);
+      const r = await api('save_customer', cur ? { id: cur.id, phone: raw } : { phone: raw, source: 'struk' });
+      const c = upsertCustomer(r.customer) || r.customer;
+      setCustomer(c);
+      S.cart.sendReceipt = true; saveCart();
+      toast(receiptFeeFor(c) ? t('rs.known', { name: c.name }) : t('rs.saved_free'), 'ok', 3500);
+      drawPay(bg);
+    } catch (e) { sv.disabled = false; err.textContent = e instanceof NetError ? t('rs.need_online') : errMsg(e); }
+  };
+  sv.onclick = save;
+  ph.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
 }
 function payResult(bg) {
   const v = cartView(), p = payCalc(v), res = $('#pay-result', bg); if (!res) return;
@@ -3667,7 +3723,7 @@ function buildSaleRequest(v, pay) {
     items: v.lines.map(l => ({ product_id: l.p.id, qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type })),
     discount: v.discount, payment_method: pay.method, paid_amount: Math.min(pay.paid, v.total),
     survey: manual ? sv.answers : [], survey_consent: manual || !!vo, survey_transcript: vo ? vsClean(vo.text) : '', // transcript only after the consent tap
-    channel: c.channel || 'toko', promo_code: cleanPromo(c.promo), notes: ''
+    channel: c.channel || 'toko', promo_code: cleanPromo(c.promo), notes: '', send_receipt: v.send
   };
 }
 function receiptFromCart(v, pay, req) {
@@ -3677,7 +3733,7 @@ function receiptFromCart(v, pay, req) {
     lines: v.lines.map(l => ({ name: l.p.name, unit: l.p.unit || '', qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type, line_total: l.total })),
     subtotal: v.subtotal, discount: v.discount, member_disc: v.memberDisc, member: v.mem ? { pct: v.mem.pct, purchase_no: v.mem.n, member_no: v.mem.no } : null,
     customer_email: v.cust ? v.cust.email || '' : '', total: v.total, method: pay.method, paid: pay.paid, change: pay.change, debt: pay.debt, status: 'ok',
-    promo_code: req.promo_code, channel: req.channel, debt_after: v.cust ? int(v.cust.debt_balance) + pay.debt : 0
+    promo_code: req.promo_code, channel: req.channel, debt_after: v.cust ? int(v.cust.debt_balance) + pay.debt : 0, send_fee: v.sendFee, send_receipt: v.send
   };
 }
 function localExitRequired(v) {
@@ -3705,7 +3761,7 @@ async function doSave(extra = {}) {
     if (r.sale) { rc.total = int(r.sale.total ?? rc.total); rc.debt = int(r.sale.debt_amount ?? rc.debt); if (r.sale.approved_by) rc.approved_by = r.sale.approved_by; }
     if (r.exit_photo_required != null) rc.exit_required = !!r.exit_photo_required;
     applyStock(r.stock);
-    if (v.cust && !r.duplicate) { v.cust.debt_balance = int(v.cust.debt_balance) + rc.debt; v.cust.visits = int(v.cust.visits) + 1; v.cust.last_visit = req.sale_date; }
+    if (v.cust && !r.duplicate) { v.cust.debt_balance = int(v.cust.debt_balance) + rc.debt; v.cust.visits = int(v.cust.visits) + 1; v.cust.last_visit = req.sale_date; if (req.send_receipt) v.cust.receipts_sent = int(v.cust.receipts_sent) + 1; }
     if (r.member) rc.member = r.member;
     rc.debt_after = v.cust ? v.cust.debt_balance : 0;
     finishSale(rc);
@@ -3971,6 +4027,7 @@ function receiptLinesHTML(rc) {
     ${rc.discount ? `<div class="r2"><span>${esc(t('rc.subtotal'))}</span><span>${esc(NF.format(rc.subtotal))}</span></div>` : ''}
     ${rc.member_disc ? `<div class="r2" id="rc-mdisc"><span>${esc(t('mem.disc_line', { pct: fmtPct1(rc.member && rc.member.pct) }))}</span><span>-${esc(NF.format(rc.member_disc))}</span></div>` : ''}
     ${int(rc.discount) - int(rc.member_disc) > 0 ? `<div class="r2" id="rc-disc"><span>${esc(t('disc.label'))}</span><span>-${esc(NF.format(int(rc.discount) - int(rc.member_disc)))}</span></div>` : ''}
+    ${int(rc.send_fee) ? `<div class="r2" id="rc-sendfee"><span>${esc(t('rs.fee_line'))}</span><span>${esc(NF.format(rc.send_fee))}</span></div>` : ''}
     ${rc.promo_code ? `<div class="r2"><span>${esc(t('pay.promo'))}</span><span>${esc(rc.promo_code)}</span></div>` : ''}
     <div class="r2 big"><span>${esc(t('total'))}</span><span>${esc(fmtRp(rc.total))}</span></div>
     <div class="r2"><span>${esc(t('rc.paid'))} (${esc(t('pm.' + rc.method))})</span><span>${esc(NF.format(rc.paid))}</span></div>
@@ -3992,6 +4049,7 @@ function receiptText(rc) {
   if (rc.pending) out.push(`*${t('rc.pending')}*`);
   out.push(`${t('rc.no')}: ${rc.invoice_no}`, `${t('rc.date')}: ${fmtDateTime(rc.sale_time, rc.sale_date)}`, `${t('rc.cashier')}: ${rc.cashier}`, `${t('rc.customer')}: ${rc.customer_name}`, L2);
   rc.lines.forEach(l => out.push(`${l.name}${l.price_type === 'grosir' ? ' (grosir)' : ''}`, `  ${fmtQty(l.qty)} x ${fmtRp(l.unit_price)} = ${fmtRp(l.line_total)}`));
+  if (int(rc.send_fee)) out.push(`${t('rs.fee_line')}: ${fmtRp(rc.send_fee)}`);
   out.push(L2, `*${t('total')}: ${fmtRp(rc.total)}*`, `${t('rc.paid')} (${t('pm.' + rc.method)}): ${fmtRp(rc.paid)}`);
   if (rc.change) out.push(`${t('pay.change')}: ${fmtRp(rc.change)}`);
   if (rc.debt) out.push(`${t('rc.debt')}: ${fmtRp(rc.debt)}`);
@@ -4039,6 +4097,7 @@ function receiptPlain(rc) {
   if (rc.discount) out.push(`${tid('rc.subtotal')}: ${fmtRp(rc.subtotal)}`);
   if (rc.member_disc) out.push(`${tid('mem.disc_line', { pct: fmtPct1(rc.member && rc.member.pct) })}: -${fmtRp(rc.member_disc)}`);
   if (int(rc.discount) - int(rc.member_disc) > 0) out.push(`${tid('disc.label')}: -${fmtRp(int(rc.discount) - int(rc.member_disc))}`);
+  if (int(rc.send_fee)) out.push(`${tid('rs.fee_line')}: ${fmtRp(rc.send_fee)}`);
   out.push(`${tid('total')}: ${fmtRp(rc.total)}`, `${tid('rc.paid')} (${tid('pm.' + rc.method)}): ${fmtRp(rc.paid)}`);
   if (rc.change) out.push(`${tid('pay.change')}: ${fmtRp(rc.change)}`);
   if (rc.debt) out.push(`${tid('rc.debt')}: ${fmtRp(rc.debt)}`);
@@ -6151,6 +6210,9 @@ Object.assign(I18N.ar, {
   'apr.retur_hint_c': 'عند الموافقة: السليم إلى المستودع، والتالف لا يُحتسب مخزونًا، ويُرد المبلغ بالطريقة أعلاه.', 'apr.retur_hint_s': 'عند الموافقة: يقل المخزون ويقل الدَّين للمورد (إشعار دائن).'
 });
 Object.assign(I18N.id, {
+  'rs.ask': 'Nomor HP untuk kirim struk (gratis pertama kali)', 'rs.save': 'Simpan & kirim', 'rs.no_thanks': 'Tidak mau? Lewati saja — struk dicetak / di layar seperti biasa.',
+  'rs.toggle_fee': 'Kirim struk (+{fee})', 'rs.toggle_free': 'Kirim struk (gratis pertama kali)', 'rs.fee_line': 'Biaya kirim struk', 'rs.to': 'Dikirim ke {to} setelah bayar',
+  'rs.saved_free': 'Nomor tersimpan — struk pertama gratis', 'rs.known': 'Nomor ini sudah terdaftar: {name}', 'rs.need_online': 'Simpan nomor perlu internet',
   'gate.title_mgr': 'Buka kas sebagai kasir', 'gate.hint_mgr': 'Laci kas Anda sendiri. Hitung uang di laci. Modal awal disetujui pemilik.', 'gate.cancel_mgr': 'Batal — jual tanpa laci',
   'kas.mgr_none': 'Anda bisa menjual tanpa laci kas. Jika hari ini Anda juga menjadi kasir, buka laci kas Anda sendiri.', 'kas.mgr_hint': 'Penjualan tunai masuk ke laci Anda; tutup kas seperti kasir. Modal awal disetujui pemilik.',
   'kas.apr_pending_owner': 'Modal awal menunggu persetujuan pemilik',
@@ -6161,6 +6223,9 @@ Object.assign(I18N.id, {
   'agree.confirm': 'Konfirmasi', 'agree.manager_only': 'Dikonfirmasi oleh manajer', 'err.AGREEMENT_REQUIRED': 'Perlu kesepakatan pemilik dan manajer'
 });
 Object.assign(I18N.ar, {
+  'rs.ask': 'رقم الهاتف لإرسال الإيصال (مجانًا أول مرة)', 'rs.save': 'حفظ وإرسال', 'rs.no_thanks': 'لا يريد؟ تخطَّ — الإيصال مطبوع / على الشاشة كالمعتاد.',
+  'rs.toggle_fee': 'إرسال الإيصال (برسوم {fee})', 'rs.toggle_free': 'إرسال الإيصال (مجانًا أول مرة)', 'rs.fee_line': 'رسوم إرسال الإيصال', 'rs.to': 'يُرسل إلى {to} بعد الدفع',
+  'rs.saved_free': 'حُفظ الرقم — الإيصال الأول مجاني', 'rs.known': 'هذا الرقم مسجَّل: {name}', 'rs.need_online': 'حفظ الرقم يحتاج إلى الإنترنت',
   'gate.title_mgr': 'فتح الصندوق كأمين صندوق', 'gate.hint_mgr': 'درج نقدي خاص بك. عُدّ النقود في الدرج. يوافق المالك على رصيد البداية.', 'gate.cancel_mgr': 'إلغاء — البيع بدون درج',
   'kas.mgr_none': 'يمكنك البيع بدون درج نقدي. إذا كنتِ أمينة الصندوق اليوم أيضًا فافتحي درجك الخاص.', 'kas.mgr_hint': 'المبيعات النقدية تدخل درجك؛ أغلقيه مثل أمين الصندوق. يوافق المالك على رصيد البداية.',
   'kas.apr_pending_owner': 'رصيد البداية بانتظار موافقة المالك',

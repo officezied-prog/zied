@@ -1470,7 +1470,9 @@ function enforceRule(el) {
   el.value = after;
   if (pos != null) { const p = cleanByRule(before.slice(0, pos), rn).length; try { el.setSelectionRange(p, p); } catch (e) { } }
   // a hint only when a character was refused (not for upper-casing)
-  if (after.length < before.length && typeof t === 'function') showRuleHint(el, t('rule.' + rn));
+  // usual number formatting (spaces, - . ( ) +) is dropped quietly; a hint only for a character that does not belong
+  const quiet = (rn === 'phone' || rn === 'num' || rn === 'pin') && !/[^\s\-.,()+\d\u0660-\u0669\u06F0-\u06F9]/.test(before);
+  if (after.length < before.length && !quiet && typeof t === 'function') showRuleHint(el, t('rule.' + rn));
 }
 document.addEventListener('input', e => { if (!e.isComposing) enforceRule(e.target); }, true);
 document.addEventListener('compositionend', e => enforceRule(e.target), true);
