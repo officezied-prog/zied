@@ -80,12 +80,8 @@ for (const [label, vp] of [['desktop', { width: 1366, height: 768 }], ['phone', 
       await shot(page, `${label}-field`);
     });
 
-    test(`screenshots ${label}: manager shift prompt, kas, dark mode, kasir redirect`, async ({ page }) => {
-      await login(page, 'Jihan', '2222', '', { openShift: false });
-      await page.waitForTimeout(250);
-      await shot(page, `${label}-shift-open`);
-      await page.fill('#so-cash', '500000');
-      await page.click('#so-ok');
+    test(`screenshots ${label}: manager kas, dark mode, kasir redirect`, async ({ page }) => {
+      await login(page, 'Jihan', '2222', '', { stay: true });
       await nav(page, 'kas');
       await shot(page, `${label}-kas-manager`);
       await page.emulateMedia({ colorScheme: 'dark' });

@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const NF = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
 const { rp, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals } = require('./helpers');
 
 test.beforeEach(async ({ page }) => { await login(page); });
@@ -116,14 +117,15 @@ test('debt (hutang) needs a customer and increases the customer debt; receiving 
   await expect(page.locator('#cd-debt')).toHaveText(rp(after));
   await expect(page.locator('#cd-wa')).toHaveAttribute('href', /wa\.me\/6281322223344\?text=.*Halimah/);
   await page.click('[data-act="cust-pay"]');
-  await page.fill('#py-amt', '100.000');
+  const pay = Math.min(100000, after); // the seeded debt depends on the day the demo data was made
+  await page.fill('#py-amt', NF.format(pay));
   await page.click('#py-m [data-m="transfer"]');
   await page.click('#py-save');
   await expect(page.locator('.toast.ok')).toContainText('Pembayaran');
   db = await getDb(page);
-  expect(db.customers.find(c => c.id === cust.id).debt_balance).toBe(after - 100000);
-  expect(db.payments[db.payments.length - 1]).toMatchObject({ customer_id: cust.id, amount: 100000, method: 'transfer', cashier: 'Pemilik' });
-  await expect(page.locator('#cd-debt')).toHaveText(rp(after - 100000));
+  expect(db.customers.find(c => c.id === cust.id).debt_balance).toBe(after - pay);
+  expect(db.payments[db.payments.length - 1]).toMatchObject({ customer_id: cust.id, amount: pay, method: 'transfer', cashier: 'Pemilik' });
+  await expect(page.locator('#cd-debt')).toHaveText(rp(after - pay));
 });
 
 test('cash payment: quick amount and change (kembalian)', async ({ page }) => {

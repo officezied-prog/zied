@@ -49,10 +49,15 @@ test('cash out + expense + close shift with blind count, result and printable re
   await expect(page.locator('#shift-result')).toContainText('Kurang ' + H.rp(10000));
   await expect(page.locator('#sr-diff')).toHaveAttribute('data-diff', '-10000');
   await expect(page.locator('#shift-report')).toContainText('620.000');
+  // v15: the report has the sale in numbers per method (one cash sale of 175.000, 1 piece)
+  await expect(page.locator('#sr-count')).toContainText('1');
+  await expect(page.locator('#sr-items')).toContainText('1');
+  await expect(page.locator('#sr-m-tunai')).toContainText('175.000');
+  await expect(page.locator('#sr-m-transfer')).toContainText(H.rp(0));
   await H.shot(page, 'phone-20-tutup-kasir');
   const db = await H.getDb(page);
   const sh = db.shifts.filter(x => x.cashier === 'Siti').pop();
-  expect(sh).toMatchObject({ status: 'closed', counted_cash: 610000, expected_cash: 620000, difference: -10000 });
+  expect(sh).toMatchObject({ status: 'closed', counted_cash: 610000, expected_cash: 620000, difference: -10000, cash_sales: 175000, transfer_sales: 0, qris_sales: 0, debt_sales: 0, items_qty: 1 });
   expect(db.expenses[db.expenses.length - 1]).toMatchObject({ category: 'transport', amount: 25000, paid_from: 'kas', user: 'Siti' });
   await page.click('#sr-copy');
   await page.click('#sr-done');

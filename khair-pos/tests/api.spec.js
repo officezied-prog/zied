@@ -50,8 +50,8 @@ test('real mode: envelope, text/plain, pin_hash, n8n array response, outbox on n
 
   const login = be.requests.find(r => r.body.action === 'login');
   expect(login.contentType).toMatch(/^text\/plain/);
-  expect(login.body).toEqual({ action: 'login', key: KEY, user: 'Jihan', pin_hash: sha(`${KEY}:jihan:4321`), data: {} });
-  expect(be.requests.find(r => r.body.action === 'users').body).toEqual({ action: 'users', key: KEY, data: {} });
+  expect(login.body).toEqual({ action: 'login', key: KEY, user: 'Jihan', pin_hash: sha(`${KEY}:jihan:4321`), data: { device: expect.objectContaining({ app: 'owner', loc_status: expect.any(String), id: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/) }) } });
+  expect(be.requests.find(r => r.body.action === 'users').body).toMatchObject({ action: 'users', key: KEY });
 
   // {ok:false} → message, not queued
   be.mode = 'invalid';

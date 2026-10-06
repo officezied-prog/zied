@@ -1,7 +1,7 @@
 // POS "Tahan" (hold sale): park the cart, serve the next customer, resume later. Held carts stay on this
 // device per store key, survive a reload, and are priced again from the current product data on resume.
 const { test, expect } = require('@playwright/test');
-const { rp, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, editDb, SHOTS } = require('./helpers');
+const { rp, login, openApp, jktToday, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, editDb, SHOTS } = require('./helpers');
 const path = require('path');
 
 const HELD_KEY = 'kpos.mock.held.demo';
@@ -128,6 +128,9 @@ test('swap, delete with confirm, price change between hold and resume, max 10', 
 
 test('manager: closing her shift warns about held carts; phone layout', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  // v15: a manager no longer opens a drawer — this one was opened before (older version) and is still hers
+  await openApp(page);
+  await editDb(page, `db.shifts.push({ shift_id: 'SH-OLD1', cashier: 'Jihan', shift_date: arg, opened_at: arg + 'T08:00:00+07:00', closed_at: '', status: 'open', opening_cash: 300000, counted_cash: null, difference: null, note: '' });`, jktToday());
   await login(page, 'Jihan', '2222');
   await page.fill('#pos-search', 'ajwa');
   await page.locator('#pos-grid .pcard').first().click();

@@ -121,7 +121,11 @@ test('Pesanan sales: badge, open order, Proses → POS sale → order diproses w
   await expect(page.locator('#view-pos')).toBeVisible();
   await expect(page.locator('#cart-fo')).toContainText(o.order_id);
   await expect(page.locator('.cline')).toHaveCount(items.length);
-  await checkoutSkip(page);
+  // v16: goods of the order still in the warehouse → the POS offers to move them to the shelf and save
+  await page.click('#btn-checkout');
+  await expect(page.locator('.modal #receipt, #shelf-modal').first()).toBeVisible();
+  if (await page.locator('#shelf-modal').count()) await page.click('#ns-move');
+  await expect(page.locator('.modal #receipt')).toBeVisible();
   const inv = (await page.locator('.modal #receipt').innerText()).match(/KM\d{6}-\d{4}/)[0];
   await expect.poll(async () => (await getDb(page)).field_orders.find(x => x.order_id === o.order_id).status).toBe('diproses');
   db = await getDb(page);

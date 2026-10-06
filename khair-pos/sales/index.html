@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- security M8: CSP (GitHub Pages cannot send headers). connect-src = the n8n webhooks only; images incl. OSM tiles. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: blob: https://cdnjs.cloudflare.com https://*.tile.openstreetmap.org; connect-src 'self' https://ziedapp.app.n8n.cloud; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="theme-color" content="#1E40AF">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -12,6 +14,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
+<!-- TODO(security M8): add integrity="sha512-…" to both Leaflet tags (copy the hashes from cdnjs.com/libraries/leaflet/1.9.4;
+     they could not be fetched offline here — a wrong hash would silently disable the map). -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
 <script async src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <style>
@@ -150,6 +154,7 @@ main{overflow:hidden;position:relative;min-width:0}
 .pinpad button{height:64px;border-radius:14px;border:1px solid var(--line);background:#F8FAFC;font-size:26px;font-weight:800;color:var(--text)}
 .pinpad button:active{background:var(--pt)}
 .pinpad button.ok{background:var(--p);color:#fff;font-size:18px}
+.pinpad[data-locked] button,.pinpad button:disabled{opacity:.4;cursor:not-allowed}
 .err{color:var(--redd);text-align:center;font-weight:700;min-height:22px;margin:6px 0}
 .foot-links{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap}
 .langs{display:flex;gap:6px}
@@ -286,6 +291,7 @@ main{overflow:hidden;position:relative;min-width:0}
     <div class="ttl grow"><b class="ellipsis" id="tb-name"></b><span class="ellipsis">Khair Sales · <span id="tb-user"></span></span></div>
     <span class="demo" id="tb-demo" hidden>DEMO</span>
     <span class="gps" id="tb-gps" hidden role="status"><i></i><span id="tb-gps-l"></span></span>
+    <span class="gps" id="tb-loc" hidden role="status">📍</span>
     <button class="pill warn" id="tb-outbox" data-act="outbox-open" hidden></button>
     <button class="icon-btn" id="tb-menu" data-act="menu" data-i18n-title="menu"><svg class="i"><use href="#i-menu"/></svg></button>
   </header>
@@ -484,6 +490,28 @@ const FS = {
   del: k => store.del('sales.' + k)
 };
 
+/* Session (security H2): the live pin_hash stays in this tab only (sessionStorage, memory fallback) and is wiped on lock /
+   logout; localStorage keeps just {user, role}. Offline login compares a verifier: store 'pins' = {[user lower]: {o, role}},
+   o = sha256('offline:' + pin_hash) (same format as the owner and cashier apps). */
+const SESS_KEY = PREFIX + 'sales.session';
+let memSess = null;
+const SESS = {
+  get() { try { const v = sessionStorage.getItem(SESS_KEY); if (v) return JSON.parse(v); } catch (e) { } return memSess; },
+  set(v) { memSess = v; try { sessionStorage.setItem(SESS_KEY, JSON.stringify(v)); } catch (e) { } },
+  del() { memSess = null; try { sessionStorage.removeItem(SESS_KEY); } catch (e) { } }
+};
+const offlineVerifier = hash => sha256Hex('offline:' + hash);
+async function migrateSecrets() {
+  const pins = store.get('pins', {});
+  let changed = false;
+  for (const k of Object.keys(pins || {})) { const e = pins[k]; if (e && e.h) { if (!e.o) e.o = await offlineVerifier(e.h); delete e.h; changed = true; } }
+  if (changed) store.set('pins', pins);
+  const ls = FS.get('session');
+  if (ls && ls.pin_hash !== undefined) { if (ls.pin_hash && !SESS.get()) SESS.set({ user: ls.user, role: ls.role, pin_hash: ls.pin_hash }); FS.set('session', { user: ls.user, role: ls.role }); }
+}
+/** The store key is never shown in full. */
+const maskKey = k => k ? '••••' + String(k).slice(-4) : '';
+
 /* ========== API client (copied from the owner app) ========== */
 class ApiError extends Error { constructor(code, message) { super(message || code); this.code = code || 'SERVER'; } }
 class NetError extends Error { constructor(message) { super(message || 'NETWORK'); this.code = 'NETWORK'; } }
@@ -501,6 +529,8 @@ async function apiRawInner(action, data, cred, opts) {
   if (cred.user) body.user = cred.user;
   if (cred.pin_hash) body.pin_hash = cred.pin_hash;
   body.data = data || {};
+  // v11: main-API requests (not the field workflow, not photos) say where this device is
+  if (!FIELD_ACTIONS.includes(action) && !opts.photo && cred.user && action !== 'users' && action !== 'setup') { body.data = Object.assign({}, body.data, { device: devicePayload() }); DEV.lastMain = Date.now(); }
   let res;
   if (MOCK) {
     res = await MockServer.request(clone(body));
@@ -518,7 +548,7 @@ async function apiRawInner(action, data, cred, opts) {
     }
     if (Array.isArray(res)) res = res[0];
   }
-  if (!res || res.ok !== true) throw new ApiError((res && res.error) || 'SERVER', res && res.message);
+  if (!res || res.ok !== true) { const err = new ApiError((res && res.error) || 'SERVER', res && res.message); err.res = res || null; throw err; }
   return res;
 }
 /** Authenticated call with the current session; BAD_PIN / BAD_KEY send the user back to login. */
@@ -527,7 +557,8 @@ async function api(action, data, opts) {
   try {
     return await apiRaw(action, data, sessCred(), opts);
   } catch (e) {
-    if (e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_USERS') forceRelogin(e);
+    if (e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_USERS' || e.code === 'LOCKED') forceRelogin(e);
+    if (e.code === 'PIN_CHANGE_REQUIRED' && S.inApp && S.pin_hash) askNewPin(S.user, S.role, S.pin_hash);
     throw e;
   }
 }
@@ -546,7 +577,7 @@ const MockServer = (() => {
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
   const READ_ONLY = ['users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos'];
   class MockErr extends Error { constructor(code, message) { super(message || code); this.code = code; } }
-  const E = (code, msg) => new MockErr(code, msg);
+  const E = (code, msg, extra) => { const e = new MockErr(code, msg); if (extra) e.extra = extra; return e; };
   let ready = null;
 
   function load() { try { return JSON.parse(localStorage.getItem(DBKEY) || 'null'); } catch (e) { return null; } }
@@ -641,6 +672,53 @@ const MockServer = (() => {
   function nameScore(a, b) { const A = nameTokens(a), B = new Set(nameTokens(b)); return A.length ? A.filter(w => B.has(w)).length / A.length : 0; }
   const blankProduct = () => ({ sku: '', name: '', category: '', unit: 'pcs', cost_price: 0, retail_price: 0, wholesale_price: 0, wholesale_min_qty: 0, stock: 0, min_stock: 0, active: true, notes: '' });
 
+  /* ---- v11 as on the server (same code as the cashier app's mock): data.device rows, activity row for a new device ---- */
+  const str = v => v === undefined || v === null ? '' : String(v).trim();
+  const money = v => Math.round(num(v));
+  const fmtN = v => String(Math.round(num(v) * 1000) / 1000);
+  function rand(n) { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (let i = 0; i < n; i++) s += a[Math.floor(Math.random() * a.length)]; return s; }
+  let dirty = false; // read-only actions still save when a device row / activity row was written
+  const LOG = []; // last requests as received (action, user, device) — for the tests
+  function logAct(db, u, kind, summary, ref, amount, level) {
+    db.activity = db.activity || [];
+    db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + rand(8), at: new Date().toISOString(), act_date: jktDate(), user: u.name, role: u.role, kind,
+      summary: str(summary).slice(0, 1000), ref: str(ref).slice(0, 60), amount: money(amount), level: level || 'info' });
+    dirty = true;
+  }
+  const isCoord = (lat, lng) => isFinite(Number(lat)) && isFinite(Number(lng)) && Math.abs(Number(lat)) <= 90 && Math.abs(Number(lng)) <= 180 && !(Number(lat) === 0 && Number(lng) === 0) && lat !== null && lat !== '' && lng !== null && lng !== '' && lat !== undefined && lng !== undefined;
+  function metres(aLat, aLng, bLat, bLng) {
+    const R = 6371000, k = Math.PI / 180, dLat = (bLat - aLat) * k, dLng = (bLng - aLng) * k;
+    const x = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(aLat * k) * Math.cos(bLat * k) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(x)));
+  }
+  /** Written only when something changed (new device, other user, status, moved > 100 m) or every 10 minutes. */
+  function deviceTouch(db, u, dev, force) {
+    if (!dev || typeof dev !== 'object') return null;
+    const id = str(dev.id);
+    if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) return null;
+    db.devices = db.devices || [];
+    const ex = db.devices.find(x => x.device_id === id) || null;
+    const now = new Date().toISOString();
+    const hasLoc = isCoord(dev.lat, dev.lng);
+    const status = ['granted', 'denied', 'unavailable', 'prompt', 'off'].indexOf(dev.loc_status) >= 0 ? dev.loc_status : (hasLoc ? 'granted' : 'unavailable');
+    if (ex && !force) {
+      const moved = hasLoc && (!isCoord(ex.lat, ex.lng) || metres(num(ex.lat), num(ex.lng), num(dev.lat), num(dev.lng)) > 100);
+      const stale = !(Date.parse(ex.last_seen) > Date.now() - 600000);
+      if (!moved && !stale && str(ex.user) === u.name && str(ex.loc_status) === status) return ex;
+    }
+    const row = {
+      device_id: id, user: u.name, role: u.role, app: ['owner', 'kasir', 'sales'].indexOf(dev.app) >= 0 ? dev.app : 'owner',
+      label: str(dev.label).slice(0, 60), ua: str(navigator.userAgent).slice(0, 300), ip: '',
+      lat: hasLoc ? Math.round(num(dev.lat) * 1e6) / 1e6 : (ex ? num(ex.lat) : 0), lng: hasLoc ? Math.round(num(dev.lng) * 1e6) / 1e6 : (ex ? num(ex.lng) : 0),
+      acc: hasLoc ? Math.round(num(dev.acc)) : (ex ? num(ex.acc) : 0), loc_status: status, loc_at: hasLoc ? now : (ex ? str(ex.loc_at) : ''),
+      first_seen: ex ? str(ex.first_seen) || now : now, last_seen: now, pings: (ex ? num(ex.pings) : 0) + 1,
+      battery: isFinite(Number(dev.battery)) && dev.battery !== null && dev.battery !== '' && dev.battery !== undefined ? Math.round(Math.min(1, Math.max(0, num(dev.battery))) * 100) / 100 : (ex ? num(ex.battery) : 0)
+    };
+    if (ex) Object.assign(ex, row); else db.devices.push(Object.assign({ id: nextId(db, 'device') }, row));
+    dirty = true;
+    if (!ex) logAct(db, u, 'perangkat_baru', 'Perangkat baru: ' + (row.label || 'tanpa nama') + ' (' + row.app + ', ' + u.name + ')' + (row.ip ? ' IP ' + row.ip : ''), id, 0, 'info');
+    return row;
+  }
   function handle(db, body) {
     const { action, key, user, pin_hash } = body;
     const data = body.data || {};
@@ -654,9 +732,46 @@ const MockServer = (() => {
       return { user: { name, role: 'owner' } };
     }
     if (!db.users.length) throw E('NO_USERS', 'Run setup first');
-    const u = db.users.find(x => x.active && x.name.toLowerCase() === String(user || '').toLowerCase());
-    if (!u || u.pin_hash !== pin_hash) throw E('BAD_PIN', 'Wrong user or PIN');
-    if (window.KhairFieldMock && KhairFieldMock.actions.includes(action)) return KhairFieldMock.handle(action, data, { name: u.name, role: u.role }, db, { jktDate: d => jktDate(d == null ? new Date() : d), jktISO: d => jktISO(d == null ? new Date() : d) });
+    const u = db.users.find(x => x.active !== false && x.name.toLowerCase() === String(user || '').trim().toLowerCase());
+    if (window.KhairFieldMock && KhairFieldMock.actions.includes(action)) {
+      // the field workflow (backend/field, v16): lock, owner master code and own-PIN rules; input cleaned (data: URLs kept)
+      if (!u) throw E('BAD_PIN', 'Nama atau PIN salah');
+      if (Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', 'Akun dikunci sementara karena PIN salah berkali-kali');
+      const fMaster = /^[a-f0-9]{64}$/.test(String(pin_hash || '')) && db.users.some(x => x.active !== false && x.role === 'owner' && x.master_hash && x.master_hash === pin_hash);
+      if (u.pin_hash !== pin_hash && !fMaster) throw E('BAD_PIN', 'Nama atau PIN salah');
+      if (u.must_change === true && !fMaster) throw E('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
+      const fdata = JSON.parse(JSON.stringify(data)); cleanFieldInput(fdata, 0); // (a copy: the server gets it over the network)
+      return KhairFieldMock.handle(action, fdata, { name: u.name, role: u.role }, db, { jktDate: d => jktDate(d == null ? new Date() : d), jktISO: d => jktISO(d == null ? new Date() : d) });
+    }
+    // v16 main API, as on the server: lock after 5 wrong PINs (15 min), owner master code, own PIN at first login
+    if (!u) throw E('BAD_PIN', 'Nama atau PIN salah');
+    const isHex64 = h => /^[0-9a-f]{64}$/.test(String(h || ''));
+    const lockMsg = until => 'Terlalu banyak PIN salah. Coba lagi jam ' + new Date(Date.parse(until) + 7 * 3600000).toISOString().slice(11, 16) + ' WIB';
+    if (Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', lockMsg(u.locked_until), { locked_until: String(u.locked_until) });
+    const viaMaster = isHex64(pin_hash) && u.pin_hash !== pin_hash && db.users.some(x => x.active !== false && x.role === 'owner' && isHex64(x.master_hash) && x.master_hash === pin_hash);
+    if (u.pin_hash !== pin_hash && !viaMaster) {
+      const fc = num(u.fail_count) + 1, until = fc >= 5 ? new Date(Date.now() + 15 * 60000).toISOString() : '';
+      u.fail_count = until ? 0 : fc; u.locked_until = until; save(db);
+      if (until) throw E('LOCKED', lockMsg(until), { locked_until: until });
+      throw E('BAD_PIN', 'Nama atau PIN salah' + (fc >= 3 ? ' (' + (5 - fc) + ' kali lagi, lalu akun dikunci 15 menit)' : ''));
+    }
+    if ((num(u.fail_count) > 0 || str(u.locked_until)) && !['change_pin', 'set_master', 'save_user'].includes(action)) { u.fail_count = 0; u.locked_until = ''; dirty = true; }
+    if (u.must_change === true && !viaMaster && !['login', 'change_pin', 'users', 'device_ping'].includes(action)) throw E('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
+    if (action === 'change_pin') {
+      const h = data.new_pin_hash;
+      if (!isHex64(h)) throw E('INVALID', 'PIN baru tidak valid');
+      if (h === u.pin_hash) throw E('INVALID', 'PIN baru harus berbeda dari PIN lama');
+      if (viaMaster && u.role === 'owner') throw E('FORBIDDEN', 'PIN pemilik hanya bisa diganti dengan PIN pemilik sendiri');
+      if (db.users.some(x => x.active !== false && isHex64(x.master_hash) && x.master_hash === h)) throw E('INVALID', 'PIN baru tidak valid');
+      Object.assign(u, { pin_hash: h, must_change: viaMaster, fail_count: 0, locked_until: '' });
+      logAct(db, u, 'ganti_pin', viaMaster ? 'PIN ' + u.name + ' direset dengan kode pemilik (wajib ganti saat masuk)' : u.name + ' mengganti PIN sendiri', u.name, 0, viaMaster ? 'warn' : 'info');
+      return { must_change: viaMaster };
+    }
+    if (action === 'login') {
+      if (viaMaster) logAct(db, u, 'masuk_master', 'Masuk ke akun ' + u.name + ' (' + u.role + ') dengan kode pemilik', u.name, 0, 'warn');
+      return { user: { name: u.name, role: u.role }, must_change: u.must_change === true && !viaMaster, via_master: viaMaster };
+    }
+    if (action !== 'device_ping') deviceTouch(db, u, data.device, false);
     const owner = u.role === 'owner';
     const needOwner = () => { if (!owner) throw E('FORBIDDEN', 'Owner only'); };
     const prodById = id => db.products.find(p => p.id === Number(id));
@@ -664,6 +779,10 @@ const MockServer = (() => {
 
     switch (action) {
       case 'login': return { user: { name: u.name, role: u.role } };
+      case 'device_ping': {
+        if (!deviceTouch(db, u, data.device, true)) throw E('INVALID', 'device.id tidak valid');
+        return { require_location: db.settings.require_device_location === true, server_time: new Date().toISOString() };
+      }
       case 'bootstrap': return { products: db.products, customers: db.customers, settings: db.settings, users: db.users.map(x => ({ name: x.name, role: x.role, active: x.active })), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
         shift: blind(shiftSummary(db, openShiftOf(db, u.name)), u.role), open_shifts: ['owner', 'manager'].includes(u.role) ? db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)) : [] };
 
@@ -1006,6 +1125,28 @@ const MockServer = (() => {
     }
   }
 
+  /* v16 as on the server (process.js): everything sent is plain text — control / direction-override characters and < >
+     (and tags) removed, __proto__ / constructor / prototype keys dropped, strings cut at 4000 characters.
+     (The field actions go to backend/field, which has no such step.) */
+  function cleanInput(o, depth) {
+    if (!o || typeof o !== 'object' || depth > 6) return;
+    Object.keys(o).forEach(k => {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') { delete o[k]; return; }
+      const v = o[k];
+      if (typeof v === 'string') o[k] = v.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g, '').replace(/<[^>]*>/g, '').replace(/[<>]/g, '').slice(0, 4000);
+      else if (v && typeof v === 'object') cleanInput(v, depth + 1);
+    });
+  }
+  /** backend/field/process-field.js: the same cleaning without the 4000-character cut; photos (data: URLs) left as they are. */
+  function cleanFieldInput(o, depth) {
+    if (!o || typeof o !== 'object' || depth > 6) return;
+    Object.keys(o).forEach(k => {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') { delete o[k]; return; }
+      const v = o[k];
+      if (typeof v === 'string' && v.indexOf('data:') !== 0) o[k] = v.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g, '').replace(/<[^>]*>/g, '').replace(/[<>]/g, '');
+      else if (v && typeof v === 'object') cleanFieldInput(v, depth + 1);
+    });
+  }
   async function request(body) {
     await ensure();
     await sleep(30 + Math.random() * 50);
@@ -1015,14 +1156,19 @@ const MockServer = (() => {
     let fieldSeeded = false;
     try { fieldSeeded = !!(window.KhairFieldMock && KhairFieldMock.seed(db)); } catch (e) { console.error(e); }
     db.approvals = db.approvals || []; db.photos = db.photos || []; db.expenses = db.expenses || []; db.shifts = db.shifts || []; db.cash_moves = db.cash_moves || [];
+    db.devices = db.devices || []; db.activity = db.activity || [];
+    LOG.push({ action: body.action, user: body.user || '', device: body.data && body.data.device ? JSON.parse(JSON.stringify(body.data.device)) : null, at: Date.now() });
+    if (LOG.length > 300) LOG.shift();
+    dirty = false;
     let res;
     try {
       const role = (db.users.find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase() && x.pin_hash === body.pin_hash) || {}).role;
+      if (body.data && typeof body.data === 'object' && !/^scan_/.test(body.action) && !(window.KhairFieldMock && KhairFieldMock.actions.includes(body.action))) { body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); }
       res = handle(db, body);
-      if (fieldSeeded || !(READ_ONLY.includes(body.action) || ['field_bootstrap', 'list_field', 'product_images'].includes(body.action))) save(db);
+      if (fieldSeeded || dirty || !(READ_ONLY.includes(body.action) || ['field_bootstrap', 'list_field', 'product_images'].includes(body.action))) save(db);
       res = Object.assign({ ok: true }, role === 'owner' || ['users', 'setup'].includes(body.action) ? res : strip(res));
     } catch (e) {
-      res = { ok: false, error: e.code || 'SERVER', message: e.message };
+      res = Object.assign({ ok: false, error: e.code || 'SERVER', message: e.message }, e.extra || {});
     }
     return JSON.parse(JSON.stringify(res));
   }
@@ -1215,7 +1361,7 @@ const MockServer = (() => {
       seq: { product: products.length, customer: customers.length, sale: seqSale, payment: seqPay, purchase: seqPur, photo: seqPh, approval: 0, expense: seqExp, shift: seqSh, move: seqMv }
     };
   }
-  return { request, ensure, reset() { try { localStorage.removeItem(DBKEY); } catch (e) { } ready = null; }, DBKEY };
+  return { request, ensure, reset() { try { localStorage.removeItem(DBKEY); } catch (e) { } ready = null; }, DBKEY, log: LOG };
 })();
 
 
@@ -1264,6 +1410,75 @@ function setLang(l) {
 const ic = (name, cls = '') => `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
 /* ========== Toasts & modals (as in the cashier app) ========== */
+/* ========== v16 plain-text inputs: every field accepts only what the server accepts ==========
+   data-rule on an input / textarea: name (person), pname (product / customer / shop / supplier), phone, email, doc (document /
+   vehicle number), num (quantity / money), pin, search, text (default), long (textarea default). Characters a field does not
+   take are dropped while typing (with a short hint); maxlength / inputmode are set on every field. User text is never HTML. */
+const INPUT_CTRL = /[<>\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F‪-‮⁦-⁩]/g;
+const INPUT_RULES = {
+  name: { drop: /[^\p{L}\p{M}\p{N} .,'-]/gu, max: 60 },
+  pname: { drop: /[^\p{L}\p{M}\p{N} .,'&()\/%+#-]/gu, max: 80 },
+  phone: { drop: /[^0-9]/g, max: 20, mode: 'tel', digits: true }, // room for a pasted "+62 812-…" before it is cleaned
+  email: { drop: /[\s<>"',;()]/g, max: 120, mode: 'email' },
+  doc: { drop: /[^A-Z0-9 \/.-]/g, max: 40, upper: true },
+  num: { drop: /[^0-9.,]/g, max: 15, mode: 'decimal', digits: true },
+  pin: { drop: /[^0-9]/g, max: 8, mode: 'numeric', digits: true },
+  search: { drop: INPUT_CTRL, max: 80 },
+  text: { drop: INPUT_CTRL, max: 200 },
+  long: { drop: INPUT_CTRL, max: 300 }
+};
+const SKIP_TYPES = ['checkbox', 'radio', 'file', 'date', 'time', 'hidden', 'range', 'color', 'button', 'submit'];
+const ruleName = el => el.dataset.rule && INPUT_RULES[el.dataset.rule] ? el.dataset.rule : el.tagName === 'TEXTAREA' ? 'long' : el.type === 'search' ? 'search' : 'text';
+const asciiDigits = v => v.replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x660)).replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x6F0));
+function cleanByRule(v, rule) {
+  const r = INPUT_RULES[rule] || INPUT_RULES.text;
+  let x = String(v == null ? '' : v);
+  if (r.digits) x = asciiDigits(x);
+  if (r.upper) x = x.toUpperCase();
+  x = x.replace(INPUT_CTRL, '');
+  if (r.drop !== INPUT_CTRL) x = x.replace(r.drop, '');
+  return x;
+}
+/** maxlength / inputmode / autocapitalize on every text field under root (new screens are covered by the observer below). */
+function applyInputRules(root) {
+  const list = root && root.matches && root.matches('input, textarea') ? [root] : root && root.querySelectorAll ? root.querySelectorAll('input, textarea') : [];
+  for (const el of list) {
+    if (el.tagName === 'INPUT' && SKIP_TYPES.includes(el.type)) continue;
+    const rn = ruleName(el), r = INPUT_RULES[rn];
+    if (!el.dataset.rule) el.dataset.rule = rn;
+    if (!el.hasAttribute('maxlength')) el.setAttribute('maxlength', String(r.max));
+    if (r.mode && !el.hasAttribute('inputmode')) el.setAttribute('inputmode', r.mode);
+    if (rn === 'doc') el.setAttribute('autocapitalize', 'characters');
+    if (rn === 'phone' || rn === 'email' || rn === 'pin') { el.setAttribute('autocapitalize', 'off'); el.setAttribute('spellcheck', 'false'); }
+  }
+}
+/** A short hint right under the field (not a toast: it must not cover the form being typed in). */
+function showRuleHint(el, msg) {
+  let h = document.getElementById('rule-hint');
+  if (!h) { h = document.createElement('div'); h.id = 'rule-hint'; h.setAttribute('role', 'status'); h.setAttribute('aria-live', 'polite'); document.body.appendChild(h); }
+  const r = el.getBoundingClientRect(), w = Math.min(320, innerWidth - 16);
+  h.textContent = msg;
+  h.style.cssText = `position:fixed;z-index:9999;top:${Math.round(Math.min(r.bottom + 4, innerHeight - 44))}px;left:${Math.round(Math.max(8, Math.min(r.left, innerWidth - w - 8)))}px;max-width:${w}px;background:#7C2D12;color:#fff;font-size:13px;font-weight:700;line-height:1.3;padding:6px 10px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.2);pointer-events:none`;
+  h.hidden = false;
+  clearTimeout(showRuleHint.tm); showRuleHint.tm = setTimeout(() => { h.hidden = true; }, 2400);
+}
+function enforceRule(el) {
+  if (!el || !el.matches || !el.matches('input, textarea') || (el.tagName === 'INPUT' && SKIP_TYPES.includes(el.type))) return;
+  const rn = ruleName(el), before = el.value, after = cleanByRule(before, rn);
+  if (after === before) return;
+  let pos = null; try { pos = el.selectionStart; } catch (e) { pos = null; }
+  el.value = after;
+  if (pos != null) { const p = cleanByRule(before.slice(0, pos), rn).length; try { el.setSelectionRange(p, p); } catch (e) { } }
+  // a hint only when a character was refused (not for upper-casing)
+  // usual number formatting (spaces, - . ( ) +) is dropped quietly; a hint only for a character that does not belong
+  const quiet = (rn === 'phone' || rn === 'num' || rn === 'pin') && !/[^\s\-.,()+\d\u0660-\u0669\u06F0-\u06F9]/.test(before);
+  if (after.length < before.length && !quiet && typeof t === 'function') showRuleHint(el, t('rule.' + rn));
+}
+document.addEventListener('input', e => { if (!e.isComposing) enforceRule(e.target); }, true);
+document.addEventListener('compositionend', e => enforceRule(e.target), true);
+document.addEventListener('focusin', e => { if (e.target && e.target.matches && e.target.matches('input, textarea')) applyInputRules(e.target); }, true);
+document.addEventListener('focusout', () => { const h = document.getElementById('rule-hint'); if (h) h.hidden = true; }, true);
+new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) applyInputRules(n); }).observe(document.documentElement, { childList: true, subtree: true });
 function toast(msg, type = '', ms = 2800) {
   const el = document.createElement('div');
   el.className = 'toast ' + type; el.textContent = msg;
@@ -1326,6 +1541,104 @@ function getFix(timeout = 15000) {
 }
 const mapsDir = s => `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(s.lat + ',' + s.lng)}`;
 
+/* ========== Devices (v11): where this phone is while Khair Sales is open ==========
+   A rep's work-location consent (Mulai kerja) also covers this (one extra line in that notice), so a rep is never asked
+   twice; owner / manager get the short device notice once per device. The fix goes as data.device with every MAIN-API
+   request (field actions go to the field workflow and carry nothing) and with device_ping on open and every 30 min while
+   the app is visible. The sales app never blocks on location. Device id kpos.device_id is shared with the other apps. */
+const DEV_ID_KEY = 'kpos.device_id', DEV_CONSENT_KEY = 'kpos.device_consent', DEV_PING_MS = 30 * 60000;
+const DEV = { app: 'sales', id: '', label: '', fix: null, status: 'prompt', watch: null, lastMain: 0, battery: null, asking: false, waiters: [], pinged: false, pingedFix: false };
+function deviceId() {
+  if (DEV.id) return DEV.id;
+  let id = '';
+  try { id = String(localStorage.getItem(DEV_ID_KEY) || ''); } catch (e) { }
+  if (/^"[^"]*"$/.test(id)) id = id.slice(1, -1);
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) { id = 'dv' + uuid().replace(/-/g, '').slice(0, 22); try { localStorage.setItem(DEV_ID_KEY, id); } catch (e) { } }
+  return (DEV.id = id);
+}
+function deviceLabel(ua = navigator.userAgent || '') {
+  const touchMac = /Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1;
+  const os = /Android/i.test(ua) ? 'Android' : /iPhone|iPod/.test(ua) ? 'iPhone' : /iPad/.test(ua) || touchMac ? 'iPad' : /Windows/.test(ua) ? 'Windows'
+    : /CrOS/.test(ua) ? 'ChromeOS' : /Macintosh|Mac OS X/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : 'Perangkat';
+  const br = /Edg(A|iOS)?\//.test(ua) ? 'Edge' : /OPR\/|Opera/.test(ua) ? 'Opera' : /SamsungBrowser/.test(ua) ? 'Samsung Internet' : /Firefox|FxiOS/.test(ua) ? 'Firefox'
+    : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  return os + ' · ' + br;
+}
+function devicePayload() {
+  const o = { id: deviceId(), app: DEV.app, label: DEV.label || (DEV.label = deviceLabel()), loc_status: DEV.status };
+  if (DEV.fix) { o.lat = DEV.fix.lat; o.lng = DEV.fix.lng; o.acc = DEV.fix.acc; }
+  if (DEV.battery != null) o.battery = DEV.battery;
+  return o;
+}
+function devConsent() { try { const c = JSON.parse(localStorage.getItem(DEV_CONSENT_KEY) || 'null'); return c && typeof c.ok === 'boolean' ? c : null; } catch (e) { return null; } }
+function devSetConsent(ok) { try { localStorage.setItem(DEV_CONSENT_KEY, JSON.stringify({ ok: !!ok, at: new Date().toISOString(), app: DEV.app })); } catch (e) { } }
+function askDeviceConsent() {
+  return new Promise(resolve => {
+    let done = false;
+    const el = openModal({
+      title: t('dev.title'), id: 'dev-consent',
+      body: `<p style="margin-top:0;font-weight:800">📍 <span id="dev-text">${esc(t('dev.notice'))}</span></p><p class="small muted">${esc(t('dev.n1'))}</p>`,
+      foot: `<button class="btn" id="dev-no">${esc(t('dev.no'))}</button><button class="btn primary" id="dev-ok">${esc(t('dev.yes'))}</button>`,
+      onClose: () => { if (!done) resolve(null); }
+    });
+    const fin = ok => { done = true; dropModal(el); resolve(ok); };
+    $('#dev-ok', el).onclick = () => fin(true);
+    $('#dev-no', el).onclick = () => fin(false);
+  });
+}
+function devSetStatus(st) { DEV.status = st; DEV.waiters.splice(0).forEach(f => f()); devIndicator(); }
+function devStopWatch() { if (DEV.watch != null) { try { navigator.geolocation.clearWatch(DEV.watch); } catch (e) { } } DEV.watch = null; }
+function devWatch() {
+  if (DEV.watch != null) return;
+  if (!navigator.geolocation) { devSetStatus('unavailable'); return; }
+  if (DEV.status === 'off') DEV.status = 'prompt';
+  try {
+    DEV.watch = navigator.geolocation.watchPosition(p => {
+      DEV.fix = { lat: Math.round(p.coords.latitude * 1e6) / 1e6, lng: Math.round(p.coords.longitude * 1e6) / 1e6, acc: Math.round(p.coords.accuracy || 0) };
+      devSetStatus('granted');
+      if (DEV.pinged && !DEV.pingedFix) devPing();
+    }, e => {
+      if (e && e.code === 1) { devStopWatch(); DEV.fix = null; devSetStatus('denied'); }
+      else if (!DEV.fix) devSetStatus('unavailable');
+    }, { enableHighAccuracy: true, maximumAge: 60000, timeout: 30000 });
+  } catch (e) { devSetStatus('unavailable'); }
+  try { if (navigator.getBattery) navigator.getBattery().then(b => { const f = () => { DEV.battery = Math.round(b.level * 100) / 100; }; f(); b.onlevelchange = f; }).catch(() => { }); } catch (e) { }
+}
+function devWaitFix(ms) {
+  if (DEV.status !== 'prompt') return Promise.resolve();
+  return new Promise(res => { const tm = setTimeout(res, ms); DEV.waiters.push(() => { clearTimeout(tm); res(); }); });
+}
+async function devPing() {
+  if (!S.inApp || !S.pin_hash) return;
+  try { await api('device_ping', {}); DEV.pinged = true; if (DEV.fix) DEV.pingedFix = true; } catch (e) { }
+}
+/** Consent given (device notice, or a rep's work-location consent): start watching and report it at once. */
+async function devAllow() { devSetConsent(true); devWatch(); await devWaitFix(6000); await devPing(); }
+async function devBoot() {
+  if (!S.inApp || DEV.asking) return;
+  deviceId(); DEV.label = deviceLabel();
+  let c = devConsent();
+  if (isRep() && FS.get(uk('consent'))) { if (!c || !c.ok) devSetConsent(true); c = { ok: true }; } // already consented to location at work: not asked again
+  if (!c) {
+    DEV.asking = true;
+    // a rep sees the work-location notice (with the device line); owner / manager the short device notice
+    const ok = isRep() ? await ensureConsent() : await askDeviceConsent();
+    DEV.asking = false;
+    if (ok === true) c = { ok: true }; else if (ok === false) { devSetConsent(false); c = { ok: false }; }
+  }
+  if (c && c.ok) { devSetConsent(true); devWatch(); await devWaitFix(6000); }
+  else if (c && !c.ok) { devStopWatch(); DEV.fix = null; devSetStatus('off'); }
+  await devPing();
+}
+function devTick() { if (S.inApp && S.pin_hash && document.visibilityState === 'visible' && Date.now() - DEV.lastMain >= DEV_PING_MS) devPing(); }
+setInterval(devTick, 60000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') devTick(); });
+function devIndicator() {
+  const b = $('#tb-loc'); if (!b) return;
+  b.hidden = !(S.inApp && DEV.status === 'granted' && DEV.watch != null && $('#tb-gps').hidden);
+  b.title = t('dev.sharing'); b.setAttribute('aria-label', t('dev.sharing'));
+}
+
 /* ========== GPS tracking (only between "Mulai kerja" and "Selesai kerja") ========== */
 const TR = { watch: null, timer: null, last: null, lastSend: Date.now(), wake: null };
 const ptsKey = () => uk('pts') + '.' + today();
@@ -1353,7 +1666,7 @@ function startTracking() {
     if (S.day.status !== 'working') return;
     // a point at least every interval even when standing still
     if (!TR.last || Date.now() - Date.parse(TR.last.t) >= cfg().interval) getFix(10000).then(f => keepPoint(f, true)).catch(() => { });
-    if (Date.now() - TR.lastSend >= cfg().batch) flushTrack();
+    if (Date.now() - TR.lastSend >= cfg().batch && S.pin_hash) flushTrack(); // while locked the points wait on the phone
   }, 5000);
   try { if (navigator.wakeLock) navigator.wakeLock.request('screen').then(w => { TR.wake = w; }).catch(() => { }); } catch (e) { }
   try { navigator.getBattery && navigator.getBattery().then(b => { TR.battery = Math.round(b.level * 100); b.onlevelchange = () => { TR.battery = Math.round(b.level * 100); }; }).catch(() => { }); } catch (e) { }
@@ -1369,6 +1682,7 @@ function updateGpsIndicator() {
   const on = S.inApp && S.day.status === 'working' && TR.watch != null;
   $('#tb-gps').hidden = !on;
   $('#tb-gps-l').textContent = '📍 ' + t('gps.active');
+  devIndicator();
 }
 /** Moves the queued points into the outbox (batches of ≤ 200) and sends the outbox. */
 async function flushTrack() {
@@ -1380,7 +1694,7 @@ async function flushTrack() {
   }
   await syncOutbox();
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && S.day.status === 'working') flushTrack(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && S.day.status === 'working' && S.pin_hash) flushTrack(); });
 
 /* ========== Outbox: day_start/day_end/track/check_in/field_order, sent in order ========== */
 let syncing = false;
@@ -1463,8 +1777,8 @@ function go(view, force) {
 
 /* ========== Login ========== */
 const L = { step: 'key', users: [], sel: '', pin: '', err: '', busy: false };
-function showLogin(step, err) {
-  closeModal(true); stopTracking();
+function showLogin(step, err, keepTracking) {
+  closeModal(true); if (!keepTracking) stopTracking();
   L.step = step; L.err = err || ''; L.pin = ''; L.busy = false;
   $('#login').hidden = false; $('#app').hidden = true;
   renderLogin();
@@ -1482,17 +1796,25 @@ function renderLogin() {
   const foot = `<div class="foot-links"><div class="langs"><button class="btn xs ${S.lang === 'id' ? 'primary' : ''}" data-act="set-lang" data-lang="id">ID</button><button class="btn xs ${S.lang === 'ar' ? 'primary' : ''}" data-act="set-lang" data-lang="ar">العربية</button></div><a class="owner-link" href="${esc(ownerHref())}">${esc(t('login.owner_app'))}</a></div>`;
   let inner;
   if (L.step === 'key') {
-    inner = `<h2>${esc(t('login.key_title'))}</h2><div class="field"><label class="f" for="lg-key">${esc(t('login.key'))}</label><input id="lg-key" class="input" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(S.key || (MOCK ? 'demo' : ''))}"></div>
+    inner = `<h2>${esc(t('login.key_title'))}</h2><div class="field"><label class="f" for="lg-key">${esc(t('login.key'))}</label><input id="lg-key" class="input" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(MOCK ? 'demo' : '')}"></div>
       <div class="err" role="alert">${esc(L.err)}</div><button class="btn primary block big" data-act="login-key" ${L.busy ? 'disabled' : ''}>${esc(L.busy ? t('loading') : t('next'))}</button>`;
   } else if (L.step === 'users') {
     const list = L.users.filter(u => SALES_ROLES.includes(u.role)).sort((a, b) => (a.role === 'sales' ? 0 : 1) - (b.role === 'sales' ? 0 : 1) || a.name.localeCompare(b.name));
     inner = `<h2>${esc(t('login.who'))}</h2><div class="users" id="users">${list.map(u => `<button data-act="login-user" data-name="${esc(u.name)}">${esc(u.name)}<span>${esc(t('role.' + u.role))}</span></button>`).join('') || `<div class="muted center" style="grid-column:1/-1">${esc(L.users.length ? t('login.no_sales') : t('loading'))}</div>`}</div>
-      <div class="err" role="alert">${esc(L.err)}</div><div class="center"><button class="btn ghost sm" data-act="login-change-key">${esc(t('login.change_key'))} (${esc(S.key)})</button></div>`;
+      <div class="err" role="alert">${esc(L.err)}</div><div class="center"><button class="btn ghost sm" data-act="login-change-key">${esc(t('login.change_key'))} (${esc(maskKey(S.key))})</button></div>`;
+  } else if (L.step === 'newpin' && L.np) {
+    // v16: own PIN at first login (or after the owner reset it), typed twice. (The owner's master code is not offered here:
+    // the field workflow does not accept it yet.)
+    const np = L.np, dots = Array.from({ length: Math.max(np.six ? 6 : 4, L.pin.length) }, (_, i) => `<i class="${i < L.pin.length ? 'f' : ''}"></i>`).join('');
+    inner = `<div id="newpin" data-stage="${np.first ? 2 : 1}"><h2>${esc(t('np.title'))}</h2><p class="center small" style="margin-top:-6px"><b>${esc(np.user)}</b> · ${esc(t(np.six ? 'np.hint6' : 'np.hint46'))}</p>
+      <h2 class="muted" style="font-size:15px" id="np-stage">${esc(t(np.first ? 'np.again' : 'np.first'))}</h2><div class="dots">${dots}</div><div class="err" role="alert" id="np-err">${esc(L.err)}</div>
+      ${pinpadHTML(false)}<div class="center" style="margin-top:8px"><button class="btn ghost sm" data-act="login-back">${esc(t('login.switch'))}</button></div></div>`;
   } else {
+    const until = lockedUntil(L.sel), locked = until > Date.now();
     const dots = Array.from({ length: Math.max(4, L.pin.length) }, (_, i) => `<i class="${i < L.pin.length ? 'f' : ''}"></i>`).join('');
     inner = `<div class="who"><button class="icon-btn ghost sm" data-act="login-back" aria-label="${esc(t('login.switch'))}">${ic('back')}</button><b id="pin-who">${esc(L.sel)}</b></div>
-      <h2 class="muted" style="font-size:15px">${esc(t('login.enter_pin'))}</h2><div class="dots">${dots}</div><div class="err" role="alert" id="login-err">${esc(L.err)}</div>
-      <div class="pinpad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button data-act="pin-key" data-k="${n}">${n}</button>`).join('')}<button data-act="pin-key" data-k="del" aria-label="${esc(t('delete'))}">⌫</button><button data-act="pin-key" data-k="0">0</button><button class="ok" data-act="pin-key" data-k="ok" ${L.busy ? 'disabled' : ''}>${esc(L.busy ? '…' : t('login.enter'))}</button></div>`;
+      <h2 class="muted" style="font-size:15px">${esc(t('login.enter_pin'))}</h2><div class="dots">${dots}</div><div class="err" role="alert" id="login-err">${esc(locked ? t('login.locked_until', { time: jktTime(until) }) : L.err)}</div>
+      ${pinpadHTML(locked)}`;
   }
   $('#login').innerHTML = `<div class="screen-card">${brand}${inner}${foot}</div>`;
   const k = $('#lg-key'); if (k) k.addEventListener('keydown', e => { if (e.key === 'Enter') ACT['login-key'](); });
@@ -1510,29 +1832,73 @@ async function demoLogin(name) {
     startSession(r.user.name, r.user.role, u.pin_hash, false);
   } catch (e) { showLogin('users', errMsg(e)); }
 }
+function pinpadHTML(locked) {
+  const d = locked ? 'disabled' : '';
+  return `<div class="pinpad" id="pinpad" ${locked ? 'data-locked="1"' : ''}>${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button data-act="pin-key" data-k="${n}" ${d}>${n}</button>`).join('')}<button data-act="pin-key" data-k="del" aria-label="${esc(t('delete'))}" ${d}>⌫</button><button data-act="pin-key" data-k="0" ${d}>0</button><button class="ok" data-act="pin-key" data-k="ok" ${L.busy || locked ? 'disabled' : ''}>${esc(L.busy ? '…' : t(L.step === 'newpin' ? 'np.ok' : 'login.enter'))}</button></div>`;
+}
+/* v16: 5 wrong PINs → LOCKED for 15 min ("… Coba lagi jam HH:MM WIB"); the pad stays off until then. */
+const LOCKS = {};
+const lockedUntil = user => LOCKS[String(user || '').toLowerCase()] || 0;
+function lockUntilFrom(e) {
+  // the server sends locked_until (ISO); the time in the message is the fallback (older servers, the field workflow)
+  const iso = e && e.res && Date.parse(e.res.locked_until);
+  if (iso > Date.now()) return iso;
+  const m = /(\d{2}):(\d{2})/.exec(String(e && e.message || ''));
+  if (!m) return Date.now() + 15 * 60000;
+  let at = Date.parse(today() + 'T' + m[1] + ':' + m[2] + ':00+07:00');
+  if (at < Date.now() - 60000) at += 86400000;
+  return at;
+}
+function askNewPin(user, role, oldHash) {
+  if (L.step === 'newpin' && L.np && L.np.user === user && !$('#login').hidden) return;
+  S.inApp = false;
+  L.np = { user, role, old: oldHash, first: '', six: role === 'owner' || role === 'manager' };
+  showLogin('newpin', '', S.day && S.day.status === 'working');
+}
+async function submitNewPin() {
+  const np = L.np; if (!np || L.busy) return;
+  if (!(np.six ? /^\d{6}$/.test(L.pin) : /^\d{4,6}$/.test(L.pin))) { L.err = t(np.six ? 'np.hint6' : 'np.hint46'); L.pin = ''; renderLogin(); return; }
+  if (!np.first) { np.first = L.pin; L.pin = ''; L.err = ''; renderLogin(); return; }
+  if (L.pin !== np.first) { np.first = ''; L.pin = ''; L.err = t('np.mismatch'); renderLogin(); return; }
+  const nh = await pinHash(S.key, np.user, L.pin);
+  if (nh === np.old) { np.first = ''; L.pin = ''; L.err = t('np.same'); renderLogin(); return; }
+  L.busy = true; L.err = ''; renderLogin();
+  try {
+    await apiRaw('change_pin', { new_pin_hash: nh }, { key: S.key, user: np.user, pin_hash: np.old });
+    const pins = store.get('pins', {}); pins[np.user.toLowerCase()] = { o: await offlineVerifier(nh), role: np.role }; store.set('pins', pins);
+    L.np = null; L.busy = false; L.pin = ''; toast(t('np.done'), 'ok');
+    startSession(np.user, np.role, nh, false);
+  } catch (e) { L.busy = false; np.first = ''; L.pin = ''; L.err = e instanceof NetError ? t('np.need_online') : errMsg(e); renderLogin(); }
+}
 async function submitPin() {
+  if (L.step === 'newpin') return submitNewPin();
   if (L.busy) return;
+  if (lockedUntil(L.sel) > Date.now()) { renderLogin(); return; }
   if (!/^\d{4,6}$/.test(L.pin)) { L.err = t('login.pin_len'); renderLogin(); return; }
   L.busy = true; L.err = ''; renderLogin();
   const user = L.sel, hash = await pinHash(S.key, user, L.pin);
   try {
     const r = await apiRaw('login', {}, { key: S.key, user, pin_hash: hash });
     if (!SALES_ROLES.includes(r.user.role)) { L.busy = false; L.pin = ''; L.err = t('login.not_sales', { role: t('role.' + r.user.role) }); renderLogin(); return; }
-    const pins = store.get('pins', {}); pins[user.toLowerCase()] = { h: hash, role: r.user.role }; store.set('pins', pins);
+    const pins = store.get('pins', {}); pins[user.toLowerCase()] = { o: await offlineVerifier(hash), role: r.user.role }; store.set('pins', pins);
+    L.busy = false; L.pin = '';
+    if (r.must_change) { askNewPin(r.user.name, r.user.role, hash); return; }
     startSession(r.user.name, r.user.role, hash, false);
   } catch (e) {
     L.busy = false; L.pin = '';
-    if (e instanceof NetError) { const known = store.get('pins', {})[user.toLowerCase()]; if (known && known.h === hash && SALES_ROLES.includes(known.role) && FS.get('cache')) { startSession(user, known.role, hash, true); return; } }
-    L.err = e.code === 'BAD_PIN' ? t('err.BAD_PIN') : errMsg(e); renderLogin();
+    if (e.code === 'LOCKED') { const until = lockUntilFrom(e); LOCKS[user.toLowerCase()] = until; L.err = ''; setTimeout(() => { if (!$('#login').hidden && L.step === 'pin') renderLogin(); }, Math.min(until - Date.now() + 500, 2147483000)); renderLogin(); return; }
+    if (e instanceof NetError) { const known = store.get('pins', {})[user.toLowerCase()]; if (known && known.o && known.o === await offlineVerifier(hash) && SALES_ROLES.includes(known.role) && FS.get('cache')) { startSession(user, known.role, hash, true); return; } }
+    const left = /\((\d) kali lagi/.exec(String(e.message || ''));
+    L.err = e.code === 'BAD_PIN' ? t('err.BAD_PIN') + (left ? ' — ' + t('login.tries_left', { n: left[1] }) : '') : errMsg(e); renderLogin();
   }
 }
 function startSession(user, role, hash, offline) {
   S.user = user; S.role = role; S.pin_hash = hash;
-  FS.set('session', { user, role, pin_hash: hash }); FS.set('last_user', user);
+  FS.set('session', { user, role }); SESS.set({ user, role, pin_hash: hash }); FS.set('last_user', user); S.lastActivity = Date.now();
   enterApp(offline);
 }
 async function enterApp(offline) {
-  $('#login').hidden = true; $('#app').hidden = false; S.inApp = true;
+  $('#login').hidden = true; $('#app').hidden = false; S.inApp = true; S.lastActivity = Date.now();
   applyData(FS.get('cache'));
   const cd = FS.get(uk('day')); if (cd && cd.day_date === today()) S.day = cd; else S.day = { status: 'off', day_date: today() };
   S.cart = FS.get(uk('order_cart'), null) || newOrderCart();
@@ -1541,19 +1907,31 @@ async function enterApp(offline) {
   await refreshData(true);
   if (S.day.status === 'working' && FS.get(uk('consent'))) startTracking();
   syncOutbox();
+  devBoot();
 }
-function lock() { if (!S.inApp) return; stopTracking(); S.pin_hash = ''; FS.set('session', { user: S.user, role: S.role, pin_hash: '' }); L.sel = S.user; S.inApp = false; showLogin('pin'); }
+/** auto = idle auto-lock: during a working day the GPS keeps collecting points on the phone (sent after the PIN). */
+function lock(auto) {
+  if (!S.inApp) return;
+  const keep = !!auto && S.day.status === 'working';
+  if (!keep) stopTracking();
+  S.pin_hash = ''; FS.set('session', { user: S.user, role: S.role }); SESS.del(); L.sel = S.user; S.inApp = false; showLogin('pin', '', keep);
+}
+/* Idle auto-lock (settings.auto_lock_minutes, default 10), as in the cashier app. */
+const lockMinutes = () => { const m = num(S.settings && S.settings.auto_lock_minutes); return m > 0 ? m : 10; };
+['pointerdown', 'keydown', 'touchstart'].forEach(ev => document.addEventListener(ev, () => { S.lastActivity = Date.now(); }, { passive: true, capture: true }));
+setInterval(() => { if (S.inApp && S.pin_hash && !$('#app').hidden && Date.now() - (S.lastActivity || Date.now()) > lockMinutes() * 60000) lock(true); }, 5000);
 function forceRelogin(e) {
   // already locked: a background request that was still in flight must not wipe the PIN being typed
   if (e.code === 'BAD_PIN' && !S.pin_hash && !$('#login').hidden && L.step === 'pin') return;
+  if (e.code === 'LOCKED') LOCKS[String(S.user).toLowerCase()] = lockUntilFrom(e);
   if (e.code === 'FORBIDDEN' && S.inApp) { toast(t('login.not_sales', { role: t('role.' + S.role) }), 'err', 5000); }
-  S.pin_hash = ''; S.inApp = false; FS.set('session', { user: S.user, role: S.role, pin_hash: '' }); L.sel = S.user;
+  S.pin_hash = ''; S.inApp = false; FS.set('session', { user: S.user, role: S.role }); SESS.del(); L.sel = S.user;
   showLogin(e.code === 'BAD_KEY' ? 'key' : 'pin', t('err.' + (e.code === 'BAD_PIN' ? 'BAD_PIN_SESSION' : e.code)));
 }
 async function logout() {
   if (S.day.status === 'working') { const r = await confirmBox(t('menu.logout_working')); if (!r.ok) return; }
   await flushTrack().catch(() => { });
-  stopTracking(); S.pin_hash = ''; S.user = ''; S.role = ''; S.inApp = false; FS.del('session'); L.sel = '';
+  stopTracking(); S.pin_hash = ''; S.user = ''; S.role = ''; S.inApp = false; FS.del('session'); SESS.del(); L.sel = '';
   showLogin('users');
 }
 
@@ -1665,7 +2043,7 @@ function leafletMap(el, points, shops, current) {
   tiles.on('tileerror', () => { if (++errs >= 3 && !loaded) { MAPS.failed = true; try { m.remove(); } catch (e) { } svgMap(el, points, shops, current); } });
   const ll = [];
   if (points.length > 1) { const line = points.map(p => [p.lat, p.lng]); window.L.polyline(line, { color: '#1E40AF', weight: 4 }).addTo(m); ll.push(...line); }
-  shops.forEach(s => { if (!validPos(s)) return; ll.push([s.lat, s.lng]); window.L.circleMarker([s.lat, s.lng], { radius: 7, color: '#fff', weight: 2, fillColor: shopColor(s), fillOpacity: 1 }).bindTooltip(s.name + ' · ' + shopLabel(s)).addTo(m); }); // colour = shop group
+  shops.forEach(s => { if (!validPos(s)) return; ll.push([s.lat, s.lng]); window.L.circleMarker([s.lat, s.lng], { radius: 7, color: '#fff', weight: 2, fillColor: shopColor(s), fillOpacity: 1 }).bindTooltip(esc(s.name + ' · ' + shopLabel(s))).addTo(m); }); // Leaflet tooltips are HTML: escape (security C1) // colour = shop group
   if (validPos(current)) { ll.push([current.lat, current.lng]); window.L.circleMarker([current.lat, current.lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#1E40AF', fillOpacity: 1 }).addTo(m); }
   if (ll.length) m.fitBounds(ll, { padding: [24, 24], maxZoom: 17 }); else m.setView([-6.2655, 106.8605], 14);
 }
@@ -1739,11 +2117,11 @@ async function ensureConsent() {
     let done = false;
     const el = openModal({
       title: t('consent.title'), id: 'consent',
-      body: `<p style="margin-top:0"><b>${esc(t('consent.lead'))}</b></p><ul class="consent-list">${['c1', 'c2', 'c3', 'c4', 'c5'].map(k => `<li>${esc(t('consent.' + k))}</li>`).join('')}</ul><p class="small muted">${esc(t('consent.law'))}</p>`,
+      body: `<p style="margin-top:0"><b>${esc(t('consent.lead'))}</b></p><ul class="consent-list">${['c1', 'c2', 'c3', 'c4', 'c5'].map(k => `<li>${esc(t('consent.' + k))}</li>`).join('')}<li id="consent-device">${esc(t('consent.c6'))}</li></ul><p class="small muted">${esc(t('consent.law'))}</p>`,
       foot: `<button class="btn" data-act="modal-close">${esc(t('consent.no'))}</button><button class="btn primary" id="consent-ok">${esc(t('consent.yes'))}</button>`,
       onClose: () => { if (!done) resolve(false); }
     });
-    $('#consent-ok', el).onclick = () => { done = true; FS.set(uk('consent'), { at: new Date().toISOString(), version: 1 }); dropModal(el); resolve(true); };
+    $('#consent-ok', el).onclick = () => { done = true; FS.set(uk('consent'), { at: new Date().toISOString(), version: 2 }); dropModal(el); resolve(true); if (!DEV.asking) devAllow(); }; // covers the device line too
   });
 }
 async function dayStart() {
@@ -1813,10 +2191,10 @@ RENDER.visit = function () {
         ${selDist != null && selDist > NEAR_M ? `<div class="small" style="color:var(--warn);font-weight:800;margin-top:6px">${esc(t('visit.far', { d: fmtDist(selDist) }))}</div>` : ''}
         <div class="row wrap" style="gap:4px 10px;margin-top:6px" id="ci-type-row"><span class="small muted tl" id="ci-type-now" data-type="${esc(sel.type || 'lainnya')}"><i class="gdot" style="--g:${shopColor(sel)}"></i>${esc(shopLabel(sel))}</span>${CI.re ? '' : `<button type="button" class="linkbtn" data-act="ci-recat" id="ci-recat">${esc(t('visit.recat'))}</button>`}</div>
         ${CI.re ? `<div class="recat" id="ci-recat-box"><div class="tp-head"><span class="grow">${esc(t('visit.recat'))}</span><button type="button" class="btn xs" data-act="ci-recat-cancel" id="ci-recat-cancel">${esc(t('cancel'))}</button></div><div id="tp">${tpHTML()}</div><div class="small muted" style="margin-top:8px">${esc(t('visit.recat_hint'))}</div></div>` : ''}`
-      : CI.isNew ? `<div id="ci-new-form"><div class="field"><label class="f" for="ci-name">${esc(t('shop.name'))} *</label><input class="input" id="ci-name" value="${esc(f.name || '')}"></div>
-          <div class="grid2"><div class="field"><label class="f" for="ci-owner">${esc(t('shop.owner'))}</label><input class="input" id="ci-owner" value="${esc(f.owner_name || '')}"></div><div class="field"><label class="f" for="ci-phone">${esc(t('phone'))}</label><input class="input" id="ci-phone" inputmode="tel" value="${esc(f.phone || '')}"></div></div>
+      : CI.isNew ? `<div id="ci-new-form"><div class="field"><label class="f" for="ci-name">${esc(t('shop.name'))} *</label><input class="input" data-rule="pname" id="ci-name" value="${esc(f.name || '')}"></div>
+          <div class="grid2"><div class="field"><label class="f" for="ci-owner">${esc(t('shop.owner'))}</label><input class="input" data-rule="name" id="ci-owner" value="${esc(f.owner_name || '')}"></div><div class="field"><label class="f" for="ci-phone">${esc(t('phone'))}</label><input class="input" data-rule="phone" id="ci-phone" type="tel" inputmode="tel" value="${esc(f.phone || '')}"></div></div>
           <div class="field"><label class="f" for="ci-address">${esc(t('shop.address'))}</label><input class="input" id="ci-address" value="${esc(f.address || '')}"></div>
-          <div class="field"><label class="f" for="ci-area">${esc(t('shop.area'))}</label><input class="input" id="ci-area" value="${esc(f.area || '')}" list="dl-area"><datalist id="dl-area">${[...new Set(S.shops.map(s => s.area).filter(Boolean))].map(a => `<option value="${esc(a)}">`).join('')}</datalist></div>
+          <div class="field"><label class="f" for="ci-area">${esc(t('shop.area'))}</label><input class="input" data-rule="pname" id="ci-area" value="${esc(f.area || '')}" list="dl-area"><datalist id="dl-area">${[...new Set(S.shops.map(s => s.area).filter(Boolean))].map(a => `<option value="${esc(a)}">`).join('')}</datalist></div>
           <div class="field"><label class="f" id="tp-label" for="tp-q">${esc(t('tp.title'))} *</label><div id="tp">${tpHTML()}</div></div>
           <button class="btn ghost sm" data-act="ci-unpick">${esc(t('visit.back_list'))}</button></div>`
       : `<div class="list" id="ci-near">${near.map(s => `<button class="li" data-act="ci-pick" data-id="${esc(s.shop_id)}">${ic('store')}<div class="grow"><div class="t">${esc(s.name)}</div><div class="s">${esc([s.owner_name, s.area, shopLabel(s)].filter(Boolean).join(' · '))}</div></div><span class="dist" style="font-weight:900;color:var(--pd)">${fmtDist(s._d)}</span></button>`).join('') || `<div class="muted small">${esc(CI.fix ? t('visit.none_near') : t('visit.need_fix'))}</div>`}</div>
@@ -1878,9 +2256,9 @@ function tpHTML() {
   const ty = KST.BY_ID[st.type], u = gUI(ty.group), ch = KST.chains(st.type);
   const known = [...new Set(ch.concat(S.shops.filter(x => x.type === st.type && x.chain).map(x => x.chain)))];
   return `<div class="tp-sel" id="tp-sel" data-type="${esc(st.type)}" style="--g:${u.c}"><span class="e" aria-hidden="true">${u.e}</span><div class="grow"><div class="t">${esc(KST.typeLabel(st.type, S.lang))}</div><div class="s">${esc(KST.groupLabel(ty.group, S.lang))}</div></div><button type="button" class="btn xs" data-act="tp-change" id="tp-change">${esc(t('tp.change'))}</button></div>
-    ${st.type === 'lainnya' ? `<div class="field" style="margin-top:10px;margin-bottom:0"><label class="f" for="tp-other">${esc(t('tp.other'))} *</label><input class="input" id="tp-other" maxlength="60" value="${esc(st.type_other)}" placeholder="${esc(t('tp.other_ph'))}"></div>` : ''}
+    ${st.type === 'lainnya' ? `<div class="field" style="margin-top:10px;margin-bottom:0"><label class="f" for="tp-other">${esc(t('tp.other'))} *</label><input class="input" data-rule="pname" id="tp-other" maxlength="60" value="${esc(st.type_other)}" placeholder="${esc(t('tp.other_ph'))}"></div>` : ''}
     ${ch.length ? `<div class="field" style="margin-top:10px;margin-bottom:0"><label class="f" for="tp-chain">${esc(t('tp.chain'))}</label><div class="chips" id="tp-chains">${ch.map(c => `<button type="button" class="chip ${st.chain === c ? 'on' : ''}" data-act="tp-chain" data-c="${esc(c)}">${esc(c)}</button>`).join('')}</div>
-      <input class="input" id="tp-chain" maxlength="40" list="dl-chain" autocomplete="off" value="${esc(st.chain)}" placeholder="${esc(t('tp.chain_ph'))}"><datalist id="dl-chain">${known.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>` : ''}`;
+      <input class="input" data-rule="pname" id="tp-chain" maxlength="40" list="dl-chain" autocomplete="off" value="${esc(st.chain)}" placeholder="${esc(t('tp.chain_ph'))}"><datalist id="dl-chain">${known.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>` : ''}`;
 }
 function drawTP() { const el = $('#tp'); if (el) el.innerHTML = tpHTML(); }
 function tpInput(e) {
@@ -2078,7 +2456,7 @@ RENDER.order = function () {
       <div class="search" style="margin-top:12px">${ic('search')}<input class="input" id="po-q" type="search" placeholder="${esc(t('order.add'))}" autocomplete="off"></div><div class="list" id="po-sug" style="margin-top:6px"></div>
       <button class="btn sm" style="margin-top:8px" data-act="tab" data-v="catalog">${ic('grid')} ${esc(t('order.from_catalog'))}</button>
       <div id="po-lines" style="margin-top:10px">${lines.map(l => `<div class="oline" data-line="${l.i}"><div class="grow"><b>${esc(l.p.name)}</b><div class="small muted num"><span data-ref="up">${fmtRp(l.unit_price)}</span> · <span class="pt ${l.price_type}" data-ref="pt">${esc(t(l.price_type))}</span></div></div>
-        <div class="qty"><button data-act="po-dec" data-i="${l.i}">−</button><input data-po-qty="${l.i}" inputmode="decimal" value="${esc(String(l.qty).replace('.', ','))}" aria-label="${esc(t('qty'))}"><button data-act="po-inc" data-i="${l.i}">+</button></div>
+        <div class="qty"><button data-act="po-dec" data-i="${l.i}">−</button><input data-rule="num" data-po-qty="${l.i}" inputmode="decimal" value="${esc(String(l.qty).replace('.', ','))}" aria-label="${esc(t('qty'))}"><button data-act="po-inc" data-i="${l.i}">+</button></div>
         <b class="num" style="min-width:90px;text-align:end" data-ref="lt">${fmtRp(l.total)}</b></div>`).join('') || `<div class="muted small">${esc(t('order.empty'))}</div>`}</div>
       <div class="total-row" style="margin-top:8px"><span>${esc(t('total'))}</span><span class="num" id="po-total">${fmtRp(total)}</span></div>
       <p class="small muted" style="margin:0 0 10px">${esc(t('order.price_note'))}</p>
@@ -2209,7 +2587,7 @@ const ACT = {
   'login-change-key': () => { L.users = []; L.step = 'key'; L.err = ''; renderLogin(); },
   'login-user': el => { L.sel = el.dataset.name; L.pin = ''; L.err = ''; if (DEMO) { demoLogin(L.sel); return; } L.step = 'pin'; renderLogin(); },
   'login-back': () => { L.pin = ''; L.err = ''; L.step = 'users'; renderLogin(); if (!L.users.length) loadUsers(); },
-  'pin-key': el => { const k = el.dataset.k; if (k === 'del') L.pin = L.pin.slice(0, -1); else if (k === 'ok') { submitPin(); return; } else if (L.pin.length < 6) L.pin += k; L.err = ''; renderLogin(); },
+  'pin-key': el => { const k = el.dataset.k; if (k === 'del') L.pin = L.pin.slice(0, -1); else if (k === 'ok') { submitPin(); return; } else if (L.pin.length < 6 && !$('#pinpad[data-locked]')) L.pin += k; L.err = ''; renderLogin(); },
   'day-start': () => dayStart(),
   'day-end': () => dayEnd(),
   'visit-shop': el => { resetCheckin(el.dataset.id); go('visit', true); },
@@ -2252,8 +2630,8 @@ document.addEventListener('click', e => {
   Promise.resolve().then(() => fn(el, e)).catch(err => { console.error(err); toast(errMsg(err), 'err'); });
 });
 document.addEventListener('keydown', e => {
-  if (!$('#login').hidden && L.step === 'pin' && !modalStack.length) {
-    if (/^\d$/.test(e.key)) { if (L.pin.length < 6) { L.pin += e.key; L.err = ''; renderLogin(); } e.preventDefault(); return; }
+  if (!$('#login').hidden && (L.step === 'pin' || L.step === 'newpin') && !modalStack.length) {
+    if (/^\d$/.test(e.key)) { if (L.pin.length < 6 && !$('#pinpad[data-locked]')) { L.pin += e.key; L.err = ''; renderLogin(); } e.preventDefault(); return; }
     if (e.key === 'Backspace') { L.pin = L.pin.slice(0, -1); renderLogin(); e.preventDefault(); return; }
     if (e.key === 'Enter') { submitPin(); e.preventDefault(); return; }
   }
@@ -2279,6 +2657,9 @@ const I18N = {
     'consent.title': 'Izin lokasi kerja', 'consent.lead': 'Khair Sales mencatat lokasi GPS Anda HANYA saat jam kerja:', 'consent.c1': 'Pencatatan mulai saat Anda menekan "Mulai kerja" dan berhenti saat "Selesai kerja".',
     'consent.c2': 'Tujuannya: menghitung jarak tempuh (uang bensin), membuktikan kunjungan toko, dan merencanakan rute.', 'consent.c3': 'Selama dicatat, tanda "📍 Lokasi aktif" selalu terlihat di atas layar.',
     'consent.c4': 'Di luar jam kerja, atau saat aplikasi ditutup/HP terkunci, lokasi tidak dicatat.', 'consent.c5': 'Data hanya dilihat pemilik/manajer Khair Mart.',
+    'consent.c6': 'Selain itu, lokasi perangkat ini dibagikan ke pemilik toko selama aplikasi dibuka (keamanan & absensi) — tanpa rekam jejak perjalanan.',
+    'dev.title': 'Lokasi perangkat', 'dev.notice': 'Lokasi perangkat ini dibagikan ke pemilik toko selama aplikasi dibuka (keamanan & absensi)', 'dev.n1': 'Hanya selama aplikasi terbuka di perangkat ini. Pilihan ini diingat di perangkat ini.',
+    'dev.yes': 'Setuju', 'dev.no': 'Tidak', 'dev.sharing': 'Lokasi perangkat dibagikan ke pemilik toko',
     'consent.law': 'Sesuai UU Pelindungan Data Pribadi (UU PDP). Persetujuan bisa ditanyakan ke pemilik kapan saja.', 'consent.yes': 'Saya setuju', 'consent.no': 'Tidak sekarang',
     'today.hello': 'Halo, {name}', 'today.start_hint': 'Tekan Mulai kerja saat berangkat. GPS hanya aktif selama jam kerja.', 'today.start': 'Mulai kerja', 'today.end': 'Selesai kerja', 'today.resume': 'Lanjut kerja',
     'today.since': 'Kerja sejak {time}', 'today.visit': 'Kunjungi toko', 'today.ended': 'Hari kerja selesai', 'today.ended_at': 'Selesai pukul {time}', 'today.visits': 'kunjungan', 'today.orders': 'pesanan',
@@ -2363,6 +2744,9 @@ const I18N = {
     'consent.title': 'إذن موقع العمل', 'consent.lead': 'يسجّل Khair Sales موقعك فقط أثناء ساعات العمل:', 'consent.c1': 'يبدأ التسجيل عند "بدء العمل" ويتوقف عند "إنهاء العمل".',
     'consent.c2': 'الغرض: حساب المسافة (بدل الوقود)، إثبات زيارة المتاجر، وتخطيط المسار.', 'consent.c3': 'أثناء التسجيل تظهر علامة "📍 الموقع نشط" أعلى الشاشة دائمًا.',
     'consent.c4': 'خارج العمل أو عند إغلاق التطبيق/قفل الهاتف لا يُسجَّل الموقع.', 'consent.c5': 'يطّلع على البيانات مالك/مدير Khair Mart فقط.',
+    'consent.c6': 'إضافةً إلى ذلك يُشارَك موقع هذا الجهاز مع مالك المتجر طوال فتح التطبيق (للأمان والحضور) — دون تسجيل مسار التنقل.',
+    'dev.title': 'موقع الجهاز', 'dev.notice': 'يُشارَك موقع هذا الجهاز مع مالك المتجر طوال فتح التطبيق (للأمان والحضور)', 'dev.n1': 'فقط أثناء فتح التطبيق على هذا الجهاز. يُحفظ اختيارك على هذا الجهاز.',
+    'dev.yes': 'موافق', 'dev.no': 'لا', 'dev.sharing': 'موقع الجهاز مُشارَك مع مالك المتجر',
     'consent.law': 'وفق قانون حماية البيانات الشخصية الإندونيسي (UU PDP).', 'consent.yes': 'أوافق', 'consent.no': 'ليس الآن',
     'today.hello': 'مرحبًا، {name}', 'today.start_hint': 'اضغط بدء العمل عند الانطلاق. GPS يعمل أثناء العمل فقط.', 'today.start': 'بدء العمل', 'today.end': 'إنهاء العمل', 'today.resume': 'متابعة العمل',
     'today.since': 'يعمل منذ {time}', 'today.visit': 'زيارة متجر', 'today.ended': 'انتهى يوم العمل', 'today.ended_at': 'انتهى الساعة {time}', 'today.visits': 'زيارات', 'today.orders': 'طلبات',
@@ -2439,6 +2823,20 @@ const I18N = {
    on the phone; {"open": true, "until": "<ISO time>"} closes them by themselves at that time (server clock from
    the Date header, the phone's clock as fallback; remembered for offline use). Real mode is never affected; a
    local test server is never closed. */
+
+/* v16 login texts */
+Object.assign(I18N.id, {
+  'login.locked_until': 'Terlalu banyak PIN salah. Coba lagi jam {time}', 'login.tries_left': '{n} kali lagi, lalu akun dikunci 15 menit',
+  'err.LOCKED': 'Akun terkunci sementara', 'err.PIN_CHANGE_REQUIRED': 'Buat PIN baru dulu',
+  'np.title': 'Buat PIN baru', 'np.hint6': 'PIN 6 angka (pemilik / manajer)', 'np.hint46': 'PIN 4–6 angka', 'np.first': 'Ketik PIN baru', 'np.again': 'Ulangi PIN baru', 'np.ok': 'OK',
+  'np.mismatch': 'PIN tidak sama, ulangi', 'np.same': 'PIN baru harus beda dengan PIN lama', 'np.done': 'PIN baru tersimpan', 'np.need_online': 'Buat PIN baru perlu internet'
+});
+Object.assign(I18N.ar, {
+  'login.locked_until': 'رمز سري خاطئ مرات كثيرة. حاول مجددًا الساعة {time}', 'login.tries_left': 'بقي {n} محاولات ثم يُقفل الحساب 15 دقيقة',
+  'err.LOCKED': 'الحساب مقفل مؤقتًا', 'err.PIN_CHANGE_REQUIRED': 'أنشئ رمزًا سريًا جديدًا أولًا',
+  'np.title': 'إنشاء رمز سري جديد', 'np.hint6': 'رمز من 6 أرقام (المالك / المدير)', 'np.hint46': 'رمز من 4 إلى 6 أرقام', 'np.first': 'اكتب الرمز الجديد', 'np.again': 'أعد كتابة الرمز الجديد', 'np.ok': 'موافق',
+  'np.mismatch': 'الرمزان غير متطابقين، أعد المحاولة', 'np.same': 'يجب أن يختلف الرمز الجديد عن القديم', 'np.done': 'حُفظ الرمز الجديد', 'np.need_online': 'إنشاء رمز جديد يحتاج إلى الإنترنت'
+});
 async function demoStillOpen() {
   if (/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) return true;
   try {
@@ -2461,6 +2859,16 @@ function showDemoClosed() {
     + '<p style="margin:0 0 12px;color:#55607a">Terima kasih sudah mencoba Khair Mart. Hubungi pemilik toko untuk akses.</p>'
     + '<p dir="rtl" style="margin:0;color:#55607a">انتهت فترة التجربة وتم إغلاق هذا الرابط. شكرًا لكم.</p></div></div>';
 }
+Object.assign(I18N.id, {
+  'rule.name': 'Hanya huruf, angka, spasi dan . , \' -', 'rule.pname': 'Hanya huruf, angka, spasi dan . , \' & ( ) / % + # -', 'rule.phone': 'Nomor HP: angka saja',
+  'rule.email': 'Alamat e-mail tanpa spasi', 'rule.doc': 'Hanya huruf, angka, spasi dan / - .', 'rule.num': 'Angka saja', 'rule.pin': 'Angka saja',
+  'rule.search': 'Tanda < > tidak boleh', 'rule.text': 'Tanda < > tidak boleh', 'rule.long': 'Tanda < > tidak boleh'
+});
+Object.assign(I18N.ar, {
+  'rule.name': 'حروف وأرقام ومسافة و . , \' - فقط', 'rule.pname': 'حروف وأرقام ومسافة و . , \' & ( ) / % + # - فقط', 'rule.phone': 'رقم الهاتف: أرقام فقط',
+  'rule.email': 'البريد الإلكتروني بدون مسافات', 'rule.doc': 'حروف وأرقام ومسافة و / - . فقط', 'rule.num': 'أرقام فقط', 'rule.pin': 'أرقام فقط',
+  'rule.search': 'العلامتان < > غير مسموحتين', 'rule.text': 'العلامتان < > غير مسموحتين', 'rule.long': 'العلامتان < > غير مسموحتين'
+});
 async function init() {
   applyLangAttrs();
   if (MOCK && !(await demoStillOpen())) { showDemoClosed(); return; }
@@ -2468,14 +2876,15 @@ async function init() {
     navigator.serviceWorker.register('sw.js', { scope: './' }).catch(() => { });
   }
   if (MOCK) { try { await MockServer.ensure(); } catch (e) { console.error(e); } }
-  const sess = FS.get('session');
+  try { await migrateSecrets(); } catch (e) { console.error(e); }
+  const sess = FS.get('session'), live = SESS.get();
   if (DEMO) {
     if (!S.key) { S.key = 'demo'; store.set('key', 'demo'); }
     const want = new URLSearchParams(location.search).get('u');
     if (want && !(sess && sess.user && sess.user.toLowerCase() === want.toLowerCase())) { demoLogin(want); return; }
   }
-  if (S.key && sess && sess.user && sess.pin_hash) {
-    S.user = sess.user; S.role = sess.role; S.pin_hash = sess.pin_hash;
+  if (S.key && sess && sess.user && live && live.pin_hash && live.user === sess.user) {
+    S.user = sess.user; S.role = sess.role; S.pin_hash = live.pin_hash;
     const cd = FS.get(uk('day')); if (cd && cd.day_date === today()) S.day = cd;
     enterApp(false); return;
   }
@@ -2483,7 +2892,7 @@ async function init() {
   if (S.key) { if (last) { L.sel = last; showLogin('pin'); } else showLogin('users'); return; }
   showLogin('key');
 }
-window.SALES = { S, TR, CI, CAT, flushTrack, syncOutbox, keepPoint, haversine, pathKm, priceFor, MAPS, IMG };
+window.SALES = { S, TR, CI, CAT, flushTrack, syncOutbox, keepPoint, haversine, pathKm, priceFor, MAPS, IMG, DEV, devTick, deviceLabel, mockLog: () => MockServer.log };
 init();
 </script>
 </body>

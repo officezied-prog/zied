@@ -326,7 +326,7 @@ test('receipt: WhatsApp number with promo consent → customer saved (normalised
   await rc.locator('#wa-save').click();
   await expect(rc.locator('#wa-done')).toContainText('Pak Hasan Alatas');
   db = await H.getDb(page);
-  expect(db.customers.find(c => c.name === 'Pak Hasan Alatas')).toMatchObject({ wa_optin: true, phone: '0811-5555-6677' });
+  expect(db.customers.find(c => c.name === 'Pak Hasan Alatas')).toMatchObject({ wa_optin: true, phone: '6281155556677' }); // the server stores the number normalised (62…)
   expect(db.customers.length).toBe(n0 + 1);
 });
 
