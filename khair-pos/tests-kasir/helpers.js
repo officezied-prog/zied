@@ -107,9 +107,18 @@ async function pickCarrier(page, type = 'pemasok', f = {}, px = 'pu') {
   if (f.kind) await page.selectOption(`#${px}-car-kind`, f.kind);
   for (const k of ['vehicle', 'name', 'phone']) if (f[k] != null) await page.fill(`#${px}-car-${k}`, f[k]);
 }
+/** A second person's phone in the same browser context (same mock DB): no session of the first page and its OWN device
+ *  id — two users on one device id make every request rewrite the shared device row (and with it the whole mock DB,
+ *  which can overwrite the other page's last write). */
+let phoneN = 0;
+async function otherPhone(context) {
+  const p = await context.newPage(), id = 'dvtestphone' + (++phoneN) + 'x' + Date.now().toString(36);
+  await p.addInitScript(dev => { localStorage.removeItem('kpos.mock.kasir.session'); localStorage.setItem('kpos.device_id', dev); }, id);
+  return p;
+}
 async function tab(page, v) {
   await page.click(`#tab-${v}`);
   await expect(page.locator(`#v-${v}`)).toBeVisible();
 }
 
-module.exports = { pickCarrier, presetDeviceConsent, rp, sha, SHOTS, shot, PHONE, TABLET, openKasir, enterKey, typePin, login, getDb, setDb, productByName, addItem, confirmQty, openCart, pay, photoFile, closeModals, tab };
+module.exports = { otherPhone, pickCarrier, presetDeviceConsent, rp, sha, SHOTS, shot, PHONE, TABLET, openKasir, enterKey, typePin, login, getDb, setDb, productByName, addItem, confirmQty, openCart, pay, photoFile, closeModals, tab };

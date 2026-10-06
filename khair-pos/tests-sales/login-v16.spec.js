@@ -50,12 +50,9 @@ test('PIN reset by the owner: "Buat PIN baru" at first login (twice, not the old
   expect(db.users.find(u => u.name === 'Ahmad')).toMatchObject({ pin_hash: sha('demo:ahmad:5678'), must_change: false });
   expect(db.activity.find(a => a.kind === 'ganti_pin' && a.ref === 'Ahmad')).toMatchObject({ level: 'info' });
 
-  // reset again while working: the field API does not check must_change (backend/field), so the rep is asked at the
-  // next PIN entry (after a lock)
+  // reset again while working: the next field call answers PIN_CHANGE_REQUIRED (v16 server) → the new-PIN screen at once
   await H.setDb(page, `db.users.find(u => u.name === 'Ahmad').must_change = true;`);
-  await page.evaluate(() => lock());
-  await expect(page.locator('#pin-who')).toHaveText('Ahmad');
-  await H.typePin(page, '5678');
+  expect(await page.evaluate(async () => { try { await api('field_bootstrap'); return 'ok'; } catch (e) { return e.code; } })).toBe('PIN_CHANGE_REQUIRED');
   await expect(np).toBeVisible();
   await expect(page.locator('#np-stage')).toHaveText('Ketik PIN baru');
   await expect(page.locator('#app')).toBeHidden();

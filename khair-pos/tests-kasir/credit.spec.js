@@ -58,8 +58,7 @@ test('remote request: the manager approves on her phone, the kasir sale saves it
   await H.shot(page, 'phone-11-waiting');
 
   // Jihan (manager) on a second device — same mock DB (same origin storage)
-  const p2 = await context.newPage();
-  await p2.addInitScript(() => { localStorage.removeItem('kpos.mock.kasir.session'); });
+  const p2 = await H.otherPhone(context);
   await H.login(p2, 'Jihan', '2222');
   await expect(p2.locator('#tb-appr')).toBeVisible();
   // the credit request + Siti's opening count (v15: every "Buka kas" goes to the manager)
@@ -122,8 +121,7 @@ test('rejected request shows the manager note; void and price requests respect c
   await expect(page.locator('#pc-pending')).toBeVisible();
   await H.closeModals(page);
 
-  const p2 = await context.newPage();
-  await p2.addInitScript(() => { localStorage.removeItem('kpos.mock.kasir.session'); });
+  const p2 = await H.otherPhone(context);
   await H.login(p2, 'Jihan', '2222');
   await expect(p2.locator('#tb-appr-n')).toHaveText('4'); // + Siti's opening count (buka_kas)
   await p2.click('#tb-appr');
@@ -142,8 +140,7 @@ test('rejected request shows the manager note; void and price requests respect c
   expect(H.productByName(db, /Ajwa/).retail_price).toBe(180000);
 
   // owner approves the void (in this app the owner can decide; invoice_no = approval.ref)
-  const p3 = await context.newPage();
-  await p3.addInitScript(() => { localStorage.removeItem('kpos.mock.kasir.session'); });
+  const p3 = await H.otherPhone(context);
   await H.login(p3, 'Pemilik', '1234');
   await p3.click('#tb-appr');
   await p3.locator('.apr-card[data-kind="void"] [data-d="approved"]').click();

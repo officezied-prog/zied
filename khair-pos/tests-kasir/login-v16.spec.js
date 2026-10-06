@@ -95,6 +95,10 @@ test('5 wrong PINs → LOCKED: the time from the server, the pad is off, the rig
   expect(Date.parse(u.locked_until)).toBeGreaterThan(Date.now() + 14 * 60000);
   const r = await page.evaluate(async h => { try { await apiRaw('login', {}, { key: 'demo', user: 'Siti', pin_hash: h }); return 'ok'; } catch (e) { return e.code + ' ' + e.message; } }, H.sha('demo:siti:1111'));
   expect(r).toMatch(/^LOCKED Terlalu banyak PIN salah\. Coba lagi jam \d{2}:\d{2} WIB$/);
+  // the answer carries locked_until (ISO); the app uses it
+  const lu = await page.evaluate(async h => { try { await apiRaw('login', {}, { key: 'demo', user: 'Siti', pin_hash: h }); } catch (e) { return [e.res.locked_until, lockUntilFrom(e)]; } }, H.sha('demo:siti:1111'));
+  expect(Date.parse(lu[0])).toBe(Date.parse(u.locked_until));
+  expect(lu[1]).toBe(Date.parse(u.locked_until));
   // another account is not affected
   await page.click('[data-act="login-back"] >> nth=0');
   await page.click('[data-act="login-user"][data-name="Rina"]');

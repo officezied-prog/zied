@@ -44,8 +44,7 @@ test('live % against the limit; over it → "Minta persetujuan diskon" → manag
   expect(db.activity.find(a => a.kind === 'minta_diskon' && a.ref === rid)).toMatchObject({ user: 'Siti', level: 'warn', amount: 10000 });
 
   // the manager decides on her phone: the card shows the discount, never profit
-  const p2 = await context.newPage();
-  await p2.addInitScript(() => { localStorage.removeItem('kpos.mock.kasir.session'); });
+  const p2 = await H.otherPhone(context);
   await H.login(p2, 'Jihan', '2222');
   await p2.click('#tb-appr');
   const card = p2.locator(`.apr-card[data-req="${rid}"]`);
@@ -89,8 +88,7 @@ test('owner / manager give a bigger discount themselves (logged); a rejected req
   expect(db.sales[db.sales.length - 1].notes).toContain('[diskon 11.4% disetujui Jihan]');
 
   // a kasir's request rejected by the owner
-  const p2 = await context.newPage();
-  await p2.addInitScript(() => { localStorage.removeItem('kpos.mock.kasir.session'); });
+  const p2 = await H.otherPhone(context);
   await H.login(p2, 'Siti', '1111');
   await H.addItem(p2, 'ajwa');
   await H.pay(p2);
@@ -98,8 +96,7 @@ test('owner / manager give a bigger discount themselves (logged); a rejected req
   await p2.click('#pay-ok');
   await p2.click('#disc-send');
   const rid = (await p2.locator('#dw-id').textContent()).trim();
-  const p3 = await context.newPage();
-  await p3.addInitScript(() => { localStorage.removeItem('kpos.mock.kasir.session'); });
+  const p3 = await H.otherPhone(context);
   await H.login(p3, 'Pemilik', '1234');
   await p3.click('#tb-appr');
   const card = p3.locator(`.apr-card[data-req="${rid}"]`);

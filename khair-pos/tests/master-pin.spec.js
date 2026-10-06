@@ -149,3 +149,19 @@ test('5 wrong PINs lock the account 15 minutes: message with the time, pad disab
   await expect(page.locator('#app')).toBeVisible();
   expect((await getDb(page)).users.find(u => u.name === 'Jihan')).toMatchObject({ fail_count: 0, locked_until: '' });
 });
+
+test('LOCKED answers carry locked_until; sales may change_pin; get_sale gives the invoice with what was already returned', async ({ page }) => {
+  await login(page, 'Pemilik', '1234', '', { stay: true });
+  for (let i = 0; i < 4; i++) await asUser(page, 'Rina', '0000', 'login');
+  const l = await page.evaluate(async () => { try { await apiRaw('login', {}, { key: 'demo', user: 'Rina', pin_hash: 'f'.repeat(64) }); } catch (e) { return e.data; } });
+  expect(l.error).toBe('LOCKED');
+  expect(Date.parse(l.locked_until)).toBeGreaterThan(Date.now() + 14 * 60000);
+  expect(await asUser(page, 'Ahmad', '4444', 'change_pin', { new_pin_hash: sha('demo:ahmad:5678') })).toMatchObject({ ok: true });
+  const db = await getDb(page);
+  const s = db.sales.filter(x => x.status !== 'void').slice(-1)[0];
+  const g = await asUser(page, 'Pemilik', '1234', 'get_sale', { invoice_no: s.invoice_no });
+  expect(g.sale.invoice_no).toBe(s.invoice_no);
+  expect(g.items.length).toBeGreaterThan(0);
+  expect(g.returned).toEqual({});
+  expect(await asUser(page, 'Pemilik', '1234', 'get_sale', { invoice_no: 'KM000000-XXXX' })).toMatchObject({ error: 'NOT_FOUND' });
+});

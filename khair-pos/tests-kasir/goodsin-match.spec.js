@@ -110,8 +110,7 @@ test('MISMATCH → reason; saved goods-in is read-only; correction request → m
   expect(wrong).toBe('INVALID');
 
   // the manager approves on her phone
-  const p2 = await context.newPage();
-  await p2.addInitScript(() => { localStorage.removeItem('kpos.mock.kasir.session'); });
+  const p2 = await H.otherPhone(context);
   await H.login(p2, 'Jihan', '2222');
   await p2.click('#tb-appr');
   const card = p2.locator(`.apr-card[data-req="${ap.request_id}"]`);

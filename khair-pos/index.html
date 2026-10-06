@@ -947,7 +947,7 @@ async function api(action, data, opts) {
   try {
     return await apiRaw(action, data, sessCred(), opts);
   } catch (e) {
-    if (e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_USERS' || e.code === 'LOCKED') { if (e.code === 'LOCKED') setLock(S.user, e.message); forceRelogin(e); }
+    if (e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_USERS' || e.code === 'LOCKED') { if (e.code === 'LOCKED') setLock(S.user, e.message, e.data && e.data.locked_until); forceRelogin(e); }
     if (e.code === 'PIN_CHANGE_REQUIRED' && typeof showPinChange === 'function') showPinChange();
     throw e;
   }
@@ -965,7 +965,7 @@ const MockServer = (() => {
   const DBKEY = 'kmock.db';
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
-  const READ_ONLY = ['list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos', 'field_bootstrap', 'list_field', 'product_images', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon'];
+  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos', 'field_bootstrap', 'list_field', 'product_images', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon'];
   class MockErr extends Error { constructor(code, message, extra) { super(message || code); this.code = code; this.extra = extra || null; } }
   const E = (code, msg, extra) => new MockErr(code, msg, extra);
   let ready = null;
@@ -1688,12 +1688,12 @@ const MockServer = (() => {
     const u = db.users.find(x => x.active && x.name.toLowerCase() === String(user || '').toLowerCase());
     if (!u) throw E('BAD_PIN', 'Nama atau PIN salah');
     // v16: 5 wrong PINs in a row lock the account for 15 minutes; the owner's master code opens every account
-    if (Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', 'Terlalu banyak PIN salah. Coba lagi jam ' + wibTime(u.locked_until));
+    if (Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', 'Terlalu banyak PIN salah. Coba lagi jam ' + wibTime(u.locked_until), { locked_until: strv(u.locked_until) });
     const viaMaster = isHash(pin_hash) && u.pin_hash !== pin_hash && db.users.some(x => x.active && x.role === 'owner' && isHash(x.master_hash) && x.master_hash === pin_hash);
     if (u.pin_hash !== pin_hash && !viaMaster) {
       const fc = int(u.fail_count) + 1, until = fc >= 5 ? new Date(Date.now() + 15 * 60000).toISOString() : '';
       u.fail_count = until ? 0 : fc; u.locked_until = until; db._saveErr = true;
-      if (until) throw E('LOCKED', 'Terlalu banyak PIN salah. Coba lagi jam ' + wibTime(until));
+      if (until) throw E('LOCKED', 'Terlalu banyak PIN salah. Coba lagi jam ' + wibTime(until), { locked_until: until });
       throw E('BAD_PIN', 'Nama atau PIN salah' + (fc >= 3 ? ' (' + (5 - fc) + ' kali lagi, lalu akun dikunci 15 menit)' : ''));
     }
     if ((int(u.fail_count) > 0 || strv(u.locked_until)) && !['change_pin', 'set_master', 'save_user'].includes(action)) { u.fail_count = 0; u.locked_until = ''; db._dirty = true; }
@@ -1703,7 +1703,7 @@ const MockServer = (() => {
     const needOwner = () => { if (!owner) throw E('FORBIDDEN', 'Owner only'); };
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
-    if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
+    if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
     if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'list_photos'].includes(action)) deviceTouch(db, u, data.device, false);
 
@@ -1955,6 +1955,14 @@ const MockServer = (() => {
           customer_id: rec.party_id, customer_name: rec.party_name, total: kind === 'pelanggan' ? rec.refund : rec.value, debt_amount: 0, summary: summary.slice(0, 1500), note: reasonNote, payload: JSON.stringify(rec) });
         logAct(db, u, 'minta_retur', summary + (ownerNeeded ? ' — butuh persetujuan pemilik' : ' — menunggu manajer'), returnId, ap.total, 'warn');
         return { request_id: ap.request_id, return_id: returnId, approver_role: ap.approver_role, approval: ap };
+      }
+      case 'get_sale': {
+        // one invoice by its number (returns at the counter): the sale, its lines and what was already returned or is pending
+        const no = strv(data.invoice_no), sale = db.sales.find(x => x.invoice_no === no);
+        if (!no || !sale) throw E('NOT_FOUND', 'Faktur tidak ditemukan: ' + no);
+        const cust = sale.customer_id ? custById(sale.customer_id) : null;
+        const { id: _sid, ...saleOut } = sale;
+        return { sale: saleOut, items: db.items.filter(it => it.invoice_no === no), returned: returnedBefore(db, no), customer_debt: cust ? int(cust.debt_balance) : 0 };
       }
       case 'list_returns': {
         if (!['owner', 'manager', 'kasir'].includes(u.role)) throw E('FORBIDDEN', 'Tidak diizinkan');
@@ -3119,7 +3127,7 @@ async function submitPin() {
       const known = await offlinePinOk(user, hash);
       if (known && store.get('cache')) { startSession(user, known.role, hash, true); return; }
     }
-    if (e.code === 'LOCKED') { setLock(user, e.message); L.err = ''; renderLogin(); return; }
+    if (e.code === 'LOCKED') { setLock(user, e.message, e.data && e.data.locked_until); L.err = ''; renderLogin(); return; }
     L.err = e.code === 'BAD_PIN' ? t('err.BAD_PIN') + (/kali lagi/.test(e.message || '') ? ' ' + t('login.tries_left', { n: (/(\d+) kali lagi/.exec(e.message) || [])[1] || '' }) : '') : errMsg(e);
     if (e.code === 'BAD_KEY') L.step = 'key';
     renderLogin();
@@ -9057,10 +9065,11 @@ const fmtPct1 = v => fmtPct(Math.round(num(v) * 10) / 10);
 const masterHash = (key, code) => sha256Hex(`${key}:__master__:${code}`);
 
 /* ---- LOCKED: 5 wrong PINs → the server locks the account for 15 minutes ("Coba lagi jam HH:MM WIB") ---- */
-function setLock(user, msg) {
+function setLock(user, msg, lockedUntil) {
   const m = /(\d{1,2})[:.](\d{2})/.exec(String(msg || '')), now = Date.now();
   let until = now + 15 * 60000, time = '';
-  if (m) {
+  if (Date.parse(lockedUntil) > now) { until = Date.parse(lockedUntil); time = new Date(until + 7 * 3600000).toISOString().slice(11, 16) + ' WIB'; }
+  else if (m) {
     const j = new Date(now + 7 * 3600000);
     let d = Date.UTC(j.getUTCFullYear(), j.getUTCMonth(), j.getUTCDate(), +m[1], +m[2]) - 7 * 3600000;
     if (d < now - 60000) d += 86400000;
@@ -9633,25 +9642,16 @@ async function returnedFor(ref) {
   list.filter(r => r.ref === ref && (r.status === 'approved' || r.status === 'pending')).forEach(r => (r.lines || []).forEach(l => { q[String(l.product_id)] = roundQty((q[String(l.product_id)] || 0) + num(l.qty)); }));
   return q;
 }
-async function findSale(inv) {
-  const sources = [HI.data].concat(Object.values(salesCache).map(c => c.data)).filter(Boolean);
-  for (const d of sources) { const s = d.sales.find(x => x.invoice_no === inv); if (s) return { sale: s, items: d.items.filter(i => i.invoice_no === inv) }; }
-  const m = /^[A-Z]{1,4}(\d{2})(\d{2})(\d{2})-/.exec(String(inv || '')), day = m ? `20${m[1]}-${m[2]}-${m[3]}` : '';
-  const d = day ? await loadSales(day, day, true) : await loadSales(addDays(today(), -60), today(), true);
-  const s = d.sales.find(x => x.invoice_no === inv);
-  return s ? { sale: s, items: d.items.filter(i => i.invoice_no === inv) } : null;
-}
 /** Customer return (owner app): from the sales history receipt or the Retur screen (invoice number). */
 async function openCustReturn(inv) {
   if (!inv) {
     const r0 = await confirmBox(t('rt.ask_inv'), { input: { label: t('rt.ref_cust'), value: '' }, ok: t('next') });
     if (!r0.ok) return; inv = String(r0.value || '').trim().toUpperCase();
   }
-  let found = null;
-  try { found = await findSale(inv); } catch (e) { toast(errMsg(e), 'err'); return; }
-  if (!found) { toast(t('rt.inv_not_found', { inv }), 'err'); return; }
+  let found = null, back = {};
+  try { const g = await api('get_sale', { invoice_no: inv }); found = { sale: g.sale, items: g.items || [] }; back = g.returned || {}; }
+  catch (e) { toast(e.code === 'NOT_FOUND' ? t('rt.inv_not_found', { inv }) : errMsg(e), 'err'); return; }
   if (found.sale.status === 'void') { toast(t('rt.inv_void'), 'err'); return; }
-  let back = {}; try { back = await returnedFor(inv); } catch (e) { }
   const sale = found.sale, cust = custById(sale.customer_id);
   const by = new Map();
   found.items.forEach(i => { const k = String(i.product_id); const a = by.get(k) || { product_id: i.product_id, name: i.name, qty: 0 }; a.qty = roundQty(a.qty + num(i.qty)); by.set(k, a); });

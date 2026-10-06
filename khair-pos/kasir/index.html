@@ -786,7 +786,7 @@ const MockServer = (() => {
   const DBKEY = 'kmock.db';
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
-  const READ_ONLY = ['users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos', 'party_ledger', 'list_returns'];
+  const READ_ONLY = ['users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos', 'party_ledger', 'list_returns', 'get_sale'];
   /* v16 settings defaults as on the server (an older demo DB lacks them) */
   const V16_DEFAULTS = { max_discount_pct: 3, sell_from_shop_only: true, return_owner_min_value: 1000000, return_owner_min_qty: 0, return_fee_pct: 0, require_return_photo: true, require_carrier: true, member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
   class MockErr extends Error { constructor(code, message) { super(message || code); this.code = code; } }
@@ -1230,20 +1230,19 @@ const MockServer = (() => {
     // v16 (as on the server): lock after 5 wrong PINs in a row (15 min), owner master code opens every account, own PIN at first login
     const u = db.users.find(x => x.active !== false && x.name.toLowerCase() === String(user || '').trim().toLowerCase());
     if (!u) throw E('BAD_PIN', 'Nama atau PIN salah');
-    if (Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', lockMsg(u.locked_until));
+    if (Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', lockMsg(u.locked_until), { locked_until: str(u.locked_until) });
     const masterOwner = isHex64(pin_hash) && u.pin_hash !== pin_hash ? db.users.find(x => x.active !== false && x.role === 'owner' && isHex64(x.master_hash) && x.master_hash === pin_hash) || null : null;
     const viaMaster = !!masterOwner;
     if (u.pin_hash !== pin_hash && !viaMaster) {
       const fc = num(u.fail_count) + 1, until = fc >= 5 ? new Date(Date.now() + 15 * 60000).toISOString() : '';
       u.fail_count = until ? 0 : fc; u.locked_until = until;
       save(db); // the failure is written although the request fails
-      if (until) throw E('LOCKED', lockMsg(until));
+      if (until) throw E('LOCKED', lockMsg(until), { locked_until: until });
       throw E('BAD_PIN', 'Nama atau PIN salah' + (fc >= 3 ? ' (' + (5 - fc) + ' kali lagi, lalu akun dikunci 15 menit)' : ''));
     }
     if ((num(u.fail_count) > 0 || str(u.locked_until)) && !['change_pin', 'set_master', 'save_user'].includes(action)) { u.fail_count = 0; u.locked_until = ''; dirty = true; }
     if (u.must_change === true && !viaMaster && !['login', 'change_pin', 'users', 'device_ping'].includes(action)) throw E('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
     lastRole = u.role;
-    // NOTE: the server refuses change_pin for sales (not in its sales list) — a rep with a reset PIN could never get in; allowed here, reported
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
     if (action !== 'device_ping') deviceTouch(db, u, data.device, false);
     const owner = u.role === 'owner';
@@ -1532,6 +1531,14 @@ const MockServer = (() => {
         });
         logAct(db, u, 'minta_retur', summary + (ownerNeeded ? ' — butuh persetujuan pemilik' : ' — menunggu manajer'), returnId, ap.total, 'warn');
         return { request_id: ap.request_id, return_id: returnId, approver_role: ap.approver_role, approval: approvalOut(ap, u.role) };
+      }
+      case 'get_sale': {
+        // one invoice by its number (returns at the counter): the sale, its lines and what was already returned or is pending
+        const no = str(data.invoice_no);
+        const sale = no ? db.sales.find(x => x.invoice_no === no) : null;
+        if (!no || !sale) throw E('NOT_FOUND', 'Faktur tidak ditemukan: ' + no);
+        const cust = sale.customer_id != null ? custById(sale.customer_id) || null : null;
+        return { sale, items: db.items.filter(it => it.invoice_no === no), returned: returnedBefore(db, no), customer_debt: cust ? money(cust.debt_balance) : 0 };
       }
       case 'list_returns': {
         if (!['owner', 'manager', 'kasir'].includes(u.role)) throw E('FORBIDDEN', 'Tidak diizinkan');
@@ -2529,6 +2536,9 @@ const LOCKS = {};
 const lockedUntil = user => LOCKS[String(user || '').toLowerCase()] || 0;
 /** The server says "… Coba lagi jam HH:MM WIB": that time today (Jakarta), else 15 minutes from now. */
 function lockUntilFrom(e) {
+  // the server sends locked_until (ISO); the time in the message is the fallback (older servers, the field workflow)
+  const iso = e && e.res && Date.parse(e.res.locked_until);
+  if (iso > Date.now()) return iso;
   const m = /(\d{2}):(\d{2})/.exec(String(e && e.message || ''));
   if (!m) return Date.now() + 15 * 60000;
   let at = Date.parse(today() + 'T' + m[1] + ':' + m[2] + ':00+07:00');
@@ -4579,14 +4589,24 @@ async function returnedOf(ref, from) {
   return q;
 }
 async function loadSaleForReturn(inv) {
+  // get_sale (v16): the sale, its lines, what was already returned / pending and the buyer's debt in one call
+  try {
+    const r = await api('get_sale', { invoice_no: inv });
+    return { sale: r.sale, items: r.items || [], ret: r.returned || {}, debt: int(r.customer_debt) };
+  } catch (e) {
+    if (e.code === 'NOT_FOUND') return null;
+    if (!(e.code === 'INVALID' && /Aksi tidak dikenal|Unknown action/i.test(String(e.message || '')))) throw e;
+  }
+  // older server without get_sale: the invoice's day from get_sales + list_returns
   const d = invoiceDate(inv);
   const r = await api('get_sales', { from: d || addDays(today(), -60), to: d || today() });
   const sale = (r.sales || []).find(s => s.invoice_no === inv);
   if (!sale) return null;
-  return { sale, items: (r.items || []).filter(i => i.invoice_no === inv), ret: await returnedOf(inv, sale.sale_date) };
+  const c = sale.customer_id != null ? custById(sale.customer_id) : null;
+  return { sale, items: (r.items || []).filter(i => i.invoice_no === inv), ret: await returnedOf(inv, sale.sale_date), debt: c ? int(c.debt_balance) : 0 };
 }
 function openReturn(pre = {}) {
-  const R = { sale: null, lines: [], reason: '', note: '', by: '', phone: '', method: 'tunai', sent: null };
+  const R = { sale: null, lines: [], reason: '', note: '', by: '', phone: '', method: 'tunai', sent: null, debt: 0 };
   const el = openModal({
     title: t('rt.title'), id: 'retur', focus: false,
     body: `<p class="small muted" style="margin-top:0">${esc(t('rt.hint'))}</p>
@@ -4612,7 +4632,7 @@ function openReturn(pre = {}) {
   };
   const draw = () => {
     if (!R.sale) { body.innerHTML = ''; send.hidden = true; return; }
-    const s = R.sale, c = cust(), debt = c ? int(c.debt_balance) : 0;
+    const s = R.sale, debt = R.debt;
     const methods = ['tunai', 'transfer'].concat(debt > 0 ? ['potong_hutang'] : [], ['tukar']);
     if (!methods.includes(R.method)) R.method = 'tunai';
     body.innerHTML = `<div class="card pad" id="rt-sale" data-inv="${esc(s.invoice_no)}" style="margin:10px 0">
@@ -4651,7 +4671,7 @@ function openReturn(pre = {}) {
       const discRatio = int(x.sale.subtotal) > 0 ? Math.min(1, int(x.sale.discount) / int(x.sale.subtotal)) : 0;
       const agg = new Map();
       x.items.forEach(it => { const k = String(it.product_id), a = agg.get(k) || { product_id: it.product_id, name: it.name, sold: 0, value: 0 }; a.sold = roundQty(a.sold + num(it.qty)); a.value += int(it.line_total); agg.set(k, a); });
-      R.sale = x.sale;
+      R.sale = x.sale; R.debt = int(x.debt);
       R.lines = [...agg.values()].map(a => { const p = prodById(a.product_id), ret = num(x.ret[String(a.product_id)]); return { product_id: a.product_id, name: p ? p.name : a.name, unit: p ? p.unit || '' : '', sold: a.sold, ret, left: roundQty(Math.max(0, a.sold - ret)), unitNet: a.sold > 0 ? a.value / a.sold * (1 - discRatio) : 0, qty: 0, cond: 'baik' }; });
       const c = cust();
       R.by = c ? c.name : (x.sale.customer_name && x.sale.customer_name !== 'Umum' ? x.sale.customer_name : '');

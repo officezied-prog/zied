@@ -548,7 +548,7 @@ async function apiRawInner(action, data, cred, opts) {
     }
     if (Array.isArray(res)) res = res[0];
   }
-  if (!res || res.ok !== true) throw new ApiError((res && res.error) || 'SERVER', res && res.message);
+  if (!res || res.ok !== true) { const err = new ApiError((res && res.error) || 'SERVER', res && res.message); err.res = res || null; throw err; }
   return res;
 }
 /** Authenticated call with the current session; BAD_PIN / BAD_KEY send the user back to login. */
@@ -577,7 +577,7 @@ const MockServer = (() => {
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
   const READ_ONLY = ['users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos'];
   class MockErr extends Error { constructor(code, message) { super(message || code); this.code = code; } }
-  const E = (code, msg) => new MockErr(code, msg);
+  const E = (code, msg, extra) => { const e = new MockErr(code, msg); if (extra) e.extra = extra; return e; };
   let ready = null;
 
   function load() { try { return JSON.parse(localStorage.getItem(DBKEY) || 'null'); } catch (e) { return null; } }
@@ -734,20 +734,25 @@ const MockServer = (() => {
     if (!db.users.length) throw E('NO_USERS', 'Run setup first');
     const u = db.users.find(x => x.active !== false && x.name.toLowerCase() === String(user || '').trim().toLowerCase());
     if (window.KhairFieldMock && KhairFieldMock.actions.includes(action)) {
-      // the field workflow: plain PIN check (no master code, no lock / own-PIN rules there yet)
-      if (!u || u.pin_hash !== pin_hash) throw E('BAD_PIN', 'Wrong user or PIN');
-      return KhairFieldMock.handle(action, data, { name: u.name, role: u.role }, db, { jktDate: d => jktDate(d == null ? new Date() : d), jktISO: d => jktISO(d == null ? new Date() : d) });
+      // the field workflow (backend/field, v16): lock, owner master code and own-PIN rules; input cleaned (data: URLs kept)
+      if (!u) throw E('BAD_PIN', 'Nama atau PIN salah');
+      if (Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', 'Akun dikunci sementara karena PIN salah berkali-kali');
+      const fMaster = /^[a-f0-9]{64}$/.test(String(pin_hash || '')) && db.users.some(x => x.active !== false && x.role === 'owner' && x.master_hash && x.master_hash === pin_hash);
+      if (u.pin_hash !== pin_hash && !fMaster) throw E('BAD_PIN', 'Nama atau PIN salah');
+      if (u.must_change === true && !fMaster) throw E('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
+      const fdata = JSON.parse(JSON.stringify(data)); cleanFieldInput(fdata, 0); // (a copy: the server gets it over the network)
+      return KhairFieldMock.handle(action, fdata, { name: u.name, role: u.role }, db, { jktDate: d => jktDate(d == null ? new Date() : d), jktISO: d => jktISO(d == null ? new Date() : d) });
     }
     // v16 main API, as on the server: lock after 5 wrong PINs (15 min), owner master code, own PIN at first login
     if (!u) throw E('BAD_PIN', 'Nama atau PIN salah');
     const isHex64 = h => /^[0-9a-f]{64}$/.test(String(h || ''));
     const lockMsg = until => 'Terlalu banyak PIN salah. Coba lagi jam ' + new Date(Date.parse(until) + 7 * 3600000).toISOString().slice(11, 16) + ' WIB';
-    if (Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', lockMsg(u.locked_until));
+    if (Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', lockMsg(u.locked_until), { locked_until: String(u.locked_until) });
     const viaMaster = isHex64(pin_hash) && u.pin_hash !== pin_hash && db.users.some(x => x.active !== false && x.role === 'owner' && isHex64(x.master_hash) && x.master_hash === pin_hash);
     if (u.pin_hash !== pin_hash && !viaMaster) {
       const fc = num(u.fail_count) + 1, until = fc >= 5 ? new Date(Date.now() + 15 * 60000).toISOString() : '';
       u.fail_count = until ? 0 : fc; u.locked_until = until; save(db);
-      if (until) throw E('LOCKED', lockMsg(until));
+      if (until) throw E('LOCKED', lockMsg(until), { locked_until: until });
       throw E('BAD_PIN', 'Nama atau PIN salah' + (fc >= 3 ? ' (' + (5 - fc) + ' kali lagi, lalu akun dikunci 15 menit)' : ''));
     }
     if ((num(u.fail_count) > 0 || str(u.locked_until)) && !['change_pin', 'set_master', 'save_user'].includes(action)) { u.fail_count = 0; u.locked_until = ''; dirty = true; }
@@ -1132,6 +1137,16 @@ const MockServer = (() => {
       else if (v && typeof v === 'object') cleanInput(v, depth + 1);
     });
   }
+  /** backend/field/process-field.js: the same cleaning without the 4000-character cut; photos (data: URLs) left as they are. */
+  function cleanFieldInput(o, depth) {
+    if (!o || typeof o !== 'object' || depth > 6) return;
+    Object.keys(o).forEach(k => {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') { delete o[k]; return; }
+      const v = o[k];
+      if (typeof v === 'string' && v.indexOf('data:') !== 0) o[k] = v.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g, '').replace(/<[^>]*>/g, '').replace(/[<>]/g, '');
+      else if (v && typeof v === 'object') cleanFieldInput(v, depth + 1);
+    });
+  }
   async function request(body) {
     await ensure();
     await sleep(30 + Math.random() * 50);
@@ -1153,7 +1168,7 @@ const MockServer = (() => {
       if (fieldSeeded || dirty || !(READ_ONLY.includes(body.action) || ['field_bootstrap', 'list_field', 'product_images'].includes(body.action))) save(db);
       res = Object.assign({ ok: true }, role === 'owner' || ['users', 'setup'].includes(body.action) ? res : strip(res));
     } catch (e) {
-      res = { ok: false, error: e.code || 'SERVER', message: e.message };
+      res = Object.assign({ ok: false, error: e.code || 'SERVER', message: e.message }, e.extra || {});
     }
     return JSON.parse(JSON.stringify(res));
   }
@@ -1823,6 +1838,9 @@ function pinpadHTML(locked) {
 const LOCKS = {};
 const lockedUntil = user => LOCKS[String(user || '').toLowerCase()] || 0;
 function lockUntilFrom(e) {
+  // the server sends locked_until (ISO); the time in the message is the fallback (older servers, the field workflow)
+  const iso = e && e.res && Date.parse(e.res.locked_until);
+  if (iso > Date.now()) return iso;
   const m = /(\d{2}):(\d{2})/.exec(String(e && e.message || ''));
   if (!m) return Date.now() + 15 * 60000;
   let at = Date.parse(today() + 'T' + m[1] + ':' + m[2] + ':00+07:00');

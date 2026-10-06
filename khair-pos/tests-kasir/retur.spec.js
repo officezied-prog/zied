@@ -7,8 +7,7 @@ const H = require('./helpers');
 test.use(H.PHONE);
 
 async function manager(context, user = 'Jihan', pin = '2222') {
-  const p = await context.newPage();
-  await p.addInitScript(() => { localStorage.removeItem('kpos.mock.kasir.session'); });
+  const p = await H.otherPhone(context); // the manager's own phone
   await H.login(p, user, pin);
   return p;
 }
@@ -69,6 +68,12 @@ test('customer return: invoice from the receipt, limits, manager approves, cash 
   // the pending return counts: the same items cannot be asked twice
   const again = await page.evaluate(async ([no, id]) => { try { await api('request_return', { kind: 'pelanggan', invoice_no: no, lines: [{ product_id: id, qty: 2 }], reason_code: 'rusak' }); return 'ok'; } catch (e) { return e.code + ' ' + e.message; } }, [inv, aj0.id]);
   expect(again).toBe('INVALID Jumlah retur melebihi yang dibeli di faktur ini: Kurma Ajwa Al-Madinah 1 kg: dibeli 2, sudah diretur 1');
+  // get_sale: the invoice, its lines and what is already returned or pending (the screen's lookup)
+  const gs = await page.evaluate(no => api('get_sale', { invoice_no: no }), inv);
+  expect(gs).toMatchObject({ sale: { invoice_no: inv }, returned: { [String(aj0.id)]: 1, [String(med0.id)]: 1 }, customer_debt: 0 });
+  expect(gs.items).toHaveLength(2);
+  expect(gs.items[0].cost_price).toBeUndefined();
+  expect(await page.evaluate(async () => { try { await api('get_sale', { invoice_no: 'KM000000-0000' }); } catch (e) { return e.code; } })).toBe('NOT_FOUND');
 
   // the manager decides in her inbox (refund shown, no cost)
   const p2 = await manager(context);
