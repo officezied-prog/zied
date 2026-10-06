@@ -1,5 +1,5 @@
 // v16 Discount limit: a kasir above max_discount_pct asks request_discount; the owner's card shows profit before/after,
-// the manager's card never shows profit; the approved request lets the sale through once (status used).
+// the manager's card also shows profit (owner decision 07 Oct), the kasir never; the approved request lets the sale through once (status used).
 const { test, expect } = require('@playwright/test');
 const path = require('path');
 const { SHOTS, jktToday, login, getDb, nav, asUser, productByName } = require('./helpers');
@@ -11,7 +11,7 @@ function discSale(p, qty, discount) {
   return { client_id: 'ds-' + Math.random().toString(36).slice(2), sale_date: jktToday(), items: [{ product_id: p.id, qty, unit_price: p.retail_price, price_type: 'eceran' }], discount, payment_method: 'tunai', paid_amount: sub - discount };
 }
 
-test('kasir above the limit → request_discount; owner sees profit before/after; manager approves without profit; sale goes through once', async ({ page }) => {
+test('kasir above the limit → request_discount; owner and manager see profit before/after; manager approves; sale goes through once', async ({ page }) => {
   await login(page, 'Pemilik', '1234', '', { stay: true });
   let db = await getDb(page);
   const p = productByName(db, /Kurma Sukkari/);
@@ -47,12 +47,14 @@ test('kasir above the limit → request_discount; owner sees profit before/after
   await page.click('[data-act="pin-key"][data-k="ok"]');
   await expect(page.locator('#app')).toBeVisible();
   const ca = await asUser(page, 'Jihan', '2222', 'check_approval', { request_id: rq.request_id });
-  expect(JSON.parse(ca.approval.payload).profit_after).toBeUndefined();
-  expect(ca.approval.summary).not.toContain('laba');
+  expect(JSON.parse(ca.approval.payload).profit_after).toBe(after - cost);
+  expect(ca.approval.summary).toContain('laba');
   await nav(page, 'approvals');
   const mcard = page.locator('.apr-card[data-kind="discount"]');
   await expect(mcard.locator('[data-v="list"]')).toHaveText(rp(list));
-  await expect(mcard.locator('[data-profit]')).toHaveCount(0);
+  // owner decision 07 Oct: the manager also sees profit before / after (only kasir never)
+  await expect(mcard.locator('[data-v="profit-before"]')).toHaveText(rp(list - cost));
+  await expect(mcard.locator('[data-v="profit-after"]')).toHaveText(rp(after - cost));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: path.join(SHOTS, 'phone-approvals-discount-manager.png') });
   await mcard.locator('[data-note]').fill('Boleh, pelanggan tetap');

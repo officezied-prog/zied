@@ -979,9 +979,10 @@ const MockServer = (() => {
   function stripPayload(str) {
     try { const pl = JSON.parse(str); if (pl && pl.changes && pl.changes.cost_price) { pl.changes.cost_price = { from: null, to: null }; } return JSON.stringify(pl); } catch (e) { return str; }
   }
+  let stripRole = ''; // owner decisions 07 Oct: the manager also sees the profit on discount requests
   function strip(o) {
     if (o && typeof o === 'object' && !Array.isArray(o) && typeof o.payload === 'string' && o.kind === 'price') o = Object.assign({}, o, { payload: stripPayload(o.payload) });
-    if (o && typeof o === 'object' && !Array.isArray(o) && o.request_id && (o.kind === 'purchase_fix' || o.kind === 'discount' || o.kind === 'retur')) o = aprOut(o);
+    if (o && typeof o === 'object' && !Array.isArray(o) && o.request_id && (o.kind === 'purchase_fix' || (o.kind === 'discount' && stripRole !== 'manager') || o.kind === 'retur')) o = aprOut(o);
     if (Array.isArray(o)) return o.map(strip);
     if (o && typeof o === 'object') { const r = {}; for (const k in o) if (!COST_KEYS.includes(k)) r[k] = strip(o[k]); return r; }
     return o;
@@ -1136,8 +1137,9 @@ const MockServer = (() => {
   }
   /* ---- v16: shelf (toko) vs warehouse (gudang), discount limit, members, owner master code, own PINs ---- */
   const isHash = v => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
+  const AGREED_KEYS = ['return_owner_min_value', 'return_owner_min_qty']; // changed only by owner–manager agreement
   const wibTime = iso => new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(11, 16) + ' WIB';
-  const V16_DEFAULTS = { max_discount_pct: 3, sell_from_shop_only: true, return_owner_min_value: 1000000, return_owner_min_qty: 0, return_fee_pct: 0, require_return_photo: true, require_carrier: true, member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
+  const V16_DEFAULTS = { max_discount_pct: 3, sell_from_shop_only: true, return_owner_min_value: 2000000, return_owner_min_qty: 0, return_fee_pct: 0, require_return_photo: true, require_carrier: true, limit_agreements: [], member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
   const setting = (db, k) => db.settings && db.settings[k] !== undefined ? db.settings[k] : V16_DEFAULTS[k];
   /** stock = total, shop_stock = on the shelf; a row without shop_stock (before v16) counts all its stock as on the shelf */
   const shopOf = p => p.shop_stock === undefined || p.shop_stock === null || p.shop_stock === '' ? num(p.stock) : num(p.shop_stock);
@@ -1946,7 +1948,7 @@ const MockServer = (() => {
             lines: list, qty_total: roundQty(sum(list, l => l.qty)), value: gross, fee_pct: 0, fee: 0, refund: gross, refund_method: 'nota_kredit', reason_code: reasonCode, reason_note: reasonNote,
             photo_id: ph ? photoId : '', out_doc_no: outDoc, carrier_type: carrier.type, carrier_name: carrier.name, carrier_vehicle: carrier.vehicle, carrier_phone: carrier.phone };
         }
-        const minVal = num(st.return_owner_min_value) > 0 ? num(st.return_owner_min_value) : 1000000, minQty = num(st.return_owner_min_qty);
+        const minVal = num(st.return_owner_min_value) > 0 ? num(st.return_owner_min_value) : 2000000, minQty = num(st.return_owner_min_qty);
         const ownerNeeded = rec.value >= minVal || (minQty > 0 && rec.qty_total >= minQty);
         const summary = (kind === 'pelanggan' ? 'Retur pelanggan ' + rec.party_name + ' (dikembalikan ' + rec.returned_by + ') faktur ' + ref : 'Retur ke pemasok ' + rec.party_name + ' dari ' + ref + ', nota keluar ' + rec.out_doc_no) +
           ': ' + list.map(l => l.name + ' ' + fmtN(l.qty) + ' ' + l.unit + (l.condition === 'rusak' ? ' (rusak)' : '')).join('; ') + ' | ' + RETURN_REASON_TEXT[reasonCode] + (reasonNote ? ': ' + reasonNote : '') +
@@ -1955,6 +1957,21 @@ const MockServer = (() => {
           customer_id: rec.party_id, customer_name: rec.party_name, total: kind === 'pelanggan' ? rec.refund : rec.value, debt_amount: 0, summary: summary.slice(0, 1500), note: reasonNote, payload: JSON.stringify(rec) });
         logAct(db, u, 'minta_retur', summary + (ownerNeeded ? ' — butuh persetujuan pemilik' : ' — menunggu manajer'), returnId, ap.total, 'warn');
         return { request_id: ap.request_id, return_id: returnId, approver_role: ap.approver_role, approval: ap };
+      }
+      case 'propose_agreement': {
+        // owner and manager agree on a limit: one proposes, the other confirms; each agreement is recorded
+        if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
+        const key = AGREED_KEYS.includes(data.key) ? data.key : '';
+        if (!key) throw E('INVALID', 'Batas tidak dikenal');
+        const value = Math.round(num(data.value));
+        if (!(value >= 0) || value > 1000000000 || (key === 'return_owner_min_value' && value < 1)) throw E('INVALID', 'Nilai tidak valid');
+        const note = strv(data.note).slice(0, 300), cur = num(setting(db, key));
+        const label = key === 'return_owner_min_value' ? 'Batas retur yang perlu persetujuan pemilik: Rp ' : 'Batas jumlah barang retur untuk pemilik: ';
+        const ap = newApproval(db, u, { kind: 'kesepakatan', approver_role: owner ? 'manager' : 'owner', ref: key, total: value,
+          summary: ('Usul ' + u.name + ': ' + label + value + ' (sekarang ' + cur + ')' + (note ? ' | ' + note : '')).slice(0, 1500), note,
+          payload: JSON.stringify({ key, value, from: cur, proposed_by: u.name, proposed_role: roleOf(u) }) });
+        logAct(db, u, 'usul_kesepakatan', ap.summary, ap.request_id, value, 'info');
+        return { request_id: ap.request_id, approval: ap };
       }
       case 'get_sale': {
         // one invoice by its number (returns at the counter): the sale, its lines and what was already returned or is pending
@@ -2010,6 +2027,20 @@ const MockServer = (() => {
           const pf = purchaseFixChanges(db, no, pl.lines);
           if (!pf.found) throw E('INVALID', 'Kirim purchase_no barang masuk yang dikoreksi');
           out.stock = applyPurchaseFix(db, no, pf.changes, strv(pl.reason) + ' (diminta ' + ap.cashier + ', disetujui ' + u.name + ')', u.name);
+        }
+        if (ap.kind === 'kesepakatan') {
+          if (strv(ap.cashier).toLowerCase() === u.name.toLowerCase()) throw E('FORBIDDEN', 'Kesepakatan harus dikonfirmasi pihak lain');
+          if (ap.approver_role === 'owner' && !owner) throw E('NEEDS_OWNER', 'Butuh konfirmasi pemilik');
+          if (ap.approver_role === 'manager' && u.role !== 'manager') throw E('FORBIDDEN', 'Kesepakatan ini dikonfirmasi oleh manajer');
+          let pl = {}; try { pl = JSON.parse(ap.payload || '{}'); } catch (e) { pl = {}; }
+          if (data.decision === 'approved' && AGREED_KEYS.includes(pl.key)) {
+            const agreed = { key: pl.key, value: num(pl.value), from: num(pl.from), proposed_by: strv(pl.proposed_by), confirmed_by: u.name, at: new Date().toISOString(), note: strv(ap.note) };
+            const hist = Array.isArray(setting(db, 'limit_agreements')) ? JSON.parse(JSON.stringify(setting(db, 'limit_agreements'))) : [];
+            hist.unshift(agreed);
+            db.settings[pl.key] = num(pl.value); db.settings.limit_agreements = hist.slice(0, 50);
+            out.agreement = agreed;
+          }
+          logAct(db, u, 'kesepakatan', (data.decision === 'approved' ? 'Disepakati ' : 'Ditolak ') + strv(pl.proposed_by) + ' & ' + u.name + ': ' + strv(ap.summary).slice(0, 500), ap.request_id, int(ap.total), 'warn');
         }
         if (ap.kind === 'retur') {
           let rec = {}; try { rec = JSON.parse(ap.payload || '{}'); } catch (e) { rec = {}; }
@@ -2593,6 +2624,7 @@ const MockServer = (() => {
         ['store_lat', 'store_lng'].forEach(k => { if (s[k] !== undefined) s[k] = num(s[k]); });
         if (s.require_device_location !== undefined) s.require_device_location = s.require_device_location === true;
         if (s.bank_accounts !== undefined) s.bank_accounts = (Array.isArray(s.bank_accounts) ? s.bank_accounts : []).map(a => ({ id: strv(a.id), bank: strv(a.bank).slice(0, 40), account_no: strv(a.account_no).slice(0, 40), holder: strv(a.holder).slice(0, 80), active: a.active !== false })).filter(a => a.id);
+        if (AGREED_KEYS.some(k => s[k] !== undefined && JSON.stringify(s[k]) !== JSON.stringify(setting(db, k)))) throw E('AGREEMENT_REQUIRED', 'Batas retur diubah lewat kesepakatan pemilik dan manajer (propose_agreement)');
         const changedKeys = Object.keys(s).filter(k => JSON.stringify(s[k]) !== JSON.stringify(db.settings[k]));
         Object.assign(db.settings, s);
         if (changedKeys.length) logAct(db, u, 'pengaturan', 'Pengaturan diubah: ' + changedKeys.join(', '), '', 0, 'info');
@@ -2677,6 +2709,7 @@ const MockServer = (() => {
       if (res && res.product && res.product.id != null && ['change_price', 'stock_adjust', 'decide_approval'].includes(body.action)) res.product = prodOut(res.product);
       const dirty = db._dirty; ['_dirty', '_role', '_shopSet', '_saveErr'].forEach(k => delete db[k]);
       if (!READ_ONLY.includes(body.action) || dirty) save(db);
+      stripRole = role || '';
       res = Object.assign({ ok: true }, role === 'owner' || ['users', 'setup'].includes(body.action) ? res : strip(res));
     } catch (e) {
       if (db._saveErr) { // wrong PIN: the counter / lock is kept (only the user row changed)
@@ -4342,15 +4375,17 @@ async function pollApprovals() {
   if (!isApprover() || !S.inApp || !S.pin_hash || $('#app').hidden) return;
   try {
     const r = await api('list_approvals');
-    const list = (r.approvals || []).filter(a => !a.status || a.status === 'pending');
+    // an agreement is shown only to the other party (owner proposal → manager; manager proposal → owner)
+    const list = (r.approvals || []).filter(a => (!a.status || a.status === 'pending') && (a.kind !== 'kesepakatan' || (String(a.cashier).toLowerCase() !== String(S.user).toLowerCase() && a.approver_role === S.role)));
     const fresh = AP.seen ? list.filter(a => !AP.seen.has(a.request_id)) : [];
     AP.seen = AP.seen || new Set();
     list.forEach(a => AP.seen.add(a.request_id));
     AP.list = list; AP.count = list.length; AP.loaded = true;
+    AP.mine = (r.approvals || []).filter(a => a.kind === 'kesepakatan' && a.status === 'pending' && String(a.cashier).toLowerCase() === String(S.user).toLowerCase());
     AP.fresh = new Set(fresh.map(a => a.request_id));
     if (fresh.length) {
       beep(); try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) { }
-      toast(t(fresh[0].kind === 'opname' ? 'gd.new_toast' : fresh[0].kind === 'purchase_fix' ? 'apr.new_fix' : fresh[0].kind === 'buka_kas' ? 'apr.new_bukakas' : fresh[0].kind === 'discount' ? 'apr.new_disc' : fresh[0].kind === 'retur' ? 'apr.new_retur' : 'apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name, no: fresh[0].ref }), 'warn', 6000);
+      toast(t(fresh[0].kind === 'opname' ? 'gd.new_toast' : fresh[0].kind === 'purchase_fix' ? 'apr.new_fix' : fresh[0].kind === 'buka_kas' ? 'apr.new_bukakas' : fresh[0].kind === 'discount' ? 'apr.new_disc' : fresh[0].kind === 'retur' ? 'apr.new_retur' : fresh[0].kind === 'kesepakatan' ? 'apr.new_agree' : 'apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name, no: fresh[0].ref }), 'warn', 6000);
     }
     updateApprovalBadge();
     if (S.view === 'approvals') drawApprovals();
@@ -4371,6 +4406,7 @@ function aprBodyHTML(a) {
   if (kind === 'buka_kas') return bukaKasAprHTML(a, pl);
   if (kind === 'discount') return discountAprHTML(a, pl);
   if (kind === 'retur') return returAprHTML(a, pl);
+  if (kind === 'kesepakatan') return agreeAprHTML(a, pl);
   if (kind === 'void') return `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(t('apr.kind_void', { inv: a.ref }))}</b><span class="badge red">${esc(a.request_id)}</span></div>
     <div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))}</div>
     <div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('rc.customer'))}</div><div class="v">${esc(a.customer_name || t('pos.walkin'))}</div></div><div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(a.total)}</div></div></div>
@@ -4418,6 +4454,7 @@ async function decideApproval(id, decision, btn) {
     toast(decision === 'approved' ? t('apr.done_ok', { id }) : t('apr.done_rej', { id }), decision === 'approved' ? 'ok' : 'warn');
     if (r.product) { upsertLocal(S.products, r.product); applyData({ products: S.products }); applyPendingStockFor(r.product.id); saveCache(); }
     if (r.stock) gdAfterStockChange(r.stock);
+    if (r.agreement) { await refreshData(true); }
     if (r.return_id) { RT.list = null; if (ap.kind === 'retur') { Object.keys(salesCache).forEach(k => delete salesCache[k]); } }
     if (r.sale) {
       Object.keys(salesCache).forEach(k => delete salesCache[k]);
@@ -6811,6 +6848,7 @@ RENDER.settings = function () {
         <div class="field"><label class="f" for="nu-pin2">${esc(t('pin_again'))}</label><input class="input" id="nu-pin2" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password"></div></div>
       <div class="red" id="nu-err"></div><button class="btn primary" data-act="user-add">${ic('plus')} ${esc(t('set.add_user'))}</button></div></div>` : ''}
 
+    ${!own && isApprover() ? `<div class="panel" id="st-retur"><h3>${ic('return')} ${esc(t('set.rt_title'))}</h3><div class="pb">${agreementCardHTML()}</div></div>` : ''}
     <div class="panel"><h3>${esc(t('set.app'))}</h3><div class="pb">
       <div class="field"><label class="f">${esc(t('set.language'))}</label><div class="seg"><button type="button" data-act="set-lang" data-lang="id" class="${S.lang === 'id' ? 'on' : ''}">Bahasa Indonesia</button><button type="button" data-act="set-lang" data-lang="ar" class="${S.lang === 'ar' ? 'on' : ''}">العربية</button></div></div>
       <div class="field"><label class="f">${esc(t('voice.title'))}</label><div class="seg" style="max-width:360px">${[['1', 'voice.on'], ['0', 'voice.off']].map(([v, k]) => `<button type="button" data-act="voice-on" data-v="${v}" class="${(VOICE.on ? '1' : '0') === v ? 'on' : ''}">${esc(t(k))}</button>`).join('')}</div>
@@ -7885,10 +7923,10 @@ function openDeviceDetail(id) {
 /* ========== Activity log (v12, owner) ========== */
 const ACTV = { recent: [], preset: '7d', from: '', to: '', group: '', user: '', q: '', data: null, err: '' };
 const ACT_GROUPS = { masuk: ['masuk', 'minta_koreksi', 'koreksi_masuk'], harga: ['harga', 'minta_harga'], stok: ['stok', 'opname', 'minta_opname', 'kemas_ulang', 'produk', 'produk_baru', 'impor', 'pindah_stok', 'jual_tanpa_rak'], retur: ['minta_retur', 'retur'],
-  kas: ['biaya', 'kas', 'tutup_kas', 'buka_kas'], jual: ['batal', 'minta_batal', 'hutang', 'minta_diskon', 'diskon', 'member_baru', 'member_berhenti'], bayar: ['bayar_masuk', 'bayar_keluar', 'alokasi', 'rekening'], pengguna: ['pengguna', 'pengaturan', 'masuk_master', 'ganti_pin', 'kode_pemilik'], perangkat: ['perangkat_baru'] };
+  kas: ['biaya', 'kas', 'tutup_kas', 'buka_kas'], jual: ['batal', 'minta_batal', 'hutang', 'minta_diskon', 'diskon', 'member_baru', 'member_berhenti'], bayar: ['bayar_masuk', 'bayar_keluar', 'alokasi', 'rekening'], pengguna: ['pengguna', 'pengaturan', 'masuk_master', 'ganti_pin', 'kode_pemilik', 'usul_kesepakatan', 'kesepakatan'], perangkat: ['perangkat_baru'] };
 const ACT_ICON = { retur: 'return', masuk: 'truck', harga: 'tag', stok: 'warehouse', kas: 'cash', jual: 'cart', bayar: 'wallet', pengguna: 'gear', perangkat: 'device', lain: 'activity' };
 function actGroup(a) {
-  if (a.kind === 'keputusan') { const m = /\((\w+)/.exec(a.summary || ''); return { credit: 'jual', void: 'jual', discount: 'jual', retur: 'retur', price: 'harga', opname: 'stok', purchase_fix: 'masuk', buka_kas: 'kas' }[m ? m[1] : 'credit'] || 'jual'; }
+  if (a.kind === 'keputusan') { const m = /\((\w+)/.exec(a.summary || ''); return { credit: 'jual', void: 'jual', discount: 'jual', retur: 'retur', kesepakatan: 'pengguna', price: 'harga', opname: 'stok', purchase_fix: 'masuk', buka_kas: 'kas' }[m ? m[1] : 'credit'] || 'jual'; }
   for (const [g, ks] of Object.entries(ACT_GROUPS)) if (ks.includes(a.kind)) return g;
   return 'lain';
 }
@@ -9152,7 +9190,7 @@ function discountAprHTML(a, pl) {
   const own = isOwner(), list = int(pl.list_total), total = int(pl.total != null ? pl.total : a.total), disc = int(pl.discount != null ? pl.discount : a.debt_amount);
   const pct = num(pl.pct), max = num(pl.max_pct || 3), mpct = num(pl.member_pct);
   const lines = Array.isArray(pl.lines) ? pl.lines : [];
-  const hasProfit = own && pl.profit_before != null;
+  const hasProfit = isApprover() && pl.profit_before != null; // owner and manager (owner decision 07 Oct); never kasir
   const pb = int(pl.profit_before), pa = int(pl.profit_after);
   return `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(t('apr.kind_disc', { pct: fmtPct1(pct) }))}</b><span class="badge amber">${esc(a.request_id)}</span></div>
     <div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))} · ${esc(a.customer_name || t('pos.walkin'))}</div>
@@ -9572,7 +9610,7 @@ RENDER.retur = function () {
   if (!RT.from) { RT.to = today(); RT.from = addDays(RT.to, -29); }
   $('#view-retur').innerHTML = `<div class="view-head"><h1>${esc(t('nav.retur'))}</h1>
       <button class="btn" data-act="rt-new-cust" id="rt-new-cust">${ic('return')} ${esc(t('rt.new_cust'))}</button><button class="btn" data-act="rt-new-sup" id="rt-new-sup">${ic('truck')} ${esc(t('rt.new_sup'))}</button></div>
-    <p class="muted small" style="margin-top:0">${esc(t('rt.hint', { n: fmtRp(settings().return_owner_min_value ?? 1000000) }))}</p>
+    <p class="muted small" style="margin-top:0">${esc(t('rt.hint', { n: fmtRp(settings().return_owner_min_value ?? 2000000) }))}</p>
     <div class="toolbar"><input class="input" type="date" id="rt-from" value="${esc(RT.from)}" aria-label="${esc(t('from'))}"><input class="input" type="date" id="rt-to" value="${esc(RT.to)}" aria-label="${esc(t('to'))}">
       <div class="chips" id="rt-tabs" role="tablist">${['menunggu', 'pelanggan', 'pemasok'].map(k => `<button class="chip ${RT.tab === k ? 'on' : ''}" role="tab" data-act="rt-tab" data-tab="${k}">${esc(t('rt.tab_' + k))} <span class="num" data-rt-n="${k}"></span></button>`).join('')}</div></div>
     <div id="rt-list"><div class="muted">${esc(t('loading'))}</div></div>`;
@@ -9773,10 +9811,8 @@ function settingsReturHTML() {
   if (!isOwner()) return '';
   const st = settings();
   return `<div class="panel" id="st-retur"><h3>${ic('return')} ${esc(t('set.rt_title'))}</h3><div class="pb">
-    <div class="field"><label class="f" for="st-rt-minval">${esc(t('set.rt_minval'))}</label><input class="input num" id="st-rt-minval" data-rule="num" inputmode="numeric" value="${esc(fmtNum(st.return_owner_min_value ?? 1000000))}">
-      <div class="small muted" style="margin-top:4px">${esc(t('set.rt_minval_hint'))}</div></div>
-    <div class="grid2"><div class="field"><label class="f" for="st-rt-minqty">${esc(t('set.rt_minqty'))}</label><input class="input num" id="st-rt-minqty" data-rule="num" inputmode="decimal" value="${esc(String(st.return_owner_min_qty ?? 0))}"><div class="small muted">${esc(t('set.rt_minqty_hint'))}</div></div>
-      <div class="field"><label class="f" for="st-rt-fee">${esc(t('set.rt_fee'))}</label><input class="input num" id="st-rt-fee" data-rule="num" inputmode="decimal" value="${esc(String(st.return_fee_pct ?? 0))}"><div class="small muted">${esc(t('set.rt_fee_hint'))}</div></div></div>
+    ${agreementCardHTML()}
+    <div class="grid2"><div class="field"><label class="f" for="st-rt-fee">${esc(t('set.rt_fee'))}</label><input class="input num" id="st-rt-fee" data-rule="num" inputmode="decimal" value="${esc(String(st.return_fee_pct ?? 0))}"><div class="small muted">${esc(t('set.rt_fee_hint'))}</div></div></div>
     <label class="check"><input type="checkbox" id="st-rt-photo" ${st.require_return_photo !== false ? 'checked' : ''}> ${esc(t('set.rt_photo'))}</label>
     <label class="check"><input type="checkbox" id="st-rt-carrier" ${st.require_carrier !== false ? 'checked' : ''}> <span>${esc(t('set.rt_carrier'))}<br><span class="small muted">${esc(t('set.rt_carrier_hint'))}</span></span></label>
     <div class="red" id="st-rt-err"></div><button class="btn primary" data-act="set-save-retur">${esc(t('save'))}</button></div></div>`;
@@ -9790,12 +9826,10 @@ Object.assign(ACT, {
   'pu-retur': el => openSupReturn(el.dataset.no),
   'rt-photo': el => { const ph = RT.photos[el.dataset.photo]; if (ph && ph.thumb) photoZoom(ph.thumb); },
   'set-save-retur': () => {
-    const err = $('#st-rt-err'), minval = moneyVal($('#st-rt-minval').value), minqty = Number(String($('#st-rt-minqty').value).replace(',', '.')), fee = Number(String($('#st-rt-fee').value).replace(',', '.'));
-    if (!(minval > 0)) { err.textContent = t('set.rt_bad_minval'); return; }
-    if (!(minqty >= 0)) { err.textContent = t('set.rt_bad_qty'); return; }
+    const err = $('#st-rt-err'), fee = Number(String($('#st-rt-fee').value).replace(',', '.'));
     if (!(fee >= 0 && fee <= 50)) { err.textContent = t('set.rt_bad_fee'); return; }
     err.textContent = '';
-    saveSettings({ return_owner_min_value: minval, return_owner_min_qty: minqty, return_fee_pct: Math.round(fee * 10) / 10, require_return_photo: $('#st-rt-photo').checked, require_carrier: $('#st-rt-carrier').checked }, err);
+    saveSettings({ return_fee_pct: Math.round(fee * 10) / 10, require_return_photo: $('#st-rt-photo').checked, require_carrier: $('#st-rt-carrier').checked }, err);
   }
 });
 
@@ -9858,6 +9892,64 @@ Object.assign(I18N.ar, {
   'set.rt_photo': 'الإرجاع للمورد يتطلب صورة البضاعة الخارجة', 'set.rt_carrier': 'الوارد يتطلب ذكر من أحضر البضاعة', 'set.rt_carrier_hint': 'مواصلات عامة + الرقم، صديق (الاسم)، سائق المورد أو موظف.',
   'set.rt_bad_minval': 'أدخل قيمة أكبر من 0', 'set.rt_bad_qty': 'كمية غير صحيحة', 'set.rt_bad_fee': 'الخصم 0–50%',
   'dr.ret_cust': 'مرتجعات العملاء', 'dr.ret_cash': 'مبالغ معادة نقداً', 'dr.ret_sup': 'إرجاع للموردين'
+});
+
+/* ---- Owner decisions (07 Oct): the return limits change only by agreement of owner and manager ---- */
+const AGREED_KEYS_C = ['return_owner_min_value', 'return_owner_min_qty'];
+const agValTxt = (key, v) => key === 'return_owner_min_value' ? fmtRp(v) : num(v) > 0 ? fmtQty(num(v)) : t('ag.off');
+function agreementCardHTML() {
+  const st = settings(), hist = Array.isArray(st.limit_agreements) ? st.limit_agreements : [];
+  const mine = (AP.mine || []).filter(a => a.kind === 'kesepakatan');
+  return `<div class="card pad" id="st-agree" style="margin-bottom:12px"><div style="font-weight:800;margin-bottom:4px">${ic('check')} ${esc(t('ag.title'))}</div>
+    <p class="small muted" style="margin-top:0">${esc(t('ag.hint'))}</p>
+    <div class="kpis" style="margin-bottom:8px"><div class="kpi gold" data-kpi="ag-value"><div class="k">${esc(t('ag.k_return_owner_min_value'))}</div><div class="v num" id="ag-cur-value">${fmtRp(st.return_owner_min_value ?? 2000000)}</div></div>
+      <div class="kpi" data-kpi="ag-qty"><div class="k">${esc(t('ag.k_return_owner_min_qty'))}</div><div class="v num" id="ag-cur-qty">${esc(agValTxt('return_owner_min_qty', st.return_owner_min_qty ?? 0))}</div></div></div>
+    ${mine.length ? `<div class="notice" id="ag-pending">${ic('clock')} <span>${mine.map(a => esc(t('ag.waiting', { what: t('ag.k_' + a.ref), v: agValTxt(a.ref, a.total), who: t('role.' + a.approver_role) }))).join('<br>')}</span></div>` : ''}
+    <div class="grid3"><div class="field"><label class="f" for="ag-key">${esc(t('ag.which'))}</label><select class="input" id="ag-key">${AGREED_KEYS_C.map(k => `<option value="${k}">${esc(t('ag.k_' + k))}</option>`).join('')}</select></div>
+      <div class="field"><label class="f" for="ag-value">${esc(t('ag.new_value'))}</label><input class="input num" id="ag-value" data-rule="num" inputmode="numeric" placeholder="2.000.000"></div>
+      <div class="field"><label class="f" for="ag-note">${esc(t('notes'))}</label><input class="input" id="ag-note" data-rule="text"></div></div>
+    <div class="red" id="ag-err" role="alert"></div><button class="btn primary" data-act="ag-propose" id="ag-propose">${ic('send')} ${esc(t('ag.propose'))}</button>
+    <h4 style="margin:14px 0 6px">${esc(t('ag.history'))}</h4>
+    <div class="tbl-wrap"><table class="tbl" id="ag-hist"><thead><tr><th>${esc(t('date'))}</th><th>${esc(t('ag.which'))}</th><th class="r">${esc(t('ag.from_to'))}</th><th>${esc(t('ag.proposed_by'))}</th><th>${esc(t('ag.confirmed_by'))}</th><th class="hide-phone">${esc(t('notes'))}</th></tr></thead><tbody>
+      ${hist.map((h, i) => `<tr data-ag="${i}"><td class="num small">${esc(fmtDateTime(h.at))}</td><td class="small">${esc(t('ag.k_' + h.key))}</td><td class="r num">${esc(agValTxt(h.key, h.from))} → <b>${esc(agValTxt(h.key, h.value))}</b></td><td>${esc(h.proposed_by)}</td><td>${esc(h.confirmed_by)}</td><td class="hide-phone small">${esc(h.note || '')}</td></tr>`).join('') || `<tr><td colspan="6" class="empty">${esc(t('ag.none'))}</td></tr>`}</tbody></table></div></div>`;
+}
+function agreeAprHTML(a, pl) {
+  const key = pl.key || a.ref;
+  return `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(t('apr.kind_agree'))}</b><span class="badge blue">${esc(a.request_id)}</span></div>
+    <div class="small muted">${esc(t('ag.proposed_by'))}: <b>${esc(pl.proposed_by || a.cashier)}</b> (${esc(t('role.' + (pl.proposed_role || 'manager')))}) · ${esc(fmtDateTime(a.created_at))}</div>
+    <div class="apr-sum" data-agree style="grid-template-columns:1fr 1fr 1fr"><div><div class="k">${esc(t('ag.which'))}</div><div class="v small" data-v="key">${esc(t('ag.k_' + key))}</div></div>
+      <div><div class="k">${esc(t('ag.now'))}</div><div class="v num" data-v="from">${esc(agValTxt(key, pl.from))}</div></div><div><div class="k">${esc(t('ag.new_value'))}</div><div class="v num gold" data-v="to">${esc(agValTxt(key, pl.value != null ? pl.value : a.total))}</div></div></div>
+    ${a.note ? `<div style="margin-bottom:8px">${esc(t('notes'))}: <b>“${esc(a.note)}”</b></div>` : ''}<div class="small muted" style="margin-bottom:8px">${esc(t('ag.card_hint'))}</div>`;
+}
+Object.assign(ACT, {
+  'ag-propose': async () => {
+    const err = $('#ag-err'), key = $('#ag-key').value, raw = $('#ag-value').value.trim(), note = $('#ag-note').value.trim();
+    const value = key === 'return_owner_min_value' ? moneyVal(raw) : Number(raw.replace(',', '.'));
+    if (raw === '' || !(value >= 0) || (key === 'return_owner_min_value' && value < 1) || value > 1000000000) { err.textContent = t('ag.bad_value'); return; }
+    if (value === num(settings()[key])) { err.textContent = t('ag.same'); return; }
+    err.textContent = '';
+    try {
+      const r = await api('propose_agreement', { key, value: Math.round(value), note });
+      toast(t('ag.sent', { who: t('role.' + r.approval.approver_role) }), 'ok', 4000);
+      await pollApprovals(); RENDER.settings();
+    } catch (e) { err.textContent = errMsg(e); }
+  }
+});
+Object.assign(I18N.id, {
+  'ag.title': 'Kesepakatan pemilik & manajer', 'ag.hint': 'Batas retur yang perlu persetujuan pemilik diubah hanya lewat kesepakatan: satu pihak mengusulkan, pihak lain mengonfirmasi di Persetujuan. Setiap kesepakatan dicatat.',
+  'ag.k_return_owner_min_value': 'Retur mulai nilai ini butuh pemilik', 'ag.k_return_owner_min_qty': 'Retur mulai jumlah barang ini butuh pemilik', 'ag.off': 'tidak dipakai', 'ag.which': 'Batas', 'ag.new_value': 'Nilai baru', 'ag.now': 'Sekarang',
+  'ag.propose': 'Usulkan batas baru', 'ag.history': 'Riwayat kesepakatan', 'ag.from_to': 'Dari → menjadi', 'ag.proposed_by': 'Diusulkan', 'ag.confirmed_by': 'Dikonfirmasi', 'ag.none': 'Belum ada kesepakatan.',
+  'ag.waiting': 'Usulan Anda menunggu konfirmasi {who}: {what} → {v}', 'ag.bad_value': 'Isi nilai yang valid', 'ag.same': 'Nilai sama dengan sekarang', 'ag.sent': 'Usulan dikirim — menunggu konfirmasi {who}',
+  'ag.card_hint': 'Setujui bila Anda sepakat. Batas berubah setelah dikonfirmasi dan dicatat di riwayat kesepakatan.', 'apr.kind_agree': 'Usulan kesepakatan batas retur', 'apr.new_agree': 'Usulan kesepakatan dari {cashier} →',
+  'ak.usul_kesepakatan': 'Usul kesepakatan', 'ak.kesepakatan': 'Kesepakatan', 'err.AGREEMENT_REQUIRED': 'Batas ini diubah lewat kesepakatan pemilik dan manajer'
+});
+Object.assign(I18N.ar, {
+  'ag.title': 'اتفاق المالك والمدير', 'ag.hint': 'حد المرتجعات الذي يحتاج موافقة المالك لا يتغير إلا باتفاق: طرف يقترح والطرف الآخر يؤكد في الموافقات. يُسجَّل كل اتفاق.',
+  'ag.k_return_owner_min_value': 'المرتجع من هذه القيمة يحتاج المالك', 'ag.k_return_owner_min_qty': 'المرتجع من هذه الكمية يحتاج المالك', 'ag.off': 'غير مستخدم', 'ag.which': 'الحد', 'ag.new_value': 'القيمة الجديدة', 'ag.now': 'الحالي',
+  'ag.propose': 'اقتراح حد جديد', 'ag.history': 'سجل الاتفاقات', 'ag.from_to': 'من ← إلى', 'ag.proposed_by': 'اقترحه', 'ag.confirmed_by': 'أكّده', 'ag.none': 'لا توجد اتفاقات بعد.',
+  'ag.waiting': 'اقتراحك بانتظار تأكيد {who}: {what} ← {v}', 'ag.bad_value': 'أدخل قيمة صحيحة', 'ag.same': 'القيمة مطابقة للحالية', 'ag.sent': 'أُرسل الاقتراح — بانتظار تأكيد {who}',
+  'ag.card_hint': 'وافق إن كنت متفقاً. يتغير الحد بعد التأكيد ويُسجَّل.', 'apr.kind_agree': 'اقتراح اتفاق على حد المرتجعات', 'apr.new_agree': 'اقتراح اتفاق من {cashier} ←',
+  'ak.usul_kesepakatan': 'اقتراح اتفاق', 'ak.kesepakatan': 'اتفاق', 'err.AGREEMENT_REQUIRED': 'هذا الحد يتغير باتفاق المالك والمدير'
 });
 
 /* ========== Boot ========== */

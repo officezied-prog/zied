@@ -5,7 +5,7 @@ const H = require('./helpers');
 
 test.use(H.PHONE);
 
-test('live % against the limit; over it → "Minta persetujuan diskon" → manager approves (no profit shown) → sale saved', async ({ page, context }) => {
+test('live % against the limit; over it → "Minta persetujuan diskon" → manager approves (sees the profit, kasir never) → sale saved', async ({ page, context }) => {
   await H.login(page);
   await H.addItem(page, 'ajwa'); // Rp 175.000 retail
   await H.pay(page);
@@ -43,7 +43,7 @@ test('live % against the limit; over it → "Minta persetujuan diskon" → manag
   expect(seen.summary).not.toContain('laba');
   expect(db.activity.find(a => a.kind === 'minta_diskon' && a.ref === rid)).toMatchObject({ user: 'Siti', level: 'warn', amount: 10000 });
 
-  // the manager decides on her phone: the card shows the discount, never profit
+  // the manager decides on her phone: the card shows the discount and (07 Oct) the profit before / after
   const p2 = await H.otherPhone(context);
   await H.login(p2, 'Jihan', '2222');
   await p2.click('#tb-appr');
@@ -52,7 +52,11 @@ test('live % against the limit; over it → "Minta persetujuan diskon" → manag
   await expect(card).toContainText('Diskon 5,7%');
   await expect(card.locator('[data-disc]')).toContainText(H.rp(10000));
   await expect(card).toContainText('Pelanggan lama');
-  await expect(card).not.toContainText(/laba|margin|profit/i);
+  const pl = JSON.parse(ap.payload);
+  await expect(card.locator('[data-disc-profit]')).toContainText('Laba harga normal');
+  await expect(card.locator('[data-disc-profit]')).toContainText(H.rp(pl.profit_before));
+  await expect(card.locator('[data-disc-profit]')).toContainText(H.rp(pl.profit_after));
+  await expect(card.locator('[data-disc-profit]')).toContainText('-' + H.rp(pl.profit_before - pl.profit_after));
   await H.shot(p2, 'phone-42-discount-card');
   await card.locator('[data-d="approved"]').click();
   await expect(card).toHaveCount(0);

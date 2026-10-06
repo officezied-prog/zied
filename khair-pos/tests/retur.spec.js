@@ -2,7 +2,7 @@
 // (manager / owner above return_owner_min_value), Retur section with every detail, daily report; who brought the goods (carrier).
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, jktToday, login, getDb, nav, asUser, photoFile, typePin, closeModals, pickCarrier, CARRIER } = require('./helpers');
+const { SHOTS, jktToday, login, getDb, nav, asUser, photoFile, typePin, closeModals, pickCarrier, CARRIER, editDb } = require('./helpers');
 
 const NF = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
 const rp = n => (n < 0 ? '-Rp ' : 'Rp ') + NF.format(Math.abs(Math.round(n)));
@@ -168,6 +168,7 @@ test('supplier return from the goods-in history: carrier, outgoing note, photo; 
   // more than came in minus returned → refused; the rest above the owner limit → owner only (badge for the manager)
   expect(await asUser(page, 'Jihan', '2222', 'request_return', { kind: 'pemasok', purchase_no: pu.purchase_no, lines: [{ product_id: ajwa.id, qty: 9 }], reason_code: 'rusak', out_doc_no: 'SJ2', photo_id: ph.photo_id, carrier: CARRIER }))
     .toMatchObject({ error: 'INVALID', message: expect.stringContaining('sudah diretur 2') });
+  await editDb(page, `db.settings.return_owner_min_value = 1000000;`); // as if agreed earlier (see the agreement test)
   const big = await asUser(page, 'Jihan', '2222', 'request_return', { kind: 'pemasok', purchase_no: pu.purchase_no, lines: [{ product_id: ajwa.id, qty: 8 }], reason_code: 'rusak', out_doc_no: 'SJ2', photo_id: ph.photo_id, carrier: CARRIER });
   expect(big.approver_role).toBe('owner');
   await page.evaluate(() => pollApprovals());
@@ -181,9 +182,6 @@ test('supplier return from the goods-in history: carrier, outgoing note, photo; 
 test('settings: return limits, fee, photo and carrier switches; goods-in form needs the carrier; strict names', async ({ page }) => {
   await login(page, 'Pemilik', '1234', '', { stay: true });
   await nav(page, 'settings');
-  await expect(page.locator('#st-rt-minval')).toHaveValue('1.000.000');
-  await page.fill('#st-rt-minval', '500.000');
-  await page.fill('#st-rt-minqty', '20');
   await page.fill('#st-rt-fee', '60');
   await page.click('[data-act="set-save-retur"]');
   await expect(page.locator('#st-rt-err')).toContainText('0–50%');
@@ -192,7 +190,7 @@ test('settings: return limits, fee, photo and carrier switches; goods-in form ne
   await page.click('[data-act="set-save-retur"]');
   await expect(page.locator('.toast.ok')).toBeVisible();
   let db = await getDb(page);
-  expect(db.settings).toMatchObject({ return_owner_min_value: 500000, return_owner_min_qty: 20, return_fee_pct: 5, require_return_photo: false, require_carrier: true });
+  expect(db.settings).toMatchObject({ return_fee_pct: 5, require_return_photo: false, require_carrier: true });
   await page.locator('#st-retur').screenshot({ path: path.join(SHOTS, 'desktop-settings-retur.png') });
   // fee applies to customer refunds
   const kis = P(db, /Kismis Hitam/);

@@ -382,6 +382,7 @@ tr.bad td{background:var(--redt);color:var(--redd);font-weight:800}
 /* v16: member badge, discount box */
 .apr-sum div{min-width:0} .apr-sum .v{overflow-wrap:anywhere}
 .apr-sum div div{padding:0;background:none;border-radius:0}
+.apr-sum .v.num{white-space:normal} .apr-sum .v .small{display:block;font-weight:700}
 @media (max-width:420px){.apr-sum>div{padding:8px}.apr-sum .v{font-size:15px}}
 .mbadge{display:flex;align-items:center;gap:6px;margin-top:8px;padding:8px 12px;border-radius:12px;background:var(--okt);color:var(--ok);font-weight:800;font-size:14.5px}
 .mbadge svg.i{width:18px;height:18px}
@@ -788,7 +789,7 @@ const MockServer = (() => {
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
   const READ_ONLY = ['users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos', 'party_ledger', 'list_returns', 'get_sale'];
   /* v16 settings defaults as on the server (an older demo DB lacks them) */
-  const V16_DEFAULTS = { max_discount_pct: 3, sell_from_shop_only: true, return_owner_min_value: 1000000, return_owner_min_qty: 0, return_fee_pct: 0, require_return_photo: true, require_carrier: true, member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
+  const V16_DEFAULTS = { limit_agreements: [], max_discount_pct: 3, sell_from_shop_only: true, return_owner_min_value: 2000000, return_owner_min_qty: 0, return_fee_pct: 0, require_return_photo: true, require_carrier: true, member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
   class MockErr extends Error { constructor(code, message) { super(message || code); this.code = code; } }
   const E = (code, msg, extra) => { const e = new MockErr(code, msg); if (extra) e.extra = extra; return e; };
   let ready = null;
@@ -1122,7 +1123,7 @@ const MockServer = (() => {
     if (!a) return a;
     const o = Object.assign({}, a);
     if (role !== 'owner') {
-      if (a.kind === 'discount') {
+      if (a.kind === 'discount' && role !== 'manager') { // (07 Oct) owner and manager see the profit; kasir never
         const pl = parseObj(a.payload); ['profit_before', 'profit_after', 'margin_before', 'margin_after', 'cost'].forEach(f => { delete pl[f]; });
         o.payload = JSON.stringify(pl); o.summary = str(o.summary).replace(/ \| laba[^|]*/g, '');
       }
@@ -1174,6 +1175,7 @@ const MockServer = (() => {
       else if (v && typeof v === 'object') cleanInput(v, depth + 1);
     });
   }
+  const AGREED_KEYS = ['return_owner_min_value', 'return_owner_min_qty'];
   const RETURN_REASONS = ['tidak_sesuai', 'rusak', 'kadaluarsa', 'salah_kirim', 'kualitas_buruk', 'berubah_pikiran', 'lainnya'];
   const RETURN_REASON_TEXT = { tidak_sesuai: 'Tidak sesuai spesifikasi', rusak: 'Rusak / cacat', kadaluarsa: 'Kedaluwarsa', salah_kirim: 'Salah kirim / salah barang', kualitas_buruk: 'Kualitas buruk', berubah_pikiran: 'Pelanggan berubah pikiran', lainnya: 'Lainnya' };
   const personName = v => { const x = str(v).replace(/\s+/g, ' '); return /^[\p{L}\p{M}][\p{L}\p{M}\p{N} .,'-]{0,59}$/u.test(x) ? x : ''; };
@@ -1517,7 +1519,7 @@ const MockServer = (() => {
             carrier_type: carrier.type, carrier_name: carrier.name, carrier_vehicle: carrier.vehicle, carrier_phone: carrier.phone
           };
         }
-        const minVal = num(st.return_owner_min_value) > 0 ? num(st.return_owner_min_value) : 1000000;
+        const minVal = num(st.return_owner_min_value) > 0 ? num(st.return_owner_min_value) : 2000000;
         const minQty = num(st.return_owner_min_qty);
         const ownerNeeded = rec.value >= minVal || (minQty > 0 && rec.qty_total >= minQty);
         const summary = (kind === 'pelanggan' ? 'Retur pelanggan ' + rec.party_name + ' (dikembalikan ' + rec.returned_by + ') faktur ' + ref : 'Retur ke pemasok ' + rec.party_name + ' dari ' + ref + ', nota keluar ' + rec.out_doc_no) +
@@ -1531,6 +1533,22 @@ const MockServer = (() => {
         });
         logAct(db, u, 'minta_retur', summary + (ownerNeeded ? ' — butuh persetujuan pemilik' : ' — menunggu manajer'), returnId, ap.total, 'warn');
         return { request_id: ap.request_id, return_id: returnId, approver_role: ap.approver_role, approval: approvalOut(ap, u.role) };
+      }
+      case 'propose_agreement': {
+        // (07 Oct) the owner and the manager agree on the return limit: one proposes, the other confirms; each agreement is recorded
+        if (!['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
+        const key = AGREED_KEYS.indexOf(data.key) >= 0 ? data.key : '';
+        if (!key) throw E('INVALID', 'Batas tidak dikenal');
+        const value = Math.round(num(data.value));
+        if (!(value >= 0) || value > 1000000000 || (key === 'return_owner_min_value' && value < 1)) throw E('INVALID', 'Nilai tidak valid');
+        const note = str(data.note).slice(0, 300);
+        const st = Object.assign({}, V16_DEFAULTS, db.settings);
+        const label = key === 'return_owner_min_value' ? 'Batas retur yang perlu persetujuan pemilik: Rp ' : 'Batas jumlah barang retur untuk pemilik: ';
+        const ap = newApproval(db, u, { kind: 'kesepakatan', approver_role: u.role === 'owner' ? 'manager' : 'owner', ref: key, total: value,
+          summary: ('Usul ' + u.name + ': ' + label + value + ' (sekarang ' + num(st[key]) + ')' + (note ? ' | ' + note : '')).slice(0, 1500), note,
+          payload: JSON.stringify({ key, value, from: num(st[key]), proposed_by: u.name, proposed_role: u.role }) });
+        logAct(db, u, 'usul_kesepakatan', ap.summary, ap.request_id, value, 'info');
+        return { request_id: ap.request_id, approval: approvalOut(ap, u.role) };
       }
       case 'get_sale': {
         // one invoice by its number (returns at the counter): the sale, its lines and what was already returned or is pending
@@ -1586,6 +1604,21 @@ const MockServer = (() => {
           const pf = purchaseFixChanges(rows, pl.lines);
           if (!pf.found) throw E('INVALID', 'Kirim purchase_no barang masuk yang dikoreksi');
           out.stock = applyPurchaseFix(db, u, no, pf.changes, str(pl.reason) + ' (diminta ' + str(ap.cashier) + ', disetujui ' + u.name + ')', u.name);
+        }
+        if (ap.kind === 'kesepakatan') {
+          if (str(ap.cashier).toLowerCase() === u.name.toLowerCase()) throw E('FORBIDDEN', 'Kesepakatan harus dikonfirmasi pihak lain');
+          if (ap.approver_role === 'owner' && u.role !== 'owner') throw E('NEEDS_OWNER', 'Butuh konfirmasi pemilik');
+          if (ap.approver_role === 'manager' && u.role !== 'manager') throw E('FORBIDDEN', 'Kesepakatan ini dikonfirmasi oleh manajer');
+          const pl = parseObj(ap.payload);
+          if (data.decision === 'approved' && AGREED_KEYS.indexOf(pl.key) >= 0) {
+            db.settings[pl.key] = num(pl.value);
+            const agreed = { key: pl.key, value: num(pl.value), from: num(pl.from), proposed_by: str(pl.proposed_by), confirmed_by: u.name, at: new Date().toISOString(), note: str(ap.note) };
+            const hist = Array.isArray(db.settings.limit_agreements) ? db.settings.limit_agreements.slice() : [];
+            hist.unshift(agreed);
+            db.settings.limit_agreements = hist.slice(0, 50);
+            out.agreement = agreed;
+          }
+          logAct(db, u, 'kesepakatan', (data.decision === 'approved' ? 'Disepakati ' : 'Ditolak ') + str(pl.proposed_by) + ' & ' + u.name + ': ' + str(ap.summary).slice(0, 500), ap.request_id, money(ap.total), 'warn');
         }
         if (ap.kind === 'retur') {
           const rec = parseObj(ap.payload);
@@ -2003,6 +2036,9 @@ const MockServer = (() => {
         ['wa_shop_number', 'wa_manager_number', 'wa_owner_number'].forEach(k => { if (s[k] !== undefined) s[k] = String(s[k] || '').replace(/[^\d+]/g, '').slice(0, 20); });
         if (s.report_time !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(s.report_time))) throw E('INVALID', 'report_time');
         if (s.survey_voice !== undefined) s.survey_voice = !(s.survey_voice === false || s.survey_voice === 'false');
+        const cur = Object.assign({}, V16_DEFAULTS, db.settings);
+        if (AGREED_KEYS.some(k => s[k] !== undefined && JSON.stringify(s[k]) !== JSON.stringify(cur[k]))) throw E('AGREEMENT_REQUIRED', 'Batas retur diubah lewat kesepakatan pemilik dan manajer (propose_agreement)');
+        delete s.limit_agreements;
         const changedKeys = Object.keys(s).filter(k => JSON.stringify(s[k]) !== JSON.stringify(db.settings[k]));
         if (changedKeys.length) logAct(db, u, 'pengaturan', 'Pengaturan diubah: ' + changedKeys.join(', '), '', 0, 'info');
         Object.assign(db.settings, s);
@@ -5360,7 +5396,8 @@ async function pollApprovals() {
   if (!isApprover() || !S.inApp || !S.pin_hash || $('#app').hidden) return;
   try {
     const r = await api('list_approvals');
-    const list = (r.approvals || []).filter(a => !a.status || a.status === 'pending');
+    // an agreement I proposed waits for the other party: not in my inbox
+    const list = (r.approvals || []).filter(a => (!a.status || a.status === 'pending') && !(a.kind === 'kesepakatan' && String(a.cashier || '').toLowerCase() === String(S.user || '').toLowerCase()));
     const fresh = AP.seen ? list.filter(a => !AP.seen.has(a.request_id)) : [];
     AP.seen = AP.seen || new Set(); list.forEach(a => AP.seen.add(a.request_id));
     AP.list = list; AP.count = list.length;
@@ -5376,11 +5413,14 @@ function aprBodyHTML(a) {
   const head = (title, badge) => `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(title)}</b><span class="badge ${badge}">${esc(a.request_id)}</span></div><div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))}</div>`;
   if (kind === 'opname') { const ls = (pl.lines || []).filter(l => num(l.diff)); return head(t('sc.apr_title', { n: (pl.lines || []).length, d: ls.length }), '') + `<table class="tbl" style="margin:8px 0" data-opname-lines><thead><tr><th></th><th class="r">${esc(t('sc.system'))}</th><th class="r">${esc(t('sc.qty'))}</th><th class="r">${esc(t('sc.diff'))}</th></tr></thead><tbody>${ls.map(l => `<tr><td>${esc(l.name)}</td><td class="r num">${fmtQty(l.system)}</td><td class="r num">${fmtQty(l.counted)}</td><td class="r num"><b>${num(l.diff) > 0 ? '+' : ''}${fmtQty(l.diff)}</b></td></tr>`).join('')}</tbody></table><div class="small muted" style="margin-bottom:8px">${esc(t('sc.apr_hint'))}</div>`; }
   if (kind === 'discount') {
-    // never profit / margin here (the server sends them to the owner only, and this app shows none of it)
+    // profit / margin only when the server sends them (owner and manager since 07 Oct; a kasir never gets them)
+    const pf = pl.profit_before != null && pl.profit_after != null ? `<div class="apr-sum" data-disc-profit><div><div class="k">${esc(t('disc.profit_before'))}</div><div class="v num">${fmtRp(pl.profit_before)}${pl.margin_before != null ? ` <span class="small muted">(${esc(fmtPct1(pl.margin_before))})</span>` : ''}</div></div>
+      <div><div class="k">${esc(t('disc.profit_after'))}</div><div class="v num ${num(pl.profit_after) < 0 ? 'red' : ''}">${fmtRp(pl.profit_after)}${pl.margin_after != null ? ` <span class="small muted">(${esc(fmtPct1(pl.margin_after))})</span>` : ''}</div></div>
+      <div><div class="k">${esc(t('disc.profit_less'))}</div><div class="v num red">-${fmtRp(num(pl.profit_before) - num(pl.profit_after))}</div></div></div>` : '';
     const lines = (Array.isArray(pl.lines) ? pl.lines : []).map(l => `<tr><td>${esc(l.name)}</td><td class="r num">${fmtQty(l.qty)}</td><td class="r num">${fmtRp(l.unit_price)}</td></tr>`).join('');
     return head(t('apr.kind_disc', { pct: fmtPct1(pl.pct), name: a.customer_name || t('sell.walkin') }), 'warn') + `<div class="apr-sum" data-disc><div><div class="k">${esc(t('disc.list_total'))}</div><div class="v num">${fmtRp(pl.list_total)}</div></div>
       <div><div class="k">${esc(t('disc.amount'))}</div><div class="v num red">-${fmtRp(pl.discount != null ? pl.discount : a.debt_amount)}</div></div><div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(pl.total != null ? pl.total : a.total)}</div></div></div>
-      <div class="small muted">${esc(t('disc.limit_is', { max: fmtPct1(pl.max_pct) }))}</div>
+      ${pf}<div class="small muted">${esc(t('disc.limit_is', { max: fmtPct1(pl.max_pct) }))}</div>
       ${lines ? `<table class="tbl" style="margin:8px 0"><tbody>${lines}</tbody></table>` : ''}${pl.reason || a.note ? `<div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason || a.note)}”</b></div>` : ''}`;
   }
   if (kind === 'buka_kas') {
@@ -5395,6 +5435,14 @@ function aprBodyHTML(a) {
     const rows = (Array.isArray(pl.changes) ? pl.changes : []).map(c => { const p = prodById(c.product_id); return `<tr><td>${esc(c.name || (p && p.name) || c.product_id)}</td><td class="r num">${fmtQty(c.from_qty)}</td><td class="r num"><b>${fmtQty(c.to_qty)}</b> ${esc(p ? p.unit || '' : '')}</td></tr>`; }).join('');
     return head(t('apr.kind_pfix', { no: a.ref }), 'warn') + `<table class="tbl" style="margin:8px 0" data-pfix-lines><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('price.old'))}</th><th class="r">${esc(t('price.new'))}</th></tr></thead><tbody>${rows}</tbody></table>
       <div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason || a.note || '')}”</b></div><div class="small muted" style="margin-bottom:8px">${esc(t('apr.pfix_hint'))}</div>`;
+  }
+  if (kind === 'kesepakatan') {
+    // owner ↔ manager agreement on a return limit (07 Oct): the other party confirms
+    const money1 = pl.key === 'return_owner_min_value', f = v => money1 ? fmtRp(v) : fmtQty(v) + ' ' + t('agree.items');
+    return head(t('apr.kind_agree'), '') + `<div class="small" style="margin-top:4px" data-agree="${esc(pl.key || a.ref || '')}">${esc(t('agree.k_' + (pl.key || a.ref || 'return_owner_min_value')))}</div>
+      <div class="apr-sum" style="grid-template-columns:1fr 1fr" data-agree-values><div><div class="k">${esc(t('agree.now'))}</div><div class="v num">${f(pl.from)}</div></div><div><div class="k">${esc(t('agree.new'))}</div><div class="v num">${f(pl.value != null ? pl.value : a.total)}</div></div></div>
+      <div class="small">${esc(t('agree.by', { name: pl.proposed_by || a.cashier || '' }))}${a.note ? ` — “${esc(a.note)}”` : ''}</div>
+      <div class="small muted" style="margin-bottom:8px">${esc(t('agree.hint'))}</div>`;
   }
   if (kind === 'retur') {
     // customer return: the refund; supplier return: quantities only (values are the owner's)
@@ -5422,11 +5470,11 @@ function drawInbox(el) {
   const box = $('.modal-b', el); if (!box) return;
   const notes = {}; $$('.apr-card', box).forEach(c => { notes[c.dataset.req] = $('[data-note]', c).value; });
   box.innerHTML = AP.list.length ? AP.list.map(a => {
-    const can = a.can_decide !== false;
+    const can = a.can_decide !== false && (a.kind !== 'kesepakatan' || a.approver_role === S.role);
     return `<div class="card pad apr-card" data-req="${esc(a.request_id)}" data-kind="${esc(a.kind || 'credit')}">${aprBodyHTML(a)}
       <input class="input" data-note placeholder="${esc(t('apr.note_ph'))}" aria-label="${esc(t('apr.note_ph'))}" ${can ? '' : 'disabled'}>
-      <div class="row" style="margin-top:10px;justify-content:flex-end">${can ? '' : `<span class="badge warn grow" data-owner-only>${ic('lock')} ${esc(t('apr.owner_only'))}</span>`}
-        <button class="btn danger" data-act="apr-decide" data-d="rejected" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t('apr.reject'))}</button><button class="btn primary" data-act="apr-decide" data-d="approved" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t('apr.approve'))}</button></div></div>`;
+      <div class="row" style="margin-top:10px;justify-content:flex-end">${can ? '' : `<span class="badge warn grow" data-owner-only>${ic('lock')} ${esc(t(a.kind === 'kesepakatan' && a.approver_role === 'manager' ? 'agree.manager_only' : 'apr.owner_only'))}</span>`}
+        <button class="btn danger" data-act="apr-decide" data-d="rejected" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t('apr.reject'))}</button><button class="btn primary" data-act="apr-decide" data-d="approved" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t(a.kind === 'kesepakatan' ? 'agree.confirm' : 'apr.approve'))}</button></div></div>`;
   }).join('') : `<div class="empty">${ic('check')}<div>${esc(t('apr.none'))}</div></div>`;
   $$('.apr-card', box).forEach(c => { if (notes[c.dataset.req]) $('[data-note]', c).value = notes[c.dataset.req]; });
 }
@@ -6098,6 +6146,20 @@ Object.assign(I18N.ar, {
   'req.retur': 'مرتجع الفاتورة {inv}', 'req.retur_sup': 'مرتجع إلى المورد {no}', 'pu.m_retur': 'مرتجع إلى المورد',
   'apr.kind_retur_c': 'مرتجع عميل · {name}', 'apr.kind_retur_s': 'مرتجع إلى المورد · {name}', 'apr.retur_inv': 'الفاتورة {inv} ({date})', 'apr.retur_from': 'من الاستلام {no} · إذن الخروج {doc}',
   'apr.retur_hint_c': 'عند الموافقة: السليم إلى المستودع، والتالف لا يُحتسب مخزونًا، ويُرد المبلغ بالطريقة أعلاه.', 'apr.retur_hint_s': 'عند الموافقة: يقل المخزون ويقل الدَّين للمورد (إشعار دائن).'
+});
+Object.assign(I18N.id, {
+  'disc.profit_before': 'Laba harga normal', 'disc.profit_after': 'Laba setelah diskon', 'disc.profit_less': 'Laba berkurang',
+  'apr.kind_agree': 'Kesepakatan batas retur', 'agree.k_return_owner_min_value': 'Retur senilai ini atau lebih perlu persetujuan pemilik',
+  'agree.k_return_owner_min_qty': 'Retur sebanyak ini atau lebih perlu persetujuan pemilik (0 = tidak dipakai)', 'agree.now': 'Sekarang', 'agree.new': 'Usulan',
+  'agree.items': 'barang', 'agree.by': 'Diusulkan oleh {name}', 'agree.hint': 'Berlaku setelah dikonfirmasi pihak lain (pemilik ↔ manajer). Tercatat di riwayat kesepakatan.',
+  'agree.confirm': 'Konfirmasi', 'agree.manager_only': 'Dikonfirmasi oleh manajer', 'err.AGREEMENT_REQUIRED': 'Perlu kesepakatan pemilik dan manajer'
+});
+Object.assign(I18N.ar, {
+  'disc.profit_before': 'الربح بالسعر العادي', 'disc.profit_after': 'الربح بعد الخصم', 'disc.profit_less': 'نقص الربح',
+  'apr.kind_agree': 'اتفاق على حد المرتجع', 'agree.k_return_owner_min_value': 'المرتجع بهذه القيمة أو أكثر يحتاج موافقة المالك',
+  'agree.k_return_owner_min_qty': 'المرتجع بهذه الكمية أو أكثر يحتاج موافقة المالك (0 = غير مستخدم)', 'agree.now': 'الحالي', 'agree.new': 'المقترح',
+  'agree.items': 'صنف', 'agree.by': 'اقترحه {name}', 'agree.hint': 'يسري بعد تأكيد الطرف الآخر (المالك ↔ المدير). يُسجَّل في سجل الاتفاقات.',
+  'agree.confirm': 'تأكيد', 'agree.manager_only': 'يؤكده المدير', 'err.AGREEMENT_REQUIRED': 'يحتاج إلى اتفاق المالك والمدير'
 });
 /* ========== Boot ========== */
 /* ========== Trial links (?demo=1 / ?mock=1) can be closed by the owner ==========
