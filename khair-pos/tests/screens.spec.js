@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, login, nav, addBySearch, closeModals, photoFile, loginKasirRedirect } = require('./helpers');
+const { SHOTS, login, nav, addBySearch, closeModals, photoFile, loginKasirRedirect, blockMapNetwork } = require('./helpers');
 const shot = (page, name, full = false) => page.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: full });
 
 async function fillCart(page, phone) {
@@ -58,6 +58,7 @@ for (const [label, vp] of [['desktop', { width: 1366, height: 768 }], ['phone', 
     });
 
     test(`screenshots ${label}: Beranda, menu, kas, approvals, purchase photo`, async ({ page }) => {
+      await blockMapNetwork(page); // the field map screenshot uses the offline SVG map (Leaflet is local since v17)
       await login(page, 'Pemilik', '1234', '', { stay: true });
       await page.click('[data-act="home-preset"][data-p="7d"]');
       await page.waitForTimeout(400);
