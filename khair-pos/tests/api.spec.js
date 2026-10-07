@@ -17,11 +17,11 @@ function fakeBackend() {
     st.requests.push({ body, contentType: req.headers()['content-type'] });
     const send = (obj, wrap) => route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*', 'content-type': 'application/json' }, body: JSON.stringify(wrap ? [obj] : obj) });
     if (body.key !== KEY) return send({ ok: false, error: 'BAD_KEY', message: 'unknown key' });
-    if (body.action === 'users') return send({ ok: true, users: [{ name: 'Jihan', role: 'manager' }] });
+    if (body.action === 'users') return send({ ok: true, users: [{ name: 'Jihan', role: 'owner' }] });
     if (body.pin_hash !== sha(`${KEY}:jihan:4321`)) return send({ ok: false, error: 'BAD_PIN', message: 'bad pin' });
     switch (body.action) {
-      case 'login': return send({ ok: true, user: { name: 'Jihan', role: 'manager' } });
-      case 'bootstrap': return send({ ok: true, products: st.products, customers: [], settings: { store_name: 'Khair Mart', paper: '80', survey_questions: [] }, users: [{ name: 'Jihan', role: 'manager', active: true }], server_time: new Date().toISOString() }, true);
+      case 'login': return send({ ok: true, user: { name: 'Jihan', role: 'owner' } });
+      case 'bootstrap': return send({ ok: true, products: st.products, customers: [], settings: { store_name: 'Khair Mart', paper: '80', survey_questions: [] }, users: [{ name: 'Jihan', role: 'owner', active: true }], server_time: new Date().toISOString() }, true);
       case 'save_sale':
         if (st.mode === 'abort') return route.abort('internetdisconnected');
         if (st.mode === 'invalid') return send({ ok: false, error: 'INVALID', message: 'qty' });

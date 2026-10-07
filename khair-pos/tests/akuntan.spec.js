@@ -1,7 +1,7 @@
 // v17 accountant (akuntan): read-only owner app — reports, history, goods in/out, customers, suppliers, returns, bank.
 // Purchase prices only when the owner allows it; profit never; every write refused by the server (mock = same rules).
 const { test, expect } = require('@playwright/test');
-const { login, openApp, enterKey, typePin, getDb, nav, editDb, asUser } = require('./helpers');
+const { login, openApp, enterKey, typePin, getDb, nav, editDb, asUser, staffSession } = require('./helpers');
 
 async function addAkuntan(page) {
   await openApp(page);
@@ -12,8 +12,7 @@ async function loginRina(page) {
   await page.reload();
   await expect(page.locator('#login')).toBeVisible();
   await enterKey(page);
-  await page.click('[data-act="login-user"][data-name="Lestari"]');
-  await typePin(page, '5555');
+  await staffSession(page, 'Lestari', '5555'); // through Khair Kasir
   await expect(page.locator('#app')).toBeVisible();
 }
 

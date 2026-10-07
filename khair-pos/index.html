@@ -792,10 +792,10 @@ const store = {
   set(k, v) { try { localStorage.setItem(PREFIX + k, JSON.stringify(v)); return true; } catch (e) { return false; } },
   del(k) { try { localStorage.removeItem(PREFIX + k); } catch (e) { } }
 };
-/* Names only, no role words (owner's decision 07 Oct). The owner is listed on the login screen only on a device opened once
-   with his own link (khair-pos/zied/), or when nobody else exists yet; the server still checks every PIN and role. */
-const ownerDevice = () => !!store.get('owner_device');
-const loginUsers = () => { const others = L.users.filter(u => u.role !== 'owner'); return ownerDevice() || DEMO || !others.length || L.users.some(u => u.role === 'owner' && u.name === L.sel) ? L.users : others; };
+/* Owner's decision 07 Oct: names only (no role words), and this app's login lists only the owner. Staff (manager, accountant,
+   cashier, sales) log in through Khair Kasir, which opens the right screens for each; a manager or accountant arrives here
+   already logged in. A locked staff session still shows its own name. The server checks every PIN and role as before. */
+const loginUsers = () => DEMO ? L.users : L.users.filter(u => u.role === 'owner' || (u.name === L.sel && u.name === S.user));
 const roleNames = role => { const n = (S.users || []).filter(u => u.role === role && u.active !== false).map(u => u.name); return n.length ? n.join(' / ') : t('role.' + role); };
 
 /* ========== Session (H2): the live pin_hash lives only in sessionStorage (this tab); localStorage keeps {user, role}.
@@ -3195,7 +3195,8 @@ function renderLogin() {
         <button data-act="pin-key" data-k="del" aria-label="${esc(t('delete'))}" ${off}>⌫</button><button data-act="pin-key" data-k="0" ${off}>0</button>
         <button class="ok" data-act="pin-key" data-k="ok" ${L.busy || lk ? 'disabled' : ''}>${esc(L.busy ? '…' : t('login.enter'))}</button></div>
       <div class="login-links"><button class="btn ghost sm" data-act="login-master" id="lg-master">${esc(t(L.master ? 'mc.login_back' : 'mc.login_link'))}</button></div>
-      <div class="login-links"><button class="btn ghost sm" data-act="login-change-key">${esc(t('login.change_key'))}</button><span class="muted small" style="align-self:center">${esc(t('login.store'))}: <b>${esc(maskKey(S.key))}</b></span></div>`;
+      <div class="login-links"><button class="btn ghost sm" data-act="login-change-key">${esc(t('login.change_key'))}</button><span class="muted small" style="align-self:center">${esc(t('login.store'))}: <b>${esc(maskKey(S.key))}</b></span></div>
+      <div class="login-links"><a class="btn ghost sm" id="lg-staff" href="${esc(KASIR_APP_URL)}">${esc(t('login.staff'))} →</a></div>`;
   }
   box.innerHTML = `<div class="login-card">${brand}${inner}${langs}</div>`;
   const k = $('#lg-key'); if (k) { k.addEventListener('keydown', e => { if (e.key === 'Enter') ACT['login-key'](); }); setTimeout(() => k.focus(), 30); }
@@ -6570,7 +6571,7 @@ const I18N = {
     'pin': 'PIN (4–6 angka)', 'pin_again': 'Ulangi PIN', 'pin_mismatch': 'PIN tidak sama', 'search_customer': 'Cari nama / no. HP pelanggan', 'n_products': '{n} produk',
     'login.key_title': 'Masukkan kode toko', 'login.key': 'Kode toko', 'login.key_hint': 'Kode toko diberikan oleh pemilik. Cukup diisi sekali di perangkat ini.',
     'login.pick_user': 'Siapa yang bertugas?', 'login.locked': 'Aplikasi terkunci — masukkan PIN', 'login.pick_user_first': 'Pilih nama dulu', 'login.pin_len': 'PIN harus 4–6 angka',
-    'login.enter': 'Masuk', 'login.change_key': 'Ganti kode toko', 'login.store': 'Toko',
+    'login.enter': 'Masuk', 'login.change_key': 'Ganti kode toko', 'login.staff': 'Karyawan: masuk lewat Khair Kasir', 'login.store': 'Toko',
     'setup.title': 'Selamat datang! Buat akun pemilik', 'setup.hint': 'Toko ini belum punya pengguna. Akun pertama adalah pemilik (owner).', 'setup.owner_name': 'Nama pemilik', 'setup.create': 'Buat akun & masuk', 'setup.done': 'Akun pemilik dibuat',
     'pos.search_ph': 'Cari produk atau scan barcode…', 'pos.camera': 'Scan dengan kamera', 'pos.camera_hint': 'Arahkan kamera ke barcode', 'pos.camera_fail': 'Kamera tidak bisa dibuka',
     'pos.cart': 'Keranjang', 'pos.cart_empty': 'Keranjang kosong', 'pos.cart_empty_hint': 'Ketuk produk atau scan barcode', 'pos.walkin': 'Umum', 'pos.walkin_hint': 'Pembeli tanpa nama',
@@ -6646,7 +6647,7 @@ const I18N = {
     'pin': 'الرقم السري (4–6 أرقام)', 'pin_again': 'أعد الرقم السري', 'pin_mismatch': 'الرقمان غير متطابقين', 'search_customer': 'ابحث باسم العميل أو هاتفه', 'n_products': '{n} منتج',
     'login.key_title': 'أدخل رمز المتجر', 'login.key': 'رمز المتجر', 'login.key_hint': 'يُدخَل رمز المتجر مرة واحدة فقط على هذا الجهاز.',
     'login.pick_user': 'من المناوب الآن؟', 'login.locked': 'التطبيق مقفل — أدخل الرقم السري', 'login.pick_user_first': 'اختر الاسم أولًا', 'login.pin_len': 'الرقم السري من 4 إلى 6 أرقام',
-    'login.enter': 'دخول', 'login.change_key': 'تغيير رمز المتجر', 'login.store': 'المتجر',
+    'login.enter': 'دخول', 'login.change_key': 'تغيير رمز المتجر', 'login.staff': 'الموظفون: الدخول من Khair Kasir', 'login.store': 'المتجر',
     'setup.title': 'أهلًا بك! أنشئ حساب المالك', 'setup.hint': 'لا يوجد مستخدمون لهذا المتجر بعد. الحساب الأول هو المالك.', 'setup.owner_name': 'اسم المالك', 'setup.create': 'إنشاء الحساب والدخول', 'setup.done': 'تم إنشاء حساب المالك',
     'pos.search_ph': 'ابحث عن منتج أو امسح الباركود…', 'pos.camera': 'المسح بالكاميرا', 'pos.camera_hint': 'وجّه الكاميرا نحو الباركود', 'pos.camera_fail': 'تعذّر فتح الكاميرا',
     'pos.cart': 'السلة', 'pos.cart_empty': 'السلة فارغة', 'pos.cart_empty_hint': 'اضغط على منتج أو امسح الباركود', 'pos.walkin': 'عميل عام', 'pos.walkin_hint': 'مشترٍ بدون اسم',
@@ -7093,7 +7094,7 @@ const ACT = {
       const hash = await pinHash(S.key, name, a);
       const r = await apiRaw('setup', { owner_name: name, pin_hash: hash }, { key: S.key });
       const u = r.user || { name, role: 'owner' };
-      L.users = [{ name: u.name, role: 'owner' }]; store.set('users_' + S.key, L.users); store.set('owner_device', true);
+      L.users = [{ name: u.name, role: 'owner' }]; store.set('users_' + S.key, L.users);
       await rememberPin(u.name, hash, 'owner');
       startSession(u.name, 'owner', hash, false);
       toast(t('setup.done'), 'ok');

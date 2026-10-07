@@ -2,18 +2,13 @@
 // (manager / owner above return_owner_min_value), Retur section with every detail, daily report; who brought the goods (carrier).
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, jktToday, login, getDb, nav, asUser, photoFile, typePin, closeModals, pickCarrier, CARRIER, editDb } = require('./helpers');
+const { SHOTS, jktToday, login, getDb, nav, asUser, photoFile, typePin, closeModals, pickCarrier, CARRIER, editDb, switchUser } = require('./helpers');
 
 const NF = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
 const rp = n => (n < 0 ? '-Rp ' : 'Rp ') + NF.format(Math.abs(Math.round(n)));
 const P = (db, re) => db.products.find(p => re.test(p.name));
 const shelf = p => p.shop_stock === undefined || p.shop_stock === null || p.shop_stock === '' ? p.stock : Math.min(p.shop_stock, p.stock);
-async function relogin(page, user, pin) {
-  await page.click('#tb-lock');
-  await page.click(`[data-act="login-user"][data-name="${user}"]`);
-  await typePin(page, pin);
-  await expect(page.locator('#app')).toBeVisible();
-}
+async function relogin(page, user, pin) { await switchUser(page, user, pin); }
 
 test('customer return from the sales history: form → manager-level request → owner approves → good items to the warehouse, cash refund, Retur list, daily report', async ({ page }) => {
   await login(page, 'Pemilik', '1234', '', { stay: true });

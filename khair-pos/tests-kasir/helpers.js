@@ -44,6 +44,13 @@ async function login(page, user = 'Siti', pin = '1111', opts = {}) {
     if ((await page.locator('#pin-who').textContent()) === user) return finishLogin(page, user, pin, opts);
     await page.locator('[data-act="login-back"]').first().click();
   }
+  if (!(await page.locator(`[data-act="login-user"][data-name="${user}"]`).count())) {
+    // the owner is not listed in Khair Kasir (owner's decision 07 Oct); his PIN pad opens when the device remembers him
+    await page.evaluate(n => localStorage.setItem('kpos.mock.last_user', JSON.stringify(n)), user);
+    await page.reload();
+    await expect(page.locator('#pin-who')).toHaveText(user);
+    return finishLogin(page, user, pin, opts);
+  }
   await page.click(`[data-act="login-user"][data-name="${user}"]`);
   return finishLogin(page, user, pin, opts);
 }

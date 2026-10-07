@@ -3,7 +3,7 @@
 const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const path = require('path');
-const { rp, SHOTS, jktToday, login, typePin, getDb, productByName, nav, closeModals, photoFile, asUser, editDb, pickCarrier, CARRIER } = require('./helpers');
+const { rp, SHOTS, jktToday, login, typePin, getDb, productByName, nav, closeModals, photoFile, asUser, editDb, pickCarrier, CARRIER, switchUser } = require('./helpers');
 
 const NF = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
 const NFQ = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 3 });
@@ -50,12 +50,7 @@ async function refreshGudang(page) {
 function saleData(p, qty, price) {
   return { client_id: 'gd-' + Math.random().toString(36).slice(2), sale_date: jktToday(), items: [{ product_id: p.id, qty, unit_price: price || p.retail_price, price_type: 'eceran' }], discount: 0, payment_method: 'tunai', paid_amount: Math.round(qty * (price || p.retail_price)) };
 }
-async function relogin(page, user, pin) {
-  await page.click('#tb-lock');
-  await page.click(`[data-act="login-user"][data-name="${user}"]`);
-  await typePin(page, pin);
-  await expect(page.locator('#app')).toBeVisible();
-}
+async function relogin(page, user, pin) { await switchUser(page, user, pin); }
 
 test('overview numbers match the mock DB; urgent list and Beranda expiry item link into Gudang', async ({ page }) => {
   await login(page, 'Pemilik', '1234', '', { stay: true });
