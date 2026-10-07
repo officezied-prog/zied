@@ -130,7 +130,13 @@ without the `data:` prefix (≈ 200–500 KB). Each call takes ~5–20 s (AI rea
 |---|---|---|
 | `scan_purchase` | `{image_base64, mime}` photo of the supplier note / goods arriving | `photo_id, extracted: {supplier, date, invoice_no, items: [{name, qty, unit, unit_price, total}], total}, suggestions: [{index, product_id, product_name, score}], drive_url` |
 | `scan_exit` | `{invoice_no, image_base64, mime}` photo of the printed receipt / goods leaving | `photo_id, extracted: {items: [...]}, match: {status: "cocok"|"tidak_cocok"|"perlu_cek", notes, diffs: [{name, recorded_qty, photo_qty}]}, drive_url` |
+| `scan_supplier_return` | `{image_base64, mime, purchase_no?}` photo of the outgoing return note / goods going back to a supplier (v17) | `photo_id, extracted: {doc_no, supplier, date, items: [{name, qty, unit}], readable, notes}, drive_url` — stored with `kind = "retur"`, `ref = purchase_no` |
 | `list_photos` | `{from, to}` | `photos: [{photo_id, kind, ref, created_at, photo_date, user, drive_url, extracted, match_status, match_notes}]` |
+
+Photo kinds in `pos_photos.kind`: `masuk` (scan_purchase), `keluar` (scan_exit), `bayar` (scan_payment), `retur`
+(scan_supplier_return, v17; before v17 supplier-return photos were stored as `masuk`). `request_return` with
+`kind: "pemasok"` takes the `photo_id` of a `retur` photo; the return form fills `out_doc_no` from `extracted.doc_no`
+when it is still empty.
 
 `drive_url` may be empty while Google Drive storage is not connected yet.
 

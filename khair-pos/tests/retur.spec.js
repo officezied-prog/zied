@@ -130,6 +130,7 @@ test('supplier return from the goods-in history: carrier, outgoing note, photo; 
   await expect(page.locator('#sr-err')).toContainText('Foto');
   await page.setInputFiles('#sr-photo', await photoFile(page, 'keluar.png'));
   await expect(page.locator('#sr-photo-ok')).toBeVisible();
+  await expect(page.locator('#sr-doc')).toHaveValue('SJ/07-A'); // a typed number is never replaced by the one read from the photo
   await page.click('#sr-send');
   await expect(page.locator('#sr-err')).toContainText('membawa');
   await page.click('#sr-car-umum');
@@ -143,6 +144,7 @@ test('supplier return from the goods-in history: carrier, outgoing note, photo; 
   db = await getDb(page);
   const ap = db.approvals.filter(a => a.kind === 'retur').slice(-1)[0], rec = JSON.parse(ap.payload);
   expect(ap).toMatchObject({ approver_role: 'manager', total: 260000 });
+  expect(db.photos.find(x => x.photo_id === rec.photo_id)).toMatchObject({ kind: 'retur', ref: pu.purchase_no }); // v17: own photo kind
   expect(rec).toMatchObject({ kind: 'pemasok', ref: pu.purchase_no, out_doc_no: 'SJ/07-A', carrier_type: 'umum', carrier_vehicle: 'B 4455 KJT', carrier_phone: '6281377778888', value: 260000 });
   await expect(page.locator(`.rt-card[data-rt="${rec.return_id}"] [data-value]`)).toHaveText(rp(260000));
 

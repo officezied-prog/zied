@@ -107,6 +107,14 @@ if (a.kind === 'bayar') {
   });
   matchStatus = ex.readable === false ? 'perlu_cek' : '';
   matchNotes = str(ex.notes).slice(0, 500);
+} else if (a.kind === 'retur') {
+  // Supplier return (v17): keep the note number in the same shape the return form accepts.
+  const doc = str(ex.doc_no).toUpperCase().replace(/\s+/g, ' ').slice(0, 40);
+  ex.doc_no = /^[A-Z0-9][A-Z0-9 \/.-]{0,39}$/.test(doc) ? doc : null;
+  ex.supplier = ex.supplier === null || ex.supplier === undefined ? null : str(ex.supplier).slice(0, 120);
+  if (ex.date && !/^\d{4}-\d{2}-\d{2}$/.test(ex.date)) ex.date = null;
+  matchStatus = ex.readable === false ? 'perlu_cek' : '';
+  matchNotes = str(ex.notes).slice(0, 500);
 } else {
   const m = ex.match && typeof ex.match === 'object' ? ex.match : {};
   let status = ['cocok', 'tidak_cocok', 'perlu_cek'].indexOf(m.status) >= 0 ? m.status : 'perlu_cek';

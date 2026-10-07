@@ -1,7 +1,7 @@
 // Photos: goods in (purchase needs an AI-read photo of the supplier note) and goods out (large sales).
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { rp, SHOTS, jktToday, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, photoFile, pickCarrier, CARRIER } = require('./helpers');
+const { rp, SHOTS, jktToday, asUser, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, photoFile, pickCarrier, CARRIER } = require('./helpers');
 
 test('purchase is blocked without a photo; mock AI scan prefills editable lines; save stores photo_id', async ({ page }) => {
   await login(page);
@@ -136,4 +136,19 @@ test('reports: Kontrol foto card numbers match the data', async ({ page }) => {
   await expect(page.locator('[data-pc="mismatch"]')).toHaveText(String(big.filter(s => s.exit_match === 'tidak_cocok').length));
   const photos = db.photos.filter(p => inR(p.photo_date));
   await expect(page.locator('#photo-table tbody tr')).toHaveCount(Math.min(60, photos.length));
+});
+
+test('v17 supplier-return photos have their own kind and label in the photo list', async ({ page }) => {
+  await login(page, 'Pemilik', '1234', '', { stay: true });
+  const ph = await asUser(page, 'Pemilik', '1234', 'scan_supplier_return', { image_base64: 'AAAA', mime: 'image/jpeg', purchase_no: 'pb-2610-001' });
+  expect(ph.extracted.doc_no).toMatch(/^RTR-/);
+  const pay = await asUser(page, 'Pemilik', '1234', 'scan_payment', { image_base64: 'AAAA', mime: 'image/jpeg' });
+  const db = await getDb(page);
+  expect(db.photos.find(x => x.photo_id === ph.photo_id)).toMatchObject({ kind: 'retur', ref: 'PB-2610-001' });
+  await nav(page, 'reports');
+  await page.click('[data-act="rep-preset"][data-p="today"]');
+  const rows = page.locator('#photo-table tbody tr');
+  await expect(rows.filter({ hasText: 'PB-2610-001' }).locator('[data-kind]')).toHaveText('Retur ke pemasok');
+  await expect(rows.filter({ has: page.locator('[data-kind="bayar"]') })).not.toHaveCount(0); // payment slips no longer show as "Masuk"
+  expect(pay.photo_id).toBeTruthy();
 });
