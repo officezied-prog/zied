@@ -6427,7 +6427,7 @@ function photoControlHTML(d) {
   const P = photoControlStats(d);
   const cell = (id, label, val, cls = '') => `<div><div class="k">${esc(label)}</div><div class="v num ${cls}" data-pc="${id}">${fmtNum(val)}</div></div>`;
   setTimeout(loadPhotoList, 0);
-  return `<div class="panel" style="margin-bottom:14px" id="photo-control"><h3>${ic('camera')} ${esc(t('pc.title'))}</h3><div class="pb">
+  return `<div class="panel" style="margin-bottom:14px" id="photo-control"><h3>${ic('camera')} ${esc(t('photoc.title'))}</h3><div class="pb">
     <div class="apr-sum" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">
       ${cell('pur-with', t('pc.pur_with'), P.purWith, 'green')}${cell('pur-without', t('pc.pur_without'), P.purWithout, P.purWithout ? 'red' : '')}
       ${cell('exit-with', t('pc.exit_with'), P.exitWith, 'green')}${cell('exit-missing', t('pc.exit_missing'), P.exitMissing, P.exitMissing ? 'red' : '')}
@@ -6730,7 +6730,7 @@ Object.assign(I18N.id, {
   'pu.photo_ok': 'Nota terbaca: {n} baris', 'pu.photo_hint_req': 'Wajib: foto nota supplier / barang datang dulu. AI mengisi barangnya.', 'pu.photo_hint_opt': 'Disarankan: foto nota supplier, AI mengisi barangnya.',
   'pu.need_photo': 'Ambil foto nota dulu', 'pu.need_match': 'Cocokkan semua baris dengan produk', 'pu.pick_product': 'pilih produk', 'pu.on_note': 'Di nota',
   'pu.unmatched': 'Belum cocok', 'pu.note_invoice': 'Nota {no}', 'pu.scan_net': 'Gagal mengirim foto (internet).', 'pu.scan_retry': 'Coba ambil foto lagi.',
-  'pc.title': 'Kontrol foto', 'pc.pur_with': 'Barang masuk + foto', 'pc.pur_without': 'Masuk tanpa foto', 'pc.exit_with': 'Keluar besar + foto', 'pc.exit_missing': 'Foto keluar belum ada',
+  'photoc.title': 'Kontrol foto', 'pc.pur_with': 'Barang masuk + foto', 'pc.pur_without': 'Masuk tanpa foto', 'pc.exit_with': 'Keluar besar + foto', 'pc.exit_missing': 'Foto keluar belum ada',
   'pc.mismatch': 'Tidak cocok', 'pc.check': 'Perlu dicek', 'pc.kind': 'Jenis', 'pc.ref': 'Referensi', 'pc.user': 'Oleh', 'pc.kind_masuk': 'Masuk', 'pc.kind_keluar': 'Keluar', 'pc.kind_bayar': 'Bukti bayar', 'pc.kind_retur': 'Retur ke pemasok', 'pc.no_photos': 'Belum ada foto di periode ini.',
   'set.exit_total': 'Wajib foto keluar jika total ≥ (Rp)', 'set.exit_qty': 'atau qty satu barang ≥', 'set.req_photo': 'Barang masuk wajib foto nota', 'set.photo_hint': 'Isi 0 untuk mematikan batas.'
 });
@@ -6756,7 +6756,7 @@ Object.assign(I18N.ar, {
   'pu.photo_ok': 'تمت قراءة الفاتورة: {n} سطر', 'pu.photo_hint_req': 'إلزامي: صوّر فاتورة المورّد أولًا، ويملأ الذكاء الاصطناعي الأصناف.', 'pu.photo_hint_opt': 'يُنصح بتصوير فاتورة المورّد.',
   'pu.need_photo': 'صوّر الفاتورة أولًا', 'pu.need_match': 'طابِق كل الأسطر مع المنتجات', 'pu.pick_product': 'اختر منتجًا', 'pu.on_note': 'في الفاتورة',
   'pu.unmatched': 'غير مطابق', 'pu.note_invoice': 'فاتورة {no}', 'pu.scan_net': 'تعذّر إرسال الصورة (الإنترنت).', 'pu.scan_retry': 'حاول التصوير مجددًا.',
-  'pc.title': 'مراقبة الصور', 'pc.pur_with': 'وارد مع صورة', 'pc.pur_without': 'وارد بلا صورة', 'pc.exit_with': 'بيع كبير مع صورة', 'pc.exit_missing': 'صور خروج ناقصة',
+  'photoc.title': 'مراقبة الصور', 'pc.pur_with': 'وارد مع صورة', 'pc.pur_without': 'وارد بلا صورة', 'pc.exit_with': 'بيع كبير مع صورة', 'pc.exit_missing': 'صور خروج ناقصة',
   'pc.mismatch': 'غير مطابق', 'pc.check': 'يحتاج مراجعة', 'pc.kind': 'النوع', 'pc.ref': 'المرجع', 'pc.user': 'بواسطة', 'pc.kind_masuk': 'وارد', 'pc.kind_keluar': 'خارج', 'pc.kind_bayar': 'إثبات دفع', 'pc.kind_retur': 'مرتجع للمورد', 'pc.no_photos': 'لا صور في هذه الفترة.',
   'set.exit_total': 'تصوير الخروج إلزامي إذا كان الإجمالي ≥ (روبية)', 'set.exit_qty': 'أو كمية صنف واحد ≥', 'set.req_photo': 'الوارد يتطلب صورة الفاتورة', 'set.photo_hint': 'ضع 0 لإلغاء الحد.'
 });
@@ -6948,7 +6948,7 @@ RENDER.settings = function () {
       <div class="row" style="margin-top:10px"><button class="btn ghost sm" data-act="sq-reset">${esc(t('set.survey_reset'))}</button><span class="grow"></span><button class="btn primary" data-act="set-save-survey">${esc(t('save'))}</button></div>
       <div class="red" id="st-sv-err"></div></div></div>
 
-    <div class="panel"><h3>${esc(t('pc.title'))}</h3><div class="pb">
+    <div class="panel"><h3>${esc(t('photoc.title'))}</h3><div class="pb">
       <div class="field"><label class="f" for="st-exit-total">${esc(t('set.exit_total'))}</label><input class="input num" id="st-exit-total" inputmode="numeric" value="${esc(fmtNum(st.exit_photo_min_total ?? 1000000))}"></div>
       <div class="field"><label class="f" for="st-exit-qty">${esc(t('set.exit_qty'))}</label><input class="input num" id="st-exit-qty" inputmode="decimal" value="${esc(fmtQtyInput(st.exit_photo_min_qty ?? 20))}"></div>
       <label class="check"><input type="checkbox" id="st-req-photo" ${st.require_purchase_photo !== false ? 'checked' : ''}> ${esc(t('set.req_photo'))}</label>
