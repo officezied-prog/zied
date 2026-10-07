@@ -90,6 +90,18 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   the Process node changed), published: active version 69aa1dc0. Camera capture of people was declined (UU PDP); the lock + owner alert is the
   deterrent instead. Decided but NOT yet built: Phase 2 = manager-performed price correction of already-sold goods with an
   owner banner and the difference in reports + customer debt.
+- **v20 Phase 2 IN PROGRESS (price correction) — server engine built + tested, NOT deployed, no UI yet:** new action
+  `correct_price` (owner/manager): data {product_id, old_price, new_price, from, to, reason, update_catalog?}. Re-prices every
+  non-void sale line of the product sold at old_price in the range. Overcharge (new<old, we owe the customer): the sale total
+  is lowered, an account customer's debt is reduced (one accumulated write per customer), any cash overpaid becomes a refund
+  record (channel kontak if there's a phone/account, else cadangan = 3-month reserve). Undercharge (new>old, customer paid
+  less): NOT auto-billed — a consultation record (manager+owner decide); the item is annotated corrected_price, totals unchanged.
+  Records one 'koreksi' approval (status 'done') with per-invoice details, cashiers, and price_setters (who set the wrong price,
+  from the 'price' log) for the Errors section. Harness `harness20.js` (overcharge account/umum, undercharge, matching, voids,
+  roles, catalog). STILL TODO before deploy: mock parity (3 apps), owner UI to run a correction, Errors section (P2b),
+  refund reserve + photo verification (P2c), reports loss/gain, transfer-payment confirmation by the manager (P2d),
+  then Phase 3 in-app chat. Owner answered: scope = all invoices from wrong-price day to discovery; walk-in overcharge with no
+  phone -> 3-month reserve, refunded on return by photographing the invoice and matching the original; undercharge -> consultation.
 - **Cold storage "Khair Gudang Dingin" (07 Oct, third session)** — see below.
 
 - Leaflet 1.9.4 is vendored in `vendor/leaflet` (no cdnjs; CSP no longer allows cdnjs). Khair Sales cache is `khair-sales-v3`.
