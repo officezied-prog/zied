@@ -128,3 +128,13 @@ test('LOCKED answers carry locked_until; sales may change_pin; get_sale gives th
   expect(g.returned).toEqual({});
   expect(await asUser(page, 'Pemilik', '1234', 'get_sale', { invoice_no: 'KM000000-XXXX' })).toMatchObject({ error: 'NOT_FOUND' });
 });
+
+test('a locked screen sends nothing: no wrong-PIN count builds up while the app waits for the PIN', async ({ page }) => {
+  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await page.click('#tb-lock');
+  await page.waitForTimeout(3000); // background calls (approvals, device ping, outbox) would run here
+  expect(Number((await getDb(page)).users.find(u => u.name === 'Pemilik').fail_count || 0)).toBe(0);
+  await typePin(page, '9999');
+  await expect(page.locator('#lg-err')).not.toBeEmpty();
+  expect(Number((await getDb(page)).users.find(u => u.name === 'Pemilik').fail_count)).toBe(1);
+});

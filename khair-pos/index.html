@@ -955,6 +955,9 @@ async function apiRawInner(action, data, cred, opts) {
 /** Authenticated call with the current session; BAD_PIN / BAD_KEY send the user back to login. */
 const sessCred = () => ({ key: S.key, user: S.user, pin_hash: S.pin_hash });
 async function api(action, data, opts) {
+  // Locked screen (or no session): nothing is sent. Background calls without a PIN used to reach the server as wrong
+  // PINs and locked the account after a few minutes. Treated like "offline", so queued work simply waits.
+  if (!S.pin_hash) throw new NetError('NO_SESSION');
   try {
     return await apiRaw(action, data, sessCred(), opts);
   } catch (e) {
