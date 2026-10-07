@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://ziedapp.app.n8n.cloud; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Khair Gudang Dingin</title>
+<link rel="icon" href="../icon.svg">
+<!-- Khair Gudang Dingin (v1): rented cold-storage warehouses — pallets, containers, append-only movements, daily stock check
+     (WhatsApp text, Excel copy or the warehouse's .xlsx report), pick orders (A4 / Word / Excel / WhatsApp), truck / Lalamove.
+     Server: n8n workflow "Khair Gudang Dingin" (/webhook/khair-cold), logic in ../backend/cold/. Demo: ?mock=1 (key "demo"). -->
+<style>
+  :root { --pri: #047857; --pri2: #065f46; --bg: #f3f4f6; --card: #fff; --tx: #111827; --mu: #6b7280; --bd: #e5e7eb; --bad: #b91c1c; --warn: #b45309; --ok: #047857; }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: var(--bg); color: var(--tx); margin: 0; }
+  header { background: var(--pri); color: #fff; padding: 10px 16px; display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 17px; margin: 0; flex: 1; }
+  header small { opacity: .85; }
+  header button { background: rgba(255,255,255,.15); color: #fff; border: 0; border-radius: 6px; padding: 8px 10px; min-height: 40px; cursor: pointer; }
+  nav { display: flex; gap: 4px; overflow-x: auto; background: #fff; border-bottom: 1px solid var(--bd); padding: 6px 8px; position: sticky; top: 60px; z-index: 4; }
+  nav button { border: 0; background: none; padding: 10px 12px; border-radius: 6px; white-space: nowrap; font-size: 14px; min-height: 42px; cursor: pointer; color: var(--tx); }
+  nav button.on { background: #d1fae5; color: var(--pri2); font-weight: 600; }
+  main { padding: 12px 16px 80px; max-width: 1100px; margin: 0 auto; }
+  .card { background: var(--card); border-radius: 10px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .card h2 { font-size: 16px; margin: 0 0 10px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+  .kpi b { font-size: 20px; display: block; }
+  .muted { color: var(--mu); font-size: 13px; }
+  label { display: block; font-size: 13px; color: var(--mu); margin: 6px 0 2px; }
+  input, select, textarea { font: inherit; padding: 9px 10px; border: 1px solid #d1d5db; border-radius: 6px; width: 100%; min-height: 42px; background: #fff; color: var(--tx); }
+  textarea { min-height: 140px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .btn { border: 1px solid #d1d5db; background: #fff; color: var(--tx); border-radius: 6px; padding: 9px 14px; min-height: 42px; cursor: pointer; font: inherit; }
+  .btn.pri { background: var(--pri); border-color: var(--pri); color: #fff; }
+  .btn.bad { color: var(--bad); border-color: #fca5a5; }
+  .btn.sm { min-height: 34px; padding: 5px 9px; font-size: 13px; }
+  .btn:disabled { opacity: .5; }
+  .tw { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { border-bottom: 1px solid var(--bd); padding: 7px 6px; text-align: start; vertical-align: top; }
+  th { color: var(--mu); font-weight: 600; font-size: 12px; white-space: nowrap; }
+  td.n, th.n { text-align: end; white-space: nowrap; }
+  tr.diff td, .bad { color: var(--bad); font-weight: 600; }
+  .warn { color: var(--warn); font-weight: 600; }
+  .chip { display: inline-block; border-radius: 99px; padding: 2px 9px; font-size: 12px; background: #e5e7eb; }
+  .chip.open { background: #dbeafe; } .chip.picked { background: #d1fae5; } .chip.cancelled { background: #fee2e2; text-decoration: line-through; }
+  .list > div { border-bottom: 1px solid var(--bd); padding: 8px 0; }
+  .order { border: 1px solid var(--bd); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .order .row .btn { flex: 0 0 auto; }
+  #toast { position: fixed; left: 16px; right: 16px; bottom: 16px; background: #111827; color: #fff; padding: 12px 14px; border-radius: 8px; text-align: center; display: none; z-index: 30; }
+  #toast.err { background: var(--bad); }
+  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 20; display: flex; align-items: flex-start; justify-content: center; overflow-y: auto; padding: 16px; }
+  #modal[hidden] { display: none; }
+  #modal .box { background: #fff; border-radius: 10px; padding: 16px; width: 100%; max-width: 720px; margin: auto 0; }
+  #modal h3 { margin: 0 0 8px; }
+  .lines td input, .lines td select { min-height: 36px; padding: 5px 6px; }
+  pre.copy { white-space: pre-wrap; background: #f9fafb; border: 1px solid var(--bd); border-radius: 6px; padding: 8px; font-size: 13px; }
+  #print-area { display: none; }
+  [dir="rtl"] td.n, [dir="rtl"] th.n { text-align: left; }
+  @media (max-width: 640px) { th.hp, td.hp { display: none; } main { padding: 10px 12px 80px; } }
+  @media print { body > *:not(#print-area) { display: none !important; } #print-area { display: block; } body { background: #fff; } }
+</style>
+</head>
+<body>
+<header><h1 id="title">Khair Gudang Dingin</h1><small id="who"></small><button id="lang" type="button">AR</button><button id="logout" type="button" hidden></button></header>
+<nav id="nav" hidden></nav>
+<main id="app"></main>
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="modal" hidden><div class="box" id="modal-box"></div></div>
+<div id="print-area"></div>
+<script src="../backend/cold/cold-parsers.js"></script>
+<script src="../backend/cold/cold-core.js"></script>
+<script src="../shared/cold-mock.js"></script>
+<script src="../shared/docs-cold.js"></script>
+<script>
+'use strict';
+if (window.top !== window.self) { try { window.top.location = window.location.href; } catch (e) { document.documentElement.innerHTML = ''; } }
+const CONFIG = { COLD_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-cold', LALAMOVE_URL: 'https://web.lalamove.com/' };
+const MOCK = /[?&](mock|demo)=1\b/.test(location.search);
+const KP = MOCK ? 'kpos.mock.' : 'kpos.'; // the owner app's storage (same site): its key and this tab's session are reused
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } }
+};
+const SS = {
+  get(k) { try { return JSON.parse(sessionStorage.getItem(k) || 'null'); } catch (e) { return null; } },
+  set(k, v) { try { if (v) sessionStorage.setItem(k, JSON.stringify(v)); else sessionStorage.removeItem(k); } catch (e) { } }
+};
+
+/* ---------- texts ---------- */
+const I18N = {
+  id: {
+    title: 'Khair Gudang Dingin', login: 'Masuk', key: 'Kunci toko', key_hint: 'Diisi sekali di perangkat ini', change_key: 'Ganti kunci', user: 'Nama pengguna', pin: 'PIN', logout: 'Keluar',
+    demo: 'Mode demo — data contoh. Kunci: demo · Pemilik 1234 · Jihan 2222 · Akuntan 3333', demo_reset: 'Ulang data demo',
+    t_dash: 'Dasbor', t_stok: 'Stok', t_cont: 'Kontainer', t_mut: 'Mutasi', t_cek: 'Cek stok harian', t_ord: 'Order ambil', t_set: 'Pengaturan',
+    role_owner: 'Pemilik', role_manager: 'Manajer', role_akuntan: 'Akuntan', ro: 'Hanya lihat',
+    wh: 'Gudang', all: 'Semua', product: 'Produk', pallet: 'Palet (PID)', lot: 'Lot', exp: 'Kedaluwarsa', cartons: 'Karton', kg: 'Kg', zone: 'Zona', position: 'Posisi', container: 'Kontainer', date_in: 'Masuk', date: 'Tanggal', search: 'Cari palet, lot, produk…',
+    pallets: 'palet', ctn: 'ctn', days_left: '{n} hari lagi', expired: 'sudah lewat {n} hari',
+    al_exp: 'Kedaluwarsa ≤ 60 hari (ambil ini dulu)', al_check: 'Belum cek stok hari ini', al_diff: 'Selisih belum dijelaskan', al_cost: 'Biaya sewa bulan ini', all_good: 'Tidak ada.',
+    cost_to_date: 'Sampai hari ini', cost_est: 'Perkiraan sebulan', pallet_days: 'Palet-hari', rate: 'Tarif', per_month: '/palet/bulan', per_day: '/palet/hari',
+    rep_print: 'Laporan stok (A4)', rep_xls: 'Excel stok', explain: 'Jelaskan', explain_q: 'Penjelasan selisih (tidak bisa diubah setelah disimpan)',
+    pallet_in: 'Palet masuk', transfer: 'Pindah', adjust: 'Koreksi', to_wh: 'Ke gudang', cartons_all: 'Karton (kosong = semua)', adj_delta: 'Selisih karton (contoh -2 atau 3)', reason: 'Alasan',
+    add_row: '+ baris', save: 'Simpan', cancel: 'Batal', close: 'Tutup', saved: 'Tersimpan', none: 'Belum ada data.', optional: 'opsional',
+    cont_add: 'Kontainer baru', cont_no: 'Nomor kontainer', size: 'Ukuran', arrival: 'Tiba', supplier: 'Pemasok', note: 'Catatan', now_ctn: 'Karton sekarang',
+    type: 'Jenis', from: 'Dari', to: 'Sampai', by: 'Oleh', reverse: 'Batalkan', reversed: 'dibatalkan', reverse_q: 'Mutasi #{n} dibatalkan dengan mutasi balik (catatan asli tetap ada). Alasan:',
+    m_IN: 'Masuk', m_OUT: 'Keluar', m_TRANSFER: 'Pindah', m_ADJUST: 'Koreksi', m_REVERSE: 'Pembatalan',
+    ck_hint: 'Tempel pesan WhatsApp dari gudang, atau salinan sel Excel, atau pilih file laporan (.xlsx).', ck_file: 'File laporan', ck_text: 'Pesan / isi laporan', ck_date: 'Tanggal stok (kosong = dari laporan / hari ini)',
+    ck_preview: 'Periksa', ck_save: 'Simpan hasil cek', ck_saved: 'Cek disimpan: {no}', ck_ok: 'Cocok', ck_diff: 'Tidak cocok', ck_theirs: 'Gudang', ck_ours: 'Kita', ck_delta: 'Selisih',
+    ck_unknown: 'Ada di laporan gudang, tidak ada di catatan kita', ck_missing: 'Ada di catatan kita, tidak disebut gudang', ck_unparsed: 'Baris tidak terbaca — periksa sendiri', ck_ignored: '{n} baris judul/total dilewati',
+    ck_import: 'Masukkan palet ini sebagai stok awal', ck_import_q: '{n} palet dari laporan dicatat sebagai stok awal di {wh} per {d}. Produk baru dibuat dari kode barang gudang.', ck_imported: '{n} palet masuk',
+    ck_hist: 'Riwayat cek', ck_print: 'Cetak', ck_all_ok: 'Semua cocok ✓', ck_file_bad: 'File tidak bisa dibaca. Simpan sebagai .xlsx atau salin selnya.',
+    or_new: 'Order baru', or_edit: 'Ubah order', dest: 'Tujuan', dest_toko: 'Toko (Khair Mart)', dest_cust: 'Pelanggan', dest_name: 'Nama pelanggan', dest_addr: 'Alamat tujuan', pickup: 'Diambil oleh', vehicle: 'Kendaraan',
+    fefo: 'Isi otomatis (kedaluwarsa terdekat dulu)', fefo_short: 'Stok kurang {n} ctn', lines: 'Palet yang diambil', st_open: 'Menunggu', st_picked: 'Diambil', st_cancelled: 'Dibatalkan',
+    a4: 'A4', word: 'Word', excel: 'Excel', wa: 'WhatsApp gudang', truck: 'Pesan truk', mark_picked: 'Tandai diambil', pick_q: 'Gudang sudah mengeluarkan barang? Stok dikurangi sekarang.', pick_date: 'Tanggal diambil',
+    cancel_order: 'Batalkan order', cancel_q: 'Alasan pembatalan', total: 'Total', est_kg: 'Perkiraan berat', suggest: 'Saran kendaraan', pickup_addr: 'Ambil di', drop_addr: 'Antar ke', copy: 'Salin', copied: 'Disalin',
+    open_lala: 'Buka Lalamove', wa_driver: 'WhatsApp sopir', trip: 'Perjalanan', via: 'Lewat', via_lala: 'Lalamove', via_drv: 'Sopir sendiri', driver: 'Sopir', plate: 'Plat nomor', cost: 'Ongkos (Rp)', no_wa: 'Nomor WhatsApp gudang belum diisi (Pengaturan)',
+    s_wh: 'Gudang', s_pr: 'Produk', s_drv: 'Sopir truk', s_company: 'Nama perusahaan di dokumen', code: 'Kode', name: 'Nama', address: 'Alamat', pic: 'PIC', pic_wa: 'WhatsApp PIC', cust_id: 'ID customer di gudang', unit: 'Satuan tarif',
+    parser: 'Format laporan', active: 'Aktif', kg_ctn: 'Kg per karton', aliases: 'Nama lain / kode barang gudang (pisah koma)', edit: 'Ubah', add: 'Tambah',
+    err_net: 'Tidak ada koneksi. Coba lagi.', confirm: 'Lanjutkan?', need_wh: 'Tambahkan gudang dulu di Pengaturan.'
+  },
+  ar: {
+    title: 'مخازن خير المبرّدة', login: 'دخول', key: 'مفتاح المتجر', key_hint: 'يُكتب مرة واحدة على هذا الجهاز', change_key: 'تغيير المفتاح', user: 'اسم المستخدم', pin: 'الرمز السري', logout: 'خروج',
+    demo: 'وضع تجريبي — بيانات مثال. المفتاح: demo · Pemilik 1234 · Jihan 2222 · Akuntan 3333', demo_reset: 'إعادة البيانات التجريبية',
+    t_dash: 'الرئيسية', t_stok: 'المخزون', t_cont: 'الحاويات', t_mut: 'الحركات', t_cek: 'الجرد اليومي', t_ord: 'أوامر السحب', t_set: 'الإعدادات',
+    role_owner: 'المالك', role_manager: 'المدير', role_akuntan: 'المحاسب', ro: 'عرض فقط',
+    wh: 'المخزن', all: 'الكل', product: 'المنتج', pallet: 'البالِت (PID)', lot: 'الدفعة', exp: 'الانتهاء', cartons: 'كراتين', kg: 'كغ', zone: 'المنطقة', position: 'الموقع', container: 'الحاوية', date_in: 'الدخول', date: 'التاريخ', search: 'ابحث عن بالِت أو دفعة أو منتج…',
+    pallets: 'بالِت', ctn: 'كرتون', days_left: 'بعد {n} يوم', expired: 'انتهى منذ {n} يوم',
+    al_exp: 'ينتهي خلال 60 يومًا (اسحبه أولًا)', al_check: 'لم يُجرَد اليوم', al_diff: 'فروق بلا تفسير', al_cost: 'تكلفة التخزين هذا الشهر', all_good: 'لا شيء.',
+    cost_to_date: 'حتى اليوم', cost_est: 'تقدير الشهر', pallet_days: 'بالِت × يوم', rate: 'السعر', per_month: '/بالِت/شهر', per_day: '/بالِت/يوم',
+    rep_print: 'تقرير المخزون (A4)', rep_xls: 'المخزون Excel', explain: 'تفسير', explain_q: 'تفسير الفرق (لا يمكن تعديله بعد الحفظ)',
+    pallet_in: 'إدخال بالِتات', transfer: 'نقل', adjust: 'تصحيح', to_wh: 'إلى المخزن', cartons_all: 'الكراتين (فارغ = الكل)', adj_delta: 'فرق الكراتين (مثل -2 أو 3)', reason: 'السبب',
+    add_row: '+ سطر', save: 'حفظ', cancel: 'إلغاء', close: 'إغلاق', saved: 'تم الحفظ', none: 'لا توجد بيانات.', optional: 'اختياري',
+    cont_add: 'حاوية جديدة', cont_no: 'رقم الحاوية', size: 'الحجم', arrival: 'الوصول', supplier: 'المورّد', note: 'ملاحظة', now_ctn: 'الكراتين الآن',
+    type: 'النوع', from: 'من', to: 'إلى', by: 'بواسطة', reverse: 'إلغاء', reversed: 'أُلغيت', reverse_q: 'تُلغى الحركة #{n} بحركة عكسية (يبقى السجل الأصلي). السبب:',
+    m_IN: 'دخول', m_OUT: 'خروج', m_TRANSFER: 'نقل', m_ADJUST: 'تصحيح', m_REVERSE: 'إلغاء',
+    ck_hint: 'الصق رسالة واتساب من المخزن، أو نسخة خلايا Excel، أو اختر ملف التقرير (.xlsx).', ck_file: 'ملف التقرير', ck_text: 'الرسالة / محتوى التقرير', ck_date: 'تاريخ المخزون (فارغ = من التقرير / اليوم)',
+    ck_preview: 'فحص', ck_save: 'حفظ نتيجة الجرد', ck_saved: 'حُفظ الجرد: {no}', ck_ok: 'مطابق', ck_diff: 'غير مطابق', ck_theirs: 'المخزن', ck_ours: 'عندنا', ck_delta: 'الفرق',
+    ck_unknown: 'في تقرير المخزن وليس في سجلاتنا', ck_missing: 'في سجلاتنا ولم يذكره المخزن', ck_unparsed: 'أسطر لم تُقرأ — راجعها بنفسك', ck_ignored: 'تم تخطي {n} سطر عناوين/مجاميع',
+    ck_import: 'أدخل هذه البالِتات كمخزون افتتاحي', ck_import_q: 'تُسجَّل {n} بالِت من التقرير كمخزون افتتاحي في {wh} بتاريخ {d}. تُنشأ المنتجات الجديدة من رمز صنف المخزن.', ck_imported: 'دخلت {n} بالِت',
+    ck_hist: 'سجل الجرد', ck_print: 'طباعة', ck_all_ok: 'كله مطابق ✓', ck_file_bad: 'تعذّر قراءة الملف. احفظه بصيغة .xlsx أو انسخ الخلايا.',
+    or_new: 'أمر جديد', or_edit: 'تعديل الأمر', dest: 'الوجهة', dest_toko: 'المحل (Khair Mart)', dest_cust: 'زبون', dest_name: 'اسم الزبون', dest_addr: 'عنوان الوجهة', pickup: 'يستلمه', vehicle: 'المركبة',
+    fefo: 'تعبئة تلقائية (الأقرب انتهاءً أولًا)', fefo_short: 'ينقص المخزون {n} كرتون', lines: 'البالِتات المسحوبة', st_open: 'بانتظار السحب', st_picked: 'سُحب', st_cancelled: 'أُلغي',
+    a4: 'A4', word: 'Word', excel: 'Excel', wa: 'واتساب المخزن', truck: 'طلب شاحنة', mark_picked: 'تأكيد السحب', pick_q: 'هل أخرج المخزن البضاعة؟ سيُخصم المخزون الآن.', pick_date: 'تاريخ السحب',
+    cancel_order: 'إلغاء الأمر', cancel_q: 'سبب الإلغاء', total: 'المجموع', est_kg: 'الوزن التقريبي', suggest: 'المركبة المقترحة', pickup_addr: 'الاستلام من', drop_addr: 'التسليم إلى', copy: 'نسخ', copied: 'تم النسخ',
+    open_lala: 'فتح Lalamove', wa_driver: 'واتساب السائق', trip: 'الرحلة', via: 'عن طريق', via_lala: 'Lalamove', via_drv: 'سائقنا', driver: 'السائق', plate: 'رقم اللوحة', cost: 'الأجرة (Rp)', no_wa: 'رقم واتساب المخزن غير مُدخل (الإعدادات)',
+    s_wh: 'المخازن', s_pr: 'المنتجات', s_drv: 'سائقو الشاحنات', s_company: 'اسم الشركة في المستندات', code: 'الرمز', name: 'الاسم', address: 'العنوان', pic: 'المسؤول', pic_wa: 'واتساب المسؤول', cust_id: 'رقم العميل لدى المخزن', unit: 'وحدة السعر',
+    parser: 'صيغة التقرير', active: 'نشط', kg_ctn: 'كغ لكل كرتون', aliases: 'أسماء أخرى / رمز صنف المخزن (بفواصل)', edit: 'تعديل', add: 'إضافة',
+    err_net: 'لا يوجد اتصال. حاول مجددًا.', confirm: 'متابعة؟', need_wh: 'أضف مخزنًا أولًا من الإعدادات.'
+  }
+};
+const MON = { id: ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'], ar: ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'] };
+const S = { key: '', user: '', role: '', pin_hash: '', lang: LS.get('kcold.lang', 'id') === 'ar' ? 'ar' : 'id', tab: 'dash', D: null, f: { wh: '', pr: '', q: '', mtype: '', mfrom: '', mto: '', ost: 'open' }, ck: null };
+function t(k, v) { let s = (I18N[S.lang] && I18N[S.lang][k]) || I18N.id[k] || k; Object.keys(v || {}).forEach(x => { s = s.split('{' + x + '}').join(String(v[x])); }); return s; }
+
+/* ---------- small helpers (user data only ever goes through textContent) ---------- */
+const $ = s => document.querySelector(s);
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  Object.keys(attrs || {}).forEach(k => {
+    const v = attrs[k];
+    if (v === null || v === undefined || v === false) return;
+    if (k === 'class') el.className = v; else if (k === 'text') el.textContent = v;
+    else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2), v);
+    else if (k === 'value') el.value = v; else el.setAttribute(k, v === true ? '' : v);
+  });
+  kids.flat(9).forEach(c => { if (c === null || c === undefined || c === false) return; el.append(c instanceof Node ? c : document.createTextNode(String(c))); });
+  return el;
+}
+const n0 = v => { const n = Math.round(Number(v) || 0); return (n < 0 ? '-' : '') + Math.abs(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.'); };
+const kgf = v => { const n = Math.round((Number(v) || 0) * 10) / 10; return n0(Math.trunc(n)) + (n % 1 ? ',' + Math.abs(Math.round(n * 10) % 10) : ''); };
+const rp = v => 'Rp ' + n0(v);
+const fd = d => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[3] + ' ' + MON[S.lang][Number(m[2]) - 1] + ' ' + m[1] : ''; };
+const fdt = iso => { if (!iso) return ''; const d = new Date(Date.parse(iso) + 7 * 3600000).toISOString(); return fd(d) + ' ' + d.slice(11, 16); };
+const today = () => new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
+const daysTo = d => Math.round((Date.parse(d + 'T00:00:00Z') - Date.parse(today() + 'T00:00:00Z')) / 86400000);
+const can = () => S.role === 'owner' || S.role === 'manager';
+const isOwner = () => S.role === 'owner';
+let toastT = 0;
+function toast(msg, err) { const el = $('#toast'); el.textContent = msg; el.className = err ? 'err' : ''; el.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => { el.style.display = 'none'; }, 3500); }
+function sha256(s) { return crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)).then(b => Array.from(new Uint8Array(b)).map(x => ('0' + x.toString(16)).slice(-2)).join('')); }
+function field(label, input) { return h('div', null, h('label', { text: label }), input); }
+function sel(id, opts, value, attrs) { return h('select', Object.assign({ id: id }, attrs || {}), opts.map(o => h('option', { value: o[0], selected: String(o[0]) === String(value) }, o[1]))); }
+function whOpts(withAll) { return (withAll ? [['', t('all')]] : []).concat(S.D.warehouses.filter(w => w.active).map(w => [w.code, w.name])); }
+function prOpts(withAll) { return (withAll ? [['', t('all')]] : []).concat(S.D.products.filter(p => p.active).map(p => [p.code, p.name])); }
+const WH = code => (S.D.warehouses.find(w => w.code === code) || { name: code, code: code });
+const PR = code => (S.D.products.find(p => p.code === code) || { name: code, code: code });
+function ctx() {
+  const wh = {}, pr = {}, pal = {};
+  S.D.warehouses.forEach(w => { wh[w.code] = w; }); S.D.products.forEach(p => { pr[p.code] = p; }); S.D.pallets.forEach(p => { pal[p.pallet_code] = p; });
+  return { company: S.D.company, wh, pr, pal, now: new Date() };
+}
+function printHtml(html) { const pa = $('#print-area'); pa.innerHTML = html; window.print(); }
+function copyText(s) { (navigator.clipboard ? navigator.clipboard.writeText(s) : Promise.reject()).then(() => toast(t('copied')), () => { const ta = h('textarea', { value: s }); document.body.append(ta); ta.select(); try { document.execCommand('copy'); toast(t('copied')); } catch (e) { } ta.remove(); }); }
+function waLink(num, text) { return 'https://wa.me/' + encodeURIComponent(num || '') + '?text=' + encodeURIComponent(text); }
+
+/* ---------- API ---------- */
+async function api(action, data) {
+  const body = { action, key: S.key, user: S.user, pin_hash: S.pin_hash, data: data || {} };
+  let r;
+  try {
+    if (MOCK) r = await KColdMock.api(body);
+    else r = await (await fetch(CONFIG.COLD_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), cache: 'no-store' })).json();
+  } catch (e) { r = { ok: false, error: 'NETWORK', message: t('err_net') }; }
+  if (!r || r.ok !== true) {
+    const e = r || { ok: false, error: 'SERVER', message: 'Server error' };
+    if (action !== 'login' && ['BAD_PIN', 'BAD_KEY', 'LOCKED', 'PIN_CHANGE_REQUIRED'].includes(e.error)) { logout(); }
+    throw e;
+  }
+  return r;
+}
+/** A write: runs, toasts, reloads the data, re-renders. Returns the response or null. */
+async function act(action, data, okMsg) {
+  try { const r = await api(action, data); toast(okMsg || t('saved')); await load(); return r; }
+  catch (e) { toast(e.message || e.error, true); return null; }
+}
+async function load() { S.D = await api('bootstrap', {}); render(); }
+
+/* ---------- login ---------- */
+function logout() { SS.set('kcold.session', null); S.user = ''; S.pin_hash = ''; S.role = ''; S.D = null; renderLogin(); }
+function renderLogin(msg) {
+  $('#nav').hidden = true; $('#logout').hidden = true; $('#who').textContent = '';
+  const keyKnown = !!S.key;
+  const keyIn = h('input', { id: 'lg-key', type: 'password', autocomplete: 'off', value: S.key, hidden: keyKnown });
+  const app = $('#app'); app.replaceChildren(h('div', { class: 'card', style: 'max-width:420px;margin:24px auto' },
+    h('h2', { text: t('login') }),
+    MOCK ? h('p', { class: 'muted', text: t('demo') }) : null,
+    h('div', { hidden: keyKnown, id: 'lg-keybox' }, field(t('key'), keyIn), h('p', { class: 'muted', text: t('key_hint') })),
+    keyKnown ? h('button', { class: 'btn sm', type: 'button', id: 'lg-chkey', onclick: () => { $('#lg-keybox').hidden = false; keyIn.hidden = false; keyIn.value = ''; keyIn.focus(); } }, t('change_key')) : null,
+    field(t('user'), h('input', { id: 'lg-user', autocomplete: 'username', value: LS.get('kcold.user', '') })),
+    field(t('pin'), h('input', { id: 'lg-pin', type: 'password', inputmode: 'numeric', autocomplete: 'current-password' })),
+    msg ? h('p', { class: 'bad', id: 'lg-msg', text: msg }) : null,
+    h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn pri', id: 'lg-go', type: 'button', onclick: doLogin, style: 'width:100%' }, t('login')))));
+  $('#lg-pin').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+}
+async function doLogin() {
+  const key = ($('#lg-key').value || '').trim(), user = $('#lg-user').value.trim(), pin = $('#lg-pin').value.trim();
+  if (!key || !user || !pin) { toast(t('key') + ' / ' + t('user') + ' / ' + t('pin'), true); return; }
+  S.key = key; S.user = user; S.pin_hash = await sha256(key + ':' + user.toLowerCase() + ':' + pin);
+  try {
+    const r = await api('login', {});
+    S.user = r.me.name; S.role = r.me.role;
+    LS.set('kcold.key', key); LS.set('kcold.user', S.user);
+    SS.set('kcold.session', { user: S.user, pin_hash: S.pin_hash, role: S.role });
+    await load();
+  } catch (e) { S.pin_hash = ''; renderLogin(e.message || e.error); }
+}
+
+/* ---------- shell ---------- */
+const TABS = ['dash', 'stok', 'cont', 'mut', 'cek', 'ord', 'set'];
+function render() {
+  document.documentElement.lang = S.lang; document.documentElement.dir = S.lang === 'ar' ? 'rtl' : 'ltr';
+  $('#title').textContent = t('title'); $('#lang').textContent = S.lang === 'ar' ? 'ID' : 'AR';
+  if (!S.D) return;
+  $('#who').textContent = S.user + ' · ' + t('role_' + S.role) + (S.role === 'akuntan' ? ' (' + t('ro') + ')' : '') + (MOCK ? ' · demo' : '');
+  $('#logout').hidden = false; $('#logout').textContent = t('logout');
+  const tabs = TABS.filter(x => x !== 'set' || isOwner());
+  if (!tabs.includes(S.tab)) S.tab = 'dash';
+  const nav = $('#nav'); nav.hidden = false;
+  nav.replaceChildren(...tabs.map(x => h('button', { type: 'button', 'data-tab': x, class: S.tab === x ? 'on' : '', onclick: () => { S.tab = x; render(); } }, t('t_' + x))));
+  const v = ({ dash: vDash, stok: vStok, cont: vCont, mut: vMut, cek: vCek, ord: vOrd, set: vSet })[S.tab]();
+  v.id = 'v-' + S.tab;
+  $('#app').replaceChildren(v);
+}
+function modal(title, body, buttons) {
+  const box = $('#modal-box');
+  box.replaceChildren(h('h3', { text: title }), body, h('div', { class: 'row', style: 'margin-top:14px;justify-content:flex-end' },
+    (buttons || []).concat([h('button', { class: 'btn', type: 'button', id: 'md-close', onclick: closeModal }, t('close'))])));
+  $('#modal').hidden = false;
+}
+function closeModal() { $('#modal').hidden = true; $('#modal-box').replaceChildren(); }
+function ask(title, label, onOk, opts) {
+  const inp = (opts && opts.input) || h('input', { id: 'ask-in' });
+  modal(title, h('div', null, label ? field(label, inp) : inp), [h('button', { class: 'btn pri', type: 'button', id: 'ask-ok', onclick: async () => { const ok = await onOk(inp.value.trim()); if (ok !== false) closeModal(); } }, t('save'))]);
+  setTimeout(() => inp.focus(), 30);
+}
+function table(head, rows, attrs) {
+  return h('div', { class: 'tw' }, h('table', attrs || null, h('thead', null, h('tr', null, head.map(c => typeof c === 'string' ? h('th', { text: c }) : h('th', { class: c[1], text: c[0] })))), h('tbody', null, rows)));
+}
+function expCell(d) { if (!d) return h('td'); const n = daysTo(d); return h('td', { class: n <= 0 ? 'bad' : n <= 60 ? 'warn' : '' }, fd(d), h('div', { class: 'muted', text: n < 0 ? t('expired', { n: -n }) : t('days_left', { n }) })); }
+
+/* ---------- dashboard ---------- */
+function vDash() {
+  const D = S.D, A = D.alerts, per = {};
+  D.stock.forEach(r => { if (r.cartons <= 0) return; const a = per[r.warehouse] = per[r.warehouse] || { p: 0, c: 0, k: 0 }; a.p++; a.c += r.cartons; a.k += r.kg; });
+  const kpis = h('div', { class: 'grid' }, D.warehouses.filter(w => w.active).map(w => { const a = per[w.code] || { p: 0, c: 0, k: 0 }; return h('div', { class: 'card kpi', 'data-wh': w.code }, h('div', { class: 'muted', text: w.name }), h('b', null, n0(a.p) + ' ' + t('pallets')), h('div', null, n0(a.c) + ' ' + t('ctn') + ' · ' + kgf(a.k) + ' kg')); }));
+  const exp = A.expiring.length ? table([t('pallet'), t('product'), t('wh'), t('exp'), [t('cartons'), 'n']], A.expiring.map(r => h('tr', { 'data-pallet': r.pallet_code }, h('td', { text: r.pallet_code }), h('td', { text: r.product_name }), h('td', { text: WH(r.warehouse).name }), expCell(r.exp_date), h('td', { class: 'n', text: n0(r.cartons) }))), { id: 'al-exp' }) : h('p', { class: 'muted', text: t('all_good') });
+  const chk = h('div', { id: 'al-check' }, A.no_check_today.length ? A.no_check_today.map(c => h('button', { class: 'btn sm', type: 'button', 'data-wh': c, onclick: () => { S.tab = 'cek'; S.ckWh = c; render(); } }, WH(c).name)) : h('p', { class: 'muted', text: t('all_good') }));
+  const diff = h('div', { class: 'list', id: 'al-diff' }, A.unexplained.length ? A.unexplained.map(c => h('div', { class: 'row', 'data-check': c.check_no }, h('span', { style: 'flex:1' }, c.check_no + ' · ' + WH(c.warehouse).name + ' · ' + fd(c.check_date) + ' · ', h('b', { class: 'bad', text: n0(c.n_diff) + ' ' + t('ck_diff') })),
+    can() ? h('button', { class: 'btn sm', type: 'button', 'data-act': 'explain', onclick: () => explain(c.check_no) }, t('explain')) : null)) : h('p', { class: 'muted', text: t('all_good') }));
+  const cost = A.storage ? h('div', { class: 'card' }, h('h2', { text: t('al_cost') }), table([t('wh'), t('rate'), [t('pallet_days'), 'n'], [t('cost_to_date'), 'n'], [t('cost_est'), 'n']], A.storage.map(s => h('tr', { 'data-wh': s.warehouse }, h('td', { text: WH(s.warehouse).name }), h('td', { text: rp(s.rate) + (s.rate_unit === 'day' ? t('per_day') : t('per_month')) }), h('td', { class: 'n', text: n0(s.pallet_days) }), h('td', { class: 'n', text: rp(s.cost_to_date) }), h('td', { class: 'n', 'data-est': '', text: rp(s.cost_month_est) }))), { id: 'al-cost' })) : null;
+  return h('div', null,
+    MOCK ? h('p', { class: 'muted' }, t('demo') + ' · ', h('button', { class: 'btn sm', type: 'button', id: 'demo-reset', onclick: async () => { await KColdMock.reset(); await load(); } }, t('demo_reset'))) : null,
+    D.warehouses.length ? kpis : h('div', { class: 'card', text: t('need_wh') }),
+    h('div', { class: 'row', style: 'margin-bottom:12px' }, h('button', { class: 'btn', type: 'button', id: 'rep-print', onclick: () => stockReport('print') }, t('rep_print')), h('button', { class: 'btn', type: 'button', id: 'rep-xls', onclick: () => stockReport('xls') }, t('rep_xls'))),
+    h('div', { class: 'card' }, h('h2', { text: t('al_exp') }), exp),
+    h('div', { class: 'card' }, h('h2', { text: t('al_check') }), chk),
+    h('div', { class: 'card' }, h('h2', { text: t('al_diff') }), diff), cost);
+}
+function explain(no) { ask(t('explain') + ' ' + no, t('explain_q'), v => v.length < 3 ? (toast(t('explain_q'), true), false) : act('check_note', { check_no: no, note: v }).then(r => !!r), { input: h('textarea', { id: 'ask-in', style: 'min-height:90px' }) }); }
+async function stockReport(kind) {
+  try {
+    const rep = await api('report', { date: today() });
+    if (kind === 'print') printHtml(KColdDocs.stock(rep, ctx()));
+    else KColdDocs.toXls([['Gudang', 'PID', 'Produk', 'Lot', 'Kedaluwarsa', 'Masuk', 'Zona', 'Kontainer', 'Karton', 'Kg']].concat(rep.rows.map(r => [WH(r.warehouse).name, r.pallet_code, r.product_name, r.lot, r.exp_date, r.date_in, r.zone, r.container_no, r.cartons, r.kg])), 'stok-gudang-' + rep.date + '.xls', 'Stok');
+  } catch (e) { toast(e.message || e.error, true); }
+}
+
+/* ---------- stock ---------- */
+function stockRows() {
+  const q = S.f.q.toLowerCase();
+  return S.D.stock.filter(r => r.cartons !== 0 && (!S.f.wh || r.warehouse === S.f.wh) && (!S.f.pr || r.product === S.f.pr) &&
+    (!q || [r.pallet_code, r.product_name, r.lot, r.container_no, r.position].join(' ').toLowerCase().indexOf(q) >= 0));
+}
+function vStok() {
+  const rows = stockRows(), tc = rows.reduce((s, r) => s + r.cartons, 0), tk = rows.reduce((s, r) => s + r.kg, 0);
+  const body = rows.map(r => h('tr', { 'data-pallet': r.pallet_code, 'data-wh': r.warehouse },
+    h('td', null, h('b', { text: r.pallet_code }), h('div', { class: 'muted', text: [r.zone, r.position].filter(Boolean).join(' · ') })), h('td', { text: r.product_name }), h('td', { class: 'hp', text: WH(r.warehouse).name }),
+    h('td', { class: 'hp', text: r.lot }), expCell(r.exp_date), h('td', { class: 'n', 'data-ctn': '', text: n0(r.cartons) }), h('td', { class: 'n hp', text: kgf(r.kg) }),
+    can() ? h('td', null, h('button', { class: 'btn sm', type: 'button', 'data-act': 'transfer', onclick: () => transferForm(r) }, t('transfer')), ' ', h('button', { class: 'btn sm', type: 'button', 'data-act': 'adjust', onclick: () => adjustForm(r) }, t('adjust'))) : null));
+  const f = h('div', { class: 'row' },
+    h('div', { style: 'flex:1;min-width:140px' }, sel('st-wh', whOpts(true), S.f.wh, { onchange: e => { S.f.wh = e.target.value; render(); } })),
+    h('div', { style: 'flex:1;min-width:140px' }, sel('st-pr', prOpts(true), S.f.pr, { onchange: e => { S.f.pr = e.target.value; render(); } })),
+    h('div', { style: 'flex:2;min-width:180px' }, h('input', { id: 'st-q', placeholder: t('search'), value: S.f.q, oninput: e => { S.f.q = e.target.value; const p = e.target.selectionStart; render(); const i = $('#st-q'); i.focus(); i.setSelectionRange(p, p); } })));
+  return h('div', null, h('div', { class: 'card' }, f, h('div', { class: 'row', style: 'margin-top:10px' },
+    can() ? h('button', { class: 'btn pri', type: 'button', id: 'st-in', onclick: () => palletInForm() }, '+ ' + t('pallet_in')) : null,
+    h('button', { class: 'btn', type: 'button', id: 'st-xls', onclick: () => KColdDocs.toXls([['Gudang', 'PID', 'Produk', 'Lot', 'Kedaluwarsa', 'Karton', 'Kg']].concat(rows.map(r => [WH(r.warehouse).name, r.pallet_code, r.product_name, r.lot, r.exp_date, r.cartons, r.kg])), 'stok-' + today() + '.xls', 'Stok') }, t('excel')),
+    h('span', { class: 'muted', id: 'st-sum' }, n0(rows.length) + ' ' + t('pallets') + ' · ' + n0(tc) + ' ' + t('ctn') + ' · ' + kgf(tk) + ' kg'))),
+    h('div', { class: 'card' }, rows.length ? table([t('pallet'), t('product'), [t('wh'), 'hp'], [t('lot'), 'hp'], t('exp'), [t('cartons'), 'n'], [t('kg'), 'n hp']].concat(can() ? [''] : []), body, { id: 'st-tbl' }) : h('p', { class: 'muted', text: t('none') })));
+}
+function transferForm(r) {
+  const to = sel('tr-to', whOpts(false).filter(o => o[0] !== r.warehouse), ''), n = h('input', { id: 'tr-n', inputmode: 'numeric', placeholder: String(r.cartons) }), why = h('input', { id: 'tr-why' });
+  modal(t('transfer') + ' ' + r.pallet_code, h('div', null, h('p', { class: 'muted', text: r.product_name + ' · ' + WH(r.warehouse).name + ' · ' + n0(r.cartons) + ' ' + t('ctn') }), field(t('to_wh'), to), field(t('cartons_all'), n), field(t('reason') + ' (' + t('optional') + ')', why)),
+    [h('button', { class: 'btn pri', type: 'button', id: 'tr-save', onclick: async () => { if (await act('movement_add', { type: 'TRANSFER', pallet_code: r.pallet_code, warehouse: r.warehouse, to_warehouse: to.value, cartons: n.value.trim() === '' ? undefined : Number(n.value), reason: why.value })) closeModal(); } }, t('save'))]);
+}
+function adjustForm(r) {
+  const n = h('input', { id: 'ad-n', inputmode: 'text' }), why = h('input', { id: 'ad-why' });
+  modal(t('adjust') + ' ' + r.pallet_code, h('div', null, h('p', { class: 'muted', text: r.product_name + ' · ' + WH(r.warehouse).name + ' · ' + n0(r.cartons) + ' ' + t('ctn') }), field(t('adj_delta'), n), field(t('reason'), why)),
+    [h('button', { class: 'btn pri', type: 'button', id: 'ad-save', onclick: async () => { if (await act('movement_add', { type: 'ADJUST', pallet_code: r.pallet_code, warehouse: r.warehouse, cartons: Number(n.value), reason: why.value })) closeModal(); } }, t('save'))]);
+}
+function palletInForm(container) {
+  if (!S.D.warehouses.length) { toast(t('need_wh'), true); return; }
+  const wh = sel('pi-wh', whOpts(false), container ? container.warehouse : S.f.wh), date = h('input', { id: 'pi-date', type: 'date', value: container ? container.arrival_date : today(), max: today() });
+  const cont = sel('pi-cont', [['', '—']].concat(S.D.containers.map(c => [c.container_no, c.container_no])), container ? container.container_no : '');
+  const tb = h('tbody');
+  const addRow = () => tb.append(h('tr', null, h('td', null, h('input', { 'data-f': 'pallet_code', placeholder: 'PID' })), h('td', null, sel('', prOpts(false), '', { 'data-f': 'product' })),
+    h('td', null, h('input', { 'data-f': 'lot' })), h('td', null, h('input', { 'data-f': 'exp_date', type: 'date' })), h('td', null, h('input', { 'data-f': 'cartons', inputmode: 'numeric', style: 'width:80px' })), h('td', null, h('input', { 'data-f': 'zone', style: 'width:90px', placeholder: 'FROZEN' }))));
+  addRow();
+  modal(t('pallet_in'), h('div', null, h('div', { class: 'row' }, h('div', { style: 'flex:1' }, field(t('wh'), wh)), h('div', { style: 'flex:1' }, field(t('date_in'), date)), h('div', { style: 'flex:1' }, field(t('container') + ' (' + t('optional') + ')', cont))),
+    h('div', { class: 'tw' }, h('table', { class: 'lines', id: 'pi-rows' }, h('thead', null, h('tr', null, [t('pallet'), t('product'), t('lot'), t('exp'), t('cartons'), t('zone')].map(x => h('th', { text: x })))), tb)),
+    h('button', { class: 'btn sm', type: 'button', id: 'pi-add', onclick: addRow }, t('add_row'))),
+    [h('button', { class: 'btn pri', type: 'button', id: 'pi-save', onclick: async () => {
+      const pallets = Array.from(tb.querySelectorAll('tr')).map(tr => { const o = {}; tr.querySelectorAll('[data-f]').forEach(i => { o[i.dataset.f] = i.value.trim(); }); o.cartons = Number(o.cartons); return o; }).filter(o => o.pallet_code);
+      if (await act('pallet_in', { warehouse: wh.value, date: date.value, container_no: cont.value, pallets })) closeModal();
+    } }, t('save'))]);
+}
+
+/* ---------- containers ---------- */
+function vCont() {
+  const rows = S.D.containers.slice().sort((a, b) => String(b.arrival_date).localeCompare(a.arrival_date)).map(c => {
+    const pals = S.D.pallets.filter(p => p.container_no === c.container_no), now = S.D.stock.filter(r => pals.some(p => p.pallet_code === r.pallet_code)).reduce((s, r) => s + r.cartons, 0);
+    return h('tr', { 'data-cont': c.container_no }, h('td', null, h('b', { text: c.container_no }), h('div', { class: 'muted', text: c.size + 'ft' })), h('td', { text: fd(c.arrival_date) }), h('td', { class: 'hp', text: c.supplier }), h('td', { text: WH(c.warehouse).name }),
+      h('td', { class: 'n', text: n0(pals.length) }), h('td', { class: 'n', text: n0(now) }), can() ? h('td', null, h('button', { class: 'btn sm', type: 'button', onclick: () => palletInForm(c) }, '+ ' + t('pallet_in'))) : null);
+  });
+  return h('div', null, can() ? h('div', { class: 'row', style: 'margin-bottom:12px' }, h('button', { class: 'btn pri', type: 'button', id: 'ct-add', onclick: contForm }, '+ ' + t('cont_add'))) : null,
+    h('div', { class: 'card' }, rows.length ? table([t('container'), t('arrival'), [t('supplier'), 'hp'], t('wh'), [t('pallets'), 'n'], [t('now_ctn'), 'n']].concat(can() ? [''] : []), rows, { id: 'ct-tbl' }) : h('p', { class: 'muted', text: t('none') })));
+}
+function contForm() {
+  const no = h('input', { id: 'ct-no', placeholder: 'CGMU5288973', style: 'text-transform:uppercase' }), size = sel('ct-size', [['20', '20ft'], ['40', '40ft'], ['40HC', '40ft HC']], '40'), wh = sel('ct-wh', whOpts(false), ''),
+    ar = h('input', { id: 'ct-date', type: 'date', value: today(), max: today() }), sup = h('input', { id: 'ct-sup' }), note = h('input', { id: 'ct-note' });
+  modal(t('cont_add'), h('div', null, field(t('cont_no'), no), field(t('size'), size), field(t('wh'), wh), field(t('arrival'), ar), field(t('supplier'), sup), field(t('note'), note)),
+    [h('button', { class: 'btn pri', type: 'button', id: 'ct-save', onclick: async () => { if (await act('container_save', { container_no: no.value, size: size.value, warehouse: wh.value, arrival_date: ar.value, supplier: sup.value, note: note.value })) closeModal(); } }, t('save'))]);
+}
+
+/* ---------- movements ---------- */
+function vMut() {
+  const reversed = {}; S.D.movements.forEach(m => { if (m.type === 'REVERSE') reversed[m.ref_seq] = true; });
+  const list = S.D.movements.filter(m => (!S.f.mtype || m.type === S.f.mtype) && (!S.f.mfrom || m.move_date >= S.f.mfrom) && (!S.f.mto || m.move_date <= S.f.mto) && (!S.f.wh || m.warehouse === S.f.wh));
+  const rows = list.map(m => h('tr', { 'data-seq': m.seq, 'data-type': m.type, class: reversed[m.seq] ? 'muted' : '' },
+    h('td', { text: '#' + m.seq }), h('td', null, fd(m.move_date), h('div', { class: 'muted', text: fdt(m.at) })), h('td', null, t('m_' + m.type), m.ref_seq ? h('div', { class: 'muted', text: '→ #' + m.ref_seq }) : null),
+    h('td', { text: m.pallet_code }), h('td', { class: 'hp', text: WH(m.warehouse).name }), h('td', { class: 'n ' + (m.cartons < 0 ? 'bad' : ''), text: (m.cartons > 0 ? '+' : '') + n0(m.cartons) }),
+    h('td', { class: 'hp' }, m.order_no ? h('b', { text: m.order_no + ' ' }) : null, m.reason || ''), h('td', { class: 'hp', text: m.by_user }),
+    h('td', null, reversed[m.seq] ? h('span', { class: 'chip', text: t('reversed') }) : can() && m.type !== 'REVERSE' ? h('button', { class: 'btn sm bad', type: 'button', 'data-act': 'reverse', onclick: () => ask(t('reverse') + ' #' + m.seq, t('reverse_q', { n: m.seq }), v => act('movement_reverse', { seq: m.seq, reason: v }).then(r => !!r)) }, t('reverse')) : null)));
+  return h('div', null, h('div', { class: 'card row' },
+    h('div', { style: 'flex:1;min-width:120px' }, sel('mu-type', [['', t('all')]].concat(['IN', 'OUT', 'TRANSFER', 'ADJUST', 'REVERSE'].map(x => [x, t('m_' + x)])), S.f.mtype, { onchange: e => { S.f.mtype = e.target.value; render(); } })),
+    h('div', { style: 'flex:1;min-width:120px' }, sel('mu-wh', whOpts(true), S.f.wh, { onchange: e => { S.f.wh = e.target.value; render(); } })),
+    h('div', { style: 'flex:1;min-width:130px' }, h('input', { id: 'mu-from', type: 'date', value: S.f.mfrom, title: t('from'), onchange: e => { S.f.mfrom = e.target.value; render(); } })),
+    h('div', { style: 'flex:1;min-width:130px' }, h('input', { id: 'mu-to', type: 'date', value: S.f.mto, title: t('to'), onchange: e => { S.f.mto = e.target.value; render(); } }))),
+    h('div', { class: 'card' }, rows.length ? table(['#', t('date'), t('type'), t('pallet'), [t('wh'), 'hp'], [t('cartons'), 'n'], [t('note'), 'hp'], [t('by'), 'hp'], ''], rows, { id: 'mu-tbl' }) : h('p', { class: 'muted', text: t('none') })));
+}
+
+/* ---------- daily check ---------- */
+/** .xlsx → tab-separated text (one block per sheet), with the browser's own unzip (DecompressionStream). */
+async function xlsxToText(file) {
+  const buf = new Uint8Array(await file.arrayBuffer()), dv = new DataView(buf.buffer), dec = new TextDecoder();
+  let e = buf.length - 22; while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) throw new Error('zip');
+  const files = {}; let p = dv.getUint32(e + 16, true);
+  for (let i = 0, n = dv.getUint16(e + 10, true); i < n; i++) {
+    const nl = dv.getUint16(p + 28, true), name = dec.decode(buf.subarray(p + 46, p + 46 + nl));
+    files[name] = { method: dv.getUint16(p + 10, true), size: dv.getUint32(p + 20, true), off: dv.getUint32(p + 42, true) };
+    p += 46 + nl + dv.getUint16(p + 30, true) + dv.getUint16(p + 32, true);
+  }
+  async function read(name) {
+    const f = files[name]; if (!f) return null;
+    const start = f.off + 30 + dv.getUint16(f.off + 26, true) + dv.getUint16(f.off + 28, true), data = buf.subarray(start, start + f.size);
+    if (f.method === 0) return dec.decode(data);
+    return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+  }
+  const xml = s => new DOMParser().parseFromString(s, 'application/xml');
+  const ssx = await read('xl/sharedStrings.xml');
+  const ss = ssx ? Array.from(xml(ssx).getElementsByTagName('si')).map(si => Array.from(si.getElementsByTagName('t')).map(x => x.textContent).join('')) : [];
+  const sheets = Object.keys(files).filter(n => /^xl\/worksheets\/sheet\d+\.xml$/.test(n)).sort((a, b) => Number(a.match(/\d+/)[0]) - Number(b.match(/\d+/)[0]));
+  const col = ref => { let n = 0; for (const ch of ref.replace(/\d+$/, '')) n = n * 26 + ch.charCodeAt(0) - 64; return n - 1; };
+  const out = [];
+  for (const s of sheets) {
+    Array.from(xml(await read(s)).getElementsByTagName('row')).forEach(row => {
+      const cells = [];
+      Array.from(row.getElementsByTagName('c')).forEach(c => {
+        const ty = c.getAttribute('t'), v = c.getElementsByTagName('v')[0];
+        let val = ty === 's' ? ss[Number(v && v.textContent)] : ty === 'inlineStr' ? Array.from(c.getElementsByTagName('t')).map(x => x.textContent).join('') : (v ? v.textContent : '');
+        cells[col(c.getAttribute('r') || 'A')] = String(val === undefined ? '' : val).replace(/[\t\r\n]+/g, ' ');
+      });
+      out.push(Array.from(cells, x => x || '').join('\t').replace(/\t+$/, ''));
+    });
+  }
+  return out.join('\n');
+}
+async function readFile(file) {
+  if (/\.xlsx$/i.test(file.name)) return xlsxToText(file);
+  const s = await file.text();
+  if (/\.csv$/i.test(file.name)) { const d = (s.split(';').length > s.split(',').length) ? ';' : ','; return s.split(/\r?\n/).map(l => l.split(d).map(c => c.replace(/^"|"$/g, '')).join('\t')).join('\n'); }
+  return s;
+}
+function vCek() {
+  const whSel = sel('ck-wh', whOpts(false), S.ckWh || (S.D.warehouses[0] || {}).code || '', { onchange: e => { S.ckWh = e.target.value; } });
+  const date = h('input', { id: 'ck-date', type: 'date', max: today(), value: S.ckDate || '' }), txt = h('textarea', { id: 'ck-text', value: S.ckText || '', oninput: e => { S.ckText = e.target.value; S.ck = null; } });
+  const file = h('input', { id: 'ck-file', type: 'file', accept: '.xlsx,.csv,.txt,.tsv', onchange: async e => { const f = e.target.files[0]; if (!f) return; try { txt.value = S.ckText = await readFile(f); preview(); } catch (err) { toast(t('ck_file_bad'), true); } } });
+  async function preview() {
+    S.ckWh = whSel.value; S.ckDate = date.value;
+    try { const r = await api('check_preview', { warehouse: whSel.value, text: txt.value, check_date: date.value || undefined }); S.ck = { wh: whSel.value, date: r.check_date, result: r.result }; render(); }
+    catch (e) { toast(e.message || e.error, true); }
+  }
+  const hist = S.D.checks.map(c => h('div', { class: 'row', 'data-check': c.check_no }, h('span', { style: 'flex:1' }, h('b', { text: c.check_no }), ' · ' + WH(c.warehouse).name + ' · ' + fd(c.check_date) + ' · ' + c.by_user + ' · ',
+    c.n_diff ? h('span', { class: 'bad', text: n0(c.n_diff) + ' ' + t('ck_diff') }) : h('span', { text: t('ck_all_ok') }), c.explained_note ? h('div', { class: 'muted', text: c.explained_note }) : null),
+    h('button', { class: 'btn sm', type: 'button', 'data-act': 'ck-print', onclick: () => printHtml(KColdDocs.check(c, ctx())) }, t('ck_print')),
+    c.n_diff && !c.explained_note && can() ? h('button', { class: 'btn sm', type: 'button', onclick: () => explain(c.check_no) }, t('explain')) : null));
+  return h('div', null, h('div', { class: 'card' }, h('p', { class: 'muted', text: t('ck_hint') }),
+    h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:150px' }, field(t('wh'), whSel)), h('div', { style: 'flex:1;min-width:150px' }, field(t('ck_date'), date)), h('div', { style: 'flex:2;min-width:200px' }, field(t('ck_file'), file))),
+    field(t('ck_text'), txt), h('div', { class: 'row', style: 'margin-top:10px' }, h('button', { class: 'btn pri', type: 'button', id: 'ck-preview', onclick: preview }, t('ck_preview')))),
+    S.ck ? checkResult() : null,
+    h('div', { class: 'card' }, h('h2', { text: t('ck_hist') }), h('div', { class: 'list', id: 'ck-hist' }, hist.length ? hist : h('p', { class: 'muted', text: t('none') }))));
+}
+function checkResult() {
+  const c = S.ck, r = c.result;
+  const lines = r.lines.map(l => h('tr', { class: l.diff ? 'diff' : '', 'data-key': l.key }, h('td', { text: l.key }), h('td', { text: l.label }), h('td', { class: 'n', text: n0(l.theirs) }), h('td', { class: 'n', text: n0(l.ours) }), h('td', { class: 'n', 'data-diff': l.diff, text: (l.diff > 0 ? '+' : '') + n0(l.diff) })));
+  const importable = r.unknown.filter(u => u.item && u.item.pallet && u.item.exp_date && u.item.cartons > 0);
+  const save = can() ? h('button', { class: 'btn pri', type: 'button', id: 'ck-save', onclick: async () => {
+    const res = await act('check_save', { warehouse: c.wh, text: S.ckText, check_date: c.date }, ' ');
+    if (res) { toast(t('ck_saved', { no: res.check.check_no })); S.ck = null; S.ckText = ''; render(); }
+  } }, t('ck_save')) : null;
+  const imp = isOwner() && importable.length ? h('button', { class: 'btn', type: 'button', id: 'ck-import', onclick: () => {
+    modal(t('ck_import'), h('p', { text: t('ck_import_q', { n: importable.length, wh: WH(c.wh).name, d: fd(c.date) }) }), [h('button', { class: 'btn pri', type: 'button', id: 'ck-import-ok', onclick: async () => {
+      const pallets = importable.map(u => { const i = u.item; return { pallet_code: i.pallet, product: u.product || i.item, product_name: i.product, ext_item: i.item || '', lot: i.lot, exp_date: i.exp_date, date_in: i.date_in, zone: i.zone, container_no: i.container_no, cartons: i.cartons, kg_per_ctn: i.kg && i.cartons ? Math.round(i.kg / i.cartons * 100) / 100 : 0 }; });
+      const res = await act('import_report', { warehouse: c.wh, date: c.date, pallets }, ' ');
+      if (res) { closeModal(); toast(t('ck_imported', { n: res.pallets })); S.ck = null; render(); }
+    } }, t('save'))]);
+  } }, t('ck_import')) : null;
+  const sub = (title, list, f, id) => list.length ? h('div', { id }, h('h2', { class: 'bad', text: title + ' (' + list.length + ')' }), h('div', { class: 'list' }, list.map(f))) : null;
+  return h('div', { class: 'card', id: 'ck-result', 'data-ndiff': r.n_diff },
+    h('h2', null, WH(c.wh).name + ' · ' + fd(c.date) + ' · ', r.n_diff ? h('span', { class: 'bad', text: n0(r.n_diff) + ' ' + t('ck_diff') }) : h('span', { text: t('ck_all_ok') })),
+    h('p', { class: 'muted', text: t('ck_ok') + ': ' + r.n_ok + ' · ' + t('ck_theirs') + ' ' + n0(r.total_theirs) + ' ' + t('ctn') + ' · ' + t('ck_ours') + ' ' + n0(r.total_ours) + ' ' + t('ctn') + ' · ' + t('ck_ignored', { n: r.ignored }) }),
+    lines.length ? table([t('pallet') + ' / ' + t('product'), t('name'), [t('ck_theirs'), 'n'], [t('ck_ours'), 'n'], [t('ck_delta'), 'n']], lines, { id: 'ck-lines' }) : null,
+    sub(t('ck_unknown'), r.unknown, u => h('div', { text: u.line + ' — ' + n0(u.cartons) + ' ' + t('ctn') }), 'ck-unknown'),
+    sub(t('ck_missing'), r.missing, m => h('div', { text: m.key + ' · ' + m.label + ' — ' + n0(m.ours) + ' ' + t('ctn') }), 'ck-missing'),
+    sub(t('ck_unparsed'), r.unparsed, u => h('div', { text: u }), 'ck-unparsed'),
+    h('div', { class: 'row', style: 'margin-top:10px' }, save, imp));
+}
+
+/* ---------- pick orders ---------- */
+function orderFull(o) { return Object.assign({}, o, { lines: o.lines || [] }); }
+function vOrd() {
+  const list = S.D.orders.filter(o => !S.f.ost || o.status === S.f.ost);
+  const C = ctx();
+  const cards = list.map(o => {
+    const tt = KColdDocs.orderTotals(o, C), open = o.status === 'open';
+    return h('div', { class: 'order', 'data-no': o.order_no, 'data-status': o.status },
+      h('div', { class: 'row' }, h('b', { text: o.order_no, style: 'flex:1' }), h('span', { class: 'chip ' + o.status, text: t('st_' + o.status) })),
+      h('div', { class: 'muted', text: WH(o.warehouse).name + ' → ' + o.dest_name + ' · ' + fd(o.order_date) + ' · ' + o.lines.length + ' ' + t('pallets') + ' · ' + n0(tt.cartons) + ' ' + t('ctn') + ' · ' + kgf(tt.kg) + ' kg' }),
+      o.trip ? h('div', { class: 'muted', 'data-trip': '' }, t('trip') + ': ' + [o.trip.vehicle, o.trip.driver, o.trip.plate].filter(Boolean).join(' · ') + (o.trip.cost ? ' · ' + rp(o.trip.cost) : '')) : null,
+      o.status === 'cancelled' && o.cancel_reason ? h('div', { class: 'muted', text: o.cancel_reason }) : null,
+      h('div', { class: 'row', style: 'margin-top:8px' },
+        h('button', { class: 'btn sm', type: 'button', 'data-act': 'a4', onclick: () => printHtml(KColdDocs.order(o, ctx())) }, t('a4')),
+        h('button', { class: 'btn sm', type: 'button', 'data-act': 'doc', onclick: () => KColdDocs.toDoc(KColdDocs.order(o, ctx()), o.order_no + '.doc') }, t('word')),
+        h('button', { class: 'btn sm', type: 'button', 'data-act': 'xls', onclick: () => orderXls(o) }, t('excel')),
+        h('button', { class: 'btn sm', type: 'button', 'data-act': 'wa', onclick: () => { const w = WH(o.warehouse); if (!w.pic_wa) toast(t('no_wa'), true); window.open(waLink(w.pic_wa, KColdDocs.waOrder(o, ctx())), '_blank', 'noopener'); } }, t('wa')),
+        o.status !== 'cancelled' ? h('button', { class: 'btn sm', type: 'button', 'data-act': 'truck', onclick: () => truckForm(o) }, t('truck')) : null,
+        open && can() ? h('button', { class: 'btn sm', type: 'button', 'data-act': 'edit', onclick: () => orderForm(o) }, t('edit')) : null,
+        open && can() ? h('button', { class: 'btn sm pri', type: 'button', 'data-act': 'pick', onclick: () => ask(t('mark_picked') + ' ' + o.order_no, t('pick_q') + ' ' + t('pick_date'), v => act('order_pick', { order_no: o.order_no, pick_date: v || today() }).then(r => !!r), { input: h('input', { id: 'ask-in', type: 'date', value: today(), max: today() }) }) }, t('mark_picked')) : null,
+        open && can() ? h('button', { class: 'btn sm bad', type: 'button', 'data-act': 'cancel', onclick: () => ask(t('cancel_order') + ' ' + o.order_no, t('cancel_q'), v => act('order_cancel', { order_no: o.order_no, reason: v }).then(r => !!r)) }, t('cancel_order')) : null));
+  });
+  return h('div', null, h('div', { class: 'card row' },
+    can() ? h('button', { class: 'btn pri', type: 'button', id: 'or-new', onclick: () => orderForm(null) }, '+ ' + t('or_new')) : null,
+    h('div', { style: 'flex:1;min-width:150px' }, sel('or-st', [['', t('all')], ['open', t('st_open')], ['picked', t('st_picked')], ['cancelled', t('st_cancelled')]], S.f.ost, { onchange: e => { S.f.ost = e.target.value; render(); } }))),
+    h('div', { id: 'or-list' }, cards.length ? cards : h('div', { class: 'card muted', text: t('none') })));
+}
+function orderXls(o) {
+  const C = ctx(), tt = KColdDocs.orderTotals(o, C);
+  KColdDocs.toXls([['No', 'PID', 'Produk', 'Lot', 'Kedaluwarsa', 'Karton']].concat(o.lines.map((l, i) => [i + 1, l.pallet_code, PR(l.product).name, l.lot, l.exp_date, Number(l.cartons)])).concat([['', '', '', '', 'TOTAL', tt.cartons],
+    [], ['No. SPB', o.order_no], ['Gudang', WH(o.warehouse).name], ['Tanggal', o.order_date], ['Tujuan', o.dest_name + (o.dest_address ? ', ' + o.dest_address : '')], ['Diambil oleh', o.pickup_person || '']]), o.order_no + '.xls', 'SPB');
+}
+function orderForm(o) {
+  if (!S.D.warehouses.length) { toast(t('need_wh'), true); return; }
+  const wh = sel('of-wh', whOpts(false), o ? o.warehouse : (S.f.wh || ''), o ? { disabled: true } : null), date = h('input', { id: 'of-date', type: 'date', value: o ? o.order_date : today() });
+  const dtype = sel('of-dtype', [['toko', t('dest_toko')], ['pelanggan', t('dest_cust')]], o ? o.dest_type : 'toko'), dname = h('input', { id: 'of-dname', value: o && o.dest_type === 'pelanggan' ? o.dest_name : '' });
+  const daddr = h('input', { id: 'of-daddr', value: o ? o.dest_address : (S.D.company.address || '') }), pick = h('input', { id: 'of-pick', value: o ? o.pickup_person : '' });
+  const veh = h('input', { id: 'of-veh', value: o ? o.vehicle : '', list: 'veh-list' }), note = h('input', { id: 'of-note', value: o ? o.note : '' });
+  const fp = sel('of-fp', prOpts(false), ''), fc = h('input', { id: 'of-fc', inputmode: 'numeric', placeholder: t('cartons'), style: 'max-width:110px' });
+  const tb = h('tbody', { id: 'of-lines' }), sum = h('div', { class: 'muted', id: 'of-sum' });
+  const avail = () => S.D.stock.filter(r => r.warehouse === wh.value && r.cartons > 0);
+  function recalc() { const c = Array.from(tb.querySelectorAll('[data-f="cartons"]')).reduce((s, i) => s + (Number(i.value) || 0), 0); sum.textContent = t('total') + ': ' + n0(c) + ' ' + t('ctn'); }
+  function addLine(pc, n) {
+    const ps = sel('', [['', '—']].concat(avail().map(r => [r.pallet_code, r.pallet_code + ' · ' + r.product_name + ' · ' + fd(r.exp_date) + ' · ' + n0(r.cartons) + ' ' + t('ctn')])), pc || '', { 'data-f': 'pallet_code' });
+    const ci = h('input', { 'data-f': 'cartons', inputmode: 'numeric', value: n || '', style: 'width:90px', oninput: recalc });
+    tb.append(h('tr', null, h('td', null, ps), h('td', null, ci), h('td', null, h('button', { class: 'btn sm bad', type: 'button', onclick: e => { e.target.closest('tr').remove(); recalc(); } }, '×'))));
+    recalc();
+  }
+  (o ? o.lines : []).forEach(l => addLine(l.pallet_code, l.cartons));
+  if (!o) addLine();
+  wh.addEventListener('change', () => { tb.replaceChildren(); addLine(); });
+  const fefoBtn = h('button', { class: 'btn sm', type: 'button', id: 'of-fefo', onclick: async () => {
+    try {
+      const r = await api('fefo', { warehouse: wh.value, product: fp.value, cartons: Number(fc.value), order_no: o ? o.order_no : '' });
+      Array.from(tb.querySelectorAll('tr')).forEach(tr => { if (!tr.querySelector('[data-f="pallet_code"]').value) tr.remove(); });
+      r.lines.forEach(l => addLine(l.pallet_code, l.cartons));
+      if (r.short > 0) toast(t('fefo_short', { n: r.short }), true);
+    } catch (e) { toast(e.message || e.error, true); }
+  } }, t('fefo'));
+  modal(o ? t('or_edit') + ' ' + o.order_no : t('or_new'), h('div', null,
+    h('datalist', { id: 'veh-list' }, S.D.vehicles.map(v => h('option', { value: v.name }))),
+    h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('wh'), wh)), h('div', { style: 'flex:1;min-width:140px' }, field(t('date'), date))),
+    h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('dest'), dtype)), h('div', { style: 'flex:1;min-width:140px' }, field(t('dest_name'), dname))),
+    field(t('dest_addr'), daddr), h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('pickup'), pick)), h('div', { style: 'flex:1;min-width:140px' }, field(t('vehicle'), veh))), field(t('note'), note),
+    h('h3', { style: 'margin-top:12px', text: t('lines') }), h('div', { class: 'row' }, h('div', { style: 'flex:2;min-width:140px' }, fp), fc, fefoBtn),
+    h('div', { class: 'tw' }, h('table', { class: 'lines' }, tb)), h('div', { class: 'row' }, h('button', { class: 'btn sm', type: 'button', id: 'of-add', onclick: () => addLine() }, t('add_row')), sum)),
+    [h('button', { class: 'btn pri', type: 'button', id: 'of-save', onclick: async () => {
+      const lines = Array.from(tb.querySelectorAll('tr')).map(tr => ({ pallet_code: tr.querySelector('[data-f="pallet_code"]').value, cartons: Number(tr.querySelector('[data-f="cartons"]').value) })).filter(l => l.pallet_code);
+      const r = await act('order_save', { order_no: o ? o.order_no : undefined, warehouse: wh.value, order_date: date.value, dest_type: dtype.value, dest_name: dname.value, dest_address: daddr.value, pickup_person: pick.value, vehicle: veh.value, note: note.value, lines });
+      if (r) { closeModal(); S.f.ost = 'open'; render(); }
+    } }, t('save'))]);
+}
+function truckForm(o) {
+  const C = ctx(), tt = KColdDocs.orderTotals(o, C), w = WH(o.warehouse), sug = KCold.vehicleFor(tt.kg), tr = o.trip || {};
+  const pickup = w.name + '\n' + (w.address || ''), drop = o.dest_name + '\n' + (o.dest_address || '');
+  const text = 'Order ' + o.order_no + '\n' + t('pickup_addr') + ': ' + pickup.replace('\n', ', ') + '\n' + t('drop_addr') + ': ' + drop.replace('\n', ', ') + '\n' + n0(tt.cartons) + ' ctn · ± ' + kgf(tt.kg) + ' kg · ' + sug + '\n' + fd(o.order_date);
+  const drv = sel('tk-drv', [['', '—']].concat((S.D.drivers || []).map((d, i) => [String(i), d.name + ' · ' + (d.vehicle || '') + ' · ' + (d.plate || '')])), '');
+  const via = sel('tk-via', [['lalamove', t('via_lala')], ['sopir', t('via_drv')]], tr.via || 'lalamove'), veh = h('input', { id: 'tk-veh', value: tr.vehicle || sug, list: 'veh-list2' }),
+    dn = h('input', { id: 'tk-driver', value: tr.driver || '' }), pl = h('input', { id: 'tk-plate', value: tr.plate || '' }), cost = h('input', { id: 'tk-cost', inputmode: 'numeric', value: tr.cost || '' });
+  drv.addEventListener('change', () => { const d = (S.D.drivers || [])[Number(drv.value)]; if (d) { via.value = 'sopir'; dn.value = d.name; pl.value = d.plate || ''; if (d.vehicle) veh.value = d.vehicle; } });
+  modal(t('truck') + ' · ' + o.order_no, h('div', { id: 'truck' },
+    h('datalist', { id: 'veh-list2' }, S.D.vehicles.map(v => h('option', { value: v.name }))),
+    h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:200px' }, h('label', { text: t('pickup_addr') }), h('pre', { class: 'copy', id: 'tk-pickup', text: pickup }), h('button', { class: 'btn sm', type: 'button', onclick: () => copyText(pickup.replace('\n', ', ')) }, t('copy'))),
+      h('div', { style: 'flex:1;min-width:200px' }, h('label', { text: t('drop_addr') }), h('pre', { class: 'copy', id: 'tk-drop', text: drop }), h('button', { class: 'btn sm', type: 'button', onclick: () => copyText(drop.replace('\n', ', ')) }, t('copy')))),
+    h('p', null, t('total') + ': ', h('b', { id: 'tk-ctn', text: n0(tt.cartons) + ' ' + t('ctn') }), ' · ' + t('est_kg') + ': ', h('b', { id: 'tk-kg', text: kgf(tt.kg) + ' kg' }), ' · ' + t('suggest') + ': ', h('b', { id: 'tk-sug', text: sug })),
+    h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', id: 'tk-lala', onclick: () => { copyText(text); window.open(CONFIG.LALAMOVE_URL, '_blank', 'noopener'); } }, t('open_lala')),
+      drv, h('button', { class: 'btn', type: 'button', id: 'tk-wa', onclick: () => { const d = (S.D.drivers || [])[Number(drv.value)]; window.open(waLink(d ? d.wa : '', text), '_blank', 'noopener'); } }, t('wa_driver'))),
+    can() ? h('div', null, h('h3', { style: 'margin-top:12px', text: t('trip') }), h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:130px' }, field(t('via'), via)), h('div', { style: 'flex:1;min-width:130px' }, field(t('vehicle'), veh))),
+      h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:130px' }, field(t('driver'), dn)), h('div', { style: 'flex:1;min-width:110px' }, field(t('plate'), pl)), h('div', { style: 'flex:1;min-width:110px' }, field(t('cost'), cost)))) : null),
+    can() ? [h('button', { class: 'btn pri', type: 'button', id: 'tk-save', onclick: async () => { if (await act('trip_save', { order_no: o.order_no, via: via.value, vehicle: veh.value, driver: dn.value, driver_wa: ((S.D.drivers || [])[Number(drv.value)] || {}).wa, plate: pl.value, cost: Number(String(cost.value).replace(/\D/g, '')) || 0 })) closeModal(); } }, t('save'))] : []);
+}
+
+/* ---------- settings (owner) ---------- */
+function vSet() {
+  const D = S.D;
+  const whRows = D.warehouses.map(w => h('tr', { 'data-wh': w.code, class: w.active ? '' : 'muted' }, h('td', null, h('b', { text: w.code })), h('td', null, w.name, h('div', { class: 'muted', text: w.address })), h('td', { class: 'hp', text: [w.pic_name, w.pic_wa].filter(Boolean).join(' · ') }),
+    h('td', { class: 'hp', text: rp(w.rate) + (w.rate_unit === 'day' ? t('per_day') : t('per_month')) }), h('td', { class: 'hp', text: w.parser }), h('td', null, h('button', { class: 'btn sm', type: 'button', 'data-act': 'wh-edit', onclick: () => whForm(w) }, t('edit')))));
+  const prRows = D.products.map(p => h('tr', { 'data-pr': p.code, class: p.active ? '' : 'muted' }, h('td', null, h('b', { text: p.code })), h('td', { text: p.name }), h('td', { class: 'n', text: kgf(p.kg_per_ctn) }), h('td', { class: 'hp', text: p.aliases }), h('td', null, h('button', { class: 'btn sm', type: 'button', onclick: () => prForm(p) }, t('edit')))));
+  const drvBox = h('tbody', { id: 'set-drv' });
+  const addDrv = d => drvBox.append(h('tr', null, ['name', 'wa', 'vehicle', 'plate'].map(k => h('td', null, h('input', { 'data-f': k, value: (d && d[k]) || '' }))), h('td', null, h('button', { class: 'btn sm bad', type: 'button', onclick: e => e.target.closest('tr').remove() }, '×'))));
+  (D.drivers || []).forEach(addDrv);
+  const company = h('input', { id: 'set-company', value: D.company.name });
+  return h('div', null,
+    h('div', { class: 'card' }, h('div', { class: 'row' }, h('h2', { text: t('s_wh'), style: 'flex:1' }), h('button', { class: 'btn pri', type: 'button', id: 'wh-add', onclick: () => whForm(null) }, '+ ' + t('add'))), table([t('code'), t('name'), [t('pic'), 'hp'], [t('rate'), 'hp'], [t('parser'), 'hp'], ''], whRows, { id: 'set-wh' })),
+    h('div', { class: 'card' }, h('div', { class: 'row' }, h('h2', { text: t('s_pr'), style: 'flex:1' }), h('button', { class: 'btn pri', type: 'button', id: 'pr-add', onclick: () => prForm(null) }, '+ ' + t('add'))), table([t('code'), t('name'), [t('kg_ctn'), 'n'], [t('aliases'), 'hp'], ''], prRows, { id: 'set-pr' })),
+    h('div', { class: 'card' }, h('h2', { text: t('s_drv') }), h('div', { class: 'tw' }, h('table', { class: 'lines' }, h('thead', null, h('tr', null, [t('name'), 'WhatsApp', t('vehicle'), t('plate'), ''].map(x => h('th', { text: x })))), drvBox)),
+      h('div', { class: 'row' }, h('button', { class: 'btn sm', type: 'button', id: 'drv-add', onclick: () => addDrv() }, t('add_row')), h('button', { class: 'btn pri', type: 'button', id: 'drv-save', onclick: () => {
+        const drivers = Array.from(drvBox.querySelectorAll('tr')).map(tr => { const o = {}; tr.querySelectorAll('[data-f]').forEach(i => { o[i.dataset.f] = i.value.trim(); }); return o; }).filter(d => d.name || d.wa);
+        act('settings_save', { drivers });
+      } }, t('save')))),
+    h('div', { class: 'card' }, field(t('s_company'), company), h('button', { class: 'btn pri', type: 'button', id: 'company-save', style: 'margin-top:8px', onclick: () => act('settings_save', { company: company.value }) }, t('save'))));
+}
+function whForm(w) {
+  const f = {}, inp = (k, attrs) => (f[k] = h('input', Object.assign({ id: 'wf-' + k, value: w ? (w[k] === undefined ? '' : w[k]) : '' }, attrs || {})));
+  const unit = sel('wf-unit', [['month', t('per_month')], ['day', t('per_day')]], w ? w.rate_unit : 'month'), parser = sel('wf-parser', Object.keys(KColdParsers.parsers).map(k => [k, k]), w ? w.parser : 'generic');
+  const active = h('input', { id: 'wf-active', type: 'checkbox', checked: w ? w.active : true, style: 'width:auto;min-height:0' });
+  modal(w ? t('edit') + ' ' + w.code : t('s_wh'), h('div', null, field(t('code'), inp('code', w ? { readonly: true } : { placeholder: 'DPP' })), field(t('name'), inp('name')), field(t('address'), inp('address')),
+    h('div', { class: 'row' }, h('div', { style: 'flex:1' }, field(t('pic'), inp('pic_name'))), h('div', { style: 'flex:1' }, field(t('pic_wa'), inp('pic_wa', { inputmode: 'tel' })))), field(t('cust_id'), inp('customer_id')),
+    h('div', { class: 'row' }, h('div', { style: 'flex:1' }, field(t('rate') + ' (Rp)', inp('rate', { inputmode: 'numeric' }))), h('div', { style: 'flex:1' }, field(t('unit'), unit))), field(t('parser'), parser), h('label', null, active, ' ' + t('active'))),
+    [h('button', { class: 'btn pri', type: 'button', id: 'wf-save', onclick: async () => {
+      const d = {}; Object.keys(f).forEach(k => { d[k] = f[k].value; }); d.rate = Number(String(d.rate).replace(/\D/g, '')) || 0; d.rate_unit = unit.value; d.parser = parser.value; d.active = active.checked;
+      if (await act('warehouse_save', d)) closeModal();
+    } }, t('save'))]);
+}
+function prForm(p) {
+  const code = h('input', { id: 'pf-code', value: p ? p.code : '', readonly: !!p }), name = h('input', { id: 'pf-name', value: p ? p.name : '' }), kg = h('input', { id: 'pf-kg', inputmode: 'decimal', value: p ? p.kg_per_ctn : '' }), al = h('input', { id: 'pf-al', value: p ? p.aliases : '' });
+  const active = h('input', { id: 'pf-active', type: 'checkbox', checked: p ? p.active : true, style: 'width:auto;min-height:0' });
+  modal(p ? t('edit') + ' ' + p.code : t('s_pr'), h('div', null, field(t('code'), code), field(t('name'), name), field(t('kg_ctn'), kg), field(t('aliases'), al), h('label', null, active, ' ' + t('active'))),
+    [h('button', { class: 'btn pri', type: 'button', id: 'pf-save', onclick: async () => { if (await act('product_save', { code: code.value, name: name.value, kg_per_ctn: Number(String(kg.value).replace(',', '.')) || 0, aliases: al.value, active: active.checked })) closeModal(); } }, t('save'))]);
+}
+
+/* ---------- start ---------- */
+$('#lang').addEventListener('click', () => { S.lang = S.lang === 'ar' ? 'id' : 'ar'; LS.set('kcold.lang', S.lang); if (S.D) render(); else { render(); renderLogin(); } });
+$('#logout').addEventListener('click', logout);
+$('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
+(async function start() {
+  render();
+  S.key = LS.get('kcold.key', '') || LS.get(KP + 'key', '') || (MOCK ? 'demo' : '');
+  // this tab's session: our own, or the owner app's (same site, same tab) — the PIN hash is never kept in localStorage
+  const own = SS.get('kcold.session'), pos = SS.get(KP + 'session');
+  const sess = own && own.pin_hash ? own : pos && pos.pin_hash && ['owner', 'manager', 'akuntan'].includes(pos.role) ? pos : null;
+  if (S.key && sess) {
+    S.user = sess.user; S.pin_hash = sess.pin_hash;
+    try { const r = await api('login', {}); S.user = r.me.name; S.role = r.me.role; SS.set('kcold.session', { user: S.user, pin_hash: S.pin_hash, role: S.role }); await load(); return; }
+    catch (e) { S.pin_hash = ''; }
+  }
+  renderLogin();
+})();
+</script>
+</body>
+</html>
