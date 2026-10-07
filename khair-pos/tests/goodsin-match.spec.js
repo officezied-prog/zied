@@ -1,7 +1,7 @@
 // v12 Goods-in checked against the photographed supplier note; locked after saving; corrections with approval.
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, login, getDb, productByName, nav, photoFile, asUser, typePin, pickCarrier, CARRIER } = require('./helpers');
+const { SHOTS, login, getDb, productByName, nav, photoFile, asUser, typePin, pickCarrier, CARRIER, switchUser } = require('./helpers');
 
 const NOTE = { supplier: 'PT Kurma Nusantara', date: null, invoice_no: 'KN-7781', total: 2450000,
   items: [{ name: 'KURMA MEDJOOL JUMBO 1KG', qty: 10, unit: 'kg', unit_price: 170000, total: 1700000 }, { name: 'GULA PASIR 1 KG', qty: 50, unit: 'pak', unit_price: 15000, total: 750000 }] };
@@ -109,9 +109,7 @@ test('a cashier\'s correction waits for the manager: before → after card witho
   expect((await asUser(page, 'Jihan', '2222', 'decide_approval', { request_id: req.request_id, decision: 'approved' })).error).toBe('INVALID');
 
   const before = productByName(await getDb(page), /Medjool/);
-  await page.click('#tb-lock');
-  await page.click('[data-act="login-user"][data-name="Jihan"]');
-  await typePin(page, '2222');
+  await switchUser(page, 'Jihan', '2222');
   await expect(page.locator('#tb-user')).toHaveText('Jihan');
   await nav(page, 'approvals');
   const card = page.locator(`.apr-card[data-req="${req.request_id}"]`);

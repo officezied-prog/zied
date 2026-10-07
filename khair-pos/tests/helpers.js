@@ -19,7 +19,6 @@ function jktToday(offsetDays = 0) {
 async function openApp(page, query = '', opts = {}) {
   const consent = opts.consent === undefined ? 'no' : opts.consent;
   if (consent && !page.__consentInit) { page.__consentInit = true; await page.addInitScript(c => { try { if (!localStorage.getItem('kpos.loc_consent')) localStorage.setItem('kpos.loc_consent', c); } catch (e) { } }, consent); }
-  if (opts.ownerDevice !== false && !page.__ownerInit) { page.__ownerInit = true; await page.addInitScript(() => { try { localStorage.setItem('kpos.mock.owner_device', 'true'); } catch (e) { } }); }
   await page.goto('index.html?mock=1' + query);
   await expect(page.locator('#login')).toBeVisible();
 }
@@ -36,11 +35,29 @@ async function typePin(page, pin) {
 
 /** Logs in. Owner and manager sell without a cash drawer (v15: only kasir accounts open one, in Khair Kasir).
  *  Owner/manager land on Beranda; the helper then goes to the POS screen unless opts.stay. */
+/** What Khair Kasir hands over when a manager or accountant goes on to the management screens: the session in this tab. */
+async function staffSession(page, user, pin, query = '') {
+  if (await page.locator('#login').isVisible()) await expect(page.locator('[data-act="login-user"]').first()).toBeVisible(); // the demo data is fully written
+  const role = await page.evaluate(n => (JSON.parse(localStorage.getItem('kmock.db')).users.find(u => u.name === n) || {}).role, user);
+  await page.evaluate(([u, r, h]) => { localStorage.setItem('kpos.mock.key', JSON.stringify('demo')); localStorage.setItem('kpos.mock.session', JSON.stringify({ user: u, role: r })); sessionStorage.setItem('kpos.mock.session', JSON.stringify({ user: u, role: r, pin_hash: h })); }, [user, role, sha(`demo:${user.toLowerCase()}:${pin}`)]);
+  await page.goto('index.html?mock=1' + query);
+}
+/** Another person takes over this device: the owner unlocks here; staff come through Khair Kasir (session hand-off). */
+async function switchUser(page, user, pin, query = '') {
+  if (user === 'Pemilik') {
+    await page.click('#tb-lock');
+    await page.click(`[data-act="login-user"][data-name="${user}"]`);
+    await typePin(page, pin);
+  } else await staffSession(page, user, pin, query);
+  await expect(page.locator('#app')).toBeVisible();
+}
 async function login(page, user = 'Pemilik', pin = '1234', query = '', opts = {}) {
   await openApp(page, query, opts);
   await enterKey(page);
-  await page.click(`[data-act="login-user"][data-name="${user}"]`);
-  await typePin(page, pin);
+  if (user === 'Pemilik') {
+    await page.click(`[data-act="login-user"][data-name="${user}"]`);
+    await typePin(page, pin);
+  } else await staffSession(page, user, pin, query); // staff come through Khair Kasir (owner's decision 07 Oct)
   await expect(page.locator('#app')).toBeVisible();
   await expect(page.locator('#shift-open')).toHaveCount(0);
   if (opts.stay) return;
@@ -101,8 +118,7 @@ async function loginKasirRedirect(page, user = 'Siti', pin = '1111') {
   await page.addInitScript(() => { try { if (!sessionStorage.getItem('kr')) { sessionStorage.setItem('kr', '1'); localStorage.removeItem('kpos.mock.session'); } } catch (e) { } });
   await openApp(page);
   if (await page.locator('#lg-key').count()) await enterKey(page);
-  await page.click(`[data-act="login-user"][data-name="${user}"]`);
-  await typePin(page, pin);
+  await staffSession(page, user, pin); // a cashier or sales session that reaches the owner app
   await expect(page.locator('#kasir-redirect')).toBeVisible();
 }
 
@@ -127,4 +143,4 @@ async function pickCarrier(page, type = 'pemasok') {
   await expect(page.locator(`#pu-car-${type}`)).toHaveClass(/\bon\b/);
 }
 const CARRIER = { type: 'pemasok', name: 'Pak Darto', vehicle: 'B 9012 TTF' };
-module.exports = { pickCarrier, CARRIER, rp, pct, sha, SHOTS, jktToday, openApp, enterKey, typePin, login, getDb, productByName, nav, addBySearch, confirmQty, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect, editDb, blockMapNetwork };
+module.exports = { staffSession, switchUser, pickCarrier, CARRIER, rp, pct, sha, SHOTS, jktToday, openApp, enterKey, typePin, login, getDb, productByName, nav, addBySearch, confirmQty, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect, editDb, blockMapNetwork };

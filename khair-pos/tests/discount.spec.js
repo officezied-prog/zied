@@ -2,7 +2,7 @@
 // the manager's card also shows profit (owner decision 07 Oct), the kasir never; the approved request lets the sale through once (status used).
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, jktToday, login, getDb, nav, asUser, productByName } = require('./helpers');
+const { SHOTS, jktToday, login, getDb, nav, asUser, productByName, switchUser } = require('./helpers');
 
 const NF = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
 const rp = n => (n < 0 ? '-Rp ' : 'Rp ') + NF.format(Math.abs(Math.round(n)));
@@ -41,10 +41,7 @@ test('kasir above the limit → request_discount; owner and manager see profit b
   await page.screenshot({ path: path.join(SHOTS, 'desktop-approvals-discount.png') });
 
   // manager: same card without any profit; API payload stripped too
-  await page.click('#tb-lock');
-  await page.click('[data-act="login-user"][data-name="Jihan"]');
-  for (const d of '2222') await page.click(`[data-act="pin-key"][data-k="${d}"]`);
-  await page.click('[data-act="pin-key"][data-k="ok"]');
+  await switchUser(page, 'Jihan', '2222');
   await expect(page.locator('#app')).toBeVisible();
   const ca = await asUser(page, 'Jihan', '2222', 'check_approval', { request_id: rq.request_id });
   expect(JSON.parse(ca.approval.payload).profit_after).toBe(after - cost);

@@ -2,14 +2,9 @@
 // one proposes (propose_agreement), the OTHER confirms in the inbox; save_settings → AGREEMENT_REQUIRED; history kept.
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, login, getDb, nav, asUser, typePin } = require('./helpers');
+const { SHOTS, login, getDb, nav, asUser, typePin, switchUser } = require('./helpers');
 
-async function relogin(page, user, pin) {
-  await page.click('#tb-lock');
-  await page.click(`[data-act="login-user"][data-name="${user}"]`);
-  await typePin(page, pin);
-  await expect(page.locator('#app')).toBeVisible();
-}
+async function relogin(page, user, pin) { await switchUser(page, user, pin); }
 
 test('owner proposes a new return limit → only the manager sees and confirms it → limit changes, history and activity', async ({ page }) => {
   await login(page, 'Pemilik', '1234', '', { stay: true });

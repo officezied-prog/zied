@@ -28,26 +28,9 @@ test('Kode pemilik: set twice-typed 8 digits; log in to another account with it 
   expect(await page.evaluate(h => Object.keys(localStorage).filter(k => k !== 'kmock.db').some(k => localStorage.getItem(k).includes(h)), masterHash(MASTER))).toBe(false);
   await page.locator('#st-master').screenshot({ path: path.join(SHOTS, 'desktop-settings-master.png') });
 
-  // log in to Jihan's account with the master code
-  await page.click('#tb-lock');
-  await pickUser(page, 'Jihan');
-  await page.click('#lg-master');
-  await expect(page.locator('#lg-master-on')).toContainText('Jihan');
-  await typePin(page, '12345678'.slice(0, 7));
-  await expect(page.locator('#lg-err')).toContainText('8 angka');
-  await typePin(page, '11112222');
-  await expect(page.locator('#lg-err')).not.toBeEmpty();
-  await typePin(page, MASTER);
-  await expect(page.locator('#app')).toBeVisible();
-  await expect(page.locator('#tb-user')).toHaveText('Jihan');
-  await expect(page.locator('#tb-master')).toBeVisible();
-  await expect(page.locator('#tb-master')).toHaveText('via kode pemilik');
-  await page.screenshot({ path: path.join(SHOTS, 'desktop-login-via-master.png') });
-  db = await getDb(page);
-  expect(db.activity.filter(a => a.kind === 'masuk_master').slice(-1)[0]).toMatchObject({ user: 'Jihan', level: 'warn' });
-  // the master code is not remembered as an offline PIN
-  const pins = await page.evaluate(() => JSON.parse(localStorage.getItem('kpos.mock.pins') || '{}'));
-  expect(pins.jihan).toBeUndefined();
+  // staff accounts are opened with the master code in Khair Kasir (screen tested in tests-kasir/login-v16); the server accepts it
+  const viaMc = await page.evaluate(async h => { try { return await apiRaw('login', {}, { key: 'demo', user: 'Jihan', pin_hash: h }); } catch (e) { return { error: e.code }; } }, masterHash(MASTER));
+  expect(viaMc).toMatchObject({ via_master: true, user: { name: 'Jihan' } });
 
   // owner via master: the card refuses, the server refuses set_master / change_pin
   await page.click('#tb-lock');
@@ -81,29 +64,8 @@ test('a PIN the owner sets is temporary: notice + "belum ganti PIN"; first login
   expect(await asUser(page, 'Nadia', '1357', 'bootstrap')).toMatchObject({ error: 'PIN_CHANGE_REQUIRED' });
   expect(await asUser(page, 'Nadia', '1357', 'login')).toMatchObject({ must_change: true });
 
-  await page.click('#tb-lock');
-  await page.evaluate(() => { localStorage.removeItem('kpos.mock.users_demo'); });
-  await page.reload();
-  await pickUser(page, 'Nadia');
-  await typePin(page, '1357');
-  await expect(page.locator('#pin-change')).toBeVisible();
-  await expect(page.locator('#app')).toBeHidden();
-  await expect(page.locator('#pc-title')).toHaveText('Buat PIN baru');
-  for (const d of '1234') await page.click(`[data-act="pc-key"][data-k="${d}"]`);
-  await page.click('[data-act="pc-key"][data-k="ok"]');
-  await expect(page.locator('#pc-err')).toContainText('6 angka');
-  await page.screenshot({ path: path.join(SHOTS, 'desktop-pin-change.png') });
-  const enter = async pin => { for (const d of pin) await page.click(`[data-act="pc-key"][data-k="${d}"]`); await page.click('[data-act="pc-key"][data-k="ok"]'); };
-  await page.click('[data-act="pc-key"][data-k="del"]'); await page.click('[data-act="pc-key"][data-k="del"]'); await page.click('[data-act="pc-key"][data-k="del"]'); await page.click('[data-act="pc-key"][data-k="del"]');
-  await enter('482915');
-  await expect(page.locator('#pc-step')).toHaveAttribute('data-step', '2');
-  await enter('482910');
-  await expect(page.locator('#pc-err')).toContainText('tidak sama');
-  await enter('482915');
-  await enter('482915');
-  await expect(page.locator('#app')).toBeVisible();
-  await expect(page.locator('#pin-change')).toBeHidden();
-  await expect(page.locator('#tb-user')).toHaveText('Nadia');
+  // her first login and the "Buat PIN baru" screen are in Khair Kasir (tests-kasir/login-v16); here the same call
+  expect(await asUser(page, 'Nadia', '1357', 'change_pin', { new_pin_hash: sha('demo:nadia:482915') })).toMatchObject({ ok: true });
   db = await getDb(page);
   expect(db.users.find(u => u.name === 'Nadia')).toMatchObject({ must_change: false, pin_hash: sha('demo:nadia:482915') });
   expect(db.activity.filter(a => a.kind === 'ganti_pin').slice(-1)[0]).toMatchObject({ user: 'Nadia' });
@@ -124,8 +86,10 @@ test('phone: "Buat PIN baru" full screen; PIN_CHANGE_REQUIRED during a session o
 
 test('5 wrong PINs lock the account 15 minutes: message with the time, pad disabled; the server says LOCKED even for the right PIN', async ({ page }) => {
   await login(page, 'Pemilik', '1234', '', { stay: true });
-  await page.click('#tb-lock');
-  await pickUser(page, 'Jihan');
+  // the owner's own account, from a fresh login screen (staff accounts: tests-kasir/login-v16)
+  await page.evaluate(() => { localStorage.removeItem('kpos.mock.session'); sessionStorage.clear(); });
+  await page.reload();
+  await pickUser(page, 'Pemilik');
   for (let i = 0; i < 4; i++) { await typePin(page, '9999'); await expect(page.locator('#lg-err')).not.toBeEmpty(); }
   await expect(page.locator('#lg-err')).toContainText('1 kali lagi');
   await typePin(page, '9999');
@@ -134,20 +98,19 @@ test('5 wrong PINs lock the account 15 minutes: message with the time, pad disab
   await expect(page.locator('#lg-pad [data-k="ok"]')).toBeDisabled();
   await page.screenshot({ path: path.join(SHOTS, 'desktop-login-locked.png') });
   const db = await getDb(page);
-  const j = db.users.find(u => u.name === 'Jihan');
+  const j = db.users.find(u => u.name === 'Pemilik');
   expect(Date.parse(j.locked_until)).toBeGreaterThan(Date.now() + 14 * 60000);
-  expect(await asUser(page, 'Jihan', '2222', 'login')).toMatchObject({ error: 'LOCKED' });
+  expect(await asUser(page, 'Pemilik', '1234', 'login')).toMatchObject({ error: 'LOCKED' });
   // other accounts are not locked
-  await pickUser(page, 'Pemilik');
-  await expect(page.locator('#lg-pad [data-k="1"]')).toBeEnabled();
+  expect((await asUser(page, 'Jihan', '2222', 'login')).user).toMatchObject({ name: 'Jihan' });
   // after the time the pad works again (server lock lifted)
-  await editDb(page, `db.users.find(u => u.name === 'Jihan').locked_until = new Date(Date.now() - 1000).toISOString();`);
-  await page.evaluate(() => { const l = JSON.parse(localStorage.getItem('kpos.mock.locks')); l.jihan.until = Date.now() - 1; localStorage.setItem('kpos.mock.locks', JSON.stringify(l)); });
-  await pickUser(page, 'Jihan');
+  await editDb(page, `db.users.find(u => u.name === 'Pemilik').locked_until = new Date(Date.now() - 1000).toISOString();`);
+  await page.evaluate(() => { const l = JSON.parse(localStorage.getItem('kpos.mock.locks')); l.pemilik.until = Date.now() - 1; localStorage.setItem('kpos.mock.locks', JSON.stringify(l)); });
+  await page.reload();
   await expect(page.locator('#lg-pad [data-k="1"]')).toBeEnabled();
-  await typePin(page, '2222');
+  await typePin(page, '1234');
   await expect(page.locator('#app')).toBeVisible();
-  expect((await getDb(page)).users.find(u => u.name === 'Jihan')).toMatchObject({ fail_count: 0, locked_until: '' });
+  expect((await getDb(page)).users.find(u => u.name === 'Pemilik')).toMatchObject({ fail_count: 0, locked_until: '' });
 });
 
 test('LOCKED answers carry locked_until; sales may change_pin; get_sale gives the invoice with what was already returned', async ({ page }) => {

@@ -64,7 +64,7 @@ test('receipt fee: setting; POS first receipt free, then +fee when ticked; shown
   expect(k.sale).toMatchObject({ send_fee: 750, total: p.retail_price + 750 });
 });
 
-test('users grouped by role (Akuntan: belum ditentukan); "Ganti orang" → new name + temporary PIN; the new person must change it; login list shows role titles', async ({ page }) => {
+test('users grouped by role (Akuntan: belum ditentukan); "Ganti orang" → new name + temporary PIN; the new person must change it; login: the owner app lists only the owner', async ({ page }) => {
   await login(page, 'Pemilik', '1234', '', { stay: true });
   await nav(page, 'settings');
   for (const [r, title] of [['owner', 'Pemilik'], ['manager', 'Manajer'], ['kasir', 'Kasir'], ['sales', 'Sales'], ['akuntan', 'Akuntan']]) await expect(page.locator(`[data-role-group="${r}"] h4`)).toContainText(title);
@@ -104,10 +104,14 @@ test('users grouped by role (Akuntan: belum ditentukan); "Ganti orang" → new n
   await page.click('#tb-lock');
   await page.evaluate(() => { localStorage.removeItem('kpos.mock.users_demo'); });
   await page.reload();
-  await expect(page.locator('[data-act="login-user"][data-name="Nuraini"]')).toHaveText('Nuraini');
+  // the owner app lists only the owner; the new manager logs in through Khair Kasir and must make her own PIN there
   await expect(page.locator('[data-act="login-user"][data-name="Pemilik"]')).toHaveText('Pemilik');
-  await page.screenshot({ path: path.join(SHOTS, 'desktop-login-role-titles.png') });
+  await expect(page.locator('[data-act="login-user"][data-name="Nuraini"]')).toHaveCount(0);
+  await page.screenshot({ path: path.join(SHOTS, 'desktop-login-owner-only.png') });
+  await page.evaluate(() => localStorage.setItem('kpos.device_consent', JSON.stringify({ ok: false, at: new Date().toISOString() })));
+  await page.goto('kasir/index.html?mock=1');
+  if (await page.locator('[data-act="login-back"]').first().isVisible()) await page.locator('[data-act="login-back"]').first().click(); // the PIN pad of the last person
   await page.click('[data-act="login-user"][data-name="Nuraini"]');
   await typePin(page, '135791');
-  await expect(page.locator('#pin-change')).toBeVisible();
+  await expect(page.locator('#newpin')).toContainText('Buat PIN baru');
 });

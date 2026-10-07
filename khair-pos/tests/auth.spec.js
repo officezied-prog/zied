@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { sha, openApp, enterKey, typePin, login, getDb, loginKasirRedirect } = require('./helpers');
+const { sha, openApp, enterKey, typePin, login, getDb, loginKasirRedirect, editDb, staffSession } = require('./helpers');
 
 test('first run: store key → setup owner → login, lock and unlock with PIN', async ({ page }) => {
   await openApp(page, '&seed=empty');
@@ -44,13 +44,17 @@ test('login: wrong PIN is rejected, keyboard PIN entry works, bad store key is r
   await expect(page.locator('.login-err')).toContainText('Kode toko tidak dikenal');
 
   await enterKey(page);
-  await page.click('[data-act="login-user"][data-name="Jihan"]');
+  await page.click('[data-act="login-user"][data-name="Pemilik"]');
   await typePin(page, '9999');
   await expect(page.locator('.login-err')).toContainText('PIN salah');
 
-  await page.keyboard.type('2222');
+  await page.keyboard.type('1234');
   await page.keyboard.press('Enter');
   await expect(page.locator('#app')).toBeVisible();
+  // a manager comes from Khair Kasir with the session of this tab
+  await staffSession(page, 'Jihan', '2222');
+  await expect(page.locator('#app')).toBeVisible();
+  await expect(page.locator('#tb-user')).toHaveText('Jihan');
   await expect(page.locator('#tb-role')).toHaveText('');
   await expect(page.locator('#shift-open')).toHaveCount(0);
   // manager has no owner-only panels
@@ -77,16 +81,37 @@ test('auto-lock after idle time', async ({ page }) => {
   await expect(page.locator('.pinpad')).toBeVisible();
 });
 
-test('names only; the owner shows on the login screen only on a device opened with his own link (khair-pos/zied/)', async ({ page }) => {
-  await openApp(page, '', { ownerDevice: false });
+test('owner app lists only the owner; staff log in once in Khair Kasir and go on to their own screens', async ({ page }) => {
+  await openApp(page);
+  const hash = await page.evaluate(() => KPOS.pinHash('demo', 'Lestari', '5555'));
+  await editDb(page, `db.users.push({ name: 'Lestari', role: 'akuntan', pin_hash: arg, active: true });`, hash);
   await enterKey(page);
-  await expect(page.locator('[data-act="login-user"][data-name="Jihan"]')).toHaveText('Jihan');
-  await expect(page.locator('[data-act="login-user"][data-name="Pemilik"]')).toHaveCount(0);
-  // the owner link marks the device (live prefix) and opens the app
-  await page.goto('zied/');
-  await expect(page).toHaveURL(/\/index\.html$/);
-  expect(await page.evaluate(() => localStorage.getItem('kpos.owner_device'))).toBe('true');
-  await page.evaluate(() => localStorage.setItem('kpos.mock.owner_device', 'true'));
-  await page.goto('index.html?mock=1');
+  await expect(page.locator('[data-act="login-user"]')).toHaveCount(1);
   await expect(page.locator('[data-act="login-user"][data-name="Pemilik"]')).toHaveText('Pemilik');
+  await expect(page.locator('#lg-staff')).toHaveAttribute('href', /kasir\/\?mock=1/);
+  // Khair Kasir: everyone except the owner, names only
+  await page.evaluate(() => localStorage.setItem('kpos.device_consent', JSON.stringify({ ok: false, at: new Date().toISOString() })));
+  await page.goto('kasir/index.html?mock=1');
+  await expect(page.locator('#users [data-act="login-user"][data-name="Jihan"]')).toHaveText('Jihan');
+  await expect(page.locator('#users [data-name="Pemilik"]')).toHaveCount(0);
+  await expect(page.locator('#users [data-name="Lestari"]')).toBeVisible(); // accountant
+  // the accountant → management screens (read-only), no second PIN
+  await page.click('#users [data-name="Lestari"]');
+  await typePin(page, '5555');
+  await expect(page).toHaveURL(/\/index\.html\?mock=1$/);
+  await expect(page.locator('#app')).toBeVisible();
+  await expect(page.locator('#tb-user')).toHaveText('Lestari');
+  await expect(page.locator('body')).toHaveClass(/\bro\b/);
+  // a manager sells in Khair Kasir and opens "Menu manajemen" when needed
+  await page.evaluate(() => { localStorage.removeItem('kpos.mock.session'); sessionStorage.clear(); localStorage.removeItem('kpos.mock.kasir.session'); localStorage.removeItem('kpos.mock.last_user'); });
+  await page.goto('kasir/index.html?mock=1');
+  await page.click('#users [data-name="Jihan"]');
+  await typePin(page, '2222');
+  await expect(page.locator('#grid .pc').first()).toBeVisible();
+  await page.click('#tab-more');
+  await expect(page.locator('#v-more')).toBeVisible();
+  await page.click('#m-mgmt');
+  await expect(page).toHaveURL(/\/index\.html\?mock=1$/);
+  await expect(page.locator('#tb-user')).toHaveText('Jihan');
+  await expect(page.locator('#nav [data-view="absensi"], #more-list [data-view="absensi"]').first()).toBeAttached();
 });

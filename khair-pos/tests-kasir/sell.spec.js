@@ -6,12 +6,12 @@ test.use(H.PHONE);
 
 test('store key, login with PIN, open the cash drawer', async ({ page }) => {
   await H.openKasir(page);
-  await expect(page.locator('#owner-link')).toHaveAttribute('href', '../index.html?mock=1');
+  await expect(page.locator('#owner-link')).toHaveCount(0); // staff door: no link to the owner's app
   await H.shot(page, 'phone-01-key');
   await H.enterKey(page);
-  // kasir first, the owner can also log in
+  // kasir first; the owner is not listed here (he has his own app)
   await expect(page.locator('#users [data-act="login-user"]').first()).toHaveAttribute('data-name', /Siti|Rina/);
-  await expect(page.locator('#users [data-name="Pemilik"]')).toBeVisible();
+  await expect(page.locator('#users [data-name="Pemilik"]')).toHaveCount(0);
   await H.shot(page, 'phone-02-users');
   await page.click('[data-act="login-user"][data-name="Siti"]');
   await expect(page.locator('#pin-who')).toHaveText('Siti');

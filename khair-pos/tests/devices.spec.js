@@ -1,7 +1,7 @@
 // v11 Devices: consent, device on every request, ping, owner map/list, manager blocked when location is required.
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, login, getDb, nav, asUser, blockMapNetwork, typePin } = require('./helpers');
+const { SHOTS, login, getDb, nav, asUser, blockMapNetwork, typePin, switchUser } = require('./helpers');
 
 const CTX = { viewport: { width: 1366, height: 768 }, serviceWorkers: 'block', locale: 'id-ID', timezoneId: 'Asia/Jakarta' };
 const HERE = { latitude: -6.27640, longitude: 106.85790, accuracy: 15 };
@@ -137,9 +137,7 @@ test('Pengaturan: shop location + "Wajibkan lokasi" → the manager sees a block
   // the owner himself is never blocked
   await expect(page.locator('#dev-block')).toBeHidden();
   // the manager logs in on this device (consent "Tidak" earlier) → blocked
-  await page.click('#tb-lock');
-  await page.click('[data-act="login-user"][data-name="Jihan"]');
-  await typePin(page, '2222');
+  await switchUser(page, 'Jihan', '2222');
   await expect(page.locator('#dev-block-card')).toBeVisible();
   await expect(page.locator('#dev-block-card')).toContainText('Lokasi perangkat wajib');
   await page.screenshot({ path: path.join(SHOTS, 'desktop-device-required.png') });

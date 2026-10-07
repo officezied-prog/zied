@@ -2551,7 +2551,7 @@ async function loadUsersForLogin() {
   if (cached.length) { L.users = cached; renderLogin(); }
   try {
     const r = await apiRaw('users', {}, { key: S.key });
-    L.users = (r.users || []).filter(u => u.role !== 'sales' && u.role !== 'akuntan');
+    L.users = (r.users || []).filter(u => u.role !== 'owner');
     store.set('users_' + S.key, L.users);
     if (!L.users.length) L.err = t('login.no_users');
     renderLogin();
@@ -2565,7 +2565,7 @@ function renderLogin() {
   const box = $('#login');
   const brand = `<div class="brand"><div class="mark" aria-hidden="true">K</div><div>Khair Kasir${MOCK ? ' <span class="demo">DEMO</span>' : ''}</div></div>`;
   const foot = `<div class="foot-links"><div class="langs"><button class="btn xs ${S.lang === 'id' ? 'primary' : ''}" data-act="set-lang" data-lang="id">ID</button><button class="btn xs ${S.lang === 'ar' ? 'primary' : ''}" data-act="set-lang" data-lang="ar">العربية</button></div>
-    <a class="owner-link" id="owner-link" href="${esc(ownerHref())}">${esc(t('login.owner_app'))}</a></div>`;
+</div>`;
   let inner = '';
   if (L.step === 'key') {
     inner = `<h2>${esc(t('login.key_title'))}</h2>
@@ -2658,7 +2658,6 @@ async function demoLogin(name) {
   S.key = 'demo'; store.set('key', 'demo');
   try {
     const r = await apiRaw('login', {}, { key: 'demo', user: u.name, pin_hash: u.pin_hash });
-    if (r.user.role === 'sales' || r.user.role === 'akuntan') { showLogin('users', t('err.FORBIDDEN')); return; }
     startSession(r.user.name, r.user.role, u.pin_hash, false);
   } catch (e) { showLogin('users', errMsg(e)); }
 }
@@ -2674,7 +2673,6 @@ async function submitPin() {
   const user = L.sel, hash = master ? await sha256Hex(S.key + ':__master__:' + L.pin) : await pinHash(S.key, user, L.pin);
   try {
     const r = await apiRaw('login', {}, { key: S.key, user, pin_hash: hash });
-    if (r.user.role === 'sales' || r.user.role === 'akuntan') { const e = new Error('sales'); e.code = 'FORBIDDEN'; throw e; }
     if (!master) { const pins = store.get('pins', {}); pins[user.toLowerCase()] = { o: await offlineVerifier(hash), role: r.user.role }; store.set('pins', pins); }
     L.master = false; L.busy = false; L.pin = '';
     if (r.must_change) { askNewPin(r.user.name, r.user.role, hash, r.via_master); return; }
@@ -2698,7 +2696,19 @@ async function submitPin() {
     renderLogin();
   }
 }
+/* Khair Kasir is the one door for all staff (owner's decision 07 Oct): the accountant goes on to the management screens
+   (owner app, read-only), sales to Khair Sales, a manager when he taps "Menu manajemen". The session is handed over in
+   this tab (same origin), so nobody types the PIN twice. */
+const salesHref = () => '../sales/index.html' + (DEMO ? '?demo=1' : (MOCK ? '?mock=1' : ''));
+function handOff(user, role, hash, viaMaster) {
+  const k = role === 'sales' ? 'sales.session' : 'session';
+  store.set(k, { user, role });
+  try { sessionStorage.setItem(PREFIX + k, JSON.stringify(Object.assign({ user, role, pin_hash: hash }, viaMaster ? { via_master: true } : {}))); } catch (e) { }
+  if (role === 'sales') store.set('sales.last_user', user);
+  location.href = role === 'sales' ? salesHref() : ownerHref();
+}
 function startSession(user, role, hash, offline, opts = {}) {
+  if (role === 'akuntan' || role === 'sales') { L.busy = false; L.pin = ''; handOff(user, role, hash, !!opts.viaMaster); return; }
   const sameUser = S.user === user;
   S.user = user; S.role = role; S.pin_hash = hash; S.lastActivity = Date.now(); S.viaMaster = !!opts.viaMaster;
   KS.set('session', { user, role }); SESS.set({ user, role, pin_hash: hash, via: S.viaMaster }); store.set('last_user', user);
@@ -5247,6 +5257,7 @@ RENDER.more = function () {
   const n = S.outbox.length, mine = myPendingCount();
   $('#v-more').innerHTML = `<div class="wrapc"><h1>${esc(t('tab.more'))}</h1>
     <div class="list" id="more-list">
+      ${S.role === 'manager' || S.role === 'owner' ? `<button class="li" data-act="to-mgmt" id="m-mgmt">${ic('list')}<div class="grow"><div class="t">${esc(t('mgmt.open'))}</div><div class="s">${esc(t('mgmt.open_s'))}</div></div></button>` : ''}
       <button class="li" data-act="att-kiosk" id="m-att">${ic('camera')}<div class="grow"><div class="t">${esc(t('att.kiosk'))}</div><div class="s">${esc(t('att.kiosk_s'))}</div></div></button>
       <button class="li" data-act="member-new" id="m-member">${ic('user')}<div class="grow"><div class="t">${esc(t('mem.new'))}</div><div class="s">${esc(t('mem.new_s'))}</div></div></button>
       <button class="li" data-act="debt-pay" id="m-debt">${ic('wallet')}<div class="grow"><div class="t">${esc(t('more.debt_pay'))}</div><div class="s">${esc(t('more.debt_pay_s'))}</div></div></button>
@@ -5265,7 +5276,7 @@ RENDER.more = function () {
       <button class="li" data-act="lock" id="m-lock">${ic('lock')}<div class="grow t">${esc(t('more.lock'))}</div></button>
       <button class="li" data-act="logout" id="m-logout">${ic('logout')}<div class="grow t">${esc(t('more.logout'))}</div></button>
     </div>
-    <p class="center small muted" style="margin-top:16px"><a href="${esc(ownerHref())}" class="owner-link">${esc(t('login.owner_app'))}</a><br>Khair Kasir ${esc(APP_VERSION)}${MOCK ? ' · DEMO' : ''}</p></div>`;
+    <p class="center small muted" style="margin-top:16px">Khair Kasir ${esc(APP_VERSION)}${MOCK ? ' · DEMO' : ''}</p></div>`;
 };
 /* ========== Terima bayar hutang (v13): tunai / transfer / QRIS, the transfer slip read by the AI (scan_payment), and
    which invoices the payment covers ("Bagian dari faktur no. …", partial allowed). An amount different from the slip
@@ -5652,7 +5663,7 @@ const ACT = {
       const r = await apiRaw('users', {}, { key });
       if (S.key !== key) { KS.del('cache'); S.products = []; S.customers = []; }
       S.key = key; store.set('key', key);
-      L.users = (r.users || []).filter(u => u.role !== 'sales' && u.role !== 'akuntan'); store.set('users_' + key, L.users);
+      L.users = (r.users || []).filter(u => u.role !== 'owner'); store.set('users_' + key, L.users);
       L.busy = false; L.step = 'users'; L.pin = '';
       if (!L.users.length) L.err = t('login.no_users');
       renderLogin();
@@ -5704,6 +5715,7 @@ const ACT = {
   'pu-clear': () => { Object.assign(PU, { lines: [], photo_id: '', thumb: '', scan: null, result: null, scanErr: '', carrier: { type: '' } }); savePuDraft(); RENDER.masuk(); },
   'pu-retur': el => openSupReturn(el.dataset.no),
   // v17: attendance of the shop's workers by face on this device (shared/att-kiosk.js, workflow khair-att)
+  'to-mgmt': () => handOff(S.user, S.role, S.pin_hash, S.viaMaster),
   'att-kiosk': () => { if (!window.KAttKiosk) { toast(t('doc.not_loaded'), 'err'); return; } KAttKiosk.open({ api: (a, d) => api(a, d, { att: true, timeout: 30000 }), lang: S.lang, deviceId: deviceId() }); },
   'quote': () => openQuotation(),
   'pu-doc': el => {
@@ -5857,6 +5869,7 @@ const I18N = {
     'qty.add': 'Tambah', 'qty.change': 'Ubah', 'qty.invalid': 'Jumlah harus lebih dari 0', 'qty.too_big': 'Jumlah terlalu besar',
     'more.ask_qty': 'Tanya jumlah saat pilih barang', 'more.ask_qty_s': 'Ketuk barang → pilih jumlah. Scan barcode tetap langsung +1.',
     'doc.invoice': 'Faktur A4', 'doc.sj': 'Surat jalan', 'doc.goods_in': 'Tanda terima', 'doc.quote': 'Penawaran', 'doc.quote_title': 'Penawaran harga', 'doc.quote_hint': 'Dari isi keranjang. Tidak disimpan dan stok tidak dipesan; cetak A4 atau bagikan.', 'doc.print_a4': 'Cetak A4', 'doc.not_loaded': 'Dokumen belum termuat, muat ulang halaman saat online',
+    'mgmt.open': 'Menu manajemen', 'mgmt.open_s': 'Laporan, barang masuk, absensi, pelanggan',
     'att.kiosk': 'Absensi pekerja', 'att.kiosk_s': 'Pekerja absen masuk / pulang dengan wajah',
     'hold.btn': 'Tahan', 'hold.title': 'Tahan transaksi', 'hold.hint': 'Keranjang disimpan di HP ini. Layani pembeli berikutnya, lalu lanjutkan dari tombol "Ditahan".',
     'hold.label': 'Penanda (opsional)', 'hold.label_hint': 'mis. baju merah, Bapak topi hitam', 'hold.default': 'Pelanggan {n}', 'hold.held': 'Ditahan: {label}',
@@ -5959,6 +5972,7 @@ const I18N = {
     'qty.add': 'إضافة', 'qty.change': 'تعديل', 'qty.invalid': 'الكمية يجب أن تكون أكبر من 0', 'qty.too_big': 'الكمية كبيرة جدًا',
     'more.ask_qty': 'السؤال عن الكمية عند اختيار الصنف', 'more.ask_qty_s': 'اضغط الصنف ← اختر الكمية. مسح الباركود يضيف 1 مباشرة.',
     'doc.invoice': 'فاتورة A4', 'doc.sj': 'إذن خروج بضاعة', 'doc.goods_in': 'إيصال استلام', 'doc.quote': 'عرض سعر', 'doc.quote_title': 'عرض سعر', 'doc.quote_hint': 'من محتوى السلة. لا يُحفظ ولا يحجز المخزون؛ اطبعه A4 أو شاركه.', 'doc.print_a4': 'طباعة A4', 'doc.not_loaded': 'لم تُحمَّل المستندات، أعد تحميل الصفحة وأنت متصل',
+    'mgmt.open': 'قائمة الإدارة', 'mgmt.open_s': 'التقارير، دخول البضاعة، الحضور، الزبائن',
     'att.kiosk': 'حضور العمال', 'att.kiosk_s': 'يسجّل العمال الدخول والخروج بالوجه',
     'hold.btn': 'تعليق', 'hold.title': 'تعليق العملية', 'hold.hint': 'تُحفظ السلة على هذا الجهاز. اخدم الزبون التالي، ثم تابِع من زر "المعلّقة".',
     'hold.label': 'علامة مميزة (اختياري)', 'hold.label_hint': 'مثل: قميص أحمر، رجل بقبعة سوداء', 'hold.default': 'زبون {n}', 'hold.held': 'عُلّقت: {label}',

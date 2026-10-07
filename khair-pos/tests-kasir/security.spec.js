@@ -48,13 +48,18 @@ test('auto-lock after settings.auto_lock_minutes idle → PIN pad, cart kept', a
   await expect(page.locator('#gate')).toBeHidden();
 });
 
-test('sales reps (Khair Sales accounts) are hidden here and cannot use the cashier app', async ({ page }) => {
+test('sales reps log in here and go on to Khair Sales (no second PIN); the server still refuses cashier actions', async ({ page }) => {
+  await page.route('**/sales/**', r => r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>Khair Sales (stub)</title><p>sales app</p>' }));
   await H.openKasir(page);
   await H.setDb(page, `db.users.push({ name: 'Ahmad', role: 'sales', pin_hash: arg, active: true });`, H.sha('demo:ahmad:4444'));
   await page.reload();
   await H.enterKey(page);
   await expect(page.locator('[data-act="login-user"][data-name="Siti"]')).toBeVisible();
-  await expect(page.locator('[data-act="login-user"][data-name="Ahmad"]')).toHaveCount(0);
+  await page.click('[data-act="login-user"][data-name="Ahmad"]');
+  await H.typePin(page, '4444');
+  await page.waitForURL(/\/sales\/index\.html\?mock=1$/);
+  expect(JSON.parse(await page.evaluate(() => sessionStorage.getItem('kpos.mock.sales.session')))).toEqual({ user: 'Ahmad', role: 'sales', pin_hash: H.sha('demo:ahmad:4444') });
+  await H.openKasir(page);
   const r = await page.evaluate(async h => { try { await apiRaw('bootstrap', {}, { key: 'demo', user: 'Ahmad', pin_hash: h }); await apiRaw('save_sale', { items: [] }, { key: 'demo', user: 'Ahmad', pin_hash: h }); return 'ok'; } catch (e) { return e.code; } }, H.sha('demo:ahmad:4444'));
   expect(r).toBe('FORBIDDEN');
 });
