@@ -2633,6 +2633,60 @@ const MockServer = (() => {
         logAct(db, u, 'minta_koreksi', 'Minta ' + summary + ' | ' + reason, no, 0, 'warn');
         return { applied: false, request_id: approval.request_id, approval, changes: pf.changes.map(qtyOnly) };
       }
+      case 'correct_price': {
+        if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
+        if (!isYmd(data.from) || !isYmd(data.to) || data.from > data.to) throw E('INVALID', 'Rentang tanggal tidak valid');
+        const p = prodById(data.product_id); if (!p) throw E('NOT_FOUND', 'Produk tidak ditemukan');
+        const oldPrice = int(data.old_price), newPrice = int(data.new_price);
+        if (oldPrice < 0 || newPrice < 0) throw E('INVALID', 'Harga tidak valid');
+        if (oldPrice === newPrice) throw E('INVALID', 'Harga lama dan baru sama');
+        if (!String(data.reason || '').trim()) throw E('INVALID', 'Alasan wajib diisi');
+        const inR = d => d >= data.from && d <= data.to;
+        const saleByInv = {};
+        db.sales.filter(s => s.status !== 'void' && inR(s.sale_date)).forEach(s => { saleByInv[s.invoice_no] = s; });
+        const hits = db.items.filter(it => Number(it.product_id) === Number(p.id) && int(it.unit_price) === oldPrice && saleByInv[it.invoice_no]);
+        if (!hits.length) throw E('NOT_FOUND', 'Tidak ada penjualan ' + p.name + ' dengan harga ' + oldPrice + ' pada rentang itu');
+        const perInv = {};
+        hits.forEach(it => {
+          const qty = num(it.qty), cost = int(it.cost_price), newLineTotal = Math.round(qty * newPrice), dd = newLineTotal - int(it.line_total);
+          (perInv[it.invoice_no] = perInv[it.invoice_no] || { diff: 0, qty: 0 });
+          perInv[it.invoice_no].diff += dd; perInv[it.invoice_no].qty += qty;
+          if (newPrice < oldPrice) { it.unit_price = newPrice; it.line_total = newLineTotal; it.line_profit = newLineTotal - Math.round(qty * cost); }
+          else { it.corrected_price = newPrice; it.corrected_note = 'harga seharusnya ' + newPrice + ' (menunggu musyawarah)'; }
+        });
+        let netDiff = 0, refundTotal = 0, underTotal = 0;
+        const cashiers = {}, details = [], refunds = [], consults = [], debtDelta = {};
+        Object.keys(perInv).forEach(inv => {
+          const s = saleByInv[inv], d = perInv[inv].diff; netDiff += d; cashiers[String(s.cashier)] = true;
+          const cust = Number(s.customer_id) > 0 ? custById(s.customer_id) : null;
+          const phone = cust ? String(cust.phone || '') : '';
+          details.push({ invoice_no: inv, date: String(s.sale_date), cashier: String(s.cashier), customer_id: Number(s.customer_id) || 0, customer_name: String(s.customer_name), phone, qty: perInv[inv].qty, diff: d });
+          if (d < 0) {
+            const paid = int(s.paid_amount), newTotal = int(s.total) + d, oldDebt = int(s.debt_amount), newDebt = Math.max(0, newTotal - paid);
+            s.subtotal = int(s.subtotal) + d; s.total = newTotal; s.profit = newTotal - int(s.total_cost); s.debt_amount = newDebt;
+            if (cust) debtDelta[String(cust.id)] = (debtDelta[String(cust.id)] || 0) + (newDebt - oldDebt);
+            const refund = Math.max(0, paid - newTotal);
+            if (refund > 0) { refundTotal += refund; refunds.push({ invoice_no: inv, customer_id: Number(s.customer_id) || 0, customer_name: String(s.customer_name), phone, amount: refund, has_account: !!cust, channel: phone ? 'kontak' : (cust ? 'kontak' : 'cadangan') }); }
+          } else {
+            underTotal += d;
+            consults.push({ invoice_no: inv, customer_id: Number(s.customer_id) || 0, customer_name: String(s.customer_name), phone, amount: d });
+          }
+        });
+        Object.keys(debtDelta).forEach(cid => { const cust = custById(cid); if (cust && debtDelta[cid]) cust.debt_balance = Math.max(0, int(cust.debt_balance) + debtDelta[cid]); });
+        const setters = db.approvals.filter(a => { if (a.kind !== 'price' || String(a.ref) !== String(p.id)) return false; try { const pl = JSON.parse(a.payload || '{}'); return pl.changes && Object.keys(pl.changes).some(f => int(pl.changes[f].to) === oldPrice); } catch (e) { return false; } }).map(a => ({ by: String(a.decided_by || a.cashier), at: String(a.decided_at || a.created_at) }));
+        let catalog = null;
+        if (data.update_catalog === true) {
+          const ch = {};
+          if (int(p.retail_price) === oldPrice) { ch.retail_price = { from: oldPrice, to: newPrice }; p.retail_price = newPrice; }
+          if (int(p.wholesale_price) === oldPrice) { ch.wholesale_price = { from: oldPrice, to: newPrice }; p.wholesale_price = newPrice; }
+          if (Object.keys(ch).length) { catalog = p; logAct(db, u, 'harga', 'Koreksi harga katalog ' + p.name + ': ' + Object.keys(ch).map(f => f + ' ' + ch[f].from + '→' + ch[f].to).join(', '), String(p.id), 0, 'warn'); }
+        }
+        const payload = JSON.stringify({ product_id: p.id, product_name: p.name, old_price: oldPrice, new_price: newPrice, from: data.from, to: data.to, invoices: details.length, qty: details.reduce((a1, x) => a1 + x.qty, 0), net_diff: netDiff, refund_total: refundTotal, under_total: underTotal, cashiers: Object.keys(cashiers), price_setters: setters, details: details.slice(0, 500), refunds: refunds.slice(0, 500), consults: consults.slice(0, 500), reason: String(data.reason).trim(), by: u.name });
+        const summary = 'Koreksi harga ' + p.name + ' ' + oldPrice + '→' + newPrice + ': ' + details.length + ' faktur, selisih ' + netDiff + (refundTotal ? ', refund ' + refundTotal : '') + (underTotal ? ', kurang bayar ' + underTotal : '');
+        const ap = newApproval(db, u, { kind: 'koreksi', ref: p.id, approver_role: 'owner', status: 'done', decided_by: u.name, decided_at: jktISO(), total: netDiff, summary: summary.slice(0, 1500), note: String(data.reason).trim(), payload });
+        logAct(db, u, 'koreksi', summary.slice(0, 1000) + ' | ' + String(data.reason).trim(), String(p.id), netDiff, 'warn');
+        return { correction: { request_id: ap.request_id, product_name: p.name, old_price: oldPrice, new_price: newPrice, invoices: details.length, net_diff: netDiff, refund_total: refundTotal, under_total: underTotal, refunds, consults, cashiers: Object.keys(cashiers), price_setters: setters }, product: catalog ? prodOut(catalog) : undefined };
+      }
       case 'repack': {
         if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
         const to = prodById(data.to_product_id);
