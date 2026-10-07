@@ -1030,6 +1030,79 @@ switch (req.action) {
     return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a) });
   }
 
+  // v20 price correction: a wrong price that was already sold. The manager picks the product, the wrong (old) price and the
+  // correct (new) price, and the date range (the wrong-price day → the day it was found). Every non-void sale line of that
+  // product sold at the old price is re-priced on its record. Overcharge (new < old) = we owe the customer: an account
+  // customer's debt is reduced and any overpay becomes a refund; a walk-in becomes a refund to contact or hold in reserve.
+  // Undercharge (new > old) = the customer paid less: NOT billed automatically — it goes to the manager+owner consultation
+  // list with the customer's contact. Every correction is one 'koreksi' record (who set the wrong price, who sold at it).
+  case 'correct_price': {
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    if (!isDate(data.from) || !isDate(data.to) || data.from > data.to) return fail('INVALID', 'Rentang tanggal tidak valid');
+    const p = productById[String(data.product_id)];
+    if (!p) return fail('NOT_FOUND', 'Produk tidak ditemukan');
+    const oldPrice = money(data.old_price), newPrice = money(data.new_price);
+    if (oldPrice < 0 || newPrice < 0) return fail('INVALID', 'Harga tidak valid');
+    if (oldPrice === newPrice) return fail('INVALID', 'Harga lama dan baru sama');
+    if (!str(data.reason)) return fail('INVALID', 'Alasan wajib diisi');
+    const saleByInv = {};
+    rows('Get Range Sales').forEach(function (s) { if (s.status !== 'void') saleByInv[s.invoice_no] = s; });
+    const hits = rows('Get Range Items').filter(function (it) { return Number(it.product_id) === Number(p.id) && money(it.unit_price) === oldPrice && saleByInv[it.invoice_no]; });
+    if (!hits.length) return fail('NOT_FOUND', 'Tidak ada penjualan ' + str(p.name) + ' dengan harga ' + oldPrice + ' pada rentang itu');
+    const perInv = {};
+    hits.forEach(function (it) {
+      const qty = num(it.qty), cost = money(it.cost_price), newLineTotal = Math.round(qty * newPrice), dd = newLineTotal - money(it.line_total);
+      (perInv[it.invoice_no] = perInv[it.invoice_no] || { diff: 0, qty: 0 });
+      perInv[it.invoice_no].diff += dd; perInv[it.invoice_no].qty += qty;
+      if (newPrice < oldPrice) ops.sale_items.push(forWrite(Object.assign({}, it, { unit_price: newPrice, line_total: newLineTotal, line_profit: newLineTotal - Math.round(qty * cost) }), it.id));
+      else ops.sale_items.push(forWrite(Object.assign({}, it, { corrected_price: newPrice, corrected_note: 'harga seharusnya ' + newPrice + ' (menunggu musyawarah)' }), it.id));
+    });
+    let netDiff = 0, refundTotal = 0, underTotal = 0;
+    const cashiers = {}, details = [], refunds = [], consults = [], debtDelta = {};
+    Object.keys(perInv).forEach(function (inv) {
+      const s = saleByInv[inv], d = perInv[inv].diff; netDiff += d; cashiers[str(s.cashier)] = true;
+      const cust = Number(s.customer_id) > 0 ? customerById[String(s.customer_id)] : null;
+      const phone = cust ? str(cust.phone) : '';
+      details.push({ invoice_no: inv, date: str(s.sale_date), cashier: str(s.cashier), customer_id: Number(s.customer_id) || 0, customer_name: str(s.customer_name), phone: phone, qty: perInv[inv].qty, diff: d });
+      if (d < 0) {
+        // overcharge: re-price the sale down; the customer is owed money
+        const paid = money(s.paid_amount), newTotal = money(s.total) + d, oldDebt = money(s.debt_amount), newDebt = Math.max(0, newTotal - paid);
+        ops.sales.push(forWrite(Object.assign({}, s, { subtotal: money(s.subtotal) + d, total: newTotal, profit: newTotal - money(s.total_cost), debt_amount: newDebt }), s.id));
+        if (cust) debtDelta[String(cust.id)] = (debtDelta[String(cust.id)] || 0) + (newDebt - oldDebt);
+        const refund = Math.max(0, paid - newTotal);
+        if (refund > 0) { refundTotal += refund; refunds.push({ invoice_no: inv, customer_id: Number(s.customer_id) || 0, customer_name: str(s.customer_name), phone: phone, amount: refund, has_account: !!cust, channel: phone ? 'kontak' : (cust ? 'kontak' : 'cadangan') }); }
+      } else {
+        // undercharge: not billed automatically — manager+owner consultation, with the customer's contact
+        underTotal += d;
+        consults.push({ invoice_no: inv, customer_id: Number(s.customer_id) || 0, customer_name: str(s.customer_name), phone: phone, amount: d });
+      }
+    });
+    // one debt write per account customer (accumulated across their corrected invoices)
+    Object.keys(debtDelta).forEach(function (cid) {
+      const cust = customerById[cid]; if (!cust || !debtDelta[cid]) return;
+      ops.customers.push(forWrite(Object.assign({}, cust, { debt_balance: Math.max(0, money(cust.debt_balance) + debtDelta[cid]) }), cust.id));
+    });
+    const setters = approvalRows.filter(function (a) {
+      if (a.kind !== 'price' || a.ref !== String(p.id)) return false;
+      try { const pl = JSON.parse(a.payload || '{}'); return pl.changes && Object.keys(pl.changes).some(function (f) { return money(pl.changes[f].to) === oldPrice; }); } catch (e) { return false; }
+    }).map(function (a) { return { by: str(a.decided_by || a.cashier), at: str(a.decided_at || a.created_at) }; });
+    let catalog = null;
+    if (data.update_catalog === true) {
+      const ch = {};
+      if (money(p.retail_price) === oldPrice) ch.retail_price = { from: oldPrice, to: newPrice };
+      if (money(p.wholesale_price) === oldPrice) ch.wholesale_price = { from: oldPrice, to: newPrice };
+      if (Object.keys(ch).length) { catalog = applyPrices(p, ch); logAct('harga', 'Koreksi harga katalog ' + str(p.name) + ': ' + Object.keys(ch).map(function (f) { return f + ' ' + ch[f].from + '→' + ch[f].to; }).join(', '), String(p.id), 0, 'warn'); }
+    }
+    const payload = JSON.stringify({ product_id: p.id, product_name: str(p.name), old_price: oldPrice, new_price: newPrice, from: data.from, to: data.to,
+      invoices: details.length, qty: details.reduce(function (a1, x) { return a1 + x.qty; }, 0), net_diff: netDiff, refund_total: refundTotal, under_total: underTotal,
+      cashiers: Object.keys(cashiers), price_setters: setters, details: details.slice(0, 500), refunds: refunds.slice(0, 500), consults: consults.slice(0, 500), reason: str(data.reason), by: me.name });
+    const summary = 'Koreksi harga ' + str(p.name) + ' ' + oldPrice + '→' + newPrice + ': ' + details.length + ' faktur, selisih ' + netDiff + (refundTotal ? ', refund ' + refundTotal : '') + (underTotal ? ', kurang bayar ' + underTotal : '');
+    const a = newApproval({ kind: 'koreksi', ref: String(p.id), approver_role: 'owner', status: 'done', decided_by: me.name, decided_at: new Date().toISOString(), total: netDiff, summary: summary.slice(0, 1500), note: str(data.reason), payload: payload });
+    ops.approvals.push(forWrite(a, -1));
+    logAct('koreksi', summary.slice(0, 1000) + ' | ' + str(data.reason), String(p.id), netDiff, 'warn');
+    return done({ ok: true, correction: { request_id: a.request_id, product_name: str(p.name), old_price: oldPrice, new_price: newPrice, invoices: details.length, net_diff: netDiff, refund_total: refundTotal, under_total: underTotal, refunds: refunds, consults: consults, cashiers: Object.keys(cashiers), price_setters: setters }, product: catalog ? productOut(catalog) : undefined });
+  }
+
   case 'repack': {
     // Bulk → small packs made in the shop: how much bulk went in, how many packs came out, the loss and the pack cost.
     if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
