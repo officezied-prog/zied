@@ -476,6 +476,7 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
   <symbol id="i-wa" viewBox="0 0 24 24"><path d="M3 21l1.7-5A8.5 8.5 0 1 1 8 19.4z"/><path d="M9 9.5c.3 2 2.3 4.2 4.5 4.8l1.2-1.2 2 1-.4 1.5c-3.7.4-8-3.9-7.6-7.6L10.2 7.6l1 2z"/></symbol>
 </svg>
 
+<script src="../shared/docs.js"></script>
 <script>
 'use strict';
 const CONFIG = { API_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-pos', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
@@ -3240,7 +3241,7 @@ function renderCart(flashId) {
     </div>
     <div class="cart-foot">
       <div class="total-row"><span>${esc(t('total'))}</span><span class="num" id="cart-total">${fmtRp(v.total)}</span></div>
-      <div class="foot-btns"><button class="hold-btn" data-act="hold" id="btn-hold" ${canHold() ? '' : 'hidden'}>${ic('pause')}${esc(t('hold.btn'))}</button><button class="pay-btn" data-act="pay" id="btn-pay" title="F9" ${v.lines.length ? '' : 'disabled'}>${esc(t('sell.pay'))}</button></div>
+      <div class="foot-btns"><button class="hold-btn" data-act="hold" id="btn-hold" ${canHold() ? '' : 'hidden'}>${ic('pause')}${esc(t('hold.btn'))}</button><button class="hold-btn" data-act="quote" id="btn-quote" title="${esc(t('doc.quote_title'))}" ${v.lines.length ? '' : 'disabled'}>${ic('print')}${esc(t('doc.quote'))}</button><button class="pay-btn" data-act="pay" id="btn-pay" title="F9" ${v.lines.length ? '' : 'disabled'}>${esc(t('sell.pay'))}</button></div>
     </div>`;
   bindCartInputs();
   refreshCartNumbers();
@@ -3263,6 +3264,7 @@ function refreshCartNumbers() {
   const tot = $('#cart-total'); if (tot) tot.textContent = fmtRp(v.total);
   const btn = $('#btn-pay'); if (btn) btn.disabled = !v.lines.length;
   const hb = $('#btn-hold'); if (hb) hb.hidden = !canHold();
+  const qb = $('#btn-quote'); if (qb) qb.disabled = !v.lines.length;
   updateHeldChip();
   const g = $('#grosir'); if (g) { g.setAttribute('aria-pressed', S.cart.grosir ? 'true' : 'false'); g.innerHTML = `${S.cart.grosir ? '✓ ' : ''}${esc(t('grosir'))}`; }
   syncMuteChips();
@@ -4074,6 +4076,36 @@ function printHTML(html) {
   $('#print-area').innerHTML = html;
   setTimeout(() => { try { window.print(); } catch (e) { } }, 50);
 }
+/* ---- v17 A4 documents (shared/docs.js): faktur, surat jalan, penawaran, tanda terima barang ---- */
+function printA4(html) {
+  if (!window.KDocs) { toast(t('doc.not_loaded'), 'err'); return; }
+  $('#page-style').textContent = `@media print{@page{${KDocs.PAGE}}}`;
+  $('#print-area').innerHTML = html;
+  setTimeout(() => { try { window.print(); } catch (e) { } }, 50);
+}
+const docCtx = (extra = {}) => Object.assign({ store: settings(), by: S.user, now: new Date() }, extra);
+function docCustomer(rc) { const c = custById(rc.customer_id); return c ? { name: c.name, phone: c.phone, address: c.address, type: c.type } : { name: rc.customer_name, phone: rc.customer_phone }; }
+function printSaleDoc(rc, kind) {
+  if (!window.KDocs) { toast(t('doc.not_loaded'), 'err'); return; }
+  const r = Object.assign({}, rc, { lines: rc.lines.map(l => Object.assign({}, l, { unit: l.unit || (S.products.find(p => p.name === l.name) || {}).unit || '' })) });
+  printA4(kind === 'sj' ? KDocs.deliveryNote(r, docCtx({ customer: docCustomer(r) })) : KDocs.invoice(r, docCtx({ customer: docCustomer(r) })));
+}
+/** Penawaran harga from the cart: print A4, share as text or copy. Nothing is saved; stock is not reserved. */
+function openQuotation() {
+  const v = cartView();
+  if (!v.lines.length || !window.KDocs) return;
+  const d = new Date(Date.now() + 7 * 3600000).toISOString();
+  const q = { no: 'PNW-' + d.slice(2, 10).replace(/-/g, '') + d.slice(11, 16).replace(':', ''), date: today(), customer_name: v.cust ? v.cust.name : '',
+    lines: v.lines.map(l => ({ name: l.p.name, unit: l.p.unit || '', qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type, line_total: l.total })),
+    subtotal: v.subtotal, discount: v.discount + (v.memberDisc || 0), total: v.total - (v.sendFee || 0) };
+  const cust = v.cust ? { name: v.cust.name, phone: v.cust.phone, address: v.cust.address } : { name: '' }, text = KDocs.quotationText(q, docCtx());
+  const el = openModal({ title: t('doc.quote_title'), id: 'quote',
+    body: `<p style="margin-top:0"><b class="num">${esc(q.no)}</b> · ${esc(fmtRp(q.total))}</p><p class="small muted">${esc(t('doc.quote_hint'))}</p>`,
+    foot: `<button class="btn sm" id="q-copy">${ic('copy')} ${esc(t('copy'))}</button><button class="btn sm" id="q-share">${ic('share')} ${esc(t('share'))}</button><button class="btn primary sm grow" id="q-print">${ic('print')} ${esc(t('doc.print_a4'))}</button>` });
+  $('#q-print', el).onclick = () => printA4(KDocs.quotation(q, docCtx({ customer: cust })));
+  $('#q-share', el).onclick = () => shareText(text, cust.phone || '');
+  $('#q-copy', el).onclick = async () => { const ok = await copyText(text); toast(ok ? t('copied') : t('copy_failed'), ok ? 'ok' : 'err'); };
+}
 async function shareText(text, phone) {
   try { if (navigator.share) { await navigator.share({ text }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
   window.open(waLink(phone, text), '_blank', 'noopener');
@@ -4087,6 +4119,7 @@ function showReceipt(rc, opts = {}) {
     foot: `<button class="btn sm" id="rc-print">${ic('print')} ${esc(t('print'))}</button>
       <button class="btn sm" id="rc-share">${ic('share')} ${esc(t('share'))}</button>
       <button class="btn sm" id="rc-copy">${ic('copy')} ${esc(t('copy'))}</button>
+      ${rc.invoice_no ? `<button class="btn sm" id="rc-invoice">${ic('receipt')} ${esc(t('doc.invoice'))}</button><button class="btn sm" id="rc-sj">${ic('truck')} ${esc(t('doc.sj'))}</button>` : ''}
       ${!rc.pending && rc.invoice_no && !opts.fromSale ? `<button class="btn sm" id="rc-retur">${ic('undo')} ${esc(t('rt.from_receipt'))}</button>` : ''}
       <button class="btn primary sm grow" data-act="modal-close" id="rc-new">${esc(opts.fromSale ? t('rc.new_sale') : t('close'))}</button>`
   });
@@ -4094,6 +4127,8 @@ function showReceipt(rc, opts = {}) {
   $('#rc-share', el).onclick = () => shareText(receiptText(rc), rc.customer_phone);
   $('#rc-copy', el).onclick = async () => { const ok = await copyText(receiptText(rc)); toast(ok ? t('copied') : t('copy_failed'), ok ? 'ok' : 'err'); };
   const rb = $('#rc-retur', el); if (rb) rb.onclick = () => { dropModal(el); openReturn({ invoice: rc.invoice_no }); };
+  const ib = $('#rc-invoice', el); if (ib) ib.onclick = () => printSaleDoc(rc, 'invoice');
+  const sb = $('#rc-sj', el); if (sb) sb.onclick = () => printSaleDoc(rc, 'sj');
   drawExitBox(el, rc);
   drawRcSend(el, rc);
   drawWaCard(el, rc);
@@ -4595,7 +4630,7 @@ function drawPuHist() {
     return `<div class="hist" data-no="${esc(g.no)}"><div class="h"><b class="num">${esc(g.no)}</b><span class="badge ${MATCH_BADGE[g.match] || 'gray'}">${esc(t('pu.m_' + (g.match || 'tanpa_foto')))}</span>${g.fixes ? `<span class="badge">${esc(t('pu.n_fixes', { n: g.fixes }))}</span>` : ''}${pend ? `<span class="badge warn" data-pending="${esc(pend.id)}">${esc(t('pu.fix_waiting'))}</span>` : ''}</div>
       <div class="small muted">${esc(fmtDate(g.date))}${g.supplier ? ' · ' + esc(g.supplier) : ''}${g.user ? ' · ' + esc(g.user) : ''}</div>
       ${g.lines.map(l => { const p = prodById(l.product_id); return `<div class="hl"><span>${esc(p ? p.name : l.name)}</span><b class="num">${fmtQty(l.qty)} ${esc(p ? p.unit || '' : '')}</b></div>`; }).join('')}
-      ${g.match === 'retur' ? '' : `<div class="row wrap" style="justify-content:space-between;margin-top:6px"><span class="lockline" style="margin:0">${ic('lock')} ${esc(t('pu.locked_short'))}</span><span class="row" style="gap:6px"><button class="btn xs" data-act="pu-retur" data-no="${esc(g.no)}">${esc(t('sr.btn'))}</button><button class="btn xs" data-act="pu-fix" data-no="${esc(g.no)}" ${pend ? 'disabled' : ''}>${esc(t('pu.fix_btn'))}</button></span></div>`}</div>`;
+      ${g.match === 'retur' ? '' : `<div class="row wrap" style="justify-content:space-between;margin-top:6px"><span class="lockline" style="margin:0">${ic('lock')} ${esc(t('pu.locked_short'))}</span><span class="row" style="gap:6px"><button class="btn xs" data-act="pu-doc" data-no="${esc(g.no)}">${ic('print')} ${esc(t('doc.goods_in'))}</button><button class="btn xs" data-act="pu-retur" data-no="${esc(g.no)}">${esc(t('sr.btn'))}</button><button class="btn xs" data-act="pu-fix" data-no="${esc(g.no)}" ${pend ? 'disabled' : ''}>${esc(t('pu.fix_btn'))}</button></span></div>`}</div>`;
   }).join('') : `<div class="muted small">${esc(t('pu.hist_none'))}</div>`;
 }
 async function openPuFix(no) {
@@ -5652,6 +5687,12 @@ const ACT = {
   'pu-del': el => { PU.lines.splice(+el.dataset.i, 1); savePuDraft(); RENDER.masuk(); },
   'pu-clear': () => { Object.assign(PU, { lines: [], photo_id: '', thumb: '', scan: null, result: null, scanErr: '', carrier: { type: '' } }); savePuDraft(); RENDER.masuk(); },
   'pu-retur': el => openSupReturn(el.dataset.no),
+  'quote': () => openQuotation(),
+  'pu-doc': el => {
+    const g = (PUH.groups || []).find(x => x.no === el.dataset.no); if (!g || !window.KDocs) return;
+    printA4(KDocs.goodsIn({ no: g.no, date: g.date, supplier: g.supplier, user: g.user, note_status: t('pu.m_' + (g.match || 'tanpa_foto')),
+      lines: g.lines.map(l => { const p = prodById(l.product_id); return { name: p ? p.name : l.name, unit: p ? p.unit || '' : '', qty: l.qty }; }) }, docCtx({ showPrices: false })));
+  },
   'retur-open': () => openReturn(),
   'rt-slip': el => openReturnNote(el.dataset.id),
   'pu-save': () => savePurchase(),
@@ -5797,6 +5838,7 @@ const I18N = {
     'req.st_pending': 'Menunggu', 'req.st_approved': 'Disetujui', 'req.st_used': 'Dipakai', 'req.st_auto': 'Langsung', 'req.st_rejected': 'Ditolak', 'req.st_gone': 'Tidak ada',
     'qty.add': 'Tambah', 'qty.change': 'Ubah', 'qty.invalid': 'Jumlah harus lebih dari 0', 'qty.too_big': 'Jumlah terlalu besar',
     'more.ask_qty': 'Tanya jumlah saat pilih barang', 'more.ask_qty_s': 'Ketuk barang → pilih jumlah. Scan barcode tetap langsung +1.',
+    'doc.invoice': 'Faktur A4', 'doc.sj': 'Surat jalan', 'doc.goods_in': 'Tanda terima', 'doc.quote': 'Penawaran', 'doc.quote_title': 'Penawaran harga', 'doc.quote_hint': 'Dari isi keranjang. Tidak disimpan dan stok tidak dipesan; cetak A4 atau bagikan.', 'doc.print_a4': 'Cetak A4', 'doc.not_loaded': 'Dokumen belum termuat, muat ulang halaman saat online',
     'hold.btn': 'Tahan', 'hold.title': 'Tahan transaksi', 'hold.hint': 'Keranjang disimpan di HP ini. Layani pembeli berikutnya, lalu lanjutkan dari tombol "Ditahan".',
     'hold.label': 'Penanda (opsional)', 'hold.label_hint': 'mis. baju merah, Bapak topi hitam', 'hold.default': 'Pelanggan {n}', 'hold.held': 'Ditahan: {label}',
     'hold.chip': 'Ditahan ({n})', 'hold.list': 'Transaksi ditahan', 'hold.resume': 'Lanjutkan', 'hold.resumed': 'Dilanjutkan: {label}',
@@ -5897,6 +5939,7 @@ const I18N = {
     'req.st_pending': 'بالانتظار', 'req.st_approved': 'موافق عليه', 'req.st_used': 'مستخدم', 'req.st_auto': 'مباشر', 'req.st_rejected': 'مرفوض', 'req.st_gone': 'غير موجود',
     'qty.add': 'إضافة', 'qty.change': 'تعديل', 'qty.invalid': 'الكمية يجب أن تكون أكبر من 0', 'qty.too_big': 'الكمية كبيرة جدًا',
     'more.ask_qty': 'السؤال عن الكمية عند اختيار الصنف', 'more.ask_qty_s': 'اضغط الصنف ← اختر الكمية. مسح الباركود يضيف 1 مباشرة.',
+    'doc.invoice': 'فاتورة A4', 'doc.sj': 'إذن خروج بضاعة', 'doc.goods_in': 'إيصال استلام', 'doc.quote': 'عرض سعر', 'doc.quote_title': 'عرض سعر', 'doc.quote_hint': 'من محتوى السلة. لا يُحفظ ولا يحجز المخزون؛ اطبعه A4 أو شاركه.', 'doc.print_a4': 'طباعة A4', 'doc.not_loaded': 'لم تُحمَّل المستندات، أعد تحميل الصفحة وأنت متصل',
     'hold.btn': 'تعليق', 'hold.title': 'تعليق العملية', 'hold.hint': 'تُحفظ السلة على هذا الجهاز. اخدم الزبون التالي، ثم تابِع من زر "المعلّقة".',
     'hold.label': 'علامة مميزة (اختياري)', 'hold.label_hint': 'مثل: قميص أحمر، رجل بقبعة سوداء', 'hold.default': 'زبون {n}', 'hold.held': 'عُلّقت: {label}',
     'hold.chip': 'المعلّقة ({n})', 'hold.list': 'العمليات المعلّقة', 'hold.resume': 'متابعة', 'hold.resumed': 'تمت متابعة: {label}',
