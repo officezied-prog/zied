@@ -22,7 +22,7 @@ test('accountant: lands on reports, sees only the audit views, cannot change any
   await expect(page.locator('#view-reports')).toBeVisible();
   await expect(page.locator('body')).toHaveClass(/\bro\b/);
   const views = await page.locator('#nav [data-view]').evaluateAll(b => b.map(x => x.dataset.view));
-  expect(views.sort()).toEqual(['bank', 'cold', 'customers', 'history', 'purchases', 'reports', 'retur', 'settings', 'suppliers']); // cold = Gudang Dingin page (read-only there too)
+  expect(views.sort()).toEqual(['bank', 'cold', 'customers', 'history', 'koreksi', 'purchases', 'reports', 'retur', 'settings', 'suppliers']); // cold = Gudang Dingin page (read-only there too)
   await page.evaluate(() => go('pos'));
   await expect(page.locator('#view-reports')).toBeVisible(); // POS is not reachable
   await nav(page, 'purchases');

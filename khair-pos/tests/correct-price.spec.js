@@ -1,8 +1,10 @@
 // v20 price correction (mock parity): overcharge refunds/debt, undercharge consultation, responsibility.
 const { test, expect } = require('@playwright/test');
 const { login, getDb, editDb } = require('./helpers');
+let seedName = '';
 
 async function seed(page) {
+  seedName = (await getDb(page)).products[0].name;
   // one product, one account customer with a phone, and three sales of that product at 185000
   await editDb(page, `
     const p = db.products[0]; p.retail_price = 185000;
@@ -51,4 +53,30 @@ test('undercharge correction: consultation, no debt change, item annotated; kasi
   // (runs as owner here; role check covered in harness) — just ensure the action exists and validates dates
   const bad = await page.evaluate(async id => { try { await api('correct_price', { product_id: id, old_price: 185000, new_price: 160000, from: '2026-10-09', to: '2026-10-01', reason: 'x' }); return 'ok'; } catch (e) { return e.code; } }, pid);
   expect(bad).toBe('INVALID');
+});
+
+const { nav, staffSession } = require('./helpers');
+test('UI: manager runs a correction from the Kesalahan view and sees it in history; akuntan sees list only', async ({ page }) => {
+  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await seed(page);
+  const pid = String((await getDb(page)).products[0].id);
+  await nav(page, 'koreksi');
+  await expect(page.locator('#view-koreksi h1')).toBeVisible();
+  await page.selectOption('#kr-prod', pid);
+  await page.fill('#kr-old', '185.000');
+  await page.fill('#kr-new', '160.000');
+  await page.fill('#kr-from', '2026-10-01');
+  await page.fill('#kr-to', '2026-10-07');
+  await page.fill('#kr-reason', 'salah ketik harga');
+  await page.click('#kr-run');
+  await expect(page.locator('#kr-result')).toContainText('Koreksi selesai');
+  await expect(page.locator('#kr-result')).toContainText('cadangan');
+  await expect(page.locator('#kr-list')).toContainText(seedName);
+  // accountant: sees the history, no correction form (through the staff hand-off)
+  const hash = await page.evaluate(() => KPOS.pinHash('demo', 'Lestari', '5555'));
+  await editDb(page, `db.users.push({ name: 'Lestari', role: 'akuntan', pin_hash: arg, active: true });`, hash);
+  await staffSession(page, 'Lestari', '5555');
+  await nav(page, 'koreksi');
+  await expect(page.locator('#kr-run')).toHaveCount(0);
+  await expect(page.locator('#kr-list')).toContainText(seedName);
 });
