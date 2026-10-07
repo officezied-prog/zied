@@ -86,7 +86,8 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   action `clear_tamper` (owner-only) from Settings → Users; the owner is warned (INVALID), never locked. New action
   `report_tamper` (the app reports a code attempt it caught). All three apps detect code client-side and instantly log the
   user out to the lock screen; the owner sees a banner on open. Server: `backend/process.js`, harness `harness19.js`
-  (+ harness16 V1/V6, harness18 M3 updated). Camera capture of people was declined (UU PDP); the lock + owner alert is the
+  (+ harness16 V1/V6, harness18 M3 updated). Process v19 pasted by the owner 07 Oct, verified equal (144,306 chars, only
+  the Process node changed), published: active version 69aa1dc0. Camera capture of people was declined (UU PDP); the lock + owner alert is the
   deterrent instead. Decided but NOT yet built: Phase 2 = manager-performed price correction of already-sold goods with an
   owner banner and the difference in reports + customer debt.
 - **Cold storage "Khair Gudang Dingin" (07 Oct, third session)** — see below.
