@@ -98,10 +98,15 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   less): NOT auto-billed — a consultation record (manager+owner decide); the item is annotated corrected_price, totals unchanged.
   Records one 'koreksi' approval (status 'done') with per-invoice details, cashiers, and price_setters (who set the wrong price,
   from the 'price' log) for the Errors section. Harness `harness20.js` (overcharge account/umum, undercharge, matching, voids,
-  roles, catalog). STILL TODO before deploy: mock parity (3 apps), owner UI to run a correction, Errors section (P2b),
-  refund reserve + photo verification (P2c), reports loss/gain, transfer-payment confirmation by the manager (P2d),
-  then Phase 3 in-app chat. Owner answered: scope = all invoices from wrong-price day to discovery; walk-in overcharge with no
-  phone -> 3-month reserve, refunded on return by photographing the invoice and matching the original; undercharge -> consultation.
+  roles, catalog). DONE now: mock parity + owner 'Kesalahan' view to run a correction + Errors list with responsibility +
+  action `list_corrections` (owner/manager run; akuntan sees the list). Tests: `tests/correct-price.spec.js` (engine, UI,
+  akuntan read-only); akuntan audit-views list updated. Paste file ready at scratchpad `Process-v20.js` — NOT pasted/published.
+  STILL TODO: reports loss/gain line on the discovery date; refund reserve + customer-return photo verification (P2c);
+  manager confirmation of every transfer payment (P2d); the consultation decision buttons (collect/writeoff/contact);
+  then Phase 3 = in-app chat between all app holders. Owner answered: scope = all invoices from wrong-price day to discovery;
+  walk-in overcharge with no phone -> 3-month reserve, refunded on return by photographing the invoice and matching the
+  original; undercharge -> manager+owner consultation (not auto-billed); every transfer payment needs the manager to confirm
+  the money arrived.
 - **Cold storage "Khair Gudang Dingin" (07 Oct, third session)** — see below.
 
 - Leaflet 1.9.4 is vendored in `vendor/leaflet` (no cdnjs; CSP no longer allows cdnjs). Khair Sales cache is `khair-sales-v3`.
