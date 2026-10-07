@@ -25,6 +25,7 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
 | POS API `/webhook/khair-pos` | gAa6F12DXjVKJXSN | `khair-pos/backend/process.js` (Process node), `parse-request.js`, `finalize.js` |
 | Photo `/webhook/khair-pos-photo` | A7XeUITjTJRU9RYB | `khair-pos/backend/photo/` |
 | Field `/webhook/khair-field` | BzPYKlfdk6tY2Ui5 | `khair-pos/backend/field/` |
+| Chat `/webhook/khair-chat` (Phase 3) | GaUrZBH6Xb9RRcgE | `khair-pos/backend/chat/` (Process Chat node), `parse-chat.js` |
 
 - **Process code:** the safety system blocks me from writing the big Process node myself (and from loader tricks). The owner pastes it:
   build the file = `backend/process.js` with `'__STORE_KEY__'` replaced by the real key (read the key from the live Process node via
@@ -108,6 +109,26 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   reports 'Koreksi harga' block. Harnesses 20/21/22. Paste file rebuilt: scratchpad Process-v20.js (161,181 chars) — the owner
   must paste it into the POS API Process node and it must be verified-equal + published. Still open for LATER: Phase 3 in-app
   chat; Phase 4 barcode reader in the cashier. A date-dependent payments.spec fixture is guarded with test.skip (seed task filed).
+- **v20 paste caution (07 Oct):** the owner's first v20 paste was run through Gemini / a formatter first — it turned `'`→`"`, reflowed every
+  line, grew to 191,240 chars and broke the syntax (unexpected `}` ~line 1095). It saved only as a draft (c261c6f7); the live active version
+  stayed v19 (69aa1dc0), so nothing broke in production. He must paste `scratchpad/Process-v20.js` **raw, no Gemini / no formatter**; verify the
+  deployed Process node equals the file (md5), confirm only that node changed, then publish. Still pending as of this writing.
+
+- **Phase 3 in-app chat (07 Oct, DONE client-side; backend built, 1 owner paste to go live):** a chat between everyone who holds an app
+  (phones/tablets/computers). Two channels: `general` (owner, manager, kasir, sales, akuntan) and `owner_mgr` (owner + manager only, private).
+  Text + an image (client downscales to ≤180 KB; img-src already allows data:). Retention is owner-set (`chat_set_retention`, setting
+  `chat_retention_days`, default 0 = keep forever); messages are append-only. Names only — never a role word.
+  - Separate sibling workflow "Khair Mart POS – Chat" `GaUrZBH6Xb9RRcgE` (`/webhook/khair-chat`), new data table **pos_chat** `n7U5yDEesJVkvH2U`.
+    Reuses pos_users (auth: same key, PIN, master code, must_change, temporary lock, and the tamper `locked_accounts` list) and pos_settings.
+  - Source: `backend/chat/` — `chat-core.js` (pure core, shared with the demo), `parse-chat.js`, `process-chat.js`, `build-chat.js`
+    (`node build-chat.js process` = Process Chat code; `node build-chat.js ops` = the update_workflow ops that built it), `test-chat.js`
+    (`node test-chat.js`, 37 checks). The store key lives inside **Process Chat** (`__STORE_KEY__`, swapped for the real key on paste, exactly
+    like the POS Process node) — the owner pastes ONE node. Verify deployed == `node build-chat.js process` with the key, then publish.
+    Owner's paste file ready at scratchpad `Chat-Process.js` (9,914 chars, key in; md5 746cc0a9e37f08b7a8c344fd47e36c62) — NOT pasted/published yet.
+  - Client: shared floating panel `shared/chat-ui.js` (loaded in all three apps + cached by each SW), demo handler `shared/chat-mock.js`
+    (loaded with `backend/chat/chat-core.js` only in `?mock=1`). Each app adds `CONFIG.CHAT_URL`, an `apiChat` wrapper, a chat branch in
+    MockServer.request (bypasses the tamper scan — a message may contain symbols), and KChatUI start/stop/setLang on login/lock/logout/lang.
+    Tests: `tests/chat.spec.js`, `tests-kasir/chat.spec.js`, `tests-sales/chat.spec.js`. SW caches bumped: owner v4, kasir v2, sales v4.
 - **Cold storage "Khair Gudang Dingin" (07 Oct, third session)** — see below.
 
 - Leaflet 1.9.4 is vendored in `vendor/leaflet` (no cdnjs; CSP no longer allows cdnjs). Khair Sales cache is `khair-sales-v3`.

@@ -479,11 +479,13 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
 <script src="../shared/docs.js"></script>
 <script src="../shared/face.js"></script>
 <script src="../shared/att-kiosk.js"></script>
+<script src="../shared/chat-ui.js"></script>
 <script>
 'use strict';
 const CONFIG = { API_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-pos', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-pos-photo';
 CONFIG.ATT_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-att';
+CONFIG.CHAT_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-chat';
 const APP_VERSION = 'kasir-1.0.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
@@ -693,7 +695,7 @@ async function apiRawInner(action, data, cred, opts) {
     const timer = setTimeout(() => ctrl && ctrl.abort(), opts.timeout || 20000);
     let r, txt;
     try {
-      r = await fetch(opts.att ? CONFIG.ATT_URL : opts.photo ? CONFIG.PHOTO_URL : CONFIG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined, cache: 'no-store' });
+      r = await fetch(opts.chat ? CONFIG.CHAT_URL : opts.att ? CONFIG.ATT_URL : opts.photo ? CONFIG.PHOTO_URL : CONFIG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined, cache: 'no-store' });
       txt = await r.text();
     } catch (e) { throw new NetError(e && e.message); } finally { clearTimeout(timer); }
     try { res = JSON.parse(txt); } catch (e) {
@@ -721,6 +723,8 @@ async function api(action, data, opts) {
   }
 }
 const apiPhoto = (action, data) => api(action, data, { photo: true, timeout: 60000 });
+// Phase 3 in-app chat (separate workflow khair-chat). apiRawInner → no global spinner on background polling.
+const apiChat = (action, data) => S.pin_hash ? apiRawInner(action, data, sessCred(), { chat: true, timeout: 30000 }) : Promise.reject(new NetError('NO_SESSION'));
 function errMsg(e) {
   if (!e) return t('err.SERVER');
   if (e instanceof NetError) return t('err.NETWORK');
@@ -2147,6 +2151,14 @@ const MockServer = (() => {
     const one = src => new Promise(res => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = res; document.head.appendChild(sc); });
     return attLoad || (attLoad = one('../backend/attendance/att-core.js').then(() => one('../shared/att-mock.js')));
   }
+  // Phase 3 chat: same core as the server (backend/chat/chat-core.js) + demo handler (shared/chat-mock.js)
+  const CHAT_ACTIONS = ['chat_bootstrap', 'chat_poll', 'chat_send', 'chat_set_retention'];
+  let chatLoad = null;
+  function loadChatMock() {
+    if (window.KChat && window.KChatMock) return Promise.resolve();
+    const one = src => new Promise(res => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = res; document.head.appendChild(sc); });
+    return chatLoad || (chatLoad = one('../backend/chat/chat-core.js').then(() => one('../shared/chat-mock.js')));
+  }
   async function request(body) {
     await ensure();
     if (/^(att_|worker_)/.test(body.action)) await loadAttMock();
@@ -2156,6 +2168,15 @@ const MockServer = (() => {
     const db = load();
     db.approvals = db.approvals || []; db.photos = db.photos || []; db.expenses = db.expenses || []; db.shifts = db.shifts || []; db.cash_moves = db.cash_moves || [];
     db.devices = db.devices || []; db.activity = db.activity || []; db.returns = db.returns || [];
+    // chat is append-only text/images; it bypasses the POS tamper scan (a message may legitimately contain symbols)
+    if (CHAT_ACTIONS.includes(body.action)) {
+      await loadChatMock();
+      if (!window.KChatMock) throw E('SERVER', 'Chat mock not loaded');
+      const cdb = load(); // fresh read AFTER the async load: the background chat poll must never save a stale snapshot over another call's writes
+      const out = window.KChatMock.handle(cdb, body, E);
+      if (cdb._dirty) { delete cdb._dirty; save(cdb); }
+      return out;
+    }
     LOG.push({ action: body.action, user: body.user || '', device: body.data && body.data.device ? JSON.parse(JSON.stringify(body.data.device)) : null, at: Date.now() });
     if (LOG.length > 300) LOG.shift();
     let res;
@@ -2425,6 +2446,7 @@ function setLang(l) {
   if (!$('#login').hidden) renderLogin();
   if (!$('#gate').hidden) renderGate();
   devCheckBlock();
+  try { if (window.KChatUI) KChatUI.setLang(S.lang); } catch (e) { }
 }
 const ic = (name, cls = '') => `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
@@ -2790,12 +2812,14 @@ async function enterApp(offline) {
   checkShiftGate();
   pollApprovals(); checkMyRequests();
   devBoot();
+  try { if (window.KChatUI) KChatUI.start({ api: apiChat, lang: S.lang }); } catch (e) { }
 }
 function lock() {
   if (!S.inApp || !S.pin_hash) return;
   S.pin_hash = '';
   KS.set('session', { user: S.user, role: S.role }); SESS.del();
   L.sel = S.user;
+  try { if (window.KChatUI) KChatUI.stop(); } catch (e) { }
   showLogin('pin');
 }
 function forceRelogin(e) {
@@ -2810,6 +2834,7 @@ function forceRelogin(e) {
 function logout() {
   S.pin_hash = ''; S.user = ''; S.role = ''; S.inApp = false; S.shift = null; S.cart = null; KS.del('session'); SESS.del();
   L.sel = ''; AP.list = []; AP.count = 0;
+  try { if (window.KChatUI) KChatUI.stop(); } catch (e) { }
   showLogin('users');
 }
 

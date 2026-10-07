@@ -700,6 +700,7 @@ body.ro [data-act="cust-pay"],body.ro [data-act="cust-edit"],body.ro [data-act="
 <script src="shared/docs.js"></script>
 <script src="shared/face.js"></script>
 <script src="shared/att-kiosk.js"></script>
+<script src="shared/chat-ui.js"></script>
 <script>
 'use strict';
 // No framing (a <meta> CSP cannot set frame-ancestors): leave any frame.
@@ -708,6 +709,7 @@ const CONFIG = { API_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-pos', TZ:
 CONFIG.PHOTO_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-pos-photo';
 CONFIG.FIELD_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-field';
 CONFIG.ATT_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-att';
+CONFIG.CHAT_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-chat';
 const APP_VERSION = '2.0.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
@@ -941,7 +943,7 @@ async function apiRawInner(action, data, cred, opts) {
     const timer = setTimeout(() => ctrl && ctrl.abort(), opts.timeout || 20000);
     let r, txt;
     try {
-      r = await fetch(opts.att ? CONFIG.ATT_URL : opts.field ? CONFIG.FIELD_URL : opts.photo ? CONFIG.PHOTO_URL : CONFIG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined, cache: 'no-store' });
+      r = await fetch(opts.chat ? CONFIG.CHAT_URL : opts.att ? CONFIG.ATT_URL : opts.field ? CONFIG.FIELD_URL : opts.photo ? CONFIG.PHOTO_URL : CONFIG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined, cache: 'no-store' });
       txt = await r.text();
     } catch (e) { throw new NetError(e && e.message); } finally { clearTimeout(timer); }
     try { res = JSON.parse(txt); } catch (e) {
@@ -2897,6 +2899,14 @@ const MockServer = (() => {
     const one = src => new Promise(res => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = res; document.head.appendChild(sc); });
     return attLoad || (attLoad = one('backend/attendance/att-core.js').then(() => one('shared/att-mock.js')));
   }
+  // Phase 3 chat: the same core as the server (backend/chat/chat-core.js) + demo handler (shared/chat-mock.js)
+  const CHAT_ACTIONS = ['chat_bootstrap', 'chat_poll', 'chat_send', 'chat_set_retention'];
+  let chatLoad = null;
+  function loadChatMock() {
+    if (window.KChat && window.KChatMock) return Promise.resolve();
+    const one = src => new Promise(res => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = res; document.head.appendChild(sc); });
+    return chatLoad || (chatLoad = one('backend/chat/chat-core.js').then(() => one('shared/chat-mock.js')));
+  }
   async function request(body, opts = {}) {
     await ensure();
     if (!extLoad) extLoad = loadExtFieldMock();
@@ -2907,6 +2917,15 @@ const MockServer = (() => {
     if (!navigator.onLine || forced) throw new NetError('offline (mock)');
     const db = load();
     db.approvals = db.approvals || []; db.photos = db.photos || []; db.expenses = db.expenses || []; db.shifts = db.shifts || []; db.cash_moves = db.cash_moves || [];
+    // chat is append-only text/images: it bypasses the POS tamper scan (a message may legitimately contain symbols)
+    if (CHAT_ACTIONS.includes(body.action)) {
+      await loadChatMock();
+      if (!window.KChatMock) throw E('SERVER', 'Chat mock not loaded');
+      const cdb = load(); // fresh read AFTER the async load: the background chat poll must never save a stale snapshot over another call's writes
+      const out = window.KChatMock.handle(cdb, body, E);
+      if (cdb._dirty) { delete cdb._dirty; save(cdb); }
+      return out;
+    }
     if (ensureField(db)) save(db);
     if (ensureV12(db)) save(db);
     if (ensureV16(db)) save(db);
@@ -3184,6 +3203,7 @@ function setLang(l) {
   applyLangAttrs();
   if (S.inApp) { renderShell(); renderPosSkeleton(); go(S.view, true); }
   if (!$('#login').hidden) renderLogin();
+  try { if (window.KChatUI) KChatUI.setLang(S.lang); } catch (e) { }
 }
 const ic = (name, cls = '') => `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
@@ -3439,12 +3459,14 @@ async function enterApp(offline, keepView) {
   refreshAttention(); checkMyRequests();
   AP.seen = null; AP.loaded = false; pollApprovals();
   devOnAppOpen();
+  try { if (window.KChatUI) KChatUI.start({ api: apiChat, lang: S.lang }); } catch (e) { }
 }
 function lock() {
   if (!S.inApp) return;
   S.pin_hash = ''; S.viaMaster = false; L.master = false;
   sessSet(S.user, S.role, '');
   L.sel = S.user;
+  try { if (window.KChatUI) KChatUI.stop(); } catch (e) { }
   showLogin('pin');
 }
 function forceRelogin(e) {
@@ -3459,6 +3481,7 @@ function forceRelogin(e) {
 function logoutStore() {
   S.pin_hash = ''; S.user = ''; S.role = ''; S.inApp = false; sessDel();
   L.users = []; L.sel = '';
+  try { if (window.KChatUI) KChatUI.stop(); } catch (e) { }
   showLogin('key');
 }
 
@@ -4756,6 +4779,9 @@ async function imageToJpeg(file, max = 1600, quality = 0.8) {
   } finally { URL.revokeObjectURL(url); }
 }
 const apiPhoto = (action, data) => api(action, data, { photo: true, timeout: 60000 });
+// Phase 3 in-app chat (separate workflow khair-chat). Uses apiRawInner so background polling shows no global spinner;
+// a missing session rejects quietly (the panel hides itself) instead of forcing an app-wide relogin.
+const apiChat = (action, data) => S.pin_hash ? apiRawInner(action, data, sessCred(), { chat: true, timeout: 30000 }) : Promise.reject(new NetError('NO_SESSION'));
 const PHOTO_INPUT = id => `<input type="file" id="${id}" accept="image/*" capture="environment" class="sr-only">`;
 
 /* ========== Exit photo (barang keluar besar) ========== */
@@ -10019,7 +10045,7 @@ Object.assign(ACT, {
     } catch (e) { err.textContent = errMsg(e); }
   }
 });
-function logoutUser() { S.pin_hash = ''; S.viaMaster = false; sessSet(S.user, S.role, ''); L.sel = S.user; S.inApp = false; showLogin('pin'); }
+function logoutUser() { S.pin_hash = ''; S.viaMaster = false; sessSet(S.user, S.role, ''); L.sel = S.user; S.inApp = false; try { if (window.KChatUI) KChatUI.stop(); } catch (e) { } showLogin('pin'); }
 Object.assign(I18N.id, {
   'role.akuntan': 'Akuntan', 'role.pekerja': 'Pekerja harian (absen wajah, tanpa PIN)', 'ro.denied': 'Akun akuntan hanya untuk melihat data', 'ro.hint': 'Akun akuntan: lihat saja, tidak bisa mengubah.', 'set.inv_title': 'Faktur & akuntan', 'set.due_days': 'Jatuh tempo faktur hutang (hari)', 'set.due_bad': 'Isi 0–120 hari', 'set.ak_cost': 'Akuntan boleh melihat harga beli (modal)', 'set.ak_cost_hint': 'Laba tetap hanya untuk pemilik. Tanpa centang, akuntan melihat jumlah barang dan pembayaran tanpa harga beli.',
   'nav.cold': "Gudang Dingin", 'navs.cold': "Gd. Dingin", 'nav.absensi': "Absensi", 'navs.absensi': "Absensi", 'att.kiosk': "Buka layar absen", 'att.add': "Tambah pekerja", 'att.hint': "Pekerja absen dengan wajah di perangkat toko. Catatan tidak bisa diubah atau dihapus siapa pun; perubahan apa pun pada data terlihat di laporan.", 'att.today': "Hari ini", 'att.workers': "Pekerja", 'att.report': "Laporan", 'att.p_month': "Bulan ini", 'att.p_lastmonth': "Bulan lalu", 'att.p_7d': "7 hari", 'att.show': "Tampilkan", 'att.settings': "Jam kerja", 'att.st_hadir': "Hadir", 'att.st_terlambat': "Terlambat", 'att.st_tidak_hadir': "Tidak hadir", 'att.st_libur': "Libur", 'att.st_belum': "Belum datang", 'att.in': "Masuk", 'att.out': "Pulang", 'att.still_in': "masih di toko", 'att.hours': "Jam kerja", 'att.late': "Terlambat", 'att.present': "Hadir", 'att.absent': "Tidak hadir", 'att.fails': "Gagal wajah", 'att.wage': "Upah/hari", 'att.wage_due': "Upah dibayar", 'att.wage_total': "Total upah", 'att.ok': "Data utuh: {n} catatan, {d} hari disegel — tidak ada yang diubah atau dihapus.", 'att.bad': "PERINGATAN: data absensi berubah", 'att.print': "Cetak laporan (A4)", 'att.csv': "Unduh CSV", 'att.events': "Kejadian ({n})", 'att.ev_fail': "Gagal absen", 'att.ev_enroll': "Daftar wajah", 'att.ev_forget': "Hapus wajah", 'att.ev_worker': "Data pekerja", 'att.ev_setting': "Jam kerja diubah", 'att.face': "Wajah", 'att.enrolled': "Terdaftar", 'att.not_enrolled': "Belum", 'att.enroll': "Daftar wajah", 'att.reenroll': "Ulang", 'att.forget': "Hapus wajah", 'att.forget_q': "Hapus data wajah {name}? Absen lama tetap ada; untuk absen lagi wajahnya harus didaftarkan ulang.", 'att.none': "Belum ada pekerja. Tambahkan pekerja lalu daftarkan wajahnya.", 'att.inactive': "nonaktif", 'att.editor_new': "Pekerja baru", 'att.editor_edit': "Ubah pekerja", 'att.job': "Pekerjaan", 'att.active': "Aktif", 'att.wage_hint': "Hanya pemilik yang melihat upah.", 'att.name_req': "Nama wajib", 'att.start': "Jam masuk", 'att.end': "Jam pulang", 'att.grace': "Toleransi terlambat (menit)", 'att.radius': "Jarak dari toko (m)", 'att.season': "Musim jam panjang", 'att.season_name': "Nama", 'att.season_from': "Dari", 'att.season_to': "Sampai", 'att.season_end': "Jam tutup", 'att.season_hint': "Contoh: dua bulan sebelum Ramadan toko tutup 23:00.", 'att.saved': "Tersimpan", 'att.no_store_loc': "Lokasi toko belum diatur, jadi jarak absen belum dicek. Atur di Pengaturan → Lokasi toko.", 'att.thumb': "Foto wajah",

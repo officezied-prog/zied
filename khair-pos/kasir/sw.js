@@ -2,9 +2,9 @@
    Network-first for the app files, cache fallback when offline. API calls (POST to n8n) are
    never cached or intercepted. The cache name is distinct from the owner app's ("khair-pos-v1"),
    and only old "khair-kasir-*" caches are removed on activate. */
-const CACHE = 'khair-kasir-v1';
-// ../shared/docs.js (A4 documents, v17) is outside this scope's folder but loaded by the page, so it is cached and served here too.
-const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', '../shared/docs.js', '../shared/face.js', '../shared/att-kiosk.js'];
+const CACHE = 'khair-kasir-v2';
+// ../shared/docs.js (A4 documents, v17) and ../shared/chat-ui.js (chat, Phase 3) are outside this scope's folder but loaded by the page, so they are cached and served here too.
+const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', '../shared/docs.js', '../shared/face.js', '../shared/att-kiosk.js', '../shared/chat-ui.js'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(() => {}));
   self.skipWaiting();
@@ -16,7 +16,7 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin || !(url.pathname.startsWith(new URL('./', self.registration.scope).pathname) || ['../shared/docs.js', '../shared/face.js', '../shared/att-kiosk.js'].some(f => url.pathname === new URL(f, self.registration.scope).pathname))) return;
+  if (url.origin !== self.location.origin || !(url.pathname.startsWith(new URL('./', self.registration.scope).pathname) || ['../shared/docs.js', '../shared/face.js', '../shared/att-kiosk.js', '../shared/chat-ui.js'].some(f => url.pathname === new URL(f, self.registration.scope).pathname))) return;
   e.respondWith(
     fetch(req).then(res => {
       if (res && res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {}); }
