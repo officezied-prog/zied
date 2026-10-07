@@ -334,10 +334,12 @@ main{overflow:hidden;position:relative;min-width:0}
 
 <script src="../shared/shop-types.js"></script>
 <script src="../shared/field-mock.js"></script>
+<script src="../shared/chat-ui.js"></script>
 <script>
 'use strict';
 const CONFIG = { API_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-pos', FIELD_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-pos-photo';
+CONFIG.CHAT_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-chat';
 const APP_VERSION = 'sales-1.0.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
@@ -538,7 +540,7 @@ async function apiRawInner(action, data, cred, opts) {
     const timer = setTimeout(() => ctrl && ctrl.abort(), opts.timeout || 20000);
     let r, txt;
     try {
-      r = await fetch(FIELD_ACTIONS.includes(action) ? CONFIG.FIELD_URL : opts.photo ? CONFIG.PHOTO_URL : CONFIG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined, cache: 'no-store' });
+      r = await fetch(opts.chat ? CONFIG.CHAT_URL : FIELD_ACTIONS.includes(action) ? CONFIG.FIELD_URL : opts.photo ? CONFIG.PHOTO_URL : CONFIG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined, cache: 'no-store' });
       txt = await r.text();
     } catch (e) { throw new NetError(e && e.message); } finally { clearTimeout(timer); }
     try { res = JSON.parse(txt); } catch (e) {
@@ -565,6 +567,8 @@ async function api(action, data, opts) {
     throw e;
   }
 }
+// Phase 3 in-app chat (separate workflow khair-chat). apiRawInner → no global spinner on background polling.
+const apiChat = (action, data) => S.pin_hash ? apiRawInner(action, data, sessCred(), { chat: true, timeout: 30000 }) : Promise.reject(new NetError('NO_SESSION'));
 function errMsg(e) {
   if (!e) return t('err.SERVER');
   if (e instanceof NetError) return t('err.NETWORK');
@@ -1176,6 +1180,14 @@ const MockServer = (() => {
       else if (v && typeof v === 'object') cleanFieldInput(v, depth + 1);
     });
   }
+  // Phase 3 chat: same core as the server (backend/chat/chat-core.js) + demo handler (shared/chat-mock.js)
+  const CHAT_ACTIONS = ['chat_bootstrap', 'chat_poll', 'chat_send', 'chat_set_retention'];
+  let chatLoad = null;
+  function loadChatMock() {
+    if (window.KChat && window.KChatMock) return Promise.resolve();
+    const one = src => new Promise(res => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = res; document.head.appendChild(sc); });
+    return chatLoad || (chatLoad = one('../backend/chat/chat-core.js').then(() => one('../shared/chat-mock.js')));
+  }
   async function request(body) {
     await ensure();
     await sleep(30 + Math.random() * 50);
@@ -1186,6 +1198,16 @@ const MockServer = (() => {
     try { fieldSeeded = !!(window.KhairFieldMock && KhairFieldMock.seed(db)); } catch (e) { console.error(e); }
     db.approvals = db.approvals || []; db.photos = db.photos || []; db.expenses = db.expenses || []; db.shifts = db.shifts || []; db.cash_moves = db.cash_moves || [];
     db.devices = db.devices || []; db.activity = db.activity || [];
+    // chat is append-only text/images; it bypasses the POS tamper scan (a message may legitimately contain symbols)
+    if (CHAT_ACTIONS.includes(body.action)) {
+      await loadChatMock();
+      const cdb = load(); // fresh read AFTER the async load: the background chat poll must never save a stale snapshot over another call's writes
+      let out;
+      try { out = window.KChatMock ? window.KChatMock.handle(cdb, body, E) : { ok: false, error: 'SERVER', message: 'Chat mock not loaded' }; }
+      catch (e) { out = { ok: false, error: e.code || 'SERVER', message: e.message }; }
+      if (cdb._dirty) { delete cdb._dirty; save(cdb); }
+      return JSON.parse(JSON.stringify(out));
+    }
     LOG.push({ action: body.action, user: body.user || '', device: body.data && body.data.device ? JSON.parse(JSON.stringify(body.data.device)) : null, at: Date.now() });
     if (LOG.length > 300) LOG.shift();
     dirty = false;
@@ -1438,6 +1460,7 @@ function setLang(l) {
   applyLangAttrs();
   if (S.inApp) { renderShell(); go(S.view, true); }
   if (!$('#login').hidden) renderLogin();
+  try { if (window.KChatUI) KChatUI.setLang(S.lang); } catch (e) { }
 }
 const ic = (name, cls = '') => `<svg class="i ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
@@ -1961,13 +1984,16 @@ async function enterApp(offline) {
   if (S.day.status === 'working' && FS.get(uk('consent'))) startTracking();
   syncOutbox();
   devBoot();
+  try { if (window.KChatUI) KChatUI.start({ api: apiChat, lang: S.lang }); } catch (e) { }
 }
 /** auto = idle auto-lock: during a working day the GPS keeps collecting points on the phone (sent after the PIN). */
 function lock(auto) {
   if (!S.inApp) return;
   const keep = !!auto && S.day.status === 'working';
   if (!keep) stopTracking();
-  S.pin_hash = ''; FS.set('session', { user: S.user, role: S.role }); SESS.del(); L.sel = S.user; S.inApp = false; showLogin('pin', '', keep);
+  S.pin_hash = ''; FS.set('session', { user: S.user, role: S.role }); SESS.del(); L.sel = S.user; S.inApp = false;
+  try { if (window.KChatUI) KChatUI.stop(); } catch (e) { }
+  showLogin('pin', '', keep);
 }
 /* Idle auto-lock (settings.auto_lock_minutes, default 10), as in the cashier app. */
 const lockMinutes = () => { const m = num(S.settings && S.settings.auto_lock_minutes); return m > 0 ? m : 10; };
@@ -1985,6 +2011,7 @@ async function logout() {
   if (S.day.status === 'working') { const r = await confirmBox(t('menu.logout_working')); if (!r.ok) return; }
   await flushTrack().catch(() => { });
   stopTracking(); S.pin_hash = ''; S.user = ''; S.role = ''; S.inApp = false; FS.del('session'); SESS.del(); L.sel = '';
+  try { if (window.KChatUI) KChatUI.stop(); } catch (e) { }
   showLogin('users');
 }
 
