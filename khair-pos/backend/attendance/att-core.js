@@ -138,7 +138,7 @@ var KAtt = (function () {
 
   /* ---------- per-day summary ---------- */
   function dayRows(records, day, wid) { return sortSeq(records).filter(function (r) { return r.att_date === day && String(r.worker_id) === String(wid); }); }
-  function summarizeDay(records, day, w, st) {
+  function summarizeDay(records, day, w, st, isToday) {
     var rows = dayRows(records, day, w.worker_id), ok = rows.filter(function (r) { return r.kind === 'in' || r.kind === 'out'; });
     var h = hoursOn(st, day), firstIn = null, lastOut = null, minutes = 0, open = null;
     ok.forEach(function (r) {
@@ -148,7 +148,8 @@ var KAtt = (function () {
     });
     var late = firstIn ? Math.max(0, wibMinutes(firstIn) - minutesOf(h.start) - num(st.att_grace_min)) : 0;
     var off = (Array.isArray(st.att_off_weekdays) ? st.att_off_weekdays : []).indexOf(new Date(day + 'T00:00:00Z').getUTCDay()) >= 0;
-    var status = firstIn ? (late > 0 ? 'terlambat' : 'hadir') : (off ? 'libur' : 'tidak_hadir');
+    // today, nobody is absent yet: 'belum' (not arrived yet) is not counted as an absence
+    var status = firstIn ? (late > 0 ? 'terlambat' : 'hadir') : (off ? 'libur' : isToday ? 'belum' : 'tidak_hadir');
     return { date: day, worker_id: w.worker_id, name: w.name, first_in: firstIn || '', last_out: lastOut || '', open: !!open, minutes: minutes, late_min: late, status: status,
       fails: rows.filter(function (r) { return r.kind === 'fail'; }).length, hours: h };
   }
@@ -267,6 +268,20 @@ var KAtt = (function () {
         sealDays();
         return done({ ok: true, worker: workerOut(w2) });
       }
+      case 'worker_forget': {
+        // UU PDP: a worker who leaves may ask to delete the face data. The numbers and the thumbnail are cleared;
+        // past attendance records stay (they never held the face) and the deletion itself is recorded in the chain.
+        if (role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik');
+        var wf = findWorker(data.worker_id);
+        if (!wf) return fail('NOT_FOUND', 'Pekerja tidak ditemukan');
+        if (!str(wf.face_desc) && !str(wf.face_thumb)) return done({ ok: true, worker: workerOut(wf) });
+        var w3 = JSON.parse(JSON.stringify(wf));
+        w3.face_desc = ''; w3.face_thumb = ''; w3._id = wf.id;
+        ops.workers.push(w3);
+        append({ kind: 'forget', worker_id: w3.worker_id, worker_name: w3.name, note: 'data wajah dihapus atas permintaan pekerja' });
+        sealDays();
+        return done({ ok: true, worker: workerOut(w3) });
+      }
       case 'att_mark': {
         if (['owner', 'manager', 'kasir'].indexOf(role) < 0) return fail('FORBIDDEN', 'Tidak diizinkan');
         var wm = findWorker(data.worker_id);
@@ -318,7 +333,7 @@ var KAtt = (function () {
         people.forEach(function (w) {
           days.forEach(function (dd) {
             if (str(w.created_at) && jkt(new Date(w.created_at)).slice(0, 10) > dd) return; // not yet working here
-            var x = summarizeDay(recs, dd, w, st); delete x.hours; rows.push(x);
+            var x = summarizeDay(recs, dd, w, st, dd === today); delete x.hours; rows.push(x);
           });
         });
         var totals = people.map(function (w) {

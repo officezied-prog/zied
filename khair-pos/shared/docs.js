@@ -191,5 +191,34 @@
     return wrap(h + footer(ctx));
   }
 
-  root.KDocs = { PAGE: PAGE, invoice: invoice, deliveryNote: deliveryNote, quotation: quotation, quotationText: quotationText, goodsIn: goodsIn, statement: statement, words: words, addDays: addDays };
+  /** Monthly attendance (v17). rep = att_report response; ctx.showWages for the owner's copy (wage due = days present × daily wage). */
+  function attendance(rep, ctx) {
+    var wages = !!ctx.showWages, days = [];
+    for (var d = rep.from; d <= rep.to && days.length < 62; d = addDays(d, 1)) days.push(d);
+    var cell = { hadir: '✓', terlambat: 'T', tidak_hadir: 'A', libur: 'L', belum: '·' };
+    var hm = function (m) { m = int(m); return Math.floor(m / 60) + 'j ' + ('0' + (m % 60)).slice(-2) + 'm'; };
+    var h = header(ctx, 'LAPORAN ABSENSI', [['Periode', date(rep.from) + ' – ' + date(rep.to)], ['Catatan', String(rep.verify ? rep.verify.count : '')]]);
+    h += '<table><tr><th>Nama</th><th>Jabatan</th><th class="n">Hadir</th><th class="n">Terlambat</th><th class="n">Tidak hadir</th><th class="n">Jam kerja</th><th class="n">Gagal wajah</th>' +
+      (wages ? '<th class="n">Upah / hari</th><th class="n">Upah dibayar</th>' : '') + '</tr>' +
+      rep.totals.map(function (t) {
+        return '<tr><td>' + esc(t.name) + '</td><td>' + esc(t.job) + '</td><td class="n">' + t.present + '</td><td class="n">' + t.late_days + (t.late_min ? ' (' + t.late_min + ' mnt)' : '') + '</td><td class="n">' + t.absent +
+          '</td><td class="n">' + hm(t.minutes) + '</td><td class="n">' + t.fails + '</td>' + (wages ? '<td class="n">' + esc(rp(t.daily_wage)) + '</td><td class="n"><b>' + esc(rp(t.wage_due)) + '</b></td>' : '') + '</tr>';
+      }).join('') + '</table>';
+    if (wages) h += '<table class="tot"><tr class="b"><td>TOTAL UPAH</td><td class="n">' + esc(rp(rep.totals.reduce(function (a, t) { return a + int(t.wage_due); }, 0))) + '</td></tr></table>';
+    h += '<div class="note">Per hari: ✓ hadir · T terlambat · A tidak hadir · L libur</div><table style="font-size:10px"><tr><th>Nama</th>' +
+      days.map(function (d) { return '<th class="n">' + Number(d.slice(8, 10)) + '</th>'; }).join('') + '</tr>' +
+      rep.totals.map(function (t) {
+        return '<tr><td>' + esc(t.name) + '</td>' + days.map(function (d) {
+          var r = rep.rows.find(function (x) { return x.worker_id === t.worker_id && x.date === d; });
+          return '<td class="n">' + (r ? cell[r.status] || '' : '') + '</td>';
+        }).join('') + '</tr>';
+      }).join('') + '</table>';
+    var v = rep.verify || {};
+    h += '<div class="note"><b>' + (v.ok ? 'Data utuh' : 'PERINGATAN: data berubah') + '</b> — ' + esc(v.ok ? 'semua ' + v.count + ' catatan dan ' + rep.sealed_days + ' segel harian cocok dengan rantai kode (tidak ada yang diubah atau dihapus).' :
+      (v.issues || []).map(function (i) { return i.text; }).join('; ')) + '</div>';
+    h += sigs(['Dibuat oleh', 'Diperiksa']);
+    return wrap(h + footer(ctx));
+  }
+
+  root.KDocs = { PAGE: PAGE, invoice: invoice, deliveryNote: deliveryNote, quotation: quotation, quotationText: quotationText, goodsIn: goodsIn, statement: statement, attendance: attendance, words: words, addDays: addDays };
 })(typeof window !== 'undefined' ? window : this);

@@ -626,6 +626,7 @@ tr.shelf-empty td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
     <section class="view" id="view-suppliers" hidden></section>
     <section class="view" id="view-bank" hidden></section>
     <section class="view" id="view-members" hidden></section>
+    <section class="view" id="view-absensi" hidden></section>
     <section class="view" id="view-retur" hidden></section>
     <section class="view" id="view-activity" hidden></section>
     <section class="view" id="view-devices" hidden></section>
@@ -695,6 +696,8 @@ tr.shelf-empty td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 
 <script src="shared/shop-types.js"></script>
 <script src="shared/docs.js"></script>
+<script src="shared/face.js"></script>
+<script src="shared/att-kiosk.js"></script>
 <script>
 'use strict';
 // No framing (a <meta> CSP cannot set frame-ancestors): leave any frame.
@@ -702,6 +705,7 @@ if (window.top !== window.self) { try { window.top.location = window.location.hr
 const CONFIG = { API_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-pos', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-pos-photo';
 CONFIG.FIELD_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-field';
+CONFIG.ATT_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-att';
 const APP_VERSION = '2.0.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
@@ -930,7 +934,7 @@ async function apiRawInner(action, data, cred, opts) {
     const timer = setTimeout(() => ctrl && ctrl.abort(), opts.timeout || 20000);
     let r, txt;
     try {
-      r = await fetch(opts.field ? CONFIG.FIELD_URL : opts.photo ? CONFIG.PHOTO_URL : CONFIG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined, cache: 'no-store' });
+      r = await fetch(opts.att ? CONFIG.ATT_URL : opts.field ? CONFIG.FIELD_URL : opts.photo ? CONFIG.PHOTO_URL : CONFIG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined, cache: 'no-store' });
       txt = await r.text();
     } catch (e) { throw new NetError(e && e.message); } finally { clearTimeout(timer); }
     try { res = JSON.parse(txt); } catch (e) {
@@ -1715,6 +1719,9 @@ const MockServer = (() => {
     if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'list_photos'].includes(action)) deviceTouch(db, u, data.device, false);
 
     switch (action) {
+      case 'att_bootstrap': case 'worker_save': case 'worker_enroll': case 'worker_forget': case 'att_mark': case 'att_report': case 'att_settings':
+        if (!window.KAttMock || !window.KAtt) throw E('SERVER', 'Attendance mock not loaded');
+        return window.KAttMock.handle(db, u, action, data, E);
       case 'login':
         if (viaMaster) logAct(db, u, 'masuk_master', 'Masuk ke akun ' + u.name + ' (' + roleOf(u) + ') dengan kode pemilik', u.name, 0, 'warn');
         return { user: { name: u.name, role: u.role }, must_change: u.must_change === true && !viaMaster, via_master: viaMaster };
@@ -2715,10 +2722,18 @@ const MockServer = (() => {
     });
   }
   let extLoad = null;
+  // v17 attendance: the same core as the server (backend/attendance/att-core.js) + demo data (shared/att-mock.js), loaded on first use
+  let attLoad = null;
+  function loadAttMock() {
+    if (window.KAttMock && window.KAtt) return Promise.resolve();
+    const one = src => new Promise(res => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = res; document.head.appendChild(sc); });
+    return attLoad || (attLoad = one('backend/attendance/att-core.js').then(() => one('shared/att-mock.js')));
+  }
   async function request(body, opts = {}) {
     await ensure();
     if (!extLoad) extLoad = loadExtFieldMock();
     await extLoad;
+    if (/^(att_|worker_)/.test(body.action)) await loadAttMock();
     await sleep(30 + Math.random() * 50);
     let forced = false; try { forced = localStorage.getItem('kmock.offline') === '1'; } catch (e) { }
     if (!navigator.onLine || forced) throw new NetError('offline (mock)');
@@ -2728,7 +2743,7 @@ const MockServer = (() => {
     if (ensureV12(db)) save(db);
     if (ensureV16(db)) save(db);
     let res;
-    if (body.data && typeof body.data === 'object' && !/^scan_/.test(body.action)) { body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); }
+    if (body.data && typeof body.data === 'object' && !/^(scan_|att_mark|worker_enroll)/.test(body.action)) { body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); }
     db.returns = db.returns || [];
     const snap = new Map((db.products || []).map(p => [p.id, { stock: num(p.stock), shop: shopOf(p) }]));
     db._shopSet = {};
@@ -2742,6 +2757,7 @@ const MockServer = (() => {
       stripRole = role || '';
       res = Object.assign({ ok: true }, role === 'owner' || ['users', 'setup'].includes(body.action) ? res : strip(res));
     } catch (e) {
+      if (e.attState) { const fresh = load(); fresh.att = e.attState; save(fresh); } // v17: refused check-ins stay recorded
       if (db._saveErr) { // wrong PIN: the counter / lock is kept (only the user row changed)
         const fresh = load(); const uu = (fresh.users || []).find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase());
         const src = db.users.find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase());
@@ -3055,6 +3071,7 @@ const VIEWS = [
   { id: 'kas', icon: 'cash', label: 'nav.kas' },
   { id: 'customers', icon: 'users', label: 'nav.customers' },
   { id: 'members', icon: 'member', label: 'nav.members', approver: true },
+  { id: 'absensi', icon: 'camera', label: 'nav.absensi', approver: true },
   { id: 'suppliers', icon: 'supplier', label: 'nav.suppliers', approver: true },
   { id: 'bank', icon: 'bank', label: 'nav.bank', approver: true },
   { id: 'history', icon: 'clock', label: 'nav.history' },
@@ -9308,6 +9325,154 @@ function memberOf(c) {
   return { pct, purchase_no: n, member_no: c.member_no || '' };
 }
 const memberBadge = c => c && c.member === true ? `<span class="badge gold mem-badge" data-member="${esc(c.member_no || '')}">${ic('member')} ${esc(t('mem.badge'))}</span>` : '';
+/* ========== v17 Absensi pekerja: workers (no app account), face enrolment with consent, the shop-device screen
+   (shared/att-kiosk.js), daily and monthly report with the chain check. Wages only for the owner; the manager sees
+   attendance and hours. Server: workflow "Khair Mart POS – Absensi" (backend/attendance/). ========== */
+const AT = { boot: null, rep: null, today: null, from: '', to: '', preset: 'month' };
+const attApi = (action, data) => api(action, data, { att: true, timeout: 30000 });
+const minHM = m => { m = int(m); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; };
+function attRange(p) {
+  const T = today(), first = T.slice(0, 8) + '01';
+  if (p === 'lastmonth') { const end = addDays(first, -1); return [end.slice(0, 8) + '01', end]; }
+  if (p === '7d') return [addDays(T, -6), T];
+  return [first, T];
+}
+const attBadge = st => `<span class="badge ${{ hadir: 'green', terlambat: 'amber', tidak_hadir: 'red', libur: 'gray', belum: 'gray' }[st] || 'gray'}" data-st="${esc(st)}">${esc(t('att.st_' + st))}</span>`;
+RENDER.absensi = function () {
+  if (!isApprover()) { go('pos'); return; }
+  const v = $('#view-absensi');
+  if (!AT.from) [AT.from, AT.to] = attRange('month');
+  v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.absensi'))}</h1><div class="row wrap"><button class="btn primary" data-act="att-kiosk" id="att-kiosk">${ic('camera')} ${esc(t('att.kiosk'))}</button><button class="btn" data-act="att-add" id="att-add">${ic('plus')} ${esc(t('att.add'))}</button></div></div>
+    <p class="small muted" style="margin-top:0">${esc(t('att.hint'))}</p>
+    <div class="panel" style="margin-bottom:14px"><h3>${ic('clock')} ${esc(t('att.today'))}</h3><div class="pb" id="att-today">${esc(t('loading'))}</div></div>
+    <div class="panel" style="margin-bottom:14px"><h3>${ic('users')} ${esc(t('att.workers'))}</h3><div class="pb" id="att-workers">${esc(t('loading'))}</div></div>
+    <div class="panel" style="margin-bottom:14px"><h3>${ic('report')} ${esc(t('att.report'))}</h3><div class="pb">
+      <div class="toolbar"><div class="chips">${['month', 'lastmonth', '7d'].map(p => `<button class="chip ${AT.preset === p ? 'on' : ''}" data-act="att-preset" data-p="${p}">${esc(t('att.p_' + p))}</button>`).join('')}</div>
+        <input class="input" type="date" id="att-from" value="${esc(AT.from)}" aria-label="${esc(t('from'))}" style="max-width:170px"><input class="input" type="date" id="att-to" value="${esc(AT.to)}" aria-label="${esc(t('to'))}" style="max-width:170px">
+        <button class="btn" data-act="att-load" id="att-load">${ic('refresh')} ${esc(t('att.show'))}</button></div>
+      <div id="att-rep">${esc(t('loading'))}</div></div></div>
+    ${isOwner() ? `<div class="panel"><h3>${ic('gear')} ${esc(t('att.settings'))}</h3><div class="pb" id="att-set">${esc(t('loading'))}</div></div>` : ''}`;
+  $('#att-from').onchange = e => { AT.from = e.target.value; AT.preset = ''; };
+  $('#att-to').onchange = e => { AT.to = e.target.value; AT.preset = ''; };
+  loadAtt();
+};
+async function loadAtt() {
+  try { AT.boot = await attApi('att_bootstrap', {}); drawAttWorkers(); drawAttSettings(); }
+  catch (e) { ['#att-workers', '#att-set'].forEach(s => { const b = $(s); if (b) b.innerHTML = `<span class="red">${esc(errMsg(e))}</span>`; }); }
+  loadAttToday(); loadAttReport();
+}
+async function loadAttToday() {
+  const box = $('#att-today'); if (!box) return;
+  try {
+    const r = await attApi('att_report', { from: today(), to: today() }); AT.today = r;
+    const rows = r.rows.filter(x => x.date === today());
+    const c = st => rows.filter(x => x.status === st).length;
+    box.innerHTML = `<div class="kpis"><div class="kpi green"><div class="k">${esc(t('att.st_hadir'))}</div><div class="v num" id="att-k-in">${c('hadir') + c('terlambat')} / ${rows.length}</div></div>
+      <div class="kpi gold"><div class="k">${esc(t('att.st_terlambat'))}</div><div class="v num" id="att-k-late">${c('terlambat')}</div></div><div class="kpi"><div class="k">${esc(t('att.st_belum'))}</div><div class="v num" id="att-k-out">${c('belum')}</div></div></div>
+      ${rows.length ? `<div class="tbl-wrap"><table class="tbl" id="att-today-tbl"><thead><tr><th>${esc(t('name'))}</th><th>${esc(t('status'))}</th><th>${esc(t('att.in'))}</th><th>${esc(t('att.out'))}</th><th class="r">${esc(t('att.hours'))}</th><th class="r">${esc(t('att.late'))}</th></tr></thead><tbody>
+      ${rows.map(x => `<tr data-w="${esc(x.worker_id)}"><td><b>${esc(x.name)}</b></td><td>${attBadge(x.status)}${x.fails ? ` <span class="badge red" title="${esc(t('att.fails'))}">${x.fails}×</span>` : ''}</td><td class="num">${x.first_in ? esc(jktTime(x.first_in)) : '—'}</td><td class="num">${x.last_out ? esc(jktTime(x.last_out)) : x.open ? `<span class="muted">${esc(t('att.still_in'))}</span>` : '—'}</td><td class="r num">${x.minutes ? minHM(x.minutes) : '—'}</td><td class="r num">${x.late_min ? x.late_min + "'" : '—'}</td></tr>`).join('')}</tbody></table></div>` : `<div class="muted">${esc(t('att.none'))}</div>`}`;
+  } catch (e) { box.innerHTML = `<span class="red">${esc(errMsg(e))}</span>`; }
+}
+function drawAttWorkers() {
+  const box = $('#att-workers'); if (!box || !AT.boot) return;
+  const ws = AT.boot.workers || [], own = isOwner();
+  const st = settings();
+  box.innerHTML = (num(st.store_lat) ? '' : `<p class="small amber" id="att-noloc">${esc(t('att.no_store_loc'))}</p>`) + (ws.length ? `<div class="tbl-wrap"><table class="tbl" id="att-w-tbl"><thead><tr><th>${esc(t('name'))}</th><th class="hide-phone">${esc(t('att.job'))}</th><th class="hide-phone">${esc(t('phone'))}</th>${own ? `<th class="r">${esc(t('att.wage'))}</th>` : ''}<th>${esc(t('att.face'))}</th><th></th></tr></thead><tbody>
+    ${ws.map(w => `<tr data-w="${esc(w.worker_id)}" class="${w.active ? '' : 'void'}"><td>${w.face_thumb ? `<img src="${esc(w.face_thumb)}" alt="${esc(t('att.thumb'))}" style="width:32px;height:32px;border-radius:50%;vertical-align:middle;margin-inline-end:6px">` : ''}<b>${esc(w.name)}</b>${w.active ? '' : ` <span class="badge gray">${esc(t('att.inactive'))}</span>`}</td>
+      <td class="hide-phone">${esc(w.job || '—')}</td><td class="hide-phone num">${esc(w.phone ? localPhone(w.phone) : '—')}</td>${own ? `<td class="r num" data-wage>${fmtRp(w.daily_wage || 0)}</td>` : ''}
+      <td>${w.enrolled ? `<span class="badge green" data-face="1">${esc(t('att.enrolled'))}</span>` : `<span class="badge amber" data-face="0">${esc(t('att.not_enrolled'))}</span>`}</td>
+      <td class="r" style="white-space:nowrap"><button class="btn xs" data-act="att-edit" data-w="${esc(w.worker_id)}">${ic('edit')}</button> ${w.active ? `<button class="btn xs ${w.enrolled ? '' : 'primary'}" data-act="att-enroll" data-w="${esc(w.worker_id)}">${ic('camera')} ${esc(t(w.enrolled ? 'att.reenroll' : 'att.enroll'))}</button>` : ''}${own && w.enrolled ? ` <button class="btn xs danger" data-act="att-forget" data-w="${esc(w.worker_id)}">${esc(t('att.forget'))}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : `<div class="muted" id="att-none">${esc(t('att.none'))}</div>`);
+}
+async function loadAttReport() {
+  const box = $('#att-rep'); if (!box) return;
+  box.innerHTML = esc(t('loading'));
+  try { AT.rep = await attApi('att_report', { from: AT.from, to: AT.to }); drawAttReport(); }
+  catch (e) { box.innerHTML = `<span class="red">${esc(errMsg(e))}</span>`; }
+}
+function drawAttReport() {
+  const box = $('#att-rep'), r = AT.rep; if (!box || !r) return;
+  const own = isOwner(), v = r.verify || {};
+  box.innerHTML = `<div class="${v.ok ? 'green' : 'red'}" id="att-verify" data-ok="${v.ok ? 1 : 0}" style="font-weight:700;margin:6px 0">${v.ok ? '✔ ' + esc(t('att.ok', { n: v.count, d: r.sealed_days })) : '⚠ ' + esc(t('att.bad'))}</div>
+    ${v.ok ? '' : `<ul class="small red" id="att-issues">${(v.issues || []).map(i => `<li>${esc(i.text)}</li>`).join('')}</ul>`}
+    <div class="tbl-wrap"><table class="tbl" id="att-tot"><thead><tr><th>${esc(t('name'))}</th><th class="r">${esc(t('att.present'))}</th><th class="r">${esc(t('att.st_terlambat'))}</th><th class="r">${esc(t('att.absent'))}</th><th class="r">${esc(t('att.hours'))}</th><th class="r">${esc(t('att.fails'))}</th>${own ? `<th class="r">${esc(t('att.wage'))}</th><th class="r">${esc(t('att.wage_due'))}</th>` : ''}</tr></thead><tbody>
+    ${r.totals.map(x => `<tr data-w="${esc(x.worker_id)}"><td><b>${esc(x.name)}</b><div class="small muted">${esc(x.job || '')}</div></td><td class="r num" data-present>${x.present}</td><td class="r num" data-late>${x.late_days}${x.late_min ? ` <span class="small muted">(${x.late_min}')</span>` : ''}</td><td class="r num ${x.absent ? 'red' : ''}" data-absent>${x.absent}</td><td class="r num">${minHM(x.minutes)}</td><td class="r num">${x.fails || '—'}</td>${own ? `<td class="r num">${fmtRp(x.daily_wage)}</td><td class="r num" data-due><b>${fmtRp(x.wage_due)}</b></td>` : ''}</tr>`).join('')}
+    ${own ? `<tr class="b"><td colspan="7"><b>${esc(t('att.wage_total'))}</b></td><td class="r num" id="att-wage-total"><b>${fmtRp(r.totals.reduce((a, x) => a + int(x.wage_due), 0))}</b></td></tr>` : ''}</tbody></table></div>
+    <div class="row wrap" style="margin-top:8px"><button class="btn" data-act="att-print" id="att-print">${ic('print')} ${esc(t('att.print'))}</button><button class="btn" data-act="att-csv" id="att-csv">${ic('download')} ${esc(t('att.csv'))}</button></div>
+    ${r.events.length ? `<details style="margin-top:10px"><summary class="small muted">${esc(t('att.events', { n: r.events.length }))}</summary><div class="tbl-wrap"><table class="tbl" id="att-events"><tbody>
+      ${r.events.slice().reverse().map(e => `<tr data-kind="${esc(e.kind)}"><td class="num small">${esc(fmtDateTime(e.at))}</td><td>${esc(t('att.ev_' + e.kind))}</td><td>${esc(e.worker_name || '')}</td><td class="small">${esc(e.note || '')}</td><td class="small muted">${esc(e.by_user || '')}</td></tr>`).join('')}</tbody></table></div></details>` : ''}`;
+}
+function drawAttSettings() {
+  const box = $('#att-set'); if (!box || !AT.boot || !isOwner()) return;
+  const s = AT.boot.settings || {}, sea = (s.att_seasons || [])[0] || {};
+  box.innerHTML = `<div class="grid2"><div class="field"><label class="f" for="att-s-start">${esc(t('att.start'))}</label><input class="input" type="time" id="att-s-start" value="${esc(s.att_work_start || '08:00')}"></div>
+    <div class="field"><label class="f" for="att-s-end">${esc(t('att.end'))}</label><input class="input" type="time" id="att-s-end" value="${esc(s.att_work_end || '21:00')}"></div>
+    <div class="field"><label class="f" for="att-s-grace">${esc(t('att.grace'))}</label><input class="input num" id="att-s-grace" inputmode="numeric" value="${esc(String(s.att_grace_min ?? 10))}"></div>
+    <div class="field"><label class="f" for="att-s-radius">${esc(t('att.radius'))}</label><input class="input num" id="att-s-radius" inputmode="numeric" value="${esc(String(s.att_radius_m ?? 200))}"></div></div>
+    <h4 style="margin:10px 0 4px">${esc(t('att.season'))}</h4><p class="small muted" style="margin:0 0 6px">${esc(t('att.season_hint'))}</p>
+    <div class="grid2"><div class="field"><label class="f" for="att-se-name">${esc(t('att.season_name'))}</label><input class="input" id="att-se-name" maxlength="30" value="${esc(sea.name || '')}" placeholder="Menjelang Ramadan"></div>
+    <div class="field"><label class="f" for="att-se-end">${esc(t('att.season_end'))}</label><input class="input" type="time" id="att-se-end" value="${esc(sea.work_end || '')}"></div>
+    <div class="field"><label class="f" for="att-se-from">${esc(t('att.season_from'))}</label><input class="input" type="date" id="att-se-from" value="${esc(sea.from || '')}"></div>
+    <div class="field"><label class="f" for="att-se-to">${esc(t('att.season_to'))}</label><input class="input" type="date" id="att-se-to" value="${esc(sea.to || '')}"></div></div>
+    <div class="row"><button class="btn primary" data-act="att-save-set" id="att-save-set">${esc(t('save'))}</button><span class="red small" id="att-set-err" role="alert"></span></div>`;
+}
+function openWorkerEditor(w) {
+  const own = isOwner();
+  const el = openModal({ title: t(w ? 'att.editor_edit' : 'att.editor_new'), id: 'att-editor', cls: 'narrow',
+    body: `<div class="field"><label class="f" for="aw-name">${esc(t('name'))} *</label><input class="input" id="aw-name" maxlength="40" value="${esc(w ? w.name : '')}" autocomplete="off"></div>
+      <div class="field"><label class="f" for="aw-job">${esc(t('att.job'))}</label><input class="input" id="aw-job" maxlength="40" value="${esc(w ? w.job : '')}" placeholder="Kuli angkut"></div>
+      <div class="field"><label class="f" for="aw-phone">${esc(t('phone'))}</label><input class="input" id="aw-phone" type="tel" inputmode="tel" value="${esc(w && w.phone ? localPhone(w.phone) : '')}"></div>
+      ${own ? `<div class="field"><label class="f" for="aw-wage">${esc(t('att.wage'))}</label><input class="input num" id="aw-wage" inputmode="numeric" value="${esc(w ? fmtNum(w.daily_wage || 0) : '')}"><div class="small muted">${esc(t('att.wage_hint'))}</div></div>` : ''}
+      ${w ? `<label class="check"><input type="checkbox" id="aw-active" ${w.active ? 'checked' : ''}> ${esc(t('att.active'))}</label>` : ''}<div class="red small" id="aw-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="aw-save">${esc(t('save'))}</button>` });
+  $('#aw-save', el).onclick = async () => {
+    const d = { name: $('#aw-name', el).value.trim(), job: $('#aw-job', el).value.trim(), phone: $('#aw-phone', el).value.trim() };
+    if (w) { d.worker_id = w.worker_id; d.active = $('#aw-active', el).checked; }
+    if (own) d.daily_wage = moneyVal($('#aw-wage', el).value);
+    if (!d.name) { $('#aw-err', el).textContent = t('att.name_req'); return; }
+    $('#aw-save', el).disabled = true;
+    try { const r = await attApi('worker_save', d); closeModal(); toast(t('att.saved'), 'ok'); await loadAtt(); if (!w && r.worker && !r.worker.enrolled) startEnroll(r.worker); }
+    catch (e) { $('#aw-save', el).disabled = false; $('#aw-err', el).textContent = errMsg(e); }
+  };
+}
+function startEnroll(w) {
+  if (!window.KAttKiosk) { toast(t('doc.not_loaded'), 'err'); return; }
+  KAttKiosk.enroll({ api: attApi, lang: S.lang, worker: w, onClose: () => { if (S.view === 'absensi') loadAtt(); } });
+}
+function attCsv() {
+  const r = AT.rep; if (!r) return;
+  const q = csvCell, own = isOwner();
+  const lines = [[t('date'), t('name'), t('status'), t('att.in'), t('att.out'), t('att.hours'), t('att.late')].map(q).join(',')]
+    .concat(r.rows.map(x => [x.date, x.name, t('att.st_' + x.status), x.first_in ? jktTime(x.first_in) : '', x.last_out ? jktTime(x.last_out) : '', minHM(x.minutes), x.late_min].map(q).join(',')))
+    .concat([''], [[t('name'), t('att.present'), t('att.st_terlambat'), t('att.absent'), t('att.hours'), t('att.fails')].concat(own ? [t('att.wage'), t('att.wage_due')] : []).map(q).join(',')])
+    .concat(r.totals.map(x => [x.name, x.present, x.late_days, x.absent, minHM(x.minutes), x.fails].concat(own ? [x.daily_wage, x.wage_due] : []).map(q).join(',')));
+  try {
+    const url = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a'); a.href = url; a.download = `absensi-${r.from}-${r.to}.csv`; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  } catch (e) { toast(errMsg(e), 'err'); }
+}
+Object.assign(ACT, {
+  'att-kiosk': () => { if (!window.KAttKiosk) { toast(t('doc.not_loaded'), 'err'); return; } KAttKiosk.open({ api: attApi, lang: S.lang, deviceId: deviceId(), onClose: () => { if (S.view === 'absensi') loadAtt(); } }); },
+  'att-add': () => openWorkerEditor(null),
+  'att-edit': el => openWorkerEditor((AT.boot.workers || []).find(w => w.worker_id === el.dataset.w)),
+  'att-enroll': el => startEnroll((AT.boot.workers || []).find(w => w.worker_id === el.dataset.w)),
+  'att-forget': async el => {
+    const w = (AT.boot.workers || []).find(x => x.worker_id === el.dataset.w); if (!w) return;
+    const r = await confirmBox(t('att.forget_q', { name: w.name }), { danger: true, ok: t('att.forget') }); if (!r.ok) return;
+    try { await attApi('worker_forget', { worker_id: w.worker_id }); toast(t('att.saved'), 'ok'); loadAtt(); } catch (e) { toast(errMsg(e), 'err'); }
+  },
+  'att-preset': el => { AT.preset = el.dataset.p; [AT.from, AT.to] = attRange(AT.preset); RENDER.absensi(); },
+  'att-load': () => { if (AT.from && AT.to) loadAttReport(); },
+  'att-print': () => { if (AT.rep && window.KDocs) printHTML(KDocs.attendance(AT.rep, docCtx({ showWages: isOwner() })), KDocs.PAGE); },
+  'att-csv': () => attCsv(),
+  'att-save-set': async () => {
+    const err = $('#att-set-err'), s = { att_work_start: $('#att-s-start').value, att_work_end: $('#att-s-end').value, att_grace_min: num($('#att-s-grace').value), att_radius_m: num($('#att-s-radius').value) };
+    const sn = $('#att-se-name').value.trim(), sf = $('#att-se-from').value, stt = $('#att-se-to').value, se = $('#att-se-end').value;
+    s.att_seasons = sf || stt || se ? [{ name: sn, from: sf, to: stt, work_end: se }] : [];
+    try { await attApi('att_settings', { settings: s }); err.textContent = ''; toast(t('att.saved'), 'ok'); loadAtt(); } catch (e) { err.textContent = errMsg(e); }
+  }
+});
+
 const MB = { q: '' };
 RENDER.members = function () {
   if (!isApprover()) { go('pos'); return; }
@@ -9523,6 +9688,7 @@ Object.assign(ACT, {
 });
 function logoutUser() { S.pin_hash = ''; S.viaMaster = false; sessSet(S.user, S.role, ''); L.sel = S.user; S.inApp = false; showLogin('pin'); }
 Object.assign(I18N.id, {
+  'nav.absensi': "Absensi", 'navs.absensi': "Absensi", 'att.kiosk': "Buka layar absen", 'att.add': "Tambah pekerja", 'att.hint': "Pekerja absen dengan wajah di perangkat toko. Catatan tidak bisa diubah atau dihapus siapa pun; perubahan apa pun pada data terlihat di laporan.", 'att.today': "Hari ini", 'att.workers': "Pekerja", 'att.report': "Laporan", 'att.p_month': "Bulan ini", 'att.p_lastmonth': "Bulan lalu", 'att.p_7d': "7 hari", 'att.show': "Tampilkan", 'att.settings': "Jam kerja", 'att.st_hadir': "Hadir", 'att.st_terlambat': "Terlambat", 'att.st_tidak_hadir': "Tidak hadir", 'att.st_libur': "Libur", 'att.st_belum': "Belum datang", 'att.in': "Masuk", 'att.out': "Pulang", 'att.still_in': "masih di toko", 'att.hours': "Jam kerja", 'att.late': "Terlambat", 'att.present': "Hadir", 'att.absent': "Tidak hadir", 'att.fails': "Gagal wajah", 'att.wage': "Upah/hari", 'att.wage_due': "Upah dibayar", 'att.wage_total': "Total upah", 'att.ok': "Data utuh: {n} catatan, {d} hari disegel — tidak ada yang diubah atau dihapus.", 'att.bad': "PERINGATAN: data absensi berubah", 'att.print': "Cetak laporan (A4)", 'att.csv': "Unduh CSV", 'att.events': "Kejadian ({n})", 'att.ev_fail': "Gagal absen", 'att.ev_enroll': "Daftar wajah", 'att.ev_forget': "Hapus wajah", 'att.ev_worker': "Data pekerja", 'att.ev_setting': "Jam kerja diubah", 'att.face': "Wajah", 'att.enrolled': "Terdaftar", 'att.not_enrolled': "Belum", 'att.enroll': "Daftar wajah", 'att.reenroll': "Ulang", 'att.forget': "Hapus wajah", 'att.forget_q': "Hapus data wajah {name}? Absen lama tetap ada; untuk absen lagi wajahnya harus didaftarkan ulang.", 'att.none': "Belum ada pekerja. Tambahkan pekerja lalu daftarkan wajahnya.", 'att.inactive': "nonaktif", 'att.editor_new': "Pekerja baru", 'att.editor_edit': "Ubah pekerja", 'att.job': "Pekerjaan", 'att.active': "Aktif", 'att.wage_hint': "Hanya pemilik yang melihat upah.", 'att.name_req': "Nama wajib", 'att.start': "Jam masuk", 'att.end': "Jam pulang", 'att.grace': "Toleransi terlambat (menit)", 'att.radius': "Jarak dari toko (m)", 'att.season': "Musim jam panjang", 'att.season_name': "Nama", 'att.season_from': "Dari", 'att.season_to': "Sampai", 'att.season_end': "Jam tutup", 'att.season_hint': "Contoh: dua bulan sebelum Ramadan toko tutup 23:00.", 'att.saved': "Tersimpan", 'att.no_store_loc': "Lokasi toko belum diatur, jadi jarak absen belum dicek. Atur di Pengaturan → Lokasi toko.", 'att.thumb': "Foto wajah",
   'nav.members': 'Member', 'navs.members': 'Member',
   'mc.title': 'Kode pemilik', 'mc.hint': 'Kode 8 angka yang hanya diketahui pemilik. Dengan kode ini pemilik bisa masuk ke akun siapa pun (misalnya saat kasir lupa PIN atau akun terkunci). Setiap masuk dengan kode ini dicatat di Aktivitas. Kode tidak disimpan di perangkat ini.',
   'mc.code': 'Kode pemilik (8 angka)', 'mc.code2': 'Ulangi kode', 'mc.set': 'Simpan kode pemilik', 'mc.change': 'Ganti kode pemilik', 'mc.has': 'Kode pemilik aktif', 'mc.none': 'Belum ada',
@@ -9558,6 +9724,7 @@ Object.assign(I18N.id, {
   'ak.pindah_stok': 'Pindah stok gudang/rak', 'ak.jual_tanpa_rak': 'Jual melebihi stok rak'
 });
 Object.assign(I18N.ar, {
+  'nav.absensi': "الحضور", 'navs.absensi': "الحضور", 'att.kiosk': "فتح شاشة الحضور", 'att.add': "إضافة عامل", 'att.hint': "يسجّل العمال حضورهم بالوجه على جهاز المحل. لا يستطيع أحد تعديل السجلات أو حذفها، وأي تغيير في البيانات يظهر في التقرير.", 'att.today': "اليوم", 'att.workers': "العمال", 'att.report': "التقرير", 'att.p_month': "هذا الشهر", 'att.p_lastmonth': "الشهر الماضي", 'att.p_7d': "7 أيام", 'att.show': "عرض", 'att.settings': "ساعات العمل", 'att.st_hadir': "حاضر", 'att.st_terlambat': "متأخر", 'att.st_tidak_hadir': "غائب", 'att.st_libur': "عطلة", 'att.st_belum': "لم يصل بعد", 'att.in': "دخول", 'att.out': "خروج", 'att.still_in': "ما زال في المحل", 'att.hours': "ساعات العمل", 'att.late': "التأخير", 'att.present': "أيام الحضور", 'att.absent': "أيام الغياب", 'att.fails': "محاولات فاشلة", 'att.wage': "الأجر اليومي", 'att.wage_due': "الأجر المستحق", 'att.wage_total': "مجموع الأجور", 'att.ok': "البيانات سليمة: {n} سجل و{d} يوم مختوم — لم يُعدَّل أو يُحذف شيء.", 'att.bad': "تحذير: تغيّرت بيانات الحضور", 'att.print': "طباعة التقرير (A4)", 'att.csv': "تنزيل CSV", 'att.events': "الأحداث ({n})", 'att.ev_fail': "محاولة فاشلة", 'att.ev_enroll': "تسجيل وجه", 'att.ev_forget': "حذف وجه", 'att.ev_worker': "بيانات عامل", 'att.ev_setting': "تغيير ساعات العمل", 'att.face': "الوجه", 'att.enrolled': "مسجّل", 'att.not_enrolled': "غير مسجّل", 'att.enroll': "تسجيل الوجه", 'att.reenroll': "إعادة", 'att.forget': "حذف الوجه", 'att.forget_q': "حذف بيانات وجه {name}؟ يبقى الحضور القديم، وللتسجيل مجددًا يجب تسجيل الوجه من جديد.", 'att.none': "لا يوجد عمال بعد. أضف عاملًا ثم سجّل وجهه.", 'att.inactive': "غير نشط", 'att.editor_new': "عامل جديد", 'att.editor_edit': "تعديل عامل", 'att.job': "العمل", 'att.active': "نشط", 'att.wage_hint': "الأجر يراه المالك فقط.", 'att.name_req': "الاسم مطلوب", 'att.start': "وقت الدخول", 'att.end': "وقت الخروج", 'att.grace': "سماحية التأخير (دقائق)", 'att.radius': "المسافة من المحل (م)", 'att.season': "موسم ساعات أطول", 'att.season_name': "الاسم", 'att.season_from': "من", 'att.season_to': "إلى", 'att.season_end': "وقت الإغلاق", 'att.season_hint': "مثال: قبل رمضان بشهرين يغلق المحل الساعة 23:00.", 'att.saved': "تم الحفظ", 'att.no_store_loc': "موقع المحل غير مضبوط، لذلك لا تُفحص المسافة عند التسجيل. اضبطه من الإعدادات ← موقع المحل.", 'att.thumb': "صورة الوجه",
   'nav.members': 'الأعضاء', 'navs.members': 'الأعضاء',
   'mc.title': 'رمز المالك', 'mc.hint': 'رمز من 8 أرقام يعرفه المالك وحده. به يستطيع المالك الدخول إلى أي حساب (مثلاً إذا نسي الكاشير رقمه أو قُفل الحساب). كل دخول بهذا الرمز يُسجَّل في سجل النشاط. لا يُحفظ الرمز على هذا الجهاز.',
   'mc.code': 'رمز المالك (8 أرقام)', 'mc.code2': 'أعد الرمز', 'mc.set': 'حفظ رمز المالك', 'mc.change': 'تغيير رمز المالك', 'mc.has': 'رمز المالك مفعّل', 'mc.none': 'غير موجود',

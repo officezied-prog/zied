@@ -477,10 +477,13 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
 </svg>
 
 <script src="../shared/docs.js"></script>
+<script src="../shared/face.js"></script>
+<script src="../shared/att-kiosk.js"></script>
 <script>
 'use strict';
 const CONFIG = { API_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-pos', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-pos-photo';
+CONFIG.ATT_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-att';
 const APP_VERSION = 'kasir-1.0.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
@@ -681,7 +684,7 @@ async function apiRawInner(action, data, cred, opts) {
   if (cred.pin_hash) body.pin_hash = cred.pin_hash;
   body.data = data || {};
   // v11: every main-API request says where this device is (photo endpoint excluded)
-  if (!opts.photo && cred.user && action !== 'users' && action !== 'setup') { body.data = Object.assign({}, body.data, { device: devicePayload() }); DEV.lastMain = Date.now(); }
+  if (!opts.photo && !opts.att && cred.user && action !== 'users' && action !== 'setup') { body.data = Object.assign({}, body.data, { device: devicePayload() }); DEV.lastMain = Date.now(); }
   let res;
   if (MOCK) {
     res = await MockServer.request(clone(body));
@@ -690,7 +693,7 @@ async function apiRawInner(action, data, cred, opts) {
     const timer = setTimeout(() => ctrl && ctrl.abort(), opts.timeout || 20000);
     let r, txt;
     try {
-      r = await fetch(opts.photo ? CONFIG.PHOTO_URL : CONFIG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined, cache: 'no-store' });
+      r = await fetch(opts.att ? CONFIG.ATT_URL : opts.photo ? CONFIG.PHOTO_URL : CONFIG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined, cache: 'no-store' });
       txt = await r.text();
     } catch (e) { throw new NetError(e && e.message); } finally { clearTimeout(timer); }
     try { res = JSON.parse(txt); } catch (e) {
@@ -1265,6 +1268,9 @@ const MockServer = (() => {
     const custById = id => db.customers.find(c => c.id === Number(id));
 
     switch (action) {
+      case 'att_bootstrap': case 'worker_save': case 'worker_enroll': case 'worker_forget': case 'att_mark': case 'att_report': case 'att_settings':
+        if (!window.KAttMock || !window.KAtt) throw E('SERVER', 'Attendance mock not loaded');
+        return window.KAttMock.handle(db, u, action, data, E);
       case 'login':
         if (viaMaster) logAct(db, u, 'masuk_master', 'Masuk ke akun ' + u.name + ' (' + u.role + ') dengan kode pemilik', u.name, 0, 'warn');
         return { user: { name: u.name, role: u.role }, must_change: u.must_change === true && !viaMaster, via_master: viaMaster };
@@ -2098,8 +2104,16 @@ const MockServer = (() => {
     }
   }
 
+  // v17 attendance: the same core as the server (backend/attendance/att-core.js) + demo data (shared/att-mock.js), loaded on first use
+  let attLoad = null;
+  function loadAttMock() {
+    if (window.KAttMock && window.KAtt) return Promise.resolve();
+    const one = src => new Promise(res => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = res; document.head.appendChild(sc); });
+    return attLoad || (attLoad = one('../backend/attendance/att-core.js').then(() => one('../shared/att-mock.js')));
+  }
   async function request(body) {
     await ensure();
+    if (/^(att_|worker_)/.test(body.action)) await loadAttMock();
     await sleep(30 + Math.random() * 50);
     let forced = false; try { forced = localStorage.getItem('kmock.offline') === '1'; } catch (e) { }
     if (!navigator.onLine || forced) throw new NetError('offline (mock)');
@@ -2114,13 +2128,14 @@ const MockServer = (() => {
       lastRole = '';
       shopSet.clear();
       const snap = new Map(db.products.map(p => [p.id, { json: JSON.stringify(p), shop: shopOf(p) }]));
-      if (body.data && typeof body.data === 'object' && !/^scan_/.test(body.action)) { body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); } // (a copy: the server gets it over the network)
+      if (body.data && typeof body.data === 'object' && !/^(scan_|att_mark|worker_enroll)/.test(body.action)) { body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); } // (a copy: the server gets it over the network)
       res = handle(db, body);
       normShop(db, snap);
       const role = lastRole;
       if (!READ_ONLY.includes(body.action) || dirty) save(db);
       res = Object.assign({ ok: true }, role === 'owner' || ['users', 'setup'].includes(body.action) ? res : strip(res));
     } catch (e) {
+      if (e.attState) { const fresh = load(); fresh.att = e.attState; save(fresh); } // v17: refused check-ins stay recorded
       res = Object.assign({ ok: false, error: e.code || 'SERVER', message: e.message }, e.extra || {});
     }
     return JSON.parse(JSON.stringify(res));
@@ -5232,6 +5247,7 @@ RENDER.more = function () {
   const n = S.outbox.length, mine = myPendingCount();
   $('#v-more').innerHTML = `<div class="wrapc"><h1>${esc(t('tab.more'))}</h1>
     <div class="list" id="more-list">
+      <button class="li" data-act="att-kiosk" id="m-att">${ic('camera')}<div class="grow"><div class="t">${esc(t('att.kiosk'))}</div><div class="s">${esc(t('att.kiosk_s'))}</div></div></button>
       <button class="li" data-act="member-new" id="m-member">${ic('user')}<div class="grow"><div class="t">${esc(t('mem.new'))}</div><div class="s">${esc(t('mem.new_s'))}</div></div></button>
       <button class="li" data-act="debt-pay" id="m-debt">${ic('wallet')}<div class="grow"><div class="t">${esc(t('more.debt_pay'))}</div><div class="s">${esc(t('more.debt_pay_s'))}</div></div></button>
       ${S.role === 'manager' && !S.shift ? `<button class="li" data-act="gate-open" id="m-kas-open">${ic('cash')}<div class="grow"><div class="t">${esc(t('gate.title_mgr'))}</div><div class="s">${esc(t('kas.mgr_hint'))}</div></div></button>` : ''}
@@ -5687,6 +5703,8 @@ const ACT = {
   'pu-del': el => { PU.lines.splice(+el.dataset.i, 1); savePuDraft(); RENDER.masuk(); },
   'pu-clear': () => { Object.assign(PU, { lines: [], photo_id: '', thumb: '', scan: null, result: null, scanErr: '', carrier: { type: '' } }); savePuDraft(); RENDER.masuk(); },
   'pu-retur': el => openSupReturn(el.dataset.no),
+  // v17: attendance of the shop's workers by face on this device (shared/att-kiosk.js, workflow khair-att)
+  'att-kiosk': () => { if (!window.KAttKiosk) { toast(t('doc.not_loaded'), 'err'); return; } KAttKiosk.open({ api: (a, d) => api(a, d, { att: true, timeout: 30000 }), lang: S.lang, deviceId: deviceId() }); },
   'quote': () => openQuotation(),
   'pu-doc': el => {
     const g = (PUH.groups || []).find(x => x.no === el.dataset.no); if (!g || !window.KDocs) return;
@@ -5839,6 +5857,7 @@ const I18N = {
     'qty.add': 'Tambah', 'qty.change': 'Ubah', 'qty.invalid': 'Jumlah harus lebih dari 0', 'qty.too_big': 'Jumlah terlalu besar',
     'more.ask_qty': 'Tanya jumlah saat pilih barang', 'more.ask_qty_s': 'Ketuk barang → pilih jumlah. Scan barcode tetap langsung +1.',
     'doc.invoice': 'Faktur A4', 'doc.sj': 'Surat jalan', 'doc.goods_in': 'Tanda terima', 'doc.quote': 'Penawaran', 'doc.quote_title': 'Penawaran harga', 'doc.quote_hint': 'Dari isi keranjang. Tidak disimpan dan stok tidak dipesan; cetak A4 atau bagikan.', 'doc.print_a4': 'Cetak A4', 'doc.not_loaded': 'Dokumen belum termuat, muat ulang halaman saat online',
+    'att.kiosk': 'Absensi pekerja', 'att.kiosk_s': 'Pekerja absen masuk / pulang dengan wajah',
     'hold.btn': 'Tahan', 'hold.title': 'Tahan transaksi', 'hold.hint': 'Keranjang disimpan di HP ini. Layani pembeli berikutnya, lalu lanjutkan dari tombol "Ditahan".',
     'hold.label': 'Penanda (opsional)', 'hold.label_hint': 'mis. baju merah, Bapak topi hitam', 'hold.default': 'Pelanggan {n}', 'hold.held': 'Ditahan: {label}',
     'hold.chip': 'Ditahan ({n})', 'hold.list': 'Transaksi ditahan', 'hold.resume': 'Lanjutkan', 'hold.resumed': 'Dilanjutkan: {label}',
@@ -5940,6 +5959,7 @@ const I18N = {
     'qty.add': 'إضافة', 'qty.change': 'تعديل', 'qty.invalid': 'الكمية يجب أن تكون أكبر من 0', 'qty.too_big': 'الكمية كبيرة جدًا',
     'more.ask_qty': 'السؤال عن الكمية عند اختيار الصنف', 'more.ask_qty_s': 'اضغط الصنف ← اختر الكمية. مسح الباركود يضيف 1 مباشرة.',
     'doc.invoice': 'فاتورة A4', 'doc.sj': 'إذن خروج بضاعة', 'doc.goods_in': 'إيصال استلام', 'doc.quote': 'عرض سعر', 'doc.quote_title': 'عرض سعر', 'doc.quote_hint': 'من محتوى السلة. لا يُحفظ ولا يحجز المخزون؛ اطبعه A4 أو شاركه.', 'doc.print_a4': 'طباعة A4', 'doc.not_loaded': 'لم تُحمَّل المستندات، أعد تحميل الصفحة وأنت متصل',
+    'att.kiosk': 'حضور العمال', 'att.kiosk_s': 'يسجّل العمال الدخول والخروج بالوجه',
     'hold.btn': 'تعليق', 'hold.title': 'تعليق العملية', 'hold.hint': 'تُحفظ السلة على هذا الجهاز. اخدم الزبون التالي، ثم تابِع من زر "المعلّقة".',
     'hold.label': 'علامة مميزة (اختياري)', 'hold.label_hint': 'مثل: قميص أحمر، رجل بقبعة سوداء', 'hold.default': 'زبون {n}', 'hold.held': 'عُلّقت: {label}',
     'hold.chip': 'المعلّقة ({n})', 'hold.list': 'العمليات المعلّقة', 'hold.resume': 'متابعة', 'hold.resumed': 'تمت متابعة: {label}',
