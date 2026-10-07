@@ -42,7 +42,7 @@ never receives `cost_price`, `total_cost`, `profit`, `line_profit`, `cost` field
 | `save_purchase` | any | `{purchase_date, supplier, note, items:[{product_id, qty, cost_price, exp_date? (YYYY-MM-DD, expiry of this batch)}]}` | `stock: [{product_id, stock, cost_price}]` |
 | `get_sales` | any (kasir: cost/profit stripped) | `{from: "YYYY-MM-DD", to: "YYYY-MM-DD"}` inclusive | `sales[], items[], payments[], purchases[]` |
 | `save_settings` | owner | `{settings: {...}}` (merged) | `settings` |
-| `save_user` | owner | `{name, role, pin_hash?, active}` (create or update by name) | `user` |
+| `save_user` | owner; manager for kasir / sales / akuntan accounts only (v18) | `{name, role, pin_hash?, active}` (create or update by name) | `user` |
 
 ## Objects
 

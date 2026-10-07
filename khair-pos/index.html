@@ -2673,7 +2673,11 @@ const MockServer = (() => {
         return { settings: db.settings };
       }
       case 'save_user': {
-        needOwner();
+        if (u.role !== 'owner') {
+          if (u.role !== 'manager') throw E('FORBIDDEN', 'Owner only');
+          const t0 = db.users.find(v => v.name.toLowerCase() === String(data.name || '').trim().toLowerCase());
+          if (!['kasir', 'sales', 'akuntan'].includes(data.role) || (t0 && !['kasir', 'sales', 'akuntan'].includes(t0.role))) throw E('FORBIDDEN', 'Manajer hanya mengatur akun kasir, sales dan akuntan');
+        }
         const name = personName(data.name);
         if (!name) throw E('INVALID', strv(data.name) ? 'Nama pengguna hanya boleh huruf, spasi dan . \' -' : 'Nama wajib');
         const role = ['owner', 'manager', 'sales', 'akuntan'].includes(data.role) ? data.role : 'kasir';
@@ -6959,16 +6963,8 @@ RENDER.settings = function () {
     ${settingsV16HTML()}
     ${settingsReturHTML()}
     ${settingsReceiptHTML()}
-    <div class="panel"><h3>${esc(t('set.users'))}</h3><div class="pb">
-      <div id="st-users" style="margin-bottom:12px">${usersByRoleHTML()}</div>
-      ${ST.tempPin ? `<div class="notice" id="st-temp-pin" role="status">${ic('lock')} <span>${esc(t('usr.temp_notice', { name: ST.tempPin }))}</span></div>` : ''}
-      <h4 style="margin:0 0 8px">${esc(t('set.add_user'))}</h4>
-      <p class="small muted" style="margin-top:0">${esc(t('usr.temp_hint'))}</p>
-      <div class="grid2"><div class="field"><label class="f" for="nu-name">${esc(t('name'))}</label><input class="input" id="nu-name" autocomplete="off"></div>
-        <div class="field"><label class="f" for="nu-role">${esc(t('set.role'))}</label><select class="input" id="nu-role"><option value="kasir">${esc(t('role.kasir'))}</option><option value="sales">${esc(t('role.sales'))}</option><option value="manager">${esc(t('role.manager'))}</option><option value="akuntan">${esc(t('role.akuntan'))}</option><option value="owner">${esc(t('role.owner'))}</option></select></div></div>
-      <div class="grid2"><div class="field"><label class="f" for="nu-pin">${esc(t('pin'))}</label><input class="input" id="nu-pin" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password"></div>
-        <div class="field"><label class="f" for="nu-pin2">${esc(t('pin_again'))}</label><input class="input" id="nu-pin2" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password"></div></div>
-      <div class="red" id="nu-err"></div><button class="btn primary" data-act="user-add">${ic('plus')} ${esc(t('set.add_user'))}</button></div></div>` : ''}
+    ${usersPanelHTML()}` : ''}
+    ${!own && S.role === 'manager' ? usersPanelHTML() : ''}
 
     ${!own && isApprover() ? `<div class="panel" id="st-retur"><h3>${ic('return')} ${esc(t('set.rt_title'))}</h3><div class="pb">${agreementCardHTML()}</div></div>` : ''}
     <div class="panel"><h3>${esc(t('set.app'))}</h3><div class="pb">
@@ -7229,6 +7225,8 @@ const ACT = {
   'user-add': async () => {
     const name = $('#nu-name').value.trim(), role = $('#nu-role').value, a = $('#nu-pin').value, b = $('#nu-pin2').value, err = $('#nu-err');
     if (!name) { err.textContent = t('required') + ': ' + t('name'); return; }
+    // a daily worker has no account: attendance by face (Absensi) — the worker form opens with the name filled in
+    if (role === 'pekerja') { go('absensi'); openWorkerEditor(null); const f = $('#aw-name'); if (f) f.value = name; return; }
     if (!ruleOk.name(name)) { err.textContent = t('rule.name'); return; }
     if (S.users.some(u => u.name.toLowerCase() === name.toLowerCase())) { err.textContent = t('set.user_exists'); return; }
     const pe = pinError(a, b); if (pe) { err.textContent = pe; return; }
@@ -9730,7 +9728,7 @@ Object.assign(ACT, {
 });
 function logoutUser() { S.pin_hash = ''; S.viaMaster = false; sessSet(S.user, S.role, ''); L.sel = S.user; S.inApp = false; showLogin('pin'); }
 Object.assign(I18N.id, {
-  'role.akuntan': 'Akuntan', 'ro.denied': 'Akun akuntan hanya untuk melihat data', 'ro.hint': 'Akun akuntan: lihat saja, tidak bisa mengubah.', 'set.inv_title': 'Faktur & akuntan', 'set.due_days': 'Jatuh tempo faktur hutang (hari)', 'set.due_bad': 'Isi 0–120 hari', 'set.ak_cost': 'Akuntan boleh melihat harga beli (modal)', 'set.ak_cost_hint': 'Laba tetap hanya untuk pemilik. Tanpa centang, akuntan melihat jumlah barang dan pembayaran tanpa harga beli.',
+  'role.akuntan': 'Akuntan', 'role.pekerja': 'Pekerja harian (absen wajah, tanpa PIN)', 'ro.denied': 'Akun akuntan hanya untuk melihat data', 'ro.hint': 'Akun akuntan: lihat saja, tidak bisa mengubah.', 'set.inv_title': 'Faktur & akuntan', 'set.due_days': 'Jatuh tempo faktur hutang (hari)', 'set.due_bad': 'Isi 0–120 hari', 'set.ak_cost': 'Akuntan boleh melihat harga beli (modal)', 'set.ak_cost_hint': 'Laba tetap hanya untuk pemilik. Tanpa centang, akuntan melihat jumlah barang dan pembayaran tanpa harga beli.',
   'nav.cold': "Gudang Dingin", 'navs.cold': "Gd. Dingin", 'nav.absensi': "Absensi", 'navs.absensi': "Absensi", 'att.kiosk': "Buka layar absen", 'att.add': "Tambah pekerja", 'att.hint': "Pekerja absen dengan wajah di perangkat toko. Catatan tidak bisa diubah atau dihapus siapa pun; perubahan apa pun pada data terlihat di laporan.", 'att.today': "Hari ini", 'att.workers': "Pekerja", 'att.report': "Laporan", 'att.p_month': "Bulan ini", 'att.p_lastmonth': "Bulan lalu", 'att.p_7d': "7 hari", 'att.show': "Tampilkan", 'att.settings': "Jam kerja", 'att.st_hadir': "Hadir", 'att.st_terlambat': "Terlambat", 'att.st_tidak_hadir': "Tidak hadir", 'att.st_libur': "Libur", 'att.st_belum': "Belum datang", 'att.in': "Masuk", 'att.out': "Pulang", 'att.still_in': "masih di toko", 'att.hours': "Jam kerja", 'att.late': "Terlambat", 'att.present': "Hadir", 'att.absent': "Tidak hadir", 'att.fails': "Gagal wajah", 'att.wage': "Upah/hari", 'att.wage_due': "Upah dibayar", 'att.wage_total': "Total upah", 'att.ok': "Data utuh: {n} catatan, {d} hari disegel — tidak ada yang diubah atau dihapus.", 'att.bad': "PERINGATAN: data absensi berubah", 'att.print': "Cetak laporan (A4)", 'att.csv': "Unduh CSV", 'att.events': "Kejadian ({n})", 'att.ev_fail': "Gagal absen", 'att.ev_enroll': "Daftar wajah", 'att.ev_forget': "Hapus wajah", 'att.ev_worker': "Data pekerja", 'att.ev_setting': "Jam kerja diubah", 'att.face': "Wajah", 'att.enrolled': "Terdaftar", 'att.not_enrolled': "Belum", 'att.enroll': "Daftar wajah", 'att.reenroll': "Ulang", 'att.forget': "Hapus wajah", 'att.forget_q': "Hapus data wajah {name}? Absen lama tetap ada; untuk absen lagi wajahnya harus didaftarkan ulang.", 'att.none': "Belum ada pekerja. Tambahkan pekerja lalu daftarkan wajahnya.", 'att.inactive': "nonaktif", 'att.editor_new': "Pekerja baru", 'att.editor_edit': "Ubah pekerja", 'att.job': "Pekerjaan", 'att.active': "Aktif", 'att.wage_hint': "Hanya pemilik yang melihat upah.", 'att.name_req': "Nama wajib", 'att.start': "Jam masuk", 'att.end': "Jam pulang", 'att.grace': "Toleransi terlambat (menit)", 'att.radius': "Jarak dari toko (m)", 'att.season': "Musim jam panjang", 'att.season_name': "Nama", 'att.season_from': "Dari", 'att.season_to': "Sampai", 'att.season_end': "Jam tutup", 'att.season_hint': "Contoh: dua bulan sebelum Ramadan toko tutup 23:00.", 'att.saved': "Tersimpan", 'att.no_store_loc': "Lokasi toko belum diatur, jadi jarak absen belum dicek. Atur di Pengaturan → Lokasi toko.", 'att.thumb': "Foto wajah",
   'nav.members': 'Member', 'navs.members': 'Member',
   'mc.title': 'Kode pemilik', 'mc.hint': 'Kode 8 angka yang hanya diketahui pemilik. Dengan kode ini pemilik bisa masuk ke akun siapa pun (misalnya saat kasir lupa PIN atau akun terkunci). Setiap masuk dengan kode ini dicatat di Aktivitas. Kode tidak disimpan di perangkat ini.',
@@ -9767,7 +9765,7 @@ Object.assign(I18N.id, {
   'ak.pindah_stok': 'Pindah stok gudang/rak', 'ak.jual_tanpa_rak': 'Jual melebihi stok rak'
 });
 Object.assign(I18N.ar, {
-  'role.akuntan': 'محاسب', 'ro.denied': 'حساب المحاسب للاطلاع فقط', 'ro.hint': 'حساب المحاسب: اطلاع فقط دون تعديل.', 'set.inv_title': 'الفواتير والمحاسب', 'set.due_days': 'مهلة سداد فاتورة الدين (أيام)', 'set.due_bad': 'أدخل من 0 إلى 120 يومًا', 'set.ak_cost': 'يسمح للمحاسب برؤية سعر الشراء', 'set.ak_cost_hint': 'الربح يبقى للمالك فقط. بدون التحديد يرى المحاسب الكميات والمدفوعات دون أسعار الشراء.',
+  'role.akuntan': 'محاسب', 'role.pekerja': 'عامل يومي (حضور بالوجه، بدون رقم سري)', 'ro.denied': 'حساب المحاسب للاطلاع فقط', 'ro.hint': 'حساب المحاسب: اطلاع فقط دون تعديل.', 'set.inv_title': 'الفواتير والمحاسب', 'set.due_days': 'مهلة سداد فاتورة الدين (أيام)', 'set.due_bad': 'أدخل من 0 إلى 120 يومًا', 'set.ak_cost': 'يسمح للمحاسب برؤية سعر الشراء', 'set.ak_cost_hint': 'الربح يبقى للمالك فقط. بدون التحديد يرى المحاسب الكميات والمدفوعات دون أسعار الشراء.',
   'nav.cold': "المخازن المبرّدة", 'navs.cold': "المبرّدة", 'nav.absensi': "الحضور", 'navs.absensi': "الحضور", 'att.kiosk': "فتح شاشة الحضور", 'att.add': "إضافة عامل", 'att.hint': "يسجّل العمال حضورهم بالوجه على جهاز المحل. لا يستطيع أحد تعديل السجلات أو حذفها، وأي تغيير في البيانات يظهر في التقرير.", 'att.today': "اليوم", 'att.workers': "العمال", 'att.report': "التقرير", 'att.p_month': "هذا الشهر", 'att.p_lastmonth': "الشهر الماضي", 'att.p_7d': "7 أيام", 'att.show': "عرض", 'att.settings': "ساعات العمل", 'att.st_hadir': "حاضر", 'att.st_terlambat': "متأخر", 'att.st_tidak_hadir': "غائب", 'att.st_libur': "عطلة", 'att.st_belum': "لم يصل بعد", 'att.in': "دخول", 'att.out': "خروج", 'att.still_in': "ما زال في المحل", 'att.hours': "ساعات العمل", 'att.late': "التأخير", 'att.present': "أيام الحضور", 'att.absent': "أيام الغياب", 'att.fails': "محاولات فاشلة", 'att.wage': "الأجر اليومي", 'att.wage_due': "الأجر المستحق", 'att.wage_total': "مجموع الأجور", 'att.ok': "البيانات سليمة: {n} سجل و{d} يوم مختوم — لم يُعدَّل أو يُحذف شيء.", 'att.bad': "تحذير: تغيّرت بيانات الحضور", 'att.print': "طباعة التقرير (A4)", 'att.csv': "تنزيل CSV", 'att.events': "الأحداث ({n})", 'att.ev_fail': "محاولة فاشلة", 'att.ev_enroll': "تسجيل وجه", 'att.ev_forget': "حذف وجه", 'att.ev_worker': "بيانات عامل", 'att.ev_setting': "تغيير ساعات العمل", 'att.face': "الوجه", 'att.enrolled': "مسجّل", 'att.not_enrolled': "غير مسجّل", 'att.enroll': "تسجيل الوجه", 'att.reenroll': "إعادة", 'att.forget': "حذف الوجه", 'att.forget_q': "حذف بيانات وجه {name}؟ يبقى الحضور القديم، وللتسجيل مجددًا يجب تسجيل الوجه من جديد.", 'att.none': "لا يوجد عمال بعد. أضف عاملًا ثم سجّل وجهه.", 'att.inactive': "غير نشط", 'att.editor_new': "عامل جديد", 'att.editor_edit': "تعديل عامل", 'att.job': "العمل", 'att.active': "نشط", 'att.wage_hint': "الأجر يراه المالك فقط.", 'att.name_req': "الاسم مطلوب", 'att.start': "وقت الدخول", 'att.end': "وقت الخروج", 'att.grace': "سماحية التأخير (دقائق)", 'att.radius': "المسافة من المحل (م)", 'att.season': "موسم ساعات أطول", 'att.season_name': "الاسم", 'att.season_from': "من", 'att.season_to': "إلى", 'att.season_end': "وقت الإغلاق", 'att.season_hint': "مثال: قبل رمضان بشهرين يغلق المحل الساعة 23:00.", 'att.saved': "تم الحفظ", 'att.no_store_loc': "موقع المحل غير مضبوط، لذلك لا تُفحص المسافة عند التسجيل. اضبطه من الإعدادات ← موقع المحل.", 'att.thumb': "صورة الوجه",
   'nav.members': 'الأعضاء', 'navs.members': 'الأعضاء',
   'mc.title': 'رمز المالك', 'mc.hint': 'رمز من 8 أرقام يعرفه المالك وحده. به يستطيع المالك الدخول إلى أي حساب (مثلاً إذا نسي الكاشير رقمه أو قُفل الحساب). كل دخول بهذا الرمز يُسجَّل في سجل النشاط. لا يُحفظ الرمز على هذا الجهاز.',
@@ -10265,12 +10263,29 @@ function settingsReceiptHTML() {
 /* ---- Users by role; "Ganti orang" (another person takes the role: new name + new temporary PIN) ---- */
 const ROLE_ORDER = ['owner', 'manager', 'kasir', 'sales', 'akuntan'];
 const pinLenFor = role => role === 'owner' || role === 'manager' ? 6 : 4;
+/* Owner's decision 07 Oct: the manager adds and manages staff accounts (cashier, sales, accountant) — never a manager or the
+   owner, and never their accounts. The server enforces the same rule; every change is in the owner's activity log. */
+const STAFF_ROLES = ['kasir', 'sales', 'akuntan'];
+const assignableRoles = () => isOwner() ? ['kasir', 'sales', 'manager', 'akuntan', 'owner'] : STAFF_ROLES;
+const canManageUser = u => isOwner() || (S.role === 'manager' && STAFF_ROLES.includes(u.role || 'kasir'));
+function usersPanelHTML() {
+  return `<div class="panel"><h3>${esc(t('set.users'))}</h3><div class="pb">
+      <div id="st-users" style="margin-bottom:12px">${usersByRoleHTML()}</div>
+      ${ST.tempPin ? `<div class="notice" id="st-temp-pin" role="status">${ic('lock')} <span>${esc(t('usr.temp_notice', { name: ST.tempPin }))}</span></div>` : ''}
+      <h4 style="margin:0 0 8px">${esc(t('set.add_user'))}</h4>
+      <p class="small muted" style="margin-top:0">${esc(t('usr.temp_hint'))}</p>
+      <div class="grid2"><div class="field"><label class="f" for="nu-name">${esc(t('name'))}</label><input class="input" id="nu-name" autocomplete="off"></div>
+        <div class="field"><label class="f" for="nu-role">${esc(t('set.role'))}</label><select class="input" id="nu-role"><option value="pekerja">${esc(t('role.pekerja'))}</option>${assignableRoles().map(x => `<option value="${x}">${esc(t('role.' + x))}</option>`).join('')}</select></div></div>
+      <div class="grid2"><div class="field"><label class="f" for="nu-pin">${esc(t('pin'))}</label><input class="input" id="nu-pin" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password"></div>
+        <div class="field"><label class="f" for="nu-pin2">${esc(t('pin_again'))}</label><input class="input" id="nu-pin2" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password"></div></div>
+      <div class="red" id="nu-err"></div><button class="btn primary" data-act="user-add">${ic('plus')} ${esc(t('set.add_user'))}</button></div></div>`;
+}
 function usersByRoleHTML() {
-  return ROLE_ORDER.map(r => {
+  return ROLE_ORDER.filter(r => isOwner() || STAFF_ROLES.includes(r)).map(r => {
     const list = S.users.filter(u => (u.role || 'kasir') === r);
     return `<div class="usr-group" data-role-group="${r}"><h4 style="margin:10px 0 6px">${esc(t('usr.group_' + r))} <span class="muted small">(${list.length})</span></h4>
       ${list.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>${list.map(u => `<tr data-user="${esc(u.name)}"><td><b>${esc(u.name)}</b> ${u.active === false ? `<span class="badge red">${esc(t('inactive'))}</span>` : ''}${u.must_change ? ` <span class="badge amber" data-must="1">${esc(t('usr.must_change'))}</span>` : ''}${u.locked ? ` <span class="badge red" data-locked="1">${esc(t('usr.locked'))}</span>` : ''}${u.has_master ? ` <span class="badge gold" data-has-master="1">${ic('lock')} ${esc(t('mc.has'))}</span>` : ''}<br>
-        <select class="input" style="width:auto;min-height:32px;padding:2px 6px;margin-top:4px" data-user-role="${esc(u.name)}" aria-label="${esc(t('set.role'))}">${['kasir', 'sales', 'manager', 'akuntan', 'owner'].map(x => `<option value="${x}" ${u.role === x ? 'selected' : ''}>${esc(t('role.' + x))}</option>`).join('')}</select></td>
+        <select class="input" style="width:auto;min-height:32px;padding:2px 6px;margin-top:4px" data-user-role="${esc(u.name)}" aria-label="${esc(t('set.role'))}">${assignableRoles().map(x => `<option value="${x}" ${u.role === x ? 'selected' : ''}>${esc(t('role.' + x))}</option>`).join('')}</select></td>
         <td class="r" style="white-space:nowrap"><button class="btn xs" data-act="user-swap" data-name="${esc(u.name)}">${ic('users')} ${esc(t('usr.swap'))}</button> <button class="btn xs" data-act="user-pin" data-name="${esc(u.name)}">${esc(t('set.reset_pin'))}</button> <button class="btn xs ${u.active === false ? '' : 'danger'}" data-act="user-toggle" data-name="${esc(u.name)}">${esc(u.active === false ? t('set.activate') : t('set.deactivate'))}</button></td></tr>`).join('')}</tbody></table></div>`
       : `<div class="small muted" data-empty-group>${esc(t(r === 'akuntan' ? 'usr.akuntan_note' : 'usr.group_empty'))}</div>`}</div>`;
   }).join('');

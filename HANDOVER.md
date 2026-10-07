@@ -73,6 +73,12 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   written for the target app in this tab (`kpos.session` / `kpos.sales.session`, pin_hash only in sessionStorage), no
   second PIN. Names only, no role words next to people, in all apps (role pickers in Settings → Users stay).
   `khair-pos/zied/` is a plain redirect to the owner app. Display only — the server checks PIN and role as before.
+- 07 Oct: locked screen sends nothing (`api()` throws NetError without pin_hash) — background calls had been counted as
+  wrong PINs and locked the owner. Photo-control panel has its own title key `photoc.title` (clashed with the new-PIN title).
+- v18 (07 Oct, owner's decision): the manager adds/manages staff accounts — roles kasir, sales, akuntan only, never manager/owner
+  nor their accounts (server `save_user` + mock; `harness18.js`). Settings → Users for the manager shows only those groups.
+  First choice "Pekerja harian" makes no account: it opens the Absensi worker form (face, no PIN). Process v18 must be pasted
+  by the owner (file built in the scratchpad, never committed) — until then the server refuses the manager's save (FORBIDDEN).
 - **Cold storage "Khair Gudang Dingin" (07 Oct, third session)** — see below.
 
 - Leaflet 1.9.4 is vendored in `vendor/leaflet` (no cdnjs; CSP no longer allows cdnjs). Khair Sales cache is `khair-sales-v3`.
