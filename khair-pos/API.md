@@ -532,3 +532,29 @@ The apps must use the same rules in their inputs (`maxlength`, `inputmode`, `pat
 - **Change the person in a role (07 Oct):** `save_user` `{name: <current>, new_name, role, pin_hash}` renames the account (another
   person takes the role); the PIN hash must be made with the new name, the new person must change it at first login; refused while
   that user has an open drawer. Logged "Ganti orang: A → B".
+
+## Attendance by face (v17)
+
+Endpoint `POST https://ziedapp.app.n8n.cloud/webhook/khair-att`, same envelope (`key`, `user`, `pin_hash`, `data`).
+Workflow "Khair Mart POS – Absensi"; code: `backend/attendance/` (`att-core.js` is also the apps' mock).
+Workers (`pos_workers`) have no app account: the shop device is logged in by a staff account and the worker taps
+their name, looks at the camera; the device sends a 128-number face descriptor (face-api, `vendor/face-api`), never a photo.
+
+| action | who | data | response |
+|---|---|---|---|
+| `att_bootstrap` | owner, manager, kasir | – | `today, hours: {start, end, season}, grace_min, radius_m, store, workers: [{worker_id, name, phone, job, active, enrolled, consent_at, today: {state: ""\|in\|out, at}, daily_wage (owner), face_thumb (owner/manager)}], settings (owner/manager)` |
+| `worker_save` | owner, manager | `{worker_id?, name, job, phone, active?, daily_wage? (owner only)}` | `worker` |
+| `worker_enroll` | owner, manager | `{worker_id, descriptor: [128], thumb: "data:image/jpeg;base64,…" (96×96), consent: true}` | `worker`; `CONSENT_REQUIRED`, `FACE_TAKEN` (same face on another worker) |
+| `worker_forget` | owner | `{worker_id}` | `worker` (face numbers and thumbnail cleared; UU PDP request of a worker who leaves) |
+| `att_mark` | owner, manager, kasir | `{worker_id, descriptor, loc: {lat, lng}, device: {id}, client_id}` | `record: {kind: in\|out, at, worker_name, late_min}`; `FACE_MISMATCH`, `OUTSIDE`, `LOCATION_REQUIRED`, `NOT_ENROLLED`; same `client_id` or < 2 min after the last mark → `duplicate: true` |
+| `att_report` | owner, manager | `{from, to}` (≤ 62 days) | `rows: [{date, worker_id, name, first_in, last_out, open, minutes, late_min, status: hadir\|terlambat\|tidak_hadir\|libur\|belum, fails}], totals: [{…, present, late_days, absent, minutes, fails, daily_wage + wage_due (owner only)}], events, verify: {ok, count, issues}, sealed_days` |
+| `att_settings` | owner | `{settings: {att_work_start, att_work_end, att_grace_min, att_radius_m, att_off_weekdays, att_seasons: [{name, from, to, work_end}]}}` | `settings` |
+
+Rules: face distance ≤ `att_face_max` (0.5); with a shop location (`store_lat/lng`) the device must be within `att_radius_m`
+(200 m). Every refused attempt is kept as a `fail` record. Late = first check-in after start + grace (10 min); today's
+missing workers are `belum` (not arrived yet), earlier days `tidak_hadir`. Wage due = days present × daily wage (owner only).
+
+No record is ever edited or deleted by any action. `pos_attendance` rows carry `seq, prev_hash, hash = sha256(prev_hash | fields)`;
+each finished day is sealed in `pos_att_seals` (count, last hash, per-worker summary; seals chained too); the chain head is
+`pos_settings.att_head`. `att_report` re-checks every hash and seal: an edited field, a deleted row or a removed day appears
+in `verify.issues`. (The n8n account owner can still edit tables by hand; the report then shows it.)

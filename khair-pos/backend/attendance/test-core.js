@@ -69,7 +69,8 @@ let rep = call('att_report', { from: '2026-10-07', to: '2026-10-08' }, OWNER, '2
 assert(rep.ok && rep.verify.ok, JSON.stringify(rep.verify));
 const tb = rep.totals.find(x => x.worker_id === budi), ts = rep.totals.find(x => x.worker_id === siti);
 assert.strictEqual(tb.present, 2); assert.strictEqual(tb.wage_due, 240000); assert.strictEqual(tb.fails, 3);
-assert.strictEqual(ts.present, 1); assert.strictEqual(ts.absent, 1); assert.strictEqual(ts.late_days, 1);
+assert.strictEqual(ts.present, 1); assert.strictEqual(ts.absent, 0); assert.strictEqual(ts.late_days, 1); // 8 Oct is today: not arrived yet, not absent
+assert.strictEqual(rep.rows.find(x => x.worker_id === siti && x.date === '2026-10-08').status, 'belum');
 const b7 = rep.rows.find(x => x.worker_id === budi && x.date === '2026-10-07'); assert.strictEqual(b7.minutes, 535); // 08:05 → 17:00
 rep = call('att_report', { from: '2026-10-07', to: '2026-10-08' }, MGR, '2026-10-08T03:00:00Z');
 assert(rep.ok && rep.totals.every(x => x.wage_due === undefined && x.daily_wage === undefined));
@@ -88,4 +89,9 @@ const lastDay7 = T.records.filter(x => x.att_date === '2026-10-07').pop(); const
 v = check(); assert(!v.ok && v.issues.some(i => i.problem === 'count' || i.problem === 'seal_hash'), JSON.stringify(v)); T.records.splice(i7, 0, lastDay7);
 T.seals[0].count = 99; v = check(); assert(!v.ok && v.issues.some(i => i.problem === 'seal_changed')); T.seals[0].count = T.records.filter(x => x.att_date === '2026-10-07').length;
 assert(check().ok);
+// face data can be deleted (owner only); attendance stays, the deletion is in the chain
+assert.strictEqual(call('worker_forget', { worker_id: siti }, MGR, '2026-10-08T04:00:00Z').error, 'FORBIDDEN');
+r = call('worker_forget', { worker_id: siti }, OWNER, '2026-10-08T04:00:00Z'); assert(r.ok && r.worker.enrolled === false);
+assert.strictEqual(call('att_mark', { worker_id: siti, descriptor: face(2), loc: SHOP }, KASIR, '2026-10-08T04:05:00Z').error, 'NOT_ENROLLED');
+assert(check().ok && T.records.some(x => x.kind === 'forget'));
 console.log('attendance core: all checks passed (' + T.records.length + ' records, ' + T.seals.length + ' seal)');
