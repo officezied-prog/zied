@@ -66,11 +66,29 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   The client part (owner app role, read-only views, settings panel "Faktur & akuntan") is on main.
 - Settings stored 07 Oct: wa_shop_number 6285810454694, wa_owner_number 6281322091202, wa_manager_number 6281190008090.
   Shop hours 08:00–21:00; from two months before Ramadan to Eid 08:00–23:00 (season in Absensi → Jam kerja, not set yet).
-- Owner's request still open: cold-storage date warehouses (pallets/containers, daily WhatsApp stock check, pick orders,
-  truck call) — waits for the owner's samples.
+- **Cold storage "Khair Gudang Dingin" (07 Oct, third session)** — see below.
 
 - Leaflet 1.9.4 is vendored in `vendor/leaflet` (no cdnjs; CSP no longer allows cdnjs). Khair Sales cache is `khair-sales-v3`.
 - Khair Sales: swiping in presentation mode on the product photo now works (image drag cancelled the swipe).
+
+## Khair Gudang Dingin (cold storage, v1, 07 Oct)
+- Page `khair-pos/gudang/` (owner app menu "Gudang Dingin" for owner / manager / akuntan; same login reused in the same tab). Demo `gudang/?mock=1`.
+- The owner's company at the warehouses: PT. SAIDA REZEKI ABADI (default document header, Pengaturan can change it). Warehouses: DPP, Bosko, Kawanishi.
+- Code: `backend/cold/` — `cold-core.js` (pure core), `cold-parsers.js` (report readers), `test-cold.js` (`node test-cold.js`), `parse-cold.js`,
+  `check-key.js`, `process-cold.js`, `build-workflow.js` (`node build-workflow.js process` = the Process Cold code). Front: `gudang/index.html`,
+  `shared/cold-mock.js`, `shared/docs-cold.js`. Tests: `tests/cold.spec.js`. API: `API.md` last section.
+- Gemini's code (07 Oct) was only a login stub (key typed into the page each time, no core / parser / documents / tests), so the module was written here
+  from `docs/cold-storage-spec.md`; Gemini's login idea (sha256 key:user:pin) was kept.
+- n8n workflow "Khair Gudang Dingin" `1QRX6A1FU0PqRtTP` (`/webhook/khair-cold`), tables cold_warehouses, cold_products, cold_containers,
+  cold_pallets, cold_movements (append-only, never clean), cold_checks, cold_orders; users from pos_users, settings in pos_settings (`cold_drivers`, `cold_company`).
+  The store key lives only in the small node **Check Key** (owner pastes `check-key.js` with his key). **Process Cold** has no key: it is
+  `node build-workflow.js process`; after any change verify the deployed jsCode equals that output, then publish.
+- Real DPP report (Excel, 3 sheets: STOCK, PID FROZEN, PID CHILLER) is read exactly (checked on the owner's 26 Apr 2025 file: 11 pallets, 2,444 ctn,
+  nothing unread). The real file is NOT in the repo (`sample-dpp.tsv/.xlsx` are made-up numbers in the same layout). PID = our pallet code.
+  **Status 07 Oct:** workflow built but NOT published — waits for the owner to paste Check Key (with key) and Process Cold; then verify
+  Process Cold equals `node build-workflow.js process`, test one `login` call, publish.
+  First use: Cek stok harian → DPP → choose the .xlsx → "Masukkan palet ini sebagai stok awal" (owner). Bosko / Kawanishi: no sample yet;
+  they use the generic reader (WhatsApp lines); write `parsers.bosko` / `parsers.kawanishi` when a real message arrives.
 
 ## Ideas noted, not built
 
