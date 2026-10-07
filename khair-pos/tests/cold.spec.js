@@ -70,10 +70,11 @@ test('daily check: pasted Excel copy shows differences, unknown and unread lines
   await expect(page.locator('#ck-text')).toHaveValue(/2274538\t157-009/);
 });
 
-test('pick order: FEFO lines, A4 / Word / Excel / WhatsApp, truck, picked → stock out; cancel keeps it visible', async ({ page }) => {
+test('pick order: FEFO lines, documents, every step (sent → approved → ready → dispatch → driver → picked → delivered), cancel with WA notice', async ({ page }) => {
   await coldLogin(page);
+  await page.evaluate(() => { window.open = u => { window.__opened = u; }; });
   await page.click('[data-tab="ord"]');
-  await expect(page.locator('#or-list .order')).toHaveCount(1); // one open order in the demo
+  await expect(page.locator('#or-list .order')).toHaveCount(2); // running: one sent to DPP, one ready at Kawanishi
   await page.click('#or-new');
   await page.selectOption('#of-wh', 'DPP');
   await page.selectOption('#of-fp', 'SUKARI-3');
@@ -86,9 +87,10 @@ test('pick order: FEFO lines, A4 / Word / Excel / WhatsApp, truck, picked → st
   await expect(page.locator('#of-lines tr').nth(1).locator('[data-f="cartons"]')).toHaveValue('164');
   await page.fill('#of-pick', 'Wahyu');
   await page.click('#of-save');
-  const card = page.locator('#or-list .order').filter({ hasText: '300 ctn' });
-  await expect(card).toHaveCount(1);
-  const no = (await card.getAttribute('data-no'));
+  const first = page.locator('#or-list .order').filter({ hasText: '300 ctn' });
+  await expect(first).toHaveCount(1);
+  const no = (await first.getAttribute('data-no'));
+  const card = page.locator(`#or-list .order[data-no="${no}"]`);
   expect(no).toMatch(/^SPB-\d{6}-\d{3}$/);
 
   await page.evaluate(() => { window.__printed = 0; window.print = () => { window.__printed++; }; });
@@ -102,11 +104,20 @@ test('pick order: FEFO lines, A4 / Word / Excel / WhatsApp, truck, picked → st
   expect(dl.suggestedFilename()).toBe(no + '.xls');
   const xml = fs.readFileSync(await dl.path(), 'utf8');
   expect(xml).toContain('<Data ss:Type="Number">164</Data>');
-  await page.evaluate(() => { window.open = u => { window.__opened = u; }; });
-  await card.locator('[data-act="wa"]').click();
+  await card.locator('[data-act="send"]').click(); // WhatsApp to the warehouse + status "sent"
+  await expect(card).toHaveAttribute('data-status', 'sent');
   const wa = decodeURIComponent(await page.evaluate(() => window.__opened));
   expect(wa).toContain('https://wa.me/6281200000001?text=');
   expect(wa).toContain('PID 2274538');
+  expect(wa).toContain('SETUJU');
+  await card.locator('[data-act="ok"]').click();
+  await expect(card).toHaveAttribute('data-status', 'approved');
+  await card.locator('[data-act="ready"]').click();
+  await expect(card).toHaveAttribute('data-status', 'ready');
+  await card.locator('[data-act="ask"]').click(); // Arabic approval request to the owner's WhatsApp
+  expect(decodeURIComponent(await page.evaluate(() => window.__opened))).toContain('طلب موافقة على الإرسال');
+  await card.locator('[data-act="dispatch"]').click();
+  await expect(card).toHaveAttribute('data-status', 'dispatch');
 
   await card.locator('[data-act="truck"]').click();
   await expect(page.locator('#tk-sug')).toHaveText('Van / blind van'); // 300 ctn × 3 kg = 900 kg net ≈ 990 kg gross
@@ -115,22 +126,30 @@ test('pick order: FEFO lines, A4 / Word / Excel / WhatsApp, truck, picked → st
   await page.fill('#tk-cost', '350.000');
   await page.click('#tk-save');
   await expect(card.locator('[data-trip]')).toContainText('Rp 350.000');
+  await expect(card).toHaveAttribute('data-status', 'driver');
+  await card.locator('[data-act="driver-wa"]').click();
+  expect(decodeURIComponent(await page.evaluate(() => window.__opened))).toContain('Sopir: Pak Udin');
 
   await card.locator('[data-act="pick"]').click();
   await page.click('#ask-ok');
-  await page.selectOption('#or-st', 'picked');
-  await expect(page.locator(`#or-list .order[data-no="${no}"]`)).toHaveAttribute('data-status', 'picked');
+  await expect(card).toHaveAttribute('data-status', 'picked');
+  await card.locator('[data-act="delivered"]').click();
+  await page.selectOption('#or-st', 'delivered');
+  await expect(card).toHaveAttribute('data-status', 'delivered');
+  await expect(card.locator('[data-log] div')).toHaveCount(8);
   await page.click('[data-tab="stok"]');
   await page.selectOption('#st-wh', 'DPP');
   await expect(page.locator('#st-tbl tr[data-pallet="2274538"] [data-ctn]')).toHaveText('100');
   await expect(page.locator('#st-tbl tr[data-pallet="2274537"] [data-ctn]')).toHaveText('122');
 
   await page.click('[data-tab="ord"]');
-  await page.selectOption('#or-st', 'open');
+  await page.selectOption('#or-st', 'sent');
   const open = page.locator('#or-list .order').first();
   await open.locator('[data-act="cancel"]').click();
   await page.fill('#ask-in', 'Toko masih ada stok');
   await page.click('#ask-ok');
+  await page.click('#cancel-wa'); // the warehouse already had it: tell them
+  expect(decodeURIComponent(await page.evaluate(() => window.__opened))).toContain('PEMBATALAN');
   await page.selectOption('#or-st', 'cancelled');
   await expect(page.locator('#or-list .order[data-status="cancelled"]')).toHaveCount(1);
 });
@@ -214,7 +233,7 @@ test('owner settings: add a warehouse; Arabic layout; the owner app menu opens G
   await expect(page.locator('#ct-tbl tr[data-cont="MSKU1234567"]')).toContainText('Tunisia');
   await page.click('[data-tab="stok"]');
   await expect(page.locator('#st-cont tr[data-cont="CGMU5288973"]')).toContainText('Kurma Sukari 3kg');
-  await expect(page.locator('#st-cont tr[data-cont="MSKU1234567"] [data-fin]')).toHaveText('masih ada');
+  await expect(page.locator('#st-cont tr[data-cont="MSKU1234567"] [data-cs]')).toHaveText('Direncanakan');
   await page.click('[data-tab="set"]');
   await page.click('#lang');
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
@@ -228,4 +247,34 @@ test('owner settings: add a warehouse; Arabic layout; the owner app menu opens G
   await expect(page).toHaveURL(/gudang\/\?mock=1/);
   await expect(page.locator('#who')).toContainText('Pemilik');
   await expect(page.locator('.kpi').first()).toBeVisible();
+});
+
+test('inbound: a container asks to enter, the warehouse accepts, pallets in → stored; dashboard shows what needs action', async ({ page }) => {
+  await coldLogin(page, 'Jihan', '2222');
+  await page.evaluate(() => { window.open = u => { window.__opened = u; }; });
+  await expect(page.locator('#need [data-need="ready"]')).toContainText('1');
+  await expect(page.locator('#need [data-need="requested"]')).toContainText('1');
+  await page.click('#need [data-need="requested"]');
+  const row = page.locator('#ct-tbl tr[data-cont="FBIU5049090"]');
+  await expect(row.locator('[data-cs]')).toHaveText('Minta izin masuk');
+  await row.locator('[data-act="c-ok"]').click();
+  await expect(row.locator('[data-cs]')).toHaveText('Diizinkan gudang');
+  await row.locator('[data-act="c-in"]').click();
+  await page.fill('#pi-rows [data-f="pallet_code"]', 'B-0200');
+  await page.selectOption('#pi-rows [data-f="product"]', 'KHALAS-10');
+  await expect(page.locator('#pi-rows [data-f="cartons"]')).toHaveValue('100'); // cartons per pallet of the product
+  await page.fill('#pi-rows [data-f="exp_date"]', '2027-08-01');
+  await page.selectOption('#pi-rows [data-f="zone"]', 'DRY');
+  await page.click('#pi-save');
+  await expect(row.locator('[data-cs]')).toHaveText('Tersimpan');
+  // a purchase inside the warehouse: no container number needed
+  await page.click('#ct-add');
+  await page.selectOption('#ct-kind', 'in_place');
+  await page.selectOption('#ct-wh', 'DPP');
+  await page.fill('#ct-sup', 'PT Penjual Kurma');
+  await page.click('#ct-save');
+  const inp = page.locator('#ct-tbl tr[data-cont^="IN"]');
+  await expect(inp).toHaveCount(1);
+  await inp.locator('[data-act="c-notice"]').click();
+  expect(decodeURIComponent(await page.evaluate(() => window.__opened))).toContain('PEMBELIAN BARANG DI GUDANG');
 });

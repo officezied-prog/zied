@@ -47,14 +47,21 @@
       M('pallet_in', { warehouse: 'KAWANISHI', date: day(8), pallets: [P('K-77001', 'MEDJOOL-5', 110, 270, 'MJ-11'), P('K-77002', 'KHALAS-10', 80, 330, 'KH-02'), P('K-77003', 'RUTHAB-2', 250, 90, 'RT-03')] }, 8);
       var o1 = M('order_save', { warehouse: 'DPP', order_date: day(7), dest_type: 'toko', dest_address: 'Jl. Raya Condet No.4, Jakarta Timur', pickup_person: 'Wahyu', vehicle: 'Pickup (bak)', lines: [{ pallet_code: '2274553', cartons: 40 }] }, 7, '08:30').order;
       M('trip_save', { order_no: o1.order_no, vehicle: 'Pickup (bak)', driver: 'Pak Rahmat', plate: 'B 9456 PQR', cost: 180000, via: 'sopir' }, 7, '08:40');
-      M('order_pick', { order_no: o1.order_no, pick_date: day(7) }, 7, '11:00');
+      M('order_pick', { order_no: o1.order_no, pick_date: day(7) }, 7, '11:00'); M('order_status', { order_no: o1.order_no, to: 'delivered' }, 7, '17:00');
       var o2 = M('order_save', { warehouse: 'BOSKO', order_date: day(5), dest_type: 'pelanggan', dest_name: 'Toko Barokah', dest_address: 'Jl. Dewi Sartika 5, Jakarta Timur', pickup_person: 'Sopir pelanggan', lines: [{ pallet_code: 'B-0103', cartons: 60 }, { pallet_code: 'B-0104', cartons: 30 }] }, 5).order;
-      M('order_pick', { order_no: o2.order_no, pick_date: day(5) }, 5, '13:00');
+      M('order_pick', { order_no: o2.order_no, pick_date: day(5) }, 5, '13:00'); M('order_status', { order_no: o2.order_no, to: 'delivered' }, 5, '17:00');
       M('movement_add', { type: 'TRANSFER', pallet_code: '3619209', warehouse: 'DPP', to_warehouse: 'KAWANISHI', move_date: day(4) }, 4);
       M('movement_add', { type: 'ADJUST', pallet_code: 'B-0101', warehouse: 'BOSKO', cartons: -2, reason: 'Karton rusak (basah), dibuang', move_date: day(3) }, 3);
       var o3 = M('order_save', { warehouse: 'DPP', order_date: day(2), dest_type: 'toko', dest_address: 'Jl. Raya Condet No.4, Jakarta Timur', pickup_person: 'Wahyu', lines: [{ pallet_code: '2274538', cartons: 50 }, { pallet_code: '3619211', cartons: 20 }] }, 2).order;
-      M('order_pick', { order_no: o3.order_no, pick_date: day(2) }, 2, '15:00');
-      M('order_save', { warehouse: 'DPP', order_date: day(-1), dest_type: 'toko', dest_address: 'Jl. Raya Condet No.4, Jakarta Timur', pickup_person: 'Wahyu', vehicle: 'Engkel (CDE)', note: 'Untuk stok Maulid', lines: [{ pallet_code: '2274538', cartons: 100 }, { pallet_code: '3619208', cartons: 21 }] }, 1, '16:00');
+      M('order_pick', { order_no: o3.order_no, pick_date: day(2) }, 2, '15:00'); M('order_status', { order_no: o3.order_no, to: 'delivered' }, 2, '17:00');
+      var o4 = M('order_save', { warehouse: 'DPP', order_date: day(-1), dest_type: 'toko', dest_address: 'Jl. Raya Condet No.4, Jakarta Timur', pickup_person: 'Wahyu', vehicle: 'Engkel (CDE)', note: 'Untuk stok Maulid', lines: [{ pallet_code: '2274538', cartons: 100 }, { pallet_code: '3619208', cartons: 21 }] }, 1, '16:00').order;
+      M('order_status', { order_no: o4.order_no, to: 'sent' }, 1, '16:05');
+      // a customer order at Kawanishi: the warehouse said yes and the goods are ready — waiting for the owner's approval to send
+      var o5 = M('order_save', { warehouse: 'KAWANISHI', order_date: day(0), dest_type: 'pelanggan', dest_name: 'Toko Al Amin', dest_address: 'Jl. Kalimalang 12, Bekasi', pickup_person: 'Sopir Lalamove', lines: [{ pallet_code: 'K-77001', cartons: 30 }] }, 1, '17:00').order;
+      M('order_status', { order_no: o5.order_no, to: 'sent' }, 1, '17:02'); M('order_status', { order_no: o5.order_no, to: 'approved' }, 1, '18:10'); M('order_status', { order_no: o5.order_no, to: 'ready' }, 0, '07:30');
+      // a container on its way: entry request sent, waiting for the warehouse
+      M('container_save', { kind: 'container', container_no: 'FBIU5049090', size: '40', warehouse: 'BOSKO', arrival_date: day(-5), supplier: 'Tunis Dates Co', origin: 'Tunisia', product: 'KHALAS-10', cartons: 1600 }, 1, '10:00');
+      M('container_status', { container_no: 'FBIU5049090', to: 'requested' }, 1, '10:05');
       // yesterday's WhatsApp check from Bosko: they count 2 cartons fewer of Sukari
       M('check_save', { warehouse: 'BOSKO', check_date: day(1), text: 'Selamat pagi pak, stok PT Saida di Bosko:\nKhalas 10kg = 198 ctn\nSukari 3kg = 238 ctn\nAjwa 5kg = 60 ctn\nTerima kasih' }, 1, '09:15');
       save(db);

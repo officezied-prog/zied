@@ -61,8 +61,30 @@
       'Gudang: ' + (w.name || o.warehouse) + '\nTanggal ambil: ' + date(o.order_date) + '\nDiambil oleh: ' + (o.pickup_person || '-') +
       '\nKendaraan: ' + ((o.trip && o.trip.vehicle) || o.vehicle || '-') + (o.trip && o.trip.plate ? ' ' + o.trip.plate : '') + '\n\n';
     (o.lines || []).forEach(function (l, i) { s += (i + 1) + '. PID ' + l.pallet_code + ' — ' + prName(ctx, l.product) + ' — ' + l.cartons + ' ctn\n'; });
-    s += '\nTotal: ' + t.cartons + ' ctn (± ' + kg(t.kg) + ' kg)\nTujuan: ' + o.dest_name + (o.dest_address ? ', ' + o.dest_address : '') + (o.note ? '\nCatatan: ' + o.note : '') + '\n\nMohon disiapkan. Terima kasih.';
+    s += '\nTotal: ' + t.cartons + ' ctn (± ' + kg(t.kg) + ' kg)\nTujuan: ' + o.dest_name + (o.dest_address ? ', ' + o.dest_address : '') + (o.note ? '\nCatatan: ' + o.note : '') +
+      '\n\nMohon balas *SETUJU* atau *TOLAK* (sebutkan nomor ' + o.order_no + '), lalu kabari kami jika barang sudah *SIAP*. Terima kasih.';
     return s;
+  }
+  /** Inbound: ask the warehouse to accept a container / register goods bought inside it (Indonesian). */
+  function waEntry(c, ctx) {
+    var w = (ctx.wh || {})[c.warehouse] || {}, co = ctx.company || {}, inPlace = c.kind === 'in_place';
+    return '*' + (inPlace ? 'PEMBERITAHUAN PEMBELIAN BARANG DI GUDANG' : 'PERMOHONAN MASUK BARANG') + '*\n' + c.container_no + '\n' + (co.name || '') + (w.customer_id ? ' (ID ' + w.customer_id + ')' : '') +
+      '\nGudang: ' + (w.name || c.warehouse) + (inPlace ? '' : '\nKontainer: ' + c.container_no + ' (' + c.size + 'ft)') + '\nProduk: ' + prName(ctx, c.product || '-') +
+      (c.cartons ? '\nJumlah: ' + c.cartons + ' karton' : '') + '\nTanggal: ' + date(c.arrival_date) + (c.origin ? '\nAsal: ' + c.origin : '') + (c.supplier ? '\n' + (inPlace ? 'Penjual' : 'Pemasok') + ': ' + c.supplier : '') +
+      (inPlace ? '\n\nMohon dicatat atas nama kami. Terima kasih.' : '\n\nMohon balas *TERIMA* atau *TOLAK* dan jadwal bongkar. Terima kasih.');
+  }
+  /** Driver details for the warehouse, so they release the goods to the right person (Indonesian). */
+  function waDriver(o, ctx) {
+    var tr = o.trip || {}, t = orderTotals(o, ctx);
+    return '*INFO PENGAMBILAN ' + o.order_no + '*\nSopir: ' + (tr.driver || '-') + (tr.driver_wa ? '\nHP: +' + tr.driver_wa : '') + '\nKendaraan: ' + (tr.vehicle || '-') + (tr.plate ? '\nPlat: ' + tr.plate : '') +
+      '\nTotal: ' + t.cartons + ' ctn\nMohon serahkan barang kepada sopir ini. Terima kasih.';
+  }
+  function waCancel(o) { return '*PEMBATALAN ' + o.order_no + '*\nMohon maaf, permintaan pengambilan ' + o.order_no + ' dibatalkan' + (o.cancel_reason ? ' (' + o.cancel_reason + ')' : '') + '. Terima kasih.'; }
+  /** To the owner / manager in Arabic: the goods are ready, approve sending. */
+  function waDispatch(o, ctx, vehicle) {
+    var w = (ctx.wh || {})[o.warehouse] || {}, t = orderTotals(o, ctx);
+    return '*طلب موافقة على الإرسال*\nالأمر: ' + o.order_no + '\nالمخزن: ' + (w.name || o.warehouse) + '\nالكمية: ' + t.cartons + ' كرتون (' + kg(t.kg) + ' كغ)\nالوجهة: ' + o.dest_name +
+      (o.dest_address ? '، ' + o.dest_address : '') + (vehicle ? '\nالمركبة المقترحة: ' + vehicle : '') + '\nالبضاعة جاهزة. افتح التطبيق واضغط «موافقة على الإرسال».';
   }
   function check(c, ctx) {
     var r = c.result || {};
@@ -103,13 +125,16 @@
     download(new Blob(['﻿', doc], { type: 'application/msword' }), filename);
   }
   function xmlEsc(s) { return esc(s).replace(/\n/g, '&#10;'); }
-  function toXls(rows, filename, sheet) {
+  function xlsXml(rows, sheet) {
     var x = '<?xml version="1.0" encoding="UTF-8"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">' +
       '<Styles><Style ss:ID="h"><Font ss:Bold="1"/></Style></Styles><Worksheet ss:Name="' + xmlEsc(sheet || 'Sheet1') + '"><Table>';
     rows.forEach(function (r, i) {
       x += '<Row>' + r.map(function (c) { var num = typeof c === 'number' && isFinite(c); return '<Cell' + (i === 0 ? ' ss:StyleID="h"' : '') + '><Data ss:Type="' + (num ? 'Number' : 'String') + '">' + (num ? c : xmlEsc(c)) + '</Data></Cell>'; }).join('') + '</Row>';
     });
-    download(new Blob([x + '</Table></Worksheet></Workbook>'], { type: 'application/vnd.ms-excel' }), filename);
+    return x + '</Table></Worksheet></Workbook>';
   }
-  root.KColdDocs = { order: order, check: check, stock: stock, waOrder: waOrder, toDoc: toDoc, toXls: toXls, orderTotals: orderTotals, esc: esc, date: date, wib: wib };
+  function toXls(rows, filename, sheet) { download(new Blob([xlsXml(rows, sheet)], { type: 'application/vnd.ms-excel' }), filename); }
+  /** The same sheet as a File, for the phone's share sheet (Android → WhatsApp). */
+  function xlsFile(rows, filename, sheet) { try { return new File([xlsXml(rows, sheet)], filename, { type: 'application/vnd.ms-excel' }); } catch (e) { return null; } }
+  root.KColdDocs = { order: order, check: check, stock: stock, waOrder: waOrder, waEntry: waEntry, waDriver: waDriver, waCancel: waCancel, waDispatch: waDispatch, toDoc: toDoc, toXls: toXls, xlsFile: xlsFile, orderTotals: orderTotals, esc: esc, date: date, wib: wib };
 })(window);

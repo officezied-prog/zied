@@ -73,6 +73,14 @@ assert.strictEqual(ok(call('bootstrap', {}, 'akuntan')).warehouses[0].rate, 4500
 err(call('container_save', { container_no: 'ABC123', warehouse: 'DPP', arrival_date: '2026-09-25' }), 'INVALID');
 ok(call('container_save', { container_no: 'cgmu 528 8973', size: '40', warehouse: 'DPP', arrival_date: '2026-09-25', supplier: 'Al Qassim', origin: 'Saudi Arabia', product: 'SUKARI-3', cartons: 693 }, 'manager'));
 err(call('container_save', { container_no: 'ABCU1234567', warehouse: 'DPP', arrival_date: '2026-09-25', product: 'NOPE' }), 'NOT_FOUND');
+// inbound: a container asks to enter; an in-place purchase gets its own number; entering pallets marks it stored
+ok(call('container_save', { container_no: 'MSKU1234567', warehouse: 'BOSKO', arrival_date: '2026-10-10' }));
+err(call('container_status', { container_no: 'MSKU1234567', to: 'approved' }), 'INVALID');
+ok(call('container_status', { container_no: 'MSKU1234567', to: 'requested' }));
+err(call('container_status', { container_no: 'MSKU1234567', to: 'rejected' }), 'INVALID');
+ok(call('container_status', { container_no: 'MSKU1234567', to: 'approved' }, 'manager'));
+const inp = ok(call('container_save', { kind: 'in_place', warehouse: 'DPP', arrival_date: '2026-09-20', supplier: 'PT Penjual' })).container;
+assert.strictEqual(inp.container_no, 'IN26100001'); assert.strictEqual(inp.status, 'planned');
 assert.strictEqual(T.containers[0].container_no, 'CGMU5288973');
 err(call('pallet_in', { warehouse: 'DPP', container_no: 'XXXX1234567', pallets: [{ pallet_code: 'P1', product: 'SUKARI-3', cartons: 10, exp_date: '2027-01-01' }] }), 'NOT_FOUND');
 err(call('pallet_in', { warehouse: 'DPP', pallets: [{ pallet_code: 'P1', product: 'SUKARI-3', cartons: 10 }] }), 'INVALID'); // expiry required
@@ -86,6 +94,7 @@ ok(call('pallet_in', { warehouse: 'DPP', container_no: 'CGMU5288973', date: '202
 assert.deepStrictEqual(T.pallets.map(p => p.zone), ['CHILLER', 'CHILLER', 'FROZEN']);
 err(call('pallet_in', { warehouse: 'DPP', pallets: [{ pallet_code: '2274537', product: 'SUKARI-3', cartons: 5, exp_date: '2027-01-01' }] }), 'INVALID'); // code taken
 assert.strictEqual(T.movements.length, 3);
+assert.strictEqual(T.containers.find(c => c.container_no === 'CGMU5288973').status, 'stored');
 assert.strictEqual(stock('2274537'), 286);
 NOW = '2026-10-07T02:00:00Z';
 
@@ -123,9 +132,22 @@ const o2 = ok(call('order_save', { warehouse: 'DPP', dest_type: 'pelanggan', des
 assert.strictEqual(o2.order_no, 'SPB-261007-002');
 ok(call('order_save', { order_no: o2.order_no, warehouse: 'DPP', dest_type: 'pelanggan', dest_name: 'Toko Barokah', lines: [{ pallet_code: '3619208', cartons: 25 }] }));
 assert.strictEqual(T.orders.length, 2);
+// the order flow: only the allowed next steps, every step logged with who and when
+err(call('order_status', { order_no: o2.order_no, to: 'ready' }), 'INVALID'); // open → ready skips the warehouse
+ok(call('order_status', { order_no: o2.order_no, to: 'sent' }, 'manager'));
+err(call('order_status', { order_no: o2.order_no, to: 'rejected' }), 'INVALID'); // a reason is needed
+ok(call('order_status', { order_no: o2.order_no, to: 'rejected', note: 'Stok belum bisa dikeluarkan' }));
+err(call('order_save', { order_no: o2.order_no, warehouse: 'DPP', dest_type: 'pelanggan', dest_name: 'Toko Barokah', lines: [{ pallet_code: '3619208', cartons: 999 }] }), 'NOT_ENOUGH'); // rejected releases nothing it doesn't have
+ok(call('order_save', { order_no: o2.order_no, warehouse: 'DPP', dest_type: 'pelanggan', dest_name: 'Toko Barokah', lines: [{ pallet_code: '3619208', cartons: 25 }] })); // fixed → open again
+['sent', 'approved', 'ready'].forEach(s => ok(call('order_status', { order_no: o2.order_no, to: s }, 'manager')));
+err(call('order_status', { order_no: o2.order_no, to: 'dispatch' }, 'akuntan'), 'FORBIDDEN');
+ok(call('order_status', { order_no: o2.order_no, to: 'dispatch' }));
+err(call('order_status', { order_no: o2.order_no, to: 'driver' }), 'INVALID'); // no driver yet
+assert.deepStrictEqual(JSON.parse(T.orders.find(o => o.order_no === o2.order_no).log).map(l => l.to), ['open', 'sent', 'rejected', 'open', 'sent', 'approved', 'ready', 'dispatch']);
 err(call('order_pick', { order_no: o2.order_no }, 'akuntan'), 'FORBIDDEN');
 err(call('trip_save', { order_no: o2.order_no }), 'INVALID');
 ok(call('trip_save', { order_no: o2.order_no, vehicle: 'Pickup', driver: 'Pak Udin', plate: 'b 1 x', cost: 250000, via: 'lalamove' }, 'manager'));
+assert.strictEqual(T.orders.find(o => o.order_no === o2.order_no).status, 'driver'); // a driver while dispatch-approved → driver step
 // someone took cartons outside the app → pick refuses
 const adj2 = ok(call('movement_add', { type: 'ADJUST', pallet_code: '3619208', warehouse: 'DPP', cartons: -110, reason: 'Diambil tanpa SPB' })).movement;
 err(call('order_pick', { order_no: o2.order_no }), 'NOT_ENOUGH');
@@ -135,6 +157,8 @@ assert.strictEqual(picked.status, 'picked'); assert.strictEqual(picked.trip.cost
 assert.strictEqual(stock('3619208'), 96);
 assert.strictEqual(T.movements.filter(m => m.type === 'OUT' && m.order_no === o2.order_no).length, 1);
 err(call('order_pick', { order_no: o2.order_no }), 'INVALID');
+ok(call('order_status', { order_no: o2.order_no, to: 'delivered' }));
+err(call('order_status', { order_no: o2.order_no, to: 'sent' }), 'INVALID');
 err(call('order_cancel', { order_no: o2.order_no, reason: 'batal' }), 'INVALID'); // picked: reverse the movement instead
 err(call('order_cancel', { order_no: o1.order_no }), 'INVALID');
 ok(call('order_cancel', { order_no: o1.order_no, reason: 'Toko masih punya stok' }));

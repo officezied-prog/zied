@@ -44,7 +44,7 @@
   tr.diff td, .bad { color: var(--bad); font-weight: 600; }
   .warn { color: var(--warn); font-weight: 600; }
   .chip { display: inline-block; border-radius: 99px; padding: 2px 9px; font-size: 12px; background: #e5e7eb; }
-  .chip.open { background: #dbeafe; } .chip.picked { background: #d1fae5; } .chip.cancelled { background: #fee2e2; text-decoration: line-through; }
+  .chip.open, .chip.sent, .chip.approved { background: #dbeafe; } .chip.ready, .chip.dispatch, .chip.driver { background: #fef3c7; } .chip.picked, .chip.delivered { background: #d1fae5; } .chip.rejected { background: #fee2e2; } .chip.cancelled { background: #fee2e2; text-decoration: line-through; }
   .list > div { border-bottom: 1px solid var(--bd); padding: 8px 0; }
   .order { border: 1px solid var(--bd); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
   .order .row .btn { flex: 0 0 auto; }
@@ -118,7 +118,13 @@ const I18N = {
     s_wh: 'Gudang', s_pr: 'Produk', s_drv: 'Sopir truk', s_company: 'Nama perusahaan di dokumen', code: 'Kode', name: 'Nama', address: 'Alamat', pic: 'PIC', pic_wa: 'WhatsApp PIC', cust_id: 'ID customer di gudang', unit: 'Satuan tarif',
     parser: 'Format laporan', active: 'Aktif', kg_ctn: 'Kg per karton', aliases: 'Nama lain / kode barang gudang (pisah koma)', edit: 'Ubah', add: 'Tambah',
     err_net: 'Tidak ada koneksi. Coba lagi.', confirm: 'Lanjutkan?', need_wh: 'Tambahkan gudang dulu di Pengaturan.',
-    code_auto: 'Kode (boleh kosong — dibuat dari nama)', z_FROZEN: 'Beku (frozen)', z_CHILLER: 'Dingin (chiller)', z_DRY: 'Biasa (kering)', rate_z: 'Tarif {z} (Rp)', ctn_pallet: 'Karton per palet', origin: 'Negara asal', cont_ctn: 'Jumlah karton (dokumen)', received: 'Masuk', finished: 'Habis', in_use: 'masih ada'
+    code_auto: 'Kode (boleh kosong — dibuat dari nama)', z_FROZEN: 'Beku (frozen)', z_CHILLER: 'Dingin (chiller)', z_DRY: 'Biasa (kering)', rate_z: 'Tarif {z} (Rp)', ctn_pallet: 'Karton per palet', origin: 'Negara asal', cont_ctn: 'Jumlah karton (dokumen)', received: 'Masuk', finished: 'Habis', in_use: 'masih ada',
+    st_active: 'Sedang berjalan', st_sent: 'Dikirim ke gudang', st_approved: 'Disetujui gudang', st_rejected: 'Ditolak gudang', st_ready: 'Barang siap', st_dispatch: 'Kirim disetujui', st_driver: 'Sopir ditugaskan', st_delivered: 'Sampai',
+    nx_send: 'Kirim ke gudang (WhatsApp)', nx_resend: 'Kirim ulang', nx_ok: 'Gudang setuju', nx_no: 'Gudang tolak', nx_ready: 'Barang siap', nx_ask: 'Minta persetujuan (WA pemilik)', nx_dispatch: 'Setujui pengiriman',
+    nx_driver_wa: 'Info sopir ke gudang (WA)', nx_delivered: 'Sudah sampai', nx_fix: 'Ubah & kirim ulang', reject_q: 'Alasan gudang menolak', share: 'Bagikan file', history: 'Riwayat', need_action: 'Perlu tindakan',
+    cold_chain: 'Barang beku/dingin: pesan truk berpendingin (Lalamove biasa tidak berpendingin).', cancel_wa: 'Beri tahu gudang (WA)',
+    kind: 'Jenis', kind_container: 'Kontainer', kind_in_place: 'Beli di gudang (tanpa kontainer)', in_no: 'Nomor (kosong = otomatis)', cs_planned: 'Direncanakan', cs_requested: 'Minta izin masuk', cs_approved: 'Diizinkan gudang', cs_rejected: 'Ditolak gudang', cs_stored: 'Tersimpan',
+    cx_request: 'Minta izin masuk (WA)', cx_ok: 'Gudang terima', cx_no: 'Gudang tolak', cx_notice: 'Beri tahu gudang (WA)'
   },
   ar: {
     title: 'مخازن خير المبرّدة', login: 'دخول', key: 'مفتاح المتجر', key_hint: 'يُكتب مرة واحدة على هذا الجهاز', change_key: 'تغيير المفتاح', user: 'اسم المستخدم', pin: 'الرمز السري', logout: 'خروج',
@@ -148,11 +154,17 @@ const I18N = {
     s_wh: 'المخازن', s_pr: 'المنتجات', s_drv: 'سائقو الشاحنات', s_company: 'اسم الشركة في المستندات', code: 'الرمز', name: 'الاسم', address: 'العنوان', pic: 'المسؤول', pic_wa: 'واتساب المسؤول', cust_id: 'رقم العميل لدى المخزن', unit: 'وحدة السعر',
     parser: 'صيغة التقرير', active: 'نشط', kg_ctn: 'كغ لكل كرتون', aliases: 'أسماء أخرى / رمز صنف المخزن (بفواصل)', edit: 'تعديل', add: 'إضافة',
     err_net: 'لا يوجد اتصال. حاول مجددًا.', confirm: 'متابعة؟', need_wh: 'أضف مخزنًا أولًا من الإعدادات.',
-    code_auto: 'الرمز (اختياري — يُنشأ من الاسم)', z_FROZEN: 'تجميد', z_CHILLER: 'تبريد', z_DRY: 'عادي', rate_z: 'سعر {z} (Rp)', ctn_pallet: 'كراتين في البالِت', origin: 'بلد المنشأ', cont_ctn: 'عدد الكراتين (حسب المستندات)', received: 'دخل', finished: 'انتهت', in_use: 'ما زالت فيها بضاعة'
+    code_auto: 'الرمز (اختياري — يُنشأ من الاسم)', z_FROZEN: 'تجميد', z_CHILLER: 'تبريد', z_DRY: 'عادي', rate_z: 'سعر {z} (Rp)', ctn_pallet: 'كراتين في البالِت', origin: 'بلد المنشأ', cont_ctn: 'عدد الكراتين (حسب المستندات)', received: 'دخل', finished: 'انتهت', in_use: 'ما زالت فيها بضاعة',
+    st_active: 'قيد التنفيذ', st_sent: 'أُرسل للمخزن', st_approved: 'وافق المخزن', st_rejected: 'رفض المخزن', st_ready: 'البضاعة جاهزة', st_dispatch: 'تمت الموافقة على الإرسال', st_driver: 'عُيّن السائق', st_delivered: 'وصلت',
+    nx_send: 'أرسل للمخزن (واتساب)', nx_resend: 'إعادة الإرسال', nx_ok: 'المخزن وافق', nx_no: 'المخزن رفض', nx_ready: 'البضاعة جاهزة', nx_ask: 'اطلب الموافقة (واتساب المالك)', nx_dispatch: 'موافقة على الإرسال',
+    nx_driver_wa: 'أرسل بيانات السائق للمخزن', nx_delivered: 'وصلت', nx_fix: 'عدّل وأعد الإرسال', reject_q: 'سبب رفض المخزن', share: 'مشاركة الملف', history: 'السجل', need_action: 'يحتاج إجراء',
+    cold_chain: 'بضاعة مجمّدة/مبرّدة: اطلب شاحنة مبرّدة (Lalamove العادي غير مبرّد).', cancel_wa: 'أبلغ المخزن (واتساب)',
+    kind: 'النوع', kind_container: 'حاوية', kind_in_place: 'شراء داخل المخزن (بلا حاوية)', in_no: 'الرقم (فارغ = تلقائي)', cs_planned: 'مخطط', cs_requested: 'طُلب إذن الدخول', cs_approved: 'وافق المخزن', cs_rejected: 'رفض المخزن', cs_stored: 'مخزّنة',
+    cx_request: 'اطلب إذن الدخول (واتساب)', cx_ok: 'المخزن قبل', cx_no: 'المخزن رفض', cx_notice: 'أبلغ المخزن (واتساب)'
   }
 };
 const MON = { id: ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'], ar: ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'] };
-const S = { key: '', user: '', role: '', pin_hash: '', lang: LS.get('kcold.lang', 'id') === 'ar' ? 'ar' : 'id', tab: 'dash', D: null, f: { wh: '', pr: '', q: '', mtype: '', mfrom: '', mto: '', ost: 'open' }, ck: null };
+const S = { key: '', user: '', role: '', pin_hash: '', lang: LS.get('kcold.lang', 'id') === 'ar' ? 'ar' : 'id', tab: 'dash', D: null, f: { wh: '', pr: '', q: '', mtype: '', mfrom: '', mto: '', ost: 'active' }, ck: null };
 function t(k, v) { let s = (I18N[S.lang] && I18N[S.lang][k]) || I18N.id[k] || k; Object.keys(v || {}).forEach(x => { s = s.split('{' + x + '}').join(String(v[x])); }); return s; }
 
 /* ---------- small helpers (user data only ever goes through textContent) ---------- */
@@ -294,10 +306,19 @@ function vDash() {
   return h('div', null,
     MOCK ? h('p', { class: 'muted' }, t('demo') + ' · ', h('button', { class: 'btn sm', type: 'button', id: 'demo-reset', onclick: async () => { await KColdMock.reset(); await load(); } }, t('demo_reset'))) : null,
     D.warehouses.length ? kpis : h('div', { class: 'card', text: t('need_wh') }),
+    needAction(),
     h('div', { class: 'row', style: 'margin-bottom:12px' }, h('button', { class: 'btn', type: 'button', id: 'rep-print', onclick: () => stockReport('print') }, t('rep_print')), h('button', { class: 'btn', type: 'button', id: 'rep-xls', onclick: () => stockReport('xls') }, t('rep_xls'))),
     h('div', { class: 'card' }, h('h2', { text: t('al_exp') }), exp),
     h('div', { class: 'card' }, h('h2', { text: t('al_check') }), chk),
     h('div', { class: 'card' }, h('h2', { text: t('al_diff') }), diff), cost);
+}
+function needAction() {
+  const os = {}, cs = {};
+  S.D.orders.forEach(o => { if (['sent', 'approved', 'ready', 'dispatch', 'driver', 'picked', 'rejected'].includes(o.status)) os[o.status] = (os[o.status] || 0) + 1; });
+  S.D.containers.forEach(c => { if (['planned', 'requested', 'approved', 'rejected'].includes(c.status)) cs[c.status] = (cs[c.status] || 0) + 1; });
+  const btn = (tab, f, label, n) => h('button', { class: 'btn sm', type: 'button', 'data-need': f, onclick: () => { S.tab = tab; if (tab === 'ord') S.f.ost = f; render(); } }, label + ' ', h('b', { text: n }));
+  const items = Object.keys(os).map(k => btn('ord', k, t('st_' + k), os[k])).concat(Object.keys(cs).map(k => btn('cont', k, t('container') + ': ' + t('cs_' + k), cs[k])));
+  return h('div', { class: 'card', id: 'need' }, h('h2', { text: t('need_action') }), items.length ? h('div', { class: 'row' }, items) : h('p', { class: 'muted', text: t('all_good') }));
 }
 function explain(no) { ask(t('explain') + ' ' + no, t('explain_q'), v => v.length < 3 ? (toast(t('explain_q'), true), false) : act('check_note', { check_no: no, note: v }).then(r => !!r), { input: h('textarea', { id: 'ask-in', style: 'min-height:90px' }) }); }
 async function stockReport(kind) {
@@ -343,7 +364,7 @@ function adjustForm(r) {
 }
 function palletInForm(container) {
   if (!S.D.warehouses.length) { toast(t('need_wh'), true); return; }
-  const wh = sel('pi-wh', whOpts(false), container ? container.warehouse : S.f.wh), date = h('input', { id: 'pi-date', type: 'date', value: container ? container.arrival_date : today(), max: today() });
+  const wh = sel('pi-wh', whOpts(false), container ? container.warehouse : S.f.wh), date = h('input', { id: 'pi-date', type: 'date', value: container && container.arrival_date < today() ? container.arrival_date : today(), max: today() });
   const cont = sel('pi-cont', [['', '—']].concat(S.D.containers.map(c => [c.container_no, c.container_no])), container ? container.container_no : '');
   const tb = h('tbody');
   const addRow = () => tb.append(h('tr', null, h('td', null, h('input', { 'data-f': 'pallet_code', placeholder: 'PID' })), h('td', null, sel('', prOpts(false), '', { 'data-f': 'product' })),
@@ -365,23 +386,38 @@ function contTable(id, withActions, wh) {
   const rows = S.D.containers.filter(c => !wh || c.warehouse === wh).sort((a, b) => String(b.arrival_date).localeCompare(a.arrival_date)).map(c => h('tr', { 'data-cont': c.container_no, class: c.finished_date ? 'muted' : '' },
     h('td', null, h('b', { text: c.container_no }), h('div', { class: 'muted', text: c.size + 'ft' + (c.origin ? ' · ' + c.origin : '') })), h('td', { text: fd(c.arrival_date) }), h('td', { text: c.product ? PR(c.product).name : '' }), h('td', { class: 'hp', text: WH(c.warehouse).name }),
     h('td', { class: 'n hp', text: c.cartons ? n0(c.cartons) : '' }), h('td', { class: 'n', text: n0(c.received) }), h('td', { class: 'n', 'data-now': '', text: n0(c.now) }),
-    h('td', { 'data-fin': '', text: c.finished_date ? fd(c.finished_date) : t('in_use') }),
-    withActions && can() ? h('td', null, h('button', { class: 'btn sm', type: 'button', onclick: () => palletInForm(c) }, '+ ' + t('pallet_in'))) : null));
+    h('td', { 'data-fin': '' }, h('span', { class: 'chip', 'data-cs': c.status, text: t('cs_' + c.status) }), h('div', { class: 'muted', text: c.finished_date ? t('finished') + ' ' + fd(c.finished_date) : c.status === 'stored' ? t('in_use') : '' })),
+    withActions && can() ? h('td', null, contNext(c)) : null));
   return rows.length ? table([t('container'), t('arrival'), t('product'), [t('wh'), 'hp'], [t('cont_ctn'), 'n hp'], [t('received'), 'n'], [t('now_ctn'), 'n'], t('finished')].concat(withActions && can() ? [''] : []), rows, { id }) : h('p', { class: 'muted', text: t('none') });
+}
+function contNext(c) {
+  const w = WH(c.warehouse), B = (a, label, fn, cls) => h('button', { class: 'btn sm ' + (cls || ''), type: 'button', 'data-act': a, onclick: fn }, label);
+  const go = (to, note) => act('container_status', { container_no: c.container_no, to, note });
+  const wa = () => { if (!w.pic_wa) toast(t('no_wa'), true); window.open(waLink(w.pic_wa, KColdDocs.waEntry(c, ctx())), '_blank', 'noopener'); };
+  const out = [];
+  if (c.status === 'planned' && c.kind === 'container') out.push(B('c-request', t('cx_request'), async () => { wa(); await go('requested'); }, 'pri'));
+  if (c.status === 'planned' && c.kind === 'in_place') out.push(B('c-notice', t('cx_notice'), wa));
+  if (c.status === 'requested') out.push(B('c-ok', t('cx_ok'), () => go('approved'), 'pri'), B('c-no', t('cx_no'), () => ask(t('cx_no'), t('reject_q'), v => go('rejected', v).then(r => !!r))));
+  if (c.status === 'rejected') out.push(B('c-request', t('cx_request'), async () => { wa(); await go('requested'); }));
+  if (['approved', 'stored'].includes(c.status) || (c.status === 'planned' && c.kind === 'in_place')) out.push(B('c-in', '+ ' + t('pallet_in'), () => palletInForm(c)));
+  return out;
 }
 function vCont() {
   return h('div', null, can() ? h('div', { class: 'row', style: 'margin-bottom:12px' }, h('button', { class: 'btn pri', type: 'button', id: 'ct-add', onclick: contForm }, '+ ' + t('cont_add'))) : null,
     h('div', { class: 'card' }, contTable('ct-tbl', true)));
 }
+function kindChange() { const k = $('#ct-kind'), l = $('#ct-no') && $('#ct-no').closest('div').querySelector('label'); if (k && l) { l.textContent = k.value === 'in_place' ? t('in_no') : t('cont_no'); $('#ct-size').closest('.row').hidden = k.value === 'in_place'; } }
 function contForm() {
+  const kind = sel('ct-kind', [['container', t('kind_container')], ['in_place', t('kind_in_place')]], 'container');
   const no = h('input', { id: 'ct-no', placeholder: 'CGMU5288973', style: 'text-transform:uppercase' }), size = sel('ct-size', [['20', '20ft'], ['40', '40ft'], ['40HC', '40ft HC']], '40'), wh = sel('ct-wh', whOpts(false), ''),
-    ar = h('input', { id: 'ct-date', type: 'date', value: today(), max: today() }), sup = h('input', { id: 'ct-sup' }), note = h('input', { id: 'ct-note' }),
+    ar = h('input', { id: 'ct-date', type: 'date', value: today() }), sup = h('input', { id: 'ct-sup' }), note = h('input', { id: 'ct-note' }),
     origin = h('input', { id: 'ct-origin', list: 'origin-list' }), prod = sel('ct-prod', [['', '—']].concat(prOpts(false)), ''), ctn = h('input', { id: 'ct-ctn', inputmode: 'numeric' });
+  kind.addEventListener('change', kindChange);
   modal(t('cont_add'), h('div', null, h('datalist', { id: 'origin-list' }, ['Saudi Arabia', 'UAE', 'Tunisia', 'Algeria', 'Iran', 'Iraq', 'Egypt', 'Jordan', 'Palestine', 'Oman'].map(c => h('option', { value: c }))),
-    field(t('cont_no'), no), h('div', { class: 'row' }, h('div', { style: 'flex:1' }, field(t('size'), size)), h('div', { style: 'flex:1' }, field(t('wh'), wh))),
+    field(t('kind'), kind), field(t('cont_no'), no), h('div', { class: 'row' }, h('div', { style: 'flex:1' }, field(t('size'), size)), h('div', { style: 'flex:1' }, field(t('wh'), wh))),
     h('div', { class: 'row' }, h('div', { style: 'flex:1' }, field(t('arrival'), ar)), h('div', { style: 'flex:1' }, field(t('origin'), origin))),
     h('div', { class: 'row' }, h('div', { style: 'flex:2' }, field(t('product'), prod)), h('div', { style: 'flex:1' }, field(t('cont_ctn'), ctn))), field(t('supplier'), sup), field(t('note'), note)),
-    [h('button', { class: 'btn pri', type: 'button', id: 'ct-save', onclick: async () => { if (await act('container_save', { container_no: no.value, size: size.value, warehouse: wh.value, arrival_date: ar.value, supplier: sup.value, note: note.value, origin: origin.value, product: prod.value, cartons: Number(String(ctn.value).replace(/\D/g, '')) || 0 })) closeModal(); } }, t('save'))]);
+    [h('button', { class: 'btn pri', type: 'button', id: 'ct-save', onclick: async () => { if (await act('container_save', { kind: kind.value, container_no: no.value, size: size.value, warehouse: wh.value, arrival_date: ar.value, supplier: sup.value, note: note.value, origin: origin.value, product: prod.value, cartons: Number(String(ctn.value).replace(/\D/g, '')) || 0 })) closeModal(); } }, t('save'))]);
 }
 
 /* ---------- movements ---------- */
@@ -491,29 +527,66 @@ function checkResult() {
 
 /* ---------- pick orders ---------- */
 function orderFull(o) { return Object.assign({}, o, { lines: o.lines || [] }); }
+const ORDER_ST = ['open', 'sent', 'approved', 'ready', 'dispatch', 'driver', 'picked', 'delivered', 'rejected', 'cancelled'];
+const HOLD = ['open', 'sent', 'approved', 'ready', 'dispatch', 'driver'];
+function goStatus(o, to, note) { return act('order_status', { order_no: o.order_no, to, note }); }
+/** Share the order's Excel file (Android: straight into WhatsApp); else download it. */
+async function shareOrder(o) {
+  const C = ctx(), tt = KColdDocs.orderTotals(o, C);
+  const rows = [['No', 'PID', 'Produk', 'Lot', 'Kedaluwarsa', 'Karton']].concat(o.lines.map((l, i) => [i + 1, l.pallet_code, PR(l.product).name, l.lot, l.exp_date, Number(l.cartons)])).concat([['', '', '', '', 'TOTAL', tt.cartons]]);
+  const file = KColdDocs.xlsFile ? KColdDocs.xlsFile(rows, o.order_no + '.xls', 'SPB') : null;
+  try { if (file && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], text: o.order_no }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+  orderXls(o);
+}
+function orderNext(o) {
+  if (!can()) return [];
+  const w = WH(o.warehouse), B = (act2, label, fn, cls) => h('button', { class: 'btn sm ' + (cls || ''), type: 'button', 'data-act': act2, onclick: fn }, label);
+  const sendWa = () => { if (!w.pic_wa) toast(t('no_wa'), true); window.open(waLink(w.pic_wa, KColdDocs.waOrder(o, ctx())), '_blank', 'noopener'); };
+  const out = [];
+  if (o.status === 'open') out.push(B('send', t('nx_send'), async () => { sendWa(); await goStatus(o, 'sent'); }, 'pri'));
+  if (o.status === 'sent') out.push(B('ok', t('nx_ok'), () => goStatus(o, 'approved'), 'pri'), B('no', t('nx_no'), () => ask(t('nx_no') + ' ' + o.order_no, t('reject_q'), v => goStatus(o, 'rejected', v).then(r => !!r))), B('resend', t('nx_resend'), sendWa));
+  if (o.status === 'approved') out.push(B('ready', t('nx_ready'), () => goStatus(o, 'ready'), 'pri'));
+  if (o.status === 'ready') {
+    const C = ctx(), sug = KCold.vehicleFor(KColdDocs.orderTotals(o, C).kg);
+    out.push(B('dispatch', t('nx_dispatch'), () => goStatus(o, 'dispatch'), 'pri'), B('ask', t('nx_ask'), () => window.open(waLink((S.D.wa || {}).owner, KColdDocs.waDispatch(o, ctx(), sug)), '_blank', 'noopener')));
+  }
+  if (o.status === 'dispatch') out.push(B('truck', t('truck'), () => truckForm(o), 'pri'));
+  if (o.status === 'driver') out.push(B('driver-wa', t('nx_driver_wa'), () => window.open(waLink(w.pic_wa, KColdDocs.waDriver(o, ctx())), '_blank', 'noopener')),
+    B('pick', t('mark_picked'), () => ask(t('mark_picked') + ' ' + o.order_no, t('pick_q') + ' ' + t('pick_date'), v => act('order_pick', { order_no: o.order_no, pick_date: v || today() }).then(r => !!r), { input: h('input', { id: 'ask-in', type: 'date', value: today(), max: today() }) }), 'pri'));
+  if (o.status === 'picked') out.push(B('delivered', t('nx_delivered'), () => goStatus(o, 'delivered'), 'pri'));
+  if (o.status === 'open' || o.status === 'rejected') out.push(B('edit', o.status === 'rejected' ? t('nx_fix') : t('edit'), () => orderForm(o)));
+  if (HOLD.includes(o.status) || o.status === 'rejected') out.push(B('cancel', t('cancel_order'), () => ask(t('cancel_order') + ' ' + o.order_no, t('cancel_q'), async v => {
+    const r = await act('order_cancel', { order_no: o.order_no, reason: v });
+    if (r && o.status !== 'open' && w.pic_wa) setTimeout(() => modal(t('cancel_order'), h('p', { text: o.order_no }), [h('button', { class: 'btn pri', type: 'button', id: 'cancel-wa', onclick: () => { closeModal(); window.open(waLink(w.pic_wa, KColdDocs.waCancel(r.order)), '_blank', 'noopener'); } }, t('cancel_wa'))]), 50);
+    return !!r;
+  }), 'bad'));
+  return out;
+}
 function vOrd() {
-  const list = S.D.orders.filter(o => !S.f.ost || o.status === S.f.ost);
+  const list = S.D.orders.filter(o => !S.f.ost || (S.f.ost === 'active' ? HOLD.includes(o.status) || o.status === 'picked' : o.status === S.f.ost));
   const C = ctx();
   const cards = list.map(o => {
-    const tt = KColdDocs.orderTotals(o, C), open = o.status === 'open';
+    const tt = KColdDocs.orderTotals(o, C);
+    const hist = h('details', { class: 'muted', 'data-log': '' }, h('summary', { text: t('history') + ' (' + (o.log || []).length + ')' }),
+      (o.log || []).slice().reverse().map(l => h('div', { text: fdt(l.at) + ' · ' + l.by + ' · ' + t('st_' + l.to) + (l.note ? ' — ' + l.note : '') })));
     return h('div', { class: 'order', 'data-no': o.order_no, 'data-status': o.status },
       h('div', { class: 'row' }, h('b', { text: o.order_no, style: 'flex:1' }), h('span', { class: 'chip ' + o.status, text: t('st_' + o.status) })),
       h('div', { class: 'muted', text: WH(o.warehouse).name + ' → ' + o.dest_name + ' · ' + fd(o.order_date) + ' · ' + o.lines.length + ' ' + t('pallets') + ' · ' + n0(tt.cartons) + ' ' + t('ctn') + ' · ' + kgf(tt.kg) + ' kg' }),
       o.trip ? h('div', { class: 'muted', 'data-trip': '' }, t('trip') + ': ' + [o.trip.vehicle, o.trip.driver, o.trip.plate].filter(Boolean).join(' · ') + (o.trip.cost ? ' · ' + rp(o.trip.cost) : '')) : null,
-      o.status === 'cancelled' && o.cancel_reason ? h('div', { class: 'muted', text: o.cancel_reason }) : null,
-      h('div', { class: 'row', style: 'margin-top:8px' },
+      (o.status === 'cancelled' || o.status === 'rejected') && (o.log || []).length ? h('div', { class: 'bad', text: (o.log[o.log.length - 1] || {}).note || o.cancel_reason || '' }) : null,
+      h('div', { class: 'row', style: 'margin-top:8px' }, orderNext(o)),
+      h('div', { class: 'row', style: 'margin-top:6px' },
         h('button', { class: 'btn sm', type: 'button', 'data-act': 'a4', onclick: () => printHtml(KColdDocs.order(o, ctx())) }, t('a4')),
         h('button', { class: 'btn sm', type: 'button', 'data-act': 'doc', onclick: () => KColdDocs.toDoc(KColdDocs.order(o, ctx()), o.order_no + '.doc') }, t('word')),
         h('button', { class: 'btn sm', type: 'button', 'data-act': 'xls', onclick: () => orderXls(o) }, t('excel')),
+        h('button', { class: 'btn sm', type: 'button', 'data-act': 'share', onclick: () => shareOrder(o) }, t('share')),
         h('button', { class: 'btn sm', type: 'button', 'data-act': 'wa', onclick: () => { const w = WH(o.warehouse); if (!w.pic_wa) toast(t('no_wa'), true); window.open(waLink(w.pic_wa, KColdDocs.waOrder(o, ctx())), '_blank', 'noopener'); } }, t('wa')),
-        o.status !== 'cancelled' ? h('button', { class: 'btn sm', type: 'button', 'data-act': 'truck', onclick: () => truckForm(o) }, t('truck')) : null,
-        open && can() ? h('button', { class: 'btn sm', type: 'button', 'data-act': 'edit', onclick: () => orderForm(o) }, t('edit')) : null,
-        open && can() ? h('button', { class: 'btn sm pri', type: 'button', 'data-act': 'pick', onclick: () => ask(t('mark_picked') + ' ' + o.order_no, t('pick_q') + ' ' + t('pick_date'), v => act('order_pick', { order_no: o.order_no, pick_date: v || today() }).then(r => !!r), { input: h('input', { id: 'ask-in', type: 'date', value: today(), max: today() }) }) }, t('mark_picked')) : null,
-        open && can() ? h('button', { class: 'btn sm bad', type: 'button', 'data-act': 'cancel', onclick: () => ask(t('cancel_order') + ' ' + o.order_no, t('cancel_q'), v => act('order_cancel', { order_no: o.order_no, reason: v }).then(r => !!r)) }, t('cancel_order')) : null));
+        o.status !== 'cancelled' && o.status !== 'dispatch' ? h('button', { class: 'btn sm', type: 'button', 'data-act': 'truck', onclick: () => truckForm(o) }, t('truck')) : null),
+      hist);
   });
   return h('div', null, h('div', { class: 'card row' },
     can() ? h('button', { class: 'btn pri', type: 'button', id: 'or-new', onclick: () => orderForm(null) }, '+ ' + t('or_new')) : null,
-    h('div', { style: 'flex:1;min-width:150px' }, sel('or-st', [['', t('all')], ['open', t('st_open')], ['picked', t('st_picked')], ['cancelled', t('st_cancelled')]], S.f.ost, { onchange: e => { S.f.ost = e.target.value; render(); } }))),
+    h('div', { style: 'flex:1;min-width:150px' }, sel('or-st', [['', t('all')], ['active', t('st_active')]].concat(ORDER_ST.map(x => [x, t('st_' + x)])), S.f.ost, { onchange: e => { S.f.ost = e.target.value; render(); } }))),
     h('div', { id: 'or-list' }, cards.length ? cards : h('div', { class: 'card muted', text: t('none') })));
 }
 function orderXls(o) {
@@ -558,7 +631,7 @@ function orderForm(o) {
     [h('button', { class: 'btn pri', type: 'button', id: 'of-save', onclick: async () => {
       const lines = Array.from(tb.querySelectorAll('tr')).map(tr => ({ pallet_code: tr.querySelector('[data-f="pallet_code"]').value, cartons: Number(tr.querySelector('[data-f="cartons"]').value) })).filter(l => l.pallet_code);
       const r = await act('order_save', { order_no: o ? o.order_no : undefined, warehouse: wh.value, order_date: date.value, dest_type: dtype.value, dest_name: dname.value, dest_address: daddr.value, pickup_person: pick.value, vehicle: veh.value, note: note.value, lines });
-      if (r) { closeModal(); S.f.ost = 'open'; render(); }
+      if (r) { closeModal(); S.f.ost = 'active'; render(); }
     } }, t('save'))]);
 }
 function truckForm(o) {
@@ -573,6 +646,7 @@ function truckForm(o) {
     h('datalist', { id: 'veh-list2' }, S.D.vehicles.map(v => h('option', { value: v.name }))),
     h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:200px' }, h('label', { text: t('pickup_addr') }), h('pre', { class: 'copy', id: 'tk-pickup', text: pickup }), h('button', { class: 'btn sm', type: 'button', onclick: () => copyText(pickup.replace('\n', ', ')) }, t('copy'))),
       h('div', { style: 'flex:1;min-width:200px' }, h('label', { text: t('drop_addr') }), h('pre', { class: 'copy', id: 'tk-drop', text: drop }), h('button', { class: 'btn sm', type: 'button', onclick: () => copyText(drop.replace('\n', ', ')) }, t('copy')))),
+    o.lines.some(l => KCold.zoneOf((S.D.pallets.find(p => p.pallet_code === l.pallet_code) || {}).zone) !== 'DRY') ? h('p', { class: 'warn', id: 'tk-cold', text: t('cold_chain') }) : null,
     h('p', null, t('total') + ': ', h('b', { id: 'tk-ctn', text: n0(tt.cartons) + ' ' + t('ctn') }), ' · ' + t('est_kg') + ': ', h('b', { id: 'tk-kg', text: kgf(tt.kg) + ' kg' }), ' · ' + t('suggest') + ': ', h('b', { id: 'tk-sug', text: sug })),
     h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', id: 'tk-lala', onclick: () => { copyText(text); window.open(CONFIG.LALAMOVE_URL, '_blank', 'noopener'); } }, t('open_lala')),
       drv, h('button', { class: 'btn', type: 'button', id: 'tk-wa', onclick: () => { const d = (S.D.drivers || [])[Number(drv.value)]; window.open(waLink(d ? d.wa : '', text), '_blank', 'noopener'); } }, t('wa_driver'))),
