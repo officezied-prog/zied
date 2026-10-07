@@ -2406,7 +2406,7 @@ function closePresent() { const el = $('#present'); if (el) el.remove(); try { d
 function drawPresent() {
   const el = $('#present'); if (!el) return;
   const p = CAT.list[CAT.idx], pl = priceLines(p), n = CAT.list.length;
-  const big = imgOf(p) ? `<img class="pbig" src="${esc(imgOf(p))}" alt="${esc(p.name)}" id="pr-img">` : `<div class="pbig" id="pr-img">${esc(p.name.charAt(0))}</div>`;
+  const big = imgOf(p) ? `<img class="pbig" src="${esc(imgOf(p))}" alt="${esc(p.name)}" id="pr-img" draggable="false">` : `<div class="pbig" id="pr-img">${esc(p.name.charAt(0))}</div>`;
   el.dataset.id = p.id;
   el.innerHTML = `<div class="ph-top"><b class="grow" id="pr-pos">${CAT.idx + 1} / ${n}</b><button class="icon-btn" data-act="present-close" aria-label="${esc(t('close'))}">${ic('x')}</button></div>
     <div class="stage">${big}<h2 id="pr-name">${esc(p.name)}</h2>
@@ -2419,6 +2419,8 @@ function drawPresent() {
 }
 function bindSwipe(el) {
   let x0 = null, y0 = null;
+  // a swipe that starts on the product photo must not become a native image drag (that cancels the pointer)
+  el.addEventListener('dragstart', e => e.preventDefault());
   el.addEventListener('pointerdown', e => { x0 = e.clientX; y0 = e.clientY; });
   el.addEventListener('pointerup', e => {
     if (x0 == null) return; const dx = e.clientX - x0, dy = e.clientY - y0; x0 = null;
