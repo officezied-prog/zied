@@ -15,6 +15,13 @@ var KCold = (function () {
   var OWNER_ONLY = { warehouse_save: 1, product_save: 1, settings_save: 1 };
   var READ = { login: 1, bootstrap: 1, report: 1, fefo: 1, check_preview: 1 };
   var EXPIRY_DAYS = 60;
+  /* Order flow (every step is logged with who and when; status is never written outside these tables):
+     open → sent (to the warehouse) → approved | rejected → ready → dispatch (owner/manager approve sending) → driver → picked (stock out) → delivered.
+     rejected → open (edit and send again). cancel: any step before picked. Statuses in HOLD keep their cartons reserved. */
+  var HOLD = ['open', 'sent', 'approved', 'ready', 'dispatch', 'driver'];
+  var FLOW = { open: ['sent'], sent: ['approved', 'rejected'], approved: ['ready'], ready: ['dispatch'], dispatch: ['driver'], picked: ['delivered'], rejected: ['open'] };
+  /* Inbound (containers and in-place purchases): planned → requested (entry request sent) → approved | rejected → stored (pallets entered). */
+  var CFLOW = { planned: ['requested', 'stored'], requested: ['approved', 'rejected'], rejected: ['requested'], approved: ['stored'] };
   /** Vehicle by weight (kg, gross ≈ net × 1.1). Edit here if the owner uses other sizes. */
   var VEHICLES = [[700, 'Pickup (bak)'], [1000, 'Van / blind van'], [2500, 'Engkel (CDE)'], [5000, 'CDD'], [Infinity, 'Fuso / 2 truk']];
 
@@ -77,7 +84,7 @@ var KCold = (function () {
   function reserved(st, exceptNo) {
     var m = {};
     st.orders.forEach(function (o) {
-      if (o.status !== 'open' || o.order_no === exceptNo) return;
+      if (HOLD.indexOf(o.status) < 0 || o.order_no === exceptNo) return;
       json(o.lines, []).forEach(function (l) { var k = l.pallet_code + '|' + o.warehouse; m[k] = (m[k] || 0) + num(l.cartons); });
     });
     return m;
@@ -206,9 +213,11 @@ var KCold = (function () {
       var mv = st.movements.filter(function (m) { return pals.indexOf(m.pallet_code) >= 0; }).sort(function (a, b) { return str(a.move_date).localeCompare(str(b.move_date)) || a.seq - b.seq; });
       var bal = 0, received = 0, fin = '';
       mv.forEach(function (m) { if (m.type === 'IN') received += m.cartons; bal += m.cartons; fin = bal <= 0 && received > 0 ? str(m.move_date) : ''; });
-      return Object.assign({}, c, { cartons: num(c.cartons), pallets: pals.length, received: received, now: bal, finished_date: fin, origin: str(c.origin), product: str(c.product) });
+      return Object.assign({}, c, { kind: str(c.kind) || 'container', status: str(c.status) || (pals.length ? 'stored' : 'planned'), log: json(c.log, []), cartons: num(c.cartons), pallets: pals.length, received: received, now: bal, finished_date: fin, origin: str(c.origin), product: str(c.product) });
     }
-    function orderOut(o) { var x = Object.assign({}, o); x.lines = json(o.lines, []); x.trip = json(o.trip, null); if (x.trip && role === 'manager') { /* trip cost is transport, not storage: the manager sees it */ } return x; }
+    function orderOut(o) { var x = Object.assign({}, o); x.lines = json(o.lines, []); x.trip = json(o.trip, null); x.log = json(o.log, []); return x; }
+    /** The row with a new status and one more log line {at, by, from, to, note}. */
+    function step(row, to, note) { var l = json(row.log, []); l.push({ at: now, by: by, from: str(row.status), to: to, note: note || '' }); return Object.assign({}, row, { status: to, log: JSON.stringify(l.slice(-60)) }); }
     function checkOut(c, full) { var x = { id: c.id, check_no: c.check_no, check_date: c.check_date, warehouse: c.warehouse, at: c.at, by_user: c.by_user, n_diff: num(c.n_diff),
       explained_note: str(c.explained_note), explained_by: str(c.explained_by), explained_at: str(c.explained_at) }; if (full) { x.result = json(c.result, {}); x.raw_text = str(c.raw_text); } return x; }
     function lineList(raw, w, exceptNo) {
@@ -244,7 +253,7 @@ var KCold = (function () {
         return done({
           me: { name: by, role: role }, today: today, sees_cost: seesCost,
           company: { name: str(s.cold_company) || 'PT. SAIDA REZEKI ABADI', store: str(s.store_name) || 'Khair Mart', address: str(s.address), phone: str(s.phone) },
-          drivers: json(s.cold_drivers, []),
+          drivers: json(s.cold_drivers, []), wa: { owner: str(s.wa_owner_number), manager: str(s.wa_manager_number) },
           warehouses: st.warehouses.map(whOut), products: st.products.map(function (p) { return { id: p.id, code: p.code, name: p.name, kg_per_ctn: num(p.kg_per_ctn), ctn_per_pallet: num(p.ctn_per_pallet), aliases: str(p.aliases), active: active(p) }; }),
           containers: st.containers.map(contOut), pallets: st.pallets, stock: stockRows(st, ''),
           movements: st.movements.slice(-500).reverse(), checks: st.checks.slice(-60).reverse().map(function (c) { return checkOut(c, true); }),
@@ -293,8 +302,9 @@ var KCold = (function () {
         return done({});
       }
       case 'container_save': {
-        var no = str(data.container_no).toUpperCase().replace(/[\s-]/g, ''), cw = wh(data.warehouse);
-        if (!/^[A-Z]{4}\d{7}$/.test(no)) return fail('INVALID', 'Nomor kontainer: 4 huruf + 7 angka (contoh CGMU5288973)');
+        var kind = data.kind === 'in_place' ? 'in_place' : 'container', no = str(data.container_no).toUpperCase().replace(/[\s-]/g, ''), cw = wh(data.warehouse);
+        if (kind === 'in_place' && !no) { var ym = today.slice(2, 4) + today.slice(5, 7), nIn = st.containers.filter(function (x) { return str(x.container_no).indexOf('IN' + ym) === 0; }).length + 1; no = 'IN' + ym + ('000' + nIn).slice(-4); }
+        if (kind === 'container' ? !/^[A-Z]{4}\d{7}$/.test(no) : !/^[A-Z0-9]{3,20}$/.test(no)) return fail('INVALID', 'Nomor kontainer: 4 huruf + 7 angka (contoh CGMU5288973)');
         if (!cw) return fail('NOT_FOUND', 'Gudang tidak ada');
         if (!isDate(data.arrival_date)) return fail('INVALID', 'Tanggal tiba wajib');
         var ce = st.containers.find(function (x) { return x.container_no === no; });
@@ -303,9 +313,18 @@ var KCold = (function () {
         if (!(cc >= 0 && cc <= 100000)) return fail('INVALID', 'Jumlah karton tidak valid');
         var crow = Object.assign({}, ce || { created_at: now, created_by: by }, { container_no: no, size: ['20', '40', '40HC'].indexOf(str(data.size)) >= 0 ? str(data.size) : '40',
           arrival_date: data.arrival_date, supplier: clean(data.supplier, 60), warehouse: cw.code, note: clean(data.note, 200),
-          origin: clean(data.origin, 40), product: cp ? cp.code : '', cartons: cc });
+          origin: clean(data.origin, 40), product: cp ? cp.code : '', cartons: cc, kind: kind });
+        if (!ce) crow = step(crow, 'planned', kind === 'in_place' ? 'Beli di gudang' : '');
         put('containers', crow);
         return done({ container: contOut(crow) });
+      }
+      case 'container_status': {
+        var cs = st.containers.find(function (x) { return x.container_no === str(data.container_no).toUpperCase(); }); if (!cs) return fail('NOT_FOUND', 'Kontainer tidak ada');
+        var cfrom = str(cs.status) || 'planned', cto = str(data.to), cnote = clean(data.note, 160);
+        if ((CFLOW[cfrom] || []).indexOf(cto) < 0) return fail('INVALID', 'Status ' + cfrom + ' → ' + cto + ' tidak boleh');
+        if (cto === 'rejected' && cnote.length < 3) return fail('INVALID', 'Alasan wajib');
+        var cr2 = put('containers', step(cs, cto, cnote));
+        return done({ container: contOut(cr2) });
       }
       case 'pallet_in':
       case 'import_report': {
@@ -338,6 +357,10 @@ var KCold = (function () {
             date_in: isDate(x.date_in) ? x.date_in : date, ext_item: clean(x.ext_item, 20), warehouse: w.code, created_at: now, created_by: by }));
         }
         var grp = nextSeq();
+        made.map(function (p) { return p.container_no; }).filter(function (c, i, a) { return c && a.indexOf(c) === i; }).forEach(function (c) {
+          var row = st.containers.find(function (x) { return x.container_no === c; });
+          if (row && str(row.status) !== 'stored') put('containers', step(row, 'stored', made.filter(function (p) { return p.container_no === c; }).length + ' palet'));
+        });
         made.forEach(function (p, k) { move({ type: 'IN', pallet_code: p.pallet_code, warehouse: w.code, cartons: int(list[k].cartons), move_date: date, grp: grp, reason: action === 'import_report' ? 'Stok awal dari laporan gudang' : clean(data.note, 120) }); });
         return done({ pallets: made.length, new_products: newProducts });
       }
@@ -409,7 +432,7 @@ var KCold = (function () {
         var ow = wh(data.warehouse); if (!ow) return fail('NOT_FOUND', 'Gudang tidak ada');
         var oe = data.order_no ? order(data.order_no) : null;
         if (data.order_no && !oe) return fail('NOT_FOUND', 'Order tidak ada');
-        if (oe && oe.status !== 'open') return fail('INVALID', 'Order sudah ' + oe.status);
+        if (oe && oe.status !== 'open' && oe.status !== 'rejected') return fail('INVALID', 'Order sudah ' + oe.status);
         if (oe && oe.warehouse !== ow.code) return fail('INVALID', 'Gudang order tidak bisa diganti; batalkan dan buat baru');
         var od = data.order_date || today; if (!isDate(od) || od < addDays(today, -7)) return fail('INVALID', 'Tanggal ambil tidak valid');
         var dt = data.dest_type === 'pelanggan' ? 'pelanggan' : 'toko', dn2 = clean(data.dest_name, 60);
@@ -420,35 +443,46 @@ var KCold = (function () {
         var orow = Object.assign({}, oe || { order_no: 'SPB-' + yymmdd + '-' + pad3(nth2), status: 'open', created_at: now, created_by: by, trip: '' }, {
           order_date: od, warehouse: ow.code, dest_type: dt, dest_name: dt === 'toko' ? (dn2 || 'Khair Mart') : dn2, dest_address: clean(data.dest_address, 200),
           pickup_person: clean(data.pickup_person, 40), vehicle: clean(data.vehicle, 40), note: clean(data.note, 200), lines: JSON.stringify(ll.lines) });
+        if (!oe) orow = step(orow, 'open'); else if (oe.status === 'rejected') orow = step(orow, 'open', 'Diubah');
         put('orders', orow);
         return done({ order: orderOut(orow) });
       }
+      case 'order_status': {
+        var os = order(data.order_no); if (!os) return fail('NOT_FOUND', 'Order tidak ada');
+        var to = str(data.to), onote = clean(data.note, 160);
+        if ((FLOW[os.status] || []).indexOf(to) < 0) return fail('INVALID', 'Status ' + os.status + ' → ' + to + ' tidak boleh');
+        if (to === 'rejected' && onote.length < 3) return fail('INVALID', 'Alasan penolakan wajib');
+        if (to === 'driver' && !(json(os.trip, {}) || {}).driver) return fail('INVALID', 'Isi data sopir dulu (Pesan truk)');
+        return done({ order: orderOut(put('orders', step(os, to, onote))) });
+      }
       case 'order_pick': {
         var op = order(data.order_no); if (!op) return fail('NOT_FOUND', 'Order tidak ada');
-        if (op.status !== 'open') return fail('INVALID', 'Order sudah ' + op.status);
+        if (HOLD.indexOf(op.status) < 0) return fail('INVALID', 'Order sudah ' + op.status);
         var pd = data.pick_date || today; if (!isDate(pd) || pd > today) return fail('INVALID', 'Tanggal ambil tidak valid');
         var lines = json(op.lines, []), short = lines.filter(function (l) { return balanceOf(st, l.pallet_code, op.warehouse) < num(l.cartons); });
         if (short.length) return fail('NOT_ENOUGH', 'Stok tidak cukup: ' + short.map(function (l) { return l.pallet_code + ' (ada ' + balanceOf(st, l.pallet_code, op.warehouse) + ', perlu ' + l.cartons + ')'; }).join(', '));
         var og = nextSeq();
         lines.forEach(function (l) { move({ type: 'OUT', pallet_code: l.pallet_code, warehouse: op.warehouse, cartons: -num(l.cartons), move_date: pd, grp: og, order_no: op.order_no, reason: 'Ambil ke ' + str(op.dest_name) }); });
-        var picked = put('orders', Object.assign({}, op, { status: 'picked', picked_at: now, picked_by: by, pick_date: pd }));
+        var picked = put('orders', step(Object.assign({}, op, { picked_at: now, picked_by: by, pick_date: pd }), 'picked'));
         return done({ order: orderOut(picked) });
       }
       case 'order_cancel': {
         var oc = order(data.order_no); if (!oc) return fail('NOT_FOUND', 'Order tidak ada');
-        if (oc.status !== 'open') return fail('INVALID', oc.status === 'picked' ? 'Sudah diambil: batalkan mutasinya di Mutasi' : 'Order sudah dibatalkan');
+        if (HOLD.indexOf(oc.status) < 0 && oc.status !== 'rejected') return fail('INVALID', oc.status === 'cancelled' ? 'Order sudah dibatalkan' : 'Sudah diambil: batalkan mutasinya di Mutasi');
         var cr = clean(data.reason, 120); if (cr.length < 3) return fail('INVALID', 'Alasan wajib');
-        var cancelled = put('orders', Object.assign({}, oc, { status: 'cancelled', cancel_reason: cr, cancelled_at: now, cancelled_by: by }));
+        var cancelled = put('orders', step(Object.assign({}, oc, { cancel_reason: cr, cancelled_at: now, cancelled_by: by }), 'cancelled', cr));
         return done({ order: orderOut(cancelled) });
       }
       case 'trip_save': {
         var ot = order(data.order_no); if (!ot) return fail('NOT_FOUND', 'Order tidak ada');
-        if (ot.status === 'cancelled') return fail('INVALID', 'Order dibatalkan');
+        if (ot.status === 'cancelled' || ot.status === 'rejected') return fail('INVALID', 'Order ' + ot.status);
         var cost = num(data.cost); if (cost < 0 || cost > 100000000) return fail('INVALID', 'Ongkos tidak valid');
         var trip = { vehicle: clean(data.vehicle, 40), driver: clean(data.driver, 40), driver_wa: data.driver_wa ? normPhone(data.driver_wa) : '', plate: clean(data.plate, 12).toUpperCase(),
           cost: Math.round(cost), via: data.via === 'lalamove' ? 'lalamove' : 'sopir', saved_by: by, saved_at: now };
         if (!trip.vehicle && !trip.driver && !trip.plate) return fail('INVALID', 'Isi kendaraan, sopir atau plat');
-        var tr = put('orders', Object.assign({}, ot, { trip: JSON.stringify(trip) }));
+        var trow = Object.assign({}, ot, { trip: JSON.stringify(trip) });
+        if (ot.status === 'dispatch' && trip.driver) trow = step(trow, 'driver', [trip.driver, trip.plate].filter(Boolean).join(' · '));
+        var tr = put('orders', trow);
         return done({ order: orderOut(tr) });
       }
       case 'fefo': {
@@ -473,6 +507,6 @@ var KCold = (function () {
         return fail('INVALID', 'Aksi tidak dikenal: ' + action);
     }
   }
-  return { core: core, stockRows: stockRows, fefo: fefo, storage: storage, compare: compare, vehicleFor: vehicleFor, zoneOf: zoneOf, ZONES: ZONES, VEHICLES: VEHICLES, EXPIRY_DAYS: EXPIRY_DAYS };
+  return { core: core, stockRows: stockRows, fefo: fefo, storage: storage, compare: compare, FLOW: FLOW, CFLOW: CFLOW, HOLD: HOLD, vehicleFor: vehicleFor, zoneOf: zoneOf, ZONES: ZONES, VEHICLES: VEHICLES, EXPIRY_DAYS: EXPIRY_DAYS };
 })();
 if (typeof window !== 'undefined') window.KCold = KCold;

@@ -87,6 +87,12 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   nothing unread). The real file is NOT in the repo (`sample-dpp.tsv/.xlsx` are made-up numbers in the same layout). PID = our pallet code.
   **Status 07 Oct:** workflow built but NOT published — waits for the owner to paste Check Key (with key) and Process Cold; then verify
   Process Cold equals `node build-workflow.js process`, test one `login` call, publish.
+  **Phase 1 of the owner's big prompt (07 Oct, decided with the owner):** stay on GitHub Pages + n8n; a person sends the WhatsApp messages
+  (ready texts, Indonesian for warehouses / Arabic for the owner) and books the truck; the app records each step (order flow and inbound flow,
+  `log` on each row), zone rates (frozen/chiller/dry), cartons per pallet, container origin/product/cartons, share-file on Android.
+  Later phases (Meta WhatsApp Business API, Lalamove API through n8n) wait for the owner's accounts — the full Next.js rebuild in his prompt was declined
+  for cost (estimate given: ~Rp 1–4 juta/month to run at 100 orders/day, plus build time).
+  n8n edits: never update the workflow while the owner has it open (his save then fails with "someone else updated").
   First use: Cek stok harian → DPP → choose the .xlsx → "Masukkan palet ini sebagai stok awal" (owner). Bosko / Kawanishi: no sample yet;
   they use the generic reader (WhatsApp lines); write `parsers.bosko` / `parsers.kawanishi` when a real message arrives.
 
