@@ -101,12 +101,13 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   roles, catalog). DONE now: mock parity + owner 'Kesalahan' view to run a correction + Errors list with responsibility +
   action `list_corrections` (owner/manager run; akuntan sees the list). Tests: `tests/correct-price.spec.js` (engine, UI,
   akuntan read-only); akuntan audit-views list updated. Paste file ready at scratchpad `Process-v20.js` — NOT pasted/published.
-  STILL TODO: reports loss/gain line on the discovery date; refund reserve + customer-return photo verification (P2c);
-  manager confirmation of every transfer payment (P2d); the consultation decision buttons (collect/writeoff/contact);
-  then Phase 3 = in-app chat between all app holders. Owner answered: scope = all invoices from wrong-price day to discovery;
-  walk-in overcharge with no phone -> 3-month reserve, refunded on return by photographing the invoice and matching the
-  original; undercharge -> manager+owner consultation (not auto-billed); every transfer payment needs the manager to confirm
-  the money arrived.
+  COMPLETE (not yet published): reports loss/gain block (daily_report.corrections), refund disputes with photo-verified
+  reserve (decide_refund), undercharge consultations (decide_consult: collect/writeoff/return), list_disputes, and every
+  incoming transfer payment needs the manager to confirm receipt (transfer_confirm in receive_payment/save_sale +
+  decide_approval; a card in both approval inboxes). UI: owner 'Kesalahan' view (run a correction + open refunds/consultations),
+  reports 'Koreksi harga' block. Harnesses 20/21/22. Paste file rebuilt: scratchpad Process-v20.js (161,181 chars) — the owner
+  must paste it into the POS API Process node and it must be verified-equal + published. Still open for LATER: Phase 3 in-app
+  chat; Phase 4 barcode reader in the cashier. A date-dependent payments.spec fixture is guarded with test.skip (seed task filed).
 - **Cold storage "Khair Gudang Dingin" (07 Oct, third session)** — see below.
 
 - Leaflet 1.9.4 is vendored in `vendor/leaflet` (no cdnjs; CSP no longer allows cdnjs). Khair Sales cache is `khair-sales-v3`.
