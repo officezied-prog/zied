@@ -185,13 +185,37 @@ test('owner settings: add a warehouse; Arabic layout; the owner app menu opens G
   await page.click('[data-tab="set"]');
   await page.click('#wh-add');
   await page.fill('#wf-code', 'GD4');
+  await page.fill('#wf-rate_frozen', '650.000');
+  await page.fill('#wf-rate_dry', '250.000');
   await page.fill('#wf-name', 'Gudang <b>Baru</b>');
   await page.fill('#wf-pic_wa', '0812 3456 7890');
-  await page.fill('#wf-rate', '500.000');
+  await page.fill('#wf-rate_chiller', '500.000');
   await page.click('#wf-save');
   const row = page.locator('#set-wh tr[data-wh="GD4"]');
   await expect(row).toContainText('Gudang b Baru /b'); // < > removed, shown as text
   await expect(row).toContainText('6281234567890');
+  await expect(row).toContainText('Rp 650.000');
+  // a product without a code (the owner's first try): the code is made from the name; cartons per pallet kept
+  await page.click('#pr-add');
+  await page.fill('#pf-name', 'تمر سكري');
+  await page.fill('#pf-kg', '3');
+  await page.fill('#pf-cpp', '240');
+  await page.click('#pf-save');
+  await expect(page.locator('#set-pr tr[data-pr="P6"] [data-cpp]')).toHaveText('240');
+  // a container with origin, product and cartons; it shows in Stok with its arrival and what is left
+  await page.click('[data-tab="cont"]');
+  await page.click('#ct-add');
+  await page.fill('#ct-no', 'msku 123 4567');
+  await page.selectOption('#ct-wh', 'BOSKO');
+  await page.fill('#ct-origin', 'Tunisia');
+  await page.selectOption('#ct-prod', 'P6');
+  await page.fill('#ct-ctn', '1200');
+  await page.click('#ct-save');
+  await expect(page.locator('#ct-tbl tr[data-cont="MSKU1234567"]')).toContainText('Tunisia');
+  await page.click('[data-tab="stok"]');
+  await expect(page.locator('#st-cont tr[data-cont="CGMU5288973"]')).toContainText('Kurma Sukari 3kg');
+  await expect(page.locator('#st-cont tr[data-cont="MSKU1234567"] [data-fin]')).toHaveText('masih ada');
+  await page.click('[data-tab="set"]');
   await page.click('#lang');
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
   await expect(page.locator('[data-tab="stok"]')).toHaveText('المخزون');

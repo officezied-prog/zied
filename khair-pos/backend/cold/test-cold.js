@@ -45,16 +45,22 @@ err(KCold.core(JSON.parse(JSON.stringify(T)), { action: 'login', user: 'Jihan', 
 
 // ---------- settings: owner only ----------
 err(call('warehouse_save', { code: 'DPP', name: 'DPP' }, 'manager'), 'FORBIDDEN');
-err(call('warehouse_save', { code: 'D P P!', name: 'x' }), 'INVALID');
+err(call('warehouse_save', { code: 'DPP' }), 'INVALID'); // a name is needed
 err(call('warehouse_save', { code: 'DPP', name: 'DPP', pic_wa: '12' }), 'INVALID');
-ok(call('warehouse_save', { code: 'DPP', name: 'DPP Cold Storage', address: 'Jakarta Utara', pic_name: 'Admin', pic_wa: '0812 1111 2222', customer_id: '0157', rate: 450000, rate_unit: 'month', parser: 'dpp' }));
+ok(call('warehouse_save', { code: 'DPP', name: 'DPP Cold Storage', address: 'Jakarta Utara', pic_name: 'Admin', pic_wa: '0812 1111 2222', customer_id: '0157', rate: 450000, rate_frozen: 600000, rate_dry: 300000, rate_unit: 'month', parser: 'dpp' }));
 ok(call('warehouse_save', { code: 'BOSKO', name: 'Bosko', rate: 15000, rate_unit: 'day', parser: 'bosko' }));
 ok(call('warehouse_save', { code: 'KAWANISHI', name: 'Kawanishi <b>', parser: 'nope' }));
 assert.strictEqual(T.warehouses[0].pic_wa, '6281211112222');
 assert.strictEqual(T.warehouses[2].name, 'Kawanishi b');
 assert.strictEqual(T.warehouses[2].parser, 'generic');
 ok(call('product_save', { code: 'SUKARI-3', name: 'Sukari 3kg', kg_per_ctn: 3, aliases: 'sukari, sukkari' }));
-ok(call('product_save', { code: 'AJWA-5', name: 'Kurma Ajwa Jumbo 5kg', kg_per_ctn: 5, aliases: 'ajwa, 157-019' }));
+ok(call('product_save', { code: 'AJWA-5', name: 'Kurma Ajwa Jumbo 5kg', kg_per_ctn: 5, ctn_per_pallet: 121, aliases: 'ajwa, 157-019' }));
+assert.strictEqual(T.products[1].ctn_per_pallet, 121);
+// no code, or an Arabic one: made from the name (the owner's first save failed on this)
+assert.strictEqual(ok(call('product_save', { code: 'تمر', name: 'تمر خلاص' })).product.code, 'P3');
+assert.strictEqual(ok(call('product_save', { name: 'Kurma Medjool 5kg' })).product.code, 'KURMA-MEDJOOL-5KG');
+assert.strictEqual(ok(call('warehouse_save', { name: 'Gudang Baru' })).warehouse.code, 'GUDANG-BARU');
+err(call('product_save', { name: 'x', ctn_per_pallet: -1 }), 'INVALID');
 err(call('product_save', { code: 'X', name: 'x' }, 'manager'), 'FORBIDDEN');
 err(call('settings_save', { drivers: [] }, 'manager'), 'FORBIDDEN');
 ok(call('settings_save', { drivers: [{ name: 'Pak Udin', wa: '0813-2222-3333', vehicle: 'Engkel', plate: 'b 1234 xyz' }] }));
@@ -65,7 +71,8 @@ assert.strictEqual(ok(call('bootstrap', {}, 'akuntan')).warehouses[0].rate, 4500
 
 // ---------- container + pallets in ----------
 err(call('container_save', { container_no: 'ABC123', warehouse: 'DPP', arrival_date: '2026-09-25' }), 'INVALID');
-ok(call('container_save', { container_no: 'cgmu 528 8973', size: '40', warehouse: 'DPP', arrival_date: '2026-09-25', supplier: 'Al Qassim' }, 'manager'));
+ok(call('container_save', { container_no: 'cgmu 528 8973', size: '40', warehouse: 'DPP', arrival_date: '2026-09-25', supplier: 'Al Qassim', origin: 'Saudi Arabia', product: 'SUKARI-3', cartons: 693 }, 'manager'));
+err(call('container_save', { container_no: 'ABCU1234567', warehouse: 'DPP', arrival_date: '2026-09-25', product: 'NOPE' }), 'NOT_FOUND');
 assert.strictEqual(T.containers[0].container_no, 'CGMU5288973');
 err(call('pallet_in', { warehouse: 'DPP', container_no: 'XXXX1234567', pallets: [{ pallet_code: 'P1', product: 'SUKARI-3', cartons: 10, exp_date: '2027-01-01' }] }), 'NOT_FOUND');
 err(call('pallet_in', { warehouse: 'DPP', pallets: [{ pallet_code: 'P1', product: 'SUKARI-3', cartons: 10 }] }), 'INVALID'); // expiry required
@@ -75,7 +82,8 @@ NOW = '2026-09-26T03:00:00Z';
 ok(call('pallet_in', { warehouse: 'DPP', container_no: 'CGMU5288973', date: '2026-09-26', pallets: [
   { pallet_code: '2274537', product: 'SUKARI-3', lot: '260925/A', cartons: 286, exp_date: '2027-06-01' },
   { pallet_code: '2274538', product: 'SUKARI-3', lot: '260925/A', cartons: 286, exp_date: '2026-11-15' },
-  { pallet_code: '3619208', product: 'AJWA-5', lot: '260925/B', cartons: 121, exp_date: '2027-03-01' }] }, 'manager'));
+  { pallet_code: '3619208', product: 'AJWA-5', lot: '260925/B', cartons: 121, exp_date: '2027-03-01', zone: 'frozen' }] }, 'manager'));
+assert.deepStrictEqual(T.pallets.map(p => p.zone), ['CHILLER', 'CHILLER', 'FROZEN']);
 err(call('pallet_in', { warehouse: 'DPP', pallets: [{ pallet_code: '2274537', product: 'SUKARI-3', cartons: 5, exp_date: '2027-01-01' }] }), 'INVALID'); // code taken
 assert.strictEqual(T.movements.length, 3);
 assert.strictEqual(stock('2274537'), 286);
@@ -185,7 +193,12 @@ assert(rep.per_warehouse.find(w => w.warehouse === 'DPP').pallets === 3);
 assert(rep.expiring.some(r => r.pallet_code === '2274538')); // ≤ 60 days
 const dppCost = rep.storage.find(s => s.warehouse === 'DPP');
 assert.strictEqual(dppCost.pallet_days, 21); // 3 pallets × 7 days (01–07 Oct)
-assert.strictEqual(dppCost.cost_to_date, Math.round(21 * 450000 / 30));
+// 2 chiller pallets at the general rate (no chiller rate set), 1 frozen pallet at the frozen rate
+assert.strictEqual(dppCost.cost_to_date, Math.round(14 * 450000 / 30 + 7 * 600000 / 30));
+assert.deepStrictEqual(dppCost.pallet_days_zone, { FROZEN: 7, CHILLER: 14, DRY: 0 });
+const cont = ok(call('bootstrap', {})).containers.find(c => c.container_no === 'CGMU5288973');
+assert.strictEqual(cont.origin, 'Saudi Arabia'); assert.strictEqual(cont.cartons, 693); assert.strictEqual(cont.received, 693 + 687); // + the 3 pallets imported from the report into DPP2 assert.strictEqual(cont.finished_date, '');
+assert(cont.now > 0 && cont.now < cont.received);
 assert.strictEqual(ok(call('report', {}, 'manager')).storage, undefined);
 const boot = ok(call('bootstrap', {}));
 assert(boot.alerts.no_check_today.includes('DPP2') && !boot.alerts.no_check_today.includes('DPP'));
