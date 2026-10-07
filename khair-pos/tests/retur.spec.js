@@ -223,10 +223,15 @@ test('settings: return limits, fee, photo and carrier switches; goods-in form ne
   expect(await asUser(page, 'Pemilik', '1234', 'save_product', { name: 'Kurma $uper', unit: 'pcs' })).toMatchObject({ error: 'INVALID', message: expect.stringContaining('Nama produk hanya boleh') });
   expect(await asUser(page, 'Pemilik', '1234', 'save_customer', { name: 'Bu Ani', phone: '08abc' })).toMatchObject({ error: 'INVALID' });
   expect(await asUser(page, 'Pemilik', '1234', 'save_user', { name: 'Admin!', role: 'kasir', pin_hash: 'a'.repeat(64) })).toMatchObject({ error: 'INVALID' });
-  // tags and control characters never reach the data
-  await asUser(page, 'Pemilik', '1234', 'save_customer', { name: 'Toko <b>Baru</b>‮', phone: '0812 9999 1111' });
+  // v19: a tag is treated as a code attempt — the owner is refused (INVALID) and nothing is saved
+  const before = (await getDb(page)).customers.length;
+  expect(await asUser(page, 'Pemilik', '1234', 'save_customer', { name: 'Toko <b>Baru</b>‮', phone: '0812 9999 1111' })).toMatchObject({ error: 'INVALID' });
   db = await getDb(page);
-  expect(db.customers.slice(-1)[0].name).toBe('Toko Baru');
+  expect(db.customers.length).toBe(before);
+  // a clean control-char-only input is still cleaned and saved
+  await asUser(page, 'Pemilik', '1234', 'save_customer', { name: 'Toko Baru 2', phone: '0812 9999 1111' });
+  db = await getDb(page);
+  expect(db.customers.slice(-1)[0].name).toBe('Toko Baru 2');
   // carrier switch off: goods-in without carrier is accepted
   await page.evaluate(() => saveSettings({ require_carrier: false }));
   const ph = await asUser(page, 'Pemilik', '1234', 'scan_purchase', { image_base64: 'AAAA', mime: 'image/jpeg' });

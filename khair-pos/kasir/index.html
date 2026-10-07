@@ -905,6 +905,10 @@ const MockServer = (() => {
     if (c) c.visits = Math.max(0, num(c.visits) - 1); // v16: a voided purchase does not count
     return s;
   }
+  function addTransferConfirm(db, u, refType, ref, amount, who, bank, transferRef) {
+    if (money(amount) <= 0) return null;
+    return newApproval(db, u, { kind: 'transfer_confirm', approver_role: 'manager', ref: String(ref), total: money(amount), customer_name: String(who || ''), note: (String(bank || '') ? 'Bank ' + bank : '') + (String(transferRef || '') ? ' ref ' + transferRef : ''), summary: ('Konfirmasi transfer masuk ' + String(who || '') + ' Rp ' + money(amount) + ' (' + refType + ' ' + ref + ') — pastikan dana sudah masuk').slice(0, 1500), payload: JSON.stringify({ ref_type: refType, ref: String(ref), amount: money(amount), bank: String(bank || ''), transfer_ref: String(transferRef || ''), who: String(who || '') }) });
+  }
   function newApproval(db, u, f) {
     const ap = Object.assign({ request_id: 'APR-' + String(nextId(db, 'approval')).padStart(4, '0'), client_id: '', created_at: jktISO(), cashier: u.name, customer_id: null, customer_name: '', customer_debt_before: 0, total: 0, debt_amount: 0, summary: '', status: 'pending', decided_by: '', decided_at: '', note: '', kind: 'credit', ref: '', payload: '', approver_role: 'manager' }, f);
     db.approvals.push(ap);
@@ -1438,6 +1442,7 @@ const MockServer = (() => {
         if (usedApproval) usedApproval.status = 'used';
         if (usedDisc) usedDisc.status = 'used';
         db.sales.push(sale);
+        if (sale.payment_method === 'transfer' && money(sale.paid_amount) > 0) addTransferConfirm(db, u, 'faktur', sale.invoice_no, sale.paid_amount, sale.customer_name, str(data.bank), str(data.transfer_ref));
         const touched = new Map();
         qtyBy.forEach((q, pid) => { const p = prodById(pid); shopSet.set(pid, r3(shopOf(p) - q)); });
         for (const l of lines) {
@@ -1712,6 +1717,7 @@ const MockServer = (() => {
           logAct(db, u, 'retur', (data.decision === 'approved' ? 'Retur disetujui ' : 'Retur ditolak ') + u.name + ': ' + str(ap.summary).slice(0, 600), str(rec.return_id), money(ap.total), 'warn');
           out.return_id = str(rec.return_id);
         }
+        if (ap.kind === 'transfer_confirm') logAct(db, u, data.decision === 'approved' ? 'transfer_ok' : 'transfer_gagal', (data.decision === 'approved' ? 'Transfer masuk DIKONFIRMASI oleh ' + u.name : 'Transfer TIDAK diterima — ' + u.name) + ' | ' + str(ap.summary), str(ap.ref), money(ap.total), data.decision === 'approved' ? 'info' : 'warn');
         Object.assign(ap, { status: data.decision, decided_by: u.name, decided_at: jktISO(), note: str(data.note) || str(ap.note) });
         logAct(db, u, 'keputusan', (data.decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + str(ap.kind || 'credit') + ', diminta ' + str(ap.cashier) + '): ' + str(ap.summary).slice(0, 600) + (str(data.note) ? ' | ' + str(data.note) : ''), ap.request_id, money(ap.total), data.decision === 'approved' ? 'info' : 'warn');
         return Object.assign({ approval: approvalOut(ap, u.role) }, out);
@@ -1988,6 +1994,7 @@ const MockServer = (() => {
         };
         db.payments.push(pay);
         c.debt_balance = Math.max(0, money(c.debt_balance) - amount);
+        if (pay.method === 'transfer') addTransferConfirm(db, u, 'pembayaran', pay.pay_id, amount, c.name, pay.bank, pay.transfer_ref);
         if (sc) sc.ph.ref = pay.pay_id;
         const dateOff = pay.slip_date && pay.slip_date !== pay.pay_date;
         logAct(db, u, 'bayar_masuk', 'Pembayaran ' + str(c.name) + ' Rp ' + amount + ' (' + pay.method + (pay.bank ? ' ' + pay.bank : '') + (pay.transfer_ref ? ', ref ' + pay.transfer_ref : '') + ')' +
@@ -5645,6 +5652,9 @@ function aprBodyHTML(a) {
       ${sup ? '' : `<div class="apr-sum" style="grid-template-columns:1fr 1fr" data-refund><div><div class="k">${esc(t('rt.method'))}</div><div class="v">${esc(t('rt.m_' + (pl.refund_method || 'tunai')))}</div></div><div><div class="k">${esc(pl.refund_method === 'potong_hutang' ? t('rt.refund_debt') : t('rt.refund'))}</div><div class="v num">${fmtRp(pl.refund != null ? pl.refund : a.total)}</div></div></div>${int(pl.fee) ? `<div class="small muted">${esc(t('rt.fee', { pct: fmtPct1(pl.fee_pct) }))}: -${fmtRp(pl.fee)}</div>` : ''}`}
       <div class="small muted" style="margin-bottom:8px">${esc(t(sup ? 'apr.retur_hint_s' : 'apr.retur_hint_c'))}</div>`;
   }
+  if (kind === 'transfer_confirm') return head(t('tc.title'), 'blue') + `<div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('tc.who'))}</div><div class="v">${esc(a.customer_name || '—')}</div></div><div><div class="k">${esc(t('tc.amount'))}</div><div class="v num"><b>${fmtRp(a.total)}</b></div></div></div>
+    <div class="small">${esc(pl.ref_type === 'faktur' ? t('tc.invoice') : t('tc.payment'))}: <b>${esc(pl.ref || a.ref)}</b>${pl.bank ? ' · ' + esc(pl.bank) : ''}${pl.transfer_ref ? ' · ' + esc(t('tc.ref')) + ' ' + esc(pl.transfer_ref) : ''}</div>
+    <div class="small muted" style="margin-bottom:8px">${esc(t('tc.hint'))}</div>`;
   if (kind === 'void') return head(t('apr.kind_void', { inv: a.ref }), 'red') + `<div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('rc.customer'))}</div><div class="v">${esc(a.customer_name || t('sell.walkin'))}</div></div><div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(a.total)}</div></div></div><div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason || a.summary || '')}”</b></div>`;
   if (kind === 'price') {
     const rows = Object.entries(pl.changes || {}).filter(([f]) => f !== 'cost_price').map(([f, ch]) => `<tr><td>${esc(t('price.f_' + f))}</td><td class="r num">${ch.from == null ? '—' : fmtRp(ch.from)}</td><td class="r num"><b>${ch.to == null ? '—' : fmtRp(ch.to)}</b></td></tr>`).join('');
@@ -5845,6 +5855,7 @@ const I18N = {
     'login.who': 'Siapa yang bertugas?', 'login.change_key': 'Ganti kode toko', 'login.switch': 'Ganti pengguna', 'login.locked': 'Layar terkunci — masukkan PIN',
     'login.enter_pin': 'Masukkan PIN', 'login.enter': 'Masuk', 'login.pin_len': 'PIN 4–6 angka', 'login.no_users': 'Belum ada pengguna. Siapkan dulu di aplikasi pemilik.',
     'login.owner_app': 'Aplikasi pemilik →',
+    'tc.title': 'Konfirmasi transfer masuk', 'tc.who': 'Dari', 'tc.amount': 'Jumlah', 'tc.invoice': 'Faktur', 'tc.payment': 'Pembayaran', 'tc.ref': 'ref', 'tc.hint': 'Setujui jika dana sudah benar-benar masuk; tolak jika belum.',
     'tamper.locked': 'Akun ini dikunci setelah percobaan menulis kode. Hanya pemilik yang membukanya.',
     'err.BAD_PIN': 'PIN salah', 'err.BAD_KEY': 'Kode toko tidak dikenal', 'err.NO_USERS': 'Belum ada pengguna', 'err.BAD_PIN_SESSION': 'Sesi berakhir, masukkan PIN lagi',
     'err.SERVER': 'Server bermasalah, coba lagi', 'err.NETWORK': 'Tidak ada koneksi', 'err.FORBIDDEN': 'Tidak diizinkan untuk peran Anda', 'err.INVALID': 'Data tidak valid',
@@ -5949,6 +5960,7 @@ const I18N = {
     'login.who': 'من المناوب؟', 'login.change_key': 'تغيير رمز المتجر', 'login.switch': 'تغيير المستخدم', 'login.locked': 'الشاشة مقفلة — أدخل الرمز السري',
     'login.enter_pin': 'أدخل الرمز السري', 'login.enter': 'دخول', 'login.pin_len': 'الرمز من 4 إلى 6 أرقام', 'login.no_users': 'لا يوجد مستخدمون. أعدّهم في تطبيق المالك.',
     'login.owner_app': '← تطبيق المالك',
+    'tc.title': 'تأكيد دخول تحويل', 'tc.who': 'من', 'tc.amount': 'المبلغ', 'tc.invoice': 'فاتورة', 'tc.payment': 'دفعة', 'tc.ref': 'مرجع', 'tc.hint': 'وافق إذا دخل المال فعلًا؛ ارفض إن لم يدخل بعد.',
     'tamper.locked': 'أُوقف هذا الحساب بعد محاولة كتابة كود. لا يفتحه إلا المالك.',
     'err.BAD_PIN': 'الرمز السري خطأ', 'err.BAD_KEY': 'رمز المتجر غير معروف', 'err.NO_USERS': 'لا يوجد مستخدمون', 'err.BAD_PIN_SESSION': 'انتهت الجلسة، أدخل الرمز مرة أخرى',
     'err.SERVER': 'مشكلة في الخادم، حاول مرة أخرى', 'err.NETWORK': 'لا يوجد اتصال', 'err.FORBIDDEN': 'غير مسموح لدورك', 'err.INVALID': 'بيانات غير صالحة',
