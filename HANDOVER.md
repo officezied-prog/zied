@@ -90,8 +90,8 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   `node build-workflow.js process`; after any change verify the deployed jsCode equals that output, then publish.
 - Real DPP report (Excel, 3 sheets: STOCK, PID FROZEN, PID CHILLER) is read exactly (checked on the owner's 26 Apr 2025 file: 11 pallets, 2,444 ctn,
   nothing unread). The real file is NOT in the repo (`sample-dpp.tsv/.xlsx` are made-up numbers in the same layout). PID = our pallet code.
-  **Status 07 Oct:** workflow built but NOT published — waits for the owner to paste Check Key (with key) and Process Cold; then verify
-  Process Cold equals `node build-workflow.js process`, test one `login` call, publish.
+  **Status 07 Oct 11:30 WIB:** published (version e7214d43). Check Key holds the key (owner pasted); Process Cold verified equal to
+  `node build-workflow.js process` at commit bb24e80 (phase 1). Login works live; no warehouses / products entered yet.
   **Phase 1 of the owner's big prompt (07 Oct, decided with the owner):** stay on GitHub Pages + n8n; a person sends the WhatsApp messages
   (ready texts, Indonesian for warehouses / Arabic for the owner) and books the truck; the app records each step (order flow and inbound flow,
   `log` on each row), zone rates (frozen/chiller/dry), cartons per pallet, container origin/product/cartons, share-file on Android.
