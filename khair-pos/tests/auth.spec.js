@@ -16,7 +16,7 @@ test('first run: store key → setup owner → login, lock and unlock with PIN',
   await page.click('[data-act="login-setup"]');
   await expect(page.locator('#app')).toBeVisible();
   await expect(page.locator('#tb-user')).toHaveText('Ahmad');
-  await expect(page.locator('#tb-role')).toHaveText('Pemilik');
+  await expect(page.locator('#tb-role')).toHaveText('');
 
   const db = await getDb(page);
   expect(db.users).toHaveLength(1);
@@ -51,7 +51,7 @@ test('login: wrong PIN is rejected, keyboard PIN entry works, bad store key is r
   await page.keyboard.type('2222');
   await page.keyboard.press('Enter');
   await expect(page.locator('#app')).toBeVisible();
-  await expect(page.locator('#tb-role')).toHaveText('Manajer');
+  await expect(page.locator('#tb-role')).toHaveText('');
   await expect(page.locator('#shift-open')).toHaveCount(0);
   // manager has no owner-only panels
   await page.click('#nav [data-view="settings"]');
@@ -75,4 +75,18 @@ test('auto-lock after idle time', async ({ page }) => {
   await page.evaluate(() => { KPOS.S.lockMinutes = 1; KPOS.S.lastActivity = Date.now() - 2 * 60000; });
   await expect(page.locator('#login')).toBeVisible({ timeout: 20000 });
   await expect(page.locator('.pinpad')).toBeVisible();
+});
+
+test('names only; the owner shows on the login screen only on a device opened with his own link (khair-pos/zied/)', async ({ page }) => {
+  await openApp(page, '', { ownerDevice: false });
+  await enterKey(page);
+  await expect(page.locator('[data-act="login-user"][data-name="Jihan"]')).toHaveText('Jihan');
+  await expect(page.locator('[data-act="login-user"][data-name="Pemilik"]')).toHaveCount(0);
+  // the owner link marks the device (live prefix) and opens the app
+  await page.goto('zied/');
+  await expect(page).toHaveURL(/\/index\.html$/);
+  expect(await page.evaluate(() => localStorage.getItem('kpos.owner_device'))).toBe('true');
+  await page.evaluate(() => localStorage.setItem('kpos.mock.owner_device', 'true'));
+  await page.goto('index.html?mock=1');
+  await expect(page.locator('[data-act="login-user"][data-name="Pemilik"]')).toHaveText('Pemilik');
 });

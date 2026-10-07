@@ -1760,7 +1760,7 @@ const TABS = [{ id: 'today', icon: 'home', label: 'tab.today' }, { id: 'visit', 
 const RENDER = {};
 function renderShell() {
   $('#tabs').innerHTML = TABS.map(v => `<button class="tab ${S.view === v.id ? 'on' : ''}" id="tab-${v.id}" data-act="tab" data-v="${v.id}">${ic(v.icon)}<span>${esc(t(v.label))}</span></button>`).join('');
-  $('#tb-name').textContent = S.user; $('#tb-user').textContent = t('role.' + S.role);
+  $('#tb-name').textContent = S.user; $('#tb-user').textContent = '';
   $('#tb-demo').hidden = !MOCK;
   updateOutboxBadge(); updateGpsIndicator(); applyLangAttrs();
 }
@@ -1799,7 +1799,7 @@ function renderLogin() {
       <div class="err" role="alert">${esc(L.err)}</div><button class="btn primary block big" data-act="login-key" ${L.busy ? 'disabled' : ''}>${esc(L.busy ? t('loading') : t('next'))}</button>`;
   } else if (L.step === 'users') {
     const list = L.users.filter(u => SALES_ROLES.includes(u.role)).sort((a, b) => (a.role === 'sales' ? 0 : 1) - (b.role === 'sales' ? 0 : 1) || a.name.localeCompare(b.name));
-    inner = `<h2>${esc(t('login.who'))}</h2><div class="users" id="users">${list.map(u => `<button data-act="login-user" data-name="${esc(u.name)}">${esc(u.name)}<span>${esc(t('role.' + u.role))}</span></button>`).join('') || `<div class="muted center" style="grid-column:1/-1">${esc(L.users.length ? t('login.no_sales') : t('loading'))}</div>`}</div>
+    inner = `<h2>${esc(t('login.who'))}</h2><div class="users" id="users">${list.map(u => `<button data-act="login-user" data-name="${esc(u.name)}">${esc(u.name)}</button>`).join('') || `<div class="muted center" style="grid-column:1/-1">${esc(L.users.length ? t('login.no_sales') : t('loading'))}</div>`}</div>
       <div class="err" role="alert">${esc(L.err)}</div><div class="center"><button class="btn ghost sm" data-act="login-change-key">${esc(t('login.change_key'))} (${esc(maskKey(S.key))})</button></div>`;
   } else if (L.step === 'newpin' && L.np) {
     // v16: own PIN at first login (or after the owner reset it), typed twice. (The owner's master code is not offered here:

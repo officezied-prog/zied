@@ -792,6 +792,11 @@ const store = {
   set(k, v) { try { localStorage.setItem(PREFIX + k, JSON.stringify(v)); return true; } catch (e) { return false; } },
   del(k) { try { localStorage.removeItem(PREFIX + k); } catch (e) { } }
 };
+/* Names only, no role words (owner's decision 07 Oct). The owner is listed on the login screen only on a device opened once
+   with his own link (khair-pos/zied/), or when nobody else exists yet; the server still checks every PIN and role. */
+const ownerDevice = () => !!store.get('owner_device');
+const loginUsers = () => { const others = L.users.filter(u => u.role !== 'owner'); return ownerDevice() || DEMO || !others.length || L.users.some(u => u.role === 'owner' && u.name === L.sel) ? L.users : others; };
+const roleNames = role => { const n = (S.users || []).filter(u => u.role === role && u.active !== false).map(u => u.name); return n.length ? n.join(' / ') : t('role.' + role); };
 
 /* ========== Session (H2): the live pin_hash lives only in sessionStorage (this tab); localStorage keeps {user, role}.
    Offline login compares a verifier sha256('offline:' + pin_hash) kept in kpos.pins — never a usable hash. ========== */
@@ -3108,7 +3113,7 @@ function renderShell() {
   $('#tb-store').textContent = settings().store_name || 'Khair Mart';
   $('#tb-sub').textContent = 'POS · ' + (MOCK ? 'demo' : maskKey(S.key));
   $('#tb-user').textContent = S.user;
-  $('#tb-role').textContent = t('role.' + S.role);
+  $('#tb-role').textContent = ''; // names only (owner's decision 07 Oct)
   const tbm = $('#tb-master'); if (tbm) { tbm.hidden = !S.viaMaster; tbm.textContent = t('mc.via'); }
   $('#tb-mock').hidden = !MOCK;
   updateApprovalBadge();
@@ -3180,7 +3185,7 @@ function renderLogin() {
     const dots = Array.from({ length: L.master ? 8 : Math.max(4, L.pin.length) }, (_, i) => `<i class="${i < L.pin.length ? 'f' : ''}"></i>`).join('');
     const lk = lockLeft(L.sel), off = lk ? 'disabled' : '';
     inner = `<h2>${esc(S.user && S.inApp ? t('login.locked') : t('login.pick_user'))}</h2>
-      <div class="users-pick" role="radiogroup" aria-label="${esc(t('login.pick_user'))}">${L.users.length ? L.users.map(u => `<button role="radio" aria-checked="${L.sel === u.name}" class="${L.sel === u.name ? 'on' : ''}" data-act="login-user" data-name="${esc(u.name)}">${u.role ? `<span class="small muted">${esc(t('role.' + u.role))} ·</span> ` : ''}${esc(u.name)}</button>`).join('') : `<span class="muted">${esc(t('loading'))}</span>`}</div>
+      <div class="users-pick" role="radiogroup" aria-label="${esc(t('login.pick_user'))}">${loginUsers().length ? loginUsers().map(u => `<button role="radio" aria-checked="${L.sel === u.name}" class="${L.sel === u.name ? 'on' : ''}" data-act="login-user" data-name="${esc(u.name)}">${esc(u.name)}</button>`).join('') : `<span class="muted">${esc(t('loading'))}</span>`}</div>
       ${L.master ? `<div class="badge red" id="lg-master-on" style="margin:0 auto 6px">${ic('lock')} ${esc(t('mc.login_title', { name: L.sel || '…' }))}</div>` : ''}
       <div class="pin-dots ${L.master ? 'eight' : ''}" aria-label="PIN">${dots}</div>
       <div class="login-err" role="alert" id="lg-err">${lk ? `<span id="lg-locked">${esc(t('login.locked_until', { time: lk.time }))}</span>` : esc(L.err)}</div>
@@ -4380,7 +4385,7 @@ function drawOnSite(el, v) {
   const body = $('#ap-body', el);
   let sel = list.length === 1 ? list[0].name : '';
   body.innerHTML = `<label class="f">${esc(t('apr.choose'))}</label>
-    <div class="users-pick" id="ap-users">${list.map(u => `<button type="button" data-n="${esc(u.name)}" class="${sel === u.name ? 'on' : ''}">${esc(u.name)} <span class="small">(${esc(t('role.' + u.role))})</span></button>`).join('') || `<span class="red">${esc(t('apr.no_approver'))}</span>`}</div>
+    <div class="users-pick" id="ap-users">${list.map(u => `<button type="button" data-n="${esc(u.name)}" class="${sel === u.name ? 'on' : ''}">${esc(u.name)}</button>`).join('') || `<span class="red">${esc(t('apr.no_approver'))}</span>`}</div>
     <label class="f" for="ap-pin">${esc(t('apr.pin_of'))}</label>
     <input class="input num" id="ap-pin" type="password" inputmode="numeric" maxlength="6" autocomplete="off" style="font-size:22px;text-align:center;letter-spacing:6px">
     <div class="pinpad" style="margin-top:10px">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button type="button" data-k="${n}">${n}</button>`).join('')}<button type="button" data-k="del" aria-label="${esc(t('delete'))}">⌫</button><button type="button" data-k="0">0</button><button type="button" class="ok" data-k="ok" id="ap-ok">${esc(t('apr.approve_save'))}</button></div>
@@ -6972,7 +6977,7 @@ RENDER.settings = function () {
       <p style="margin:0 0 10px"><a href="${esc(KASIR_APP_URL)}" id="st-kasir-app">${esc(t('kasirapp.link'))}</a> <span class="small muted">${esc(t('kasirapp.link_hint'))}</span></p>
       <div class="row wrap"><button class="btn" data-act="lock">${ic('lock')} ${esc(t('lock'))}</button><button class="btn" data-act="refresh-data">${ic('refresh')} ${esc(t('set.reload_data'))}</button><button class="btn danger" data-act="logout-store">${esc(t('set.logout_store'))}</button></div>
       ${MOCK ? `<div class="hr"></div><p class="small muted">${esc(t('set.mock_hint'))}</p><button class="btn danger sm" data-act="mock-reset">${esc(t('set.mock_reset'))}</button>` : ''}
-      <p class="small muted">v${APP_VERSION} · ${esc(S.user)} (${esc(t('role.' + S.role))}) · ${esc(t('login.store'))}: <b id="st-key">${esc(MOCK ? 'demo' : maskKey(S.key))}</b>${isOwner() && !MOCK ? ` <button class="btn xs" data-act="st-key-show" id="st-key-show">${esc(t('set.key_show'))}</button>` : ''}</p></div></div>
+      <p class="small muted">v${APP_VERSION} · ${esc(S.user)} · ${esc(t('login.store'))}: <b id="st-key">${esc(MOCK ? 'demo' : maskKey(S.key))}</b>${isOwner() && !MOCK ? ` <button class="btn xs" data-act="st-key-show" id="st-key-show">${esc(t('set.key_show'))}</button>` : ''}</p></div></div>
 
     <div class="panel" id="st-outbox"><h3>${esc(t('set.outbox'))} <span class="badge ${S.outbox.length ? 'amber' : ''}">${S.outbox.length}</span></h3><div class="pb">
       ${S.outbox.length ? `<div class="list">${S.outbox.map(e => `<div class="li" style="min-height:0"><div class="grow"><div class="t num">${fmtRp(e.rc.total)} · ${esc(e.rc.customer_name)}</div><div class="s">${esc(fmtDateTime(e.req.sale_time, e.req.sale_date))} · ${esc(e.user)} · ${esc(t('outbox.tries', { n: e.tries }))}${e.error ? ` · <span class="red">${esc(e.error === 'NETWORK' ? t('err.NETWORK') : e.error + (e.message ? ': ' + e.message : ''))}</span>` : ''}</div></div></div>`).join('')}</div>` : `<p class="muted">${esc(t('outbox.none'))}</p>`}
@@ -7086,7 +7091,7 @@ const ACT = {
       const hash = await pinHash(S.key, name, a);
       const r = await apiRaw('setup', { owner_name: name, pin_hash: hash }, { key: S.key });
       const u = r.user || { name, role: 'owner' };
-      L.users = [{ name: u.name, role: 'owner' }]; store.set('users_' + S.key, L.users);
+      L.users = [{ name: u.name, role: 'owner' }]; store.set('users_' + S.key, L.users); store.set('owner_device', true);
       await rememberPin(u.name, hash, 'owner');
       startSession(u.name, 'owner', hash, false);
       toast(t('setup.done'), 'ok');
@@ -7977,7 +7982,7 @@ function drawDevices() {
       ${isCoordC(store.lat, store.lng) ? '' : `<p class="small" style="margin-bottom:0;color:var(--warn)">${esc(t('dv.no_store'))} <button class="btn xs" data-act="go" data-view="settings">${esc(t('nav.settings'))}</button></p>`}</div></div>
     <div class="tbl-wrap"><table class="tbl" id="dv-table"><thead><tr><th>${esc(t('dv.user'))}</th><th>${esc(t('dv.device'))}</th><th>${esc(t('dv.last_seen'))}</th><th>${esc(t('dv.location'))}</th><th class="r">${esc(t('dv.distance'))}</th><th class="r hide-phone">${esc(t('dv.battery'))}</th><th class="hide-phone">IP</th></tr></thead><tbody>
     ${list.map(x => `<tr class="click ${x.away ? 'miss' : ''}" data-act="dv-open" data-id="${esc(x.d.device_id)}" data-dev="${esc(x.d.device_id)}">
-      <td><b>${esc(x.d.user)}</b> <span class="badge ${x.d.role === 'owner' ? 'gold' : x.d.role === 'manager' ? 'blue' : 'gray'}">${esc(t('role.' + x.d.role))}</span></td>
+      <td><b>${esc(x.d.user)}</b></td>
       <td><span class="app-dot app-${x.app}"></span> ${esc(x.d.label || '—')}<div class="small muted">${esc(t('dv.app_' + x.app))}</div></td>
       <td>${x.active ? `<span class="badge green" data-active>${esc(t('dv.active'))}</span>` : `<span class="small" data-ago>${esc(ago(x.d.last_seen))}</span>`}${x.away ? ` <span class="badge red" data-away>${esc(t('dv.outside'))}</span>` : ''}</td>
       <td>${devLocCell(x)}</td>
@@ -8040,7 +8045,7 @@ function openDeviceDetail(id) {
   openModal({
     title: `${d.user} · ${d.label || t('dv.device')}`, cls: 'narrow', id: 'dv-detail',
     body: `<table class="tbl"><tbody>
-      ${row(t('dv.user'), `${esc(d.user)} <span class="badge">${esc(t('role.' + d.role))}</span>`)}${row(t('dv.app'), `<span class="app-dot app-${x.app}"></span> ${esc(t('dv.app_' + x.app))}`)}
+      ${row(t('dv.user'), esc(d.user))}${row(t('dv.app'), `<span class="app-dot app-${x.app}"></span> ${esc(t('dv.app_' + x.app))}`)}
       ${row(t('dv.last_seen'), x.active ? `<span class="badge green">${esc(t('dv.active'))}</span>` : esc(fmtDateTime(d.last_seen) + ' · ' + ago(d.last_seen)))}
       ${row(t('dv.location'), devLocCell(x))}${row(t('dv.distance'), esc(fmtDist(x.dist)) + (x.away ? ` <span class="badge red">${esc(t('dv.outside'))}</span>` : ''))}
       ${x.hasLoc ? row('Lat, Lng', `<span class="num">${num(d.lat).toFixed(6)}, ${num(d.lng).toFixed(6)}</span>`) : ''}
@@ -8122,7 +8127,7 @@ function drawActivity() {
   box.innerHTML = `<p class="muted small" id="act-count">${esc(t('act.count', { n: fmtNum(list.length), w: fmtNum(warn) }))}</p>
     ${list.length ? `<div class="act-list" id="act-list">${list.slice(0, 500).map(a => { const g = actGroup(a); return `<div class="act-row ${a.level === 'warn' ? 'warn' : ''}" data-kind="${esc(a.kind)}" data-level="${esc(a.level)}" data-group="${g}">
       <span class="act-ic" title="${esc(t('actg.' + g))}">${ic(ACT_ICON[g] || 'activity')}</span>
-      <div class="grow"><div class="t">${esc(a.summary)}</div><div class="s"><b class="num">${esc(fmtDate(a.act_date || jktDate(a.at)))} ${esc(jktTime(a.at))}</b> · ${esc(a.user)} <span class="badge gray">${esc(t('role.' + a.role))}</span> · ${esc(t('ak.' + a.kind))}${a.ref ? ' · ' + esc(a.ref) : ''}</div></div>
+      <div class="grow"><div class="t">${esc(a.summary)}</div><div class="s"><b class="num">${esc(fmtDate(a.act_date || jktDate(a.at)))} ${esc(jktTime(a.at))}</b> · ${esc(a.user)} · ${esc(t('ak.' + a.kind))}${a.ref ? ' · ' + esc(a.ref) : ''}</div></div>
       ${int(a.amount) ? `<div class="act-amt num ${int(a.amount) < 0 ? 'red' : ''}">${fmtRp(a.amount)}</div>` : ''}</div>`; }).join('')}</div>` : `<div class="empty">${esc(t('no_data'))}</div>`}`;
 }
 Object.assign(ACT, {
@@ -10193,7 +10198,7 @@ function agreementCardHTML() {
     <p class="small muted" style="margin-top:0">${esc(t('ag.hint'))}</p>
     <div class="kpis" style="margin-bottom:8px"><div class="kpi gold" data-kpi="ag-value"><div class="k">${esc(t('ag.k_return_owner_min_value'))}</div><div class="v num" id="ag-cur-value">${fmtRp(st.return_owner_min_value ?? 2000000)}</div></div>
       <div class="kpi" data-kpi="ag-qty"><div class="k">${esc(t('ag.k_return_owner_min_qty'))}</div><div class="v num" id="ag-cur-qty">${esc(agValTxt('return_owner_min_qty', st.return_owner_min_qty ?? 0))}</div></div></div>
-    ${mine.length ? `<div class="notice" id="ag-pending">${ic('clock')} <span>${mine.map(a => esc(t('ag.waiting', { what: t('ag.k_' + a.ref), v: agValTxt(a.ref, a.total), who: t('role.' + a.approver_role) }))).join('<br>')}</span></div>` : ''}
+    ${mine.length ? `<div class="notice" id="ag-pending">${ic('clock')} <span>${mine.map(a => esc(t('ag.waiting', { what: t('ag.k_' + a.ref), v: agValTxt(a.ref, a.total), who: roleNames(a.approver_role) }))).join('<br>')}</span></div>` : ''}
     <div class="grid3"><div class="field"><label class="f" for="ag-key">${esc(t('ag.which'))}</label><select class="input" id="ag-key">${AGREED_KEYS_C.map(k => `<option value="${k}">${esc(t('ag.k_' + k))}</option>`).join('')}</select></div>
       <div class="field"><label class="f" for="ag-value">${esc(t('ag.new_value'))}</label><input class="input num" id="ag-value" data-rule="num" inputmode="numeric" placeholder="2.000.000"></div>
       <div class="field"><label class="f" for="ag-note">${esc(t('notes'))}</label><input class="input" id="ag-note" data-rule="text"></div></div>
@@ -10205,7 +10210,7 @@ function agreementCardHTML() {
 function agreeAprHTML(a, pl) {
   const key = pl.key || a.ref;
   return `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(t('apr.kind_agree'))}</b><span class="badge blue">${esc(a.request_id)}</span></div>
-    <div class="small muted">${esc(t('ag.proposed_by'))}: <b>${esc(pl.proposed_by || a.cashier)}</b> (${esc(t('role.' + (pl.proposed_role || 'manager')))}) · ${esc(fmtDateTime(a.created_at))}</div>
+    <div class="small muted">${esc(t('ag.proposed_by'))}: <b>${esc(pl.proposed_by || a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))}</div>
     <div class="apr-sum" data-agree style="grid-template-columns:1fr 1fr 1fr"><div><div class="k">${esc(t('ag.which'))}</div><div class="v small" data-v="key">${esc(t('ag.k_' + key))}</div></div>
       <div><div class="k">${esc(t('ag.now'))}</div><div class="v num" data-v="from">${esc(agValTxt(key, pl.from))}</div></div><div><div class="k">${esc(t('ag.new_value'))}</div><div class="v num gold" data-v="to">${esc(agValTxt(key, pl.value != null ? pl.value : a.total))}</div></div></div>
     ${a.note ? `<div style="margin-bottom:8px">${esc(t('notes'))}: <b>“${esc(a.note)}”</b></div>` : ''}<div class="small muted" style="margin-bottom:8px">${esc(t('ag.card_hint'))}</div>`;
@@ -10219,7 +10224,7 @@ Object.assign(ACT, {
     err.textContent = '';
     try {
       const r = await api('propose_agreement', { key, value: Math.round(value), note });
-      toast(t('ag.sent', { who: t('role.' + r.approval.approver_role) }), 'ok', 4000);
+      toast(t('ag.sent', { who: roleNames(r.approval.approver_role) }), 'ok', 4000);
       await pollApprovals(); RENDER.settings();
     } catch (e) { err.textContent = errMsg(e); }
   }

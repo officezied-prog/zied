@@ -82,7 +82,7 @@ test('manager rejects a remote request with a note; the kasir sees it and nothin
 
 test('owner/manager selling on credit need no extra step; manager never sees cost', async ({ page }) => {
   await login(page, 'Jihan', '2222');
-  await expect(page.locator('#tb-role')).toHaveText('Manajer');
+  await expect(page.locator('#tb-role')).toHaveText('');
   await expect(page.locator('#tb-appr')).toBeVisible();
   expect(await page.evaluate(() => KPOS.S.products.some(p => 'cost_price' in p))).toBe(false);
   await addBySearch(page, 'kismis hijau');
