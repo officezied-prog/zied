@@ -107,9 +107,9 @@ async function loginKasirRedirect(page, user = 'Siti', pin = '1111') {
 
 /** Read-modify-write of the mock database (stands in for server-side changes). */
 const editDb = (page, fn, arg) => page.evaluate(([src, a]) => { const db = JSON.parse(localStorage.getItem('kmock.db')); new Function('db', 'arg', src)(db, a); localStorage.setItem('kmock.db', JSON.stringify(db)); }, [fn, arg]);
-/** Block Leaflet (cdnjs) and OSM tiles so the map must use its SVG fallback. */
+/** Block Leaflet (vendor/leaflet, formerly cdnjs) and OSM tiles so the map must use its SVG fallback. */
 async function blockMapNetwork(page) {
-  await page.route(/cdnjs\.cloudflare\.com/, r => r.abort());
+  await page.route(/cdnjs\.cloudflare\.com|\/vendor\/leaflet\//, r => r.abort());
   await page.route(/tile\.openstreetmap\.org/, r => r.abort());
 }
 

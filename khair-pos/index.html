@@ -2,7 +2,7 @@
 <html lang="id" dir="ltr">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: blob: https://cdnjs.cloudflare.com https://*.tile.openstreetmap.org; connect-src 'self' https://ziedapp.app.n8n.cloud; media-src 'self' blob: mediastream:; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' https://ziedapp.app.n8n.cloud; media-src 'self' blob: mediastream:; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1E40AF">
 <meta name="mobile-web-app-capable" content="yes">
@@ -5389,8 +5389,8 @@ function visitPopupHTML(v, n) {
     ${v.photo_thumb ? `<div><img src="${esc(b64Img(v.photo_thumb))}" alt="" style="width:120px;border-radius:6px;margin-top:6px"></div>` : ''}</div>`;
 }
 
-/* ---- Map: Leaflet (cdnjs + OSM) with an SVG fallback ---- */
-const LEAFLET = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
+/* ---- Map: Leaflet (vendor/leaflet, same site — no third-party script) + OSM tiles, with an SVG fallback ---- */
+const LEAFLET = 'vendor/leaflet/';
 let leafletP = null;
 function loadLeaflet() {
   if (window.L && window.L.map) return Promise.resolve(true);
@@ -5398,9 +5398,8 @@ function loadLeaflet() {
   leafletP = new Promise(res => {
     let done = false; const fin = ok => { if (!done) { done = true; res(ok && !!(window.L && window.L.map)); } };
     try {
-      // TODO(security M8): set css.integrity / sc.integrity = 'sha512-…' (cdnjs.com/libraries/leaflet/1.9.4) — not reachable from the build machine.
-      const css = document.createElement('link'); css.rel = 'stylesheet'; css.crossOrigin = 'anonymous'; css.href = LEAFLET + 'leaflet.min.css'; document.head.appendChild(css);
-      const sc = document.createElement('script'); sc.crossOrigin = 'anonymous'; sc.src = LEAFLET + 'leaflet.min.js'; sc.onload = () => fin(true); sc.onerror = () => fin(false);
+      const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = LEAFLET + 'leaflet.css'; document.head.appendChild(css);
+      const sc = document.createElement('script'); sc.src = LEAFLET + 'leaflet.js'; sc.onload = () => fin(true); sc.onerror = () => fin(false);
       document.head.appendChild(sc);
     } catch (e) { fin(false); }
     setTimeout(() => fin(false), 5000);
