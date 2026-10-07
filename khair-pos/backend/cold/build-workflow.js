@@ -4,9 +4,9 @@
 const fs = require('fs'), path = require('path');
 const read = f => fs.readFileSync(path.join(__dirname, f), 'utf8');
 const T = {
-  warehouses: ['SrfURGh9rMlha9nS', 'code name address pic_name pic_wa customer_id rate:n rate_unit parser active:b created_at created_by'],
-  products: ['km5ciaJdz6EuMHYe', 'code name kg_per_ctn:n aliases active:b created_at created_by'],
-  containers: ['HQOIBXsGqHwtCYAq', 'container_no size arrival_date supplier warehouse note created_at created_by'],
+  warehouses: ['SrfURGh9rMlha9nS', 'code name address pic_name pic_wa customer_id rate:n rate_unit parser active:b created_at created_by rate_frozen:n rate_chiller:n rate_dry:n'],
+  products: ['km5ciaJdz6EuMHYe', 'code name kg_per_ctn:n aliases active:b created_at created_by ctn_per_pallet:n'],
+  containers: ['HQOIBXsGqHwtCYAq', 'container_no size arrival_date supplier warehouse note created_at created_by origin product cartons:n'],
   pallets: ['v1KdfKzeAAnCdB3a', 'pallet_code product lot prod_date exp_date kg_per_ctn:n position zone container_no date_in ext_item warehouse created_at created_by'],
   movements: ['ISUlFiRCK23qxeXb', 'seq:n move_date at type pallet_code warehouse cartons:n ref_seq:n grp:n order_no reason by_user'],
   checks: ['EBLmSmYfQxa6RWal', 'check_no check_date warehouse at by_user raw_text result n_diff:n explained_note explained_by explained_at'],

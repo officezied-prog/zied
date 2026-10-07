@@ -22,6 +22,22 @@ var KCold = (function () {
   function num(v) { var n = Number(v); return isFinite(n) ? n : 0; }
   function clean(v, max) { return str(v).replace(/[\u0000-\u001f\u007f<>‪-‮⁦-⁩]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max || 80); }
   function code(v) { var s = str(v).toUpperCase().replace(/\s+/g, '-'); return /^[A-Z0-9][A-Z0-9._\-]{0,29}$/.test(s) ? s : ''; }
+  /** A code from the name when none (or an Arabic one) is typed: "Kurma Sukari 3kg" → SUKARI-3KG style, else P1, P2… */
+  function autoCode(name, taken, prefix) {
+    var base = str(name).toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 20).replace(/-+$/, '');
+    if (!base) { var n = taken.length + 1; while (taken.indexOf(prefix + n) >= 0) n++; return prefix + n; }
+    var c = base, k = 2; while (taken.indexOf(c) >= 0) c = base + '-' + k++;
+    return c;
+  }
+  var ZONES = ['FROZEN', 'CHILLER', 'DRY'];
+  /** FROZEN (beku / تجميد), CHILLER (dingin / تبريد), DRY (kering, biasa / عادي); empty → CHILLER. */
+  function zoneOf(v) {
+    var z = str(v).toUpperCase();
+    if (/FROZ|BEKU|FREEZ|تجميد|مجمد/.test(z)) return 'FROZEN';
+    if (/DRY|KERING|AMBIENT|NORMAL|BIASA|عادي|جاف/.test(z)) return 'DRY';
+    return 'CHILLER';
+  }
+  function rateOf(w, zone) { var r = num(w['rate_' + zone.toLowerCase()]); return r > 0 ? r : num(w.rate); }
   function isDate(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s + 'T00:00:00Z')); }
   function wib(iso) { return new Date(Date.parse(iso) + 7 * 3600000).toISOString(); }
   function addDays(d, n) { var x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); }
@@ -80,16 +96,22 @@ var KCold = (function () {
   }
   /** Pallet-days and storage cost of one warehouse in a month (up to `upTo`), pro rata per day. */
   function storage(st, w, ym, upTo) {
-    var rate = num(w.rate), perDay = w.rate_unit === 'day' ? rate : rate / 30, first = ym + '-01', last = ym + '-' + daysIn(ym), end = upTo < last ? upTo : last;
+    // each pallet pays the rate of its zone (frozen / chiller / dry), per day; a monthly rate counts as rate / 30 per day
+    var perDay = {}, first = ym + '-01', last = ym + '-' + daysIn(ym), end = upTo < last ? upTo : last, zoneOfP = {};
+    ZONES.forEach(function (z) { var r = rateOf(w, z); perDay[z] = w.rate_unit === 'day' ? r : r / 30; });
+    st.pallets.forEach(function (p) { zoneOfP[p.pallet_code] = zoneOf(p.zone); });
     var moves = st.movements.filter(function (x) { return x.warehouse === w.code; }).sort(function (a, b) { return str(a.move_date).localeCompare(str(b.move_date)); });
-    var bal = {}, i = 0, palletDays = 0, now = 0;
+    var bal = {}, i = 0, days = { FROZEN: 0, CHILLER: 0, DRY: 0 }, nowZ = { FROZEN: 0, CHILLER: 0, DRY: 0 };
     for (var d = first; d <= end; d = addDays(d, 1)) {
       while (i < moves.length && str(moves[i].move_date) <= d) { bal[moves[i].pallet_code] = (bal[moves[i].pallet_code] || 0) + num(moves[i].cartons); i++; }
-      now = Object.keys(bal).filter(function (k) { return bal[k] > 0; }).length; palletDays += now;
+      nowZ = { FROZEN: 0, CHILLER: 0, DRY: 0 };
+      Object.keys(bal).forEach(function (k) { if (bal[k] > 0) nowZ[zoneOfP[k] || 'CHILLER']++; });
+      ZONES.forEach(function (z) { days[z] += nowZ[z]; });
     }
-    var left = end < last ? (Date.parse(last) - Date.parse(end)) / 86400000 : 0;
-    return { warehouse: w.code, month: ym, rate: rate, rate_unit: w.rate_unit || 'month', pallet_days: palletDays, pallets_now: now,
-      cost_to_date: Math.round(palletDays * perDay), cost_month_est: Math.round((palletDays + now * left) * perDay) };
+    var left = end < last ? (Date.parse(last) - Date.parse(end)) / 86400000 : 0, cost = 0, est = 0, pd = 0, now = 0;
+    ZONES.forEach(function (z) { cost += days[z] * perDay[z]; est += (days[z] + nowZ[z] * left) * perDay[z]; pd += days[z]; now += nowZ[z]; });
+    return { warehouse: w.code, month: ym, rate: rateOf(w, 'CHILLER'), rates: { FROZEN: rateOf(w, 'FROZEN'), CHILLER: rateOf(w, 'CHILLER'), DRY: rateOf(w, 'DRY') }, rate_unit: w.rate_unit || 'month',
+      pallet_days: pd, pallet_days_zone: days, pallets_now: now, pallets_now_zone: nowZ, cost_to_date: Math.round(cost), cost_month_est: Math.round(est) };
   }
 
   /* ---------- daily check: their lines vs our balance ---------- */
@@ -177,7 +199,15 @@ var KCold = (function () {
       if (!row.grp) row.grp = row.seq;
       put('movements', row); return row;
     }
-    function whOut(w) { var o = { id: w.id, code: w.code, name: w.name, address: str(w.address), pic_name: str(w.pic_name), pic_wa: str(w.pic_wa), customer_id: str(w.customer_id), parser: str(w.parser) || 'generic', active: active(w) }; if (seesCost) { o.rate = num(w.rate); o.rate_unit = w.rate_unit || 'month'; } return o; }
+    function whOut(w) { var o = { id: w.id, code: w.code, name: w.name, address: str(w.address), pic_name: str(w.pic_name), pic_wa: str(w.pic_wa), customer_id: str(w.customer_id), parser: str(w.parser) || 'generic', active: active(w) }; if (seesCost) { o.rate = num(w.rate); o.rate_frozen = rateOf(w, 'FROZEN'); o.rate_chiller = rateOf(w, 'CHILLER'); o.rate_dry = rateOf(w, 'DRY'); o.rate_unit = w.rate_unit || 'month'; } return o; }
+    /** Containers with what came in, what is left and the day the last carton went out (finished). */
+    function contOut(c) {
+      var pals = st.pallets.filter(function (p) { return p.container_no === c.container_no; }).map(function (p) { return p.pallet_code; });
+      var mv = st.movements.filter(function (m) { return pals.indexOf(m.pallet_code) >= 0; }).sort(function (a, b) { return str(a.move_date).localeCompare(str(b.move_date)) || a.seq - b.seq; });
+      var bal = 0, received = 0, fin = '';
+      mv.forEach(function (m) { if (m.type === 'IN') received += m.cartons; bal += m.cartons; fin = bal <= 0 && received > 0 ? str(m.move_date) : ''; });
+      return Object.assign({}, c, { cartons: num(c.cartons), pallets: pals.length, received: received, now: bal, finished_date: fin, origin: str(c.origin), product: str(c.product) });
+    }
     function orderOut(o) { var x = Object.assign({}, o); x.lines = json(o.lines, []); x.trip = json(o.trip, null); if (x.trip && role === 'manager') { /* trip cost is transport, not storage: the manager sees it */ } return x; }
     function checkOut(c, full) { var x = { id: c.id, check_no: c.check_no, check_date: c.check_date, warehouse: c.warehouse, at: c.at, by_user: c.by_user, n_diff: num(c.n_diff),
       explained_note: str(c.explained_note), explained_by: str(c.explained_by), explained_at: str(c.explained_at) }; if (full) { x.result = json(c.result, {}); x.raw_text = str(c.raw_text); } return x; }
@@ -215,31 +245,35 @@ var KCold = (function () {
           me: { name: by, role: role }, today: today, sees_cost: seesCost,
           company: { name: str(s.cold_company) || 'PT. SAIDA REZEKI ABADI', store: str(s.store_name) || 'Khair Mart', address: str(s.address), phone: str(s.phone) },
           drivers: json(s.cold_drivers, []),
-          warehouses: st.warehouses.map(whOut), products: st.products.map(function (p) { return { id: p.id, code: p.code, name: p.name, kg_per_ctn: num(p.kg_per_ctn), aliases: str(p.aliases), active: active(p) }; }),
-          containers: st.containers, pallets: st.pallets, stock: stockRows(st, ''),
+          warehouses: st.warehouses.map(whOut), products: st.products.map(function (p) { return { id: p.id, code: p.code, name: p.name, kg_per_ctn: num(p.kg_per_ctn), ctn_per_pallet: num(p.ctn_per_pallet), aliases: str(p.aliases), active: active(p) }; }),
+          containers: st.containers.map(contOut), pallets: st.pallets, stock: stockRows(st, ''),
           movements: st.movements.slice(-500).reverse(), checks: st.checks.slice(-60).reverse().map(function (c) { return checkOut(c, true); }),
           orders: st.orders.slice(-100).reverse().map(orderOut), alerts: alerts(), vehicles: VEHICLES.map(function (v) { return { max_kg: v[0] === Infinity ? null : v[0], name: v[1] }; })
         });
       }
       case 'warehouse_save': {
-        var c = code(data.code), name = clean(data.name, 60);
-        if (!c || !name) return fail('INVALID', 'Kode dan nama gudang wajib');
-        var ex = wh(c), rate = num(data.rate);
-        if (rate < 0 || rate > 100000000) return fail('INVALID', 'Tarif tidak valid');
+        var name = clean(data.name, 60);
+        if (!name) return fail('INVALID', 'Nama gudang wajib');
+        var c = code(data.code) || autoCode(name, st.warehouses.map(function (x) { return x.code; }), 'GD');
+        var ex = wh(c), rate = num(data.rate), rz = {};
+        ZONES.forEach(function (z) { rz['rate_' + z.toLowerCase()] = num(data['rate_' + z.toLowerCase()]); });
+        if ([rate, rz.rate_frozen, rz.rate_chiller, rz.rate_dry].some(function (r) { return r < 0 || r > 100000000; })) return fail('INVALID', 'Tarif tidak valid');
         var unit = data.rate_unit === 'day' ? 'day' : 'month', parser = P && P.parsers[str(data.parser)] ? str(data.parser) : 'generic';
         var waRaw = str(data.pic_wa), wa = waRaw ? normPhone(waRaw) : '';
         if (waRaw && !wa) return fail('INVALID', 'Nomor WhatsApp tidak valid');
         var row = Object.assign({}, ex || { created_at: now, created_by: by }, { code: c, name: name, address: clean(data.address, 200), pic_name: clean(data.pic_name, 40), pic_wa: wa,
-          customer_id: clean(data.customer_id, 20), rate: rate, rate_unit: unit, parser: parser, active: data.active === undefined ? true : bool(data.active) });
+          customer_id: clean(data.customer_id, 20), rate: rate, rate_frozen: rz.rate_frozen, rate_chiller: rz.rate_chiller, rate_dry: rz.rate_dry, rate_unit: unit, parser: parser, active: data.active === undefined ? true : bool(data.active) });
         put('warehouses', row);
         return done({ warehouse: whOut(row) });
       }
       case 'product_save': {
-        var pc = code(data.code), pn = clean(data.name, 60), kpc = num(data.kg_per_ctn);
-        if (!pc || !pn) return fail('INVALID', 'Kode dan nama produk wajib');
+        var pn = clean(data.name, 60), kpc = num(data.kg_per_ctn), cpp = data.ctn_per_pallet === undefined || data.ctn_per_pallet === '' ? 0 : int(data.ctn_per_pallet);
+        if (!pn) return fail('INVALID', 'Nama produk wajib');
+        var pc = code(data.code) || autoCode(pn, st.products.map(function (x) { return x.code; }), 'P');
         if (kpc < 0 || kpc > 100) return fail('INVALID', 'Kg per karton 0–100');
+        if (!(cpp >= 0 && cpp <= 5000)) return fail('INVALID', 'Karton per palet 0–5000');
         var pe = product(pc);
-        var prow = Object.assign({}, pe || { created_at: now, created_by: by }, { code: pc, name: pn, kg_per_ctn: kpc,
+        var prow = Object.assign({}, pe || { created_at: now, created_by: by }, { code: pc, name: pn, kg_per_ctn: kpc, ctn_per_pallet: cpp,
           aliases: str(data.aliases).split(',').map(function (a) { return clean(a, 40); }).filter(Boolean).slice(0, 12).join(', '), active: data.active === undefined ? true : bool(data.active) });
         put('products', prow);
         return done({ product: prow });
@@ -264,10 +298,14 @@ var KCold = (function () {
         if (!cw) return fail('NOT_FOUND', 'Gudang tidak ada');
         if (!isDate(data.arrival_date)) return fail('INVALID', 'Tanggal tiba wajib');
         var ce = st.containers.find(function (x) { return x.container_no === no; });
+        var cp = str(data.product) ? product(data.product) : null, cc = data.cartons === undefined || data.cartons === '' ? 0 : int(data.cartons);
+        if (str(data.product) && !cp) return fail('NOT_FOUND', 'Produk tidak ada');
+        if (!(cc >= 0 && cc <= 100000)) return fail('INVALID', 'Jumlah karton tidak valid');
         var crow = Object.assign({}, ce || { created_at: now, created_by: by }, { container_no: no, size: ['20', '40', '40HC'].indexOf(str(data.size)) >= 0 ? str(data.size) : '40',
-          arrival_date: data.arrival_date, supplier: clean(data.supplier, 60), warehouse: cw.code, note: clean(data.note, 200) });
+          arrival_date: data.arrival_date, supplier: clean(data.supplier, 60), warehouse: cw.code, note: clean(data.note, 200),
+          origin: clean(data.origin, 40), product: cp ? cp.code : '', cartons: cc });
         put('containers', crow);
-        return done({ container: crow });
+        return done({ container: contOut(crow) });
       }
       case 'pallet_in':
       case 'import_report': {
@@ -296,7 +334,7 @@ var KCold = (function () {
           }
           seenP[pcode] = true;
           made.push(put('pallets', { pallet_code: pcode, product: pr.code, lot: clean(x.lot, 60), prod_date: isDate(x.prod_date) ? x.prod_date : '', exp_date: exp,
-            kg_per_ctn: num(x.kg_per_ctn) || num(pr.kg_per_ctn), position: clean(x.position, 20), zone: clean(x.zone, 12).toUpperCase(), container_no: pcn,
+            kg_per_ctn: num(x.kg_per_ctn) || num(pr.kg_per_ctn), position: clean(x.position, 20), zone: zoneOf(x.zone), container_no: pcn,
             date_in: isDate(x.date_in) ? x.date_in : date, ext_item: clean(x.ext_item, 20), warehouse: w.code, created_at: now, created_by: by }));
         }
         var grp = nextSeq();
@@ -435,6 +473,6 @@ var KCold = (function () {
         return fail('INVALID', 'Aksi tidak dikenal: ' + action);
     }
   }
-  return { core: core, stockRows: stockRows, fefo: fefo, storage: storage, compare: compare, vehicleFor: vehicleFor, VEHICLES: VEHICLES, EXPIRY_DAYS: EXPIRY_DAYS };
+  return { core: core, stockRows: stockRows, fefo: fefo, storage: storage, compare: compare, vehicleFor: vehicleFor, zoneOf: zoneOf, ZONES: ZONES, VEHICLES: VEHICLES, EXPIRY_DAYS: EXPIRY_DAYS };
 })();
 if (typeof window !== 'undefined') window.KCold = KCold;
