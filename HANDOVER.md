@@ -61,10 +61,9 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   with the key (verify equality after any change). Face library vendored in `vendor/face-api`. Owner app menu "Absensi";
   Khair Kasir "Lainnya → Absensi pekerja". Records are append-only and hash-chained; never "clean" these tables.
   No workers added yet: the owner adds them and registers faces with the worker's consent.
-- **Waiting for the owner's paste:** `backend/process.js` v17 = accountant role `akuntan` (read-only) + settings
+- **Deployed 07 Oct (owner pasted, verified equal, published):** `backend/process.js` v17 = accountant role `akuntan` (read-only) + settings
   `invoice_due_days` (14) and `akuntan_sees_cost` (false). Tests: `harness17.js`; harness16/16base unchanged apart from ids.
-  The client part (owner app role, read-only views, settings panel "Faktur & akuntan") is on branch
-  `claude/khair-v17-akuntan` and goes to main only after the paste is verified.
+  The client part (owner app role, read-only views, settings panel "Faktur & akuntan") is on main.
 - Settings stored 07 Oct: wa_shop_number 6285810454694, wa_owner_number 6281322091202, wa_manager_number 6281190008090.
   Shop hours 08:00–21:00; from two months before Ramadan to Eid 08:00–23:00 (season in Absensi → Jam kerja, not set yet).
 - Owner's request still open: cold-storage date warehouses (pallets/containers, daily WhatsApp stock check, pick orders,
