@@ -53,3 +53,9 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
 ## Ideas noted, not built
 - Separate photo kind for supplier-return exit receipts (now uses scan_purchase).
 - Leaflet SRI hashes (cdnjs was unreachable from the build container).
+
+## Paused until the real launch (07 Oct, owner's decision)
+The shop has not started real work yet. Paused: Claude routine "Khair Mart – تقرير الصباح" (trig_01Lj7zLWVfr54bVpHwkEthr5, disabled),
+n8n agents "المراقب — Khair Mart Supervisor" (1N9dy9vt13QCVkPM) and "مراقب التواصل — Khair Mart Social Watch" (UEmt2aI5fsUqBWY1),
+both unpublished. On launch day: re-enable the routine (update_trigger enabled=true) and publish both agents again (publish_agent).
+The marketing brain agent (4OipUFmiFhUN2ADr) stays published (it only answers when asked).
