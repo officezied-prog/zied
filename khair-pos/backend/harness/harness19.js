@@ -19,20 +19,23 @@ const base=(action,user,pin,data)=>({ip:'1.2.3.4',ua:'Mozilla/5.0 (Linux; Androi
 
 const it=(pid,qty,price)=>({product_id:pid,qty:qty,unit_price:price});
 // v17 accountant (akuntan): read-only; purchase prices only when the owner allows; profit never.
+// v19: manager cannot create/manage akuntan; code attempts lock the account (setting locked_accounts); owner clears.
 let r;
-// v18: the manager adds and manages staff accounts (kasir, sales, akuntan) — never a manager or the owner, nor their accounts.
-const ok = (tag, r) => console.log(tag, r.response.ok ? 'ok' : r.response.error, r.ops && r.ops.users ? r.ops.users.map(u => u.name + ':' + u.role + (u.must_change ? ':must' : '')).join(',') : '');
-ok('M1 manager adds kasir', run(base('save_user', 'Jihan', '2222', { name: 'Budi', role: 'kasir', pin_hash: h('Budi', '4321') }), db));
-ok('M2 manager adds sales', run(base('save_user', 'Jihan', '2222', { name: 'Wahyu', role: 'sales', pin_hash: h('Wahyu', '4321') }), db));
-r = run(base('save_user', 'Jihan', '2222', { name: 'Rina', role: 'akuntan', pin_hash: h('Rina', '4321') }), db); console.log('M3 manager adds akuntan (now refused)', r.response.error);
-ok('M4 manager resets Siti PIN', run(base('save_user', 'Jihan', '2222', { name: 'Siti', role: 'kasir', pin_hash: h('Siti', '9876'), active: true }), db));
-ok('M5 manager deactivates Siti', run(base('save_user', 'Jihan', '2222', { name: 'Siti', role: 'kasir', active: false }), db));
-ok('M6 manager makes a manager (refused)', run(base('save_user', 'Jihan', '2222', { name: 'Budi', role: 'manager', pin_hash: h('Budi', '4321') }), db));
-ok('M7 manager makes an owner (refused)', run(base('save_user', 'Jihan', '2222', { name: 'Budi', role: 'owner', pin_hash: h('Budi', '4321') }), db));
-ok('M8 manager promotes Siti to manager (refused)', run(base('save_user', 'Jihan', '2222', { name: 'Siti', role: 'manager', active: true }), db));
-ok('M9 manager edits the owner (refused)', run(base('save_user', 'Jihan', '2222', { name: 'Pemilik', role: 'kasir', active: false }), db));
-ok('M10 manager edits himself (refused)', run(base('save_user', 'Jihan', '2222', { name: 'Jihan', role: 'kasir', pin_hash: h('Jihan', '1111') }), db));
-ok('M11 manager unknown role (refused)', run(base('save_user', 'Jihan', '2222', { name: 'Budi', role: 'boss', pin_hash: h('Budi', '4321') }), db));
-ok('M12 kasir adds a user (refused)', run(base('save_user', 'Siti', '1111', { name: 'Budi', role: 'kasir', pin_hash: h('Budi', '4321') }), db));
-ok('M13 owner adds a manager', run(base('save_user', 'Pemilik', '1234', { name: 'Nadia', role: 'manager', pin_hash: h('Nadia', '135790') }), db));
-ok('M14 rename refused while Siti has an open kas (same as owner)', run(base('save_user', 'Jihan', '2222', { name: 'Siti', new_name: 'Ani', role: 'kasir', pin_hash: h('Ani', '4321') }), Object.assign({}, db, { shifts: [] })));
+const lockedOut = r => { const s = (r.ops && r.ops.settings || []).find(x => x.skey === 'locked_accounts'); return s ? JSON.parse(s.svalue) : null; };
+const tamperLog = r => (r.ops && r.ops.activity || []).some(a => a.kind === 'tamper');
+r = run(base('save_user', 'Jihan', '2222', { name: 'Rina', role: 'akuntan', pin_hash: h('Rina', '4321') }), db); console.log('1 manager+akuntan refused', r.response.error);
+r = run(base('save_user', 'Jihan', '2222', { name: 'Budi', role: 'kasir', pin_hash: h('Budi', '4321') }), db); console.log('2 manager+kasir ok', r.response.ok);
+r = run(base('save_user', 'Pemilik', '1234', { name: 'Rina', role: 'akuntan', pin_hash: h('Rina', '4321') }), db); console.log('3 owner+akuntan ok', r.response.ok);
+for (const [act, d] of [['save_customer', { name: 'A<script>x</script>' }], ['save_customer', { name: 'B', notes: '${a}' }], ['save_customer', { name: 'C', notes: 'x=>y' }], ['save_customer', { name: 'D', notes: 'a;;;b' }], ['save_customer', { name: 'E', notes: 'window.name' }]]) {
+  r = run(base(act, 'Siti', '1111', JSON.parse(JSON.stringify(d))), db);
+  console.log('4 code kasir →', r.response.error, 'locked=' + JSON.stringify(lockedOut(r)), 'log=' + tamperLog(r));
+}
+r = run(base('save_customer', 'Siti', '1111', { name: 'Toko Maju', notes: 'beli 3 (tiga) + 2, 100% ok, 0812-3' }), db); console.log('5 normal note ok', r.response.ok, r.response.error || '', 'nolock=' + (lockedOut(r) === null));
+r = run(base('save_customer', 'Pemilik', '1234', { name: 'X', notes: '${evil}' }), db); console.log('6 owner code INVALID, nolock', r.response.error, lockedOut(r) === null);
+const L = Object.assign({}, db, { settings: [{ id: 9, skey: 'locked_accounts', svalue: JSON.stringify(['siti']) }] });
+r = run(base('save_sale', 'Siti', '1111', { client_id: 'z', items: [], payment_method: 'tunai', paid_amount: 0 }), L); console.log('7 locked blocked', r.response.error);
+r = run(base('login', 'Siti', '1111', {}), L); console.log('8 locked login ok flag', r.response.ok, r.response.tamper_locked);
+r = run(base('login', 'Jihan', '2222', {}), L); console.log('9 other login not locked', r.response.ok, r.response.tamper_locked);
+r = run(base('clear_tamper', 'Pemilik', '1234', { name: 'Siti' }), L); console.log('10 owner clears', r.response.ok, 'remaining=' + JSON.stringify(lockedOut(r)));
+r = run(base('clear_tamper', 'Jihan', '2222', { name: 'Siti' }), L); console.log('11 manager cannot clear', r.response.error);
+r = run(base('bootstrap', 'Pemilik', '1234', {}), L); console.log('12 bootstrap tamper flag', (r.response.users.find(u => u.name === 'Siti') || {}).tamper);

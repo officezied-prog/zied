@@ -194,12 +194,12 @@ r=run(base('save_purchase','Siti','1111',{supplier:'PT A',carrier:{type:'teman'}
 r=run(base('save_purchase','Siti','1111',{supplier:'PT A',carrier:{type:'umum',kind:'angkot',vehicle:'M 06'},items:[{product_id:1,qty:1,cost_price:1}]}),dbG); console.log('C4 ok',r.response.ok,r.ops.purchases.map(x=>[x.carrier_type,x.carrier_name,x.carrier_vehicle]),r.ops.activity.map(a=>a.summary));
 r=run(base('save_purchase','Siti','1111',{supplier:'PT A',carrier:{type:'teman',name:'Ali; DROP TABLE'},items:[{product_id:1,qty:1,cost_price:1}]}),dbG); console.log('C5 code in name',r.response.message);
 // validation
-r=run(base('save_customer','Siti','1111',{name:'Toko <b>Maju</b> 2',phone:'0812'}),db); console.log('V1 tags stripped',r.response.ok,r.ops.customers[0]&&r.ops.customers[0].name);
+r=run(base('save_customer','Siti','1111',{name:'Toko <b>Maju</b> 2',phone:'0812'}),db); console.log('V1 tags now lock (code)',r.response.error,'locked='+!!(r.ops.settings||[]).find(x=>x.skey==='locked_accounts'));
 r=run(base('save_customer','Siti','1111',{name:'Toko {Maju}',phone:'0812'}),db); console.log('V2 braces refused',r.response.error);
 r=run(base('save_customer','Siti','1111',{name:'Bu Ani',phone:'0812abc'}),db); console.log('V3 phone letters',r.response.message);
 r=run(base('save_product','Pemilik','1234',{name:'Madu "Asli"',sku:'X1'}),db); console.log('V4 product quote',r.response.error);
 r=run(base('save_product','Pemilik','1234',{name:'Kurma Ajwa 1kg (Premium) 10%',sku:'89912345;'}),db); console.log('V5 sku',r.response.message);
-r=run(base('save_user','Pemilik','1234',{name:'admin<script>',role:'kasir',pin_hash:h('x','1')}),db); console.log('V6 user name',r.response.ok,r.ops.users[0]&&r.ops.users[0].name);
+r=run(base('save_user','Pemilik','1234',{name:'admin<script>',role:'kasir',pin_hash:h('x','1')}),db); console.log('V6 owner code → INVALID',r.response.error,'noUserWrite='+!(r.ops.users||[]).length);
 r=run(base('save_user','Pemilik','1234',{name:'a=b',role:'kasir',pin_hash:h('x','1')}),db); console.log('V7 user =',r.response.error);
 r=run(Object.assign(base('save_customer','Siti','1111',{}),{data:JSON.parse('{"name":"Bu Ana","__proto__":{"isAdmin":true},"notes":"a\\u0000b\\u202Ec"}')}),db); console.log('V8 proto/control',r.response.ok,JSON.stringify(r.ops.customers[0].notes),({}).isAdmin);
 // ---- agent follow-ups ----

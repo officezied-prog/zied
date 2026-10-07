@@ -42,7 +42,7 @@ never receives `cost_price`, `total_cost`, `profit`, `line_profit`, `cost` field
 | `save_purchase` | any | `{purchase_date, supplier, note, items:[{product_id, qty, cost_price, exp_date? (YYYY-MM-DD, expiry of this batch)}]}` | `stock: [{product_id, stock, cost_price}]` |
 | `get_sales` | any (kasir: cost/profit stripped) | `{from: "YYYY-MM-DD", to: "YYYY-MM-DD"}` inclusive | `sales[], items[], payments[], purchases[]` |
 | `save_settings` | owner | `{settings: {...}}` (merged) | `settings` |
-| `save_user` | owner; manager for kasir / sales / akuntan accounts only (v18) | `{name, role, pin_hash?, active}` (create or update by name) | `user` |
+| `save_user` | owner; manager for kasir / sales accounts only (v19) | `{name, role, pin_hash?, active}` (create or update by name) | `user` |
 
 ## Objects
 
@@ -139,6 +139,21 @@ Photo kinds in `pos_photos.kind`: `masuk` (scan_purchase), `keluar` (scan_exit),
 when it is still empty.
 
 `drive_url` may be empty while Google Drive storage is not connected yet.
+
+## Anti-tamper and account lock (v19)
+
+Before cleaning, every request's raw string fields are scanned for a clear code attempt: a run of 3+ of `< > { } [ ] ; $ = | \\ \``,
+or a code token (`</`, `<script`, `javascript:`, `${`, `=>`, `eval(`, `function(`, `document.`/`window.` property access, `require(`, `import(`).
+A hit from a non-owner locks that account: the name is added to the setting `locked_accounts`, the response is `{error:"TAMPER", locked:true}`,
+and every later action (except login/users/device_ping/change_pin/clear_tamper/report_tamper) returns `{error:"TAMPER_LOCKED", locked:true}`.
+The owner is warned (`INVALID`) but never locked. `login` returns `tamper_locked` for a locked non-owner; `bootstrap` marks each locked user `tamper:true`.
+
+| action | who | data | response |
+|---|---|---|---|
+| `report_tamper` | any (the app caught a code attempt) | `{where}` | `{ok, locked}` — locks a non-owner; the owner is only logged |
+| `clear_tamper` | owner | `{name}` | `{ok, user}` — removes the name from `locked_accounts` |
+
+The three apps also detect code attempts in inputs client-side and log the user straight out to the lock screen.
 
 ## Protected changes: old invoices and prices (v3)
 

@@ -79,6 +79,16 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   nor their accounts (server `save_user` + mock; `harness18.js`). Settings → Users for the manager shows only those groups.
   First choice "Pekerja harian" makes no account: it opens the Absensi worker form (face, no PIN). Process v18 pasted by the
   owner 07 Oct, verified equal (139,990 chars, only the Process node changed), published: active version b2de79d6.
+- **v19 (07 Oct, owner's decisions) — needs a Process paste:** (1) the manager creates/manages only kasir and sales accounts
+  (never akuntan, manager or owner); (2) a clear code attempt in any field (a run of 3+ of `< > { } [ ] ; $ = | \ \``
+  or a code token like `</`, `${`, `=>`, `script`, `document.`) locks that non-owner account — the name is kept in the
+  setting `locked_accounts` (no schema change), the server returns TAMPER / TAMPER_LOCKED, the owner opens it with the new
+  action `clear_tamper` (owner-only) from Settings → Users; the owner is warned (INVALID), never locked. New action
+  `report_tamper` (the app reports a code attempt it caught). All three apps detect code client-side and instantly log the
+  user out to the lock screen; the owner sees a banner on open. Server: `backend/process.js`, harness `harness19.js`
+  (+ harness16 V1/V6, harness18 M3 updated). Camera capture of people was declined (UU PDP); the lock + owner alert is the
+  deterrent instead. Decided but NOT yet built: Phase 2 = manager-performed price correction of already-sold goods with an
+  owner banner and the difference in reports + customer debt.
 - **Cold storage "Khair Gudang Dingin" (07 Oct, third session)** — see below.
 
 - Leaflet 1.9.4 is vendored in `vendor/leaflet` (no cdnjs; CSP no longer allows cdnjs). Khair Sales cache is `khair-sales-v3`.
