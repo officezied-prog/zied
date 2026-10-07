@@ -77,8 +77,8 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   wrong PINs and locked the owner. Photo-control panel has its own title key `photoc.title` (clashed with the new-PIN title).
 - v18 (07 Oct, owner's decision): the manager adds/manages staff accounts — roles kasir, sales, akuntan only, never manager/owner
   nor their accounts (server `save_user` + mock; `harness18.js`). Settings → Users for the manager shows only those groups.
-  First choice "Pekerja harian" makes no account: it opens the Absensi worker form (face, no PIN). Process v18 must be pasted
-  by the owner (file built in the scratchpad, never committed) — until then the server refuses the manager's save (FORBIDDEN).
+  First choice "Pekerja harian" makes no account: it opens the Absensi worker form (face, no PIN). Process v18 pasted by the
+  owner 07 Oct, verified equal (139,990 chars, only the Process node changed), published: active version b2de79d6.
 - **Cold storage "Khair Gudang Dingin" (07 Oct, third session)** — see below.
 
 - Leaflet 1.9.4 is vendored in `vendor/leaflet` (no cdnjs; CSP no longer allows cdnjs). Khair Sales cache is `khair-sales-v3`.
