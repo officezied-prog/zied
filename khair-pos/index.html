@@ -1711,7 +1711,7 @@ const MockServer = (() => {
     const custById = id => db.customers.find(c => c.id === Number(id));
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
-    if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'list_photos'].includes(action)) deviceTouch(db, u, data.device, false);
+    if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'list_photos'].includes(action)) deviceTouch(db, u, data.device, false);
 
     switch (action) {
       case 'login':
@@ -2130,6 +2130,18 @@ const MockServer = (() => {
         db.photos.push(photo);
         sale.exit_photo = photo.photo_id; sale.exit_match = match.status;
         return { photo_id: photo.photo_id, extracted: { items: seen }, match, drive_url: '' };
+      }
+      case 'scan_supplier_return': {
+        // v17 photo workflow, kind 'retur': the outgoing return note / goods going back to the supplier (demo: localStorage kmock.retur)
+        if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
+        let ex = null;
+        try { ex = JSON.parse(localStorage.getItem('kmock.retur') || 'null'); } catch (e) { }
+        if (!ex) ex = { doc_no: 'RTR-' + jktDate().replace(/-/g, '').slice(2), supplier: null, date: jktDate(), items: [], readable: true, notes: '' };
+        const pno = String(data.purchase_no || '').trim().toUpperCase();
+        const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'retur', ref: /^[A-Z0-9][A-Z0-9 \/.-]{0,39}$/.test(pno) ? pno : '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted: ex,
+          match_status: ex.readable === false ? 'perlu_cek' : '', match_notes: String(ex.notes || '') };
+        db.photos.push(photo);
+        return { photo_id: photo.photo_id, extracted: ex, drive_url: '' };
       }
       case 'list_photos': {
         if (!isYmd(data.from) || !isYmd(data.to)) throw E('INVALID', 'from/to');
@@ -6345,6 +6357,8 @@ function photoControlHTML(d) {
     <div id="rp-photos" class="small muted">${esc(t('loading'))}</div></div></div>`;
 }
 let photoSeq = 0;
+// Photo kinds from the photo workflow: goods in, goods out (sale), payment slip, goods back to a supplier (v17).
+const PHOTO_KIND_BADGE = { masuk: 'blue', keluar: 'gold', bayar: 'green', retur: 'amber' };
 async function loadPhotoList() {
   const box = $('#rp-photos'); if (!box) return;
   const seq = ++photoSeq;
@@ -6354,7 +6368,7 @@ async function loadPhotoList() {
     const list = (r.photos || []).slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
     $('#rp-photos').className = '';
     $('#rp-photos').innerHTML = list.length ? `<div class="tbl-wrap"><table class="tbl" id="photo-table"><thead><tr><th>${esc(t('time'))}</th><th>${esc(t('pc.kind'))}</th><th>${esc(t('pc.ref'))}</th><th class="hide-phone">${esc(t('pc.user'))}</th><th>${esc(t('status'))}</th><th></th></tr></thead><tbody>
-      ${list.slice(0, 60).map(ph => `<tr><td class="num">${esc(fmtDateTime(ph.created_at, ph.photo_date))}</td><td><span class="badge ${ph.kind === 'keluar' ? 'gold' : 'blue'}">${esc(t('pc.kind_' + (ph.kind === 'keluar' ? 'keluar' : 'masuk')))}</span></td><td>${esc(ph.ref || '')}</td><td class="hide-phone">${esc(ph.user || '')}</td>
+      ${list.slice(0, 60).map(ph => `<tr><td class="num">${esc(fmtDateTime(ph.created_at, ph.photo_date))}</td><td><span class="badge ${PHOTO_KIND_BADGE[ph.kind] || 'blue'}" data-kind="${esc(PHOTO_KIND_BADGE[ph.kind] ? ph.kind : 'masuk')}">${esc(t('pc.kind_' + (PHOTO_KIND_BADGE[ph.kind] ? ph.kind : 'masuk')))}</span></td><td>${esc(ph.ref || '')}</td><td class="hide-phone">${esc(ph.user || '')}</td>
         <td>${ph.match_status ? `<span class="badge ${ph.match_status === 'cocok' ? 'green' : ph.match_status === 'tidak_cocok' ? 'red' : 'amber'}">${esc(t('exit.' + ph.match_status))}</span>` : ''}</td>
         <td>${ph.drive_url ? `<a href="${esc(safeUrl(ph.drive_url))}" target="_blank" rel="noopener">${esc(t('photo.open'))}</a>` : '<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table></div>` : `<span class="muted">${esc(t('pc.no_photos'))}</span>`;
   } catch (e) { if (seq === photoSeq && $('#rp-photos')) $('#rp-photos').innerHTML = `<span class="red">${esc(errMsg(e))}</span>`; }
@@ -6638,7 +6652,7 @@ Object.assign(I18N.id, {
   'pu.need_photo': 'Ambil foto nota dulu', 'pu.need_match': 'Cocokkan semua baris dengan produk', 'pu.pick_product': 'pilih produk', 'pu.on_note': 'Di nota',
   'pu.unmatched': 'Belum cocok', 'pu.note_invoice': 'Nota {no}', 'pu.scan_net': 'Gagal mengirim foto (internet).', 'pu.scan_retry': 'Coba ambil foto lagi.',
   'pc.title': 'Kontrol foto', 'pc.pur_with': 'Barang masuk + foto', 'pc.pur_without': 'Masuk tanpa foto', 'pc.exit_with': 'Keluar besar + foto', 'pc.exit_missing': 'Foto keluar belum ada',
-  'pc.mismatch': 'Tidak cocok', 'pc.check': 'Perlu dicek', 'pc.kind': 'Jenis', 'pc.ref': 'Referensi', 'pc.user': 'Oleh', 'pc.kind_masuk': 'Masuk', 'pc.kind_keluar': 'Keluar', 'pc.no_photos': 'Belum ada foto di periode ini.',
+  'pc.mismatch': 'Tidak cocok', 'pc.check': 'Perlu dicek', 'pc.kind': 'Jenis', 'pc.ref': 'Referensi', 'pc.user': 'Oleh', 'pc.kind_masuk': 'Masuk', 'pc.kind_keluar': 'Keluar', 'pc.kind_bayar': 'Bukti bayar', 'pc.kind_retur': 'Retur ke pemasok', 'pc.no_photos': 'Belum ada foto di periode ini.',
   'set.exit_total': 'Wajib foto keluar jika total ≥ (Rp)', 'set.exit_qty': 'atau qty satu barang ≥', 'set.req_photo': 'Barang masuk wajib foto nota', 'set.photo_hint': 'Isi 0 untuk mematikan batas.'
 });
 Object.assign(I18N.ar, {
@@ -6664,7 +6678,7 @@ Object.assign(I18N.ar, {
   'pu.need_photo': 'صوّر الفاتورة أولًا', 'pu.need_match': 'طابِق كل الأسطر مع المنتجات', 'pu.pick_product': 'اختر منتجًا', 'pu.on_note': 'في الفاتورة',
   'pu.unmatched': 'غير مطابق', 'pu.note_invoice': 'فاتورة {no}', 'pu.scan_net': 'تعذّر إرسال الصورة (الإنترنت).', 'pu.scan_retry': 'حاول التصوير مجددًا.',
   'pc.title': 'مراقبة الصور', 'pc.pur_with': 'وارد مع صورة', 'pc.pur_without': 'وارد بلا صورة', 'pc.exit_with': 'بيع كبير مع صورة', 'pc.exit_missing': 'صور خروج ناقصة',
-  'pc.mismatch': 'غير مطابق', 'pc.check': 'يحتاج مراجعة', 'pc.kind': 'النوع', 'pc.ref': 'المرجع', 'pc.user': 'بواسطة', 'pc.kind_masuk': 'وارد', 'pc.kind_keluar': 'خارج', 'pc.no_photos': 'لا صور في هذه الفترة.',
+  'pc.mismatch': 'غير مطابق', 'pc.check': 'يحتاج مراجعة', 'pc.kind': 'النوع', 'pc.ref': 'المرجع', 'pc.user': 'بواسطة', 'pc.kind_masuk': 'وارد', 'pc.kind_keluar': 'خارج', 'pc.kind_bayar': 'إثبات دفع', 'pc.kind_retur': 'مرتجع للمورد', 'pc.no_photos': 'لا صور في هذه الفترة.',
   'set.exit_total': 'تصوير الخروج إلزامي إذا كان الإجمالي ≥ (روبية)', 'set.exit_qty': 'أو كمية صنف واحد ≥', 'set.req_photo': 'الوارد يتطلب صورة الفاتورة', 'set.photo_hint': 'ضع 0 لإلغاء الحد.'
 });
 
@@ -9799,7 +9813,7 @@ async function openSupReturn(no) {
     $('#sr-photo', body).onchange = async e => {
       const f = e.target.files[0]; if (!f) return;
       R.uploading = true; draw();
-      try { const img = await imageToJpeg(f); R.thumb = img.thumb; const r = await apiPhoto('scan_purchase', { image_base64: img.base64, mime: img.mime }); R.photo_id = r.photo_id || ''; }
+      try { const img = await imageToJpeg(f); R.thumb = img.thumb; const r = await apiPhoto('scan_supplier_return', { image_base64: img.base64, mime: img.mime, purchase_no: no }); R.photo_id = r.photo_id || ''; const d = r.extracted && r.extracted.doc_no; if (d && !R.doc.trim()) R.doc = String(d); }
       catch (e2) { R.uploading = false; draw(); $('#sr-err', el).textContent = errMsg(e2); return; }
       R.uploading = false; draw();
     };

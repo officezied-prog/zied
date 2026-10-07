@@ -28,7 +28,7 @@ if (req.action === 'list_photos') {
   });
   return respond({ ok: true, photos: photos });
 }
-if (['scan_purchase', 'scan_exit', 'scan_payment'].indexOf(req.action) < 0) return fail('INVALID', 'Aksi tidak dikenal: ' + req.action);
+if (['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return'].indexOf(req.action) < 0) return fail('INVALID', 'Aksi tidak dikenal: ' + req.action);
 if (req.too_big) return fail('INVALID', 'Foto terlalu besar, kecilkan dulu (maks ±5 MB)');
 if (req.img.length < 200) return fail('INVALID', 'Foto wajib dikirim');
 
@@ -43,6 +43,14 @@ if (req.action === 'scan_payment') {
   const prompt = 'Kamu kasir/akuntan toko Khair Mart. Foto ini adalah bukti pembayaran: bukti transfer bank / m-banking / QRIS / setoran tunai, untuk pembayaran dari pelanggan atau ke pemasok. Baca datanya. ' + JSON_ONLY +
     ' Format: {"date": "YYYY-MM-DD"|null, "time": "HH:MM"|null, "amount": number|null, "sender_name": string|null, "sender_bank": string|null, "receiver_name": string|null, "receiver_bank": string|null, "bank": string|null, "transfer_ref": string|null, "description": string|null, "status": "berhasil"|"gagal"|"tidak_jelas", "readable": boolean, "notes": string}. transfer_ref = nomor referensi / no. transaksi / ID transaksi. bank = bank/aplikasi pengirim. Tulis notes dalam Bahasa Indonesia singkat.';
   return [{ json: { mode: 'scan', kind: 'bayar', action: req.action, img: req.img, mime: req.mime, prompt: prompt, user: me.name, ref: '' } }];
+}
+if (req.action === 'scan_supplier_return') {
+  // Goods going back to a supplier (v17): the outgoing return note / delivery order and/or the goods leaving. Own kind 'retur'.
+  const prompt = 'Kamu pengawas barang keluar di toko grosir Khair Mart. Foto ini adalah nota retur / surat jalan barang yang DIKEMBALIKAN ke pemasok' +
+    (req.purchase_no ? ' (dari barang masuk ' + req.purchase_no + ')' : '') + ' dan/atau foto barang retur yang akan keluar. Baca nomor dokumen, pemasok dan semua barang. ' + JSON_ONLY +
+    ' Format: {"doc_no": string|null, "supplier": string|null, "date": "YYYY-MM-DD"|null, "items": [{"name": string, "qty": number|null, "unit": string|null}], "readable": boolean, "notes": string}. ' +
+    'doc_no = nomor nota retur / surat jalan / DO yang tertulis. Jika hanya foto barang tanpa nota, tulis barang dan jumlah dus/karung/pcs yang terlihat, doc_no null. Tulis notes dalam Bahasa Indonesia singkat.';
+  return [{ json: { mode: 'scan', kind: 'retur', action: req.action, img: req.img, mime: req.mime, prompt: prompt, user: me.name, ref: req.purchase_no || '' } }];
 }
 const sale = rows('Get Sale').find(function (s) { return s.invoice_no === req.invoice_no; });
 if (!sale) return fail('NOT_FOUND', 'Faktur tidak ditemukan: ' + req.invoice_no);

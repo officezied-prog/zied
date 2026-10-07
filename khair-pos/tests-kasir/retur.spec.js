@@ -188,6 +188,9 @@ test('supplier return from a goods-in: outgoing note, photo, carrier; no values 
   await expect(m.locator('#sr-err')).toHaveText('Foto bukti barang keluar wajib');
   await page.setInputFiles('#sr-photo', await H.photoFile(page, 'keluar.png'));
   await expect(m.locator('#sr-photo-ok')).toBeVisible();
+  await expect(m.locator('#sr-doc')).toHaveValue('SJK/0012-A'); // the typed number stays
+  const rph = (await H.getDb(page)).photos.slice(-1)[0];
+  expect(rph).toMatchObject({ kind: 'retur', ref: no }); // v17: own photo kind, linked to the goods-in
   await page.click('#sr-send');
   await expect(m.locator('#sr-err')).toHaveText('Pilih siapa yang membawa barang');
   await H.pickCarrier(page, 'umum', {}, 'sr');
@@ -248,4 +251,25 @@ test('Arabic supplier return screen', async ({ page }) => {
   await H.shot(page, 'phone-58-retur-supplier-ar', false, { noToasts: true });
   const db = await H.getDb(page);
   expect(db.purchases.filter(r => r.purchase_no === no)[0]).toMatchObject({ carrier_type: 'teman', carrier_name: 'أحمد' });
+});
+
+test('v17 supplier return: the note number read from the photo fills an empty field', async ({ page }) => {
+  await H.login(page);
+  const NOTE = { supplier: 'CV Timur Tengah Food', date: '', invoice_no: 'TTF-9002', total: 0, items: [{ name: 'KURMA MEDJOOL JUMBO 1KG', qty: 5, unit: 'kg', unit_price: 170000, total: 850000 }] };
+  await page.evaluate(n => { localStorage.setItem('kmock.scan', JSON.stringify(n)); localStorage.setItem('kmock.retur', JSON.stringify({ doc_no: 'RTR/TTF-0042', supplier: 'CV Timur Tengah Food', date: null, items: [{ name: 'KURMA MEDJOOL', qty: 2, unit: 'kg' }], readable: true, notes: '' })); }, NOTE);
+  await H.tab(page, 'masuk');
+  await page.setInputFiles('#pu-photo', await H.photoFile(page, 'nota.png'));
+  await expect(page.locator('#pu-photo-ok')).toContainText('1 baris');
+  await H.pickCarrier(page);
+  await page.click('#pu-save');
+  const no = (await page.locator('#pu-res-no').textContent()).trim();
+  await page.locator(`#pu-hist .hist[data-no="${no}"] [data-act="pu-retur"]`).click();
+  const m = page.locator('#sup-retur');
+  await expect(m.locator('#sr-doc')).toHaveValue('');
+  await page.setInputFiles('#sr-photo', await H.photoFile(page, 'keluar.png'));
+  await expect(m.locator('#sr-photo-ok')).toBeVisible();
+  await expect(m.locator('#sr-doc')).toHaveValue('RTR/TTF-0042');
+  const db = await H.getDb(page);
+  expect(db.photos.slice(-1)[0]).toMatchObject({ kind: 'retur', ref: no, extracted: { doc_no: 'RTR/TTF-0042' } });
+  expect(db.photos.filter(x => x.kind === 'masuk').slice(-1)[0].extracted.invoice_no).toBe('TTF-9002'); // goods-in photo unchanged
 });

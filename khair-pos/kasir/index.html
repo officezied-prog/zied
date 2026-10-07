@@ -1717,6 +1717,18 @@ const MockServer = (() => {
         sale.exit_photo = photo.photo_id; sale.exit_match = match.status;
         return { photo_id: photo.photo_id, extracted: { items: seen }, match, drive_url: '' };
       }
+      case 'scan_supplier_return': {
+        // v17 photo workflow, kind 'retur': the outgoing return note / goods going back to the supplier (demo: localStorage kmock.retur)
+        if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
+        let ex = null;
+        try { ex = JSON.parse(localStorage.getItem('kmock.retur') || 'null'); } catch (e) { }
+        if (!ex) ex = { doc_no: 'RTR-' + jktDate().replace(/-/g, '').slice(2), supplier: null, date: jktDate(), items: [], readable: true, notes: '' };
+        const pno = String(data.purchase_no || '').trim().toUpperCase();
+        const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'retur', ref: /^[A-Z0-9][A-Z0-9 \/.-]{0,39}$/.test(pno) ? pno : '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted: ex,
+          match_status: ex.readable === false ? 'perlu_cek' : '', match_notes: String(ex.notes || '') };
+        db.photos.push(photo);
+        return { photo_id: photo.photo_id, extracted: ex, drive_url: '' };
+      }
       case 'list_photos': {
         if (!isYmd(data.from) || !isYmd(data.to)) throw E('INVALID', 'from/to');
         return { photos: db.photos.filter(x => x.photo_date >= data.from && x.photo_date <= data.to) };
@@ -4886,7 +4898,7 @@ function openSupReturn(no) {
     $('#sr-photo', body).onchange = async e => {
       const f = e.target.files[0]; if (!f) return;
       R.uploading = true; draw();
-      try { const img = await imageToJpeg(f); R.thumb = img.thumb; const r = await apiPhoto('scan_purchase', { image_base64: img.base64, mime: img.mime }); R.photo_id = r.photo_id || ''; }
+      try { const img = await imageToJpeg(f); R.thumb = img.thumb; const r = await apiPhoto('scan_supplier_return', { image_base64: img.base64, mime: img.mime, purchase_no: no }); R.photo_id = r.photo_id || ''; const d = r.extracted && r.extracted.doc_no; if (d && !R.doc.trim()) R.doc = String(d); }
       catch (e2) { R.uploading = false; draw(); $('#sr-err', el).textContent = e2 instanceof NetError ? t('rt.need_online') : errMsg(e2); return; }
       R.uploading = false; draw();
     };
