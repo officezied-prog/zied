@@ -1,4 +1,4 @@
-# Khair Mart — handover (07 Oct 2026, v16 live)
+# Khair Mart — handover (07 Oct 2026, v16 live + v17 parts)
 
 Start a new session with: "Read HANDOVER.md and continue." Everything needed is in this repo and in n8n; the old chat is not needed.
 
@@ -50,8 +50,25 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
    he must connect both in n8n → Credentials, then add the nodes).
 4. Accountant role and the final rep: not decided yet.
 
+## v17 (07 Oct, second session)
+- **Live:** supplier-return photos have their own kind (`scan_supplier_return`, kind `retur`; photo workflow published).
+- **Live:** A4 documents from `shared/docs.js` — Faktur (grosir/eceran, due date + banks when there is debt), Surat jalan,
+  Penawaran (from the cart), Tanda terima barang masuk, Rekap tagihan (owner customer detail). Both apps.
+- **Live:** face attendance. Workflow "Khair Mart POS – Absensi" `g0O8lG5tqlRD9WPs` (`/webhook/khair-att`), tables pos_workers,
+  pos_attendance, pos_att_seals; code `backend/attendance/` (`node test-core.js`), deployed Process Att = att-core.js + process-att.js
+  with the key (verify equality after any change). Face library vendored in `vendor/face-api`. Owner app menu "Absensi";
+  Khair Kasir "Lainnya → Absensi pekerja". Records are append-only and hash-chained; never "clean" these tables.
+  No workers added yet: the owner adds them and registers faces with the worker's consent.
+- **Waiting for the owner's paste:** `backend/process.js` v17 = accountant role `akuntan` (read-only) + settings
+  `invoice_due_days` (14) and `akuntan_sees_cost` (false). Tests: `harness17.js`; harness16/16base unchanged apart from ids.
+  The client part (owner app role, read-only views, settings panel "Faktur & akuntan") is on branch
+  `claude/khair-v17-akuntan` and goes to main only after the paste is verified.
+- Settings stored 07 Oct: wa_shop_number 6285810454694, wa_owner_number 6281322091202, wa_manager_number 6281190008090.
+  Shop hours 08:00–21:00; from two months before Ramadan to Eid 08:00–23:00 (season in Absensi → Jam kerja, not set yet).
+- Owner's request still open: cold-storage date warehouses (pallets/containers, daily WhatsApp stock check, pick orders,
+  truck call) — waits for the owner's samples.
+
 ## Ideas noted, not built
-- Separate photo kind for supplier-return exit receipts (now uses scan_purchase).
 - Leaflet SRI hashes (cdnjs was unreachable from the build container).
 
 ## Paused until the real launch (07 Oct, owner's decision)
