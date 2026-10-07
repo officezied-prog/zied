@@ -5,8 +5,9 @@ let seedName = '';
 
 async function seed(page) {
   seedName = (await getDb(page)).products[0].name;
-  // one product, one account customer with a phone, and three sales of that product at 185000
+  // isolate from demo sales, then one product + one account customer with a phone + three sales at 185000
   await editDb(page, `
+    db.sales.length = 0; db.items.length = 0;
     const p = db.products[0]; p.retail_price = 185000;
     const c = db.customers[0]; c.phone = '081200000007'; c.debt_balance = 300000;
     const mk = (inv, paid, cid, cname, cashier) => { db.sales.push({ id: db.sales.length+1000, invoice_no: inv, sale_date: '2026-10-05', cashier, customer_id: cid, customer_name: cname, subtotal: 185000, discount: 0, send_fee: 0, total: 185000, total_cost: 150000, profit: 35000, payment_method: paid>=185000?'tunai':'hutang', paid_amount: paid, debt_amount: Math.max(0,185000-paid), status: 'ok' });
@@ -79,4 +80,28 @@ test('UI: manager runs a correction from the Kesalahan view and sees it in histo
   await nav(page, 'koreksi');
   await expect(page.locator('#kr-run')).toHaveCount(0);
   await expect(page.locator('#kr-list')).toContainText(seedName);
+});
+
+test('disputes: an overcharge refund can be paid; an undercharge consultation is decided by the owner', async ({ page }) => {
+  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await seed(page);
+  const pid = String((await getDb(page)).products[0].id);
+  // overcharge -> refund (ZK1 account paid full -> kontak; ZK3 umum -> cadangan)
+  await page.evaluate(async id => await api('correct_price', { product_id: id, old_price: 185000, new_price: 160000, from: '2026-10-01', to: '2026-10-07', reason: 'salah' }), pid);
+  await nav(page, 'koreksi');
+  await expect(page.locator('#kr-disputes')).toContainText('Refund');
+  // pay the kontak refund (has account / phone)
+  const kontak = page.locator('#kr-disputes .li').filter({ hasText: 'hubungi' }).first();
+  await kontak.locator('[data-act="kr-refund-pay"]').click();
+  await page.click('#cf-ok');
+  await expect.poll(async () => (await getDb(page)).approvals.filter(a => a.kind === 'refund' && a.status === 'approved').length).toBeGreaterThan(0);
+  // undercharge -> consultation; owner collects -> adds to debt
+  const before = (await getDb(page)).customers[0].debt_balance;
+  await page.evaluate(async id => await api('correct_price', { product_id: id, old_price: 160000, new_price: 180000, from: '2026-10-01', to: '2026-10-07', reason: 'naik' }), pid);
+  await page.click('[data-act="kr-refresh"]');
+  await expect(page.locator('#kr-disputes')).toContainText('Musyawarah');
+  const cons = page.locator('#kr-disputes .li').filter({ hasText: 'Musyawarah' }).first();
+  await cons.locator('[data-d="collect"]').click();
+  await page.click('#cf-ok');
+  await expect.poll(async () => (await getDb(page)).customers[0].debt_balance).toBeGreaterThan(before);
 });

@@ -1088,6 +1088,10 @@ const MockServer = (() => {
     if (c) c.visits = Math.max(0, Math.round(num(c.visits)) - 1);
     return s;
   }
+  function addTransferConfirm(db, u, refType, ref, amount, who, bank, transferRef) {
+    if (int(amount) <= 0) return null;
+    return newApproval(db, u, { kind: 'transfer_confirm', approver_role: 'manager', ref: String(ref), total: int(amount), customer_name: String(who || ''), note: (String(bank || '') ? 'Bank ' + bank : '') + (String(transferRef || '') ? ' ref ' + transferRef : ''), summary: ('Konfirmasi transfer masuk ' + String(who || '') + ' Rp ' + int(amount) + ' (' + refType + ' ' + ref + ') — pastikan dana sudah masuk').slice(0, 1500), payload: JSON.stringify({ ref_type: refType, ref: String(ref), amount: int(amount), bank: String(bank || ''), transfer_ref: String(transferRef || ''), who: String(who || '') }) });
+  }
   function newApproval(db, u, f) {
     const ap = Object.assign({ request_id: 'APR-' + String(nextId(db, 'approval')).padStart(4, '0'), client_id: '', created_at: jktISO(), cashier: u.name, customer_id: null, customer_name: '', customer_debt_before: 0, total: 0, debt_amount: 0, summary: '', status: 'pending', decided_by: '', decided_at: '', note: '', kind: 'credit', ref: '', payload: '', approver_role: 'manager' }, f);
     db.approvals.push(ap);
@@ -1875,6 +1879,7 @@ const MockServer = (() => {
         if (usedApproval) usedApproval.status = 'used';
         if (usedDisc) usedDisc.status = 'used';
         db.sales.push(sale);
+        if (sale.payment_method === 'transfer' && int(sale.paid_amount) > 0) addTransferConfirm(db, u, 'faktur', sale.invoice_no, sale.paid_amount, sale.customer_name, strv(data.bank), strv(data.transfer_ref));
         for (const l of lines) {
           db.items.push({ invoice_no: sale.invoice_no, sale_date, product_id: l.p.id, sku: l.p.sku, name: l.p.name, qty: l.qty, unit_price: l.unit_price, price_type: l.price_type, cost_price: l.p.cost_price, line_total: l.line_total, line_profit: l.line_total - l.line_cost, customer_name: sale.customer_name });
         }
@@ -2125,6 +2130,7 @@ const MockServer = (() => {
           logAct(db, u, 'retur', (data.decision === 'approved' ? 'Retur disetujui ' : 'Retur ditolak ') + u.name + ': ' + strv(ap.summary).slice(0, 600), strv(rec.return_id), int(ap.total), 'warn');
           out.return_id = strv(rec.return_id);
         }
+        if (ap.kind === 'transfer_confirm') logAct(db, u, data.decision === 'approved' ? 'transfer_ok' : 'transfer_gagal', (data.decision === 'approved' ? 'Transfer masuk DIKONFIRMASI oleh ' + u.name : 'Transfer TIDAK diterima — ' + u.name + (String(data.note || '') ? ': ' + data.note : '')) + ' | ' + strv(ap.summary), strv(ap.ref), int(ap.total), data.decision === 'approved' ? 'info' : 'warn');
         logAct(db, u, 'keputusan', (data.decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + (ap.kind || 'credit') + ', diminta ' + ap.cashier + '): ' + strv(ap.summary).slice(0, 600) + (strv(data.note) ? ' | ' + strv(data.note) : ''), ap.request_id, int(ap.total), data.decision === 'approved' ? 'info' : 'warn');
         Object.assign(ap, { status: data.decision, decided_by: u.name, decided_at: jktISO(), note: String(data.note || '') });
         return Object.assign({ approval: ap }, out);
@@ -2421,6 +2427,7 @@ const MockServer = (() => {
           note: (strv(data.note) + (strv(data.mismatch_reason) ? ' | beda dengan bukti: ' + strv(data.mismatch_reason) : '')).slice(0, 500), cashier: u.name, shift_id: psh ? psh.shift_id : '' };
         db.payments.push(payment);
         c.debt_balance = Math.max(0, int(c.debt_balance) - amount);
+        if (method === 'transfer') addTransferConfirm(db, u, 'pembayaran', payment.pay_id, amount, c.name, payment.bank, payment.transfer_ref);
         const dateOff = payment.slip_date && payment.slip_date !== payment.pay_date;
         logAct(db, u, 'bayar_masuk', 'Pembayaran ' + c.name + ' Rp ' + amount + ' (' + method + (payment.bank ? ' ' + payment.bank : '') + (payment.transfer_ref ? ', ref ' + payment.transfer_ref : '') + ')' +
           (chk.alloc.length ? ' untuk ' + chk.alloc.map(a => a.ref + ' Rp ' + a.amount).join(', ') : ' — belum dialokasi') + (strv(data.mismatch_reason) ? ' | beda dengan bukti: ' + strv(data.mismatch_reason) : '') +
@@ -2573,6 +2580,11 @@ const MockServer = (() => {
         rep.cash = { sales: byMethod.tunai, payments_in: rep.payments_in.tunai, payments_out: rep.payments_out.tunai, expenses_from_kas: rep.expenses.from_kas,
           expected_total: sum(shifts, x => x.expected_cash), counted_total: sum(shifts.filter(x => x.status === 'closed'), x => x.counted_cash), difference_total: sum(shifts.filter(x => x.status === 'closed'), x => x.difference) };
         if (owner) rep.profit = sum(okSales, x => int(x.profit));
+        const wibDayOf = iso => iso ? new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(0, 10) : '';
+        const corrDay = db.approvals.filter(a => a.kind === 'koreksi' && wibDayOf(a.decided_at) === day);
+        const refPaid = db.approvals.filter(a => a.kind === 'refund' && a.status === 'approved' && wibDayOf(a.decided_at) === day);
+        const wrOff = db.approvals.filter(a => a.kind === 'konsultasi' && a.status === 'rejected' && wibDayOf(a.decided_at) === day);
+        rep.corrections = { count: corrDay.length, net: sum(corrDay, x => int(x.total)), refund_paid: sum(refPaid, x => int(x.total)), writeoff: sum(wrOff, x => int(x.total)) };
         const rets = (db.returns || []).filter(x => x.status === 'approved' && x.return_date === day), custRets = rets.filter(x => x.kind !== 'pemasok');
         rep.returns = { customer: { count: custRets.length, refund: sum(custRets, x => int(x.refund)), tunai: sum(custRets.filter(x => x.refund_method === 'tunai'), x => int(x.refund)) }, supplier: { count: rets.length - custRets.length } };
         if (owner) rep.returns.supplier.value = sum(rets.filter(x => x.kind === 'pemasok'), x => int(x.value));
@@ -2638,6 +2650,42 @@ const MockServer = (() => {
         if (!(isAppr(u) || u.role === 'akuntan')) throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
         return { corrections: db.approvals.filter(a => a.kind === 'koreksi').map(a => { let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; } return { request_id: a.request_id, at: String(a.decided_at || a.created_at), by: String(a.decided_by || a.cashier), total: int(a.total), summary: String(a.summary || ''), payload: pl }; }).sort((x, y) => String(y.at).localeCompare(String(x.at))) };
       }
+      case 'list_disputes': {
+        if (!(isAppr(u) || u.role === 'akuntan')) throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+        const canDec = a => u.role === 'owner' || (u.role === 'manager' && a.approver_role !== 'owner');
+        const now = Date.now();
+        return { disputes: db.approvals.filter(a => (a.kind === 'refund' || a.kind === 'konsultasi') && a.status === 'pending').map(a => { let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; } return { request_id: a.request_id, kind: a.kind, at: String(a.created_at), amount: int(a.total), customer_name: String(a.customer_name || ''), summary: String(a.summary || ''), can_decide: canDec(a), expired: !!(pl.expiry && Date.parse(pl.expiry) < now), payload: pl }; }).sort((x, y) => String(x.at).localeCompare(String(y.at))) };
+      }
+      case 'decide_refund': {
+        if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
+        const a = db.approvals.find(x => x.request_id === String(data.request_id || '')); if (!a || a.kind !== 'refund') throw E('NOT_FOUND', 'Permintaan refund tidak ditemukan');
+        if (a.status !== 'pending') throw E('INVALID', 'Sudah diputuskan: ' + a.status);
+        if (!(u.role === 'owner' || a.approver_role !== 'owner')) throw E('NEEDS_OWNER', 'Butuh persetujuan pemilik');
+        let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+        if (data.decision === 'release') {
+          if (pl.channel === 'cadangan' && pl.expiry && Date.parse(pl.expiry) > Date.now()) throw E('INVALID', 'Belum lewat 3 bulan — belum bisa dilepas');
+          a.status = 'released'; a.decided_by = u.name; a.decided_at = jktISO(); a.note = String(data.note || '') || 'dana dilepas (3 bln lewat)';
+          logAct(db, u, 'refund_lepas', 'Cadangan refund DILEPAS ' + String(a.customer_name) + ' Rp ' + int(a.total) + ' (3 bln lewat, jadi pemasukan)', String(a.ref), int(a.total), 'info');
+          return { released: true };
+        }
+        if (pl.channel === 'cadangan' && !String(data.photo_id || '')) throw E('PHOTO_REQUIRED', 'Cadangan: foto faktur pelanggan dulu untuk verifikasi');
+        a.status = 'approved'; a.decided_by = u.name; a.decided_at = jktISO(); a.note = 'refund dibayar' + (String(data.photo_id || '') ? ' (foto ' + String(data.photo_id).slice(0, 40) + ')' : '');
+        logAct(db, u, 'refund_bayar', 'Refund DIBAYAR ' + String(a.customer_name) + ' Rp ' + int(a.total) + ' (faktur ' + String(pl.invoice_no) + ')' + (String(data.photo_id || '') ? ' — terverifikasi foto' : ''), String(a.ref), int(a.total), 'warn');
+        return { approval: Object.assign({}, a) };
+      }
+      case 'decide_consult': {
+        if (u.role !== 'owner') throw E('NEEDS_OWNER', 'Keputusan musyawarah oleh pemilik');
+        const a = db.approvals.find(x => x.request_id === String(data.request_id || '')); if (!a || a.kind !== 'konsultasi') throw E('NOT_FOUND', 'Musyawarah tidak ditemukan');
+        if (a.status !== 'pending') throw E('INVALID', 'Sudah diputuskan: ' + a.status);
+        let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+        const dec = ['collect', 'writeoff', 'return'].includes(data.decision) ? data.decision : '';
+        if (!dec) throw E('INVALID', 'Pilih: collect / writeoff / return');
+        let extra = '';
+        if (dec === 'collect') { const cust = Number(pl.customer_id) > 0 ? custById(pl.customer_id) : null; if (cust) { cust.debt_balance = int(cust.debt_balance) + int(a.total); extra = ' (ditambah ke hutang ' + String(cust.name) + ')'; } else extra = ' (pelanggan umum — hubungi ' + (String(pl.phone || '') || 'tanpa nomor') + ')'; }
+        a.status = dec === 'collect' ? 'approved' : (dec === 'writeoff' ? 'rejected' : 'used'); a.decided_by = u.name; a.decided_at = jktISO(); a.note = (dec + (String(data.note || '') ? ': ' + String(data.note) : '')).slice(0, 500);
+        logAct(db, u, 'musyawarah', 'Musyawarah kurang bayar ' + String(a.customer_name) + ' Rp ' + int(a.total) + ' → ' + (dec === 'collect' ? 'tagih' : dec === 'writeoff' ? 'direlakan (rugi)' : 'barang dikembalikan') + extra, String(a.ref), int(a.total), 'warn');
+        return { decision: dec };
+      }
       case 'correct_price': {
         if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
         if (!isYmd(data.from) || !isYmd(data.to) || data.from > data.to) throw E('INVALID', 'Rentang tanggal tidak valid');
@@ -2689,6 +2737,9 @@ const MockServer = (() => {
         const payload = JSON.stringify({ product_id: p.id, product_name: p.name, old_price: oldPrice, new_price: newPrice, from: data.from, to: data.to, invoices: details.length, qty: details.reduce((a1, x) => a1 + x.qty, 0), net_diff: netDiff, refund_total: refundTotal, under_total: underTotal, cashiers: Object.keys(cashiers), price_setters: setters, details: details.slice(0, 500), refunds: refunds.slice(0, 500), consults: consults.slice(0, 500), reason: String(data.reason).trim(), by: u.name });
         const summary = 'Koreksi harga ' + p.name + ' ' + oldPrice + '→' + newPrice + ': ' + details.length + ' faktur, selisih ' + netDiff + (refundTotal ? ', refund ' + refundTotal : '') + (underTotal ? ', kurang bayar ' + underTotal : '');
         const ap = newApproval(db, u, { kind: 'koreksi', ref: p.id, approver_role: 'owner', status: 'done', decided_by: u.name, decided_at: jktISO(), total: netDiff, summary: summary.slice(0, 1500), note: String(data.reason).trim(), payload });
+        const expiry90 = new Date(Date.now() + 90 * 86400000).toISOString();
+        refunds.forEach(rf => newApproval(db, u, { kind: 'refund', approver_role: 'manager', ref: rf.invoice_no, total: rf.amount, customer_id: rf.customer_id, customer_name: rf.customer_name, summary: ('Refund ' + rf.customer_name + ' Rp ' + rf.amount + ' (' + (rf.channel === 'cadangan' ? 'cadangan 3 bln' : 'hubungi') + ') — faktur ' + rf.invoice_no).slice(0, 1500), payload: JSON.stringify({ invoice_no: rf.invoice_no, customer_id: rf.customer_id, customer_name: rf.customer_name, phone: rf.phone, amount: rf.amount, channel: rf.channel, has_account: rf.has_account, expiry: rf.channel === 'cadangan' ? expiry90 : '', correction: ap.request_id, product_name: p.name }) }));
+        consults.forEach(cs => newApproval(db, u, { kind: 'konsultasi', approver_role: 'owner', ref: cs.invoice_no, total: cs.amount, customer_id: cs.customer_id, customer_name: cs.customer_name, summary: ('Musyawarah (kurang bayar) ' + cs.customer_name + ' Rp ' + cs.amount + ' — faktur ' + cs.invoice_no).slice(0, 1500), payload: JSON.stringify({ invoice_no: cs.invoice_no, customer_id: cs.customer_id, customer_name: cs.customer_name, phone: cs.phone, amount: cs.amount, correction: ap.request_id, product_name: p.name }) }));
         logAct(db, u, 'koreksi', summary.slice(0, 1000) + ' | ' + String(data.reason).trim(), String(p.id), netDiff, 'warn');
         return { correction: { request_id: ap.request_id, product_name: p.name, old_price: oldPrice, new_price: newPrice, invoices: details.length, net_diff: netDiff, refund_total: refundTotal, under_total: underTotal, refunds, consults, cashiers: Object.keys(cashiers), price_setters: setters }, product: catalog ? prodOut(catalog) : undefined };
       }
@@ -8198,7 +8249,7 @@ async function actPoll() {
 setInterval(() => { if (isOwner()) actPoll(); }, 120000);
 function actRange(p) { const T = today(); return p === 'today' ? [T, T] : p === '30d' ? [addDays(T, -29), T] : [addDays(T, -6), T]; }
 /* v20 Kesalahan & koreksi harga: the manager/owner corrects a price that was already sold; akuntan sees the list only. */
-const KR = { list: null, busy: false, result: null };
+const KR = { list: null, disputes: null, busy: false, result: null, _pending: null };
 RENDER.koreksi = function () {
   const v = $('#view-koreksi'); if (!v) return;
   const canDo = isApprover();
@@ -8219,11 +8270,45 @@ RENDER.koreksi = function () {
   v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.koreksi'))}</h1><button class="btn sm" data-act="kr-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
     <p class="muted small" style="margin-top:0">${esc(t('kr.hint'))}</p>
     ${form}
+    <div class="panel"><h3>${ic('wallet')} ${esc(t('kr.open'))}</h3><div class="pb" id="kr-disputes">${KR.disputes ? krDisputesHTML(KR.disputes) : `<div class="empty">${esc(t('loading'))}</div>`}</div></div>
     <div class="panel"><h3>${ic('clock')} ${esc(t('kr.history'))}</h3><div class="pb" id="kr-list">${KR.list ? krListHTML(KR.list) : `<div class="empty">${esc(t('loading'))}</div>`}</div></div>`;
   const sel = $('#kr-prod', v);
   if (sel) sel.onchange = () => { const o = sel.selectedOptions[0]; if (o && o.dataset.retail && !$('#kr-old').value) $('#kr-old').value = fmtNum(int(o.dataset.retail)); };
-  loadCorrections();
+  loadCorrections(); loadDisputes();
 };
+async function loadDisputes() {
+  try { const r = await api('list_disputes', {}); KR.disputes = r.disputes || []; const box = $('#kr-disputes'); if (box) box.innerHTML = krDisputesHTML(KR.disputes); }
+  catch (e) { const box = $('#kr-disputes'); if (box) box.innerHTML = `<div class="empty">${esc(errMsg(e))}</div>`; }
+}
+async function krReservetoPhoto() {
+  const fi = $('#kr-ph'), f = fi && fi.files && fi.files[0], pend = KR._pending; if (!f || !pend) return;
+  toast(t('kr.verifying'), 'info', 4000);
+  try {
+    const img = await imageToJpeg(f);
+    const r = await apiPhoto('scan_exit', { invoice_no: pend.inv, image_base64: img.base64, mime: img.mime });
+    const photoId = r.photo_id || '';
+    if (!photoId) { toast(t('kr.photo_fail'), 'err'); return; }
+    await api('decide_refund', { request_id: pend.id, decision: 'paid', photo_id: photoId });
+    toast(t('kr.paid'), 'ok', 5000); KR.disputes = null; loadDisputes();
+  } catch (e) { toast(errMsg(e), 'err', 5000); }
+  finally { KR._pending = null; }
+}
+function krDisputesHTML(list) {
+  if (!list.length) return `<div class="empty">${esc(t('kr.no_open'))}</div>`;
+  return `<div class="list">${list.map(d => {
+    const pl = d.payload || {}, owner = isOwner();
+    if (d.kind === 'refund') {
+      const cadangan = pl.channel === 'cadangan';
+      const acts = `<button class="btn xs ${cadangan ? '' : 'primary'}" data-act="kr-refund-pay" data-id="${esc(d.request_id)}" data-ch="${esc(pl.channel || '')}" data-inv="${esc(pl.invoice_no || '')}">${ic('check')} ${esc(cadangan ? t('kr.pay_photo') : t('kr.pay'))}</button>${cadangan && d.expired ? ` <button class="btn xs" data-act="kr-refund-release" data-id="${esc(d.request_id)}">${esc(t('kr.release'))}</button>` : ''}`;
+      return `<div class="li"><div class="grow"><div class="t">${ic('wallet')} ${esc(t('kr.refund'))}: ${esc(d.customer_name)} ${esc(fmtRp(d.amount))}</div>
+        <div class="s">${esc(t('kr.ch_' + (pl.channel || 'kontak')))}${pl.phone ? ' · ' + esc(pl.phone) : ''} · ${esc(t('kr.product'))}: ${esc(pl.product_name || '')} · ${esc(pl.invoice_no || '')}${cadangan ? ' · ' + esc(t('kr.until')) + ' ' + esc(fmtDate(pl.expiry)) : ''}</div></div>
+        <div class="r" style="white-space:nowrap">${d.can_decide ? acts : `<span class="badge gold">${esc(t('kr.owner_only'))}</span>`}</div></div>`;
+    }
+    return `<div class="li"><div class="grow"><div class="t">${ic('users')} ${esc(t('kr.consult'))}: ${esc(d.customer_name)} ${esc(fmtRp(d.amount))}</div>
+      <div class="s">${esc(t('kr.product'))}: ${esc(pl.product_name || '')} · ${esc(pl.invoice_no || '')}${pl.phone ? ' · ' + esc(pl.phone) : ' · ' + esc(t('kr.no_phone'))}</div></div>
+      <div class="r" style="white-space:nowrap">${owner ? `<button class="btn xs primary" data-act="kr-consult" data-id="${esc(d.request_id)}" data-d="collect">${esc(t('kr.collect'))}</button> <button class="btn xs" data-act="kr-consult" data-id="${esc(d.request_id)}" data-d="writeoff">${esc(t('kr.writeoff'))}</button> <button class="btn xs" data-act="kr-consult" data-id="${esc(d.request_id)}" data-d="return">${esc(t('kr.return'))}</button>` : `<span class="badge gold">${esc(t('kr.owner_decides'))}</span>`}</div></div>`;
+  }).join('')}</div><input type="file" id="kr-ph" accept="image/*" capture="environment" hidden>`;
+}
 function addDaysStr(ymd, n) { const d = new Date(ymd + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
 async function loadCorrections() {
   try { const r = await api('list_corrections', {}); KR.list = r.corrections || []; const box = $('#kr-list'); if (box) box.innerHTML = krListHTML(KR.list); }
@@ -8232,7 +8317,7 @@ async function loadCorrections() {
 function krResultHTML(c) {
   const money = n => fmtRp(n);
   const refunds = (c.refunds || []).length ? `<div class="small" style="margin-top:6px"><b>${esc(t('kr.refunds'))}:</b> ${c.refunds.map(r => `${esc(r.customer_name)} ${money(r.amount)} (${esc(t('kr.ch_' + r.channel))}${r.phone ? ' ' + esc(r.phone) : ''})`).join(' · ')}</div>` : '';
-  const consults = (c.consults || []).length ? `<div class="small" style="margin-top:6px"><b>${esc(t('kr.consults'))}:</b> ${c.consults.map(r => `${esc(r.customer_name)} ${money(r.amount)}${r.phone ? ' (' + esc(r.phone) + ')' : ''}`).join(' · ')} <button class="btn xs" data-act="kr-consult">${esc(t('kr.consult_btn'))}</button></div>` : '';
+  const consults = (c.consults || []).length ? `<div class="small" style="margin-top:6px"><b>${esc(t('kr.consults'))}:</b> ${c.consults.map(r => `${esc(r.customer_name)} ${money(r.amount)}${r.phone ? ' (' + esc(r.phone) + ')' : ''}`).join(' · ')}</div>` : '';
   return `<div class="card pad" style="margin-top:10px;border:1px solid var(--ok)"><b>${esc(t('kr.done'))}</b><br>
     ${esc(c.product_name)} ${fmtRp(c.old_price)} → ${fmtRp(c.new_price)} · ${c.invoices} ${esc(t('kr.invoices'))}<br>
     <span class="${c.net_diff < 0 ? 'red' : ''}">${esc(t('kr.net'))}: ${money(c.net_diff)}</span>${c.refund_total ? ` · ${esc(t('kr.refund_total'))}: ${money(c.refund_total)}` : ''}${c.under_total ? ` · ${esc(t('kr.under_total'))}: ${money(c.under_total)}` : ''}
@@ -8301,8 +8386,27 @@ Object.assign(ACT, {
   'dv-active': el => { DV.active = el.dataset.v === '1'; $$('#dv-act .chip').forEach(c => c.classList.toggle('on', c === el)); drawDevices(); },
   'dv-open': el => openDeviceDetail(el.dataset.id),
   'act-refresh': () => loadActivity(),
-  'kr-refresh': () => { KR.list = null; loadCorrections(); },
-  'kr-consult': () => toast(t('kr.consult_soon'), 'info', 4000),
+  'kr-refresh': () => { KR.list = null; KR.disputes = null; loadCorrections(); loadDisputes(); },
+  'kr-refund-pay': async el => {
+    const id = el.dataset.id, ch = el.dataset.ch, inv = el.dataset.inv;
+    if (ch === 'cadangan') { // walk-in reserve: verify by photographing the customer's invoice
+      const fi = $('#kr-ph'); if (!fi) return; KR._pending = { id, inv }; fi.value = ''; fi.onchange = krReservetoPhoto; fi.click(); return;
+    }
+    const c = await confirmBox(t('kr.pay_confirm'), { danger: false }); if (!c.ok) return;
+    try { await api('decide_refund', { request_id: id, decision: 'paid' }); toast(t('kr.paid'), 'ok'); KR.disputes = null; loadDisputes(); }
+    catch (e) { toast(errMsg(e), 'err'); }
+  },
+  'kr-refund-release': async el => {
+    const c = await confirmBox(t('kr.release_confirm'), { danger: true }); if (!c.ok) return;
+    try { await api('decide_refund', { request_id: el.dataset.id, decision: 'release' }); toast(t('kr.released'), 'ok'); KR.disputes = null; loadDisputes(); }
+    catch (e) { toast(errMsg(e), 'err'); }
+  },
+  'kr-consult': async el => {
+    const d = el.dataset.d, id = el.dataset.id;
+    const c = await confirmBox(t('kr.consult_confirm_' + d), { danger: d === 'writeoff' }); if (!c.ok) return;
+    try { await api('decide_consult', { request_id: id, decision: d }); toast(t('kr.consult_done'), 'ok'); KR.disputes = null; loadDisputes(); }
+    catch (e) { toast(errMsg(e), 'err'); }
+  },
   'kr-run': async () => {
     const err = $('#kr-err');
     const pid = $('#kr-prod').value, oldP = moneyVal($('#kr-old').value), newP = moneyVal($('#kr-new').value);
@@ -9290,7 +9394,7 @@ Object.assign(ACT, {
 
 Object.assign(I18N.id, {
   'nav.koreksi': 'Kesalahan', 'navs.koreksi': 'Koreksi',
-  'kr.new': 'Koreksi harga jual (sudah terjual)', 'kr.reported': 'Koreksi ini tercatat dan dilaporkan ke pemilik.', 'kr.product': 'Barang', 'kr.old_price': 'Harga salah (lama)', 'kr.new_price': 'Harga benar (baru)', 'kr.from': 'Dari tanggal', 'kr.to': 'Sampai tanggal', 'kr.reason': 'Sebab', 'kr.reason_ph': 'mis. salah ketik saat ubah harga', 'kr.update_catalog': 'Perbaiki juga harga katalog ke depan', 'kr.run': 'Jalankan koreksi', 'kr.hint': 'Aplikasi mengambil semua faktur barang ini dengan harga lama dari tanggal salah sampai hari ketahuan, lalu memperbaikinya.', 'kr.history': 'Riwayat koreksi', 'kr.none': 'Belum ada koreksi', 'kr.invoices': 'faktur', 'kr.net': 'Selisih', 'kr.refund_total': 'Refund', 'kr.under_total': 'Kurang bayar', 'kr.refunds': 'Refund ke pelanggan', 'kr.consults': 'Musyawarah (kurang bayar)', 'kr.consult_btn': 'Musyawarah pemilik–manajer', 'kr.consult_soon': 'Keputusan musyawarah: segera ditambah', 'kr.ch_kontak': 'hubungi', 'kr.ch_cadangan': 'cadangan 3 bln', 'kr.done': 'Koreksi selesai', 'kr.by_setters': 'Yang salah input', 'kr.by_sellers': 'Yang menjual', 'kr.responsible': 'Tanggung jawab', 'kr.saved': 'Koreksi tersimpan', 'kr.bad_price': 'Harga lama/baru tidak valid atau sama',
+  'kr.new': 'Koreksi harga jual (sudah terjual)', 'kr.reported': 'Koreksi ini tercatat dan dilaporkan ke pemilik.', 'kr.product': 'Barang', 'kr.old_price': 'Harga salah (lama)', 'kr.new_price': 'Harga benar (baru)', 'kr.from': 'Dari tanggal', 'kr.to': 'Sampai tanggal', 'kr.reason': 'Sebab', 'kr.reason_ph': 'mis. salah ketik saat ubah harga', 'kr.update_catalog': 'Perbaiki juga harga katalog ke depan', 'kr.run': 'Jalankan koreksi', 'kr.hint': 'Aplikasi mengambil semua faktur barang ini dengan harga lama dari tanggal salah sampai hari ketahuan, lalu memperbaikinya.', 'kr.history': 'Riwayat koreksi', 'kr.none': 'Belum ada koreksi', 'kr.invoices': 'faktur', 'kr.net': 'Selisih', 'kr.refund_total': 'Refund', 'kr.under_total': 'Kurang bayar', 'kr.refunds': 'Refund ke pelanggan', 'kr.consults': 'Musyawarah (kurang bayar)', 'kr.consult_btn': 'Musyawarah pemilik–manajer', 'kr.consult_soon': 'Keputusan musyawarah: segera ditambah', 'kr.ch_kontak': 'hubungi', 'kr.ch_cadangan': 'cadangan 3 bln', 'kr.done': 'Koreksi selesai', 'kr.by_setters': 'Yang salah input', 'kr.by_sellers': 'Yang menjual', 'kr.responsible': 'Tanggung jawab', 'kr.saved': 'Koreksi tersimpan', 'kr.bad_price': 'Harga lama/baru tidak valid atau sama', 'kr.open': 'Perlu tindakan (refund & musyawarah)', 'kr.no_open': 'Tidak ada yang perlu ditindak', 'kr.refund': 'Refund', 'kr.consult': 'Musyawarah', 'kr.pay': 'Tandai dibayar', 'kr.pay_photo': 'Bayar (foto faktur)', 'kr.release': 'Lepas dana (3 bln)', 'kr.until': 'sampai', 'kr.owner_only': 'pemilik/manajer', 'kr.no_phone': 'tanpa nomor', 'kr.collect': 'Tagih', 'kr.writeoff': 'Relakan (rugi)', 'kr.return': 'Barang kembali', 'kr.owner_decides': 'diputuskan pemilik', 'kr.pay_confirm': 'Tandai refund ini sudah dibayar ke pelanggan?', 'kr.paid': 'Refund ditandai dibayar', 'kr.release_confirm': 'Lepas dana cadangan ini (jadi pemasukan toko)?', 'kr.released': 'Dana dilepas', 'kr.consult_confirm_collect': 'Tagih selisih ini ke pelanggan (ditambah ke hutang bila ada akun)?', 'kr.consult_confirm_writeoff': 'Relakan selisih ini sebagai kerugian?', 'kr.consult_confirm_return': 'Tandai barang dikembalikan untuk kasus ini?', 'kr.consult_done': 'Keputusan tersimpan', 'kr.verifying': 'Memverifikasi foto faktur…', 'kr.photo_fail': 'Foto gagal, ulangi',
   'nav.activity': 'Aktivitas', 'navs.activity': 'Aktivitas', 'nav.devices': 'Perangkat', 'navs.devices': 'Perangkat', 'nav.suppliers': 'Pemasok', 'navs.suppliers': 'Pemasok', 'nav.bank': 'Rekening Bank Toko', 'navs.bank': 'Rekening',
   'dev.consent': 'Lokasi perangkat ini dibagikan ke pemilik toko selama aplikasi dibuka (keamanan & absensi).', 'dev.agree': 'Setuju', 'dev.decline': 'Tidak',
   'dev.block_title': 'Lokasi perangkat wajib', 'dev.block_hint': 'Pemilik toko mewajibkan lokasi untuk kasir dan manajer. Izinkan lokasi agar aplikasi bisa dipakai.', 'dev.allow': 'Izinkan lokasi & coba lagi', 'dev.waiting': 'Menunggu lokasi…',
@@ -9358,7 +9462,7 @@ Object.assign(I18N.id, {
 });
 Object.assign(I18N.ar, {
   'nav.koreksi': 'الأخطاء', 'navs.koreksi': 'الأخطاء',
-  'kr.new': 'تصحيح ثمن بيع (بضاعة بيعت)', 'kr.reported': 'هذا التصحيح يُسجَّل ويصل المالك.', 'kr.product': 'الصنف', 'kr.old_price': 'الثمن الخطأ (القديم)', 'kr.new_price': 'الثمن الصحيح (الجديد)', 'kr.from': 'من تاريخ', 'kr.to': 'إلى تاريخ', 'kr.reason': 'السبب', 'kr.reason_ph': 'مثال: خطأ كتابة عند تغيير الثمن', 'kr.update_catalog': 'صحّح أيضًا ثمن القائمة مستقبلًا', 'kr.run': 'تنفيذ التصحيح', 'kr.hint': 'يأخذ التطبيق كل فواتير هذا الصنف بالثمن القديم من يوم الخطأ إلى يوم اكتشافه، ويصحّحها.', 'kr.history': 'سجل التصحيحات', 'kr.none': 'لا توجد تصحيحات بعد', 'kr.invoices': 'فاتورة', 'kr.net': 'الفرق', 'kr.refund_total': 'إرجاع', 'kr.under_total': 'نقص دفع', 'kr.refunds': 'إرجاع للزبائن', 'kr.consults': 'مشاورة (نقص دفع)', 'kr.consult_btn': 'مشاورة المالك والمدير', 'kr.consult_soon': 'قرار المشاورة: يُضاف قريبًا', 'kr.ch_kontak': 'تواصل', 'kr.ch_cadangan': 'ميزانية 3 أشهر', 'kr.done': 'تم التصحيح', 'kr.by_setters': 'من أدخل الخطأ', 'kr.by_sellers': 'من باع', 'kr.responsible': 'المسؤول', 'kr.saved': 'حُفظ التصحيح', 'kr.bad_price': 'الثمن القديم/الجديد غير صالح أو متساوٍ',
+  'kr.new': 'تصحيح ثمن بيع (بضاعة بيعت)', 'kr.reported': 'هذا التصحيح يُسجَّل ويصل المالك.', 'kr.product': 'الصنف', 'kr.old_price': 'الثمن الخطأ (القديم)', 'kr.new_price': 'الثمن الصحيح (الجديد)', 'kr.from': 'من تاريخ', 'kr.to': 'إلى تاريخ', 'kr.reason': 'السبب', 'kr.reason_ph': 'مثال: خطأ كتابة عند تغيير الثمن', 'kr.update_catalog': 'صحّح أيضًا ثمن القائمة مستقبلًا', 'kr.run': 'تنفيذ التصحيح', 'kr.hint': 'يأخذ التطبيق كل فواتير هذا الصنف بالثمن القديم من يوم الخطأ إلى يوم اكتشافه، ويصحّحها.', 'kr.history': 'سجل التصحيحات', 'kr.none': 'لا توجد تصحيحات بعد', 'kr.invoices': 'فاتورة', 'kr.net': 'الفرق', 'kr.refund_total': 'إرجاع', 'kr.under_total': 'نقص دفع', 'kr.refunds': 'إرجاع للزبائن', 'kr.consults': 'مشاورة (نقص دفع)', 'kr.consult_btn': 'مشاورة المالك والمدير', 'kr.consult_soon': 'قرار المشاورة: يُضاف قريبًا', 'kr.ch_kontak': 'تواصل', 'kr.ch_cadangan': 'ميزانية 3 أشهر', 'kr.done': 'تم التصحيح', 'kr.by_setters': 'من أدخل الخطأ', 'kr.by_sellers': 'من باع', 'kr.responsible': 'المسؤول', 'kr.saved': 'حُفظ التصحيح', 'kr.bad_price': 'الثمن القديم/الجديد غير صالح أو متساوٍ', 'kr.open': 'يحتاج إجراءً (إرجاع ومشاورة)', 'kr.no_open': 'لا شيء يحتاج إجراءً', 'kr.refund': 'إرجاع', 'kr.consult': 'مشاورة', 'kr.pay': 'تأشير مدفوع', 'kr.pay_photo': 'ادفع (صوّر الفاتورة)', 'kr.release': 'إطلاق المبلغ (3 أشهر)', 'kr.until': 'حتى', 'kr.owner_only': 'المالك/المدير', 'kr.no_phone': 'بلا رقم', 'kr.collect': 'طالِب', 'kr.writeoff': 'اعتبره خسارة', 'kr.return': 'إرجاع البضاعة', 'kr.owner_decides': 'يقرره المالك', 'kr.pay_confirm': 'تأشير أن هذا الإرجاع دُفع للزبون؟', 'kr.paid': 'أُشّر الإرجاع مدفوعًا', 'kr.release_confirm': 'إطلاق مبلغ الاحتياط (يصبح دخلًا للمحل)؟', 'kr.released': 'أُطلق المبلغ', 'kr.consult_confirm_collect': 'مطالبة الزبون بالفرق (يُضاف لدينه إن كان له حساب)؟', 'kr.consult_confirm_writeoff': 'اعتبار الفرق خسارة؟', 'kr.consult_confirm_return': 'تأشير أن البضاعة أُرجعت لهذه الحالة؟', 'kr.consult_done': 'حُفظ القرار', 'kr.verifying': 'جارٍ التحقق من صورة الفاتورة…', 'kr.photo_fail': 'فشلت الصورة، أعد المحاولة',
   'nav.activity': 'سجل النشاط', 'navs.activity': 'النشاط', 'nav.devices': 'الأجهزة', 'navs.devices': 'الأجهزة', 'nav.suppliers': 'الموردون', 'navs.suppliers': 'الموردون', 'nav.bank': 'الحساب البنكي للشركة', 'navs.bank': 'البنك',
   'dev.consent': 'يُشارَك موقع هذا الجهاز مع مالك المتجر طوال فتح التطبيق (للأمان والحضور).', 'dev.agree': 'موافق', 'dev.decline': 'لا',
   'dev.block_title': 'موقع الجهاز مطلوب', 'dev.block_hint': 'يشترط المالك مشاركة الموقع للكاشير والمدير. اسمح بالموقع لاستخدام التطبيق.', 'dev.allow': 'السماح بالموقع وإعادة المحاولة', 'dev.waiting': 'بانتظار الموقع…',
