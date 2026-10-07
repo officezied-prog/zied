@@ -2551,7 +2551,7 @@ async function loadUsersForLogin() {
   if (cached.length) { L.users = cached; renderLogin(); }
   try {
     const r = await apiRaw('users', {}, { key: S.key });
-    L.users = (r.users || []).filter(u => u.role !== 'sales');
+    L.users = (r.users || []).filter(u => u.role !== 'sales' && u.role !== 'akuntan');
     store.set('users_' + S.key, L.users);
     if (!L.users.length) L.err = t('login.no_users');
     renderLogin();
@@ -2658,7 +2658,7 @@ async function demoLogin(name) {
   S.key = 'demo'; store.set('key', 'demo');
   try {
     const r = await apiRaw('login', {}, { key: 'demo', user: u.name, pin_hash: u.pin_hash });
-    if (r.user.role === 'sales') { showLogin('users', t('err.FORBIDDEN')); return; }
+    if (r.user.role === 'sales' || r.user.role === 'akuntan') { showLogin('users', t('err.FORBIDDEN')); return; }
     startSession(r.user.name, r.user.role, u.pin_hash, false);
   } catch (e) { showLogin('users', errMsg(e)); }
 }
@@ -2674,7 +2674,7 @@ async function submitPin() {
   const user = L.sel, hash = master ? await sha256Hex(S.key + ':__master__:' + L.pin) : await pinHash(S.key, user, L.pin);
   try {
     const r = await apiRaw('login', {}, { key: S.key, user, pin_hash: hash });
-    if (r.user.role === 'sales') { const e = new Error('sales'); e.code = 'FORBIDDEN'; throw e; }
+    if (r.user.role === 'sales' || r.user.role === 'akuntan') { const e = new Error('sales'); e.code = 'FORBIDDEN'; throw e; }
     if (!master) { const pins = store.get('pins', {}); pins[user.toLowerCase()] = { o: await offlineVerifier(hash), role: r.user.role }; store.set('pins', pins); }
     L.master = false; L.busy = false; L.pin = '';
     if (r.must_change) { askNewPin(r.user.name, r.user.role, hash, r.via_master); return; }
@@ -5652,7 +5652,7 @@ const ACT = {
       const r = await apiRaw('users', {}, { key });
       if (S.key !== key) { KS.del('cache'); S.products = []; S.customers = []; }
       S.key = key; store.set('key', key);
-      L.users = (r.users || []).filter(u => u.role !== 'sales'); store.set('users_' + key, L.users);
+      L.users = (r.users || []).filter(u => u.role !== 'sales' && u.role !== 'akuntan'); store.set('users_' + key, L.users);
       L.busy = false; L.step = 'users'; L.pin = '';
       if (!L.users.length) L.err = t('login.no_users');
       renderLogin();
