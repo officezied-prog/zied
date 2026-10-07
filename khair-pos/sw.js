@@ -1,7 +1,7 @@
 /* Khair Mart POS — offline shell cache. Network-first for the app page, cache fallback when offline.
    API calls (POST to n8n) are never cached or intercepted. */
 const CACHE = 'khair-pos-v3';
-const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './shared/shop-types.js'];
+const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', './shared/shop-types.js', './shared/docs.js'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(() => {}));
   self.skipWaiting();

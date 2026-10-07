@@ -694,6 +694,7 @@ tr.shelf-empty td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 </svg>
 
 <script src="shared/shop-types.js"></script>
+<script src="shared/docs.js"></script>
 <script>
 'use strict';
 // No framing (a <meta> CSP cannot set frame-ancestors): leave any frame.
@@ -3600,6 +3601,7 @@ function renderCart(flashId) {
         <input class="input" id="cart-promo" style="min-height:36px;text-transform:uppercase" placeholder="${esc(t('promo.ph'))}" aria-label="${esc(t('promo.title'))}" value="${esc(c.promo || '')}"></details>
       <div class="row" style="margin-top:8px">
         <button class="btn big hold-btn" style="padding:0 12px" data-act="hold" id="btn-hold" ${canHold() ? '' : 'hidden'}>${ic('pause')}${esc(t('hold.btn'))}</button>
+        <button class="btn big" style="padding:0 12px" data-act="quote" id="btn-quote" title="${esc(t('doc.quote_title'))}" ${v.lines.length ? '' : 'disabled'}>${ic('print')}${esc(t('doc.quote'))}</button>
         <button class="btn primary big grow" style="padding:0 12px" data-act="checkout" id="btn-checkout" title="F9" ${v.lines.length ? '' : 'disabled'}>${esc(t('pos.pay_save'))}</button>
       </div>
     </div>`;
@@ -3638,6 +3640,7 @@ function refreshCartNumbers() {
   }
   const btn = $('#btn-checkout'); if (btn) btn.disabled = !v.lines.length;
   const hb = $('#btn-hold'); if (hb) hb.hidden = !canHold();
+  const qb = $('#btn-quote'); if (qb) qb.disabled = !v.lines.length;
   updateHeldChip();
   const ex = $('#cart-exit'); if (ex) ex.hidden = !v.lines.length || !localExitRequired(v);
   const bar = $('#cart-bar');
@@ -4171,6 +4174,31 @@ function printHTML(html, page) {
   $('#print-area').innerHTML = html;
   setTimeout(() => { try { window.print(); } catch (e) { } }, 50);
 }
+/* ---- v17 A4 documents (shared/docs.js): faktur, surat jalan, penawaran, tanda terima barang, rekap tagihan ---- */
+const docCtx = (extra = {}) => Object.assign({ store: settings(), by: S.user, now: new Date() }, extra);
+function docCustomer(rc) { const c = custById(rc.customer_id); return c ? { name: c.name, phone: c.phone, address: c.address, type: c.type } : { name: rc.customer_name, phone: rc.customer_phone }; }
+function printDoc(html) { if (!window.KDocs) { toast(t('doc.not_loaded'), 'err'); return; } printHTML(html, KDocs.PAGE); }
+function printSaleDoc(rc, kind) {
+  if (!window.KDocs) { toast(t('doc.not_loaded'), 'err'); return; }
+  const r = Object.assign({}, rc, { lines: rc.lines.map(l => Object.assign({}, l, { unit: l.unit || (prodByName(l.name) || {}).unit || '' })) });
+  printDoc(kind === 'sj' ? KDocs.deliveryNote(r, docCtx({ customer: docCustomer(r) })) : KDocs.invoice(r, docCtx({ customer: docCustomer(r) })));
+}
+const prodByName = n => S.products.find(p => p.name === n);
+/** Penawaran harga from the current cart: print A4, WhatsApp text or copy. Nothing is saved; stock is not reserved. */
+function openQuotation() {
+  const v = cartView();
+  if (!v.lines.length || !window.KDocs) return;
+  const d = new Date(Date.now() + 7 * 3600000).toISOString();
+  const q = { no: 'PNW-' + d.slice(2, 10).replace(/-/g, '') + d.slice(11, 16).replace(':', ''), date: today(), customer_name: v.cust ? v.cust.name : '',
+    lines: v.lines.map(l => ({ name: l.p.name, unit: l.p.unit || '', qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type, line_total: l.total })),
+    subtotal: v.subtotal, discount: v.discount, total: v.total - (v.sendFee || 0) };
+  const cust = v.cust ? { name: v.cust.name, phone: v.cust.phone, address: v.cust.address } : { name: '' }, text = KDocs.quotationText(q, docCtx());
+  const el = openModal({ title: t('doc.quote_title'), id: 'quote', cls: 'narrow',
+    body: `<p style="margin-top:0"><b class="num">${esc(q.no)}</b> · ${esc(fmtRp(q.total))}</p><p class="small muted">${esc(t('doc.quote_hint'))}</p>`,
+    foot: `<button class="btn" id="q-copy">${ic('copy')} ${esc(t('copy'))}</button><a class="btn" id="q-wa" target="_blank" rel="noopener" href="${esc(waLink(cust.phone || '', text))}">${ic('wa')} WhatsApp</a><button class="btn primary" id="q-print">${ic('print')} ${esc(t('doc.print_a4'))}</button>` });
+  $('#q-print', el).onclick = () => printDoc(KDocs.quotation(q, docCtx({ customer: cust })));
+  $('#q-copy', el).onclick = async () => { const ok = await copyText(text); toast(ok ? t('copied') : t('copy_failed'), ok ? 'ok' : 'err'); };
+}
 function printReceipt(rc) { const w = settings().paper === '80' ? '80mm' : '58mm'; printHTML(receiptHTML(rc), `size:${w} auto;margin:2mm`); }
 function showReceipt(rc, opts = {}) {
   const canVoid = opts.sale && isOwner() && rc.status !== 'void' && !rc.pending;
@@ -4180,6 +4208,7 @@ function showReceipt(rc, opts = {}) {
     foot: `${canVoid ? `<button class="btn danger" data-act="void-sale" data-inv="${esc(rc.invoice_no)}">${esc(t('hist.void'))}</button>` : ''}${opts.sale && !isOwner() && rc.status !== 'void' && !rc.pending ? `<button class="btn danger sm" data-act="void-request" data-inv="${esc(rc.invoice_no)}">${esc(t('void.request'))}</button>` : ''}
       ${opts.sale && isApprover() && rc.status !== 'void' && !rc.pending ? `<button class="btn sm" data-act="rt-cust" data-inv="${esc(rc.invoice_no)}" id="rc-retur">${ic('return')} ${esc(t('rt.btn'))}</button>` : ''}
       <button class="btn sm" data-act="rc-print">${ic('print')} ${esc(t('print'))}</button>
+      ${rc.invoice_no ? `<button class="btn sm" data-act="rc-invoice" id="rc-invoice">${ic('print')} ${esc(t('doc.invoice'))}</button><button class="btn sm" data-act="rc-sj" id="rc-sj">${ic('truck')} ${esc(t('doc.sj'))}</button>` : ''}
       <button class="btn sm" data-act="rc-copy">${ic('copy')} ${esc(t('copy'))}</button>
       <a class="btn sm" id="rc-wa" target="_blank" rel="noopener" href="${esc(waLink(rc.customer_phone, receiptText(rc)))}">${ic('wa')} WhatsApp</a>
       ${opts.fromSale ? `<button class="btn primary sm" data-act="modal-close" id="rc-new">${esc(t('pos.new_sale'))}</button>` : `<button class="btn primary sm" data-act="modal-close">${esc(t('close'))}</button>`}`
@@ -5808,7 +5837,7 @@ function parseSurvey(s) { if (Array.isArray(s)) return s; try { const v = JSON.p
 function rcFromSale(sale, items) {
   const local = store.get('receipts', []).find(r => r.invoice_no === sale.invoice_no);
   const cust = custById(sale.customer_id);
-  const lines = items.filter(i => i.invoice_no === sale.invoice_no).map(i => ({ name: i.name, unit: '', qty: num(i.qty), unit_price: int(i.unit_price), price_type: i.price_type, line_total: int(i.line_total) }));
+  const lines = items.filter(i => i.invoice_no === sale.invoice_no).map(i => ({ name: i.name, unit: (prodById(i.product_id) || {}).unit || '', qty: num(i.qty), unit_price: int(i.unit_price), price_type: i.price_type, line_total: int(i.line_total) }));
   return {
     invoice_no: sale.invoice_no, client_id: sale.client_id, pending: false, sale_date: sale.sale_date, sale_time: sale.sale_time, cashier: sale.cashier,
     customer_name: sale.customer_name || t('pos.walkin'), customer_phone: cust ? cust.phone : '', customer_id: sale.customer_id,
@@ -6108,6 +6137,7 @@ async function openCustomerDetail(c) {
       <div class="row wrap" style="margin-bottom:16px">
         <button class="btn primary" data-act="cust-pay" data-id="${esc(c.id)}" ${c.debt_balance > 0 ? '' : 'disabled'}>${esc(t('cust.receive'))}</button>
         <a class="btn" target="_blank" rel="noopener" id="cd-wa" href="${esc(waLink(c.phone, debtReminderText(c)))}" ${c.debt_balance > 0 ? '' : 'hidden'}>${ic('wa')} ${esc(t('cust.remind_wa'))}</a>
+        <button class="btn" data-act="cust-statement" data-id="${esc(c.id)}" id="cd-statement">${ic('print')} ${esc(t('doc.statement'))}</button>
         <button class="btn" data-act="cust-edit" data-id="${esc(c.id)}">${ic('edit')} ${esc(t('edit'))}</button>
       </div>
       <div class="panel" style="margin-bottom:16px" id="cd-ledger-panel"><h3>${ic('wallet')} ${esc(t('led.title'))}</h3><div class="pb"><div id="cd-ledger" class="muted">${esc(t('loading'))}</div></div></div>
@@ -6771,6 +6801,7 @@ Object.assign(I18N.ar, { 'voice.title': 'صوت الكاشير (نطق اسم ا
 Object.assign(I18N.id, {
   'qty.add': 'Tambah', 'qty.change': 'Ubah', 'qty.invalid': 'Jumlah harus lebih dari 0', 'qty.too_big': 'Jumlah terlalu besar',
   'set.ask_qty': 'Tanya jumlah saat pilih barang', 'set.ask_qty_hint': 'Ketuk barang → pilih jumlah. Scan barcode tetap langsung +1. Pengaturan per perangkat.',
+  'doc.invoice': 'Faktur A4', 'doc.sj': 'Surat jalan', 'doc.goods_in': 'Tanda terima', 'doc.statement': 'Cetak rekap tagihan', 'doc.quote': 'Penawaran', 'doc.quote_title': 'Penawaran harga', 'doc.quote_hint': 'Dari isi keranjang. Tidak disimpan dan stok tidak dipesan; cetak A4 atau kirim lewat WhatsApp.', 'doc.print_a4': 'Cetak A4', 'doc.not_loaded': 'Dokumen belum termuat, muat ulang halaman',
   'hold.btn': 'Tahan', 'hold.title': 'Tahan transaksi', 'hold.hint': 'Keranjang disimpan di perangkat ini. Layani pembeli berikutnya, lalu lanjutkan dari tombol "Ditahan".',
   'hold.label': 'Penanda (opsional)', 'hold.label_hint': 'mis. baju merah, Bapak topi hitam', 'hold.default': 'Pelanggan {n}', 'hold.held': 'Ditahan: {label}',
   'hold.chip': 'Ditahan ({n})', 'hold.list': 'Transaksi ditahan', 'hold.resume': 'Lanjutkan', 'hold.resumed': 'Dilanjutkan: {label}',
@@ -6784,6 +6815,7 @@ Object.assign(I18N.id, {
 Object.assign(I18N.ar, {
   'qty.add': 'إضافة', 'qty.change': 'تعديل', 'qty.invalid': 'الكمية يجب أن تكون أكبر من 0', 'qty.too_big': 'الكمية كبيرة جدًا',
   'set.ask_qty': 'السؤال عن الكمية عند اختيار الصنف', 'set.ask_qty_hint': 'اضغط الصنف ← اختر الكمية. مسح الباركود يضيف 1 مباشرة. إعداد خاص بهذا الجهاز.',
+  'doc.invoice': 'فاتورة A4', 'doc.sj': 'إذن خروج بضاعة', 'doc.goods_in': 'إيصال استلام', 'doc.statement': 'طباعة كشف الحساب', 'doc.quote': 'عرض سعر', 'doc.quote_title': 'عرض سعر', 'doc.quote_hint': 'من محتوى السلة. لا يُحفظ ولا يحجز المخزون؛ اطبعه A4 أو أرسله عبر واتساب.', 'doc.print_a4': 'طباعة A4', 'doc.not_loaded': 'لم تُحمَّل المستندات، أعد تحميل الصفحة',
   'hold.btn': 'تعليق', 'hold.title': 'تعليق العملية', 'hold.hint': 'تُحفظ السلة على هذا الجهاز. اخدم الزبون التالي، ثم تابِع من زر "المعلّقة".',
   'hold.label': 'علامة مميزة (اختياري)', 'hold.label_hint': 'مثل: قميص أحمر، رجل بقبعة سوداء', 'hold.default': 'زبون {n}', 'hold.held': 'عُلّقت: {label}',
   'hold.chip': 'المعلّقة ({n})', 'hold.list': 'العمليات المعلّقة', 'hold.resume': 'متابعة', 'hold.resumed': 'تمت متابعة: {label}',
@@ -7070,6 +7102,20 @@ const ACT = {
   'checkout': () => checkout(),
   'cam-scan': () => cameraScan(code => { const p = findBySku(code); if (p) addToCart(p); else toast(t('pos.barcode_nf', { code }), 'err'); }),
   'rc-print': el => { const m = el.closest('.modal-bg'); if (m && m._rc) printReceipt(m._rc); },
+  'rc-invoice': el => { const m = el.closest('.modal-bg'); if (m && m._rc) printSaleDoc(m._rc, 'invoice'); },
+  'rc-sj': el => { const m = el.closest('.modal-bg'); if (m && m._rc) printSaleDoc(m._rc, 'sj'); },
+  'quote': () => openQuotation(),
+  'pu-doc': el => {
+    const n = PH.data && purchaseNotes(PH.data.purchases).find(x => x.no === el.dataset.no); if (!n || !window.KDocs) return;
+    const lines = noteProducts(n).map(a => { const p = prodById(a.pid); return { name: a.name, unit: p ? p.unit || '' : '', qty: a.qty, cost_price: a.qty ? Math.round(a.total / a.qty) : 0, total: a.total }; });
+    printDoc(KDocs.goodsIn({ no: n.no, date: n.date, supplier: n.supplier, user: n.user, carrier_text: n.carrier, note_status: n.status ? t('mt.' + n.status) : '', lines }, docCtx({ showPrices: isOwner() })));
+  },
+  'cust-statement': el => {
+    const c = custById(el.dataset.id); if (!c || !window.KDocs) return;
+    if (!LG.data || LG.kind !== 'customer' || !LG.party || LG.party.id != c.id) { toast(t('loading'), 'info'); return; }
+    const rows = LG.data.docs.filter(d => d.remaining > 0).map(d => ({ ref: d.ref, date: d.date, debt: d.total, paid: d.paid + d.auto, remaining: d.remaining }));
+    printDoc(KDocs.statement({ customer: { name: c.name, phone: c.phone, address: c.address }, date: today(), rows, total: rows.reduce((a, r) => a + r.remaining, 0) }, docCtx()));
+  },
   'rc-copy': async el => { const m = el.closest('.modal-bg'); if (!m || !m._rc) return; const ok = await copyText(receiptText(m._rc)); toast(ok ? t('copied') : t('copy_failed'), ok ? 'ok' : 'err'); },
   'void-sale': el => voidSale(el.dataset.inv),
 
@@ -8266,7 +8312,7 @@ function drawPurchaseHistory() {
     ${notes.map(n => `<tr data-no="${esc(n.no)}"><td class="num">${esc(fmtDate(n.date))}</td><td class="small"><b>${esc(n.no || '—')}</b></td><td>${esc(n.supplier || '—')}${n.carrier ? `<div class="small muted" data-carrier>${ic('truck')} ${esc(n.carrier)}</div>` : ''}</td>
       <td class="hide-phone small">${noteProducts(n).slice(0, 4).map(a => `${esc(a.name)} <b class="num">×${fmtQty(a.qty)}</b>`).join(', ')}${noteProducts(n).length > 4 ? ' …' : ''}</td>
       <td class="r num">${fmtRp(n.total)}</td><td>${matchBadge(n.status)}${n.fixed ? ' ' + matchBadge('koreksi') : ''}${n.notes && n.status === 'tidak_cocok' ? `<div class="small muted">${esc(n.notes)}</div>` : ''}</td>
-      <td class="r" style="white-space:nowrap">${n.no && n.status !== 'retur' ? `<button class="btn xs" data-act="pu-fix" data-no="${esc(n.no)}">${ic('edit')} ${esc(t('fix.button'))}</button>${isApprover() ? ` <button class="btn xs" data-act="pu-retur" data-no="${esc(n.no)}">${ic('return')} ${esc(t('rt.btn'))}</button>` : ''}` : ''}</td></tr>`).join('')}</tbody></table></div>
+      <td class="r" style="white-space:nowrap">${n.no && n.status !== 'retur' ? `<button class="btn xs" data-act="pu-fix" data-no="${esc(n.no)}">${ic('edit')} ${esc(t('fix.button'))}</button>${isApprover() ? ` <button class="btn xs" data-act="pu-retur" data-no="${esc(n.no)}">${ic('return')} ${esc(t('rt.btn'))}</button>` : ''}` : ''}${n.no ? ` <button class="btn xs" data-act="pu-doc" data-no="${esc(n.no)}">${ic('print')} ${esc(t('doc.goods_in'))}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
     <p class="small muted">${esc(t('pu.locked_hint'))}</p>` : `<div class="muted">${esc(t('no_data'))}</div>`;
 }
 function openPurchaseFix(no) {
