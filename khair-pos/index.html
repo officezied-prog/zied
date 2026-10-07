@@ -630,6 +630,7 @@ body.ro [data-act="cust-pay"],body.ro [data-act="cust-edit"],body.ro [data-act="
     <section class="view" id="view-absensi" hidden></section>
     <section class="view" id="view-retur" hidden></section>
     <section class="view" id="view-activity" hidden></section>
+    <section class="view" id="view-koreksi" hidden></section>
     <section class="view" id="view-devices" hidden></section>
     <section class="view" id="view-settings" hidden></section>
   </main>
@@ -1750,7 +1751,7 @@ const MockServer = (() => {
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
-    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
+    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'list_corrections'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
     if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'list_photos'].includes(action)) deviceTouch(db, u, data.device, false);
 
@@ -2633,6 +2634,10 @@ const MockServer = (() => {
         logAct(db, u, 'minta_koreksi', 'Minta ' + summary + ' | ' + reason, no, 0, 'warn');
         return { applied: false, request_id: approval.request_id, approval, changes: pf.changes.map(qtyOnly) };
       }
+      case 'list_corrections': {
+        if (!(isAppr(u) || u.role === 'akuntan')) throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+        return { corrections: db.approvals.filter(a => a.kind === 'koreksi').map(a => { let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; } return { request_id: a.request_id, at: String(a.decided_at || a.created_at), by: String(a.decided_by || a.cashier), total: int(a.total), summary: String(a.summary || ''), payload: pl }; }).sort((x, y) => String(y.at).localeCompare(String(x.at))) };
+      }
       case 'correct_price': {
         if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
         if (!isYmd(data.from) || !isYmd(data.to) || data.from > data.to) throw E('INVALID', 'Rentang tanggal tidak valid');
@@ -3103,7 +3108,7 @@ const isApprover = () => S.role === 'owner' || S.role === 'manager';
 // v17 accountant: reads sales, invoices, goods in/out, returns, ledgers, bank and reports; changes nothing (the server refuses too)
 const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
-const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'settings'];
+const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'settings'];
 const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh)$/;
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
@@ -3202,6 +3207,7 @@ const VIEWS = [
   { id: 'approvals', icon: 'check', label: 'nav.approvals', approver: true },
   { id: 'orders', icon: 'clip', label: 'nav.orders', approver: true },
   { id: 'field', icon: 'pin', label: 'nav.field', approver: true },
+  { id: 'koreksi', icon: 'tag', label: 'nav.koreksi', approver: true },
   { id: 'activity', icon: 'activity', label: 'nav.activity', owner: true },
   { id: 'devices', icon: 'device', label: 'nav.devices', owner: true },
   { id: 'settings', icon: 'gear', label: 'nav.settings' }
@@ -8191,6 +8197,58 @@ async function actPoll() {
 }
 setInterval(() => { if (isOwner()) actPoll(); }, 120000);
 function actRange(p) { const T = today(); return p === 'today' ? [T, T] : p === '30d' ? [addDays(T, -29), T] : [addDays(T, -6), T]; }
+/* v20 Kesalahan & koreksi harga: the manager/owner corrects a price that was already sold; akuntan sees the list only. */
+const KR = { list: null, busy: false, result: null };
+RENDER.koreksi = function () {
+  const v = $('#view-koreksi'); if (!v) return;
+  const canDo = isApprover();
+  const prods = (S.products || []).filter(p => p.active !== false).slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const form = canDo ? `<div class="panel"><h3>${ic('tag')} ${esc(t('kr.new'))}</h3><div class="pb">
+      <div class="notice" style="margin-top:0">${ic('send')} <span>${esc(t('kr.reported'))}</span></div>
+      <div class="field"><label class="f" for="kr-prod">${esc(t('kr.product'))} *</label>
+        <select class="input" id="kr-prod"><option value="">—</option>${prods.map(p => `<option value="${p.id}" data-retail="${esc(String(int(p.retail_price)))}" data-ws="${esc(String(int(p.wholesale_price)))}">${esc(p.name)}</option>`).join('')}</select></div>
+      <div class="grid2"><div class="field"><label class="f" for="kr-old">${esc(t('kr.old_price'))} *</label><input class="input num" id="kr-old" data-rule="num" inputmode="numeric" placeholder="0"></div>
+        <div class="field"><label class="f" for="kr-new">${esc(t('kr.new_price'))} *</label><input class="input num" id="kr-new" data-rule="num" inputmode="numeric" placeholder="0"></div></div>
+      <div class="grid2"><div class="field"><label class="f" for="kr-from">${esc(t('kr.from'))} *</label><input class="input" type="date" id="kr-from" value="${esc(addDaysStr(today(), -30))}"></div>
+        <div class="field"><label class="f" for="kr-to">${esc(t('kr.to'))} *</label><input class="input" type="date" id="kr-to" value="${esc(today())}"></div></div>
+      <div class="field"><label class="f" for="kr-reason">${esc(t('kr.reason'))} *</label><input class="input" id="kr-reason" data-rule="text" placeholder="${esc(t('kr.reason_ph'))}"></div>
+      <label class="chk"><input type="checkbox" id="kr-catalog"> ${esc(t('kr.update_catalog'))}</label>
+      <div class="red" id="kr-err" role="alert"></div>
+      <div class="row" style="justify-content:flex-end"><button class="btn primary" data-act="kr-run" id="kr-run">${ic('check')} ${esc(t('kr.run'))}</button></div>
+      <div id="kr-result">${KR.result ? krResultHTML(KR.result) : ''}</div></div></div>` : '';
+  v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.koreksi'))}</h1><button class="btn sm" data-act="kr-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
+    <p class="muted small" style="margin-top:0">${esc(t('kr.hint'))}</p>
+    ${form}
+    <div class="panel"><h3>${ic('clock')} ${esc(t('kr.history'))}</h3><div class="pb" id="kr-list">${KR.list ? krListHTML(KR.list) : `<div class="empty">${esc(t('loading'))}</div>`}</div></div>`;
+  const sel = $('#kr-prod', v);
+  if (sel) sel.onchange = () => { const o = sel.selectedOptions[0]; if (o && o.dataset.retail && !$('#kr-old').value) $('#kr-old').value = fmtNum(int(o.dataset.retail)); };
+  loadCorrections();
+};
+function addDaysStr(ymd, n) { const d = new Date(ymd + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
+async function loadCorrections() {
+  try { const r = await api('list_corrections', {}); KR.list = r.corrections || []; const box = $('#kr-list'); if (box) box.innerHTML = krListHTML(KR.list); }
+  catch (e) { const box = $('#kr-list'); if (box) box.innerHTML = `<div class="empty">${esc(errMsg(e))}</div>`; }
+}
+function krResultHTML(c) {
+  const money = n => fmtRp(n);
+  const refunds = (c.refunds || []).length ? `<div class="small" style="margin-top:6px"><b>${esc(t('kr.refunds'))}:</b> ${c.refunds.map(r => `${esc(r.customer_name)} ${money(r.amount)} (${esc(t('kr.ch_' + r.channel))}${r.phone ? ' ' + esc(r.phone) : ''})`).join(' · ')}</div>` : '';
+  const consults = (c.consults || []).length ? `<div class="small" style="margin-top:6px"><b>${esc(t('kr.consults'))}:</b> ${c.consults.map(r => `${esc(r.customer_name)} ${money(r.amount)}${r.phone ? ' (' + esc(r.phone) + ')' : ''}`).join(' · ')} <button class="btn xs" data-act="kr-consult">${esc(t('kr.consult_btn'))}</button></div>` : '';
+  return `<div class="card pad" style="margin-top:10px;border:1px solid var(--ok)"><b>${esc(t('kr.done'))}</b><br>
+    ${esc(c.product_name)} ${fmtRp(c.old_price)} → ${fmtRp(c.new_price)} · ${c.invoices} ${esc(t('kr.invoices'))}<br>
+    <span class="${c.net_diff < 0 ? 'red' : ''}">${esc(t('kr.net'))}: ${money(c.net_diff)}</span>${c.refund_total ? ` · ${esc(t('kr.refund_total'))}: ${money(c.refund_total)}` : ''}${c.under_total ? ` · ${esc(t('kr.under_total'))}: ${money(c.under_total)}` : ''}
+    ${refunds}${consults}
+    <div class="small muted" style="margin-top:6px">${esc(t('kr.by_setters'))}: ${(c.price_setters || []).map(x => esc(x.by) + ' (' + esc(fmtDate(x.at)) + ')').join(', ') || '—'} · ${esc(t('kr.by_sellers'))}: ${(c.cashiers || []).map(esc).join(', ')}</div></div>`;
+}
+function krListHTML(list) {
+  if (!list.length) return `<div class="empty">${esc(t('kr.none'))}</div>`;
+  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${esc(t('date'))}</th><th>${esc(t('kr.product'))}</th><th class="r">${esc(t('kr.net'))}</th><th>${esc(t('kr.responsible'))}</th></tr></thead><tbody>${list.map(c => {
+    const p = c.payload || {};
+    const setters = (p.price_setters || []).map(x => x.by).join(', ');
+    return `<tr><td class="num">${esc(fmtDate(c.at))}</td><td>${esc(p.product_name || '')}<br><span class="small muted">${esc(fmtRp(p.old_price))}→${esc(fmtRp(p.new_price))} · ${p.invoices || 0} ${esc(t('kr.invoices'))}</span></td>
+      <td class="r ${int(c.total) < 0 ? 'red' : ''}">${esc(fmtRp(c.total))}</td>
+      <td class="small">${esc(t('kr.by_setters'))}: ${esc(setters || '—')}<br>${esc(t('kr.by_sellers'))}: ${esc((p.cashiers || []).join(', '))}</td></tr>`;
+  }).join('')}</tbody></table></div>`;
+}
 RENDER.activity = function () {
   if (!isOwner()) { go('pos'); return; }
   if (!ACTV.from || ACTV.preset !== 'custom') [ACTV.from, ACTV.to] = actRange(ACTV.preset);
@@ -8243,6 +8301,25 @@ Object.assign(ACT, {
   'dv-active': el => { DV.active = el.dataset.v === '1'; $$('#dv-act .chip').forEach(c => c.classList.toggle('on', c === el)); drawDevices(); },
   'dv-open': el => openDeviceDetail(el.dataset.id),
   'act-refresh': () => loadActivity(),
+  'kr-refresh': () => { KR.list = null; loadCorrections(); },
+  'kr-consult': () => toast(t('kr.consult_soon'), 'info', 4000),
+  'kr-run': async () => {
+    const err = $('#kr-err');
+    const pid = $('#kr-prod').value, oldP = moneyVal($('#kr-old').value), newP = moneyVal($('#kr-new').value);
+    const from = $('#kr-from').value, to = $('#kr-to').value, reason = $('#kr-reason').value.trim(), cat = $('#kr-catalog').checked;
+    if (!pid) { err.textContent = t('required') + ': ' + t('kr.product'); return; }
+    if (!(oldP >= 0) || !(newP >= 0) || oldP === newP) { err.textContent = t('kr.bad_price'); return; }
+    if (!from || !to) { err.textContent = t('required') + ': ' + t('kr.from'); return; }
+    if (!reason) { err.textContent = t('required') + ': ' + t('kr.reason'); return; }
+    if (KR.busy) return; KR.busy = true; err.textContent = ''; $('#kr-run').disabled = true;
+    try {
+      const r = await api('correct_price', { product_id: pid, old_price: oldP, new_price: newP, from, to, reason, update_catalog: cat });
+      KR.result = r.correction; toast(t('kr.saved'), 'ok');
+      if (r.product) { const p = S.products.find(x => String(x.id) === String(pid)); if (p) Object.assign(p, r.product); }
+      KR.list = null; RENDER.koreksi();
+    } catch (e) { err.textContent = errMsg(e); $('#kr-run').disabled = false; }
+    finally { KR.busy = false; }
+  },
   'act-preset': el => { ACTV.preset = el.dataset.p; if (ACTV.preset !== 'custom') [ACTV.from, ACTV.to] = actRange(ACTV.preset); $$('#act-presets .chip').forEach(c => c.classList.toggle('on', c === el)); $('#act-dates').hidden = ACTV.preset !== 'custom'; loadActivity(); },
   'act-group': el => { ACTV.group = el.dataset.g; $$('#act-groups .chip').forEach(c => c.classList.toggle('on', c === el)); drawActivity(); }
 });
@@ -9212,6 +9289,8 @@ Object.assign(ACT, {
 });
 
 Object.assign(I18N.id, {
+  'nav.koreksi': 'Kesalahan', 'navs.koreksi': 'Koreksi',
+  'kr.new': 'Koreksi harga jual (sudah terjual)', 'kr.reported': 'Koreksi ini tercatat dan dilaporkan ke pemilik.', 'kr.product': 'Barang', 'kr.old_price': 'Harga salah (lama)', 'kr.new_price': 'Harga benar (baru)', 'kr.from': 'Dari tanggal', 'kr.to': 'Sampai tanggal', 'kr.reason': 'Sebab', 'kr.reason_ph': 'mis. salah ketik saat ubah harga', 'kr.update_catalog': 'Perbaiki juga harga katalog ke depan', 'kr.run': 'Jalankan koreksi', 'kr.hint': 'Aplikasi mengambil semua faktur barang ini dengan harga lama dari tanggal salah sampai hari ketahuan, lalu memperbaikinya.', 'kr.history': 'Riwayat koreksi', 'kr.none': 'Belum ada koreksi', 'kr.invoices': 'faktur', 'kr.net': 'Selisih', 'kr.refund_total': 'Refund', 'kr.under_total': 'Kurang bayar', 'kr.refunds': 'Refund ke pelanggan', 'kr.consults': 'Musyawarah (kurang bayar)', 'kr.consult_btn': 'Musyawarah pemilik–manajer', 'kr.consult_soon': 'Keputusan musyawarah: segera ditambah', 'kr.ch_kontak': 'hubungi', 'kr.ch_cadangan': 'cadangan 3 bln', 'kr.done': 'Koreksi selesai', 'kr.by_setters': 'Yang salah input', 'kr.by_sellers': 'Yang menjual', 'kr.responsible': 'Tanggung jawab', 'kr.saved': 'Koreksi tersimpan', 'kr.bad_price': 'Harga lama/baru tidak valid atau sama',
   'nav.activity': 'Aktivitas', 'navs.activity': 'Aktivitas', 'nav.devices': 'Perangkat', 'navs.devices': 'Perangkat', 'nav.suppliers': 'Pemasok', 'navs.suppliers': 'Pemasok', 'nav.bank': 'Rekening Bank Toko', 'navs.bank': 'Rekening',
   'dev.consent': 'Lokasi perangkat ini dibagikan ke pemilik toko selama aplikasi dibuka (keamanan & absensi).', 'dev.agree': 'Setuju', 'dev.decline': 'Tidak',
   'dev.block_title': 'Lokasi perangkat wajib', 'dev.block_hint': 'Pemilik toko mewajibkan lokasi untuk kasir dan manajer. Izinkan lokasi agar aplikasi bisa dipakai.', 'dev.allow': 'Izinkan lokasi & coba lagi', 'dev.waiting': 'Menunggu lokasi…',
@@ -9278,6 +9357,8 @@ Object.assign(I18N.id, {
   'set.report_title': 'Laporan harian (WhatsApp)', 'set.wa_company': 'WhatsApp toko / perusahaan', 'set.wa_manager': 'WhatsApp manajer', 'set.wa_owner': 'WhatsApp pemilik', 'set.report_time': 'Pengingat kirim laporan (jam)', 'set.report_time_bad': 'Jam tidak valid'
 });
 Object.assign(I18N.ar, {
+  'nav.koreksi': 'الأخطاء', 'navs.koreksi': 'الأخطاء',
+  'kr.new': 'تصحيح ثمن بيع (بضاعة بيعت)', 'kr.reported': 'هذا التصحيح يُسجَّل ويصل المالك.', 'kr.product': 'الصنف', 'kr.old_price': 'الثمن الخطأ (القديم)', 'kr.new_price': 'الثمن الصحيح (الجديد)', 'kr.from': 'من تاريخ', 'kr.to': 'إلى تاريخ', 'kr.reason': 'السبب', 'kr.reason_ph': 'مثال: خطأ كتابة عند تغيير الثمن', 'kr.update_catalog': 'صحّح أيضًا ثمن القائمة مستقبلًا', 'kr.run': 'تنفيذ التصحيح', 'kr.hint': 'يأخذ التطبيق كل فواتير هذا الصنف بالثمن القديم من يوم الخطأ إلى يوم اكتشافه، ويصحّحها.', 'kr.history': 'سجل التصحيحات', 'kr.none': 'لا توجد تصحيحات بعد', 'kr.invoices': 'فاتورة', 'kr.net': 'الفرق', 'kr.refund_total': 'إرجاع', 'kr.under_total': 'نقص دفع', 'kr.refunds': 'إرجاع للزبائن', 'kr.consults': 'مشاورة (نقص دفع)', 'kr.consult_btn': 'مشاورة المالك والمدير', 'kr.consult_soon': 'قرار المشاورة: يُضاف قريبًا', 'kr.ch_kontak': 'تواصل', 'kr.ch_cadangan': 'ميزانية 3 أشهر', 'kr.done': 'تم التصحيح', 'kr.by_setters': 'من أدخل الخطأ', 'kr.by_sellers': 'من باع', 'kr.responsible': 'المسؤول', 'kr.saved': 'حُفظ التصحيح', 'kr.bad_price': 'الثمن القديم/الجديد غير صالح أو متساوٍ',
   'nav.activity': 'سجل النشاط', 'navs.activity': 'النشاط', 'nav.devices': 'الأجهزة', 'navs.devices': 'الأجهزة', 'nav.suppliers': 'الموردون', 'navs.suppliers': 'الموردون', 'nav.bank': 'الحساب البنكي للشركة', 'navs.bank': 'البنك',
   'dev.consent': 'يُشارَك موقع هذا الجهاز مع مالك المتجر طوال فتح التطبيق (للأمان والحضور).', 'dev.agree': 'موافق', 'dev.decline': 'لا',
   'dev.block_title': 'موقع الجهاز مطلوب', 'dev.block_hint': 'يشترط المالك مشاركة الموقع للكاشير والمدير. اسمح بالموقع لاستخدام التطبيق.', 'dev.allow': 'السماح بالموقع وإعادة المحاولة', 'dev.waiting': 'بانتظار الموقع…',

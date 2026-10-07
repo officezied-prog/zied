@@ -125,7 +125,7 @@ if (me.must_change === true && !viaMaster && ['login', 'change_pin', 'users', 'd
 }
 const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' : (me.role === 'sales' ? 'sales' : (me.role === 'akuntan' ? 'akuntan' : 'kasir')));
 // v17 accountant: reads goods in/out, invoices, payments, returns, ledgers and reports; never sells or changes anything.
-const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval'];
+const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections'];
 if (role === 'akuntan' && AKUNTAN_READ.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
 if (role === 'sales' && ['login', 'bootstrap', 'device_ping', 'change_pin'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
 const isApprover = role === 'owner' || role === 'manager';
@@ -1413,6 +1413,15 @@ switch (req.action) {
   case 'list_approvals': {
     if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
     return done({ ok: true, approvals: approvalRows.filter(function (a) { return a.status === 'pending'; }).map(approvalOut) });
+  }
+
+  case 'list_corrections': {
+    // Errors section: every price correction, who is responsible, the money impact.
+    if (!canAudit) return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+    return done({ ok: true, corrections: approvalRows.filter(function (a) { return a.kind === 'koreksi'; }).map(function (a) {
+      var pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+      return { request_id: a.request_id, at: str(a.decided_at || a.created_at), by: str(a.decided_by || a.cashier), total: money(a.total), summary: str(a.summary), payload: pl };
+    }).sort(function (x, y) { return String(y.at).localeCompare(String(x.at)); }) });
   }
 
   case 'decide_approval': {
