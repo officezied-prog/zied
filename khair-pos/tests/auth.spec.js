@@ -59,10 +59,10 @@ test('login: wrong PIN is rejected, keyboard PIN entry works, bad store key is r
   await expect(page.locator('#shift-open')).toHaveCount(0);
   // manager has no owner-only panels
   await page.click('#nav [data-view="settings"]');
-  // v18: the manager manages staff accounts only — groups kasir / sales / akuntan, roles offered: those three
-  await expect(page.locator('#st-users [data-role-group]')).toHaveCount(3);
-  await expect(page.locator('#st-users [data-role-group="owner"], #st-users [data-role-group="manager"]')).toHaveCount(0);
-  expect(await page.locator('#nu-role option').evaluateAll(o => o.map(x => x.value))).toEqual(['pekerja', 'kasir', 'sales', 'akuntan']);
+  // v19: the manager manages only cashier and sales accounts (no accountant) — 2 groups
+  await expect(page.locator('#st-users [data-role-group]')).toHaveCount(2);
+  await expect(page.locator('#st-users [data-role-group="owner"], #st-users [data-role-group="manager"], #st-users [data-role-group="akuntan"]')).toHaveCount(0);
+  expect(await page.locator('#nu-role option').evaluateAll(o => o.map(x => x.value))).toEqual(['pekerja', 'kasir', 'sales']);
   await expect(page.locator('#st-outbox')).toBeVisible();
   await expect(page.locator('#st-kasir-app')).toHaveAttribute('href', './kasir/?mock=1');
 });
