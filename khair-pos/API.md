@@ -558,3 +558,39 @@ No record is ever edited or deleted by any action. `pos_attendance` rows carry `
 each finished day is sealed in `pos_att_seals` (count, last hash, per-worker summary; seals chained too); the chain head is
 `pos_settings.att_head`. `att_report` re-checks every hash and seal: an edited field, a deleted row or a removed day appears
 in `verify.issues`. (The n8n account owner can still edit tables by hand; the report then shows it.)
+
+## Khair Gudang Dingin (cold storage) — `POST /webhook/khair-cold` (v1)
+
+Page `gudang/` (owner app menu "Gudang Dingin"; owner, manager, akuntan). n8n workflow "Khair Gudang Dingin" `1QRX6A1FU0PqRtTP`.
+Same envelope as the POS: `{ action, key, user, pin_hash, data }` (text/plain), answer `{ ok: true, ... }` or `{ ok: false, error, message }`.
+Users are `pos_users` (same PIN, master code, lock, must-change rules). Roles: owner everything; manager everything except settings and
+storage rates/costs; akuntan read-only (also sees costs). Errors: `BAD_KEY`, `BAD_PIN`, `LOCKED`, `PIN_CHANGE_REQUIRED`, `FORBIDDEN`, `INVALID`, `NOT_FOUND`, `NOT_ENOUGH`.
+
+Stock is never stored: balance(pallet, warehouse) = sum of `cold_movements.cartons`. Movements are append-only; `movement_reverse`
+writes `REVERSE` rows with `ref_seq` (a transfer is undone as a pair). Daily checks are saved once; only one explanation can be added.
+
+| action | who | data → answer |
+|---|---|---|
+| `login` | all 3 | → `me {name, role}` |
+| `bootstrap` | all 3 | → warehouses, products, containers, pallets, `stock` rows, last 500 movements, last 60 checks, last 100 orders, drivers, company, `alerts {expiring (≤60 d), no_check_today, unexplained, storage?}`, vehicles |
+| `warehouse_save` | owner | `{code? (made from the name when empty), name, rate_frozen, rate_chiller, rate_dry, address, pic_name, pic_wa, customer_id, rate, rate_unit: month\|day, parser: generic\|dpp\|bosko\|kawanishi, active}` |
+| `product_save` | owner | `{code? (from the name), name, kg_per_ctn, ctn_per_pallet, aliases ("sukari, 157-007"), active}` — aliases are how report lines find the product |
+| `settings_save` | owner | `{drivers: [{name, wa, vehicle, plate}]}` and/or `{company}` (pos_settings `cold_drivers`, `cold_company`) |
+| `container_save` | owner, manager | `{container_no (4 letters + 7 digits), size 20\|40\|40HC, warehouse, arrival_date, supplier, note}` |
+| `pallet_in` | owner, manager | `{warehouse, date, container_no?, pallets: [{pallet_code, product, lot, prod_date?, exp_date, cartons, kg_per_ctn?, position?, zone?}]}` → pallets + IN movements |
+| `import_report` | owner (manager without new products) | same as pallet_in, from a parsed warehouse report: creates missing products (`product` = warehouse item code, `product_name`) and containers |
+| `movement_add` | owner, manager | `{type: TRANSFER, pallet_code, warehouse, to_warehouse, cartons?}` or `{type: ADJUST, pallet_code, warehouse, cartons (signed), reason}` |
+| `movement_reverse` | owner, manager | `{seq, reason}` |
+| `check_preview` | all 3 | `{warehouse, text, check_date?}` → `{check_date, result}` (nothing saved) |
+| `check_save` | owner, manager | same → `check {check_no CEK-YYMMDD-NNN, result, raw_text, n_diff}` |
+| `check_note` | owner, manager | `{check_no, note}` once |
+| `order_save` | owner, manager | `{order_no? (edit while open), warehouse, order_date, dest_type toko\|pelanggan, dest_name, dest_address, pickup_person, vehicle, note, lines: [{pallet_code, cartons}]}` → `SPB-YYMMDD-NNN`; open orders reserve their cartons |
+| `order_status` | owner, manager | `{order_no, to, note?}` — flow open → sent → approved \| rejected(note) → ready → dispatch → driver (needs a trip driver; trip_save while dispatch does it) → picked → delivered; rejected → open by editing. Each step appends `{at, by, from, to, note}` to `log` |
+| `order_pick` | owner, manager | `{order_no, pick_date?}` (any step before picked) → OUT movements; `NOT_ENOUGH` if stock changed |
+| `order_cancel` | owner, manager | `{order_no, reason}` (open only; stays visible) |
+| `trip_save` | owner, manager | `{order_no, via lalamove\|sopir, vehicle, driver, driver_wa, plate, cost}` |
+| `fefo` | all 3 | `{warehouse, product, cartons, order_no?}` → `{lines, short}` (earliest expiry first, minus reserved) |
+| `report` | all 3 | `{date?}` → rows, per_warehouse, per_product, expiring, storage? (pallet-days × rate; monthly rate = rate/30 per day) |
+
+Check result: `{lines: [{kind pallet|product, key, label, theirs, ours, diff}], unknown, missing, unparsed, ignored, n_ok, n_diff, total_theirs, total_ours}`.
+Report readers: `backend/cold/cold-parsers.js` (the DPP "LAPORAN STOCK PER-PID" Excel, its copied cells, WhatsApp lines like "Sukari 3kg 120 ctn").
