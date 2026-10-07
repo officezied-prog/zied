@@ -267,6 +267,16 @@ function approvalOut(a) {
   o.can_decide = canDecide(a);
   return o;
 }
+// v20 P2d: every incoming transfer payment must be confirmed by the account holder (the manager) that the money really arrived.
+function addTransferConfirm(refType, ref, amount, who, bank, transferRef) {
+  if (money(amount) <= 0) return null;
+  var a = newApproval({ kind: 'transfer_confirm', approver_role: 'manager', ref: str(ref), total: money(amount),
+    customer_name: str(who), note: (str(bank) ? 'Bank ' + str(bank) : '') + (str(transferRef) ? ' ref ' + str(transferRef) : ''),
+    summary: ('Konfirmasi transfer masuk ' + str(who) + ' Rp ' + money(amount) + ' (' + refType + ' ' + str(ref) + ') — pastikan dana sudah masuk').slice(0, 1500),
+    payload: JSON.stringify({ ref_type: refType, ref: str(ref), amount: money(amount), bank: str(bank), transfer_ref: str(transferRef), who: str(who) }) });
+  ops.approvals.push(forWrite(a, -1));
+  return a;
+}
 function newApproval(fields) {
   return Object.assign({
     request_id: 'AP' + rand(6), client_id: '', created_at: new Date().toISOString(), cashier: me.name,
@@ -922,6 +932,7 @@ switch (req.action) {
       }), myShift.id));
     }
     ops.sales.push(forWrite(sale, -1));
+    if (c.method === 'transfer' && money(c.paid) > 0) addTransferConfirm('faktur', invoice, c.paid, sale.customer_name, str(data.bank), str(data.transfer_ref));
     c.lines.forEach(function (l) { ops.sale_items.push(forWrite(l, -1)); });
     const stockOut = [];
     Object.keys(c.qtyByProduct).forEach(function (pid) {
@@ -1099,6 +1110,18 @@ switch (req.action) {
     const summary = 'Koreksi harga ' + str(p.name) + ' ' + oldPrice + '→' + newPrice + ': ' + details.length + ' faktur, selisih ' + netDiff + (refundTotal ? ', refund ' + refundTotal : '') + (underTotal ? ', kurang bayar ' + underTotal : '');
     const a = newApproval({ kind: 'koreksi', ref: String(p.id), approver_role: 'owner', status: 'done', decided_by: me.name, decided_at: new Date().toISOString(), total: netDiff, summary: summary.slice(0, 1500), note: str(data.reason), payload: payload });
     ops.approvals.push(forWrite(a, -1));
+    // each money outcome becomes its own actionable record: a refund to pay (overcharge) or a consultation to decide (undercharge)
+    var expiry90 = new Date(Date.now() + 90 * 86400000).toISOString();
+    refunds.forEach(function (rf) {
+      ops.approvals.push(forWrite(newApproval({ kind: 'refund', approver_role: 'manager', ref: rf.invoice_no, total: rf.amount, customer_id: rf.customer_id, customer_name: rf.customer_name,
+        summary: ('Refund ' + rf.customer_name + ' Rp ' + rf.amount + ' (' + (rf.channel === 'cadangan' ? 'cadangan 3 bln' : 'hubungi') + ') — faktur ' + rf.invoice_no).slice(0, 1500),
+        payload: JSON.stringify({ invoice_no: rf.invoice_no, customer_id: rf.customer_id, customer_name: rf.customer_name, phone: rf.phone, amount: rf.amount, channel: rf.channel, has_account: rf.has_account, expiry: rf.channel === 'cadangan' ? expiry90 : '', correction: a.request_id, product_name: str(p.name) }) }), -1));
+    });
+    consults.forEach(function (cs) {
+      ops.approvals.push(forWrite(newApproval({ kind: 'konsultasi', approver_role: 'owner', ref: cs.invoice_no, total: cs.amount, customer_id: cs.customer_id, customer_name: cs.customer_name,
+        summary: ('Musyawarah (kurang bayar) ' + cs.customer_name + ' Rp ' + cs.amount + ' — faktur ' + cs.invoice_no).slice(0, 1500),
+        payload: JSON.stringify({ invoice_no: cs.invoice_no, customer_id: cs.customer_id, customer_name: cs.customer_name, phone: cs.phone, amount: cs.amount, correction: a.request_id, product_name: str(p.name) }) }), -1));
+    });
     logAct('koreksi', summary.slice(0, 1000) + ' | ' + str(data.reason), String(p.id), netDiff, 'warn');
     return done({ ok: true, correction: { request_id: a.request_id, product_name: str(p.name), old_price: oldPrice, new_price: newPrice, invoices: details.length, net_diff: netDiff, refund_total: refundTotal, under_total: underTotal, refunds: refunds, consults: consults, cashiers: Object.keys(cashiers), price_setters: setters }, product: catalog ? productOut(catalog) : undefined });
   }
@@ -1415,6 +1438,59 @@ switch (req.action) {
     return done({ ok: true, approvals: approvalRows.filter(function (a) { return a.status === 'pending'; }).map(approvalOut) });
   }
 
+  case 'list_disputes': {
+    // Open money items from corrections: refunds to pay (overcharge) and consultations to decide (undercharge).
+    if (!canAudit) return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+    var nowMs = Date.now();
+    var dp = approvalRows.filter(function (a) { return (a.kind === 'refund' || a.kind === 'konsultasi') && a.status === 'pending'; }).map(function (a) {
+      var pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+      var expired = pl.expiry && Date.parse(pl.expiry) < nowMs;
+      return { request_id: a.request_id, kind: a.kind, at: str(a.created_at), amount: money(a.total), customer_name: str(a.customer_name), summary: str(a.summary), can_decide: canDecide(a), expired: !!expired, payload: pl };
+    }).sort(function (x, y) { return String(x.at).localeCompare(String(y.at)); });
+    return done({ ok: true, disputes: dp });
+  }
+
+  case 'decide_refund': {
+    // Pay a refund (overcharge). A walk-in reserve (cadangan) refund needs a photo of the returned invoice to verify.
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    const a = approvalById(String(data.request_id || ''));
+    if (!a || a.kind !== 'refund') return fail('NOT_FOUND', 'Permintaan refund tidak ditemukan');
+    if (a.status !== 'pending') return fail('INVALID', 'Sudah diputuskan: ' + a.status);
+    if (!canDecide(a)) return fail('NEEDS_OWNER', 'Butuh persetujuan pemilik');
+    let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+    const act = data.decision === 'release' ? 'release' : 'paid';
+    if (act === 'paid') {
+      if (pl.channel === 'cadangan' && !str(data.photo_id)) return fail('PHOTO_REQUIRED', 'Cadangan: foto faktur pelanggan dulu untuk verifikasi');
+      ops.approvals.push(forWrite(Object.assign({}, a, { status: 'approved', decided_by: me.name, decided_at: new Date().toISOString(), note: 'refund dibayar' + (str(data.photo_id) ? ' (foto ' + str(data.photo_id).slice(0, 40) + ')' : '') }), a.id));
+      logAct('refund_bayar', 'Refund DIBAYAR ' + str(a.customer_name) + ' Rp ' + money(a.total) + ' (faktur ' + str(pl.invoice_no) + ')' + (str(data.photo_id) ? ' — terverifikasi foto' : ''), str(a.ref), money(a.total), 'warn');
+      return done({ ok: true, approval: approvalOut(Object.assign({}, a, { status: 'approved' })) });
+    }
+    if (pl.channel === 'cadangan' && pl.expiry && Date.parse(pl.expiry) > Date.now()) return fail('INVALID', 'Belum lewat 3 bulan — belum bisa dilepas');
+    ops.approvals.push(forWrite(Object.assign({}, a, { status: 'released', decided_by: me.name, decided_at: new Date().toISOString(), note: str(data.note) || 'dana dilepas (3 bln lewat)' }), a.id));
+    logAct('refund_lepas', 'Cadangan refund DILEPAS ' + str(a.customer_name) + ' Rp ' + money(a.total) + ' (3 bln lewat, jadi pemasukan)', str(a.ref), money(a.total), 'info');
+    return done({ ok: true, released: true });
+  }
+
+  case 'decide_consult': {
+    // The manager+owner consultation on an undercharge: collect from the customer, write it off, or take the goods back.
+    if (role !== 'owner') return fail('NEEDS_OWNER', 'Keputusan musyawarah oleh pemilik');
+    const a = approvalById(String(data.request_id || ''));
+    if (!a || a.kind !== 'konsultasi') return fail('NOT_FOUND', 'Musyawarah tidak ditemukan');
+    if (a.status !== 'pending') return fail('INVALID', 'Sudah diputuskan: ' + a.status);
+    let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+    const dec = ['collect', 'writeoff', 'return'].indexOf(data.decision) >= 0 ? data.decision : '';
+    if (!dec) return fail('INVALID', 'Pilih: collect / writeoff / return');
+    let extra = '';
+    if (dec === 'collect') {
+      const cust = Number(pl.customer_id) > 0 ? customerById[String(pl.customer_id)] : null;
+      if (cust) { ops.customers.push(forWrite(Object.assign({}, cust, { debt_balance: money(cust.debt_balance) + money(a.total) }), cust.id)); extra = ' (ditambah ke hutang ' + str(cust.name) + ')'; }
+      else extra = ' (pelanggan umum — hubungi ' + (str(pl.phone) || 'tanpa nomor') + ')';
+    }
+    ops.approvals.push(forWrite(Object.assign({}, a, { status: dec === 'collect' ? 'approved' : (dec === 'writeoff' ? 'rejected' : 'used'), decided_by: me.name, decided_at: new Date().toISOString(), note: (dec + (str(data.note) ? ': ' + str(data.note) : '')).slice(0, 500) }), a.id));
+    logAct('musyawarah', 'Musyawarah kurang bayar ' + str(a.customer_name) + ' Rp ' + money(a.total) + ' → ' + (dec === 'collect' ? 'tagih' : dec === 'writeoff' ? 'direlakan (rugi)' : 'barang dikembalikan') + extra, str(a.ref), money(a.total), 'warn');
+    return done({ ok: true, decision: dec });
+  }
+
   case 'list_corrections': {
     // Errors section: every price correction, who is responsible, the money impact.
     if (!canAudit) return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
@@ -1453,6 +1529,11 @@ switch (req.action) {
       if (!pf.found) return fail('INVALID', 'Kirim purchase_no barang masuk yang dikoreksi');
       out.stock = applyPurchaseFix(no, pf.changes, str(pl.reason) + ' (diminta ' + str(a.cashier) + ', disetujui ' + me.name + ')', me.name);
       finalStatus = 'used';
+    }
+    if (a.kind === 'transfer_confirm') {
+      // The manager confirms the transfer really landed (or flags it as not received).
+      finalStatus = decision === 'approved' ? 'used' : 'rejected';
+      logAct(decision === 'approved' ? 'transfer_ok' : 'transfer_gagal', (decision === 'approved' ? 'Transfer masuk DIKONFIRMASI oleh ' + me.name : 'Transfer TIDAK diterima — ' + me.name + (str(data.note) ? ': ' + str(data.note) : '')) + ' | ' + str(a.summary), str(a.ref), money(a.total), decision === 'approved' ? 'info' : 'warn');
     }
     if (decision === 'approved' && a.kind === 'price') {
       const p = productById[String(a.ref)];
@@ -1717,6 +1798,7 @@ switch (req.action) {
     };
     ops.payments.push(forWrite(pay, -1));
     ops.customers.push(forWrite(nc, c.id));
+    if (pay.method === 'transfer') addTransferConfirm('pembayaran', pay.pay_id, amount, str(c.name), pay.bank, pay.transfer_ref);
     if (myShift && pay.method === 'tunai') {
       ops.shifts.push(forWrite(Object.assign({}, myShift, { cash_payments: money(myShift.cash_payments) + amount }), myShift.id));
     }
@@ -1890,6 +1972,12 @@ switch (req.action) {
       expected_total: sumOf(shifts, function (x) { return x.expected_cash; }), counted_total: sumOf(shifts.filter(function (x) { return x.status === 'closed'; }), function (x) { return x.counted_cash; }),
       difference_total: sumOf(shifts.filter(function (x) { return x.status === 'closed'; }), function (x) { return x.difference; }) };
     if (role === 'owner') rep.profit = sumOf(okSales, function (x) { return money(x.profit); });
+    // v20 price corrections impact on this day (loss/gain): net re-pricing, refunds paid out, and undercharges written off.
+    var wibDayOf = function (iso) { return iso ? new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(0, 10) : ''; };
+    var corrDay = approvalRows.filter(function (a) { return a.kind === 'koreksi' && wibDayOf(a.decided_at) === day; });
+    var refPaid = approvalRows.filter(function (a) { return a.kind === 'refund' && a.status === 'approved' && wibDayOf(a.decided_at) === day; });
+    var wrOff = approvalRows.filter(function (a) { return a.kind === 'konsultasi' && a.status === 'rejected' && wibDayOf(a.decided_at) === day; });
+    rep.corrections = { count: corrDay.length, net: sumOf(corrDay, function (x) { return money(x.total); }), refund_paid: sumOf(refPaid, function (x) { return money(x.total); }), writeoff: sumOf(wrOff, function (x) { return money(x.total); }) };
     const st = readSettings();
     const rets = rows('Get Range Returns').filter(function (x) { return x.status === 'approved'; });
     const custRets = rets.filter(function (x) { return x.kind !== 'pemasok'; });
