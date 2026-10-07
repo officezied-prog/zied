@@ -1,5 +1,5 @@
 // Shared helpers for the Khair Sales e2e tests (mock backend, ?mock=1, mocked geolocation).
-// Network independence: cdnjs (Leaflet), OSM tiles and wa.me are blocked in every test → the map
+// Network independence: Leaflet (vendor/leaflet; cdnjs before v17), OSM tiles and wa.me are blocked in every test → the map
 // falls back to the SVG plot.
 const base = require('@playwright/test');
 const { expect } = base;
@@ -9,7 +9,7 @@ const NF = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
 const rp = n => (Math.round(n) < 0 ? '-Rp ' : 'Rp ') + NF.format(Math.abs(Math.round(n)));
 const SHOTS = path.join(__dirname, 'screenshots');
 const shot = async (page, name, full = false) => { await page.waitForTimeout(350); return page.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: full }); };
-const BLOCK = /cdnjs\.cloudflare\.com|tile\.openstreetmap\.org|wa\.me|google\.com/;
+const BLOCK = /cdnjs\.cloudflare\.com|\/vendor\/leaflet\/|tile\.openstreetmap\.org|wa\.me|google\.com/;
 
 const test = base.test.extend({
   context: async ({ context }, use) => {

@@ -1,12 +1,12 @@
 /* Khair Sales — offline shell cache for the field-sales app (scope ./ = khair-pos/sales/).
-   Network-first for the app files (+ the shared shop-type list, the shared mock script and the Leaflet files from cdnjs),
+   Network-first for the app files (+ the shared shop-type list, the shared mock script and Leaflet from ../vendor/leaflet),
    cache fallback when offline. API calls (POST to n8n) and map tiles are never cached here.
    Only old "khair-sales-*" caches are removed on activate. */
-const CACHE = 'khair-sales-v2';
-const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', '../shared/shop-types.js', '../shared/field-mock.js'];
-const LEAFLET = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
+const CACHE = 'khair-sales-v3';
+const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', '../shared/shop-types.js', '../shared/field-mock.js', '../vendor/leaflet/leaflet.js', '../vendor/leaflet/leaflet.css'];
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(() => {}));
+  // one file at a time: a file that cannot be fetched (e.g. the map library) must not leave the whole shell uncached
+  e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(u).catch(() => {})))).catch(() => {}));
   self.skipWaiting();
 });
 self.addEventListener('activate', e => {
@@ -17,8 +17,8 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   const scope = new URL('./', self.registration.scope).pathname;
-  const mine = url.origin === self.location.origin && (url.pathname.startsWith(scope) || /\/shared\/(field-mock|shop-types)\.js$/.test(url.pathname));
-  if (!mine && !req.url.startsWith(LEAFLET)) return;
+  const mine = url.origin === self.location.origin && (url.pathname.startsWith(scope) || /\/shared\/(field-mock|shop-types)\.js$/.test(url.pathname) || /\/vendor\/leaflet\//.test(url.pathname));
+  if (!mine) return;
   e.respondWith(
     fetch(req).then(res => {
       if (res && (res.ok || res.type === 'opaque')) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {}); }
