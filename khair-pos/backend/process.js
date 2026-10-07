@@ -54,8 +54,10 @@ function forWrite(r, id) {
   return o;
 }
 const COST_FIELDS = ['cost_price', 'total_cost', 'profit', 'line_profit'];
+// The accountant sees purchase prices only when the owner allows it (settings.akuntan_sees_cost); profit stays owner-only.
 function strip(r, role) {
   const o = clean(r);
+  if (role === 'akuntan' && readSettings().akuntan_sees_cost === true) { delete o.profit; delete o.line_profit; return o; }
   if (role !== 'owner') COST_FIELDS.forEach(function (f) { delete o[f]; });
   return o;
 }
@@ -104,9 +106,13 @@ if ((num(me.fail_count) > 0 || str(me.locked_until)) && ['change_pin', 'set_mast
 if (me.must_change === true && !viaMaster && ['login', 'change_pin', 'users', 'device_ping'].indexOf(req.action) < 0) {
   return fail('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
 }
-const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' : (me.role === 'sales' ? 'sales' : 'kasir'));
+const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' : (me.role === 'sales' ? 'sales' : (me.role === 'akuntan' ? 'akuntan' : 'kasir')));
+// v17 accountant: reads goods in/out, invoices, payments, returns, ledgers and reports; never sells or changes anything.
+const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval'];
+if (role === 'akuntan' && AKUNTAN_READ.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
 if (role === 'sales' && ['login', 'bootstrap', 'device_ping', 'change_pin'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
 const isApprover = role === 'owner' || role === 'manager';
+const canAudit = isApprover || role === 'akuntan';
 function findApprover(name, hash) {
   const u = activeUsers.find(function (x) { return str(x.name).toLowerCase() === str(name).toLowerCase(); });
   if (!u || u.pin_hash !== hash || (u.role !== 'owner' && u.role !== 'manager')) return null;
@@ -173,7 +179,9 @@ const DEFAULT_SETTINGS = {
   store_lat: 0,
   store_lng: 0,
   require_device_location: false,
-  bank_accounts: []
+  bank_accounts: [],
+  invoice_due_days: 14,
+  akuntan_sees_cost: false
 };
 const settingRows = rows('Get Settings');
 const approvalRows = rows('Get Approvals');
@@ -390,7 +398,7 @@ function returnOut(r) {
   const o = clean(r);
   if (typeof o.lines === 'string') { try { o.lines = JSON.parse(o.lines); } catch (e) { o.lines = []; } }
   if (role === 'kasir' && o.kind === 'pemasok') return null;
-  if (role !== 'owner' && o.kind === 'pemasok') { delete o.value; delete o.refund; (o.lines || []).forEach(function (l) { delete l.unit_price; delete l.value; }); }
+  if (role !== 'owner' && !(role === 'akuntan' && readSettings().akuntan_sees_cost === true) && o.kind === 'pemasok') { delete o.value; delete o.refund; (o.lines || []).forEach(function (l) { delete l.unit_price; delete l.value; }); }
   return o;
 }
 function isEmail(v) { return /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[a-z]{2,}$/i.test(v) && v.length <= 120; }
@@ -1264,7 +1272,7 @@ switch (req.action) {
   }
 
   case 'list_returns': {
-    if (!isApprover && role !== 'kasir') return fail('FORBIDDEN', 'Tidak diizinkan');
+    if (!canAudit && role !== 'kasir') return fail('FORBIDDEN', 'Tidak diizinkan');
     const done1 = rows('Get Range Returns').map(returnOut).filter(Boolean);
     const pending = approvalRows.filter(function (a) { return a.kind === 'retur' && a.status === 'pending'; }).map(function (a) {
       let pl = {};
@@ -1671,7 +1679,7 @@ switch (req.action) {
   }
 
   case 'bank_recon': {
-    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    if (!canAudit) return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
     const acc = bankAccounts().find(function (x) { return str(x.id) === str(data.account_id); });
     if (!acc) return fail('INVALID', 'Pilih rekening bank toko');
     const period = str(data.period);
@@ -1703,7 +1711,7 @@ switch (req.action) {
 
   case 'daily_report': {
     // One day in numbers: sales by payment method, what went to the bank, payments, expenses and every cash drawer.
-    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    if (!canAudit) return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
     if (!isDate(data.date)) return fail('INVALID', 'Tanggal tidak valid');
     const day = data.date;
     const allSales = rows('Get Range Sales').filter(function (x) { return x.sale_date === day; });
@@ -1759,7 +1767,7 @@ switch (req.action) {
 
   case 'party_ledger': {
     const pt = data.party_type === 'supplier' ? 'supplier' : 'customer';
-    if (pt === 'supplier' && !isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    if (pt === 'supplier' && !canAudit) return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
     let key, balance;
     if (pt === 'customer') {
       const c = customerById[String(data.customer_id)];
@@ -1890,12 +1898,18 @@ switch (req.action) {
 
   case 'save_settings': {
     const incoming = data.settings && typeof data.settings === 'object' ? data.settings : {};
-    const allowed = ['store_name', 'address', 'phone', 'receipt_footer', 'paper', 'survey_questions', 'survey_auto', 'auto_lock_minutes', 'language', 'exit_photo_min_total', 'exit_photo_min_qty', 'require_purchase_photo', 'require_shift', 'wa_shop_number', 'wa_manager_number', 'wa_owner_number', 'report_time', 'max_discount_pct', 'receipt_send_fee', 'sell_from_shop_only', 'return_owner_min_value', 'return_owner_min_qty', 'return_fee_pct', 'require_return_photo', 'require_carrier', 'member_enabled', 'member_tiers', 'survey_voice', 'store_lat', 'store_lng', 'require_device_location', 'bank_accounts'];
+    const allowed = ['store_name', 'address', 'phone', 'receipt_footer', 'paper', 'survey_questions', 'survey_auto', 'auto_lock_minutes', 'language', 'exit_photo_min_total', 'exit_photo_min_qty', 'require_purchase_photo', 'require_shift', 'wa_shop_number', 'wa_manager_number', 'wa_owner_number', 'report_time', 'max_discount_pct', 'receipt_send_fee', 'sell_from_shop_only', 'return_owner_min_value', 'return_owner_min_qty', 'return_fee_pct', 'require_return_photo', 'require_carrier', 'member_enabled', 'member_tiers', 'survey_voice', 'store_lat', 'store_lng', 'require_device_location', 'bank_accounts', 'invoice_due_days', 'akuntan_sees_cost'];
     const byKey = {};
     settingRows.forEach(function (r) { byKey[r.skey] = r; });
     if (AGREED_KEYS.some(function (k) { return incoming[k] !== undefined && JSON.stringify(incoming[k]) !== JSON.stringify(readSettings()[k]); })) {
       return fail('AGREEMENT_REQUIRED', 'Batas retur diubah lewat kesepakatan pemilik dan manajer (propose_agreement)');
     }
+    if (incoming.invoice_due_days !== undefined) {
+      const dd = Math.round(num(incoming.invoice_due_days));
+      if (!(dd >= 0 && dd <= 120)) return fail('INVALID', 'Jatuh tempo faktur 0–120 hari');
+      incoming.invoice_due_days = dd;
+    }
+    if (incoming.akuntan_sees_cost !== undefined) incoming.akuntan_sees_cost = incoming.akuntan_sees_cost === true;
     allowed.forEach(function (k) {
       if (incoming[k] === undefined) return;
       ops.settings.push({ _id: byKey[k] ? byKey[k].id : -1, skey: k, svalue: JSON.stringify(incoming[k]) });
@@ -1910,7 +1924,7 @@ switch (req.action) {
   case 'save_user': {
     const name = personName(data.name);
     if (!name) return fail('INVALID', str(data.name) ? 'Nama pengguna hanya boleh huruf, spasi dan . \' -' : 'Nama wajib');
-    const newRole = ['owner', 'manager', 'sales'].indexOf(data.role) >= 0 ? data.role : 'kasir';
+    const newRole = ['owner', 'manager', 'sales', 'akuntan'].indexOf(data.role) >= 0 ? data.role : 'kasir';
     const ex = users.find(function (u) { return str(u.name).toLowerCase() === name.toLowerCase(); });
     const active = data.active !== false;
     // Another person takes this account / role (new name): needs a new PIN made with the new name (hash includes it).
