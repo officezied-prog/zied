@@ -2515,7 +2515,7 @@ const RENDER = {};
 function renderShell() {
   $('#tabs').innerHTML = TABS.map(v => `<button class="tab ${S.view === v.id ? 'on' : ''}" id="tab-${v.id}" data-act="tab" data-v="${v.id}" ${S.view === v.id ? 'aria-current="page"' : ''}>${ic(v.icon)}<span>${esc(t(v.label))}</span>${v.id === 'more' && myPendingCount() ? `<b class="dot">${myPendingCount()}</b>` : ''}</button>`).join('');
   $('#tb-store').textContent = settings().store_name || 'Khair Mart';
-  $('#tb-user').textContent = `${t('role.' + S.role)} · ${S.user}`;
+  $('#tb-user').textContent = S.user;
   $('#tb-demo').hidden = !MOCK;
   $('#tb-master').hidden = !S.viaMaster; $('#tb-master').textContent = t('login.via_master');
   updateApprovalBadge();
@@ -2576,7 +2576,7 @@ function renderLogin() {
   } else if (L.step === 'users') {
     const list = L.users.slice().sort((a, b) => (ROLE_ORDER[a.role] ?? 3) - (ROLE_ORDER[b.role] ?? 3) || a.name.localeCompare(b.name));
     inner = `<h2>${esc(t('login.who'))}</h2>
-      <div class="users" id="users">${list.length ? list.map(u => `<button data-act="login-user" data-name="${esc(u.name)}"><span>${esc(t('role.' + u.role))} ·</span> ${esc(u.name)}</button>`).join('') : `<div class="muted center" style="grid-column:1/-1">${esc(t('loading'))}</div>`}</div>
+      <div class="users" id="users">${list.length ? list.map(u => `<button data-act="login-user" data-name="${esc(u.name)}">${esc(u.name)}</button>`).join('') : `<div class="muted center" style="grid-column:1/-1">${esc(t('loading'))}</div>`}</div>
       <div class="err" role="alert">${esc(L.err)}</div>
       <div class="center"><button class="btn ghost sm" data-act="login-change-key">${esc(t('login.change_key'))} (${esc(maskKey(S.key))})</button></div>`;
   } else if (L.step === 'newpin' && L.np) {
@@ -3872,7 +3872,7 @@ function drawOnSite(el) {
   const body = $('#ap-body', el);
   let sel = list.length === 1 ? list[0].name : '';
   body.innerHTML = `<label class="f">${esc(t('apr.choose'))}</label>
-    <div class="picker" id="ap-users">${list.map(u => `<button type="button" data-n="${esc(u.name)}" class="${sel === u.name ? 'on' : ''}">${esc(u.name)} <span class="small">(${esc(t('role.' + u.role))})</span></button>`).join('') || `<span class="red">${esc(t('apr.no_approver'))}</span>`}</div>
+    <div class="picker" id="ap-users">${list.map(u => `<button type="button" data-n="${esc(u.name)}" class="${sel === u.name ? 'on' : ''}">${esc(u.name)}</button>`).join('') || `<span class="red">${esc(t('apr.no_approver'))}</span>`}</div>
     <label class="f" for="ap-pin">${esc(t('apr.pin_of'))}</label>
     <input class="input num" data-rule="pin" id="ap-pin" type="password" inputmode="numeric" maxlength="6" autocomplete="off" style="font-size:24px;text-align:center;letter-spacing:8px">
     <div class="pinpad" style="margin-top:10px">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button type="button" data-k="${n}">${n}</button>`).join('')}<button type="button" data-k="del" aria-label="${esc(t('delete'))}">⌫</button><button type="button" data-k="0">0</button><button type="button" class="ok" data-k="ok" id="ap-ok">${esc(t('apr.approve_save'))}</button></div>

@@ -66,6 +66,11 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   The client part (owner app role, read-only views, settings panel "Faktur & akuntan") is on main.
 - Settings stored 07 Oct: wa_shop_number 6285810454694, wa_owner_number 6281322091202, wa_manager_number 6281190008090.
   Shop hours 08:00–21:00; from two months before Ramadan to Eid 08:00–23:00 (season in Absensi → Jam kerja, not set yet).
+- 07 Oct, owner's decision: names only, no role words next to people (login screens, top bars, approvers, activity/devices)
+  in all three apps; role pickers in Settings → Users stay. The owner has his own link
+  https://officezied-prog.github.io/zied/khair-pos/zied/ — it marks the device (localStorage `kpos.owner_device`) and opens
+  the owner app; on other devices the owner's name is not listed on the login screen (unless no other user exists, demo mode,
+  or the locked session is his). This is display only; the server checks PIN and role as before.
 - Owner's request still open: cold-storage date warehouses (pallets/containers, daily WhatsApp stock check, pick orders,
   truck call) — waits for the owner's samples.
 

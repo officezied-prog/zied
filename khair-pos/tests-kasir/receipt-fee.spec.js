@@ -10,10 +10,10 @@ test.use(H.PHONE);
 test('new customer: number at payment, first receipt free; next time "+Rp 500" toggle with the fee on the bill, total and change', async ({ page }) => {
   await H.openKasir(page);
   await H.enterKey(page);
-  await expect(page.locator('[data-act="login-user"][data-name="Jihan"]')).toHaveText('Manajer · Jihan');
-  await expect(page.locator('[data-act="login-user"][data-name="Siti"]')).toHaveText('Kasir · Siti');
+  await expect(page.locator('[data-act="login-user"][data-name="Jihan"]')).toHaveText('Jihan');
+  await expect(page.locator('[data-act="login-user"][data-name="Siti"]')).toHaveText('Siti');
   await H.login(page, 'Siti', '1111', { noGoto: true });
-  await expect(page.locator('#tb-user')).toHaveText('Kasir · Siti');
+  await expect(page.locator('#tb-user')).toHaveText('Siti');
   const tas = H.productByName(await H.getDb(page), /Tasbih/), price = tas.retail_price;
 
   await H.addItem(page, 'tasbih');
@@ -104,6 +104,6 @@ test('server rules (mock mirrors): sending needs a customer; the fee is not coun
   await page.click('#rs-toggle');
   await expect(page.locator('#pay-sendfee')).toContainText('رسوم إرسال الإيصال');
   await expect(page.locator('#pay-total')).toHaveText(H.rp(price + 500));
-  await expect(page.locator('#tb-user')).toHaveText(/ · /);
+  await expect(page.locator('#tb-user')).toHaveText('Siti');
   await H.shot(page, 'phone-65-receipt-fee-ar', false, { noToasts: true });
 });

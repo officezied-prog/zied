@@ -104,8 +104,8 @@ test('users grouped by role (Akuntan: belum ditentukan); "Ganti orang" → new n
   await page.click('#tb-lock');
   await page.evaluate(() => { localStorage.removeItem('kpos.mock.users_demo'); });
   await page.reload();
-  await expect(page.locator('[data-act="login-user"][data-name="Nuraini"]')).toHaveText('Manajer · Nuraini');
-  await expect(page.locator('[data-act="login-user"][data-name="Pemilik"]')).toHaveText('Pemilik · Pemilik');
+  await expect(page.locator('[data-act="login-user"][data-name="Nuraini"]')).toHaveText('Nuraini');
+  await expect(page.locator('[data-act="login-user"][data-name="Pemilik"]')).toHaveText('Pemilik');
   await page.screenshot({ path: path.join(SHOTS, 'desktop-login-role-titles.png') });
   await page.click('[data-act="login-user"][data-name="Nuraini"]');
   await typePin(page, '135791');

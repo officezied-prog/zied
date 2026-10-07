@@ -19,6 +19,7 @@ function jktToday(offsetDays = 0) {
 async function openApp(page, query = '', opts = {}) {
   const consent = opts.consent === undefined ? 'no' : opts.consent;
   if (consent && !page.__consentInit) { page.__consentInit = true; await page.addInitScript(c => { try { if (!localStorage.getItem('kpos.loc_consent')) localStorage.setItem('kpos.loc_consent', c); } catch (e) { } }, consent); }
+  if (opts.ownerDevice !== false && !page.__ownerInit) { page.__ownerInit = true; await page.addInitScript(() => { try { localStorage.setItem('kpos.mock.owner_device', 'true'); } catch (e) { } }); }
   await page.goto('index.html?mock=1' + query);
   await expect(page.locator('#login')).toBeVisible();
 }
