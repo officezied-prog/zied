@@ -59,7 +59,10 @@ test('login: wrong PIN is rejected, keyboard PIN entry works, bad store key is r
   await expect(page.locator('#shift-open')).toHaveCount(0);
   // manager has no owner-only panels
   await page.click('#nav [data-view="settings"]');
-  await expect(page.locator('#st-users')).toHaveCount(0);
+  // v18: the manager manages staff accounts only — groups kasir / sales / akuntan, roles offered: those three
+  await expect(page.locator('#st-users [data-role-group]')).toHaveCount(3);
+  await expect(page.locator('#st-users [data-role-group="owner"], #st-users [data-role-group="manager"]')).toHaveCount(0);
+  expect(await page.locator('#nu-role option').evaluateAll(o => o.map(x => x.value))).toEqual(['pekerja', 'kasir', 'sales', 'akuntan']);
   await expect(page.locator('#st-outbox')).toBeVisible();
   await expect(page.locator('#st-kasir-app')).toHaveAttribute('href', './kasir/?mock=1');
 });
@@ -114,4 +117,37 @@ test('owner app lists only the owner; staff log in once in Khair Kasir and go on
   await expect(page).toHaveURL(/\/index\.html\?mock=1$/);
   await expect(page.locator('#tb-user')).toHaveText('Jihan');
   await expect(page.locator('#nav [data-view="absensi"], #more-list [data-view="absensi"]').first()).toBeAttached();
+});
+
+test('manager adds a new cashier with a temporary PIN; the server refuses a manager or owner account', async ({ page }) => {
+  await login(page, 'Jihan', '2222', '', { stay: true });
+  await page.click('#nav [data-view="settings"]');
+  await page.fill('#nu-name', 'Budi Kasir');
+  await page.selectOption('#nu-role', 'kasir');
+  await page.fill('#nu-pin', '4321');
+  await page.fill('#nu-pin2', '4321');
+  await page.click('[data-act="user-add"]');
+  await expect(page.locator('#st-temp-pin')).toContainText('Budi Kasir');
+  await expect(page.locator('#st-users [data-role-group="kasir"] tr').filter({ hasText: 'Budi Kasir' })).toBeVisible();
+  const db = await getDb(page);
+  expect(db.users.find(u => u.name === 'Budi Kasir')).toMatchObject({ role: 'kasir', must_change: true });
+  expect(db.activity.filter(a => a.kind === 'pengguna').slice(-1)[0]).toMatchObject({ user: 'Jihan', level: 'warn' });
+  for (const role of ['manager', 'owner']) {
+    const r = await page.evaluate(async ([ro, h]) => { try { await api('save_user', { name: 'X Y', role: ro, pin_hash: h }); return 'ok'; } catch (e) { return e.code; } }, [role, sha('demo:x y:4321')]);
+    expect(r).toBe('FORBIDDEN');
+  }
+  const r2 = await page.evaluate(async () => { try { await api('save_user', { name: 'Pemilik', role: 'kasir', active: false }); return 'ok'; } catch (e) { return e.code; } });
+  expect(r2).toBe('FORBIDDEN');
+});
+
+test('first job choice "Pekerja harian": no account, the attendance worker form opens with the name', async ({ page }) => {
+  await login(page, 'Jihan', '2222', '', { stay: true });
+  await page.click('#nav [data-view="settings"]');
+  await expect(page.locator('#nu-role')).toHaveValue('pekerja');
+  await page.fill('#nu-name', 'Joko Angkut');
+  await page.click('[data-act="user-add"]');
+  await expect(page.locator('#view-absensi')).toBeVisible();
+  await expect(page.locator('#att-editor #aw-name')).toHaveValue('Joko Angkut');
+  await expect(page.locator('#att-editor #aw-wage')).toHaveCount(0); // wages are the owner's
+  expect((await getDb(page)).users.some(u => u.name === 'Joko Angkut')).toBe(false);
 });

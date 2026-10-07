@@ -133,7 +133,9 @@ function addMove(x, type, amount, note) {
   mv.push({ t: new Date().toISOString(), type: type, amount: amount, note: note, by: me.name });
   x.moves = JSON.stringify(mv.slice(-100));
 }
-const OWNER_ONLY = ['void_sale', 'save_product', 'import_products', 'stock_adjust', 'save_settings', 'save_user', 'list_devices', 'list_activity'];
+const OWNER_ONLY = ['void_sale', 'save_product', 'import_products', 'stock_adjust', 'save_settings', 'list_devices', 'list_activity'];
+// v18 (owner's decision 07 Oct): save_user is the owner's, or a manager's for staff accounts only (checked in the action)
+const STAFF_ROLES = ['kasir', 'sales', 'akuntan'];
 if (OWNER_ONLY.indexOf(req.action) >= 0 && role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik');
 
 const products = rows('Get Products');
@@ -1922,6 +1924,11 @@ switch (req.action) {
   }
 
   case 'save_user': {
+    if (role !== 'owner') {
+      if (role !== 'manager') return fail('FORBIDDEN', 'Hanya untuk pemilik');
+      const t0 = users.find(function (u) { return str(u.name).toLowerCase() === str(data.name).trim().toLowerCase(); });
+      if (STAFF_ROLES.indexOf(data.role) < 0 || (t0 && STAFF_ROLES.indexOf(t0.role) < 0)) return fail('FORBIDDEN', 'Manajer hanya mengatur akun kasir, sales dan akuntan');
+    }
     const name = personName(data.name);
     if (!name) return fail('INVALID', str(data.name) ? 'Nama pengguna hanya boleh huruf, spasi dan . \' -' : 'Nama wajib');
     const newRole = ['owner', 'manager', 'sales', 'akuntan'].indexOf(data.role) >= 0 ? data.role : 'kasir';
