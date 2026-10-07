@@ -24,7 +24,7 @@ let r;
 const ok = (tag, r) => console.log(tag, r.response.ok ? 'ok' : r.response.error, r.ops && r.ops.users ? r.ops.users.map(u => u.name + ':' + u.role + (u.must_change ? ':must' : '')).join(',') : '');
 ok('M1 manager adds kasir', run(base('save_user', 'Jihan', '2222', { name: 'Budi', role: 'kasir', pin_hash: h('Budi', '4321') }), db));
 ok('M2 manager adds sales', run(base('save_user', 'Jihan', '2222', { name: 'Wahyu', role: 'sales', pin_hash: h('Wahyu', '4321') }), db));
-ok('M3 manager adds akuntan', run(base('save_user', 'Jihan', '2222', { name: 'Rina', role: 'akuntan', pin_hash: h('Rina', '4321') }), db));
+r = run(base('save_user', 'Jihan', '2222', { name: 'Rina', role: 'akuntan', pin_hash: h('Rina', '4321') }), db); console.log('M3 manager adds akuntan (now refused)', r.response.error);
 ok('M4 manager resets Siti PIN', run(base('save_user', 'Jihan', '2222', { name: 'Siti', role: 'kasir', pin_hash: h('Siti', '9876'), active: true }), db));
 ok('M5 manager deactivates Siti', run(base('save_user', 'Jihan', '2222', { name: 'Siti', role: 'kasir', active: false }), db));
 ok('M6 manager makes a manager (refused)', run(base('save_user', 'Jihan', '2222', { name: 'Budi', role: 'manager', pin_hash: h('Budi', '4321') }), db));

@@ -716,6 +716,7 @@ async function api(action, data, opts) {
   } catch (e) {
     if (e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_USERS' || e.code === 'LOCKED') forceRelogin(e);
     if (e.code === 'PIN_CHANGE_REQUIRED' && S.inApp && S.pin_hash) askNewPin(S.user, S.role, S.pin_hash, S.viaMaster);
+    if ((e.code === 'TAMPER' || e.code === 'TAMPER_LOCKED') && !isOwner() && typeof tamperLockUI === 'function') tamperLockUI();
     throw e;
   }
 }
@@ -1184,6 +1185,19 @@ const MockServer = (() => {
   /* ---- v16 returns (retur), who brought the goods (carrier) and strict text fields — as on the server ---- */
   // Everything the apps send is plain text: control / direction-override characters and < > (and tags) are removed,
   // __proto__ / constructor / prototype keys are dropped, strings are cut at 4000 characters.
+  const CODE_RUN = /[<>{}\[\];`$\\|=]{3,}/, CODE_TOK = /<\s*\/?\s*script\b|<\/[a-z]|javascript:|\$\{|=>|\beval\s*\(|\bfunction\s*\(|\b(?:document|window|globalThis|self)\s*\.\s*[a-z_$]|\brequire\s*\(|\bimport\s*\(/i;
+  function scanCodeAttempt(o, depth) {
+    if (!o || typeof o !== 'object' || (depth || 0) > 6) return '';
+    let hit = '';
+    Object.keys(o).some(k => {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') return false;
+      const v = o[k];
+      if (typeof v === 'string') { if (CODE_RUN.test(v) || CODE_TOK.test(v)) { hit = v.slice(0, 60); return true; } }
+      else if (v && typeof v === 'object') { hit = scanCodeAttempt(v, (depth || 0) + 1); if (hit) return true; }
+      return false;
+    });
+    return hit;
+  }
   function cleanInput(o, depth) {
     if (!o || typeof o !== 'object' || depth > 6) return;
     Object.keys(o).forEach(k => {
@@ -1267,6 +1281,13 @@ const MockServer = (() => {
     if (action !== 'device_ping') deviceTouch(db, u, data.device, false);
     const owner = u.role === 'owner';
     const needOwner = () => { if (!owner) throw E('FORBIDDEN', 'Owner only'); };
+    // v19 anti-tamper: a clear code attempt locks a non-owner account (only the owner opens it, from the owner app).
+    const lockedSet = () => Array.isArray(db.settings.locked_accounts) ? db.settings.locked_accounts.map(x => String(x).toLowerCase()) : [];
+    const isLockedAcct = n => lockedSet().indexOf(String(n).trim().toLowerCase()) >= 0;
+    const codeHit = body.__codeHit || '';
+    if (codeHit && !owner) { if (!isLockedAcct(u.name)) db.settings.locked_accounts = lockedSet().concat([u.name.toLowerCase()]); logAct(db, u, 'tamper', 'Percobaan menulis kode — akun dikunci: "' + codeHit + '" (aksi ' + action + ')', u.name, 0, 'danger'); const er = E('TAMPER', 'Input tidak sah. Akun dikunci, hanya pemilik yang membuka.'); er.extra = { locked: true }; throw er; }
+    if (codeHit && owner) { logAct(db, u, 'tamper', 'Input ditolak (karakter kode): "' + codeHit + '" (aksi ' + action + ')', u.name, 0, 'warn'); dirty = true; throw E('INVALID', 'Input tidak sah (karakter kode tidak diperbolehkan)'); }
+    if (!owner && isLockedAcct(u.name) && !['login', 'users', 'device_ping', 'change_pin', 'report_tamper'].includes(action)) { const er = E('TAMPER_LOCKED', 'Akun dikunci setelah percobaan tidak sah. Hanya pemilik yang membuka.'); er.extra = { locked: true }; throw er; }
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
 
@@ -1276,7 +1297,12 @@ const MockServer = (() => {
         return window.KAttMock.handle(db, u, action, data, E);
       case 'login':
         if (viaMaster) logAct(db, u, 'masuk_master', 'Masuk ke akun ' + u.name + ' (' + u.role + ') dengan kode pemilik', u.name, 0, 'warn');
-        return { user: { name: u.name, role: u.role }, must_change: u.must_change === true && !viaMaster, via_master: viaMaster };
+        return { user: { name: u.name, role: u.role }, must_change: u.must_change === true && !viaMaster, via_master: viaMaster, tamper_locked: u.role !== 'owner' && isLockedAcct(u.name) };
+      case 'report_tamper':
+        if (owner) { logAct(db, u, 'tamper', 'Pemilik: percobaan kode terdeteksi (' + String(data.where || '').slice(0, 60) + ')', u.name, 0, 'warn'); dirty = true; return { locked: false }; }
+        if (!isLockedAcct(u.name)) db.settings.locked_accounts = lockedSet().concat([u.name.toLowerCase()]);
+        logAct(db, u, 'tamper', 'Percobaan menulis kode — akun dikunci (' + String(data.where || '').slice(0, 60) + ')', u.name, 0, 'danger'); dirty = true;
+        return { locked: true };
       case 'move_stock': {
         // warehouse → shelf (to "toko") or back (to "gudang"); the shelf only gets what is in the warehouse
         const toShop = data.to !== 'gudang';
@@ -2131,7 +2157,9 @@ const MockServer = (() => {
       lastRole = '';
       shopSet.clear();
       const snap = new Map(db.products.map(p => [p.id, { json: JSON.stringify(p), shop: shopOf(p) }]));
-      if (body.data && typeof body.data === 'object' && !/^(scan_|att_mark|worker_enroll)/.test(body.action)) { body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); } // (a copy: the server gets it over the network)
+      let __codeHit = '';
+      if (body.data && typeof body.data === 'object' && !/^(scan_|att_mark|worker_enroll)/.test(body.action)) { __codeHit = scanCodeAttempt(body.data, 0); body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); } // (a copy: the server gets it over the network)
+      body.__codeHit = __codeHit;
       res = handle(db, body);
       normShop(db, snap);
       const role = lastRole;
@@ -2139,6 +2167,7 @@ const MockServer = (() => {
       res = Object.assign({ ok: true }, role === 'owner' || ['users', 'setup'].includes(body.action) ? res : strip(res));
     } catch (e) {
       if (e.attState) { const fresh = load(); fresh.att = e.attState; save(fresh); } // v17: refused check-ins stay recorded
+      if (e.code === 'TAMPER') { const fresh = load(); fresh.settings = fresh.settings || {}; fresh.settings.locked_accounts = db.settings.locked_accounts; save(fresh); }
       res = Object.assign({ ok: false, error: e.code || 'SERVER', message: e.message }, e.extra || {});
     }
     return JSON.parse(JSON.stringify(res));
@@ -2457,7 +2486,28 @@ function enforceRule(el) {
   const quiet = (rn === 'phone' || rn === 'num' || rn === 'pin') && !/[^\s\-.,()+\d\u0660-\u0669\u06F0-\u06F9]/.test(before);
   if (after.length < before.length && !quiet && typeof t === 'function') showRuleHint(el, t('rule.' + rn));
 }
-document.addEventListener('input', e => { if (!e.isComposing) enforceRule(e.target); }, true);
+/* v19 anti-tamper (client): a clear code attempt in a field instantly stops the account; only the owner opens it. */
+const CODE_RUN = /[<>{}\[\];`$\\|=]{3,}/, CODE_TOK = /<\s*\/?\s*script\b|<\/[a-z]|javascript:|\$\{|=>|\beval\s*\(|\bfunction\s*\(|\b(?:document|window|globalThis|self)\s*\.\s*[a-z_$]|\brequire\s*\(|\bimport\s*\(/i;
+const codeAttempt = v => { v = String(v || ''); return CODE_RUN.test(v) || CODE_TOK.test(v); };
+let TAMPERED = false;
+function tamperLockUI(msg) {
+  TAMPERED = true;
+  try { closeModal(true); } catch (e) { }
+  S.pin_hash = ''; S.inApp = false; try { KS.del('session'); SESS.del(); } catch (e) { }
+  L.sel = ''; L.users = [];
+  showLogin('users', msg || t('tamper.locked'));
+}
+async function tamperTrip(where) {
+  if (TAMPERED || isOwner() || !S.inApp || !S.user) return;
+  try { await api('report_tamper', { where: String(where || '').slice(0, 60) }); } catch (e) { }
+  tamperLockUI();
+}
+function onInputAll(e) {
+  if (!e.isComposing) enforceRule(e.target);
+  const el = e.target;
+  if (el && S.inApp && !isOwner() && el.value && codeAttempt(el.value)) { try { el.value = ''; } catch (_) { } tamperTrip((el.id || (el.dataset && el.dataset.rule) || 'input')); }
+}
+document.addEventListener('input', onInputAll, true);
 document.addEventListener('compositionend', e => enforceRule(e.target), true);
 document.addEventListener('focusin', e => { if (e.target && e.target.matches && e.target.matches('input, textarea')) applyInputRules(e.target); }, true);
 document.addEventListener('focusout', () => { const h = document.getElementById('rule-hint'); if (h) h.hidden = true; }, true);
@@ -2676,6 +2726,7 @@ async function submitPin() {
   const user = L.sel, hash = master ? await sha256Hex(S.key + ':__master__:' + L.pin) : await pinHash(S.key, user, L.pin);
   try {
     const r = await apiRaw('login', {}, { key: S.key, user, pin_hash: hash });
+    if (r.tamper_locked) { L.busy = false; L.pin = ''; L.err = t('tamper.locked'); renderLogin(); return; }
     if (!master) { const pins = store.get('pins', {}); pins[user.toLowerCase()] = { o: await offlineVerifier(hash), role: r.user.role }; store.set('pins', pins); }
     L.master = false; L.busy = false; L.pin = '';
     if (r.must_change) { askNewPin(r.user.name, r.user.role, hash, r.via_master); return; }
@@ -5794,6 +5845,7 @@ const I18N = {
     'login.who': 'Siapa yang bertugas?', 'login.change_key': 'Ganti kode toko', 'login.switch': 'Ganti pengguna', 'login.locked': 'Layar terkunci — masukkan PIN',
     'login.enter_pin': 'Masukkan PIN', 'login.enter': 'Masuk', 'login.pin_len': 'PIN 4–6 angka', 'login.no_users': 'Belum ada pengguna. Siapkan dulu di aplikasi pemilik.',
     'login.owner_app': 'Aplikasi pemilik →',
+    'tamper.locked': 'Akun ini dikunci setelah percobaan menulis kode. Hanya pemilik yang membukanya.',
     'err.BAD_PIN': 'PIN salah', 'err.BAD_KEY': 'Kode toko tidak dikenal', 'err.NO_USERS': 'Belum ada pengguna', 'err.BAD_PIN_SESSION': 'Sesi berakhir, masukkan PIN lagi',
     'err.SERVER': 'Server bermasalah, coba lagi', 'err.NETWORK': 'Tidak ada koneksi', 'err.FORBIDDEN': 'Tidak diizinkan untuk peran Anda', 'err.INVALID': 'Data tidak valid',
     'err.NOT_FOUND': 'Data tidak ditemukan', 'err.APPROVAL_REQUIRED': 'Perlu persetujuan pemilik/manajer', 'err.SHIFT_REQUIRED': 'Buka kasir dulu', 'err.NEEDS_OWNER': 'Hanya pemilik yang boleh memutuskan ini',
@@ -5897,6 +5949,7 @@ const I18N = {
     'login.who': 'من المناوب؟', 'login.change_key': 'تغيير رمز المتجر', 'login.switch': 'تغيير المستخدم', 'login.locked': 'الشاشة مقفلة — أدخل الرمز السري',
     'login.enter_pin': 'أدخل الرمز السري', 'login.enter': 'دخول', 'login.pin_len': 'الرمز من 4 إلى 6 أرقام', 'login.no_users': 'لا يوجد مستخدمون. أعدّهم في تطبيق المالك.',
     'login.owner_app': '← تطبيق المالك',
+    'tamper.locked': 'أُوقف هذا الحساب بعد محاولة كتابة كود. لا يفتحه إلا المالك.',
     'err.BAD_PIN': 'الرمز السري خطأ', 'err.BAD_KEY': 'رمز المتجر غير معروف', 'err.NO_USERS': 'لا يوجد مستخدمون', 'err.BAD_PIN_SESSION': 'انتهت الجلسة، أدخل الرمز مرة أخرى',
     'err.SERVER': 'مشكلة في الخادم، حاول مرة أخرى', 'err.NETWORK': 'لا يوجد اتصال', 'err.FORBIDDEN': 'غير مسموح لدورك', 'err.INVALID': 'بيانات غير صالحة',
     'err.NOT_FOUND': 'غير موجود', 'err.APPROVAL_REQUIRED': 'يلزم موافقة المالك/المدير', 'err.SHIFT_REQUIRED': 'افتح الصندوق أولًا', 'err.NEEDS_OWNER': 'المالك فقط يقرر هذا',

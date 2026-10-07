@@ -59,17 +59,18 @@ test('names, phone, e-mail and quantities refuse what the server refuses; maxlen
   expect(await unlimited(page)).toEqual([]);
 });
 
-test('the server cleans every text: tags and < > removed, then each field is checked (as the mock mirrors)', async ({ page }) => {
+test('field checks (INVALID), a clean note is saved, and a code attempt now LOCKS the account (v19)', async ({ page }) => {
   await H.login(page);
   const db0 = await H.getDb(page);
   const sale = db0.sales.filter(s => s.status === 'ok').pop(), it = db0.items.find(i => i.invoice_no === sale.invoice_no);
   const r = await page.evaluate(async ([inv, pid]) => {
     const one = async d => { try { return await api('request_return', d); } catch (e) { return { error: e.code, message: e.message }; } };
     return {
-      ok: await one({ kind: 'pelanggan', invoice_no: inv, lines: [{ product_id: pid, qty: 0.5 }], reason_code: 'lainnya', reason_note: '<script>alert(1)</script>Rusak <i>kemasan</i>‮', returned_by: 'Ibu <b>Ani</b>' }),
       badName: await one({ kind: 'pelanggan', invoice_no: inv, lines: [{ product_id: pid, qty: 0.5 }], reason_code: 'rusak', returned_by: '123 Ani' }),
       badPhone: await one({ kind: 'pelanggan', invoice_no: inv, lines: [{ product_id: pid, qty: 0.5 }], reason_code: 'rusak', returned_by_phone: '12ab' }),
-      noReason: await one({ kind: 'pelanggan', invoice_no: inv, lines: [{ product_id: pid, qty: 0.5 }], reason_code: 'bosan' })
+      noReason: await one({ kind: 'pelanggan', invoice_no: inv, lines: [{ product_id: pid, qty: 0.5 }], reason_code: 'bosan' }),
+      ok: await one({ kind: 'pelanggan', invoice_no: inv, lines: [{ product_id: pid, qty: 0.5 }], reason_code: 'lainnya', reason_note: 'Rusak kemasan 100%, 2 pcs', returned_by: 'Ibu Ani' }),
+      code: await one({ kind: 'pelanggan', invoice_no: inv, lines: [{ product_id: pid, qty: 0.5 }], reason_code: 'rusak', reason_note: '<script>alert(1)</script>' })
     };
   }, [sale.invoice_no, it.product_id]);
   expect(r.badName).toEqual({ error: 'INVALID', message: 'Nama orang yang mengembalikan hanya boleh huruf' });
@@ -77,8 +78,13 @@ test('the server cleans every text: tags and < > removed, then each field is che
   expect(r.noReason).toEqual({ error: 'INVALID', message: 'Pilih alasan retur' });
   const db = await H.getDb(page);
   const ap = db.approvals.find(a => a.request_id === r.ok.request_id);
-  expect(ap.note).toBe('alert(1)Rusak kemasan');
+  expect(ap.note).toBe('Rusak kemasan 100%, 2 pcs');
   expect(JSON.parse(ap.payload).returned_by).toBe('Ibu Ani');
+  // a code attempt locks this cashier (server), and the app logs straight out to the lock screen
+  expect(r.code.error).toBe('TAMPER');
+  expect((await H.getDb(page)).settings.locked_accounts).toContain('siti');
+  await expect(page.locator('#login')).toBeVisible();
+  await expect(page.locator('#login')).toContainText('dikunci');
 });
 
 test('Arabic: the hint for a refused character', async ({ page }) => {

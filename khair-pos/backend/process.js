@@ -4,6 +4,18 @@ const data = req.data && typeof req.data === 'object' ? req.data : {};
 // Everything the apps send is plain text, never code: control characters and < > are removed, keys that reach
 // JavaScript internals (__proto__, constructor, prototype) are dropped and every string is cut at 4000 characters.
 // Each action then checks its own fields (names, numbers, dates, phone, e-mail, document numbers).
+// v19 anti-tamper: before cleaning, the raw fields are scanned for a clear code attempt (a run of 3+ code symbols
+// such as < > { } [ ] ; $ = | \ `, or a known code token). If found, the account is locked and only the owner opens it.
+function scanCodeAttempt(o) {
+  var hit = '', RUN = /[<>{}\[\];`$\\|=]{3,}/, TOK = /<\s*\/?\s*script\b|<\/[a-z]|javascript:|\$\{|=>|\beval\s*\(|\bfunction\s*\(|\b(?:document|window|globalThis|self)\s*\.\s*[a-z_$]|\brequire\s*\(|\bimport\s*\(/i;
+  (function walk(v, d) {
+    if (hit || d > 6 || !v) return;
+    if (typeof v === 'string') { if (RUN.test(v) || TOK.test(v)) hit = v.slice(0, 60); }
+    else if (typeof v === 'object') { Object.keys(v).forEach(function (k) { if (k !== '__proto__' && k !== 'constructor' && k !== 'prototype') walk(v[k], d + 1); }); }
+  })(o, 0);
+  return hit;
+}
+var __codeHit = scanCodeAttempt(data);
 (function cleanInput(o, depth) {
   if (!o || typeof o !== 'object' || depth > 6) return;
   Object.keys(o).forEach(function (k) {
@@ -73,6 +85,11 @@ if (req.key !== STORE_KEY) return fail('BAD_KEY', 'Kunci toko salah');
 
 const users = rows('Get Users');
 const activeUsers = users.filter(function (u) { return u.active !== false; });
+// v19 tamper lock: names locked after a code attempt are kept in the setting "locked_accounts" (no schema change).
+function lockedRow() { return rows('Get Settings').find(function (r) { return r.skey === 'locked_accounts'; }) || null; }
+var LOCKED = (function () { var r = lockedRow(); var a = []; try { a = JSON.parse(r ? r.svalue : '[]'); } catch (e) { a = []; } return Array.isArray(a) ? a.map(function (x) { return String(x).toLowerCase(); }) : []; })();
+function isLocked(name) { return LOCKED.indexOf(String(name).trim().toLowerCase()) >= 0; }
+function writeLocked(arr) { var r = lockedRow(); var u = []; arr.forEach(function (x) { x = String(x).trim().toLowerCase(); if (x && u.indexOf(x) < 0) u.push(x); }); ops.settings.push({ _id: r ? r.id : -1, skey: 'locked_accounts', svalue: JSON.stringify(u.slice(0, 200)) }); }
 
 if (req.action === 'users') {
   return done({ ok: true, users: activeUsers.map(function (u) { return { name: u.name, role: u.role }; }) });
@@ -113,6 +130,20 @@ if (role === 'akuntan' && AKUNTAN_READ.indexOf(req.action) < 0) return fail('FOR
 if (role === 'sales' && ['login', 'bootstrap', 'device_ping', 'change_pin'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
 const isApprover = role === 'owner' || role === 'manager';
 const canAudit = isApprover || role === 'akuntan';
+// v19 anti-tamper: a clear code attempt locks a non-owner account (only the owner opens it); the owner is warned, not locked.
+var TAMPER_OK = ['login', 'users', 'device_ping', 'change_pin', 'clear_tamper', 'report_tamper'];
+if (__codeHit && role !== 'owner') {
+  if (!isLocked(me.name)) writeLocked(LOCKED.concat([me.name]));
+  logAct('tamper', 'Percobaan menulis kode — akun dikunci: "' + __codeHit + '" (aksi ' + req.action + ')', me.name, 0, 'danger');
+  return done({ ok: false, error: 'TAMPER', locked: true, message: 'Input tidak sah. Akun dikunci, hanya pemilik yang membuka.' });
+}
+if (__codeHit && role === 'owner') {
+  logAct('tamper', 'Input ditolak (karakter kode): "' + __codeHit + '" (aksi ' + req.action + ')', me.name, 0, 'warn');
+  return done({ ok: false, error: 'INVALID', message: 'Input tidak sah (karakter kode tidak diperbolehkan)' });
+}
+if (role !== 'owner' && isLocked(me.name) && TAMPER_OK.indexOf(req.action) < 0) {
+  return done({ ok: false, error: 'TAMPER_LOCKED', locked: true, message: 'Akun dikunci setelah percobaan tidak sah. Hanya pemilik yang membuka.' });
+}
 function findApprover(name, hash) {
   const u = activeUsers.find(function (x) { return str(x.name).toLowerCase() === str(name).toLowerCase(); });
   if (!u || u.pin_hash !== hash || (u.role !== 'owner' && u.role !== 'manager')) return null;
@@ -136,6 +167,8 @@ function addMove(x, type, amount, note) {
 const OWNER_ONLY = ['void_sale', 'save_product', 'import_products', 'stock_adjust', 'save_settings', 'list_devices', 'list_activity'];
 // v18 (owner's decision 07 Oct): save_user is the owner's, or a manager's for staff accounts only (checked in the action)
 const STAFF_ROLES = ['kasir', 'sales', 'akuntan'];
+// v19 (owner's decision): the manager creates/manages only cashier and sales accounts — never an accountant (akuntan) or a manager/owner.
+const MGR_ROLES = ['kasir', 'sales'];
 if (OWNER_ONLY.indexOf(req.action) >= 0 && role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik');
 
 const products = rows('Get Products');
@@ -702,7 +735,7 @@ if (req.action !== 'device_ping') deviceTouch(data.device, false);
 switch (req.action) {
   case 'login':
     if (viaMaster) logAct('masuk_master', 'Masuk ke akun ' + me.name + ' (' + role + ') dengan kode pemilik', me.name, 0, 'warn');
-    return done({ ok: true, user: { name: me.name, role: role }, must_change: me.must_change === true && !viaMaster, via_master: viaMaster });
+    return done({ ok: true, user: { name: me.name, role: role }, must_change: me.must_change === true && !viaMaster, via_master: viaMaster, tamper_locked: isLocked(me.name) && role !== 'owner' });
 
   case 'move_stock': {
     // Warehouse → shelf (to: "toko") or back (to: "gudang"). Moving to the shelf needs the goods in the warehouse first,
@@ -742,6 +775,26 @@ switch (req.action) {
     return done({ ok: true, must_change: viaMaster });
   }
 
+  case 'report_tamper': {
+    // The app saw a clear code attempt in a field and locks the account here; only the owner opens it.
+    var where = str(data.where).slice(0, 80);
+    if (role === 'owner') { logAct('tamper', 'Pemilik: percobaan kode terdeteksi (' + where + ')', me.name, 0, 'warn'); return done({ ok: true, locked: false }); }
+    if (!isLocked(me.name)) writeLocked(LOCKED.concat([me.name]));
+    logAct('tamper', 'Percobaan menulis kode — akun dikunci (' + where + ')', me.name, 0, 'danger');
+    return done({ ok: true, locked: true });
+  }
+
+  case 'clear_tamper': {
+    if (role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik yang membuka akun');
+    var tn = str(data.name).trim().toLowerCase();
+    var tu = users.find(function (u) { return str(u.name).toLowerCase() === tn; });
+    if (!tu) return fail('NOT_FOUND', 'Pengguna tidak ditemukan');
+    writeLocked(LOCKED.filter(function (x) { return x !== tn; }));
+    if (num(tu.fail_count) > 0 || str(tu.locked_until)) ops.users.push(forWrite(Object.assign({}, clean(tu), { fail_count: 0, locked_until: '' }), tu.id));
+    logAct('tamper', 'Pemilik membuka kunci akun ' + tu.name, tu.name, 0, 'warn');
+    return done({ ok: true, user: { name: tu.name, role: tu.role, active: tu.active !== false } });
+  }
+
   case 'set_master': {
     if (role !== 'owner' || viaMaster) return fail('FORBIDDEN', 'Hanya pemilik dengan PIN sendiri');
     if (!isHash(data.master_hash) || data.master_hash === me.pin_hash) return fail('INVALID', 'Kode pemilik tidak valid');
@@ -773,7 +826,7 @@ switch (req.action) {
       products: products.map(productOut),
       customers: customers.map(clean),
       settings: readSettings(),
-      users: users.map(function (u) { return role === 'owner' ? { name: u.name, role: u.role, active: u.active !== false, must_change: u.must_change === true, locked: Date.parse(u.locked_until) > Date.now(), has_master: u.role === 'owner' && isHash(u.master_hash) } : { name: u.name, role: u.role, active: u.active !== false }; }),
+      users: users.map(function (u) { return role === 'owner' ? { name: u.name, role: u.role, active: u.active !== false, must_change: u.must_change === true, locked: Date.parse(u.locked_until) > Date.now(), tamper: isLocked(u.name), has_master: u.role === 'owner' && isHash(u.master_hash) } : { name: u.name, role: u.role, active: u.active !== false }; }),
       via_master: viaMaster, must_change: me.must_change === true && !viaMaster,
       shift: shiftOut(myShift),
       open_shifts: isApprover ? openShifts.map(shiftOut) : [],
@@ -1927,7 +1980,7 @@ switch (req.action) {
     if (role !== 'owner') {
       if (role !== 'manager') return fail('FORBIDDEN', 'Hanya untuk pemilik');
       const t0 = users.find(function (u) { return str(u.name).toLowerCase() === str(data.name).trim().toLowerCase(); });
-      if (STAFF_ROLES.indexOf(data.role) < 0 || (t0 && STAFF_ROLES.indexOf(t0.role) < 0)) return fail('FORBIDDEN', 'Manajer hanya mengatur akun kasir, sales dan akuntan');
+      if (MGR_ROLES.indexOf(data.role) < 0 || (t0 && MGR_ROLES.indexOf(t0.role) < 0)) return fail('FORBIDDEN', 'Manajer hanya mengatur akun kasir dan sales');
     }
     const name = personName(data.name);
     if (!name) return fail('INVALID', str(data.name) ? 'Nama pengguna hanya boleh huruf, spasi dan . \' -' : 'Nama wajib');

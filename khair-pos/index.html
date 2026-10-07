@@ -963,6 +963,7 @@ async function api(action, data, opts) {
   } catch (e) {
     if (e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_USERS' || e.code === 'LOCKED') { if (e.code === 'LOCKED') setLock(S.user, e.message, e.data && e.data.locked_until); forceRelogin(e); }
     if (e.code === 'PIN_CHANGE_REQUIRED' && typeof showPinChange === 'function') showPinChange();
+    if ((e.code === 'TAMPER' || e.code === 'TAMPER_LOCKED') && !isOwner() && typeof tamperLockUI === 'function') tamperLockUI();
     throw e;
   }
 }
@@ -1217,6 +1218,19 @@ const MockServer = (() => {
     return a;
   }
   /* ---- v16 returns (retur), who brought the goods (carrier), plain-text input — as on the server ---- */
+  const CODE_RUN = /[<>{}\[\];`$\\|=]{3,}/, CODE_TOK = /<\s*\/?\s*script\b|<\/[a-z]|javascript:|\$\{|=>|\beval\s*\(|\bfunction\s*\(|\b(?:document|window|globalThis|self)\s*\.\s*[a-z_$]|\brequire\s*\(|\bimport\s*\(/i;
+  function scanCodeAttempt(o, depth) {
+    if (!o || typeof o !== 'object' || (depth || 0) > 6) return '';
+    let hit = '';
+    Object.keys(o).some(k => {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') return false;
+      const v = o[k];
+      if (typeof v === 'string') { if (CODE_RUN.test(v) || CODE_TOK.test(v)) { hit = v.slice(0, 60); return true; } }
+      else if (v && typeof v === 'object') { hit = scanCodeAttempt(v, (depth || 0) + 1); if (hit) return true; }
+      return false;
+    });
+    return hit;
+  }
   function cleanInput(o, depth) {
     if (!o || typeof o !== 'object' || depth > 6) return;
     Object.keys(o).forEach(k => {
@@ -1726,6 +1740,13 @@ const MockServer = (() => {
     db._role = u.role;
     const owner = u.role === 'owner';
     const needOwner = () => { if (!owner) throw E('FORBIDDEN', 'Owner only'); };
+    // v19 anti-tamper: a clear code attempt locks a non-owner account (only the owner opens it); the owner is warned, not locked.
+    const lockedSet = () => Array.isArray(db.settings.locked_accounts) ? db.settings.locked_accounts.map(x => String(x).toLowerCase()) : [];
+    const isLockedAcct = n => lockedSet().indexOf(String(n).trim().toLowerCase()) >= 0;
+    const codeHit = body.__codeHit || '';
+    if (codeHit && !owner) { if (!isLockedAcct(u.name)) db.settings.locked_accounts = lockedSet().concat([u.name.toLowerCase()]); logAct(db, u, 'tamper', 'Percobaan menulis kode — akun dikunci: "' + codeHit + '" (aksi ' + action + ')', u.name, 0, 'danger'); const er = E('TAMPER', 'Input tidak sah. Akun dikunci, hanya pemilik yang membuka.'); er.extra = { locked: true }; throw er; }
+    if (codeHit && owner) { logAct(db, u, 'tamper', 'Input ditolak (karakter kode): "' + codeHit + '" (aksi ' + action + ')', u.name, 0, 'warn'); db._dirty = true; throw E('INVALID', 'Input tidak sah (karakter kode tidak diperbolehkan)'); }
+    if (!owner && isLockedAcct(u.name) && !['login', 'users', 'device_ping', 'change_pin', 'clear_tamper', 'report_tamper'].includes(action)) { const er = E('TAMPER_LOCKED', 'Akun dikunci setelah percobaan tidak sah. Hanya pemilik yang membuka.'); er.extra = { locked: true }; throw er; }
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
@@ -1739,7 +1760,7 @@ const MockServer = (() => {
         return window.KAttMock.handle(db, u, action, data, E);
       case 'login':
         if (viaMaster) logAct(db, u, 'masuk_master', 'Masuk ke akun ' + u.name + ' (' + roleOf(u) + ') dengan kode pemilik', u.name, 0, 'warn');
-        return { user: { name: u.name, role: u.role }, must_change: u.must_change === true && !viaMaster, via_master: viaMaster };
+        return { user: { name: u.name, role: u.role }, must_change: u.must_change === true && !viaMaster, via_master: viaMaster, tamper_locked: u.role !== 'owner' && isLockedAcct(u.name) };
       case 'change_pin': {
         if (!isHash(data.new_pin_hash)) throw E('INVALID', 'PIN baru tidak valid');
         if (data.new_pin_hash === u.pin_hash) throw E('INVALID', 'PIN baru harus berbeda dari PIN lama');
@@ -1783,7 +1804,7 @@ const MockServer = (() => {
         return { stock: mv.map(x => ({ product_id: x.p.id, stock: num(x.p.stock), shop_stock: x.sh, gudang_stock: roundQty(num(x.p.stock) - x.sh) })) };
       }
       case 'bootstrap': return { user: { name: u.name, role: roleOf(u) }, products: db.products.map(prodOut), customers: db.customers, settings: Object.assign({}, V16_DEFAULTS, db.settings), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
-        users: db.users.map(x => owner ? { name: x.name, role: x.role, active: x.active, must_change: x.must_change === true, locked: Date.parse(x.locked_until) > Date.now(), has_master: x.role === 'owner' && isHash(x.master_hash) } : { name: x.name, role: x.role, active: x.active }), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
+        users: db.users.map(x => owner ? { name: x.name, role: x.role, active: x.active, must_change: x.must_change === true, locked: Date.parse(x.locked_until) > Date.now(), tamper: isLockedAcct(x.name), has_master: x.role === 'owner' && isHash(x.master_hash) } : { name: x.name, role: x.role, active: x.active }), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
         shift: blind(shiftSummary(db, openShiftOf(db, u.name)), u.role), open_shifts: ['owner', 'manager'].includes(u.role) ? db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)) : [],
         activity_recent: owner ? db.activity.filter(a => a.act_date >= addDays(jktDate(), -7) && a.act_date <= jktDate()).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 100) : [] };
       case 'device_ping': {
@@ -2672,11 +2693,27 @@ const MockServer = (() => {
         if (changedKeys.length) logAct(db, u, 'pengaturan', 'Pengaturan diubah: ' + changedKeys.join(', '), '', 0, 'info');
         return { settings: db.settings };
       }
+      case 'report_tamper': {
+        if (owner) { logAct(db, u, 'tamper', 'Pemilik: percobaan kode terdeteksi (' + String(data.where || '').slice(0, 60) + ')', u.name, 0, 'warn'); db._dirty = true; return { locked: false }; }
+        if (!isLockedAcct(u.name)) db.settings.locked_accounts = lockedSet().concat([u.name.toLowerCase()]);
+        logAct(db, u, 'tamper', 'Percobaan menulis kode — akun dikunci (' + String(data.where || '').slice(0, 60) + ')', u.name, 0, 'danger'); db._dirty = true;
+        return { locked: true };
+      }
+      case 'clear_tamper': {
+        needOwner();
+        const tn = String(data.name || '').trim().toLowerCase();
+        const tu = db.users.find(v => v.name.toLowerCase() === tn);
+        if (!tu) throw E('NOT_FOUND', 'Pengguna tidak ditemukan');
+        db.settings.locked_accounts = lockedSet().filter(x => x !== tn);
+        tu.fail_count = 0; tu.locked_until = '';
+        logAct(db, u, 'tamper', 'Pemilik membuka kunci akun ' + tu.name, tu.name, 0, 'warn'); db._dirty = true;
+        return { user: { name: tu.name, role: tu.role, active: tu.active !== false } };
+      }
       case 'save_user': {
         if (u.role !== 'owner') {
           if (u.role !== 'manager') throw E('FORBIDDEN', 'Owner only');
           const t0 = db.users.find(v => v.name.toLowerCase() === String(data.name || '').trim().toLowerCase());
-          if (!['kasir', 'sales', 'akuntan'].includes(data.role) || (t0 && !['kasir', 'sales', 'akuntan'].includes(t0.role))) throw E('FORBIDDEN', 'Manajer hanya mengatur akun kasir, sales dan akuntan');
+          if (!['kasir', 'sales'].includes(data.role) || (t0 && !['kasir', 'sales'].includes(t0.role))) throw E('FORBIDDEN', 'Manajer hanya mengatur akun kasir dan sales');
         }
         const name = personName(data.name);
         if (!name) throw E('INVALID', strv(data.name) ? 'Nama pengguna hanya boleh huruf, spasi dan . \' -' : 'Nama wajib');
@@ -2764,7 +2801,9 @@ const MockServer = (() => {
     if (ensureV12(db)) save(db);
     if (ensureV16(db)) save(db);
     let res;
-    if (body.data && typeof body.data === 'object' && !/^(scan_|att_mark|worker_enroll)/.test(body.action)) { body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); }
+    let __codeHit = '';
+    if (body.data && typeof body.data === 'object' && !/^(scan_|att_mark|worker_enroll)/.test(body.action)) { __codeHit = scanCodeAttempt(body.data, 0); body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); }
+    body.__codeHit = __codeHit;
     db.returns = db.returns || [];
     const snap = new Map((db.products || []).map(p => [p.id, { stock: num(p.stock), shop: shopOf(p) }]));
     db._shopSet = {};
@@ -2781,6 +2820,7 @@ const MockServer = (() => {
       res = Object.assign({ ok: true }, role === 'owner' || ['users', 'setup'].includes(body.action) ? res : akCost ? stripProfit(res) : strip(res));
     } catch (e) {
       if (e.attState) { const fresh = load(); fresh.att = e.attState; save(fresh); } // v17: refused check-ins stay recorded
+      if (e.code === 'TAMPER') { const fresh = load(); fresh.settings = fresh.settings || {}; fresh.settings.locked_accounts = db.settings.locked_accounts; save(fresh); }
       if (db._saveErr) { // wrong PIN: the counter / lock is kept (only the user row changed)
         const fresh = load(); const uu = (fresh.users || []).find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase());
         const src = db.users.find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase());
@@ -3228,6 +3268,7 @@ async function submitPin() {
   const user = L.sel, hash = L.master ? await masterHash(S.key, L.pin) : await pinHash(S.key, user, L.pin);
   try {
     const r = await apiRaw('login', {}, { key: S.key, user, pin_hash: hash });
+    if (r.tamper_locked) { L.busy = false; L.pin = ''; L.err = t('tamper.locked'); renderLogin(); return; } // locked after a code attempt; only the owner opens it
     if (!r.via_master) await rememberPin(user, hash, r.user.role); // never keep a verifier of the master code
     L.master = false;
     PC.need = r.must_change === true;
@@ -3317,6 +3358,7 @@ function applyData(d) {
   if (Array.isArray(d.customers)) S.customers = d.customers;
   if (d.settings && typeof d.settings === 'object') S.settings = d.settings;
   if (Array.isArray(d.users)) S.users = d.users;
+  if (Array.isArray(d.users) && S.inApp && isOwner()) { const nLock = d.users.filter(u => u.tamper).length; if (nLock && !window.__tamperBanner) { window.__tamperBanner = true; setTimeout(() => toast(t('tamper.banner', { n: nLock }), 'err', 9000), 300); } }
   if (d.approvals_pending != null && typeof AP !== 'undefined') AP.count = int(d.approvals_pending);
   if ('shift' in d) { S.shift = d.shift || null; S.shiftsSupported = true; }
   if (Array.isArray(d.users) && S.inApp && S.user) { const me = d.users.find(u => u.name.toLowerCase() === S.user.toLowerCase()); if (me && (me.role === 'kasir' || me.role === 'sales') && S.role !== me.role) setTimeout(() => showKasirRedirect(S.user, me.role), 0); }
@@ -7247,6 +7289,11 @@ const ACT = {
     if (u.active !== false) { const r = await confirmBox(t('set.deactivate_confirm', { name: u.name }), { danger: true }); if (!r.ok) return; }
     saveUser({ name: u.name, role: u.role, active: u.active === false });
   },
+  'user-unlock': async el => {
+    const name = el.dataset.name; const c = await confirmBox(t('tamper.unlock_confirm', { name }), { danger: true }); if (!c.ok) return;
+    try { await api('clear_tamper', { name }); const u = S.users.find(x => x.name === name); if (u) u.tamper = false; toast(t('tamper.unlocked', { name }), 'ok'); RENDER.settings(); }
+    catch (e) { toast(errMsg(e), 'err'); }
+  },
   'outbox-sync': () => syncOutbox(true),
   'st-key-show': el => { const k = $('#st-key'); if (!k) return; const shown = el.dataset.on === '1'; k.textContent = shown ? maskKey(S.key) : S.key; el.dataset.on = shown ? '' : '1'; el.textContent = t(shown ? 'set.key_show' : 'set.key_hide'); },
   'apr-refresh': () => pollApprovals(),
@@ -9740,6 +9787,7 @@ Object.assign(I18N.id, {
   'err.LOCKED': 'Akun dikunci sementara', 'err.PIN_CHANGE_REQUIRED': 'Buat PIN baru dulu', 'err.NOT_ON_SHELF': 'Barang belum ada di rak toko', 'err.NOT_IN_GUDANG': 'Stok gudang kurang', 'err.DISCOUNT_APPROVAL_REQUIRED': 'Diskon perlu persetujuan',
   'pc.title': 'Buat PIN baru', 'pc.hint': 'Halo {name}, PIN Anda dibuat oleh pemilik (sementara). Buat PIN sendiri {n} angka — jangan beri tahu siapa pun.',
   'pc.step1': 'Masukkan PIN baru ({n} angka)', 'pc.step2': 'Ulangi PIN baru', 'pc.len': 'PIN harus {n} angka', 'pc.same': 'PIN baru harus berbeda dari PIN sementara', 'pc.save': 'Lanjut', 'pc.cancel': 'Keluar', 'pc.done': 'PIN baru disimpan',
+  'tamper.locked': 'Akun ini dikunci setelah percobaan menulis kode. Hanya pemilik yang membukanya.', 'tamper.badge': 'dikunci (coba kode)', 'tamper.unlock': 'Buka kunci', 'tamper.unlock_confirm': 'Buka kunci akun {name}? Hanya lakukan jika Anda yakin.', 'tamper.unlocked': 'Akun {name} dibuka', 'tamper.banner': '{n} akun dikunci setelah percobaan menulis kode. Buka dari Pengaturan → Pengguna.',
   'usr.must_change': 'belum ganti PIN', 'usr.locked': 'terkunci', 'usr.temp_notice': 'PIN untuk {name} adalah PIN sementara: saat pertama masuk, {name} wajib membuat PIN sendiri.',
   'usr.temp_hint': 'PIN yang Anda buat untuk orang lain bersifat sementara — mereka membuat PIN sendiri saat pertama masuk.',
   'apr.kind_disc': 'Diskon {pct}', 'apr.new_disc': 'Permintaan diskon dari {cashier} →',
@@ -9777,6 +9825,7 @@ Object.assign(I18N.ar, {
   'err.LOCKED': 'الحساب مقفل مؤقتاً', 'err.PIN_CHANGE_REQUIRED': 'أنشئ رقماً سرياً جديداً أولاً', 'err.NOT_ON_SHELF': 'البضاعة ليست على رف المحل', 'err.NOT_IN_GUDANG': 'مخزون المستودع غير كافٍ', 'err.DISCOUNT_APPROVAL_REQUIRED': 'الخصم يحتاج موافقة',
   'pc.title': 'أنشئ رقماً سرياً جديداً', 'pc.hint': 'مرحباً {name}، رقمك السري وضعه المالك (مؤقت). أنشئ رقمك الخاص من {n} أرقام — لا تخبر به أحداً.',
   'pc.step1': 'أدخل الرقم الجديد ({n} أرقام)', 'pc.step2': 'أعد الرقم الجديد', 'pc.len': 'الرقم السري {n} أرقام', 'pc.same': 'يجب أن يختلف الرقم الجديد عن المؤقت', 'pc.save': 'متابعة', 'pc.cancel': 'خروج', 'pc.done': 'تم حفظ الرقم الجديد',
+  'tamper.locked': 'أُوقف هذا الحساب بعد محاولة كتابة كود. لا يفتحه إلا المالك.', 'tamper.badge': 'موقوف (محاولة كود)', 'tamper.unlock': 'فتح القفل', 'tamper.unlock_confirm': 'فتح قفل حساب {name}؟ لا تفعل إلا إذا كنت متأكدًا.', 'tamper.unlocked': 'فُتح حساب {name}', 'tamper.banner': '{n} حساب أُوقف بعد محاولة كتابة كود. افتحه من الإعدادات ← المستخدمون.',
   'usr.must_change': 'لم يغيّر الرقم بعد', 'usr.locked': 'مقفل', 'usr.temp_notice': 'رقم {name} مؤقت: عند أول دخول يجب على {name} إنشاء رقمه الخاص.',
   'usr.temp_hint': 'الرقم الذي تضعه لشخص آخر مؤقت — ينشئ رقمه الخاص عند أول دخول.',
   'apr.kind_disc': 'خصم {pct}', 'apr.new_disc': 'طلب خصم من {cashier} ←',
@@ -9830,7 +9879,27 @@ function applyRule(el) {
   if (nv.length > r.max) nv = nv.slice(0, r.max);
   if (nv !== v) { const pos = Math.max(0, (el.selectionStart || nv.length) - (v.length - nv.length)); el.value = nv; try { el.setSelectionRange(pos, pos); } catch (e) { } }
 }
-document.addEventListener('input', e => { const el = e.target; if (el && el.dataset && el.dataset.rule) applyRule(el); }, true);
+/* v19 anti-tamper (client): a clear code attempt in a field instantly stops the account; only the owner opens it. */
+const CODE_RUN = /[<>{}\[\];`$\\|=]{3,}/, CODE_TOK = /<\s*\/?\s*script\b|<\/[a-z]|javascript:|\$\{|=>|\beval\s*\(|\bfunction\s*\(|\b(?:document|window|globalThis|self)\s*\.\s*[a-z_$]|\brequire\s*\(|\bimport\s*\(/i;
+const codeAttempt = v => { v = String(v || ''); return CODE_RUN.test(v) || CODE_TOK.test(v); };
+let TAMPERED = false;
+function tamperLockUI(msg) {
+  TAMPERED = true;
+  try { closeModal(true); } catch (e) { }
+  S.pin_hash = ''; S.inApp = false; try { sessDel(); } catch (e) { }
+  L.users = []; L.sel = '';
+  showLogin('users', msg || t('tamper.locked'));
+}
+async function tamperTrip(where) {
+  if (TAMPERED || isOwner() || !S.inApp || !S.user) return;
+  try { await api('report_tamper', { where: String(where || '').slice(0, 60) }); } catch (e) { }
+  tamperLockUI();
+}
+document.addEventListener('input', e => {
+  const el = e.target; if (!el || !el.dataset) return;
+  if (el.dataset.rule) applyRule(el);
+  if (S.inApp && !isOwner() && el.value && codeAttempt(el.value)) { try { el.value = ''; } catch (_) { } tamperTrip(el.id || el.dataset.rule || 'input'); }
+}, true);
 /** Every text field gets a maxlength (its rule's, or 300 / 4000) and the right keyboard; set when it appears. */
 const DEF_MAX = { text: 300, search: 120, tel: 20, email: 120, number: 18, password: 8 };
 function stampInputs(root) {
@@ -10265,9 +10334,10 @@ const ROLE_ORDER = ['owner', 'manager', 'kasir', 'sales', 'akuntan'];
 const pinLenFor = role => role === 'owner' || role === 'manager' ? 6 : 4;
 /* Owner's decision 07 Oct: the manager adds and manages staff accounts (cashier, sales, accountant) — never a manager or the
    owner, and never their accounts. The server enforces the same rule; every change is in the owner's activity log. */
-const STAFF_ROLES = ['kasir', 'sales', 'akuntan'];
-const assignableRoles = () => isOwner() ? ['kasir', 'sales', 'manager', 'akuntan', 'owner'] : STAFF_ROLES;
-const canManageUser = u => isOwner() || (S.role === 'manager' && STAFF_ROLES.includes(u.role || 'kasir'));
+// v19 (owner's decision): the manager creates/manages only cashier and sales accounts — never an accountant, manager or owner.
+const MGR_ROLES = ['kasir', 'sales'];
+const assignableRoles = () => isOwner() ? ['kasir', 'sales', 'manager', 'akuntan', 'owner'] : MGR_ROLES;
+const canManageUser = u => isOwner() || (S.role === 'manager' && MGR_ROLES.includes(u.role || 'kasir'));
 function usersPanelHTML() {
   return `<div class="panel"><h3>${esc(t('set.users'))}</h3><div class="pb">
       <div id="st-users" style="margin-bottom:12px">${usersByRoleHTML()}</div>
@@ -10281,12 +10351,12 @@ function usersPanelHTML() {
       <div class="red" id="nu-err"></div><button class="btn primary" data-act="user-add">${ic('plus')} ${esc(t('set.add_user'))}</button></div></div>`;
 }
 function usersByRoleHTML() {
-  return ROLE_ORDER.filter(r => isOwner() || STAFF_ROLES.includes(r)).map(r => {
+  return ROLE_ORDER.filter(r => isOwner() || MGR_ROLES.includes(r)).map(r => {
     const list = S.users.filter(u => (u.role || 'kasir') === r);
     return `<div class="usr-group" data-role-group="${r}"><h4 style="margin:10px 0 6px">${esc(t('usr.group_' + r))} <span class="muted small">(${list.length})</span></h4>
-      ${list.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>${list.map(u => `<tr data-user="${esc(u.name)}"><td><b>${esc(u.name)}</b> ${u.active === false ? `<span class="badge red">${esc(t('inactive'))}</span>` : ''}${u.must_change ? ` <span class="badge amber" data-must="1">${esc(t('usr.must_change'))}</span>` : ''}${u.locked ? ` <span class="badge red" data-locked="1">${esc(t('usr.locked'))}</span>` : ''}${u.has_master ? ` <span class="badge gold" data-has-master="1">${ic('lock')} ${esc(t('mc.has'))}</span>` : ''}<br>
+      ${list.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>${list.map(u => `<tr data-user="${esc(u.name)}"><td><b>${esc(u.name)}</b> ${u.active === false ? `<span class="badge red">${esc(t('inactive'))}</span>` : ''}${u.must_change ? ` <span class="badge amber" data-must="1">${esc(t('usr.must_change'))}</span>` : ''}${u.locked ? ` <span class="badge red" data-locked="1">${esc(t('usr.locked'))}</span>` : ''}${u.tamper ? ` <span class="badge red" data-tamper="1">${ic('lock')} ${esc(t('tamper.badge'))}</span>` : ''}${u.has_master ? ` <span class="badge gold" data-has-master="1">${ic('lock')} ${esc(t('mc.has'))}</span>` : ''}<br>
         <select class="input" style="width:auto;min-height:32px;padding:2px 6px;margin-top:4px" data-user-role="${esc(u.name)}" aria-label="${esc(t('set.role'))}">${assignableRoles().map(x => `<option value="${x}" ${u.role === x ? 'selected' : ''}>${esc(t('role.' + x))}</option>`).join('')}</select></td>
-        <td class="r" style="white-space:nowrap"><button class="btn xs" data-act="user-swap" data-name="${esc(u.name)}">${ic('users')} ${esc(t('usr.swap'))}</button> <button class="btn xs" data-act="user-pin" data-name="${esc(u.name)}">${esc(t('set.reset_pin'))}</button> <button class="btn xs ${u.active === false ? '' : 'danger'}" data-act="user-toggle" data-name="${esc(u.name)}">${esc(u.active === false ? t('set.activate') : t('set.deactivate'))}</button></td></tr>`).join('')}</tbody></table></div>`
+        <td class="r" style="white-space:nowrap">${u.tamper && isOwner() ? `<button class="btn xs danger" data-act="user-unlock" data-name="${esc(u.name)}">${ic('lock')} ${esc(t('tamper.unlock'))}</button> ` : ''}<button class="btn xs" data-act="user-swap" data-name="${esc(u.name)}">${ic('users')} ${esc(t('usr.swap'))}</button> <button class="btn xs" data-act="user-pin" data-name="${esc(u.name)}">${esc(t('set.reset_pin'))}</button> <button class="btn xs ${u.active === false ? '' : 'danger'}" data-act="user-toggle" data-name="${esc(u.name)}">${esc(u.active === false ? t('set.activate') : t('set.deactivate'))}</button></td></tr>`).join('')}</tbody></table></div>`
       : `<div class="small muted" data-empty-group>${esc(t(r === 'akuntan' ? 'usr.akuntan_note' : 'usr.group_empty'))}</div>`}</div>`;
   }).join('');
 }
