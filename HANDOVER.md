@@ -30,7 +30,9 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   build the file = `backend/process.js` with `'__STORE_KEY__'` replaced by the real key (read the key from the live Process node via
   `get_workflow_details`), send it privately with SendUserFile, he pastes into the Process node (Esc / Ctrl+S to save), then verify the
   deployed jsCode equals the file before publishing. Small nodes, filters and data tables can be edited directly (`update_workflow`).
-- **Not yet deployed:** `backend/field/process-field.js` v16 auth (master code, lock, must_change, input cleaning) — deploy when reps start.
+- **Deployed 07 Oct:** `backend/field/process-field.js` v16 auth (master code, lock, must_change, input cleaning) in the Field workflow.
+  The MCP transport writes the four direction characters of the cleanInput regex (\u202A-\u202E, \u2066-\u2069) literally:
+  compare with those four normalised; behaviour is identical.
 - Data tables: pos_* (users, products, customers, sales, sale_items, payments, purchases, settings, approvals, photos, expenses, shifts,
   devices, repacks, activity, bank_lines, returns, shops, visits, tracks, field_days, field_orders, product_images).
 - Settings already stored: bank account BNI 1229517397 (zied salah). Return limit for owner approval Rp 2,000,000 (changes only by
@@ -68,8 +70,10 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
 - Owner's request still open: cold-storage date warehouses (pallets/containers, daily WhatsApp stock check, pick orders,
   truck call) — waits for the owner's samples.
 
+- Leaflet 1.9.4 is vendored in `vendor/leaflet` (no cdnjs; CSP no longer allows cdnjs). Khair Sales cache is `khair-sales-v3`.
+- Khair Sales: swiping in presentation mode on the product photo now works (image drag cancelled the swipe).
+
 ## Ideas noted, not built
-- Leaflet SRI hashes (cdnjs was unreachable from the build container).
 
 ## Paused until the real launch (07 Oct, owner's decision)
 The shop has not started real work yet. Paused: Claude routine "Khair Mart – تقرير الصباح" (trig_01Lj7zLWVfr54bVpHwkEthr5, disabled),

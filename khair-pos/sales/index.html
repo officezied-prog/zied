@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- security M8: CSP (GitHub Pages cannot send headers). connect-src = the n8n webhooks only; images incl. OSM tiles. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; img-src 'self' data: blob: https://cdnjs.cloudflare.com https://*.tile.openstreetmap.org; connect-src 'self' https://ziedapp.app.n8n.cloud; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' https://ziedapp.app.n8n.cloud; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="theme-color" content="#1E40AF">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -14,10 +14,9 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
-<!-- TODO(security M8): add integrity="sha512-…" to both Leaflet tags (copy the hashes from cdnjs.com/libraries/leaflet/1.9.4;
-     they could not be fetched offline here — a wrong hash would silently disable the map). -->
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
-<script async src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<!-- Leaflet 1.9.4 served from this site (vendor/leaflet), not from a CDN -->
+<link rel="stylesheet" href="../vendor/leaflet/leaflet.css">
+<script async src="../vendor/leaflet/leaflet.js"></script>
 <style>
 
 /* ========== Tokens (store logo: blue + red) ========== */
@@ -2025,7 +2024,7 @@ function imgHTML(p, cls) { const d = imgOf(p); return d ? `<img class="${cls}" s
 function stockLevel(p) { const s = num(p.stock); if (s <= 0) return 'habis'; if (s <= Math.max(num(p.min_stock), 0) || s < Math.max(3, num(p.wholesale_min_qty))) return 'sedikit'; return 'ada'; }
 const stockChip = p => { const l = stockLevel(p); return `<span class="stock ${l}" data-stock="${l}">${esc(t('stock.' + l))}</span>`; };
 
-/* ========== Map: Leaflet (cdnjs + OSM) when available, SVG plot otherwise ========== */
+/* ========== Map: Leaflet (vendor/leaflet + OSM tiles) when available, SVG plot otherwise ========== */
 const MAPS = { failed: false };
 function renderMap(el, { points = [], shops = [], current = null, tall = false }) {
   if (!el) return;
