@@ -130,6 +130,26 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
     (loaded with `backend/chat/chat-core.js` only in `?mock=1`). Each app adds `CONFIG.CHAT_URL`, an `apiChat` wrapper, a chat branch in
     MockServer.request (bypasses the tamper scan — a message may contain symbols), and KChatUI start/stop/setLang on login/lock/logout/lang.
     Tests: `tests/chat.spec.js`, `tests-kasir/chat.spec.js`, `tests-sales/chat.spec.js`. SW caches bumped: owner v4, kasir v2, sales v4.
+- **Phase 4 barcode (08 Oct, DONE, live with the apps):** a product's `sku` IS its barcode. Cashier POS search + Enter on an exact SKU
+  adds the product straight to the cart (keyboard-wedge scanner path, `isFastInput`), and `BarcodeDetector` camera buttons scan into the
+  POS search and into the product-form SKU field (`cameraScan`). Tests: `tests/barcode.spec.js`.
+- **v21 shelf-life / expiry + product attributes (08 Oct, DONE in repo + tests; n8n node done; NOT yet live — needs HTML merge + one Process paste):**
+  - New `pos_products` columns (already added to the data table): `size`, `weight` (free text ≤ 40), `exp_date` (soonest upcoming expiry,
+    YYYY-MM-DD or empty) and `exp_none` (boolean, true = never expires, e.g. gelas / madu). `category` already existed.
+  - Owner product form gains Ukuran / Berat / Tanggal kedaluwarsa (+ a "Tak ada" checkbox). Goods-in — the cashier `RENDER.masuk` AND the
+    owner `RENDER.purchases` — now needs an expiry per line (a date, or "Tak ada"); the server rejects a line with neither (`INVALID`).
+    The batch row keeps its `exp_date`; the product's shown expiry becomes the soonest upcoming batch (a fresh / expired stock is replaced).
+  - Stock turns **red** when the soonest expiry is within 6 months (`exp.soon` + days), with `KEDALUWARSA` once past; `exp_none` never goes red.
+    Owner products list uses helpers `prodExpState` / `prodExpBadge` (next to `isLow`); CSS `.exp-soon` / `.exp-expired`.
+  - Backend `backend/process.js`: `save_product`, `save_purchase`, `import_products` updated. Harness `backend/harness/harness23.js`
+    (12 checks, all pass). Both mock servers + demo seeds mirror it. Owner suite 156 + kasir 92 green. SW caches bumped: **owner v5, kasir v3**
+    (sales unchanged). The save-check order in goods-in is carrier → expiry, so the carrier prompt still wins.
+  - **n8n already done + published (POS API active version 8d46023a):** the `Upsert products` node now maps size/weight/exp_date/exp_none.
+    Safe with the live v20 Process (those four are just written blank until v21 is pasted — production goods-in is NOT broken meanwhile).
+  - **To go live (owner-driven, THIS order):** (1) merge the app code to `main` so Pages serves the new UI; (2) the owner pastes
+    `scratchpad/Process-v21.js` (163,241 chars, md5 cb011fda…, `__STORE_KEY__` already swapped for the real key) into the POS **Process**
+    node — raw, no Gemini / no formatter — then verify deployed == file and publish. HTML first (new UI sends the expiry), then the paste
+    (v21 enforces it); the reverse would block goods-in on the old UI.
 - **Cold storage "Khair Gudang Dingin" (07 Oct, third session)** — see below.
 
 - Leaflet 1.9.4 is vendored in `vendor/leaflet` (no cdnjs; CSP no longer allows cdnjs). Khair Sales cache is `khair-sales-v3`.

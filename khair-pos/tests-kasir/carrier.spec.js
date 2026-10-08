@@ -35,6 +35,7 @@ test('carrier required: public transport needs the vehicle number; stored on the
   await expect(page.locator('#pu-car-vehicle')).toHaveValue('M-06 JKT');
   await page.evaluate(() => document.querySelector('#pu-car').scrollIntoView({ block: 'center' }));
   await H.shot(page, 'phone-51-carrier', false, { noToasts: true });
+  await H.fillPuExp(page);
   await page.click('#pu-save');
   await expect(page.locator('#pu-res-match')).toHaveText('Cocok dengan nota');
   const no = (await page.locator('#pu-res-no').textContent()).trim();
@@ -49,7 +50,7 @@ test('friend / staff need a name; the server answers CARRIER_REQUIRED; setting r
   await H.login(page);
   const api = (d) => page.evaluate(async x => { try { await api('save_purchase', x); return 'ok'; } catch (e) { return e.code + ' ' + e.message; } }, d);
   const pid = (await H.getDb(page)).products[0].id;
-  const base = { items: [{ product_id: pid, qty: 1, cost_price: 1000 }], supplier: 'Toko Uji' };
+  const base = { items: [{ product_id: pid, qty: 1, cost_price: 1000, exp_none: true }], supplier: 'Toko Uji' };
   await H.setDb(page, `db.settings.require_purchase_photo = false;`);
   expect(await api(base)).toBe('CARRIER_REQUIRED Pilih siapa yang membawa barang (kendaraan umum / teman / sopir pemasok / karyawan)');
   expect(await api({ ...base, carrier: { type: 'teman' } })).toBe('CARRIER_REQUIRED Tulis nama orang yang membawa barang');
@@ -72,6 +73,7 @@ test('friend / staff need a name; the server answers CARRIER_REQUIRED; setting r
   await H.pickCarrier(page, 'karyawan', { name: 'رشيد <ب>' });
   await expect(page.locator('#pu-car-name')).toHaveValue('رشيد ب');
   await H.shot(page, 'phone-52-carrier-ar', false, { noToasts: true });
+  await H.fillPuExp(page);
   await page.click('#pu-save');
   await expect(page.locator('#pu-res-no')).toBeVisible();
   const no = (await page.locator('#pu-res-no').textContent()).trim();

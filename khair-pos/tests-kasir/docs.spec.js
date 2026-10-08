@@ -47,6 +47,7 @@ test('cart → Penawaran; receipt → Faktur A4 and Surat jalan; goods-in → Ta
   await page.setInputFiles('#pu-photo', await H.photoFile(page, 'nota.png'));
   await expect(page.locator('#pu-photo-ok')).toContainText('1 baris');
   await H.pickCarrier(page);
+  await H.fillPuExp(page);
   await page.click('#pu-save');
   const no = (await page.locator('#pu-res-no').textContent()).trim();
   await page.locator(`#pu-hist .hist[data-no="${no}"] [data-act="pu-doc"]`).click();
