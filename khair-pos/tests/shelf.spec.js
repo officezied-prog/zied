@@ -80,7 +80,7 @@ test('goods-in adds to the warehouse only; a sale above the shelf → NOT_ON_SHE
   let db = await getDb(page);
   const ajwa = P(db, /Kurma Ajwa/), before = ajwa.stock;
   const ph = await asUser(page, 'Pemilik', '1234', 'scan_purchase', { image_base64: 'AAAA', mime: 'image/jpeg' });
-  await asUser(page, 'Pemilik', '1234', 'save_purchase', { carrier: CARRIER, purchase_date: jktToday(), supplier: 'PT Uji Rak', photo_id: ph.photo_id, items: [{ product_id: ajwa.id, qty: 10, cost_price: 130000 }], mismatch_reason: 'uji rak' });
+  await asUser(page, 'Pemilik', '1234', 'save_purchase', { carrier: CARRIER, purchase_date: jktToday(), supplier: 'PT Uji Rak', photo_id: ph.photo_id, items: [{ product_id: ajwa.id, qty: 10, cost_price: 130000, exp_none: true }], mismatch_reason: 'uji rak' });
   db = await getDb(page);
   expect(P(db, /Kurma Ajwa/)).toMatchObject({ stock: before + 10, shop_stock: before }); // the old stock counts as on the shelf
 

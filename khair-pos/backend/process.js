@@ -1647,6 +1647,9 @@ switch (req.action) {
     if (str(data.category) && !safeName(data.category, 40)) return fail('INVALID', 'Kategori hanya boleh huruf dan angka');
     if (str(data.unit) && !/^[\p{L}\p{N} .\/-]{1,15}$/u.test(str(data.unit))) return fail('INVALID', 'Satuan tidak valid');
     if (str(data.supplier) && !safeName(data.supplier, 80)) return fail('INVALID', 'Nama pemasok hanya boleh huruf dan angka');
+    if (str(data.size).length > 40) return fail('INVALID', 'Ukuran terlalu panjang');
+    if (str(data.weight).length > 40) return fail('INVALID', 'Berat terlalu panjang');
+    if (str(data.exp_date) && !isDate(data.exp_date)) return fail('INVALID', 'Tanggal kedaluwarsa tidak valid (YYYY-MM-DD)');
     const existing = data.id ? productById[String(data.id)] : null;
     if (data.id && !existing) return fail('NOT_FOUND', 'Produk tidak ditemukan');
     if (sku && products.some(function (p) { return str(p.sku) === sku && (!existing || p.id !== existing.id); })) return fail('INVALID', 'SKU/barcode sudah dipakai');
@@ -1656,8 +1659,13 @@ switch (req.action) {
       wholesale_min_qty: num(data.wholesale_min_qty), stock: existing ? num(existing.stock) : num(data.stock),
       min_stock: num(data.min_stock), active: data.active !== false, notes: str(data.notes),
       supplier: str(data.supplier).slice(0, 80),
+      size: data.size !== undefined ? str(data.size).slice(0, 40) : (existing ? str(existing.size) : ''),
+      weight: data.weight !== undefined ? str(data.weight).slice(0, 40) : (existing ? str(existing.weight) : ''),
       repack_from: 0, repack_qty: 0
     };
+    // Shelf life (v21): a product is either dated or explicitly "no expiry" (cups, honey, …); only dated ones can go red.
+    p.exp_none = data.exp_none !== undefined ? data.exp_none === true : (existing ? existing.exp_none === true : false);
+    p.exp_date = p.exp_none ? '' : (isDate(data.exp_date) ? data.exp_date : (data.exp_date === undefined && existing ? str(existing.exp_date) : ''));
     // Repacked in the shop: this product is made from a bulk product (repack_from), repack_qty of its unit per piece.
     if (num(data.repack_from) > 0) {
       const bulk = productById[String(data.repack_from)];
@@ -1698,7 +1706,7 @@ switch (req.action) {
       const sku = str(r.sku);
       if (!name && !sku) return;
       const ex = (sku && bySku[sku]) || (name && byName[name.toLowerCase()]) || null;
-      const base = ex ? Object.assign({}, ex) : { sku: sku, name: name, category: '', unit: 'pcs', cost_price: 0, retail_price: 0, wholesale_price: 0, wholesale_min_qty: 0, stock: 0, min_stock: 0, active: true, notes: '', supplier: '', repack_from: 0, repack_qty: 0 };
+      const base = ex ? Object.assign({}, ex) : { sku: sku, name: name, category: '', unit: 'pcs', cost_price: 0, retail_price: 0, wholesale_price: 0, wholesale_min_qty: 0, stock: 0, min_stock: 0, active: true, notes: '', supplier: '', size: '', weight: '', exp_date: '', exp_none: false, repack_from: 0, repack_qty: 0 };
       if (name) base.name = name;
       if (sku) base.sku = sku;
       fields.forEach(function (f) {
@@ -2048,22 +2056,38 @@ switch (req.action) {
     const purchaseNo = 'PB' + date.replace(/-/g, '').slice(2) + '-' + rand(4);
     const matchNotes = (match.diffs.length ? diffText(match.diffs) : '') + (reason ? ' | alasan: ' + reason : '');
     const state = {};
+    const prevStockById = {};
+    const today = jkDate();
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       const p = state[String(it.product_id)] || (productById[String(it.product_id)] ? Object.assign({}, productById[String(it.product_id)]) : null);
       if (!p) return fail('NOT_FOUND', 'Produk tidak ditemukan: ' + it.product_id);
       const qty = Math.round(num(it.qty) * 1000) / 1000;
       if (!(qty > 0)) return fail('INVALID', 'Jumlah tidak valid: ' + p.name);
+      // Every goods-in line carries a shelf life (v21): a real date, or "no expiry" for items like cups / honey.
+      const expNone = it.exp_none === true;
+      const expDate = isDate(it.exp_date) ? it.exp_date : '';
+      if (!expNone && !expDate) return fail('INVALID', 'Tanggal kedaluwarsa wajib untuk ' + str(p.name) + ' (isi tanggal atau tandai "tak ada")');
       const cost = money(it.cost_price);
       const oldStock = Math.max(0, num(p.stock));
+      if (prevStockById[String(p.id)] === undefined) prevStockById[String(p.id)] = oldStock;
       const newCost = oldStock + qty > 0 ? Math.round((oldStock * money(p.cost_price) + qty * cost) / (oldStock + qty)) : cost;
       p.stock = Math.round((num(p.stock) + qty) * 1000) / 1000;
       p.cost_price = newCost;
+      // Keep the product's shown expiry at the soonest upcoming batch (conservative for the red warning); a fresh
+      // (empty / expired) stock is replaced by this batch's date. "No expiry" marks the product so it never goes red.
+      if (expNone) { p.exp_none = true; p.exp_date = ''; }
+      else {
+        p.exp_none = false;
+        const cur = isDate(p.exp_date) ? p.exp_date : '';
+        if (!cur || prevStockById[String(p.id)] <= 0 || cur < today) p.exp_date = expDate;
+        else p.exp_date = expDate < cur ? expDate : cur;
+      }
       state[String(p.id)] = p;
       ops.purchases.push(forWrite({
         purchase_date: date, supplier: str(data.supplier), product_id: p.id, name: str(p.name), qty: qty,
         cost_price: cost, total: Math.round(qty * cost), note: str(data.note), user: me.name, photo_id: photoId,
-        exp_date: isDate(it.exp_date) ? it.exp_date : '', purchase_no: purchaseNo, match_status: match.status, match_notes: matchNotes.slice(0, 500),
+        exp_date: expDate, purchase_no: purchaseNo, match_status: match.status, match_notes: matchNotes.slice(0, 500),
         carrier_type: carrier.type, carrier_name: carrier.name, carrier_vehicle: carrier.vehicle, carrier_phone: carrier.phone
       }, -1));
     }
@@ -2071,7 +2095,7 @@ switch (req.action) {
     Object.keys(state).forEach(function (pid) {
       const p = state[pid];
       ops.products.push(forWrite(p, p.id));
-      const o = { product_id: p.id, stock: p.stock };
+      const o = { product_id: p.id, stock: p.stock, exp_date: p.exp_date || '', exp_none: p.exp_none === true };
       if (role === 'owner') o.cost_price = p.cost_price;
       stockOut.push(o);
     });

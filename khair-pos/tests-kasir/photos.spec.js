@@ -80,6 +80,7 @@ test('barang masuk: photo of the supplier note → AI lines → map products →
   // the note says 6 × Madu and nothing about Tasbih → the live check and the server both say "Beda dengan nota"
   await expect(page.locator('#pu-match-box')).toHaveAttribute('data-status', 'tidak_cocok');
   await H.pickCarrier(page);
+  await H.fillPuExp(page);
   await page.click('#pu-save');
   await expect(page.locator('#pu-mismatch #pu-mm-diffs tr.bad')).toHaveCount(2);
   await page.fill('#pu-mm-reason', 'Madu belum dikirim, tasbih titipan');

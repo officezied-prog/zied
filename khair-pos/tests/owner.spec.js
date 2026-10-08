@@ -50,6 +50,7 @@ test('purchase (barang masuk) updates stock and weighted average cost; stock adj
   await page.locator('[data-act="pu-add"]').first().click();
   await page.locator('[data-pu-qty="0"]').fill('10');
   await page.locator('[data-pu-cost="0"]').fill('175.000');
+  await page.locator('[data-pu-exp="0"]').fill('2027-06-01');
   await expect(page.locator('#pu-total')).toHaveText(rp(1750000));
   await pickCarrier(page);
   await page.click('#pu-save');
@@ -98,7 +99,7 @@ test('kasir never receives cost / profit (API as Siti) and is sent to the cashie
   expect(rows.filter(x => bad.some(k => k in x)).length).toBe(0);
   const ph = await asUser(page, 'Siti', '1111', 'scan_purchase', { image_base64: 'AAAA', mime: 'image/jpeg' });
   expect(JSON.stringify(ph)).not.toContain('cost_price');
-  const pr = await asUser(page, 'Siti', '1111', 'save_purchase', { carrier: CARRIER, purchase_date: T, supplier: 'x', photo_id: ph.photo_id, items: [{ product_id: 1, qty: 1, cost_price: 100 }], mismatch_reason: 'uji' });
+  const pr = await asUser(page, 'Siti', '1111', 'save_purchase', { carrier: CARRIER, purchase_date: T, supplier: 'x', photo_id: ph.photo_id, items: [{ product_id: 1, qty: 1, cost_price: 100, exp_none: true }], mismatch_reason: 'uji' });
   expect(pr.stock.some(x => 'cost_price' in x)).toBe(false);
   expect((await asUser(page, 'Siti', '1111', 'void_sale', { invoice_no: r.sales[0].invoice_no, reason: 'x' })).error).toBe('FORBIDDEN');
 

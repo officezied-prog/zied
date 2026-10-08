@@ -2050,21 +2050,29 @@ const MockServer = (() => {
         const checked = data.items.map(it => {
           const p = prodById(it.product_id); if (!p) throw E('NOT_FOUND', 'product ' + it.product_id);
           const qty = roundQty(it.qty); if (!(qty > 0)) throw E('INVALID', 'qty must be > 0');
-          return { p, qty, cost: Math.max(0, int(it.cost_price)), exp: isYmd(it.exp_date) ? it.exp_date : '' };
+          const expNone = it.exp_none === true;
+          const exp = isYmd(it.exp_date) ? it.exp_date : '';
+          if (!expNone && !exp) throw E('INVALID', 'Tanggal kedaluwarsa wajib untuk ' + p.name + ' (isi tanggal atau tandai "tak ada")');
+          return { p, qty, cost: Math.max(0, int(it.cost_price)), exp, expNone };
         });
         const purchase_no = 'PB' + pdate.replace(/-/g, '').slice(2) + '-' + rand(4);
         const matchNotes = ((match.diffs.length ? NoteMatch.diffText(match.diffs) : '') + (reason ? ' | alasan: ' + reason : '')).slice(0, 500);
         const out = [];
         let sumTotal = 0;
-        for (const { p, qty, cost, exp } of checked) {
+        const prevStockById = {};
+        const today0 = jktDate();
+        for (const { p, qty, cost, exp, expNone } of checked) {
           const old = Math.max(0, num(p.stock));
+          if (prevStockById[p.id] === undefined) prevStockById[p.id] = old;
           p.cost_price = old + qty > 0 ? Math.round((old * p.cost_price + qty * cost) / (old + qty)) : cost;
           p.stock = roundQty(p.stock + qty);
+          if (expNone) { p.exp_none = true; p.exp_date = ''; }
+          else { p.exp_none = false; const cur = isYmd(p.exp_date) ? p.exp_date : ''; p.exp_date = (!cur || prevStockById[p.id] <= 0 || cur < today0) ? exp : (exp < cur ? exp : cur); }
           db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: pdate, supplier: String(data.supplier || ''), product_id: p.id, name: p.name, qty, cost_price: cost, total: Math.round(qty * cost), note: String(data.note || ''), user: u.name, photo_id: photo ? photo.photo_id : '', exp_date: exp,
             purchase_no, match_status: match.status, match_notes: matchNotes, carrier_type: carrier.type, carrier_name: carrier.name, carrier_vehicle: carrier.vehicle, carrier_phone: carrier.phone });
           sumTotal += Math.round(qty * cost);
           const o = out.find(x => x.product_id === p.id);
-          if (o) Object.assign(o, { stock: p.stock, cost_price: p.cost_price }); else out.push({ product_id: p.id, stock: p.stock, cost_price: p.cost_price });
+          if (o) Object.assign(o, { stock: p.stock, cost_price: p.cost_price, exp_date: p.exp_date, exp_none: p.exp_none }); else out.push({ product_id: p.id, stock: p.stock, cost_price: p.cost_price, exp_date: p.exp_date, exp_none: p.exp_none });
         }
         if (photo) photo.ref = [photo.ref, String(data.supplier || '')].filter(Boolean).join(' ') || 'masuk';
         logAct(db, u, 'masuk', 'Barang masuk ' + purchase_no + (str(data.supplier) ? ' dari ' + str(data.supplier) : '') + ': ' + data.items.length + ' baris, Rp ' + sumTotal + ' — nota: ' + match.status + (matchNotes ? ' (' + matchNotes + ')' : '') + (carrier.type ? ' — dibawa ' + ({ umum: 'kendaraan umum', teman: 'teman', pemasok: 'sopir pemasok', karyawan: 'karyawan' })[carrier.type] + (carrier.name ? ' ' + carrier.name : '') + (carrier.vehicle ? ' ' + carrier.vehicle : '') : ''), purchase_no, sumTotal, match.status === 'cocok' ? 'info' : 'warn');
@@ -2235,7 +2243,7 @@ const MockServer = (() => {
       ['Finjan Set 12 pcs', 'Peralatan Dapur', 'set', 55000, 85000, 72000, 4, 16, 4, 1],
       ['Minyak Zaitun Extra Virgin 500 ml', 'Sembako', 'botol', 72000, 98000, 88000, 6, 1, 6, 2]
     ];
-    const products = P.map((r, i) => ({ id: i + 1, sku: '89910' + String(70001 + i * 37).padStart(7, '0') + (i % 10), name: r[0], category: r[1], unit: r[2], cost_price: r[3], retail_price: r[4], wholesale_price: r[5], wholesale_min_qty: r[6], stock: r[7], min_stock: r[8], active: true, notes: '' }));
+    const products = P.map((r, i) => ({ id: i + 1, sku: '89910' + String(70001 + i * 37).padStart(7, '0') + (i % 10), name: r[0], category: r[1], unit: r[2], cost_price: r[3], retail_price: r[4], wholesale_price: r[5], wholesale_min_qty: r[6], stock: r[7], min_stock: r[8], active: true, notes: '', size: '', weight: '', exp_date: '', exp_none: false }));
     const weights = P.map(r => r[9]);
     const wsum = sum(weights);
     const pickProduct = () => { let x = R() * wsum; for (let i = 0; i < weights.length; i++) { x -= weights[i]; if (x <= 0) return products[i]; } return products[0]; };
@@ -3924,6 +3932,8 @@ function applyStock(list) {
     else if (p.shop_stock === undefined || p.shop_stock === null || p.shop_stock === '') p.shop_stock = num(p.stock);
     p.stock = roundQty(num(s.stock) - pend);
     if (num(p.shop_stock) > p.stock) p.shop_stock = p.stock;
+    if (s.exp_date !== undefined) p.exp_date = s.exp_date;
+    if (s.exp_none !== undefined) p.exp_none = s.exp_none;
     p.gudang_stock = gudangOf(p);
   });
   saveCache();
@@ -4560,6 +4570,7 @@ RENDER.masuk = function (force) {
           <div class="g3"><div><label class="f">${esc(t('qty'))}${p ? ` (${esc(p.unit || '')})` : ''}</label><input class="input num" inputmode="decimal" data-rule="num" data-pu-qty="${i}" value="${esc(fmtQtyInput(l.qty))}"></div>
           <div><label class="f">${esc(t('pu.price_note'))}</label><input class="input num" inputmode="numeric" data-rule="num" data-pu-cost="${i}" value="${l.cost ? esc(fmtNum(l.cost)) : ''}"></div>
           <button class="icon-btn" data-act="pu-del" data-i="${i}" aria-label="${esc(t('delete'))}" style="color:var(--redd)">${ic('trash')}</button></div>
+          <div class="row" style="gap:8px;align-items:flex-end;margin-top:6px"><div class="grow" style="min-width:0"><label class="f">${esc(t('pu.exp'))}</label><input class="input" type="date" data-pu-exp="${i}" value="${esc(l.exp || '')}" aria-label="${esc(t('pu.exp'))}" title="${esc(t('pu.exp_hint'))}" ${l.exp_none ? 'disabled' : ''}></div><label class="check small" style="flex:0 0 auto;white-space:nowrap;padding-bottom:10px"><input type="checkbox" data-pu-expnone="${i}" ${l.exp_none ? 'checked' : ''}> ${esc(t('pu.exp_none'))}</label></div>
           <div class="noteq" role="status">${bad ? esc(t('pu.line_diff', { typed: fmtQty(l.qty), note: fmtQty(it.qty) })) : ''}</div></div>`;
       }).join('') || `<div class="empty">${esc(t('pu.empty_hint'))}</div>`}</div>
       <div class="field" style="margin-top:6px"><label class="f" for="pu-q">${esc(t('pu.add_product'))}</label><div class="search">${ic('search')}<input class="input" id="pu-q" type="search" autocomplete="off" placeholder="${esc(t('sell.search_ph'))}" value="${esc(PU.q)}"></div><div class="list" id="pu-sug" style="margin-top:6px"></div></div>
@@ -4591,6 +4602,8 @@ RENDER.masuk = function (force) {
   $$('[data-pu-qty]', v).forEach(i => i.oninput = () => { const k = +i.dataset.puQty; PU.lines[k].qty = qtyVal(i.value); recalc(); drawPuLine(k); drawPuMatch(); });
   $$('[data-pu-cost]', v).forEach(i => i.oninput = () => { PU.lines[+i.dataset.puCost].cost = moneyVal(i.value); recalc(); });
   $$('[data-pu-prod]', v).forEach(sel => sel.onchange = () => { const l = PU.lines[+sel.dataset.puProd]; l.product_id = sel.value ? Number(sel.value) || sel.value : null; savePuDraft(); RENDER.masuk(); });
+  $$('[data-pu-exp]', v).forEach(i => i.onchange = () => { PU.lines[+i.dataset.puExp].exp = i.value; savePuDraft(); });
+  $$('[data-pu-expnone]', v).forEach(i => i.onchange = () => { const l = PU.lines[+i.dataset.puExpnone]; l.exp_none = i.checked; if (i.checked) l.exp = ''; savePuDraft(); RENDER.masuk(); });
   bindCarrier(v, 'pu', PU.carrier, () => { savePuDraft(); RENDER.masuk(); }, savePuDraft);
   drawPuMatch();
   drawPuHist();
@@ -4636,10 +4649,11 @@ async function savePurchase(reason) {
   const err = $('#pu-err');
   const block = puBlockReason();
   if (block) { if (err) err.textContent = block; return; }
-  const items = PU.lines.map(l => { const it = { product_id: l.product_id, qty: roundQty(l.qty), cost_price: int(l.cost) }; if (hasIdx(l)) it.photo_index = int(l.photo_index); return it; });
+  const items = PU.lines.map(l => { const it = { product_id: l.product_id, qty: roundQty(l.qty), cost_price: int(l.cost) }; if (l.exp_none) it.exp_none = true; else if (/^\d{4}-\d{2}-\d{2}$/.test(l.exp || '')) it.exp_date = l.exp; if (hasIdx(l)) it.photo_index = int(l.photo_index); return it; });
   if (items.some(i => !(i.qty > 0))) { if (err) err.textContent = t('pu.bad_qty'); return; }
   const cchk = carrierCheck(PU.carrier, carrierRequired());
   if (cchk) { carrierShow($('#v-masuk'), 'pu', cchk); if (err) err.textContent = cchk.msg; return; }
+  if (items.some(i => !i.exp_none && !i.exp_date)) { if (err) err.textContent = t('pu.exp_required'); return; }
   if (!reason && items.some(i => !(i.cost_price > 0))) { const ok = await confirmBox(t('pu.zero_cost')); if (!ok.ok) return; }
   const btn = $('#pu-save'); if (btn) { btn.disabled = true; btn.textContent = t('saving'); }
   const mmBtn = $('#pu-mm-save'); if (mmBtn) mmBtn.disabled = true;
@@ -5936,6 +5950,7 @@ const I18N = {
     'pu.photo_hint_opt': 'Foto nota agar AI mengisi barangnya.', 'pu.ai_reading': 'AI membaca nota… (5–20 detik)', 'pu.photo_ok': 'Foto tersimpan · {n} baris terbaca', 'pu.demo_scan': 'Mode DEMO: pembacaan foto hanya contoh tetap — tidak membaca foto asli Anda. Pakai aplikasi asli (tanpa ?mock=1) untuk membaca nota sungguhan.',
     'pu.check_lines': 'Cek barang & jumlah', 'pu.supplier': 'Supplier', 'pu.on_note': 'Di nota', 'pu.unmatched': 'Pilih barangnya', 'pu.pick_product': 'pilih barang',
     'pu.price_note': 'Harga di nota', 'pu.empty_hint': 'Foto nota dulu, atau tambah barang manual.', 'pu.add_product': 'Tambah barang manual', 'pu.total_note': 'Total nota',
+    'pu.exp': 'Kedaluwarsa', 'pu.exp_hint': 'Wajib: tanggal kedaluwarsa, atau centang "tak ada"', 'pu.exp_none': 'Tak ada', 'pu.exp_required': 'Isi tanggal kedaluwarsa tiap baris, atau centang "tak ada"',
     'pu.save': 'Simpan barang masuk', 'pu.saved': 'Barang masuk tersimpan', 'pu.empty': 'Belum ada barang', 'pu.need_photo': 'Foto nota dulu', 'pu.need_match': 'Semua baris harus dipilih barangnya',
     'pu.note_invoice': 'Nota {no}', 'pu.scan_net': 'Gagal mengirim foto (koneksi).', 'pu.scan_retry': 'Coba foto lagi.', 'pu.bad_qty': 'Jumlah harus lebih dari 0', 'pu.zero_cost': 'Ada harga nota 0. Tetap simpan?',
     'kas.owner_none': 'Pemilik tidak perlu buka kasir.', 'kas.closed': 'Kasir belum dibuka', 'kas.open_since': 'Kasir buka sejak {time}', 'kas.stale': 'Dibuka {date} — belum ditutup!',
@@ -6041,6 +6056,7 @@ const I18N = {
     'pu.photo_hint_opt': 'صوّر الفاتورة ليملأ الذكاء الاصطناعي الأصناف.', 'pu.ai_reading': 'جارٍ قراءة الفاتورة… (5–20 ثانية)', 'pu.photo_ok': 'حُفظت الصورة · {n} سطور', 'pu.demo_scan': 'وضع تجريبي: قراءة الصورة مثال ثابت ولا تقرأ صورتك الحقيقية. استعمل التطبيق الحقيقي (بدون ?mock=1) لقراءة فاتورتك.',
     'pu.check_lines': 'راجع الأصناف والكميات', 'pu.supplier': 'المورد', 'pu.on_note': 'في الفاتورة', 'pu.unmatched': 'اختر الصنف', 'pu.pick_product': 'اختر صنفًا',
     'pu.price_note': 'السعر في الفاتورة', 'pu.empty_hint': 'صوّر الفاتورة أولًا أو أضف صنفًا يدويًا.', 'pu.add_product': 'إضافة صنف يدويًا', 'pu.total_note': 'إجمالي الفاتورة',
+    'pu.exp': 'تاريخ الانتهاء', 'pu.exp_hint': 'إلزامي: تاريخ الانتهاء، أو ضع علامة "غير موجود"', 'pu.exp_none': 'غير موجود', 'pu.exp_required': 'املأ تاريخ الانتهاء لكل سطر، أو ضع علامة "غير موجود"',
     'pu.save': 'حفظ البضاعة المستلمة', 'pu.saved': 'تم حفظ الاستلام', 'pu.empty': 'لا توجد أصناف', 'pu.need_photo': 'صوّر الفاتورة أولًا', 'pu.need_match': 'اختر الصنف لكل سطر',
     'pu.note_invoice': 'فاتورة {no}', 'pu.scan_net': 'تعذّر إرسال الصورة (اتصال).', 'pu.scan_retry': 'أعد التصوير.', 'pu.bad_qty': 'الكمية يجب أن تكون أكبر من 0', 'pu.zero_cost': 'يوجد سعر 0. حفظ على أي حال؟',
     'kas.owner_none': 'المالك لا يحتاج فتح الصندوق.', 'kas.closed': 'الصندوق غير مفتوح', 'kas.open_since': 'الصندوق مفتوح منذ {time}', 'kas.stale': 'فُتح {date} — لم يُغلق!',

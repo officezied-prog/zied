@@ -33,13 +33,13 @@ never receives `cost_price`, `total_cost`, `profit`, `line_profit`, `cost` field
 | `bootstrap` | any | – | `products[], customers[], settings{}, users[{name,role,active}], server_time` |
 | `save_sale` | any | see Sale below | `invoice_no, sale: {...}, stock: [{product_id, stock}], duplicate: bool` |
 | `void_sale` | owner | `{invoice_no, reason}` | `sale` |
-| `save_product` | owner | Product (with `id` to update; `stock` only used on create) | `product` |
+| `save_product` | owner | Product (with `id` to update; `stock` only used on create). Shelf life (v21): `size`, `weight` (free text ≤ 40), and either `exp_date` (YYYY-MM-DD, soonest upcoming expiry) or `exp_none: true` for items that never expire (gelas, madu, …) | `product` |
 | `import_products` | owner | `{rows: [Product without id]}` upsert by `sku`, else by exact `name` | `created, updated` |
 | `stock_adjust` | owner | `{product_id, new_stock, reason}` | `product` |
 | `save_customer` | any | Customer (with `id` to update; `debt_balance` ignored). `name` is optional when a phone is given (default "Pelanggan " + last 4 digits). Without `id`, a customer with the same normalised phone (62…) is updated instead of duplicated. `wa_optin`, `source` (≤ 20) | `customer`, `existed` |
 | `stock_count` | any except sales | `{counts: [{product_id, counted}], note}` (stock count / opname, ≤ 500 lines) | `applied, lines: [{product_id, name, unit, system, counted, diff}]`. Owner: applied now, `stock`. Others: `request_id, approval` (kind `opname`, owner decides); on approval each `diff` is added to the stock at that moment, so sales made meanwhile are kept. Every change is logged as a purchase row with supplier `STOK OPNAME` |
 | `receive_payment` | any | `{customer_id, amount, method, note, pay_date}` | `payment, customer` |
-| `save_purchase` | any | `{purchase_date, supplier, note, items:[{product_id, qty, cost_price, exp_date? (YYYY-MM-DD, expiry of this batch)}]}` | `stock: [{product_id, stock, cost_price}]` |
+| `save_purchase` | any | `{purchase_date, supplier, note, items:[{product_id, qty, cost_price, exp_date (YYYY-MM-DD) OR exp_none:true}]}`. v21: every line **must** carry an expiry — a date or `exp_none:true` (items like gelas/madu); a line with neither is rejected `INVALID`. The batch keeps its `exp_date`; the product's shown expiry becomes the soonest upcoming batch (a fresh/expired stock is replaced). | `stock: [{product_id, stock, cost_price, exp_date, exp_none}]` |
 | `get_sales` | any (kasir: cost/profit stripped) | `{from: "YYYY-MM-DD", to: "YYYY-MM-DD"}` inclusive | `sales[], items[], payments[], purchases[]` |
 | `save_settings` | owner | `{settings: {...}}` (merged) | `settings` |
 | `save_user` | owner; manager for kasir / sales accounts only (v19) | `{name, role, pin_hash?, active}` (create or update by name) | `user` |

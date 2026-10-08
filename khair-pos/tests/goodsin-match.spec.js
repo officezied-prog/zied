@@ -11,6 +11,9 @@ async function scanNote(page) {
   await page.setInputFiles('#pu-photo', await photoFile(page, 'nota.png'));
   await expect(page.locator('#pu-photo-card')).toHaveClass(/done/);
   await expect(page.locator('#pu-lines tbody tr[data-line]')).toHaveCount(2);
+  // v21: expiry is mandatory per line — give every scanned line a far-off date so the save flow can proceed.
+  const n = await page.locator('[data-pu-exp]').count();
+  for (let i = 0; i < n; i++) await page.locator(`[data-pu-exp="${i}"]`).fill('2027-06-01');
 }
 
 test('live comparison with the note; MISMATCH shows the differences; fix quantities → saved "cocok" with a purchase number', async ({ page }) => {

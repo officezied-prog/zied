@@ -165,6 +165,7 @@ test('supplier return from a goods-in: outgoing note, photo, carrier; no values 
   await page.setInputFiles('#pu-photo', await H.photoFile(page, 'nota.png'));
   await expect(page.locator('#pu-photo-ok')).toContainText('1 baris');
   await H.pickCarrier(page);
+  await H.fillPuExp(page);
   await page.click('#pu-save');
   const no = (await page.locator('#pu-res-no').textContent()).trim();
   const med0 = H.productByName(await H.getDb(page), /Medjool/);
@@ -242,6 +243,7 @@ test('Arabic supplier return screen', async ({ page }) => {
   await H.tab(page, 'masuk');
   await page.setInputFiles('#pu-photo', await H.photoFile(page, 'nota.png'));
   await H.pickCarrier(page, 'teman', { name: 'أحمد' });
+  await H.fillPuExp(page);
   await page.click('#pu-save');
   const no = (await page.locator('#pu-res-no').textContent()).trim();
   await page.locator(`#pu-hist .hist[data-no="${no}"] [data-act="pu-retur"]`).click();
@@ -261,6 +263,7 @@ test('v17 supplier return: the note number read from the photo fills an empty fi
   await page.setInputFiles('#pu-photo', await H.photoFile(page, 'nota.png'));
   await expect(page.locator('#pu-photo-ok')).toContainText('1 baris');
   await H.pickCarrier(page);
+  await H.fillPuExp(page);
   await page.click('#pu-save');
   const no = (await page.locator('#pu-res-no').textContent()).trim();
   await page.locator(`#pu-hist .hist[data-no="${no}"] [data-act="pu-retur"]`).click();

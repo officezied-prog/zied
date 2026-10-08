@@ -127,5 +127,10 @@ async function tab(page, v) {
   await page.click(`#tab-${v}`);
   await expect(page.locator(`#v-${v}`)).toBeVisible();
 }
+/** v21: every goods-in line needs a shelf life. Fill all visible expiry inputs with a far-off date before saving. */
+async function fillPuExp(page, date = '2027-06-01') {
+  const n = await page.locator('[data-pu-exp]').count();
+  for (let i = 0; i < n; i++) await page.locator(`[data-pu-exp="${i}"]`).fill(date);
+}
 
-module.exports = { otherPhone, pickCarrier, presetDeviceConsent, rp, sha, SHOTS, shot, PHONE, TABLET, openKasir, enterKey, typePin, login, getDb, setDb, productByName, addItem, confirmQty, openCart, pay, photoFile, closeModals, tab };
+module.exports = { otherPhone, pickCarrier, presetDeviceConsent, rp, sha, SHOTS, shot, PHONE, TABLET, openKasir, enterKey, typePin, login, getDb, setDb, productByName, addItem, confirmQty, openCart, pay, photoFile, closeModals, tab, fillPuExp };
