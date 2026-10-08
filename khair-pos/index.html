@@ -7987,7 +7987,7 @@ Object.assign(ACT, {
   'gdo-submit': () => gdoSubmit()
 });
 Object.assign(I18N.id, {
-  'nav.gudang': 'Gudang', 'navs.gudang': 'Gudang', 'pu.exp': 'Kedaluwarsa', 'pu.exp_hint': 'Wajib: tanggal kedaluwarsa, atau centang "tak ada"', 'pu.exp_none': 'Tak ada', 'prod.size': 'Ukuran', 'prod.weight': 'Berat', 'prod.expiry': 'Tanggal kedaluwarsa', 'prod.no_expiry': 'Tak ada (tidak kedaluwarsa)', 'prod.expiry_hint': 'Kosongkan & centang "tak ada" untuk barang tanpa kedaluwarsa (gelas, madu, …)', 'exp.soon': 'Kedaluwarsa {n} hari lagi', 'exp.expired': 'KEDALUWARSA', 'exp.ok': 'Kedaluwarsa', 'pu.exp_required': 'Isi tanggal kedaluwarsa tiap baris, atau centang "tak ada"',
+  'nav.gudang': 'Gudang', 'navs.gudang': 'Gudang', 'pu.exp': 'Kedaluwarsa', 'pu.exp_hint': 'Wajib: tanggal kedaluwarsa, atau centang "tak ada"', 'pu.exp_none': 'Tak ada', 'prod.size': 'Ukuran', 'prod.weight': 'Berat', 'prod.expiry': 'Tanggal kedaluwarsa', 'prod.no_expiry': 'Tak ada (tidak kedaluwarsa)', 'prod.expiry_hint': 'Kosongkan & centang "tak ada" untuk barang tanpa kedaluwarsa (gelas, madu, …)', 'exp.soon': 'Kedaluwarsa {n} hari lagi', 'exp.expired': 'KEDALUWARSA', 'exp.ok': 'Kedaluwarsa', 'pu.exp_required': 'Isi tanggal kedaluwarsa tiap baris, atau centang "tak ada"', 'mon.view_only': 'Pantau saja',
   'att.expiring': '{n} barang hampir kedaluwarsa', 'att.opname': 'Opname menunggu persetujuan ({n})',
   'gd.tab_overview': 'Ringkasan', 'gd.tab_list': 'Daftar stok', 'gd.tab_expiry': 'Kedaluwarsa', 'gd.tab_opname': 'Stok opname',
   'gd.items': 'Jumlah barang', 'gd.units': 'Total unit', 'gd.value_cost': 'Nilai stok (harga modal)', 'gd.value_retail': 'Nilai stok (harga eceran)',
@@ -8020,7 +8020,7 @@ Object.assign(I18N.id, {
   'gd.apr_hint': 'Jika disetujui, selisih ditambahkan ke stok saat ini — penjualan sesudah penghitungan tetap terhitung.', 'gd.apr_same': '{n} barang sesuai (tanpa selisih)', 'gd.apr_nodiff': 'Tidak ada selisih.', 'gd.total': 'Total', 'gd.new_toast': 'Stok opname baru dari {cashier} →'
 });
 Object.assign(I18N.ar, {
-  'nav.gudang': 'المخزن', 'navs.gudang': 'المخزن', 'pu.exp': 'تاريخ الانتهاء', 'pu.exp_hint': 'إلزامي: تاريخ الانتهاء، أو ضع علامة "غير موجود"', 'pu.exp_none': 'غير موجود', 'prod.size': 'الحجم', 'prod.weight': 'الوزن', 'prod.expiry': 'تاريخ الانتهاء', 'prod.no_expiry': 'غير موجود (لا ينتهي)', 'prod.expiry_hint': 'اتركه فارغاً وضع علامة "غير موجود" للبضائع بلا صلاحية (أكواب، عسل، …)', 'exp.soon': 'ينتهي خلال {n} يوماً', 'exp.expired': 'منتهي', 'exp.ok': 'ينتهي', 'pu.exp_required': 'املأ تاريخ الانتهاء لكل سطر، أو ضع علامة "غير موجود"',
+  'nav.gudang': 'المخزن', 'navs.gudang': 'المخزن', 'pu.exp': 'تاريخ الانتهاء', 'pu.exp_hint': 'إلزامي: تاريخ الانتهاء، أو ضع علامة "غير موجود"', 'pu.exp_none': 'غير موجود', 'prod.size': 'الحجم', 'prod.weight': 'الوزن', 'prod.expiry': 'تاريخ الانتهاء', 'prod.no_expiry': 'غير موجود (لا ينتهي)', 'prod.expiry_hint': 'اتركه فارغاً وضع علامة "غير موجود" للبضائع بلا صلاحية (أكواب، عسل، …)', 'exp.soon': 'ينتهي خلال {n} يوماً', 'exp.expired': 'منتهي', 'exp.ok': 'ينتهي', 'pu.exp_required': 'املأ تاريخ الانتهاء لكل سطر، أو ضع علامة "غير موجود"', 'mon.view_only': 'مراقبة فقط',
   'att.expiring': '{n} أصناف قاربت صلاحيتها على الانتهاء', 'att.opname': 'جرد بانتظار الموافقة ({n})',
   'gd.tab_overview': 'ملخص', 'gd.tab_list': 'قائمة المخزون', 'gd.tab_expiry': 'الصلاحية', 'gd.tab_opname': 'جرد المخزون',
   'gd.items': 'عدد الأصناف', 'gd.units': 'إجمالي الوحدات', 'gd.value_cost': 'قيمة المخزون (بالتكلفة)', 'gd.value_retail': 'قيمة المخزون (بسعر التجزئة)',
@@ -10295,7 +10295,7 @@ RENDER.retur = function () {
   if (!canAudit()) { go('pos'); return; }
   if (!RT.from) { RT.to = today(); RT.from = addDays(RT.to, -29); }
   $('#view-retur').innerHTML = `<div class="view-head"><h1>${esc(t('nav.retur'))}</h1>
-      <button class="btn" data-act="rt-new-cust" id="rt-new-cust">${ic('return')} ${esc(t('rt.new_cust'))}</button><button class="btn" data-act="rt-new-sup" id="rt-new-sup">${ic('truck')} ${esc(t('rt.new_sup'))}</button></div>
+      ${!isOwner() ? `<button class="btn" data-act="rt-new-cust" id="rt-new-cust">${ic('return')} ${esc(t('rt.new_cust'))}</button><button class="btn" data-act="rt-new-sup" id="rt-new-sup">${ic('truck')} ${esc(t('rt.new_sup'))}</button>` : `<span class="badge gray" id="rt-view-only">${esc(t('mon.view_only'))}</span>`}</div>
     <p class="muted small" style="margin-top:0">${esc(t('rt.hint', { n: fmtRp(settings().return_owner_min_value ?? 2000000) }))}</p>
     <div class="toolbar"><input class="input" type="date" id="rt-from" value="${esc(RT.from)}" aria-label="${esc(t('from'))}"><input class="input" type="date" id="rt-to" value="${esc(RT.to)}" aria-label="${esc(t('to'))}">
       <div class="chips" id="rt-tabs" role="tablist">${['menunggu', 'pelanggan', 'pemasok'].map(k => `<button class="chip ${RT.tab === k ? 'on' : ''}" role="tab" data-act="rt-tab" data-tab="${k}">${esc(t('rt.tab_' + k))} <span class="num" data-rt-n="${k}"></span></button>`).join('')}</div></div>
