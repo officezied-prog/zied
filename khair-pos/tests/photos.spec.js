@@ -44,6 +44,7 @@ test('purchase is blocked without a photo; mock AI scan prefills editable lines;
   await expect(page.locator('#pu-save')).toBeEnabled();
   await expect(page.locator('#pu-cmp tr[data-cmp="diff"]')).toHaveCount(1);
   await pickCarrier(page);
+  for (let i = 0, nexp = await page.locator('[data-pu-exp]').count(); i < nexp; i++) await page.locator(`[data-pu-exp="${i}"]`).fill('2027-06-01');
   await page.click('#pu-save');
   await expect(page.locator('#pu-mismatch')).toBeVisible();
   await expect(page.locator('#pu-mm-diffs tbody tr')).toHaveCount(1);

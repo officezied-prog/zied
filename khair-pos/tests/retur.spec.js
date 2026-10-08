@@ -102,7 +102,7 @@ test('supplier return from the goods-in history: carrier, outgoing note, photo; 
   const ajwa = P(db, /Kurma Ajwa/);
   const ph = await asUser(page, 'Pemilik', '1234', 'scan_purchase', { image_base64: 'AAAA', mime: 'image/jpeg' });
   // carrier is required (CARRIER_REQUIRED), public transport needs its number
-  const base = { purchase_date: jktToday(), supplier: 'PT Kurma Nusantara', photo_id: ph.photo_id, items: [{ product_id: ajwa.id, qty: 10, cost_price: 130000 }], mismatch_reason: 'uji retur' };
+  const base = { purchase_date: jktToday(), supplier: 'PT Kurma Nusantara', photo_id: ph.photo_id, items: [{ product_id: ajwa.id, qty: 10, cost_price: 130000, exp_none: true }], mismatch_reason: 'uji retur' };
   expect(await asUser(page, 'Pemilik', '1234', 'save_purchase', base)).toMatchObject({ error: 'CARRIER_REQUIRED' });
   expect(await asUser(page, 'Pemilik', '1234', 'save_purchase', Object.assign({ carrier: { type: 'umum', kind: 'ojek' } }, base))).toMatchObject({ error: 'CARRIER_REQUIRED', message: expect.stringContaining('nomor kendaraan') });
   const pu = await asUser(page, 'Pemilik', '1234', 'save_purchase', Object.assign({ carrier: CARRIER }, base));
@@ -235,5 +235,5 @@ test('settings: return limits, fee, photo and carrier switches; goods-in form ne
   // carrier switch off: goods-in without carrier is accepted
   await page.evaluate(() => saveSettings({ require_carrier: false }));
   const ph = await asUser(page, 'Pemilik', '1234', 'scan_purchase', { image_base64: 'AAAA', mime: 'image/jpeg' });
-  expect((await asUser(page, 'Pemilik', '1234', 'save_purchase', { supplier: 'PT Kurma Nusantara', photo_id: ph.photo_id, items: [{ product_id: kis.id, qty: 1, cost_price: 1000 }], mismatch_reason: 'uji' })).purchase_no).toBeTruthy();
+  expect((await asUser(page, 'Pemilik', '1234', 'save_purchase', { supplier: 'PT Kurma Nusantara', photo_id: ph.photo_id, items: [{ product_id: kis.id, qty: 1, cost_price: 1000, exp_none: true }], mismatch_reason: 'uji' })).purchase_no).toBeTruthy();
 });

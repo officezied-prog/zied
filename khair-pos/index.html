@@ -58,6 +58,8 @@ a{color:var(--brand-text)}
 .muted{color:var(--muted)}
 .small{font-size:13px}
 .red{color:var(--danger)}
+.exp-soon{color:var(--danger);font-weight:700}
+.exp-expired{display:inline-block;background:var(--danger);color:#fff;font-weight:700;padding:1px 6px;border-radius:6px}
 .green{color:var(--ok)}
 .right{text-align:end}
 .center{text-align:center}
@@ -1020,11 +1022,14 @@ const MockServer = (() => {
     const p = Object.assign({}, base);
     const str = k => { if (src[k] !== undefined) p[k] = String(src[k] == null ? '' : src[k]).trim(); };
     const money = k => { if (src[k] !== undefined && src[k] !== '') p[k] = Math.max(0, int(src[k])); };
-    ['sku', 'name', 'category', 'unit', 'notes', 'supplier'].forEach(str);
+    ['sku', 'name', 'category', 'unit', 'notes', 'supplier', 'size', 'weight'].forEach(str);
     ['cost_price', 'retail_price', 'wholesale_price'].forEach(money);
     if (src.wholesale_min_qty !== undefined && src.wholesale_min_qty !== '') p.wholesale_min_qty = Math.max(0, roundQty(src.wholesale_min_qty));
     if (src.min_stock !== undefined && src.min_stock !== '') p.min_stock = Math.max(0, roundQty(src.min_stock));
     if (src.active !== undefined) p.active = !(src.active === false || src.active === 'false' || src.active === 0);
+    if (src.exp_none !== undefined) p.exp_none = src.exp_none === true || src.exp_none === 'true';
+    if (src.exp_date !== undefined) p.exp_date = /^\d{4}-\d{2}-\d{2}$/.test(String(src.exp_date)) ? String(src.exp_date) : '';
+    if (p.exp_none) p.exp_date = '';
     return p;
   }
   function priceSale(db, data, quote) {
@@ -1150,7 +1155,7 @@ const MockServer = (() => {
   }
   const nameTokens = s => norm(s).replace(/(\d)([a-z])/g, '$1 $2').replace(/([a-z])(\d)/g, '$1 $2').replace(/[^a-z0-9 ]/g, ' ').split(' ').filter(Boolean).map(w => w === 'gr' ? 'g' : w);
   function nameScore(a, b) { const A = nameTokens(a), B = new Set(nameTokens(b)); return A.length ? A.filter(w => B.has(w)).length / A.length : 0; }
-  const blankProduct = () => ({ sku: '', name: '', category: '', unit: 'pcs', cost_price: 0, retail_price: 0, wholesale_price: 0, wholesale_min_qty: 0, stock: 0, min_stock: 0, active: true, notes: '' });
+  const blankProduct = () => ({ sku: '', name: '', category: '', unit: 'pcs', cost_price: 0, retail_price: 0, wholesale_price: 0, wholesale_min_qty: 0, stock: 0, min_stock: 0, active: true, notes: '', size: '', weight: '', exp_date: '', exp_none: false });
 
   /* ---- v11–v14 (mirrors backend process.js): devices, activity log, repacking, goods-in vs the photographed note,
      purchase corrections, payments with allocations, company bank account reconciliation ---- */
@@ -1584,7 +1589,7 @@ const MockServer = (() => {
       const best = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0]; p.supplier = best ? best[0] : '';
     });
     // bulk products repacked in the shop
-    const addProd = f => { const p = Object.assign({ id: nextId(db, 'product'), sku: '', category: '', unit: 'pcs', cost_price: 0, retail_price: 0, wholesale_price: 0, wholesale_min_qty: 0, stock: 0, min_stock: 0, active: true, notes: '', supplier: '', repack_from: 0, repack_qty: 0 }, f); db.products.push(p); return p; };
+    const addProd = f => { const p = Object.assign({ id: nextId(db, 'product'), sku: '', category: '', unit: 'pcs', cost_price: 0, retail_price: 0, wholesale_price: 0, wholesale_min_qty: 0, stock: 0, min_stock: 0, active: true, notes: '', supplier: '', size: '', weight: '', exp_date: '', exp_none: false, repack_from: 0, repack_qty: 0 }, f); db.products.push(p); return p; };
     const rabia = addProd({ sku: '8991099000011', name: 'Kurma Rabia Curah (karton 10 kg)', category: 'Kurma', unit: 'kg', cost_price: 48000, retail_price: 62000, wholesale_price: 56000, wholesale_min_qty: 10, stock: 34, min_stock: 10, notes: 'Datang per karton 10 kg, dikemas ulang di toko', supplier: 'PT Kurma Nusantara' });
     const r500 = addProd({ sku: '8991099000028', name: 'Kurma Rabia Kemas 500 g', category: 'Kurma', unit: 'pak', cost_price: 25600, retail_price: 35000, wholesale_price: 31000, wholesale_min_qty: 10, stock: 18, min_stock: 10, repack_from: rabia.id, repack_qty: 0.5 });
     const r250 = addProd({ sku: '8991099000035', name: 'Kurma Rabia Kemas 250 g', category: 'Kurma', unit: 'pak', cost_price: 13100, retail_price: 19000, wholesale_price: 17000, wholesale_min_qty: 12, stock: 9, min_stock: 12, repack_from: rabia.id, repack_qty: 0.25 });
@@ -2611,18 +2616,26 @@ const MockServer = (() => {
         const checked = data.items.map(it => {
           const p = prodById(it.product_id); if (!p) throw E('NOT_FOUND', 'product ' + it.product_id);
           const qty = roundQty(it.qty); if (!(qty > 0)) throw E('INVALID', 'qty must be > 0');
-          return { p, qty, cost: Math.max(0, int(it.cost_price)), exp: isYmd(it.exp_date) ? it.exp_date : '' };
+          const expNone = it.exp_none === true;
+          const exp = isYmd(it.exp_date) ? it.exp_date : '';
+          if (!expNone && !exp) throw E('INVALID', 'Tanggal kedaluwarsa wajib untuk ' + p.name + ' (isi tanggal atau tandai "tak ada")');
+          return { p, qty, cost: Math.max(0, int(it.cost_price)), exp, expNone };
         });
         const purchase_no = 'PB' + pdate.replace(/-/g, '').slice(2) + '-' + randId(4);
         const matchNotes = (match.diffs.length ? diffText(match.diffs) : '') + (reason ? ' | alasan: ' + reason : '');
         const out = [];
-        for (const { p, qty, cost, exp } of checked) {
+        const prevStockById = {};
+        const today0 = jktDate();
+        for (const { p, qty, cost, exp, expNone } of checked) {
           const old = Math.max(0, num(p.stock));
+          if (prevStockById[p.id] === undefined) prevStockById[p.id] = old;
           p.cost_price = old + qty > 0 ? Math.round((old * p.cost_price + qty * cost) / (old + qty)) : cost;
           p.stock = roundQty(p.stock + qty);
+          if (expNone) { p.exp_none = true; p.exp_date = ''; }
+          else { p.exp_none = false; const cur = isYmd(p.exp_date) ? p.exp_date : ''; p.exp_date = (!cur || prevStockById[p.id] <= 0 || cur < today0) ? exp : (exp < cur ? exp : cur); }
           db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: pdate, supplier: String(data.supplier || ''), product_id: p.id, name: p.name, qty, cost_price: cost, total: Math.round(qty * cost), note: String(data.note || ''), user: u.name, photo_id: photo ? photo.photo_id : '', exp_date: exp,
             purchase_no, match_status: match.status, match_notes: matchNotes.slice(0, 500), carrier_type: carrier.type, carrier_name: carrier.name, carrier_vehicle: carrier.vehicle, carrier_phone: carrier.phone });
-          const o = out.find(x => x.product_id === p.id); if (o) Object.assign(o, { stock: p.stock, cost_price: p.cost_price }); else out.push({ product_id: p.id, stock: p.stock, cost_price: p.cost_price });
+          const o = out.find(x => x.product_id === p.id); if (o) Object.assign(o, { stock: p.stock, cost_price: p.cost_price, exp_date: p.exp_date, exp_none: p.exp_none }); else out.push({ product_id: p.id, stock: p.stock, cost_price: p.cost_price, exp_date: p.exp_date, exp_none: p.exp_none });
         }
         if (photo) photo.ref = [photo.ref, String(data.supplier || '')].filter(Boolean).join(' ') || 'masuk';
         const sumTotal = sum(checked, x => Math.round(x.qty * x.cost));
@@ -3148,6 +3161,9 @@ const MockServer = (() => {
     addPur(4, ADJUST_SUPPLIER, /Kurma Medjool/, -1, null, 'Rusak — kemasan sobek');
     addPur(11, ADJUST_SUPPLIER, /Tasbih/, -2, null, 'Hilang');
     addPur(19, ADJUST_SUPPLIER, /Gula Pasir/, 3, null, 'Hitung ulang — salah input');
+    // Showcase the shelf-life colour in demo: one short-dated food (red) and one no-expiry item (gelas/madu style).
+    const cokShort = prodRe(/Cokelat Arab Kerang/); if (cokShort) cokShort.exp_date = addDays(T, 100);
+    const noExp = prodRe(/Tasbih/); if (noExp) noExp.exp_none = true;
     const users = mode === 'empty' ? [] : [
       { name: 'Pemilik', role: 'owner', pin_hash: await pinHash('demo', 'Pemilik', '1234'), active: true },
       { name: 'Siti', role: 'kasir', pin_hash: await pinHash('demo', 'Siti', '1111'), active: true },
@@ -3600,6 +3616,22 @@ function filterProducts(q, cat, opts = {}) {
 }
 const categories = () => [...new Set(S.products.filter(p => p.category).map(p => p.category))].sort();
 const isLow = p => num(p.stock) <= num(p.min_stock);
+// Shelf life (v21): a product shows red in stock when its soonest expiry is within 6 months (or already passed).
+// Items marked "no expiry" (cups, honey, …) never go red.
+function prodExpDays(p) { if (!p || p.exp_none || !/^\d{4}-\d{2}-\d{2}$/.test(p.exp_date || '')) return null; return Math.round((Date.parse(p.exp_date + 'T00:00:00') - Date.now()) / 86400000); }
+function prodExpState(p) {
+  if (!p || p.exp_none || !/^\d{4}-\d{2}-\d{2}$/.test(p.exp_date || '')) return '';
+  const exp = new Date(p.exp_date + 'T00:00:00'), now = new Date(), t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (exp < t0) return 'expired';
+  const six = new Date(t0.getFullYear(), t0.getMonth() + 6, t0.getDate());
+  return exp < six ? 'soon' : 'ok';
+}
+function prodExpBadge(p) {
+  const st = prodExpState(p); if (!st) return '';
+  if (st === 'expired') return `<div class="small exp-expired">${esc(t('exp.expired'))}</div>`;
+  if (st === 'soon') return `<div class="small exp-soon">${esc(t('exp.soon', { n: Math.max(0, prodExpDays(p)) }))} · ${esc(fmtDate(p.exp_date))}</div>`;
+  return `<div class="small muted">${esc(t('exp.ok'))} · ${esc(fmtDate(p.exp_date))}</div>`;
+}
 
 /* ========== Cashier voice: speak each item so the customer hears the count ==========
    Only product names and quantities are ever spoken — never prices, totals, discounts,
@@ -4282,7 +4314,7 @@ function localExitRequired(v) {
   return (minT > 0 && v.total >= minT) || (minQ > 0 && v.lines.some(l => num(l.line ? l.line.qty : l.qty) >= minQ));
 }
 function applyStock(list) {
-  (list || []).forEach(s => { const p = prodById(s.product_id); if (p) { const sh0 = shelfOf(p); p.stock = roundQty(num(s.stock) - pendingQty(p.id)); p.shop_stock = s.shop_stock != null ? roundQty(num(s.shop_stock) - pendingQty(p.id)) : Math.min(sh0, p.stock); if (s.cost_price != null && isOwner()) p.cost_price = int(s.cost_price); } });
+  (list || []).forEach(s => { const p = prodById(s.product_id); if (p) { const sh0 = shelfOf(p); p.stock = roundQty(num(s.stock) - pendingQty(p.id)); p.shop_stock = s.shop_stock != null ? roundQty(num(s.shop_stock) - pendingQty(p.id)) : Math.min(sh0, p.stock); if (s.cost_price != null && isOwner()) p.cost_price = int(s.cost_price); if (s.exp_date !== undefined) p.exp_date = s.exp_date; if (s.exp_none !== undefined) p.exp_none = s.exp_none; } });
   saveCache();
 }
 function finishSale(rc) {
@@ -5853,7 +5885,7 @@ function drawProducts() {
       ${own ? `<td class="r num">${fmtRp(p.cost_price)}${p.retail_price ? `<div class="small muted">${fmtPct((p.retail_price - p.cost_price) / p.retail_price * 100)}</div>` : ''}</td>` : ''}
       <td class="r num">${fmtRp(p.retail_price)}</td>
       <td class="r num">${int(p.wholesale_price) ? fmtRp(p.wholesale_price) + `<div class="small muted">≥ ${fmtQty(p.wholesale_min_qty)}</div>` : '—'}</td>
-      <td class="r num"><b class="${isLow(p) ? 'red' : ''}">${fmtQty(p.stock)}</b><div class="small muted">min ${fmtQty(p.min_stock)}</div></td>
+      <td class="r num"><b class="${isLow(p) || prodExpState(p) === 'expired' || prodExpState(p) === 'soon' ? 'red' : ''}">${fmtQty(p.stock)}</b><div class="small muted">min ${fmtQty(p.min_stock)}</div>${prodExpBadge(p)}</td>
       <td class="r" style="white-space:nowrap">${isApprover() ? `<button class="icon-btn sm" data-act="prod-photo" data-id="${esc(p.id)}" title="${esc(t('img.title'))}" aria-label="${esc(t('img.title'))}">${ic('camera')}</button> ` : ''}${own ? `<button class="btn xs" data-act="stock-adj" data-id="${esc(p.id)}">${esc(t('prod.adjust'))}</button>` : `<button class="btn xs" data-act="price-change" data-id="${esc(p.id)}">${ic('tag')} ${esc(t('price.title'))}</button>`}</td>
     </tr>`).join('') || `<tr><td colspan="7" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div>`;
 }
@@ -5866,6 +5898,13 @@ function productForm(p) {
     <div class="grid2"><div class="field"><label class="f" for="pf-sku">${esc(t('sku'))}</label><div class="row" style="gap:6px;align-items:center"><input class="input" id="pf-sku" name="sku" value="${esc(p.sku ?? '')}" inputmode="text" style="flex:1 1 auto;min-width:0">${'BarcodeDetector' in window ? `<button type="button" class="icon-btn" id="pf-sku-cam" style="flex:0 0 auto;width:42px;height:42px" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}">${ic('scan')}</button>` : ''}</div></div>${f('category', t('category'), 'list="dl-cats"')}</div>
     <datalist id="dl-cats">${categories().map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     ${f('supplier', t('prod.supplier'), 'list="dl-psup" autocomplete="off"')}<datalist id="dl-psup">${knownSuppliers().map(c => `<option value="${esc(c)}">`).join('')}</datalist>
+    <div class="grid2">${f('size', t('prod.size'), 'placeholder="500 g / 1 L"')}${f('weight', t('prod.weight'), 'placeholder="1000 g"')}</div>
+    <div class="field"><label class="f" for="pf-exp_date">${esc(t('prod.expiry'))}</label>
+      <div class="row" style="gap:8px;align-items:center">
+        <input class="input" id="pf-exp_date" name="exp_date" type="date" value="${esc(p.exp_date || '')}" style="flex:1 1 auto;min-width:0" ${p.exp_none ? 'disabled' : ''}>
+        <label class="check" style="flex:0 0 auto;white-space:nowrap"><input type="checkbox" id="pf-exp_none" ${p.exp_none ? 'checked' : ''}> ${esc(t('prod.no_expiry'))}</label>
+      </div>
+      <div class="small muted">${esc(t('prod.expiry_hint'))}</div></div>
     <datalist id="dl-units">${units.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     <div class="grid2">${f('unit', t('unit'), 'list="dl-units"', p.unit || 'pcs')}${f('cost_price', t('cost_price'), 'inputmode="numeric" class="input num"', p.cost_price ? fmtNum(p.cost_price) : '')}</div>
     <div class="grid2">${f('retail_price', t('retail_price'), 'inputmode="numeric"', p.retail_price ? fmtNum(p.retail_price) : '')}${f('wholesale_price', t('wholesale_price'), 'inputmode="numeric"', p.wholesale_price ? fmtNum(p.wholesale_price) : '')}</div>
@@ -5887,13 +5926,18 @@ function openProductEditor(p, after) {
   const margin = () => { const c = moneyVal(val('cost_price')), r = moneyVal(val('retail_price')), w = moneyVal(val('wholesale_price')); $('#pf-margin', el).textContent = r ? `${t('margin')} ${t('eceran')}: ${fmtPct((r - c) / r * 100)}${w ? ` · ${t('grosir')}: ${fmtPct((w - c) / w * 100)}` : ''}` : ''; };
   $$('input', el).forEach(i => i.addEventListener('input', margin)); margin();
   const skuCam = $('#pf-sku-cam', el); if (skuCam) skuCam.onclick = () => cameraScan(code => { const s = $('#pf-sku', el); if (s) { s.value = String(code || '').trim(); s.dispatchEvent(new Event('input', { bubbles: true })); } });
+  const expNoneBox = $('#pf-exp_none', el), expDateInp = $('#pf-exp_date', el);
+  if (expNoneBox && expDateInp) expNoneBox.onchange = () => { expDateInp.disabled = expNoneBox.checked; if (expNoneBox.checked) expDateInp.value = ''; };
   const rf = $('#pf-repack_from', el); if (rf) rf.onchange = () => { const o = rf.selectedOptions[0]; $('#pf-rq-unit', el).textContent = o && o.dataset.unit || '—'; };
   $('#pf-save', el).onclick = async () => {
+    const expNone = $('#pf-exp_none', el) ? $('#pf-exp_none', el).checked : false;
     const data = {
       name: val('name').trim(), sku: val('sku').trim(), category: val('category').trim(), unit: val('unit').trim() || 'pcs',
       cost_price: moneyVal(val('cost_price')), retail_price: moneyVal(val('retail_price')), wholesale_price: moneyVal(val('wholesale_price')),
       wholesale_min_qty: qtyVal(val('wholesale_min_qty')), min_stock: qtyVal(val('min_stock')), notes: val('notes'), active: $('#pf-active', el).checked,
-      supplier: val('supplier').trim(), repack_from: Number(val('repack_from')) || 0, repack_qty: Number(val('repack_from')) ? qtyVal(val('repack_qty')) : 0
+      supplier: val('supplier').trim(), size: val('size').trim(), weight: val('weight').trim(),
+      exp_none: expNone, exp_date: expNone ? '' : val('exp_date').trim(),
+      repack_from: Number(val('repack_from')) || 0, repack_qty: Number(val('repack_from')) ? qtyVal(val('repack_qty')) : 0
     };
     if (data.repack_from && !(data.repack_qty > 0)) { $('#pf-err', el).textContent = t('required') + ': ' + t('prod.repack_qty'); $('#pf-repack_qty', el).focus(); return; }
     if (p.id) data.id = p.id; else data.stock = qtyVal(val('stock'));
@@ -6156,7 +6200,7 @@ RENDER.purchases = function () {
           return `<tr class="${p ? '' : 'unmatched'}" data-line="${i}"><td style="min-width:220px">${cell}</td>
           <td class="r"><input class="input num" style="width:90px" inputmode="decimal" data-pu-qty="${i}" value="${esc(fmtQtyInput(l.qty))}" aria-label="${esc(t('qty'))}"></td>
           <td class="r"><input class="input num" style="width:120px" inputmode="numeric" data-pu-cost="${i}" value="${l.cost ? esc(fmtNum(l.cost)) : ''}" aria-label="${esc(t('pu.cost_unit'))}"></td>
-          <td><input class="input" type="date" style="width:150px" data-pu-exp="${i}" value="${esc(l.exp || '')}" aria-label="${esc(t('pu.exp'))}" title="${esc(t('pu.exp_hint'))}"></td>
+          <td><input class="input" type="date" style="width:140px" data-pu-exp="${i}" value="${esc(l.exp || '')}" aria-label="${esc(t('pu.exp'))}" title="${esc(t('pu.exp_hint'))}" ${l.exp_none ? 'disabled' : ''}><label class="check small" style="margin-top:4px;white-space:nowrap"><input type="checkbox" data-pu-expnone="${i}" ${l.exp_none ? 'checked' : ''}> ${esc(t('pu.exp_none'))}</label></td>
           <td class="r num" data-pu-tot="${i}">${fmtRp(Math.round(num(l.qty) * int(l.cost)))}</td>
           <td><button class="icon-btn ghost sm" data-act="pu-del" data-i="${i}" aria-label="${esc(t('delete'))}">${ic('trash')}</button></td></tr>`; }).join('') || `<tr><td colspan="6" class="empty">${esc(t('pu.empty'))}</td></tr>`}</tbody></table></div>
       <div class="row" style="margin-top:12px;justify-content:space-between;flex-wrap:wrap">
@@ -6189,6 +6233,7 @@ RENDER.purchases = function () {
   $$('[data-pu-qty]', v).forEach(i => i.oninput = () => { PU.lines[+i.dataset.puQty].qty = qtyVal(i.value); if (PU.mismatch) { PU.mismatch = null; const mw = $('#pu-mm-wrap', v); if (mw) mw.innerHTML = ''; } recalc(); });
   $$('[data-pu-cost]', v).forEach(i => i.oninput = () => { PU.lines[+i.dataset.puCost].cost = moneyVal(i.value); recalc(); });
   $$('[data-pu-exp]', v).forEach(i => i.onchange = () => { PU.lines[+i.dataset.puExp].exp = i.value; savePuDraft(); });
+  $$('[data-pu-expnone]', v).forEach(i => i.onchange = () => { const l = PU.lines[+i.dataset.puExpnone]; l.exp_none = i.checked; if (i.checked) l.exp = ''; savePuDraft(); RENDER.purchases(); });
   $$('[data-pu-prod]', v).forEach(sel => sel.onchange = () => { const l = PU.lines[+sel.dataset.puProd]; l.product_id = sel.value ? Number(sel.value) || sel.value : null; savePuDraft(); RENDER.purchases(); });
   loadRecentPurchases();
 };
@@ -6236,11 +6281,12 @@ async function savePurchase(mismatchReason) {
   const err = $('#pu-err');
   const block = puBlockReason();
   if (block) { err.textContent = block; return; }
-  const items = PU.lines.map(l => Object.assign({ product_id: l.product_id, qty: roundQty(l.qty), cost_price: int(l.cost) }, /^\d{4}-\d{2}-\d{2}$/.test(l.exp || '') ? { exp_date: l.exp } : {}, l.photo_index != null && PU.photo_id ? { photo_index: l.photo_index } : {}));
+  const items = PU.lines.map(l => Object.assign({ product_id: l.product_id, qty: roundQty(l.qty), cost_price: int(l.cost) }, l.exp_none ? { exp_none: true } : (/^\d{4}-\d{2}-\d{2}$/.test(l.exp || '') ? { exp_date: l.exp } : {}), l.photo_index != null && PU.photo_id ? { photo_index: l.photo_index } : {}));
   if (items.some(i => !(i.qty > 0))) { err.textContent = t('pu.bad_qty'); return; }
   if (PU.supplier.trim() && !ruleOk.pname(PU.supplier)) { err.textContent = t('rule.pname'); return; }
   const cchk = carrierCheck(PU.carrier, carrierRequired());
   if (cchk) { carrierShow($('#view-purchases'), 'pu', cchk); err.textContent = cchk.msg; return; }
+  if (items.some(i => !i.exp_none && !i.exp_date)) { err.textContent = t('pu.exp_required'); return; }
   if (!mismatchReason && items.some(i => !(i.cost_price > 0))) { const ok = await confirmBox(t('pu.zero_cost')); if (!ok.ok) return; }
   const btn = $('#pu-save'); btn.disabled = true; btn.textContent = t('saving');
   const before = new Map(PU.lines.map(l => { const p = prodById(l.product_id); return [l.product_id, p ? { stock: p.stock, cost: p.cost_price } : {}]; }));
@@ -7941,7 +7987,7 @@ Object.assign(ACT, {
   'gdo-submit': () => gdoSubmit()
 });
 Object.assign(I18N.id, {
-  'nav.gudang': 'Gudang', 'navs.gudang': 'Gudang', 'pu.exp': 'Kedaluwarsa', 'pu.exp_hint': 'Opsional: tanggal kedaluwarsa barang yang datang ini',
+  'nav.gudang': 'Gudang', 'navs.gudang': 'Gudang', 'pu.exp': 'Kedaluwarsa', 'pu.exp_hint': 'Wajib: tanggal kedaluwarsa, atau centang "tak ada"', 'pu.exp_none': 'Tak ada', 'prod.size': 'Ukuran', 'prod.weight': 'Berat', 'prod.expiry': 'Tanggal kedaluwarsa', 'prod.no_expiry': 'Tak ada (tidak kedaluwarsa)', 'prod.expiry_hint': 'Kosongkan & centang "tak ada" untuk barang tanpa kedaluwarsa (gelas, madu, …)', 'exp.soon': 'Kedaluwarsa {n} hari lagi', 'exp.expired': 'KEDALUWARSA', 'exp.ok': 'Kedaluwarsa', 'pu.exp_required': 'Isi tanggal kedaluwarsa tiap baris, atau centang "tak ada"',
   'att.expiring': '{n} barang hampir kedaluwarsa', 'att.opname': 'Opname menunggu persetujuan ({n})',
   'gd.tab_overview': 'Ringkasan', 'gd.tab_list': 'Daftar stok', 'gd.tab_expiry': 'Kedaluwarsa', 'gd.tab_opname': 'Stok opname',
   'gd.items': 'Jumlah barang', 'gd.units': 'Total unit', 'gd.value_cost': 'Nilai stok (harga modal)', 'gd.value_retail': 'Nilai stok (harga eceran)',
@@ -7974,7 +8020,7 @@ Object.assign(I18N.id, {
   'gd.apr_hint': 'Jika disetujui, selisih ditambahkan ke stok saat ini — penjualan sesudah penghitungan tetap terhitung.', 'gd.apr_same': '{n} barang sesuai (tanpa selisih)', 'gd.apr_nodiff': 'Tidak ada selisih.', 'gd.total': 'Total', 'gd.new_toast': 'Stok opname baru dari {cashier} →'
 });
 Object.assign(I18N.ar, {
-  'nav.gudang': 'المخزن', 'navs.gudang': 'المخزن', 'pu.exp': 'تاريخ الانتهاء', 'pu.exp_hint': 'اختياري: تاريخ انتهاء صلاحية هذه الدفعة',
+  'nav.gudang': 'المخزن', 'navs.gudang': 'المخزن', 'pu.exp': 'تاريخ الانتهاء', 'pu.exp_hint': 'إلزامي: تاريخ الانتهاء، أو ضع علامة "غير موجود"', 'pu.exp_none': 'غير موجود', 'prod.size': 'الحجم', 'prod.weight': 'الوزن', 'prod.expiry': 'تاريخ الانتهاء', 'prod.no_expiry': 'غير موجود (لا ينتهي)', 'prod.expiry_hint': 'اتركه فارغاً وضع علامة "غير موجود" للبضائع بلا صلاحية (أكواب، عسل، …)', 'exp.soon': 'ينتهي خلال {n} يوماً', 'exp.expired': 'منتهي', 'exp.ok': 'ينتهي', 'pu.exp_required': 'املأ تاريخ الانتهاء لكل سطر، أو ضع علامة "غير موجود"',
   'att.expiring': '{n} أصناف قاربت صلاحيتها على الانتهاء', 'att.opname': 'جرد بانتظار الموافقة ({n})',
   'gd.tab_overview': 'ملخص', 'gd.tab_list': 'قائمة المخزون', 'gd.tab_expiry': 'الصلاحية', 'gd.tab_opname': 'جرد المخزون',
   'gd.items': 'عدد الأصناف', 'gd.units': 'إجمالي الوحدات', 'gd.value_cost': 'قيمة المخزون (بالتكلفة)', 'gd.value_retail': 'قيمة المخزون (بسعر التجزئة)',
