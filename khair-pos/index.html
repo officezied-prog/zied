@@ -5863,7 +5863,7 @@ function productForm(p) {
   const f = (k, label, attrs = '', val) => `<div class="field"><label class="f" for="pf-${k}">${esc(label)}</label><input class="input" id="pf-${k}" name="${k}" value="${esc(val !== undefined ? val : (p[k] ?? ''))}" ${attrs}></div>`;
   return `<form id="pf" autocomplete="off" onsubmit="return false">
     ${f('name', t('name') + ' *', 'required autofocus')}
-    <div class="grid2">${f('sku', t('sku'), 'inputmode="text"')}${f('category', t('category'), 'list="dl-cats"')}</div>
+    <div class="grid2"><div class="field"><label class="f" for="pf-sku">${esc(t('sku'))}</label><div class="row" style="gap:6px;align-items:center"><input class="input" id="pf-sku" name="sku" value="${esc(p.sku ?? '')}" inputmode="text" style="flex:1 1 auto;min-width:0">${'BarcodeDetector' in window ? `<button type="button" class="icon-btn" id="pf-sku-cam" style="flex:0 0 auto;width:42px;height:42px" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}">${ic('scan')}</button>` : ''}</div></div>${f('category', t('category'), 'list="dl-cats"')}</div>
     <datalist id="dl-cats">${categories().map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     ${f('supplier', t('prod.supplier'), 'list="dl-psup" autocomplete="off"')}<datalist id="dl-psup">${knownSuppliers().map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     <datalist id="dl-units">${units.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
@@ -5886,6 +5886,7 @@ function openProductEditor(p, after) {
   const val = k => $(`#pf-${k}`, el) ? $(`#pf-${k}`, el).value : '';
   const margin = () => { const c = moneyVal(val('cost_price')), r = moneyVal(val('retail_price')), w = moneyVal(val('wholesale_price')); $('#pf-margin', el).textContent = r ? `${t('margin')} ${t('eceran')}: ${fmtPct((r - c) / r * 100)}${w ? ` · ${t('grosir')}: ${fmtPct((w - c) / w * 100)}` : ''}` : ''; };
   $$('input', el).forEach(i => i.addEventListener('input', margin)); margin();
+  const skuCam = $('#pf-sku-cam', el); if (skuCam) skuCam.onclick = () => cameraScan(code => { const s = $('#pf-sku', el); if (s) { s.value = String(code || '').trim(); s.dispatchEvent(new Event('input', { bubbles: true })); } });
   const rf = $('#pf-repack_from', el); if (rf) rf.onchange = () => { const o = rf.selectedOptions[0]; $('#pf-rq-unit', el).textContent = o && o.dataset.unit || '—'; };
   $('#pf-save', el).onclick = async () => {
     const data = {
