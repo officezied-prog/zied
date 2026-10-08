@@ -106,8 +106,9 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   reserve (decide_refund), undercharge consultations (decide_consult: collect/writeoff/return), list_disputes, and every
   incoming transfer payment needs the manager to confirm receipt (transfer_confirm in receive_payment/save_sale +
   decide_approval; a card in both approval inboxes). UI: owner 'Kesalahan' view (run a correction + open refunds/consultations),
-  reports 'Koreksi harga' block. Harnesses 20/21/22. Paste file rebuilt: scratchpad Process-v20.js (161,181 chars) — the owner
-  must paste it into the POS API Process node and it must be verified-equal + published. Still open for LATER: Phase 3 in-app
+  reports 'Koreksi harga' block. Harnesses 20/21/22. Paste file rebuilt: scratchpad Process-v20.js (161,181 chars). Pasted by the owner 08 Oct (raw, after a
+  Gemini-reformatted attempt was caught and rejected), verified byte-equal (md5 bf7a8bc0…, only the Process node changed per
+  versions_diff), **published: active version 7dd07220**. Phase 2 is live. Still open for LATER: Phase 3 in-app
   chat; Phase 4 barcode reader in the cashier. A date-dependent payments.spec fixture is guarded with test.skip (seed task filed).
 - **v20 paste caution (07 Oct):** the owner's first v20 paste was run through Gemini / a formatter first — it turned `'`→`"`, reflowed every
   line, grew to 191,240 chars and broke the syntax (unexpected `}` ~line 1095). It saved only as a draft (c261c6f7); the live active version
