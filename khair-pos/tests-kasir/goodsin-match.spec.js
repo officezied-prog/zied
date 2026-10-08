@@ -37,6 +37,7 @@ test('MISMATCH → reason; saved goods-in is read-only; correction request → m
   await expect(page.locator('#pu-match-box')).toHaveAttribute('data-status', 'tidak_cocok');
   await expect(page.locator('#pu-live-diffs tr.bad')).toHaveCount(1);
   await H.pickCarrier(page);
+  await H.fillPuExp(page);
   await page.click('#pu-save');
   const mm = page.locator('#pu-mismatch');
   await expect(mm).toBeVisible();
@@ -150,6 +151,7 @@ test('a manager corrects directly (no request), the owner sees it as koreksi_mas
   const gula = H.productByName(db0, /Gula Pasir/);
   await scanNote(page, [{ name: 'GULA PASIR 1 KG', qty: 20, unit: 'pak', unit_price: 15000, total: 300000 }]);
   await H.pickCarrier(page);
+  await H.fillPuExp(page);
   await page.click('#pu-save');
   await expect(page.locator('#pu-res-match')).toHaveText('Cocok dengan nota');
   const no = (await page.locator('#pu-res-no').textContent()).trim();
