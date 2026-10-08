@@ -124,7 +124,7 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
     (`node build-chat.js process` = Process Chat code; `node build-chat.js ops` = the update_workflow ops that built it), `test-chat.js`
     (`node test-chat.js`, 37 checks). The store key lives inside **Process Chat** (`__STORE_KEY__`, swapped for the real key on paste, exactly
     like the POS Process node) — the owner pastes ONE node. Verify deployed == `node build-chat.js process` with the key, then publish.
-    Owner's paste file ready at scratchpad `Chat-Process.js` (9,914 chars, key in; md5 746cc0a9e37f08b7a8c344fd47e36c62) — NOT pasted/published yet.
+    Process Chat pasted by the owner 08 Oct, checked by a wrong-key test execution (returned BAD_KEY cleanly — no syntax error, real code not the placeholder), **published: active version e05e34c1**. Chat is live.
   - Client: shared floating panel `shared/chat-ui.js` (loaded in all three apps + cached by each SW), demo handler `shared/chat-mock.js`
     (loaded with `backend/chat/chat-core.js` only in `?mock=1`). Each app adds `CONFIG.CHAT_URL`, an `apiChat` wrapper, a chat branch in
     MockServer.request (bypasses the tamper scan — a message may contain symbols), and KChatUI start/stop/setLang on login/lock/logout/lang.
