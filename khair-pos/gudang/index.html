@@ -11,16 +11,19 @@
      (WhatsApp text, Excel copy or the warehouse's .xlsx report), pick orders (A4 / Word / Excel / WhatsApp), truck / Lalamove.
      Server: n8n workflow "Khair Gudang Dingin" (/webhook/khair-cold), logic in ../backend/cold/. Demo: ?mock=1 (key "demo"). -->
 <style>
-  :root { --pri: #047857; --pri2: #065f46; --bg: #f3f4f6; --card: #fff; --tx: #111827; --mu: #6b7280; --bd: #e5e7eb; --bad: #b91c1c; --warn: #b45309; --ok: #047857; }
+  /* Unified with the owner app (khair-pos/index.html): same blue brand, surfaces, and dark mode. */
+  :root { --pri:#1E40AF; --pri2:#1E3A8A; --pri-l:#DBEAFE; --bg:#F4F6FA; --card:#FFFFFF; --soft:#F8FAFC; --tx:#0F172A; --mu:#526075; --bd:#DCE3EC; --inp:#FFFFFF; --inp-bd:#C3CDDA; --toast:#0F172A; --bad:#B91C1C; --bad-l:#FEE2E2; --warn:#B45309; --warn-l:#FEF3C7; --ok:#15803D; --ok-l:#DCFCE7; --font:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans","Noto Naskh Arabic","Geeza Pro",Tahoma,Arial,sans-serif; }
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){ --pri:#2563EB; --pri2:#93C5FD; --pri-l:#1E2B4D; --bg:#0B1220; --card:#111A2E; --soft:#0F172A; --tx:#E5E9F2; --mu:#9AA8BF; --bd:#24324D; --inp:#0F172A; --inp-bd:#334366; --toast:#1E293B; --bad:#F87171; --bad-l:#2A1215; --warn:#FBBF24; --warn-l:#2B2108; --ok:#4ADE80; --ok-l:#10291A; color-scheme:dark; } }
+  :root[data-theme="dark"]{ --pri:#2563EB; --pri2:#93C5FD; --pri-l:#1E2B4D; --bg:#0B1220; --card:#111A2E; --soft:#0F172A; --tx:#E5E9F2; --mu:#9AA8BF; --bd:#24324D; --inp:#0F172A; --inp-bd:#334366; --toast:#1E293B; --bad:#F87171; --bad-l:#2A1215; --warn:#FBBF24; --warn-l:#2B2108; --ok:#4ADE80; --ok-l:#10291A; color-scheme:dark; }
   * { box-sizing: border-box; }
-  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: var(--bg); color: var(--tx); margin: 0; }
+  body { font: 15px/1.4 var(--font); background: var(--bg); color: var(--tx); margin: 0; }
   header { background: var(--pri); color: #fff; padding: 10px 16px; display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 5; }
   header h1 { font-size: 17px; margin: 0; flex: 1; }
   header small { opacity: .85; }
   header button { background: rgba(255,255,255,.15); color: #fff; border: 0; border-radius: 6px; padding: 8px 10px; min-height: 40px; cursor: pointer; }
-  nav { display: flex; gap: 4px; overflow-x: auto; background: #fff; border-bottom: 1px solid var(--bd); padding: 6px 8px; position: sticky; top: 60px; z-index: 4; }
+  nav { display: flex; gap: 4px; overflow-x: auto; background: var(--card); border-bottom: 1px solid var(--bd); padding: 6px 8px; position: sticky; top: 60px; z-index: 4; }
   nav button { border: 0; background: none; padding: 10px 12px; border-radius: 6px; white-space: nowrap; font-size: 14px; min-height: 42px; cursor: pointer; color: var(--tx); }
-  nav button.on { background: #d1fae5; color: var(--pri2); font-weight: 600; }
+  nav button.on { background: var(--pri-l); color: var(--pri2); font-weight: 600; }
   main { padding: 12px 16px 80px; max-width: 1100px; margin: 0 auto; }
   .card { background: var(--card); border-radius: 10px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
   .card h2 { font-size: 16px; margin: 0 0 10px; }
@@ -29,9 +32,9 @@
   .kpi b { font-size: 20px; display: block; }
   .muted { color: var(--mu); font-size: 13px; }
   label { display: block; font-size: 13px; color: var(--mu); margin: 6px 0 2px; }
-  input, select, textarea { font: inherit; padding: 9px 10px; border: 1px solid #d1d5db; border-radius: 6px; width: 100%; min-height: 42px; background: #fff; color: var(--tx); }
+  input, select, textarea { font: inherit; padding: 9px 10px; border: 1px solid var(--inp-bd); border-radius: 6px; width: 100%; min-height: 42px; background: var(--inp); color: var(--tx); }
   textarea { min-height: 140px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
-  .btn { border: 1px solid #d1d5db; background: #fff; color: var(--tx); border-radius: 6px; padding: 9px 14px; min-height: 42px; cursor: pointer; font: inherit; }
+  .btn { border: 1px solid var(--inp-bd); background: var(--card); color: var(--tx); border-radius: 6px; padding: 9px 14px; min-height: 42px; cursor: pointer; font: inherit; }
   .btn.pri { background: var(--pri); border-color: var(--pri); color: #fff; }
   .btn.bad { color: var(--bad); border-color: #fca5a5; }
   .btn.sm { min-height: 34px; padding: 5px 9px; font-size: 13px; }
@@ -43,24 +46,33 @@
   td.n, th.n { text-align: end; white-space: nowrap; }
   tr.diff td, .bad { color: var(--bad); font-weight: 600; }
   .warn { color: var(--warn); font-weight: 600; }
-  .chip { display: inline-block; border-radius: 99px; padding: 2px 9px; font-size: 12px; background: #e5e7eb; }
-  .chip.open, .chip.sent, .chip.approved { background: #dbeafe; } .chip.ready, .chip.dispatch, .chip.driver { background: #fef3c7; } .chip.picked, .chip.delivered { background: #d1fae5; } .chip.rejected { background: #fee2e2; } .chip.cancelled { background: #fee2e2; text-decoration: line-through; }
+  .chip { display: inline-block; border-radius: 99px; padding: 2px 9px; font-size: 12px; background: var(--bd); }
+  .chip.open, .chip.sent, .chip.approved { background: var(--pri-l); } .chip.ready, .chip.dispatch, .chip.driver { background: var(--warn-l); } .chip.picked, .chip.delivered { background: var(--ok-l); } .chip.rejected { background: var(--bad-l); } .chip.cancelled { background: var(--bad-l); text-decoration: line-through; }
   .list > div { border-bottom: 1px solid var(--bd); padding: 8px 0; }
   .order { border: 1px solid var(--bd); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
   .order .row .btn { flex: 0 0 auto; }
-  #toast { position: fixed; left: 16px; right: 16px; bottom: 16px; background: #111827; color: #fff; padding: 12px 14px; border-radius: 8px; text-align: center; display: none; z-index: 30; }
+  #toast { position: fixed; left: 16px; right: 16px; bottom: 16px; background: var(--toast); color: #fff; padding: 12px 14px; border-radius: 8px; text-align: center; display: none; z-index: 30; }
   #toast.err { background: var(--bad); }
   #modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 20; display: flex; align-items: flex-start; justify-content: center; overflow-y: auto; padding: 16px; }
   #modal[hidden] { display: none; }
-  #modal .box { background: #fff; border-radius: 10px; padding: 16px; width: 100%; max-width: 720px; margin: auto 0; }
+  #modal .box { background: var(--card); border-radius: 10px; padding: 16px; width: 100%; max-width: 720px; margin: auto 0; }
   #modal h3 { margin: 0 0 8px; }
   .lines td input, .lines td select { min-height: 36px; padding: 5px 6px; }
-  pre.copy { white-space: pre-wrap; background: #f9fafb; border: 1px solid var(--bd); border-radius: 6px; padding: 8px; font-size: 13px; }
+  pre.copy { white-space: pre-wrap; background: var(--soft); border: 1px solid var(--bd); border-radius: 6px; padding: 8px; font-size: 13px; }
   #print-area { display: none; }
   [dir="rtl"] td.n, [dir="rtl"] th.n { text-align: left; }
   @media (max-width: 640px) { th.hp, td.hp { display: none; } main { padding: 10px 12px 80px; } }
   @media print { body > *:not(#print-area) { display: none !important; } #print-area { display: block; } body { background: #fff; } }
 </style>
+<script>
+  /* Follow the owner app's manual light/dark choice (shared localStorage, same origin); 'auto' falls back to the media query above. */
+  try {
+    var _mk = /[?&]mock=1/.test(location.search);
+    var _raw = localStorage.getItem((_mk ? 'kpos.mock.' : 'kpos.') + 'theme');
+    var _th = _raw ? JSON.parse(_raw) : 'auto';
+    if (_th === 'light' || _th === 'dark') document.documentElement.dataset.theme = _th;
+  } catch (e) {}
+</script>
 </head>
 <body>
 <header><h1 id="title">Khair Gudang Dingin</h1><small id="who"></small><button id="lang" type="button">AR</button><button id="logout" type="button" hidden></button></header>
