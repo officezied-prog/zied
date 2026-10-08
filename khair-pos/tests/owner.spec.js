@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { rp, pct, jktToday, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect, pickCarrier, CARRIER } = require('./helpers');
+const { rp, pct, jktToday, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect, pickCarrier, CARRIER, editDb } = require('./helpers');
 
 test('owner voids a sale from history: status void, stock restored, debt reversed', async ({ page }) => {
   await login(page);
@@ -203,4 +203,18 @@ test('CSV import (majoo style): BOM, semicolons, quotes, Rupiah formats, upsert 
   expect(r.rows[1][0]).toBe('Teh "Spesial", 100g');
   expect(r.map).toMatchObject({ name: 0, sku: 1, retail_price: 2, cost_price: 3, stock: 4 });
   expect(r.n).toEqual([12500, 12500.5, 1.5, 1250000]);
+});
+
+// v22: the manager and accountant may ADD a new product (e.g. a new item on a goods-in note); editing an existing product stays the owner's.
+test('manager + accountant can add a new product but not edit an existing one; the cashier cannot add', async ({ page }) => {
+  await login(page, 'Pemilik', '1234', '', { stay: true });
+  const akHash = await page.evaluate(() => KPOS.pinHash('demo', 'Lestari', '5555'));
+  await editDb(page, `db.users.push({ name: 'Lestari', role: 'akuntan', pin_hash: arg, active: true });`, akHash);
+  const pid = (await getDb(page)).products[0].id;
+  const NEW = { name: 'Barang Uji Baru', unit: 'pcs', retail_price: 9000, stock: 0 };
+  expect((await asUser(page, 'Jihan', '2222', 'save_product', NEW)).product).toBeTruthy();                       // manager create
+  expect((await asUser(page, 'Jihan', '2222', 'save_product', Object.assign({ id: pid }, NEW))).error).toBe('FORBIDDEN'); // manager edit → no
+  expect((await asUser(page, 'Lestari', '5555', 'save_product', Object.assign({}, NEW, { name: 'Barang Akun' }))).product).toBeTruthy(); // accountant create
+  expect((await asUser(page, 'Lestari', '5555', 'save_product', Object.assign({ id: pid }, NEW))).error).toBe('FORBIDDEN'); // accountant edit → no
+  expect((await asUser(page, 'Siti', '1111', 'save_product', NEW)).error).toBe('FORBIDDEN');                     // cashier → no
 });

@@ -1762,7 +1762,7 @@ const MockServer = (() => {
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
-    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'list_corrections'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
+    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'list_corrections', 'save_product'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
     if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'list_photos'].includes(action)) deviceTouch(db, u, data.device, false);
 
@@ -2296,7 +2296,10 @@ const MockServer = (() => {
         return { expense };
       }
       case 'save_product': {
-        needOwner();
+        if (!owner) {
+          if (u.role !== 'manager' && u.role !== 'akuntan') throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+          if (data.id) throw E('FORBIDDEN', 'Hanya pemilik yang boleh mengubah produk yang sudah ada');
+        }
         const name = safeName(data.name, 80);
         if (!name) throw E('INVALID', strv(data.name) ? 'Nama produk hanya boleh huruf, angka dan . , \' & ( ) / % + # -' : 'Nama produk wajib');
         const sku = String(data.sku || '').trim();
@@ -3195,7 +3198,7 @@ const isApprover = () => S.role === 'owner' || S.role === 'manager';
 const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
 const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'settings'];
-const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh)$/;
+const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|prod-new)$/;
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
@@ -5853,7 +5856,7 @@ RENDER.products = function () {
   const own = isOwner();
   const v = $('#view-products');
   v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.products'))}</h1>
-      ${own ? `<button class="btn" data-act="import-csv">${ic('upload')} ${esc(t('imp.button'))}</button><button class="btn primary" data-act="prod-new">${ic('plus')} ${esc(t('prod.new'))}</button>` : ''}</div>
+      ${own ? `<button class="btn" data-act="import-csv">${ic('upload')} ${esc(t('imp.button'))}</button>` : ''}${canAudit() ? `<button class="btn primary" data-act="prod-new">${ic('plus')} ${esc(t('prod.new'))}</button>` : ''}</div>
     <div class="toolbar">
       <input class="input" id="pr-q" type="search" placeholder="${esc(t('prod.search_ph'))}" value="${esc(PR.q)}" aria-label="${esc(t('prod.search_ph'))}">
       <select class="input" id="pr-cat" aria-label="${esc(t('category'))}"><option value="">${esc(t('all_categories'))}</option>${categories().map(c => `<option ${PR.cat === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
@@ -6195,7 +6198,7 @@ RENDER.purchases = function () {
           const cell = l.ext
             ? `<select class="input" data-pu-prod="${i}" aria-label="${esc(t('product'))}">${prodOptions(l.product_id)}</select>
                <div class="small" style="margin-top:4px">${esc(t('pu.on_note'))}: <b>${esc(l.ext.name)}</b>${l.ext.score != null ? ` <span class="badge ${l.ext.score >= 0.75 ? 'green' : l.ext.score >= 0.5 ? 'gold' : 'amber'}">${Math.round(l.ext.score * 100)}%</span>` : ''}</div>
-               ${!p ? `<div class="small" style="color:var(--warn)"><b>${esc(t('pu.unmatched'))}</b>${own ? ` <button class="btn xs" data-act="pu-newprod" data-i="${i}">${ic('plus')} ${esc(t('prod.new'))}</button>` : ''}</div>` : info}`
+               ${!p ? `<div class="small" style="color:var(--warn)"><b>${esc(t('pu.unmatched'))}</b>${isApprover() ? ` <button class="btn xs" data-act="pu-newprod" data-i="${i}">${ic('plus')} ${esc(t('prod.new'))}</button>` : ''}</div>` : info}`
             : `<b>${esc(p ? p.name : l.name)}</b>${info}`;
           return `<tr class="${p ? '' : 'unmatched'}" data-line="${i}"><td style="min-width:220px">${cell}</td>
           <td class="r"><input class="input num" style="width:90px" inputmode="decimal" data-pu-qty="${i}" value="${esc(fmtQtyInput(l.qty))}" aria-label="${esc(t('qty'))}"></td>
