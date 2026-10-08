@@ -4545,7 +4545,7 @@ RENDER.masuk = function (force) {
       <button class="btn sm" data-act="move-open" id="mv-open">${ic('truck')} ${esc(t('mv.title'))}${inGudang ? ` <span class="badge warn num" id="mv-open-n">${inGudang}</span>` : ''}</button></div>
     <div class="card pad step" id="pu-photo-card" style="margin-bottom:12px">
       ${PU.thumb ? `<img class="thumb" id="pu-thumb" src="${esc(PU.thumb)}" alt="${esc(t('pu.photo_title'))}">` : `<div class="thumb">${ic('camera')}</div>`}
-      <div class="grow" style="min-width:180px"><div style="font-weight:900;font-size:17px">1. ${esc(t('pu.photo_title'))}</div><div id="pu-status">${status}</div></div>
+      <div class="grow" style="min-width:180px"><div style="font-weight:900;font-size:17px">1. ${esc(t('pu.photo_title'))}</div><div id="pu-status">${status}</div>${MOCK ? `<div class="small" style="color:var(--warn);font-weight:700;margin-top:4px">${esc(t('pu.demo_scan'))}</div>` : ''}</div>
       <label class="btn ${PU.photo_id ? '' : 'primary'} big" for="pu-photo" id="pu-photo-btn" ${PU.scanning ? 'aria-disabled="true" style="pointer-events:none"' : ''}>${ic('camera')} ${esc(PU.photo_id ? t('pu.photo_retake') : t('pu.photo_take'))}</label>
       ${PHOTO_INPUT('pu-photo')}</div>
     <div class="card pad" style="margin-bottom:12px">
@@ -5933,7 +5933,7 @@ const I18N = {
     'outbox.hint': 'Dikirim otomatis saat online.', 'outbox.k_sale': 'Penjualan', 'outbox.k_payment': 'Bayar hutang', 'outbox.k_expense': 'Pengeluaran', 'outbox.k_cash': 'Kas masuk/keluar', 'outbox.k_contact': 'Nomor pelanggan',
     'outbox.drop_confirm': 'Hapus data yang gagal ini?',
     'pu.photo_title': 'Foto nota supplier', 'pu.photo_take': 'Foto nota', 'pu.photo_retake': 'Foto ulang', 'pu.photo_hint_req': 'Wajib: foto nota/barang datang. AI membaca isinya.',
-    'pu.photo_hint_opt': 'Foto nota agar AI mengisi barangnya.', 'pu.ai_reading': 'AI membaca nota… (5–20 detik)', 'pu.photo_ok': 'Foto tersimpan · {n} baris terbaca',
+    'pu.photo_hint_opt': 'Foto nota agar AI mengisi barangnya.', 'pu.ai_reading': 'AI membaca nota… (5–20 detik)', 'pu.photo_ok': 'Foto tersimpan · {n} baris terbaca', 'pu.demo_scan': 'Mode DEMO: pembacaan foto hanya contoh tetap — tidak membaca foto asli Anda. Pakai aplikasi asli (tanpa ?mock=1) untuk membaca nota sungguhan.',
     'pu.check_lines': 'Cek barang & jumlah', 'pu.supplier': 'Supplier', 'pu.on_note': 'Di nota', 'pu.unmatched': 'Pilih barangnya', 'pu.pick_product': 'pilih barang',
     'pu.price_note': 'Harga di nota', 'pu.empty_hint': 'Foto nota dulu, atau tambah barang manual.', 'pu.add_product': 'Tambah barang manual', 'pu.total_note': 'Total nota',
     'pu.save': 'Simpan barang masuk', 'pu.saved': 'Barang masuk tersimpan', 'pu.empty': 'Belum ada barang', 'pu.need_photo': 'Foto nota dulu', 'pu.need_match': 'Semua baris harus dipilih barangnya',
@@ -6038,7 +6038,7 @@ const I18N = {
     'outbox.hint': 'تُرسل تلقائيًا عند الاتصال.', 'outbox.k_sale': 'بيع', 'outbox.k_payment': 'سداد دَين', 'outbox.k_expense': 'مصروف', 'outbox.k_cash': 'إدخال/إخراج نقد', 'outbox.k_contact': 'رقم عميل',
     'outbox.drop_confirm': 'حذف هذا السجل الفاشل؟',
     'pu.photo_title': 'صورة فاتورة المورد', 'pu.photo_take': 'صوّر الفاتورة', 'pu.photo_retake': 'إعادة التصوير', 'pu.photo_hint_req': 'إلزامي: صورة الفاتورة/البضاعة. الذكاء الاصطناعي يقرأها.',
-    'pu.photo_hint_opt': 'صوّر الفاتورة ليملأ الذكاء الاصطناعي الأصناف.', 'pu.ai_reading': 'جارٍ قراءة الفاتورة… (5–20 ثانية)', 'pu.photo_ok': 'حُفظت الصورة · {n} سطور',
+    'pu.photo_hint_opt': 'صوّر الفاتورة ليملأ الذكاء الاصطناعي الأصناف.', 'pu.ai_reading': 'جارٍ قراءة الفاتورة… (5–20 ثانية)', 'pu.photo_ok': 'حُفظت الصورة · {n} سطور', 'pu.demo_scan': 'وضع تجريبي: قراءة الصورة مثال ثابت ولا تقرأ صورتك الحقيقية. استعمل التطبيق الحقيقي (بدون ?mock=1) لقراءة فاتورتك.',
     'pu.check_lines': 'راجع الأصناف والكميات', 'pu.supplier': 'المورد', 'pu.on_note': 'في الفاتورة', 'pu.unmatched': 'اختر الصنف', 'pu.pick_product': 'اختر صنفًا',
     'pu.price_note': 'السعر في الفاتورة', 'pu.empty_hint': 'صوّر الفاتورة أولًا أو أضف صنفًا يدويًا.', 'pu.add_product': 'إضافة صنف يدويًا', 'pu.total_note': 'إجمالي الفاتورة',
     'pu.save': 'حفظ البضاعة المستلمة', 'pu.saved': 'تم حفظ الاستلام', 'pu.empty': 'لا توجد أصناف', 'pu.need_photo': 'صوّر الفاتورة أولًا', 'pu.need_match': 'اختر الصنف لكل سطر',
