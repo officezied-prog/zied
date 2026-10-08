@@ -237,3 +237,17 @@ test('settings: return limits, fee, photo and carrier switches; goods-in form ne
   const ph = await asUser(page, 'Pemilik', '1234', 'scan_purchase', { image_base64: 'AAAA', mime: 'image/jpeg' });
   expect((await asUser(page, 'Pemilik', '1234', 'save_purchase', { supplier: 'PT Kurma Nusantara', photo_id: ph.photo_id, items: [{ product_id: kis.id, qty: 1, cost_price: 1000, exp_none: true }], mismatch_reason: 'uji' })).purchase_no).toBeTruthy();
 });
+
+// v21 owner → monitoring: the owner watches returns but does not start them; the manager still operates.
+test('monitoring: the owner cannot start a return (view-only), the manager still can', async ({ page }) => {
+  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await nav(page, 'retur');
+  await expect(page.locator('#rt-view-only')).toBeVisible();
+  await expect(page.locator('#rt-new-cust')).toHaveCount(0);
+  await expect(page.locator('#rt-new-sup')).toHaveCount(0);
+  await switchUser(page, 'Jihan', '2222');
+  await nav(page, 'retur');
+  await expect(page.locator('#rt-new-cust')).toBeVisible();
+  await expect(page.locator('#rt-new-sup')).toBeVisible();
+  await expect(page.locator('#rt-view-only')).toHaveCount(0);
+});
