@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const NF = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
-const { rp, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals } = require('./helpers');
+const { rp, login, switchUser, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals } = require('./helpers');
 
 test.beforeEach(async ({ page }) => { await login(page); });
 
@@ -111,7 +111,8 @@ test('debt (hutang) needs a customer and increases the customer debt; receiving 
   expect(after).toBe(cust.debt_balance + p.wholesale_price);
   await closeModals(page);
 
-  // receive a payment from the customer page
+  // receive a payment from the customer page — money-in is the manager's job; the owner only monitors
+  await switchUser(page, 'Jihan', '2222');
   await nav(page, 'customers');
   await page.locator('[data-act="cust-open"]').filter({ hasText: 'Warung Bu Halimah' }).click();
   await expect(page.locator('#cd-debt')).toHaveText(rp(after));
@@ -124,7 +125,7 @@ test('debt (hutang) needs a customer and increases the customer debt; receiving 
   await expect(page.locator('.toast.ok')).toContainText('Pembayaran');
   db = await getDb(page);
   expect(db.customers.find(c => c.id === cust.id).debt_balance).toBe(after - pay);
-  expect(db.payments[db.payments.length - 1]).toMatchObject({ customer_id: cust.id, amount: pay, method: 'transfer', cashier: 'Pemilik' });
+  expect(db.payments[db.payments.length - 1]).toMatchObject({ customer_id: cust.id, amount: pay, method: 'transfer', cashier: 'Jihan' });
   await expect(page.locator('#cd-debt')).toHaveText(rp(after - pay));
 });
 
