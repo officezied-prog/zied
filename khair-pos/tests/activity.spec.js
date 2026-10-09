@@ -3,7 +3,7 @@ const { test, expect } = require('@playwright/test');
 const path = require('path');
 const { SHOTS, login, getDb, productByName, nav, asUser, CARRIER } = require('./helpers');
 
-test('price change, goods-in and correction by the manager reach the owner: unread badge, Beranda note, feed with filters', async ({ page }) => {
+test('price change, goods-in and a correction REQUEST by the manager reach the owner: unread badge, Beranda note, feed with filters', async ({ page }) => {
   await login(page, 'Pemilik', '1234', '', { stay: true });
   // read everything that is there so far
   await nav(page, 'activity');
@@ -17,7 +17,8 @@ test('price change, goods-in and correction by the manager reach the owner: unre
   const ph = await asUser(page, 'Jihan', '2222', 'scan_purchase', { image_base64: 'AAAA', mime: 'image/jpeg' });
   const pu = await asUser(page, 'Jihan', '2222', 'save_purchase', { carrier: CARRIER, supplier: 'Agen Sembako Pasar Induk', photo_id: ph.photo_id, items: [{ product_id: gula.id, qty: 50, cost_price: 15000, photo_index: 1, exp_none: true }], mismatch_reason: 'Kurma dan madu menyusul' });
   const fx = await asUser(page, 'Jihan', '2222', 'request_purchase_fix', { purchase_no: pu.purchase_no, lines: [{ product_id: gula.id, qty: 48 }], reason: '2 pak sobek' });
-  expect(fx.applied).toBe(true);
+  expect(fx.applied).toBe(false); // owner monitoring: the manager REQUESTS the correction, the owner approves it
+  expect(fx.approver_role).toBe('owner');
 
   await page.evaluate(() => refreshData(true));
   await expect(page.locator('#tb-act-n')).toHaveText('3');
@@ -32,7 +33,7 @@ test('price change, goods-in and correction by the manager reach the owner: unre
   await expect(page.locator('#view-activity')).toBeVisible();
   await expect(page.locator('#tb-act-n')).toHaveCount(0);
   const rows = page.locator('#act-list .act-row');
-  await expect(rows.first()).toHaveAttribute('data-kind', 'koreksi_masuk');
+  await expect(rows.first()).toHaveAttribute('data-kind', 'minta_koreksi');
   await expect(rows.first()).toContainText(`Koreksi barang masuk ${pu.purchase_no}`);
   await expect(rows.first()).toContainText('50→48');
   await expect(rows.first()).toHaveClass(/warn/);
