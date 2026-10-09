@@ -4,7 +4,7 @@ const MockServer = (() => {
   const DBKEY = 'kmock.db';
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
-  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_photos', 'field_bootstrap', 'list_field', 'product_images', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon'];
+  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_transfers', 'list_photos', 'field_bootstrap', 'list_field', 'product_images', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon'];
   class MockErr extends Error { constructor(code, message, extra) { super(message || code); this.code = code; this.extra = extra || null; } }
   const E = (code, msg, extra) => new MockErr(code, msg, extra);
   let ready = null;
@@ -1559,6 +1559,66 @@ const MockServer = (() => {
           return { request_id: a.request_id, created_at: strv(a.created_at), by: strv(a.cashier), summary: strv(a.summary), total: int(a.total), status: a.status, items };
         }).filter(p => p.items.some(it => it.approved && !it.paid));
         return { pay_plans: plans };
+      }
+      case 'request_transfer': {
+        // Owner-approved bank transfers: the manager raises a transfer request for the owner to approve (money leaves via BNI).
+        if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
+        const payee = safeName(data.payee, 80);
+        if (!payee) throw E('INVALID', 'Nama penerima wajib (huruf dan angka saja)');
+        const amount = int(data.amount);
+        if (!(amount > 0)) throw E('INVALID', 'Jumlah transfer tidak valid');
+        const reason = strv(data.reason).slice(0, 300);
+        const account_id = strv(data.account_id);
+        if (account_id && !bankAccounts(db).some(x => strv(x.id) === account_id)) throw E('INVALID', 'Rekening bank tidak dikenal');
+        const summary = payee + ' Rp ' + amount + (reason ? ' — ' + reason : '');
+        const approval = newApproval(db, u, { kind: 'transfer', approver_role: 'owner', total: amount, summary, payload: JSON.stringify({ payee, amount, reason, account_id, paid: false, pay_id: '' }) });
+        logAct(db, u, 'minta_transfer', summary, approval.request_id, amount, 'warn');
+        return { applied: false, request_id: approval.request_id, approval };
+      }
+      case 'record_transfer': {
+        // The manager records a bank transfer once the owner approved the request; the owner may record directly.
+        if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
+        const payee = safeName(data.payee, 80);
+        if (!payee) throw E('INVALID', 'Nama penerima wajib (huruf dan angka saja)');
+        const amount = int(data.amount);
+        if (!(amount > 0)) throw E('INVALID', 'Jumlah transfer tidak valid');
+        let reqAp = null, reqPl = {};
+        if (u.role === 'manager') {
+          reqAp = db.approvals.find(x => x.request_id === strv(data.request_id)) || null;
+          try { reqPl = JSON.parse(reqAp ? reqAp.payload : '{}'); } catch (e) { reqPl = {}; }
+          if (!reqAp || reqAp.kind !== 'transfer' || reqAp.status !== 'approved' || reqPl.paid === true
+            || safeName(reqPl.payee, 80) !== payee || int(reqPl.amount) !== amount) {
+            throw E('NEEDS_OWNER', 'Transfer butuh persetujuan pemilik');
+          }
+        }
+        if (dupRef(db.payments.filter(p => payDir(p) === 'out'), data.transfer_ref)) throw E('INVALID', 'Nomor transfer ini sudah pernah dipakai: ' + strv(data.transfer_ref));
+        const reason = (reqAp ? strv(reqPl.reason) : strv(data.reason)).slice(0, 300);
+        const pay = { id: nextId(db, 'payment'), pay_id: 'PY' + randId(7), pay_date: isYmd(data.pay_date) ? data.pay_date : jktDate(), pay_time: new Date().toISOString(),
+          direction: 'out', party_type: 'other', customer_id: 0, customer_name: '', supplier: '', payee, amount, method: 'transfer',
+          account_id: strv(data.account_id) || payAccount(db, data, 'transfer'), bank: strv(data.bank).slice(0, 60), transfer_ref: strv(data.transfer_ref).slice(0, 80),
+          proof_photo_id: strv(data.photo_id).slice(0, 40), alloc: '[]', match_status: '',
+          note: (reason + (strv(data.note) ? ' | ' + strv(data.note) : '')).slice(0, 500), cashier: u.name };
+        db.payments.push(pay);
+        logAct(db, u, 'transfer_keluar', 'Transfer ' + payee + ' Rp ' + amount + (pay.bank ? ' ' + pay.bank : '') + (pay.transfer_ref ? ', ref ' + pay.transfer_ref : ''), pay.pay_id, amount, 'info');
+        if (u.role === 'manager' && reqAp) {
+          reqPl.paid = true; reqPl.pay_id = pay.pay_id;
+          reqAp.payload = JSON.stringify(reqPl); reqAp.status = 'done';
+          return { payment: payOut(pay), transfer: { request_id: reqAp.request_id, status: 'done' } };
+        }
+        return { payment: payOut(pay) };
+      }
+      case 'list_transfers': {
+        if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
+        const transfers = db.approvals.filter(a => {
+          if (a.kind !== 'transfer' || a.status !== 'approved') return false;
+          if (u.role === 'manager' && strv(a.cashier).toLowerCase() !== u.name.toLowerCase()) return false;
+          let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+          return pl.paid !== true;
+        }).map(a => {
+          let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+          return { request_id: a.request_id, created_at: strv(a.created_at), by: strv(a.cashier), payee: strv(pl.payee), amount: int(pl.amount), reason: strv(pl.reason), status: a.status };
+        });
+        return { transfers };
       }
       case 'allocate_payment': {
         if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');

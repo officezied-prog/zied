@@ -1945,7 +1945,7 @@ async function pollApprovals() {
     AP.fresh = new Set(fresh.map(a => a.request_id));
     if (fresh.length) {
       beep(); try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) { }
-      toast(t(fresh[0].kind === 'opname' ? 'gd.new_toast' : fresh[0].kind === 'purchase_fix' ? 'apr.new_fix' : fresh[0].kind === 'buka_kas' ? 'apr.new_bukakas' : fresh[0].kind === 'discount' ? 'apr.new_disc' : fresh[0].kind === 'retur' ? 'apr.new_retur' : fresh[0].kind === 'pay_plan' ? 'apr.new_payplan' : fresh[0].kind === 'kesepakatan' ? 'apr.new_agree' : 'apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name, no: fresh[0].ref }), 'warn', 6000);
+      toast(t(fresh[0].kind === 'opname' ? 'gd.new_toast' : fresh[0].kind === 'purchase_fix' ? 'apr.new_fix' : fresh[0].kind === 'buka_kas' ? 'apr.new_bukakas' : fresh[0].kind === 'discount' ? 'apr.new_disc' : fresh[0].kind === 'retur' ? 'apr.new_retur' : fresh[0].kind === 'pay_plan' ? 'apr.new_payplan' : fresh[0].kind === 'transfer' ? 'apr.new_transfer' : fresh[0].kind === 'kesepakatan' ? 'apr.new_agree' : 'apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name, no: fresh[0].ref }), 'warn', 6000);
     }
     updateApprovalBadge();
     if (S.view === 'approvals') drawApprovals();
@@ -1967,6 +1967,7 @@ function aprBodyHTML(a) {
   if (kind === 'discount') return discountAprHTML(a, pl);
   if (kind === 'retur') return returAprHTML(a, pl);
   if (kind === 'pay_plan') return payPlanAprHTML(a, pl);
+  if (kind === 'transfer') return transferAprHTML(a, pl);
   if (kind === 'kesepakatan') return agreeAprHTML(a, pl);
   if (kind === 'transfer_confirm') return `<div class="row wrap"><b class="grow" style="font-size:17px">${ic('bank')} ${esc(t('tc.title'))}</b><span class="badge blue">${esc(a.request_id)}</span></div>
     <div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('tc.who'))}</div><div class="v">${esc(a.customer_name || '—')}</div></div><div><div class="k">${esc(t('tc.amount'))}</div><div class="v num"><b>${esc(fmtRp(a.total))}</b></div></div></div>
@@ -2000,6 +2001,13 @@ function payPlanAprHTML(a, pl) {
     <div class="small" style="margin:6px 0 2px">${esc(t('pp.pick_items'))}</div>
     <div class="list">${rows}</div>
     <div class="apr-sum" style="grid-template-columns:1fr;margin-top:6px"><div><div class="k">${esc(t('total'))}</div><div class="v num"><b>${fmtRp(a.total)}</b></div></div></div>`;
+}
+function transferAprHTML(a, pl) {
+  // Owner-approved bank transfer: the owner sees payee, amount and reason, then approves or rejects (money leaves via BNI).
+  return `<div class="row wrap"><b class="grow" style="font-size:17px">${ic('bank')} ${esc(t('apr.kind_transfer'))}</b><span class="badge amber">${esc(a.request_id)}</span></div>
+    <div class="small muted">${esc(t('pp.proposed_by', { by: a.cashier }))} · ${esc(fmtDateTime(a.created_at))}</div>
+    <div class="apr-sum" style="grid-template-columns:1fr 1fr;margin-top:6px"><div><div class="k">${esc(t('tf.payee'))}</div><div class="v">${esc(pl.payee || '—')}</div></div><div><div class="k">${esc(t('tf.amount'))}</div><div class="v num"><b>${fmtRp(pl.amount || a.total)}</b></div></div></div>
+    ${pl.reason ? `<div class="small" style="margin-top:6px">${esc(t('tf.reason'))}: <b>“${esc(pl.reason)}”</b></div>` : ''}`;
 }
 function drawApprovals() {
   const box = $('#apr-list'); if (!box) return;
@@ -5572,10 +5580,10 @@ function openDeviceDetail(id) {
 /* ========== Activity log (v12, owner) ========== */
 const ACTV = { recent: [], preset: '7d', from: '', to: '', group: '', user: '', q: '', data: null, err: '' };
 const ACT_GROUPS = { masuk: ['masuk', 'minta_koreksi', 'koreksi_masuk'], harga: ['harga', 'minta_harga'], stok: ['stok', 'opname', 'minta_opname', 'kemas_ulang', 'produk', 'produk_baru', 'impor', 'pindah_stok', 'jual_tanpa_rak'], retur: ['minta_retur', 'retur'],
-  kas: ['biaya', 'kas', 'tutup_kas', 'buka_kas'], jual: ['batal', 'minta_batal', 'hutang', 'minta_diskon', 'diskon', 'member_baru', 'member_berhenti'], bayar: ['bayar_masuk', 'bayar_keluar', 'alokasi', 'rekening', 'minta_bayar', 'setuju_bayar', 'tolak_bayar'], pengguna: ['pengguna', 'pengaturan', 'masuk_master', 'ganti_pin', 'kode_pemilik', 'usul_kesepakatan', 'kesepakatan'], perangkat: ['perangkat_baru'] };
+  kas: ['biaya', 'kas', 'tutup_kas', 'buka_kas'], jual: ['batal', 'minta_batal', 'hutang', 'minta_diskon', 'diskon', 'member_baru', 'member_berhenti'], bayar: ['bayar_masuk', 'bayar_keluar', 'alokasi', 'rekening', 'minta_bayar', 'setuju_bayar', 'tolak_bayar', 'minta_transfer', 'transfer_keluar'], pengguna: ['pengguna', 'pengaturan', 'masuk_master', 'ganti_pin', 'kode_pemilik', 'usul_kesepakatan', 'kesepakatan'], perangkat: ['perangkat_baru'] };
 const ACT_ICON = { retur: 'return', masuk: 'truck', harga: 'tag', stok: 'warehouse', kas: 'cash', jual: 'cart', bayar: 'wallet', pengguna: 'gear', perangkat: 'device', lain: 'activity' };
 function actGroup(a) {
-  if (a.kind === 'keputusan') { const m = /\((\w+)/.exec(a.summary || ''); return { credit: 'jual', void: 'jual', discount: 'jual', retur: 'retur', kesepakatan: 'pengguna', price: 'harga', opname: 'stok', purchase_fix: 'masuk', buka_kas: 'kas', pay_plan: 'bayar' }[m ? m[1] : 'credit'] || 'jual'; }
+  if (a.kind === 'keputusan') { const m = /\((\w+)/.exec(a.summary || ''); return { credit: 'jual', void: 'jual', discount: 'jual', retur: 'retur', kesepakatan: 'pengguna', price: 'harga', opname: 'stok', purchase_fix: 'masuk', buka_kas: 'kas', pay_plan: 'bayar', transfer: 'bayar' }[m ? m[1] : 'credit'] || 'jual'; }
   for (const [g, ks] of Object.entries(ACT_GROUPS)) if (ks.includes(a.kind)) return g;
   return 'lain';
 }
@@ -6418,6 +6426,82 @@ async function pickSupplierThenPay() {
   $('#sp-pick-ok', el).onclick = () => { const v = $('#sp-pick', el).value.trim(); if (!v) { $('#sp-pick-err', el).textContent = t('required'); return; } closeModal(); openPayForm('supplier', { name: v }); };
 }
 
+/* ---- Owner-approved bank transfers (v29): the manager raises a request, the owner approves, the manager records
+   the transfer executed via the company bank (BNI). The owner only monitors — money-out stays hidden by omon. ---- */
+const TF = { list: null };
+async function loadTransfers() {
+  if (!canPropose()) { TF.list = []; drawTransfers(); return; }
+  try { TF.list = (await api('list_transfers')).transfers || []; } catch (e) { TF.list = TF.list || []; }
+  drawTransfers();
+}
+// The manager's owner-approved, still-unrecorded transfers: record each one (collect bank / transfer_ref).
+function drawTransfers() {
+  const box = $('#bk-transfers'); if (!box) return;
+  if (!canPropose()) { box.innerHTML = ''; return; }
+  const items = (TF.list || []);
+  if (!items.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="card pad" style="margin-bottom:12px"><h3 style="margin:0 0 6px">${ic('check')} ${esc(t('tf.to_record'))}</h3>
+    <div class="list" id="tf-rows">${items.map(it => `<div class="li" data-tf-req="${esc(it.request_id)}"><span class="act-ic">${ic('bank')}</span>
+      <div class="grow"><div class="t">${esc(it.payee)}</div><div class="s">${esc(t('pp.proposed_by', { by: it.by }))}${it.reason ? ' · ' + esc(it.reason) : ''}</div></div>
+      <div class="right"><div class="num" style="font-weight:800">${fmtRp(it.amount)}</div><button class="btn xs primary" data-act="tf-record" data-req="${esc(it.request_id)}" data-payee="${esc(it.payee)}" data-amt="${it.amount}">${esc(t('tf.record'))}</button></div></div>`).join('')}</div></div>`;
+}
+async function openRequestTransfer() {
+  if (!canPropose()) return;
+  const accs = bankAccountsList();
+  const el = openModal({
+    title: t('tf.title'), id: 'tf-request-modal',
+    body: `<p class="muted small" style="margin-top:0">${esc(t('tf.hint'))}</p>
+      <div class="field"><label class="f" for="tf-payee">${esc(t('tf.payee'))}</label><input class="input" id="tf-payee" maxlength="80" autocomplete="off" autofocus></div>
+      <div class="field"><label class="f" for="tf-amt">${esc(t('tf.amount'))}</label><input class="input num" id="tf-amt" inputmode="numeric"></div>
+      <div class="field"><label class="f" for="tf-reason">${esc(t('tf.reason'))}</label><input class="input" id="tf-reason" maxlength="300"></div>
+      ${accs.length ? `<div class="field"><label class="f" for="tf-acc">${esc(t('tf.account'))}</label><select class="input" id="tf-acc"><option value="">${esc(t('tf.account_any'))}</option>${accs.map(a => `<option value="${esc(a.id)}">${esc(accLabel(a))}</option>`).join('')}</select></div>` : ''}
+      <div class="red" id="tf-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="tf-send">${ic('send')} ${esc(t('tf.send'))}</button>`
+  });
+  $('#tf-amt', el).addEventListener('change', e => { const v = moneyVal(e.target.value); e.target.value = v ? fmtNum(v) : ''; });
+  $('#tf-send', el).onclick = async () => {
+    const err = $('#tf-err', el), payee = $('#tf-payee', el).value.trim(), amount = moneyVal($('#tf-amt', el).value);
+    if (!payee) { err.textContent = t('required') + ': ' + t('tf.payee'); return; }
+    if (!(amount > 0)) { err.textContent = t('cust.amount_invalid'); return; }
+    const data = { payee, amount, reason: $('#tf-reason', el).value.trim() };
+    const acc = $('#tf-acc', el); if (acc && acc.value) data.account_id = acc.value;
+    $('#tf-send', el).disabled = true; err.textContent = '';
+    try {
+      await api('request_transfer', data);
+      closeModal(true);
+      toast(t('tf.sent_ok', { payee }), 'ok', 4000);
+      pollApprovals();
+    } catch (e) { $('#tf-send', el).disabled = false; err.textContent = errMsg(e); }
+  };
+}
+async function openRecordTransfer(req) {
+  if (!canPropose()) return;
+  const accs = bankAccountsList();
+  const el = openModal({
+    title: t('tf.record'), id: 'tf-record-modal',
+    body: `<p style="margin-top:0"><b>${esc(req.payee)}</b> · <b class="num">${fmtRp(req.amount)}</b></p>
+      <p class="muted small">${esc(t('tf.record_hint'))}</p>
+      <div class="field"><label class="f" for="tf-bank">${esc(t('tf.bank'))}</label><input class="input" id="tf-bank" maxlength="60" value="${esc((accById(accs.length ? (accs.find(a => a.active !== false) || accs[0]).id : '') || {}).bank || '')}" autocomplete="off"></div>
+      <div class="field"><label class="f" for="tf-ref">${esc(t('tf.ref'))}</label><input class="input" id="tf-ref" maxlength="80" autocomplete="off"></div>
+      ${accs.length ? `<div class="field"><label class="f" for="tf-racc">${esc(t('tf.account'))}</label><select class="input" id="tf-racc">${accs.map(a => `<option value="${esc(a.id)}" ${a.active !== false ? 'selected' : ''}>${esc(accLabel(a))}</option>`).join('')}</select></div>` : ''}
+      <div class="field"><label class="f" for="tf-note">${esc(t('notes'))}</label><input class="input" id="tf-note" maxlength="200"></div>
+      <div class="red" id="tf-rec-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="tf-rec-ok">${ic('wallet')} ${esc(t('tf.record'))}</button>`
+  });
+  $('#tf-rec-ok', el).onclick = async () => {
+    const err = $('#tf-rec-err', el);
+    const data = { request_id: req.request_id, payee: req.payee, amount: req.amount, bank: $('#tf-bank', el).value.trim(), transfer_ref: $('#tf-ref', el).value.trim(), note: $('#tf-note', el).value.trim() };
+    const racc = $('#tf-racc', el); if (racc && racc.value) data.account_id = racc.value;
+    $('#tf-rec-ok', el).disabled = true; err.textContent = '';
+    try {
+      await api('record_transfer', data);
+      closeModal(true);
+      toast(t('tf.recorded_ok', { payee: req.payee, amount: fmtRp(req.amount) }), 'ok', 4000);
+      TF.list = null; loadTransfers(); loadBank(); pollApprovals();
+    } catch (e) { $('#tf-rec-ok', el).disabled = false; err.textContent = errMsg(e); }
+  };
+}
+
 /* ---- Rekening Bank Toko: the month's bank payments + reconciliation with the bank statement (v14) ---- */
 const BK = { acc: '', period: '', data: null, pays: null, photos: {}, err: '', seq: 0 };
 const BR_ORDER = ['tidak_tercatat', 'beda_jumlah', 'missing', 'beda_tanggal', 'manual', 'cocok', 'diabaikan'];
@@ -6433,11 +6517,14 @@ RENDER.bank = function () {
     v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.bank'))}</h1></div><div class="card pad center" id="bk-noacc"><p>${esc(t('bk.no_account'))}</p>${isOwner() ? `<button class="btn primary" data-act="go" data-view="settings">${ic('gear')} ${esc(t('nav.settings'))}</button>` : `<p class="muted small">${esc(t('bk.ask_owner'))}</p>`}</div>`;
     return;
   }
-  v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.bank'))}</h1><button class="btn" data-act="bk-csv" id="bk-csv">${ic('download')} ${esc(t('bk.export'))}</button><button class="btn primary" data-act="bk-import" id="bk-import-btn">${ic('upload')} ${esc(t('bk.import'))}</button></div>
+  v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.bank'))}</h1>${canPropose() ? `<button class="btn primary" data-act="tf-request">${ic('send')} ${esc(t('tf.request'))}</button>` : ''}<button class="btn" data-act="bk-csv" id="bk-csv">${ic('download')} ${esc(t('bk.export'))}</button><button class="btn primary" data-act="bk-import" id="bk-import-btn">${ic('upload')} ${esc(t('bk.import'))}</button></div>
     <p class="muted small" style="margin-top:0">${esc(t('bk.hint'))}</p>
+    <div id="bk-transfers"></div>
     <div class="toolbar"><select class="input" id="bk-acc" aria-label="${esc(t('pay.account'))}">${accs.map(a => `<option value="${esc(a.id)}" ${String(a.id) === String(BK.acc) ? 'selected' : ''}>${esc(accLabel(a))}${a.active === false ? ' (' + esc(t('inactive')) + ')' : ''}</option>`).join('')}</select>
       <label class="f" style="margin:0">${esc(t('bk.month'))} <input class="input" type="month" id="bk-period" value="${esc(BK.period)}" style="width:auto"></label></div>
     <div id="bk-body"><div class="empty">${esc(t('loading'))}</div></div>`;
+  if (TF.list) drawTransfers();
+  loadTransfers();
   $('#bk-acc').onchange = e => { BK.acc = e.target.value; loadBank(); };
   $('#bk-period').onchange = e => { if (/^\d{4}-\d{2}$/.test(e.target.value)) { BK.period = e.target.value; loadBank(); } };
   loadBank();
@@ -6461,7 +6548,7 @@ function bkPayInfo(p) {
   const slipAmt = ex && ex.amount != null ? int(ex.amount) : null;
   return { amtOk: p.proof_photo_id ? (slipAmt == null ? null : slipAmt === int(p.amount)) : null, dateOk: p.proof_photo_id && p.slip_date ? p.slip_date === p.pay_date : null, url: ph && ph.drive_url, slipAmt };
 }
-const partyOf = p => p.customer_name || p.supplier || '—';
+const partyOf = p => p.customer_name || p.supplier || p.payee || '—';
 function drawBank() {
   const body = $('#bk-body'); if (!body) return;
   body.style.opacity = '';
@@ -6774,6 +6861,8 @@ Object.assign(ACT, {
   'sp-pay-new': () => pickSupplierThenPay(),
   'sp-propose': el => { closeModal(); openProposePayment(el.dataset.name || ''); },
   'pp-record': el => { closeModal(); openPayForm('supplier', { name: el.dataset.sup }, { plan_request_id: el.dataset.plan, item_index: int(el.dataset.idx), amount: int(el.dataset.amt) }); },
+  'tf-request': () => openRequestTransfer(),
+  'tf-record': el => openRecordTransfer({ request_id: el.dataset.req, payee: el.dataset.payee, amount: int(el.dataset.amt) }),
   'bk-import': () => openBankImport(),
   'bk-csv': () => bkCsv(),
   'bk-match': el => bkMatchLine(el.dataset.line),
@@ -6977,6 +7066,29 @@ Object.assign(I18N.ar, {
   'apr.kind_payplan': 'خطة دفع للموردين', 'pp.pick_items': 'اختر الفواتير التي تُدفع الآن (يبقى الباقي بانتظار):', 'pp.need_pick': 'اختر فاتورة واحدة على الأقل للموافقة',
   'apr.new_payplan': 'خطة دفع للموردين من {cashier} بانتظار الموافقة ←',
   'ak.minta_bayar': 'اقتراح خطة دفع', 'ak.setuju_bayar': 'الموافقة على خطة الدفع', 'ak.tolak_bayar': 'رفض خطة الدفع'
+});
+// v29: owner-approved bank transfers — the manager requests, the owner approves, the manager records the transfer (BNI).
+Object.assign(I18N.id, {
+  'tf.request': 'Minta transfer', 'tf.title': 'Minta persetujuan transfer',
+  'tf.hint': 'Isi penerima, jumlah dan alasan transfer. Uang belum keluar — pemilik yang menyetujui dulu, lalu Anda melakukan transfer lewat rekening perusahaan (BNI) dan mencatatnya.',
+  'tf.payee': 'Penerima', 'tf.amount': 'Jumlah (Rp)', 'tf.reason': 'Alasan', 'tf.account': 'Rekening perusahaan', 'tf.account_any': '— pilih saat mencatat —',
+  'tf.send': 'Kirim ke pemilik', 'tf.sent_ok': 'Permintaan transfer dikirim ke pemilik ({payee})',
+  'tf.to_record': 'Disetujui pemilik — siap ditransfer', 'tf.record': 'Catat transfer',
+  'tf.record_hint': 'Lakukan transfer lewat rekening perusahaan (BNI), lalu catat bukti di sini.', 'tf.bank': 'Bank', 'tf.ref': 'No. referensi transfer',
+  'tf.recorded_ok': 'Transfer dicatat: {payee} {amount}',
+  'apr.kind_transfer': 'Permintaan transfer', 'apr.new_transfer': 'Permintaan transfer dari {cashier} menunggu persetujuan →',
+  'ak.minta_transfer': 'Minta transfer', 'ak.transfer_keluar': 'Transfer keluar'
+});
+Object.assign(I18N.ar, {
+  'tf.request': 'طلب تحويل', 'tf.title': 'طلب الموافقة على تحويل',
+  'tf.hint': 'أدخل المستفيد والمبلغ وسبب التحويل. لم يخرج المال بعد — يوافق المالك أولًا، ثم تنفّذ التحويل عبر حساب الشركة (BNI) وتسجّله.',
+  'tf.payee': 'المستفيد', 'tf.amount': 'المبلغ (روبية)', 'tf.reason': 'السبب', 'tf.account': 'حساب الشركة', 'tf.account_any': '— يُختار عند التسجيل —',
+  'tf.send': 'إرسال إلى المالك', 'tf.sent_ok': 'أُرسل طلب التحويل إلى المالك ({payee})',
+  'tf.to_record': 'موافَق عليه من المالك — جاهز للتحويل', 'tf.record': 'تسجيل التحويل',
+  'tf.record_hint': 'نفّذ التحويل عبر حساب الشركة (BNI)، ثم سجّل الإثبات هنا.', 'tf.bank': 'البنك', 'tf.ref': 'رقم مرجع التحويل',
+  'tf.recorded_ok': 'سُجّل التحويل: {payee} {amount}',
+  'apr.kind_transfer': 'طلب تحويل', 'apr.new_transfer': 'طلب تحويل من {cashier} بانتظار الموافقة ←',
+  'ak.minta_transfer': 'طلب تحويل', 'ak.transfer_keluar': 'تحويل صادر'
 });
 
 /* ========== v16: owner master code, own PINs, lock after wrong PINs, discount approvals, members, warehouse vs shelf ========== */

@@ -1940,6 +1940,76 @@ switch (req.action) {
     return done({ ok: true, pay_plans: plans });
   }
 
+  case 'request_transfer': {
+    // Owner-approved bank transfers: the manager raises a transfer request (payee, amount, reason) for the owner to approve.
+    // Money leaves the company via the company bank account (BNI) only after the owner approves and the manager records it.
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    const payee = safeName(data.payee, 80);
+    if (!payee) return fail('INVALID', 'Nama penerima wajib (huruf dan angka saja)');
+    const amount = money(data.amount);
+    if (!(amount > 0)) return fail('INVALID', 'Jumlah transfer tidak valid');
+    const reason = str(data.reason).slice(0, 300);
+    const account_id = str(data.account_id);
+    if (account_id && !bankAccounts().some(function (x) { return str(x.id) === account_id; })) return fail('INVALID', 'Rekening bank tidak dikenal');
+    const summary = payee + ' Rp ' + amount + (reason ? ' — ' + reason : '');
+    const a = newApproval({ kind: 'transfer', approver_role: 'owner', total: amount, summary: summary, payload: JSON.stringify({ payee: payee, amount: amount, reason: reason, account_id: account_id, paid: false, pay_id: '' }) });
+    ops.approvals.push(forWrite(a, -1));
+    logAct('minta_transfer', summary, a.request_id, amount, 'warn');
+    return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a) });
+  }
+
+  case 'record_transfer': {
+    // The manager records a bank transfer once the owner has approved the request; the owner may record directly.
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    const payee = safeName(data.payee, 80);
+    if (!payee) return fail('INVALID', 'Nama penerima wajib (huruf dan angka saja)');
+    const amount = money(data.amount);
+    if (!(amount > 0)) return fail('INVALID', 'Jumlah transfer tidak valid');
+    let reqAp = null, reqPl = {};
+    if (role === 'manager') {
+      reqAp = approvalById(str(data.request_id));
+      try { reqPl = JSON.parse(reqAp ? reqAp.payload : '{}'); } catch (e) { reqPl = {}; }
+      if (!reqAp || reqAp.kind !== 'transfer' || reqAp.status !== 'approved' || reqPl.paid === true
+        || safeName(reqPl.payee, 80) !== payee || money(reqPl.amount) !== amount) {
+        return fail('NEEDS_OWNER', 'Transfer butuh persetujuan pemilik');
+      }
+    }
+    if (dupRef(data.transfer_ref)) return fail('INVALID', 'Nomor transfer ini sudah pernah dipakai: ' + str(data.transfer_ref));
+    const reason = (reqAp ? str(reqPl.reason) : str(data.reason)).slice(0, 300);
+    const pay = {
+      pay_id: 'PY' + rand(7), pay_date: isDate(data.pay_date) ? data.pay_date : jkDate(), pay_time: new Date().toISOString(),
+      direction: 'out', party_type: 'other', customer_id: 0, customer_name: '', supplier: '', payee: payee, amount: amount, method: 'transfer',
+      account_id: str(data.account_id) || payAccount('transfer'), bank: str(data.bank).slice(0, 60), transfer_ref: str(data.transfer_ref).slice(0, 80),
+      proof_photo_id: str(data.photo_id).slice(0, 40), alloc: '[]', match_status: '',
+      note: (reason + (str(data.note) ? ' | ' + str(data.note) : '')).slice(0, 500), cashier: me.name
+    };
+    ops.payments.push(forWrite(pay, -1));
+    logAct('transfer_keluar', 'Transfer ' + payee + ' Rp ' + amount + (pay.bank ? ' ' + pay.bank : '') + (pay.transfer_ref ? ', ref ' + pay.transfer_ref : ''), pay.pay_id, amount, 'info');
+    if (role === 'manager' && reqAp) {
+      reqPl.paid = true; reqPl.pay_id = pay.pay_id;
+      ops.approvals.push(forWrite(Object.assign({}, reqAp, { payload: JSON.stringify(reqPl), status: 'done' }), reqAp.id));
+      return done({ ok: true, payment: Object.assign({ id: null }, payOut(pay)), transfer: { request_id: reqAp.request_id, status: 'done' } });
+    }
+    return done({ ok: true, payment: Object.assign({ id: null }, payOut(pay)) });
+  }
+
+  case 'list_transfers': {
+    // The manager's own owner-approved, still-unpaid transfer requests (for the owner: every approved-unpaid one).
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    const transfers = approvalRows.filter(function (a) {
+      if (a.kind !== 'transfer' || a.status !== 'approved') return false;
+      if (role === 'manager' && str(a.cashier).toLowerCase() !== me.name.toLowerCase()) return false;
+      var pl = {};
+      try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+      return pl.paid !== true;
+    }).map(function (a) {
+      var pl = {};
+      try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+      return { request_id: a.request_id, created_at: str(a.created_at), by: str(a.cashier), payee: str(pl.payee), amount: money(pl.amount), reason: str(pl.reason), status: a.status };
+    });
+    return done({ ok: true, transfers: transfers });
+  }
+
   case 'allocate_payment': {
     if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
     const p0 = partyPayments.find(function (x) { return x.pay_id === str(data.pay_id); });
