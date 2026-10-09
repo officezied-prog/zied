@@ -698,6 +698,7 @@ async function enterApp(offline, keepView) {
   if (!S.cart) S.cart = loadCart();
   if (!isOwner() && S.view === 'settings' && !keepView) S.view = isAudit() ? 'reports' : 'pos';
   document.body.classList.toggle('ro', isAudit());
+  document.body.classList.toggle('omon', isOwner()); // owner = monitoring: hide money-out actions (keep expenses + approvals)
   renderShell(); renderPosSkeleton();
   go(keepView ? S.view : (isApprover() ? 'home' : isAudit() ? 'reports' : 'pos'), true);
   if (offline) toast(t('offline_mode'), 'warn', 4000);
