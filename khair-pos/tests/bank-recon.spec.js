@@ -1,7 +1,7 @@
 // v14 Company bank account: settings, monthly statement import (CSV, Indonesian formats), reconciliation report, manual match / ignore.
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, jktToday, login, getDb, nav, asUser, editDb } = require('./helpers');
+const { SHOTS, jktToday, login, switchUser, getDb, nav, asUser, editDb } = require('./helpers');
 
 const prevMonth = () => { const d = new Date(jktToday().slice(0, 8) + '01T00:00:00Z'); d.setUTCDate(0); return d.toISOString().slice(0, 7); };
 async function openBank(page, period) {
@@ -28,7 +28,8 @@ test('Pengaturan: bank accounts of the shop (add, validate, save)', async ({ pag
   const accs = (await getDb(page)).settings.bank_accounts;
   expect(accs.map(a => a.id)).toEqual(['BA1', 'BA2', 'BA3']);
   expect(accs[2]).toEqual({ id: 'BA3', bank: 'BRI', account_no: '098765432101', holder: 'Khair Mart Cabang', active: true });
-  // the payment form offers the active accounts, first one by default
+  // the payment form offers the active accounts, first one by default — the manager receives money; the owner only monitors
+  await switchUser(page, 'Jihan', '2222');
   await nav(page, 'customers');
   await page.locator('[data-act="cust-open"]').first().click();
   await page.click('[data-act="cust-pay"]');
@@ -97,7 +98,7 @@ test('seeded month: every status with clear groups, totals, manual match, ignore
 });
 
 test('import a bank CSV (Indonesian numbers, DD/MM/YYYY, DD/MM, ISO dates): mapping guessed and remembered per bank; transfer matched by reference', async ({ page }) => {
-  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await login(page, 'Jihan', '2222', '', { stay: true }); // importing the bank statement is the manager's job; the owner only monitors
   const T = jktToday(), period = T.slice(0, 7), [y, m, d] = T.split('-');
   const db0 = await getDb(page);
   const cust = db0.customers.find(c => c.debt_balance > 345000);

@@ -1,13 +1,17 @@
-// v19: manager manages only kasir/sales; a code attempt locks a non-owner account; the owner unlocks.
+// v19/v28: the manager CREATES/EDITS only kasir/sales (role options), but v28 lets the manager SUSPEND any non-owner, so
+// the non-owner groups are now visible to the manager (owner group stays hidden). A code attempt still locks a non-owner.
 const { test, expect } = require('@playwright/test');
 const { openApp, enterKey, typePin, login, getDb, nav } = require('./helpers');
 
-test('manager: user role options are kasir/sales only (+ daily worker); no akuntan/manager/owner', async ({ page }) => {
+test('manager: role options stay kasir/sales (+ daily worker); non-owner groups visible, owner group hidden', async ({ page }) => {
   await login(page, 'Jihan', '2222', '', { stay: true });
   await nav(page, 'settings');
-  await expect(page.locator('#st-users [data-role-group]')).toHaveCount(2);
+  // v28: manager sees all NON-owner groups (manager, kasir, sales, akuntan) so any non-owner can be suspended; never the owner group.
+  await expect(page.locator('#st-users [data-role-group]')).toHaveCount(4);
   await expect(page.locator('#st-users [data-role-group="kasir"]')).toBeVisible();
-  await expect(page.locator('#st-users [data-role-group="akuntan"]')).toHaveCount(0);
+  await expect(page.locator('#st-users [data-role-group="akuntan"]')).toBeVisible();
+  await expect(page.locator('#st-users [data-role-group="owner"]')).toHaveCount(0);
+  // create/edit is still kasir/sales only (add-user role options unchanged)
   expect(await page.locator('#nu-role option').evaluateAll(o => o.map(x => x.value))).toEqual(['pekerja', 'kasir', 'sales']);
   const r = await page.evaluate(async () => { try { await api('save_user', { name: 'Rina', role: 'akuntan', pin_hash: 'a'.repeat(64) }); return 'ok'; } catch (e) { return e.code; } });
   expect(r).toBe('FORBIDDEN');

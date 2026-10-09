@@ -22,7 +22,7 @@ const openDocs = (db, cid) => ledger(db, cid).filter(d => d.free > 0);
 test('customer: slip photo pre-fills amount/bank/ref/date, MISMATCH needs a reason, part of a chosen invoice; ledger and "Atur alokasi"', async ({ page }) => {
   // the demo seed depends on the time of day (around 09:30 it adds a payment that clears Toko Berkah's debt): fix the clock
   await page.clock.setFixedTime(new Date(`${jktToday()}T08:00:00+07:00`));
-  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await login(page, 'Jihan', '2222', '', { stay: true }); // receiving & allocating customer money is the manager's job; the owner only monitors
   const T = jktToday();
   await page.evaluate(t => localStorage.setItem('kmock.pay', JSON.stringify({ date: t, amount: 250000, sender_name: 'TOKO BERKAH CONDET', bank: 'BCA', transfer_ref: '8800112233', readable: true, notes: '' })), T);
   let db = await getDb(page);
@@ -124,12 +124,18 @@ test('seeded unallocated payment → "Atur alokasi" makes it lunas; manager allo
   expect(parse(p1.alloc).reduce((a, x) => a + x.amount, 0)).toBe(Math.min(p0.amount, openDocs(Object.assign({}, db, { payments: db.payments.filter(p => p.pay_id !== p0.pay_id) }), cust.id).reduce((a, d) => a + d.free, 0)));
 });
 
-test('Pemasok: open notes and balance; pay a supplier from the drawer → expected cash goes down; phone + Arabic screenshot', async ({ page }) => {
+test('Pemasok: open notes and balance; pay an owner-approved plan item from the drawer → expected cash goes down; phone + Arabic screenshot', async ({ page }) => {
   await openApp(page);
   // v15: managers no longer open drawers — this one was opened earlier and is still Jihan's
   await editDb(page, `db.shifts.push({ shift_id: 'SH-OLDJ', cashier: 'Jihan', shift_date: arg, opened_at: arg + 'T08:00:00+07:00', closed_at: '', status: 'open', opening_cash: 1000000, counted_cash: null, difference: null, note: '' });`, jktToday());
   await login(page, 'Jihan', '2222', '', { stay: true });
   const exp0 = await page.evaluate(async () => (await api('bootstrap')).shift.expected_cash);
+  // v23: the manager can no longer pay a supplier directly — he proposes a plan and the owner authorizes it first.
+  expect((await asUser(page, 'Jihan', '2222', 'pay_supplier', { supplier: 'PT Kurma Nusantara', amount: 300000, method: 'transfer' })).error).toBe('NEEDS_OWNER');
+  const prop = await asUser(page, 'Jihan', '2222', 'propose_payment', { items: [{ supplier: 'PT Kurma Nusantara', amount: 300000, priority: 1, note: 'nota lama' }] });
+  expect(prop.applied).toBe(false);
+  await asUser(page, 'Pemilik', '1234', 'decide_approval', { request_id: prop.request_id, decision: 'approved', approve_items: [0] });
+
   await nav(page, 'suppliers');
   const row = page.locator('#sp-rows [data-sup="PT Kurma Nusantara"]');
   await expect(row).toBeVisible();
@@ -138,13 +144,14 @@ test('Pemasok: open notes and balance; pay a supplier from the drawer → expect
   expect(open.length).toBeGreaterThan(0);
   await expect(row.locator('[data-remaining]')).toHaveText(rp(open.reduce((a, d) => a + d.remaining, 0)));
   await page.screenshot({ path: path.join(SHOTS, 'desktop-suppliers.png') });
-  await row.click();
-  await expect(page.locator('#sd-ledger #led-docs tbody tr[data-ref]')).toHaveCount(open.length);
-  await page.click('#sd-modal [data-act="sp-pay"]');
+  // the owner-authorized plan item shows in the "siap dibayar" panel — record the payment from there
+  const recBtn = page.locator('#sp-plans [data-act="pp-record"][data-sup="PT Kurma Nusantara"]');
+  await expect(recBtn).toBeVisible();
+  await recBtn.click();
   await expect(page.locator('#pay-modal')).toBeVisible();
+  await expect(page.locator('#py-amt')).toHaveValue('300.000'); // pre-filled from the authorized plan item
   await page.click('#py-m [data-m="tunai"]');
   await page.click('#py-from [data-f="kas"]');
-  await page.fill('#py-amt', '300.000');
   await page.locator(`#py-alloc .alloc-row[data-ref="${open[0].ref}"] [data-al-chk]`).check();
   await page.locator(`#py-alloc .alloc-row[data-ref="${open[0].ref}"] [data-al-amt]`).fill(NF.format(Math.min(300000, open[0].remaining)));
   await page.click('#py-save');
@@ -153,10 +160,15 @@ test('Pemasok: open notes and balance; pay a supplier from the drawer → expect
   const pay = db.payments.slice(-1)[0];
   expect(pay).toMatchObject({ direction: 'out', party_type: 'supplier', supplier: 'PT Kurma Nusantara', amount: 300000, method: 'tunai', paid_from: 'kas', shift_id: 'SH-OLDJ', account_id: '' });
   expect(pay.note).toContain('[dari kas]');
+  // the plan item is now marked paid (+ pay_id) and the single-item plan is done
+  const planAp = db.approvals.find(a => a.request_id === prop.request_id);
+  const planItem = JSON.parse(planAp.payload).items[0];
+  expect(planItem).toMatchObject({ approved: true, paid: true, pay_id: pay.pay_id });
+  expect(planAp.status).toBe('done');
   const exp1 = await page.evaluate(async () => (await api('bootstrap')).shift.expected_cash);
   expect(exp1).toBe(exp0 - 300000);
   expect(db.activity.slice(-1)[0]).toMatchObject({ kind: 'bayar_keluar', amount: 300000 });
-  // without an own drawer the kas option is refused by the server
+  // without an own drawer the kas option is refused by the server (owner still pays directly)
   expect((await asUser(page, 'Pemilik', '1234', 'pay_supplier', { supplier: 'PT Kurma Nusantara', amount: 1000, method: 'tunai', paid_from: 'kas' })).error).toBe('SHIFT_REQUIRED');
   expect((await asUser(page, 'Siti', '1111', 'pay_supplier', { supplier: 'PT Kurma Nusantara', amount: 1000, method: 'transfer' })).error).toBe('FORBIDDEN');
   expect((await asUser(page, 'Siti', '1111', 'party_ledger', { party_type: 'supplier', supplier: 'PT Kurma Nusantara' })).error).toBe('FORBIDDEN');

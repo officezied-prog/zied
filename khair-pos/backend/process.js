@@ -66,13 +66,15 @@ function forWrite(r, id) {
   return o;
 }
 const COST_FIELDS = ['cost_price', 'total_cost', 'profit', 'line_profit'];
-// The accountant sees purchase prices only when the owner allows it (settings.akuntan_sees_cost); profit stays owner-only.
+// The accountant AND the manager see purchase prices only when the owner allows it (settings.akuntan_sees_cost); profit stays owner-only.
 function strip(r, role) {
   const o = clean(r);
-  if (role === 'akuntan' && readSettings().akuntan_sees_cost === true) { delete o.profit; delete o.line_profit; return o; }
+  if ((role === 'akuntan' || role === 'manager') && readSettings().akuntan_sees_cost === true) { delete o.profit; delete o.line_profit; return o; }
   if (role !== 'owner') COST_FIELDS.forEach(function (f) { delete o[f]; });
   return o;
 }
+// Purchase prices (never profit) reach the owner always, and the accountant / manager when the owner allows it (akuntan_sees_cost).
+function costOk() { return role === 'owner' || ((role === 'akuntan' || role === 'manager') && readSettings().akuntan_sees_cost === true); }
 function jkDate() { return new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10); }
 function rand(n) {
   const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -566,7 +568,7 @@ function applyPurchaseFix(no, changes, reason, byName) {
       purchase_no: no, match_status: 'koreksi', match_notes: str(reason).slice(0, 300)
     }, -1));
     const o = { product_id: p.id, stock: ns };
-    if (role === 'owner') o.cost_price = nc;
+    if (costOk()) o.cost_price = nc;
     out.push(o);
   });
   return out;
@@ -1625,6 +1627,20 @@ switch (req.action) {
       out.return_id = str(rec.return_id);
       finalStatus = decision === 'approved' ? 'used' : 'rejected';
     }
+    if (a.kind === 'pay_plan') {
+      // v23 supplier pay plan: the owner ticks which items (data.approve_items) to authorize paying now.
+      let pl = {};
+      try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+      const items = Array.isArray(pl.items) ? pl.items : [];
+      const picks = {};
+      (Array.isArray(data.approve_items) ? data.approve_items : []).forEach(function (i) { const n = num(i); if (n >= 0 && n === Math.floor(n)) picks[n] = true; });
+      let nApproved = 0;
+      items.forEach(function (it, i) { const yes = decision === 'approved' && picks[i] === true; it.approved = yes; if (yes) nApproved++; });
+      a.payload = JSON.stringify({ items: items });
+      finalStatus = (decision === 'approved' && nApproved > 0) ? 'approved' : 'rejected';
+      logAct(finalStatus === 'approved' ? 'setuju_bayar' : 'tolak_bayar',
+        (finalStatus === 'approved' ? 'Setuju bayar ' + nApproved + ' pemasok: ' : 'Tolak rencana bayar: ') + str(a.summary).slice(0, 500), a.request_id, money(a.total), finalStatus === 'approved' ? 'info' : 'warn');
+    }
     const na = Object.assign({}, a, { status: finalStatus === 'used' ? 'approved' : finalStatus, decided_by: me.name, decided_at: new Date().toISOString(), note: str(data.note) || str(a.note) });
     ops.approvals.push(forWrite(na, a.id));
     logAct('keputusan', (decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + str(a.kind || 'credit') + ', diminta ' + str(a.cashier) + '): ' + str(a.summary).slice(0, 600) + (str(data.note) ? ' | ' + str(data.note) : ''), a.request_id, money(a.total), decision === 'approved' ? 'info' : 'warn');
@@ -1830,6 +1846,21 @@ switch (req.action) {
     if (!sup) return fail('INVALID', 'Nama pemasok wajib (huruf dan angka saja)');
     const amount = money(data.amount);
     if (!(amount > 0)) return fail('INVALID', 'Jumlah pembayaran tidak valid');
+    // v23 owner monitoring: the manager may only record a supplier payment the owner authorized in a pay plan
+    // (propose_payment → decide_approval). The owner still pays directly. kasir/sales/akuntan are already blocked above.
+    let planAp = null, planIdx = -1, planItems = null;
+    if (role === 'manager') {
+      planAp = approvalById(str(data.plan_request_id));
+      planIdx = num(data.item_index);
+      let ppl = {};
+      try { ppl = JSON.parse(planAp ? planAp.payload : '{}'); } catch (e) { ppl = {}; }
+      planItems = planAp && Array.isArray(ppl.items) ? ppl.items : null;
+      const it = planItems && planIdx >= 0 && planIdx < planItems.length && planIdx === Math.floor(planIdx) ? planItems[planIdx] : null;
+      if (!planAp || planAp.kind !== 'pay_plan' || planAp.status !== 'approved' || !it || it.approved !== true || it.paid === true
+        || safeName(it.supplier, 80) !== sup || money(it.amount) !== amount) {
+        return fail('NEEDS_OWNER', 'Pembayaran pemasok butuh persetujuan pemilik (rencana bayar)');
+      }
+    }
     const method = ['tunai', 'transfer', 'qris'].indexOf(data.method) >= 0 ? data.method : 'transfer';
     const fromKas = data.paid_from === 'kas' && method === 'tunai';
     if (fromKas && !myShift) return fail('SHIFT_REQUIRED', 'Buka kasir (shift) dulu untuk bayar dari kas');
@@ -1857,7 +1888,126 @@ switch (req.action) {
       (chk.alloc.length ? ' untuk ' + chk.alloc.map(function (a1) { return a1.ref + ' Rp ' + a1.amount; }).join(', ') : ' — belum dialokasi') + (str(data.mismatch_reason) ? ' | beda dengan bukti: ' + str(data.mismatch_reason) : '') +
       (pay.slip_date && pay.slip_date !== pay.pay_date ? ' | tanggal bukti ' + pay.slip_date + ' ≠ dicatat ' + pay.pay_date : ''),
       pay.pay_id, amount, str(data.mismatch_reason) || (pay.slip_date && pay.slip_date !== pay.pay_date) ? 'warn' : 'info');
+    if (role === 'manager' && planAp && planItems) {
+      // Mark this plan item paid; when every owner-approved item is paid, the whole plan is done.
+      planItems[planIdx].paid = true;
+      planItems[planIdx].pay_id = pay.pay_id;
+      const allPaid = planItems.filter(function (x) { return x.approved === true; }).every(function (x) { return x.paid === true; });
+      ops.approvals.push(forWrite(Object.assign({}, planAp, { payload: JSON.stringify({ items: planItems }), status: allPaid ? 'done' : 'approved' }), planAp.id));
+      return done({ ok: true, payment: Object.assign({ id: null }, payOut(pay)), plan: { request_id: planAp.request_id, item_index: planIdx, status: allPaid ? 'done' : 'approved' } });
+    }
     return done({ ok: true, payment: Object.assign({ id: null }, payOut(pay)) });
+  }
+
+  case 'propose_payment': {
+    // v23 owner monitoring: the manager proposes a LIST of supplier bills to pay; the owner authorizes which to pay now.
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    const src = Array.isArray(data.items) ? data.items : [];
+    if (!src.length) return fail('INVALID', 'Tambah minimal satu tagihan pemasok');
+    if (src.length > 50) return fail('INVALID', 'Terlalu banyak tagihan (maks 50)');
+    const items = [];
+    for (let i = 0; i < src.length; i++) {
+      const it = src[i] || {};
+      const sup = safeName(it.supplier, 80);
+      if (!sup) return fail('INVALID', 'Nama pemasok wajib (huruf dan angka saja)');
+      const amt = money(it.amount);
+      if (!(amt > 0)) return fail('INVALID', 'Jumlah pembayaran tidak valid: ' + sup);
+      items.push({ supplier: sup, amount: amt, priority: Math.round(num(it.priority)), note: str(it.note).slice(0, 200), approved: false, paid: false, pay_id: '' });
+    }
+    const total = items.reduce(function (s, it) { return s + it.amount; }, 0);
+    const summary = items.map(function (it) { return it.supplier + ' Rp ' + it.amount; }).join(', ').slice(0, 1500);
+    const a = newApproval({ kind: 'pay_plan', approver_role: 'owner', total: total, summary: summary, payload: JSON.stringify({ items: items }) });
+    ops.approvals.push(forWrite(a, -1));
+    logAct('minta_bayar', summary, a.request_id, total, 'warn');
+    return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a) });
+  }
+
+  case 'list_pay_plans': {
+    // The manager's own owner-approved supplier pay plans that still have items to pay.
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    const plans = approvalRows.filter(function (a) {
+      if (a.kind !== 'pay_plan' || a.status !== 'approved') return false;
+      if (role === 'manager' && str(a.cashier).toLowerCase() !== me.name.toLowerCase()) return false;
+      return true;
+    }).map(function (a) {
+      var pl = {};
+      try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+      const items = (Array.isArray(pl.items) ? pl.items : []).map(function (it, i) {
+        return { index: i, supplier: str(it.supplier), amount: money(it.amount), priority: num(it.priority), note: str(it.note), approved: it.approved === true, paid: it.paid === true, pay_id: str(it.pay_id) };
+      });
+      return { request_id: a.request_id, created_at: str(a.created_at), by: str(a.cashier), summary: str(a.summary), total: money(a.total), status: a.status, items: items };
+    }).filter(function (p) { return p.items.some(function (it) { return it.approved && !it.paid; }); });
+    return done({ ok: true, pay_plans: plans });
+  }
+
+  case 'request_transfer': {
+    // Owner-approved bank transfers: the manager raises a transfer request (payee, amount, reason) for the owner to approve.
+    // Money leaves the company via the company bank account (BNI) only after the owner approves and the manager records it.
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    const payee = safeName(data.payee, 80);
+    if (!payee) return fail('INVALID', 'Nama penerima wajib (huruf dan angka saja)');
+    const amount = money(data.amount);
+    if (!(amount > 0)) return fail('INVALID', 'Jumlah transfer tidak valid');
+    const reason = str(data.reason).slice(0, 300);
+    const account_id = str(data.account_id);
+    if (account_id && !bankAccounts().some(function (x) { return str(x.id) === account_id; })) return fail('INVALID', 'Rekening bank tidak dikenal');
+    const summary = payee + ' Rp ' + amount + (reason ? ' — ' + reason : '');
+    const a = newApproval({ kind: 'transfer', approver_role: 'owner', total: amount, summary: summary, payload: JSON.stringify({ payee: payee, amount: amount, reason: reason, account_id: account_id, paid: false, pay_id: '' }) });
+    ops.approvals.push(forWrite(a, -1));
+    logAct('minta_transfer', summary, a.request_id, amount, 'warn');
+    return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a) });
+  }
+
+  case 'record_transfer': {
+    // The manager records a bank transfer once the owner has approved the request; the owner may record directly.
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    const payee = safeName(data.payee, 80);
+    if (!payee) return fail('INVALID', 'Nama penerima wajib (huruf dan angka saja)');
+    const amount = money(data.amount);
+    if (!(amount > 0)) return fail('INVALID', 'Jumlah transfer tidak valid');
+    let reqAp = null, reqPl = {};
+    if (role === 'manager') {
+      reqAp = approvalById(str(data.request_id));
+      try { reqPl = JSON.parse(reqAp ? reqAp.payload : '{}'); } catch (e) { reqPl = {}; }
+      if (!reqAp || reqAp.kind !== 'transfer' || reqAp.status !== 'approved' || reqPl.paid === true
+        || safeName(reqPl.payee, 80) !== payee || money(reqPl.amount) !== amount) {
+        return fail('NEEDS_OWNER', 'Transfer butuh persetujuan pemilik');
+      }
+    }
+    if (dupRef(data.transfer_ref)) return fail('INVALID', 'Nomor transfer ini sudah pernah dipakai: ' + str(data.transfer_ref));
+    const reason = (reqAp ? str(reqPl.reason) : str(data.reason)).slice(0, 300);
+    const pay = {
+      pay_id: 'PY' + rand(7), pay_date: isDate(data.pay_date) ? data.pay_date : jkDate(), pay_time: new Date().toISOString(),
+      direction: 'out', party_type: 'other', customer_id: 0, customer_name: '', supplier: '', payee: payee, amount: amount, method: 'transfer',
+      account_id: str(data.account_id) || payAccount('transfer'), bank: str(data.bank).slice(0, 60), transfer_ref: str(data.transfer_ref).slice(0, 80),
+      proof_photo_id: str(data.photo_id).slice(0, 40), alloc: '[]', match_status: '',
+      note: (reason + (str(data.note) ? ' | ' + str(data.note) : '')).slice(0, 500), cashier: me.name
+    };
+    ops.payments.push(forWrite(pay, -1));
+    logAct('transfer_keluar', 'Transfer ' + payee + ' Rp ' + amount + (pay.bank ? ' ' + pay.bank : '') + (pay.transfer_ref ? ', ref ' + pay.transfer_ref : ''), pay.pay_id, amount, 'info');
+    if (role === 'manager' && reqAp) {
+      reqPl.paid = true; reqPl.pay_id = pay.pay_id;
+      ops.approvals.push(forWrite(Object.assign({}, reqAp, { payload: JSON.stringify(reqPl), status: 'done' }), reqAp.id));
+      return done({ ok: true, payment: Object.assign({ id: null }, payOut(pay)), transfer: { request_id: reqAp.request_id, status: 'done' } });
+    }
+    return done({ ok: true, payment: Object.assign({ id: null }, payOut(pay)) });
+  }
+
+  case 'list_transfers': {
+    // The manager's own owner-approved, still-unpaid transfer requests (for the owner: every approved-unpaid one).
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    const transfers = approvalRows.filter(function (a) {
+      if (a.kind !== 'transfer' || a.status !== 'approved') return false;
+      if (role === 'manager' && str(a.cashier).toLowerCase() !== me.name.toLowerCase()) return false;
+      var pl = {};
+      try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+      return pl.paid !== true;
+    }).map(function (a) {
+      var pl = {};
+      try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+      return { request_id: a.request_id, created_at: str(a.created_at), by: str(a.cashier), payee: str(pl.payee), amount: money(pl.amount), reason: str(pl.reason), status: a.status };
+    });
+    return done({ ok: true, transfers: transfers });
   }
 
   case 'allocate_payment': {
@@ -2102,7 +2252,7 @@ switch (req.action) {
       const p = state[pid];
       ops.products.push(forWrite(p, p.id));
       const o = { product_id: p.id, stock: p.stock, exp_date: p.exp_date || '', exp_none: p.exp_none === true };
-      if (role === 'owner') o.cost_price = p.cost_price;
+      if (costOk()) o.cost_price = p.cost_price;
       stockOut.push(o);
     });
     const sumTotal = ops.purchases.reduce(function (a1, r) { return a1 + money(r.total); }, 0);
@@ -2179,6 +2329,32 @@ switch (req.action) {
     return done({ ok: true, settings: merged });
   }
 
+  // v28 (owner's decision): the owner AND the manager may SUSPEND (deactivate) any non-owner staff account at once;
+  // only the OWNER re-enables. No one suspends their own account; a manager never touches an owner account.
+  // This action is the single source of truth for "who may set a user active true/false".
+  case 'set_account_active': {
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    if (typeof data.active !== 'boolean') return fail('INVALID', 'Status aktif wajib true atau false');
+    let target = null;
+    if (data.id !== undefined && data.id !== null && String(data.id) !== '') target = users.find(function (u) { return String(u.id) === String(data.id); });
+    else { const tn = str(data.name).toLowerCase(); if (tn) target = users.find(function (u) { return str(u.name).toLowerCase() === tn; }); }
+    if (!target) return fail('NOT_FOUND', 'Pengguna tidak ditemukan');
+    const selfTarget = target.id === me.id || str(target.name).toLowerCase() === str(me.name).toLowerCase();
+    if (data.active === false) {
+      // SUSPEND: never your own account; a manager may not suspend an owner.
+      if (selfTarget) return fail('FORBIDDEN', 'Tidak bisa menonaktifkan akun sendiri');
+      if (role === 'manager' && target.role === 'owner') return fail('FORBIDDEN', 'Manajer tidak boleh menonaktifkan akun pemilik');
+      if (target.role === 'owner' && activeUsers.filter(function (u) { return u.role === 'owner'; }).length <= 1) return fail('INVALID', 'Harus ada minimal satu pemilik aktif');
+    } else {
+      // RE-ENABLE: owner only.
+      if (role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik yang boleh mengaktifkan kembali akun');
+    }
+    const upd = Object.assign({}, clean(target), { active: data.active });
+    ops.users.push(forWrite(upd, target.id));
+    logAct(data.active ? 'akun_aktif' : 'akun_nonaktif', (data.active ? 'Mengaktifkan kembali akun ' : 'Menonaktifkan akun ') + target.name + ' (' + target.role + ') oleh ' + me.name, target.name, 0, 'warn');
+    return done({ ok: true, user: { name: target.name, role: target.role, active: data.active, must_change: target.must_change === true } });
+  }
+
   case 'save_user': {
     if (role !== 'owner') {
       if (role !== 'manager') return fail('FORBIDDEN', 'Hanya untuk pemilik');
@@ -2190,6 +2366,10 @@ switch (req.action) {
     const newRole = ['owner', 'manager', 'sales', 'akuntan'].indexOf(data.role) >= 0 ? data.role : 'kasir';
     const ex = users.find(function (u) { return str(u.name).toLowerCase() === name.toLowerCase(); });
     const active = data.active !== false;
+    // v28: active is set by the same rule as set_account_active — re-enabling a suspended account is owner-only, and no
+    // one suspends their own account, even through save_user. (A manager is already limited to kasir/sales targets above.)
+    if (ex && ex.active === false && active && role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik yang boleh mengaktifkan kembali akun');
+    if (ex && ex.id === me.id && !active && ex.active !== false) return fail('FORBIDDEN', 'Tidak bisa menonaktifkan akun sendiri');
     // Another person takes this account / role (new name): needs a new PIN made with the new name (hash includes it).
     let newName = '';
     if (str(data.new_name)) {

@@ -91,6 +91,7 @@
 <script src="../shared/face.js"></script>
 <script src="../shared/att-kiosk.js"></script>
 <script src="../shared/chat-ui.js"></script>
+<script src="../shared/field-mock.js"></script>
 <script src="mock.js"></script>
 <script>
 'use strict';
@@ -98,6 +99,8 @@ const CONFIG = { API_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-pos', TZ:
 CONFIG.PHOTO_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-pos-photo';
 CONFIG.ATT_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-chat';
+// Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
+CONFIG.FIELD_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-field';
 const APP_VERSION = 'kasir-1.0.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
@@ -307,7 +310,7 @@ async function apiRawInner(action, data, cred, opts) {
     const timer = setTimeout(() => ctrl && ctrl.abort(), opts.timeout || 20000);
     let r, txt;
     try {
-      r = await fetch(opts.chat ? CONFIG.CHAT_URL : opts.att ? CONFIG.ATT_URL : opts.photo ? CONFIG.PHOTO_URL : CONFIG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined, cache: 'no-store' });
+      r = await fetch(opts.chat ? CONFIG.CHAT_URL : opts.att ? CONFIG.ATT_URL : opts.field ? CONFIG.FIELD_URL : opts.photo ? CONFIG.PHOTO_URL : CONFIG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined, cache: 'no-store' });
       txt = await r.text();
     } catch (e) { throw new NetError(e && e.message); } finally { clearTimeout(timer); }
     try { res = JSON.parse(txt); } catch (e) {
@@ -337,6 +340,8 @@ async function api(action, data, opts) {
 const apiPhoto = (action, data) => api(action, data, { photo: true, timeout: 60000 });
 // Phase 3 in-app chat (separate workflow khair-chat). apiRawInner → no global spinner on background polling.
 const apiChat = (action, data) => S.pin_hash ? apiRawInner(action, data, sessCred(), { chat: true, timeout: 30000 }) : Promise.reject(new NetError('NO_SESSION'));
+// Field-sales backend (separate workflow khair-field). The cashier only reads field orders (cashier_orders, read-only).
+const apiField = (action, data, opts) => api(action, data, Object.assign({ field: true, timeout: 30000 }, opts || {}));
 function errMsg(e) {
   if (!e) return t('err.SERVER');
   if (e instanceof NetError) return t('err.NETWORK');
@@ -3361,6 +3366,7 @@ RENDER.more = function () {
       <button class="li" data-act="member-new" id="m-member">${ic('user')}<div class="grow"><div class="t">${esc(t('mem.new'))}</div><div class="s">${esc(t('mem.new_s'))}</div></div></button>
       <button class="li" data-act="debt-pay" id="m-debt">${ic('wallet')}<div class="grow"><div class="t">${esc(t('more.debt_pay'))}</div><div class="s">${esc(t('more.debt_pay_s'))}</div></div></button>
       ${S.role === 'manager' && !S.shift ? `<button class="li" data-act="gate-open" id="m-kas-open">${ic('cash')}<div class="grow"><div class="t">${esc(t('gate.title_mgr'))}</div><div class="s">${esc(t('kas.mgr_hint'))}</div></div></button>` : ''}
+      <button class="li" data-act="field-orders" id="m-field">${ic('truck')}<div class="grow"><div class="t">${esc(t('more.field'))}</div><div class="s">${esc(t('more.field_s'))}</div></div></button>
       <button class="li" data-act="retur-open" id="m-retur">${ic('undo')}<div class="grow"><div class="t">${esc(t('more.retur'))}</div><div class="s">${esc(t('more.retur_s'))}</div></div></button>
       <button class="li" data-act="void-req" id="m-void">${ic('undo')}<div class="grow"><div class="t">${esc(t('more.void'))}</div><div class="s">${esc(t('more.void_s'))}</div></div></button>
       <button class="li" data-act="price-req" id="m-price">${ic('tag')}<div class="grow"><div class="t">${esc(t('more.price'))}</div><div class="s">${esc(S.role === 'kasir' ? t('more.price_s') : t('more.price_s_mgr'))}</div></div></button>
@@ -3540,6 +3546,38 @@ async function requestVoid(inv) {
     closeModal(true);
     toast(t('void.sent', { id: res.request_id }), 'ok', 5000);
   } catch (e) { toast(e instanceof NetError ? t('apr.need_online') : errMsg(e), 'err', 5000); }
+}
+/* ========== Field reps' orders (read-only) ==========
+   The counter cashier sees the orders field sales reps placed, so they can prepare/fulfil them. Separate backend
+   (khair-field); for the kasir role the server allows ONLY the read-only cashier_orders action — no edit, no status
+   change, no placing orders. Orders carry selling prices only (no cost). */
+const FO_BADGE = { baru: 'warn', diproses: 'ok', dikirim: 'gray', batal: 'red' };
+function foParseItems(x) { if (Array.isArray(x)) return x; try { const v = JSON.parse(x || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+function foStatus(s) { const k = 'fo.st_' + s; return I18N.id[k] ? t(k) : String(s || ''); }
+function openFieldOrders() {
+  const el = openModal({
+    title: t('more.field'), id: 'field-orders', body: `<div class="spinner"></div>`,
+    foot: `<button class="btn" id="fo-refresh">${ic('refresh')} ${esc(t('refresh'))}</button><button class="btn primary" data-act="modal-close">${esc(t('close'))}</button>`
+  });
+  const draw = async () => {
+    const body = $('.modal-b', el); if (!body) return;
+    body.innerHTML = `<div class="spinner"></div>`;
+    try {
+      const r = await apiField('cashier_orders');
+      const list = (r.orders || []).map(o => Object.assign({}, o, { itemsList: foParseItems(o.items) }));
+      body.innerHTML = `<p class="muted small" style="margin-top:0">${esc(t('fo.hint'))}</p>` + (list.length
+        ? `<div class="list">${list.map(o => `<div class="li" style="flex-direction:column;align-items:stretch;gap:4px">
+            <div class="row" style="align-items:flex-start;gap:8px"><div class="grow"><div class="t">${esc(o.shop_name)}</div>
+              <div class="s">${esc(t('fo.rep'))}: ${esc(o.user)} · ${esc(fmtDate(o.order_date))}${o.delivery_date ? ' · ' + esc(t('fo.delivery')) + ' ' + esc(fmtDate(o.delivery_date)) : ''}</div></div>
+              <span class="badge ${FO_BADGE[o.status] || 'gray'}" data-ost="${esc(o.status)}">${esc(foStatus(o.status))}</span></div>
+            <div class="small" style="margin-top:2px">${o.itemsList.map(i => `<div class="row" style="gap:8px"><span class="grow">${esc(i.name || i.product_id)}${i.price_type === 'grosir' ? ` <span class="badge" style="padding:0 7px">${esc(t('grosir'))}</span>` : ''} <span class="muted">× ${fmtQty(i.qty)}${i.unit ? ' ' + esc(i.unit) : ''}</span></span><span class="num">${fmtRp(i.line_total != null ? i.line_total : num(i.qty) * int(i.unit_price))}</span></div>`).join('')}</div>
+            ${o.notes ? `<div class="small muted">${esc(t('notes'))}: ${esc(o.notes)}</div>` : ''}
+            <div class="row" style="font-weight:800"><span class="grow">${esc(t('total'))}</span><span class="num">${fmtRp(o.total)}</span></div></div>`).join('')}</div>`
+        : `<div class="empty">${esc(t('fo.empty'))}</div>`);
+    } catch (e) { body.innerHTML = `<div class="err">${esc(e instanceof NetError ? t('fo.offline') : errMsg(e))}</div>`; }
+  };
+  $('#fo-refresh', el).onclick = draw;
+  draw();
 }
 function openPricePicker() {
   const el = openModal({ title: t('more.price'), id: 'price-pick', body: `<div class="search">${ic('search')}<input class="input" id="pp-q" type="search" placeholder="${esc(t('sell.search_ph'))}" autocomplete="off" autofocus></div><div class="list" id="pp-list" style="margin-top:8px"></div>` });
@@ -3825,6 +3863,7 @@ const ACT = {
     printA4(KDocs.goodsIn({ no: g.no, date: g.date, supplier: g.supplier, user: g.user, note_status: t('pu.m_' + (g.match || 'tanpa_foto')),
       lines: g.lines.map(l => { const p = prodById(l.product_id); return { name: p ? p.name : l.name, unit: p ? p.unit || '' : '', qty: l.qty }; }) }, docCtx({ showPrices: false })));
   },
+  'field-orders': () => openFieldOrders(),
   'retur-open': () => openReturn(),
   'rt-slip': el => openReturnNote(el.dataset.id),
   'pu-save': () => savePurchase(),
@@ -4356,6 +4395,10 @@ Object.assign(I18N.id, {
   'car.need': 'Pilih siapa yang membawa barang', 'car.need_vehicle': 'Tulis nomor kendaraannya (plat / nomor angkot)', 'car.need_name': 'Tulis nama orang yang membawa barang', 'car.bad_phone': 'Nomor HP tidak valid',
   'err.CARRIER_REQUIRED': 'Pembawa barang wajib diisi',
   'more.retur': 'Retur pelanggan', 'more.retur_s': 'Barang dikembalikan — disetujui manajer',
+  'more.field': 'Pesanan Lapangan', 'more.field_s': 'Pesanan dari sales lapangan — siapkan barangnya',
+  'fo.hint': 'Pesanan dari sales lapangan. Hanya untuk dilihat dan disiapkan.',
+  'fo.rep': 'Sales', 'fo.delivery': 'Antar', 'fo.empty': 'Belum ada pesanan lapangan yang terbuka', 'fo.offline': 'Butuh internet untuk melihat pesanan lapangan',
+  'fo.st_baru': 'Baru', 'fo.st_diproses': 'Diproses', 'fo.st_dikirim': 'Dikirim', 'fo.st_batal': 'Batal',
   'rt.title': 'Retur pelanggan', 'rt.hint': 'Cari faktur pembelian pelanggan, lalu pilih barang dan jumlah yang dikembalikan.', 'rt.inv': 'Nomor faktur', 'rt.inv_ph': 'contoh KM261006-0001',
   'rt.find': 'Cari', 'rt.scan': 'Scan faktur', 'rt.not_found': 'Faktur tidak ditemukan: {inv}', 'rt.void': 'Faktur ini sudah dibatalkan', 'rt.pending_inv': 'Struk ini belum terkirim (offline) — retur bisa setelah tersimpan',
   'rt.buyer': 'Pembeli', 'rt.disc_note': 'Faktur ini diberi diskon {amt}: nilai retur dihitung setelah diskon.', 'rt.lines': 'Barang yang dikembalikan',
@@ -4390,6 +4433,10 @@ Object.assign(I18N.ar, {
   'car.need': 'اختر من أحضر البضاعة', 'car.need_vehicle': 'اكتب رقم المركبة (اللوحة / رقم الحافلة)', 'car.need_name': 'اكتب اسم الشخص الذي أحضر البضاعة', 'car.bad_phone': 'رقم الهاتف غير صالح',
   'err.CARRIER_REQUIRED': 'يجب تحديد من أحضر البضاعة',
   'more.retur': 'مرتجع عميل', 'more.retur_s': 'بضاعة مُعادة — بموافقة المدير',
+  'more.field': 'طلبات المندوبين', 'more.field_s': 'طلبات من مندوبي البيع الميداني — جهّز البضاعة',
+  'fo.hint': 'طلبات من مندوبي البيع الميداني. للعرض والتجهيز فقط.',
+  'fo.rep': 'المندوب', 'fo.delivery': 'التسليم', 'fo.empty': 'لا توجد طلبات ميدانية مفتوحة حتى الآن', 'fo.offline': 'تحتاج إلى إنترنت لعرض طلبات المندوبين',
+  'fo.st_baru': 'جديد', 'fo.st_diproses': 'قيد التنفيذ', 'fo.st_dikirim': 'أُرسل', 'fo.st_batal': 'ملغى',
   'rt.title': 'مرتجع عميل', 'rt.hint': 'ابحث عن فاتورة شراء العميل، ثم اختر الأصناف والكميات المُعادة.', 'rt.inv': 'رقم الفاتورة', 'rt.inv_ph': 'مثال KM261006-0001',
   'rt.find': 'بحث', 'rt.scan': 'مسح الفاتورة', 'rt.not_found': 'الفاتورة غير موجودة: {inv}', 'rt.void': 'هذه الفاتورة ملغاة', 'rt.pending_inv': 'هذا الإيصال لم يُرسل بعد (دون اتصال) — المرتجع بعد الحفظ',
   'rt.buyer': 'المشتري', 'rt.disc_note': 'على هذه الفاتورة خصم {amt}: قيمة المرتجع بعد الخصم.', 'rt.lines': 'الأصناف المُعادة',

@@ -426,11 +426,13 @@ const isApprover = () => S.role === 'owner' || S.role === 'manager';
 // v17 accountant: reads sales, invoices, goods in/out, returns, ledgers, bank and reports; changes nothing (the server refuses too)
 const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
-const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'settings'];
+const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'settings'];
 const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|prod-new)$/;
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
+// Purchase / cost price (never profit) is visible to the owner always, and to the manager / accountant when the owner allows it (akuntan_sees_cost).
+const canSeeCost = () => isOwner() || ((isApprover() || isAudit()) && settings().akuntan_sees_cost === true);
 const surveyQuestions = () => { const q = settings().survey_questions; return Array.isArray(q) ? q.filter(x => String(x).trim()) : DEFAULT_SURVEY; };
 
 /* ========== i18n ========== */
@@ -698,6 +700,7 @@ async function enterApp(offline, keepView) {
   if (!S.cart) S.cart = loadCart();
   if (!isOwner() && S.view === 'settings' && !keepView) S.view = isAudit() ? 'reports' : 'pos';
   document.body.classList.toggle('ro', isAudit());
+  document.body.classList.toggle('omon', isOwner()); // owner = monitoring: hide money-out actions (keep expenses + approvals)
   renderShell(); renderPosSkeleton();
   go(keepView ? S.view : (isApprover() ? 'home' : isAudit() ? 'reports' : 'pos'), true);
   if (offline) toast(t('offline_mode'), 'warn', 4000);
@@ -1546,7 +1549,7 @@ function localExitRequired(v) {
   return (minT > 0 && v.total >= minT) || (minQ > 0 && v.lines.some(l => num(l.line ? l.line.qty : l.qty) >= minQ));
 }
 function applyStock(list) {
-  (list || []).forEach(s => { const p = prodById(s.product_id); if (p) { const sh0 = shelfOf(p); p.stock = roundQty(num(s.stock) - pendingQty(p.id)); p.shop_stock = s.shop_stock != null ? roundQty(num(s.shop_stock) - pendingQty(p.id)) : Math.min(sh0, p.stock); if (s.cost_price != null && isOwner()) p.cost_price = int(s.cost_price); if (s.exp_date !== undefined) p.exp_date = s.exp_date; if (s.exp_none !== undefined) p.exp_none = s.exp_none; } });
+  (list || []).forEach(s => { const p = prodById(s.product_id); if (p) { const sh0 = shelfOf(p); p.stock = roundQty(num(s.stock) - pendingQty(p.id)); p.shop_stock = s.shop_stock != null ? roundQty(num(s.shop_stock) - pendingQty(p.id)) : Math.min(sh0, p.stock); if (s.cost_price != null && canSeeCost()) p.cost_price = int(s.cost_price); if (s.exp_date !== undefined) p.exp_date = s.exp_date; if (s.exp_none !== undefined) p.exp_none = s.exp_none; } });
   saveCache();
 }
 function finishSale(rc) {
@@ -1942,7 +1945,7 @@ async function pollApprovals() {
     AP.fresh = new Set(fresh.map(a => a.request_id));
     if (fresh.length) {
       beep(); try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) { }
-      toast(t(fresh[0].kind === 'opname' ? 'gd.new_toast' : fresh[0].kind === 'purchase_fix' ? 'apr.new_fix' : fresh[0].kind === 'buka_kas' ? 'apr.new_bukakas' : fresh[0].kind === 'discount' ? 'apr.new_disc' : fresh[0].kind === 'retur' ? 'apr.new_retur' : fresh[0].kind === 'kesepakatan' ? 'apr.new_agree' : 'apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name, no: fresh[0].ref }), 'warn', 6000);
+      toast(t(fresh[0].kind === 'opname' ? 'gd.new_toast' : fresh[0].kind === 'purchase_fix' ? 'apr.new_fix' : fresh[0].kind === 'buka_kas' ? 'apr.new_bukakas' : fresh[0].kind === 'discount' ? 'apr.new_disc' : fresh[0].kind === 'retur' ? 'apr.new_retur' : fresh[0].kind === 'pay_plan' ? 'apr.new_payplan' : fresh[0].kind === 'transfer' ? 'apr.new_transfer' : fresh[0].kind === 'kesepakatan' ? 'apr.new_agree' : 'apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name, no: fresh[0].ref }), 'warn', 6000);
     }
     updateApprovalBadge();
     if (S.view === 'approvals') drawApprovals();
@@ -1963,6 +1966,8 @@ function aprBodyHTML(a) {
   if (kind === 'buka_kas') return bukaKasAprHTML(a, pl);
   if (kind === 'discount') return discountAprHTML(a, pl);
   if (kind === 'retur') return returAprHTML(a, pl);
+  if (kind === 'pay_plan') return payPlanAprHTML(a, pl);
+  if (kind === 'transfer') return transferAprHTML(a, pl);
   if (kind === 'kesepakatan') return agreeAprHTML(a, pl);
   if (kind === 'transfer_confirm') return `<div class="row wrap"><b class="grow" style="font-size:17px">${ic('bank')} ${esc(t('tc.title'))}</b><span class="badge blue">${esc(a.request_id)}</span></div>
     <div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('tc.who'))}</div><div class="v">${esc(a.customer_name || '—')}</div></div><div><div class="k">${esc(t('tc.amount'))}</div><div class="v num"><b>${esc(fmtRp(a.total))}</b></div></div></div>
@@ -1984,6 +1989,26 @@ function aprBodyHTML(a) {
     ${aprSummaryHTML(null, int(a.customer_debt_before), int(a.debt_amount), int(a.total))}
     ${a.summary ? `<div class="small" style="margin-bottom:8px">${esc(a.summary)}</div>` : ''}`;
 }
+function payPlanAprHTML(a, pl) {
+  // Supplier pay plan: the owner ticks which items to pay now (default all), then approves (or rejects the whole plan).
+  const items = Array.isArray(pl.items) ? pl.items : [];
+  const can = a.can_decide !== false; // owner only
+  const rows = items.map((it, i) => `<label class="li" style="align-items:center"><input type="checkbox" data-pp-item data-idx="${i}" ${can ? 'checked' : 'disabled'} style="width:20px;height:20px;margin-inline-end:10px">
+    <div class="grow"><div class="t">${esc(it.supplier)}</div><div class="s">${esc(t('pp.priority'))} ${fmtNum(it.priority || 0)}${it.note ? ' · ' + esc(it.note) : ''}</div></div>
+    <div class="right num" style="font-weight:800">${fmtRp(it.amount)}</div></label>`).join('');
+  return `<div class="row wrap"><b class="grow" style="font-size:17px">${ic('wallet')} ${esc(t('apr.kind_payplan'))}</b><span class="badge amber">${esc(a.request_id)}</span></div>
+    <div class="small muted">${esc(t('pp.proposed_by', { by: a.cashier }))} · ${esc(fmtDateTime(a.created_at))}</div>
+    <div class="small" style="margin:6px 0 2px">${esc(t('pp.pick_items'))}</div>
+    <div class="list">${rows}</div>
+    <div class="apr-sum" style="grid-template-columns:1fr;margin-top:6px"><div><div class="k">${esc(t('total'))}</div><div class="v num"><b>${fmtRp(a.total)}</b></div></div></div>`;
+}
+function transferAprHTML(a, pl) {
+  // Owner-approved bank transfer: the owner sees payee, amount and reason, then approves or rejects (money leaves via BNI).
+  return `<div class="row wrap"><b class="grow" style="font-size:17px">${ic('bank')} ${esc(t('apr.kind_transfer'))}</b><span class="badge amber">${esc(a.request_id)}</span></div>
+    <div class="small muted">${esc(t('pp.proposed_by', { by: a.cashier }))} · ${esc(fmtDateTime(a.created_at))}</div>
+    <div class="apr-sum" style="grid-template-columns:1fr 1fr;margin-top:6px"><div><div class="k">${esc(t('tf.payee'))}</div><div class="v">${esc(pl.payee || '—')}</div></div><div><div class="k">${esc(t('tf.amount'))}</div><div class="v num"><b>${fmtRp(pl.amount || a.total)}</b></div></div></div>
+    ${pl.reason ? `<div class="small" style="margin-top:6px">${esc(t('tf.reason'))}: <b>“${esc(pl.reason)}”</b></div>` : ''}`;
+}
 function drawApprovals() {
   const box = $('#apr-list'); if (!box) return;
   const sig = AP.list.map(a => a.request_id).join('|') + '#' + S.lang;
@@ -2004,11 +2029,19 @@ async function decideApproval(id, decision, btn) {
   const card = btn.closest('.apr-card');
   const ap = AP.list.find(a => a.request_id === id) || {};
   const note = card ? $('[data-note]', card).value.trim() : '';
+  if (ap.kind === 'pay_plan') {
+    if (decision === 'approved') {
+      const picks = $$('[data-pp-item]', card).filter(c => c.checked).map(c => int(c.dataset.idx));
+      if (!picks.length) { toast(t('pp.need_pick'), 'warn'); return; }
+      ap.__picks = picks;
+    } else ap.__picks = [];
+  }
   $$('button', card).forEach(b => b.disabled = true);
   try {
     const data = { request_id: id, decision, note };
     if (ap.kind === 'void') data.invoice_no = ap.ref;
     if (ap.kind === 'purchase_fix') data.purchase_no = ap.ref;
+    if (ap.kind === 'pay_plan') data.approve_items = ap.__picks || [];
     const r = await api('decide_approval', data);
     AP.list = AP.list.filter(a => a.request_id !== id); AP.count = AP.list.length;
     updateApprovalBadge(); renderShell(); drawApprovals();
@@ -2578,20 +2611,23 @@ function brandOf(s, itemsByInv) {
 }
 RENDER.home = function () {
   if (!isApprover()) { go('pos'); return; }
-  $('#view-home').innerHTML = `<div class="view-head"><h1>${esc(t('nav.home'))}</h1><button class="btn sm" data-act="home-daily" id="home-daily">${ic('report')} ${esc(t('dr.title'))}</button><button class="btn sm" data-act="home-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
+  $('#view-home').innerHTML = `<div class="view-head"><h1>${esc(t('nav.home'))}</h1>${HM.preset === 'today' ? `<span class="badge green" id="home-live" style="margin-inline-end:auto" title="${esc(t('home.live_hint'))}">● ${esc(t('home.live'))} <span class="muted" id="home-updated"></span></span>` : ''}<button class="btn sm" data-act="home-daily" id="home-daily">${ic('report')} ${esc(t('dr.title'))}</button><button class="btn sm" data-act="home-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
     <div class="chips" style="margin-bottom:4px">${['today', 'yesterday', '7d', 'month', 'lastmonth', 'year'].map(p => `<button class="chip ${HM.preset === p ? 'on' : ''}" data-act="home-preset" data-p="${p}">${esc(t('pr.' + p))}</button>`).join('')}</div>
     <div class="chips" style="margin-bottom:10px">${['all', 'eceran', 'grosir'].map(b => `<button class="chip ${HM.brand === b ? 'on' : ''}" data-act="home-brand" data-b="${b}">${esc(t('brand.' + b))}</button>`).join('')}</div>
     <div id="home-body"><div class="empty">${esc(t('loading'))}</div></div>`;
   loadHome();
 };
 let homeSeq = 0;
-async function loadHome() {
+async function loadHome(opts = {}) {
   const [from, to] = homeRange(HM.preset), seq = ++homeSeq;
-  const b = $('#home-body'); if (b) b.style.opacity = '.55';
-  try { const d = await loadSales(from, to, true); if (seq !== homeSeq) return; HM.data = d; HM.err = ''; } catch (e) { if (seq !== homeSeq) return; HM.data = null; HM.err = errMsg(e); }
+  const b = $('#home-body'); if (b && !opts.silent) b.style.opacity = '.55';
+  try { const d = await loadSales(from, to, !opts.fresh); if (seq !== homeSeq) return; HM.data = d; HM.err = ''; } catch (e) { if (seq !== homeSeq) return; HM.data = null; HM.err = errMsg(e); }
   drawHome();
+  const up = $('#home-updated'); if (up && HM.preset === 'today') up.textContent = t('home.updated', { time: DTF_TIME.format(new Date()) });
   refreshAttention();
 }
+// Owner/manager live sales monitor: while viewing today's dashboard, refresh it quietly (fresh data, no flicker) every 30s.
+setInterval(() => { if (S.inApp && S.view === 'home' && HM.preset === 'today') loadHome({ silent: true, fresh: true }); }, 30000);
 function computeHome(d, brand) {
   const byInv = {}; d.items.forEach(i => (byInv[i.invoice_no] = byInv[i.invoice_no] || []).push(i));
   const inBrand = s => brand === 'all' || brandOf(s, byInv) === brand;
@@ -3109,16 +3145,16 @@ function drawProducts() {
   $('#pr-list').innerHTML = `<p class="muted small">${esc(t('n_products', { n: list.length }))}</p>
     <div class="tbl-wrap"><table class="tbl" id="prod-table"><thead><tr>
       <th>${esc(t('product'))}</th><th class="hide-phone">${esc(t('category'))}</th>
-      ${own ? `<th class="r" data-col="cost">${esc(t('cost'))}</th>` : ''}
+      ${canSeeCost() ? `<th class="r" data-col="cost">${esc(t('cost'))}</th>` : ''}
       <th class="r">${esc(t('eceran'))}</th><th class="r">${esc(t('grosir'))}</th><th class="r">${esc(t('stock'))}</th><th></th></tr></thead>
     <tbody>${shown.map(p => `<tr class="${own ? 'click' : ''}" ${own ? `data-act="prod-edit" data-id="${esc(p.id)}"` : ''} data-pid="${esc(p.id)}">
       <td><div class="row" style="align-items:flex-start">${productImg(p) ? `<img class="pthumb" src="${esc(productImg(p))}" alt="">` : (p.image_updated ? '<span class="pthumb"></span>' : '')}<div><b>${esc(p.name)}</b>${p.active === false ? ` <span class="badge gray">${esc(t('inactive'))}</span>` : ''}<div class="small muted">${esc(p.sku || '—')} · ${esc(p.unit || '')}</div></div></div></td>
       <td class="hide-phone">${esc(p.category || '')}</td>
-      ${own ? `<td class="r num">${fmtRp(p.cost_price)}${p.retail_price ? `<div class="small muted">${fmtPct((p.retail_price - p.cost_price) / p.retail_price * 100)}</div>` : ''}</td>` : ''}
+      ${canSeeCost() ? `<td class="r num">${fmtRp(p.cost_price)}${p.retail_price ? `<div class="small muted">${fmtPct((p.retail_price - p.cost_price) / p.retail_price * 100)}</div>` : ''}</td>` : ''}
       <td class="r num">${fmtRp(p.retail_price)}</td>
       <td class="r num">${int(p.wholesale_price) ? fmtRp(p.wholesale_price) + `<div class="small muted">≥ ${fmtQty(p.wholesale_min_qty)}</div>` : '—'}</td>
       <td class="r num"><b class="${isLow(p) || prodExpState(p) === 'expired' || prodExpState(p) === 'soon' ? 'red' : ''}">${fmtQty(p.stock)}</b><div class="small muted">min ${fmtQty(p.min_stock)}</div>${prodExpBadge(p)}</td>
-      <td class="r" style="white-space:nowrap">${isApprover() ? `<button class="icon-btn sm" data-act="prod-photo" data-id="${esc(p.id)}" title="${esc(t('img.title'))}" aria-label="${esc(t('img.title'))}">${ic('camera')}</button> ` : ''}${own ? `<button class="btn xs" data-act="stock-adj" data-id="${esc(p.id)}">${esc(t('prod.adjust'))}</button>` : `<button class="btn xs" data-act="price-change" data-id="${esc(p.id)}">${ic('tag')} ${esc(t('price.title'))}</button>`}</td>
+      <td class="r" style="white-space:nowrap">${isApprover() ? `<button class="icon-btn sm" data-act="prod-photo" data-id="${esc(p.id)}" title="${esc(t('img.title'))}" aria-label="${esc(t('img.title'))}">${ic('camera')}</button> ` : ''}${own ? `<button class="btn xs" data-act="stock-adj" data-id="${esc(p.id)}">${esc(t('prod.adjust'))}</button>` : (isAudit() ? '' : `<button class="btn xs" data-act="price-change" data-id="${esc(p.id)}">${ic('tag')} ${esc(t('price.title'))}</button>`)}</td>
     </tr>`).join('') || `<tr><td colspan="7" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div>`;
 }
 function productForm(p) {
@@ -3405,7 +3441,7 @@ RENDER.purchases = function () {
       <div class="panel"><h3>${esc(t('pu.history'))}</h3><div id="pu-recent" class="pb"><div class="muted">${esc(t('loading'))}</div></div></div>`;
     loadRecentPurchases(); return;
   }
-  const own = isOwner();
+  const own = canSeeCost();
   if (!PU.date) PU.date = today();
   const total = sum(PU.lines, l => Math.round(num(l.qty) * int(l.cost)));
   const prodOptions = sel => `<option value="">— ${esc(t('pu.pick_product'))} —</option>` + S.products.filter(p => p.active !== false).slice().sort((a, b) => a.name.localeCompare(b.name)).map(p => `<option value="${esc(p.id)}" ${p.id == sel ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
@@ -3501,7 +3537,7 @@ async function scanPurchasePhoto(file) {
 function puAdd(p) {
   const ex = PU.lines.find(l => l.product_id == p.id && !l.ext);
   if (ex) ex.qty = roundQty(num(ex.qty) + 1);
-  else PU.lines.push({ product_id: p.id, name: p.name, qty: 1, cost: isOwner() ? int(p.cost_price) : 0 });
+  else PU.lines.push({ product_id: p.id, name: p.name, qty: 1, cost: canSeeCost() ? int(p.cost_price) : 0 });
   PU.q = ''; PU.result = null; savePuDraft(); RENDER.purchases();
   const idx = PU.lines.findIndex(l => l.product_id == p.id && !l.ext);
   const inp = $$('[data-pu-qty]')[idx]; if (inp) { inp.focus(); inp.select(); }
@@ -3533,7 +3569,7 @@ async function savePurchase(mismatchReason) {
     PU.mismatch = null;
     applyStock(r.stock);
     const sups = store.get('suppliers', []); if (PU.supplier.trim() && !sups.includes(PU.supplier.trim())) { sups.unshift(PU.supplier.trim()); store.set('suppliers', sups.slice(0, 30)); }
-    const own = isOwner();
+    const own = canSeeCost();
     const mst = (r.match || {}).status || (PU.photo_id ? '' : 'tanpa_foto');
     PU.result = `<div class="panel" style="margin-bottom:16px;border-color:var(--ok)" id="pu-res" data-no="${esc(r.purchase_no || '')}"><h3>${ic('box')} ${esc(t('pu.saved'))}${r.purchase_no ? ` · <b id="pu-no">${esc(r.purchase_no)}</b>` : ''} ${matchBadge(mst, 'pu-match-badge')}</h3><div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('stock'))}</th>${own ? `<th class="r">${esc(t('pu.new_cost'))}</th>` : ''}</tr></thead><tbody>
       ${(r.stock || []).map(s => { const p = prodById(s.product_id) || {}; const b = before.get(s.product_id) || before.get(Number(s.product_id)) || {}; return `<tr><td>${esc(p.name || s.product_id)}</td><td class="r num">${fmtQty(b.stock)} → <b>${fmtQty(s.stock)}</b></td>${own ? `<td class="r num" data-newcost="${esc(s.product_id)}">${b.cost != null ? fmtRp(b.cost) + ' → ' : ''}<b>${fmtRp(s.cost_price)}</b></td>` : ''}</tr>`; }).join('')}</tbody></table></div></div>`;
@@ -4093,6 +4129,7 @@ const I18N = {
     'set.store': 'Info toko & struk', 'set.store_name': 'Nama toko', 'set.footer': 'Catatan bawah struk', 'set.paper': 'Lebar kertas printer', 'set.survey': 'Pertanyaan survei',
     'set.survey_auto': 'Tampilkan banner survei suara otomatis saat bayar', 'set.survey_voice': 'Survei suara saat bayar', 'set.survey_voice_hint': 'Kasir minta izin pelanggan dulu; hanya teks yang disimpan, suara tidak. Butuh Chrome di Android.', 'set.wa_shop': 'Nomor WhatsApp toko', 'set.wa_shop_hint': 'Tombol “Kirim ke WA toko” di struk mengirim nomor pelanggan baru ke nomor ini.', 'set.survey_new': 'Pertanyaan baru…', 'set.survey_reset': 'Kembalikan ke bawaan', 'set.users': 'Pengguna', 'set.add_user': 'Tambah pengguna',
     'set.role': 'Peran', 'set.reset_pin': 'Ganti PIN', 'set.activate': 'Aktifkan', 'set.deactivate': 'Nonaktifkan', 'set.deactivate_confirm': 'Nonaktifkan {name}? Ia tidak bisa masuk lagi.', 'set.user_exists': 'Nama sudah dipakai',
+    'set.suspend': 'Nonaktifkan', 'set.reenable': 'Aktifkan kembali',
     'set.app': 'Aplikasi', 'set.language': 'Bahasa', 'set.autolock': 'Kunci otomatis jika tidak dipakai', 'set.reload_data': 'Muat ulang data', 'set.data_reloaded': 'Data diperbarui',
     'set.logout_store': 'Keluar dari toko', 'set.logout_confirm': 'Keluar dan hapus kode toko dari perangkat ini?', 'set.outbox': 'Antrian offline',
     'set.mock_hint': 'Mode DEMO: data hanya tersimpan di browser ini (kode toko: demo, Pemilik PIN 1234, Siti PIN 1111).', 'set.mock_reset': 'Reset data demo'
@@ -4169,6 +4206,7 @@ const I18N = {
     'set.store': 'بيانات المتجر والإيصال', 'set.store_name': 'اسم المتجر', 'set.footer': 'ملاحظة أسفل الإيصال', 'set.paper': 'عرض ورق الطابعة', 'set.survey': 'أسئلة الاستبيان',
     'set.survey_auto': 'إظهار شريط الاستبيان الصوتي تلقائيًا عند الدفع', 'set.survey_voice': 'استبيان صوتي أثناء الدفع', 'set.survey_voice_hint': 'يطلب الكاشير إذن العميل أولًا؛ يُحفظ النص فقط دون الصوت. يحتاج Chrome على أندرويد.', 'set.wa_shop': 'رقم واتساب المتجر', 'set.wa_shop_hint': 'زر «إرسال إلى واتساب المتجر» في الإيصال يرسل رقم العميل الجديد إلى هذا الرقم.', 'set.survey_new': 'سؤال جديد…', 'set.survey_reset': 'استعادة الأسئلة الافتراضية', 'set.users': 'المستخدمون', 'set.add_user': 'إضافة مستخدم',
     'set.role': 'الدور', 'set.reset_pin': 'تغيير الرقم السري', 'set.activate': 'تفعيل', 'set.deactivate': 'تعطيل', 'set.deactivate_confirm': 'تعطيل {name}؟ لن يستطيع الدخول.', 'set.user_exists': 'الاسم مستخدم',
+    'set.suspend': 'إيقاف', 'set.reenable': 'تفعيل',
     'set.app': 'التطبيق', 'set.language': 'اللغة', 'set.autolock': 'القفل التلقائي عند عدم الاستخدام', 'set.reload_data': 'تحديث البيانات', 'set.data_reloaded': 'تم تحديث البيانات',
     'set.logout_store': 'الخروج من المتجر', 'set.logout_confirm': 'الخروج وحذف رمز المتجر من هذا الجهاز؟', 'set.outbox': 'العمليات غير المرسلة',
     'set.mock_hint': 'وضع تجريبي: البيانات محفوظة في هذا المتصفح فقط (الرمز: demo، المالك 1234، سيتي 1111).', 'set.mock_reset': 'إعادة ضبط البيانات التجريبية'
@@ -4271,7 +4309,7 @@ Object.assign(I18N.ar, {
 Object.assign(I18N.id, {
   'nav.home': 'Beranda', 'navs.home': 'Beranda', 'nav.kas': 'Kas Kasir', 'navs.kas': 'Kas', 'pr.year': 'Tahun ini', 'rp.mode_kas': 'Kas Kasir',
   'brand.all': 'Semua', 'brand.eceran': 'Khair Mart (eceran)', 'brand.grosir': 'Khair Grosir (grosir)',
-  'home.avg': 'Rata-rata / struk', 'home.top': 'Produk terlaris', 'home.hourly': 'Transaksi & omzet per jam', 'home.tx': 'transaksi', 'home.all': 'Semua', 'home.channels': 'Kanal penjualan', 'home.cashiers': 'Per kasir',
+  'home.avg': 'Rata-rata / struk', 'home.top': 'Produk terlaris', 'home.hourly': 'Transaksi & omzet per jam', 'home.tx': 'transaksi', 'home.all': 'Semua', 'home.channels': 'Kanal penjualan', 'home.cashiers': 'Per kasir', 'home.live': 'Langsung', 'home.live_hint': 'Penjualan hari ini diperbarui otomatis setiap 30 detik.', 'home.updated': 'diperbarui {time}',
   'att.title': 'Perlu perhatian', 'att.none': 'Semua aman, tidak ada yang perlu dicek.', 'att.approvals': '{n} permintaan menunggu persetujuan', 'att.exit': '{n} penjualan besar belum ada foto keluar',
   'att.diff': '{n} tutup kasir dengan selisih (total {amount})', 'att.stale': 'Kasir {name} belum ditutup sejak {date}', 'att.neg': '{n} produk stok minus', 'att.low': '{n} produk stok menipis',
   'notif.title': 'Notifikasi', 'notif.results': 'Hasil permintaan saya', 'notif.none': 'Belum ada.', 'notif.approved': '{label} disetujui {name}', 'notif.rejected': '{label} ditolak {name}',
@@ -4293,7 +4331,7 @@ Object.assign(I18N.id, {
 Object.assign(I18N.ar, {
   'nav.home': 'الرئيسية', 'navs.home': 'الرئيسية', 'nav.kas': 'صندوق الكاشير', 'navs.kas': 'الصندوق', 'pr.year': 'هذه السنة', 'rp.mode_kas': 'الصندوق',
   'brand.all': 'الكل', 'brand.eceran': 'خير مارت (تجزئة)', 'brand.grosir': 'خير جملة (جملة)',
-  'home.avg': 'متوسط الفاتورة', 'home.top': 'الأكثر مبيعًا', 'home.hourly': 'العمليات والمبيعات بالساعة', 'home.tx': 'عملية', 'home.all': 'الكل', 'home.channels': 'قنوات البيع', 'home.cashiers': 'حسب الكاشير',
+  'home.avg': 'متوسط الفاتورة', 'home.top': 'الأكثر مبيعًا', 'home.hourly': 'العمليات والمبيعات بالساعة', 'home.tx': 'عملية', 'home.all': 'الكل', 'home.channels': 'قنوات البيع', 'home.cashiers': 'حسب الكاشير', 'home.live': 'مباشر', 'home.live_hint': 'مبيعات اليوم تُحدَّث تلقائيًا كل ٣٠ ثانية.', 'home.updated': 'آخر تحديث {time}',
   'att.title': 'يحتاج انتباه', 'att.none': 'كل شيء على ما يرام.', 'att.approvals': '{n} طلبات بانتظار الموافقة', 'att.exit': '{n} مبيعات كبيرة بلا صورة خروج',
   'att.diff': '{n} إغلاقات صندوق بفرق (الإجمالي {amount})', 'att.stale': 'صندوق {name} لم يُغلق منذ {date}', 'att.neg': '{n} منتجات مخزونها سالب', 'att.low': '{n} منتجات مخزونها منخفض',
   'notif.title': 'الإشعارات', 'notif.results': 'نتائج طلباتي', 'notif.none': 'لا شيء بعد.', 'notif.approved': 'وافق {name} على {label}', 'notif.rejected': 'رفض {name} {label}',
@@ -4470,6 +4508,14 @@ async function saveUser(data, errEl) {
     upsertByName(S.users, r.user || data); saveCache();
     toast(t('saved'), 'ok'); RENDER.settings(); return true;
   } catch (e) { if (errEl) errEl.textContent = errMsg(e); else toast(errMsg(e), 'err'); return false; }
+}
+// v28: suspend / re-enable a staff account through the dedicated set_account_active action.
+async function setAccountActive(u, active) {
+  try {
+    const r = await api('set_account_active', { name: u.name, active });
+    upsertByName(S.users, r.user || { name: u.name, role: u.role, active });
+    saveCache(); toast(t(active ? 'usr.reenabled' : 'usr.suspended_ok', { name: u.name }), 'ok'); RENDER.settings(); return true;
+  } catch (e) { toast(errMsg(e), 'err'); return false; }
 }
 function upsertByName(arr, u) { const i = arr.findIndex(x => x.name.toLowerCase() === u.name.toLowerCase()); const clean = Object.assign({}, i >= 0 ? arr[i] : {}, { name: u.name, role: u.role, active: u.active !== false }); if (u.must_change !== undefined) clean.must_change = u.must_change === true; if (i >= 0) arr[i] = clean; else arr.push(clean); }
 function askNewPin(name) {
@@ -4706,10 +4752,15 @@ const ACT = {
       else { ST.tempPin = u.name; RENDER.settings(); }
     }
   },
-  'user-toggle': async el => {
+  // v28: suspend (owner + manager, any non-owner but self) / re-enable (owner only) — via the dedicated action.
+  'user-suspend': async el => {
     const u = S.users.find(x => x.name === el.dataset.name); if (!u) return;
-    if (u.active !== false) { const r = await confirmBox(t('set.deactivate_confirm', { name: u.name }), { danger: true }); if (!r.ok) return; }
-    saveUser({ name: u.name, role: u.role, active: u.active === false });
+    const r = await confirmBox(t('set.deactivate_confirm', { name: u.name }), { danger: true }); if (!r.ok) return;
+    setAccountActive(u, false);
+  },
+  'user-reenable': el => {
+    const u = S.users.find(x => x.name === el.dataset.name); if (!u) return;
+    setAccountActive(u, true);
   },
   'user-unlock': async el => {
     const name = el.dataset.name; const c = await confirmBox(t('tamper.unlock_confirm', { name }), { danger: true }); if (!c.ok) return;
@@ -4879,7 +4930,7 @@ function gdDraw(full) {
 
 /* ---- Ringkasan ---- */
 function gdOverviewHTML() {
-  const rows = gdRows(), own = isOwner(), T = today();
+  const rows = gdRows(), own = canSeeCost(), T = today();
   const pos = r => Math.max(0, r.stock);
   const cnt = st => rows.filter(r => r.status === st).length;
   const expN = GD.year ? rows.filter(r => r.exp).length : null;
@@ -4940,7 +4991,7 @@ function gdDrawListRows() {
   const sorts = { name: byName, stock: (a, b) => a.stock - b.stock || byName(a, b), stock_desc: (a, b) => b.stock - a.stock || byName(a, b), days: (a, b) => (a.days ?? Infinity) - (b.days ?? Infinity) || a.stock - b.stock || byName(a, b) };
   rows.sort(sorts[GD.sort] || byName);
   const waitYear = (GD.status === 'kedaluwarsa' || GD.group === 'expiry' || GD.group === 'supplier') && !GD.year;
-  const own = isOwner(), ctx = GD.group ? gdGroupCtx() : null;
+  const own = canSeeCost(), ctx = GD.group ? gdGroupCtx() : null;
   const rowHTML = r => `<tr class="click ${r.gudang > 0 && r.shelf <= 0 ? 'shelf-empty' : ''}" data-act="gd-card" data-id="${esc(r.p.id)}" data-pid="${esc(r.p.id)}">
       <td><b>${esc(r.p.name)}</b><div class="small muted">${esc(r.p.category || '')}${r.exp ? ` · ${esc(t('gd.exp_short'))} ${esc(fmtDate(r.exp.exp))}` : ''}${num(r.p.repack_from) > 0 ? ` · <span class="badge blue">${esc(t('gd.pk_pack'))}</span>` : ''}</div></td>
       <td class="r num" data-col="stock"><b class="${r.stock <= 0 ? 'red' : ''}">${fmtQty(r.stock)}</b> <span class="small muted">${esc(r.p.unit || '')}</span></td>
@@ -5174,7 +5225,7 @@ async function gdoSubmit() {
 }
 /** Approvals inbox card for kind 'opname': lines with system / counted / difference and its value. */
 function opnameAprHTML(a, pl) {
-  const own = isOwner(), lines = (pl.lines || []).slice().sort((x, y) => !!num(y.diff) - !!num(x.diff) || String(x.name).localeCompare(String(y.name)));
+  const own = canSeeCost(), lines = (pl.lines || []).slice().sort((x, y) => !!num(y.diff) - !!num(x.diff) || String(x.name).localeCompare(String(y.name)));
   const diffs = lines.filter(l => num(l.diff)), same = lines.filter(l => !num(l.diff));
   let vr = 0, vc = 0;
   const row = l => { const p = prodById(l.product_id) || {}, d = num(l.diff), r = Math.round(d * int(p.retail_price)), c = Math.round(d * int(p.cost_price)); vr += r; vc += c;
@@ -5532,10 +5583,10 @@ function openDeviceDetail(id) {
 /* ========== Activity log (v12, owner) ========== */
 const ACTV = { recent: [], preset: '7d', from: '', to: '', group: '', user: '', q: '', data: null, err: '' };
 const ACT_GROUPS = { masuk: ['masuk', 'minta_koreksi', 'koreksi_masuk'], harga: ['harga', 'minta_harga'], stok: ['stok', 'opname', 'minta_opname', 'kemas_ulang', 'produk', 'produk_baru', 'impor', 'pindah_stok', 'jual_tanpa_rak'], retur: ['minta_retur', 'retur'],
-  kas: ['biaya', 'kas', 'tutup_kas', 'buka_kas'], jual: ['batal', 'minta_batal', 'hutang', 'minta_diskon', 'diskon', 'member_baru', 'member_berhenti'], bayar: ['bayar_masuk', 'bayar_keluar', 'alokasi', 'rekening'], pengguna: ['pengguna', 'pengaturan', 'masuk_master', 'ganti_pin', 'kode_pemilik', 'usul_kesepakatan', 'kesepakatan'], perangkat: ['perangkat_baru'] };
+  kas: ['biaya', 'kas', 'tutup_kas', 'buka_kas'], jual: ['batal', 'minta_batal', 'hutang', 'minta_diskon', 'diskon', 'member_baru', 'member_berhenti'], bayar: ['bayar_masuk', 'bayar_keluar', 'alokasi', 'rekening', 'minta_bayar', 'setuju_bayar', 'tolak_bayar', 'minta_transfer', 'transfer_keluar'], pengguna: ['pengguna', 'pengaturan', 'masuk_master', 'ganti_pin', 'kode_pemilik', 'usul_kesepakatan', 'kesepakatan'], perangkat: ['perangkat_baru'] };
 const ACT_ICON = { retur: 'return', masuk: 'truck', harga: 'tag', stok: 'warehouse', kas: 'cash', jual: 'cart', bayar: 'wallet', pengguna: 'gear', perangkat: 'device', lain: 'activity' };
 function actGroup(a) {
-  if (a.kind === 'keputusan') { const m = /\((\w+)/.exec(a.summary || ''); return { credit: 'jual', void: 'jual', discount: 'jual', retur: 'retur', kesepakatan: 'pengguna', price: 'harga', opname: 'stok', purchase_fix: 'masuk', buka_kas: 'kas' }[m ? m[1] : 'credit'] || 'jual'; }
+  if (a.kind === 'keputusan') { const m = /\((\w+)/.exec(a.summary || ''); return { credit: 'jual', void: 'jual', discount: 'jual', retur: 'retur', kesepakatan: 'pengguna', price: 'harga', opname: 'stok', purchase_fix: 'masuk', buka_kas: 'kas', pay_plan: 'bayar', transfer: 'bayar' }[m ? m[1] : 'credit'] || 'jual'; }
   for (const [g, ks] of Object.entries(ACT_GROUPS)) if (ks.includes(a.kind)) return g;
   return 'lain';
 }
@@ -6101,15 +6152,17 @@ function allocUI(root, docs, getAmount, pre) {
   draw();
   return { read, err, upd, auto, setDocs: (d, p) => { docs = d; pre = p; draw(); } };
 }
-async function openPayForm(kind, party) {
+async function openPayForm(kind, party, opts = {}) {
   const isCust = kind === 'customer';
+  const plan = opts.plan_request_id ? { plan_request_id: opts.plan_request_id, item_index: opts.item_index } : null;
+  const preAmt = isCust ? party.debt_balance : (opts.amount != null ? opts.amount : '');
   const P = { photo_id: '', slip: null, method: isCust ? 'tunai' : 'transfer', ui: null, docs: [], scanning: false, serverMM: null };
   const accs = bankAccountsList().filter(a => a.active !== false);
   const el = openModal({
     title: isCust ? t('cust.receive') : t('sp.pay'), id: 'pay-modal',
     body: `<p style="margin-top:0"><b id="py-party">${esc(isCust ? party.name : party.name)}</b><br><span class="muted">${isCust ? `${esc(t('debt'))}: <b class="red num">${fmtRp(party.debt_balance)}</b>` : `${esc(t('sp.balance'))}: <b class="num" id="py-sbal">…</b>`}</span></p>
       <div class="slip-row" id="py-slip-row"><label class="btn" for="py-slip" id="py-slip-btn">${ic('camera')} ${esc(t('pay.slip_take'))}</label>${PHOTO_INPUT('py-slip')}<div class="grow small" id="py-slip-st"><span class="muted">${esc(t('pay.slip_hint'))}</span></div></div>
-      <div class="field"><label class="f" for="py-amt">${esc(t('amount'))} (Rp)</label><input class="input num" id="py-amt" inputmode="numeric" value="${isCust ? esc(fmtNum(party.debt_balance)) : ''}" autofocus style="font-size:20px;font-weight:800"></div>
+      <div class="field"><label class="f" for="py-amt">${esc(t('amount'))} (Rp)</label><input class="input num" id="py-amt" inputmode="numeric" value="${preAmt === '' ? '' : esc(fmtNum(preAmt))}" autofocus style="font-size:20px;font-weight:800"></div>
       <div class="field"><label class="f">${esc(t('pos.method'))}</label><div class="seg" id="py-m">${['tunai', 'transfer', 'qris'].map(m => `<button type="button" data-m="${m}" class="${m === P.method ? 'on' : ''}">${esc(t('pm.' + m))}</button>`).join('')}</div></div>
       <div id="py-bankbox" hidden><div class="grid2"><div class="field"><label class="f" for="py-acc">${esc(t('pay.account'))}</label><select class="input" id="py-acc">${accs.map(a => `<option value="${esc(a.id)}">${esc(accLabel(a))}</option>`).join('') || `<option value="">${esc(t('pay.no_account'))}</option>`}</select></div>
         <div class="field"><label class="f" for="py-bank">${esc(t(isCust ? 'pay.bank_from' : 'pay.bank_to'))}</label><input class="input" id="py-bank" list="dl-banks" autocomplete="off"><datalist id="dl-banks">${BANK_NAMES.map(b => `<option value="${esc(b)}">`).join('')}</datalist></div></div>
@@ -6191,6 +6244,7 @@ async function openPayForm(kind, party) {
     if (isCust) data.customer_id = party.id; else data.supplier = party.name;
     if (P.method !== 'tunai') { const b = $('#py-bank', el).value.trim(), r = $('#py-ref', el).value.trim(), a = $('#py-acc', el).value; if (b) data.bank = b; if (r) data.transfer_ref = r; if (a) data.account_id = a; }
     if (!isCust) data.paid_from = P.method === 'tunai' ? (($('#py-from .on', el) || { dataset: { f: 'lain' } }).dataset.f) : 'lain';
+    if (plan) { data.plan_request_id = plan.plan_request_id; data.item_index = plan.item_index; }
     if (P.photo_id) data.photo_id = P.photo_id;
     if (mmOn && reason) data.mismatch_reason = reason;
     const alloc = P.ui.read(); if (alloc.length) data.alloc = alloc;
@@ -6210,7 +6264,9 @@ async function openPayForm(kind, party) {
         closeModal(true);
         toast(t('sp.paid_ok', { amount: fmtRp(amount), name: party.name }), 'ok', 4000);
         if (data.paid_from === 'kas') refreshData(true);
-        SUP.list = null; if (S.view === 'suppliers') loadSuppliers(); openSupplierDetail(party.name);
+        SUP.list = null; SUP.plans = null;
+        if (plan) { if (S.view === 'suppliers') loadSuppliers(); else loadPayPlans(); pollApprovals(); }
+        else { if (S.view === 'suppliers') loadSuppliers(); openSupplierDetail(party.name); }
       }
     } catch (e) {
       $('#py-save', el).disabled = false;
@@ -6246,7 +6302,8 @@ function openAllocate(kind, party, pay, L) {
 }
 
 /* ---- Pemasok (suppliers): open goods-in notes, payments, balance ---- */
-const SUP = { list: null, err: '', q: '', seq: 0 };
+const SUP = { list: null, err: '', q: '', seq: 0, plans: null };
+const canPropose = () => isApprover() && !isOwner(); // the manager operates; the owner only monitors (money-out hidden by omon)
 async function supplierNameList() {
   try { await gdYear(false, 10 * 60000); } catch (e) { }
   return knownSuppliers().filter(n => !internalName(n));
@@ -6254,17 +6311,22 @@ async function supplierNameList() {
 const internalName = n => ['PENYESUAIAN STOK', 'STOK OPNAME', REPACK_SUPPLIER].includes(String(n || '').trim().toUpperCase());
 RENDER.suppliers = function () {
   if (!canAudit()) { go('pos'); return; }
-  $('#view-suppliers').innerHTML = `<div class="view-head"><h1>${esc(t('nav.suppliers'))}</h1><button class="btn sm" data-act="sp-refresh">${ic('refresh')} ${esc(t('refresh'))}</button><button class="btn primary" data-act="sp-pay-new">${ic('wallet')} ${esc(t('sp.pay'))}</button></div>
+  // The owner only monitors (sp-pay-new hidden by omon). The manager pays via owner-approved plans, so he proposes here.
+  const headBtn = canPropose() ? `<button class="btn primary" data-act="sp-propose">${ic('send')} ${esc(t('pp.propose'))}</button>` : `<button class="btn primary" data-act="sp-pay-new">${ic('wallet')} ${esc(t('sp.pay'))}</button>`;
+  $('#view-suppliers').innerHTML = `<div class="view-head"><h1>${esc(t('nav.suppliers'))}</h1><button class="btn sm" data-act="sp-refresh">${ic('refresh')} ${esc(t('refresh'))}</button>${headBtn}</div>
     <p class="muted small" style="margin-top:0">${esc(t('sp.hint'))}</p>
+    <div id="sp-plans"></div>
     <div id="sp-kpis"></div>
     <div class="toolbar"><input class="input" id="sp-q" type="search" placeholder="${esc(t('sp.search_ph'))}" value="${esc(SUP.q)}" aria-label="${esc(t('sp.search_ph'))}"></div>
     <div id="sp-list"><div class="empty">${esc(t('loading'))}</div></div>`;
   $('#sp-q').addEventListener('input', e => { SUP.q = e.target.value; drawSuppliers(); });
   if (SUP.list) drawSuppliers();
+  if (SUP.plans) drawSupplierPlans();
   loadSuppliers();
 };
 async function loadSuppliers() {
   const seq = ++SUP.seq;
+  if (canPropose()) loadPayPlans();
   try {
     const names = await supplierNameList();
     const res = await Promise.all(names.map(n => loadLedger('supplier', { name: n }).then(L => ({ name: n, L })).catch(e => ({ name: n, err: errMsg(e) }))));
@@ -6272,6 +6334,24 @@ async function loadSuppliers() {
     SUP.list = res; SUP.err = '';
   } catch (e) { if (seq !== SUP.seq) return; SUP.err = errMsg(e); }
   drawSuppliers();
+}
+async function loadPayPlans() {
+  if (!canPropose()) { SUP.plans = []; drawSupplierPlans(); return; }
+  try { SUP.plans = (await api('list_pay_plans')).pay_plans || []; } catch (e) { SUP.plans = SUP.plans || []; }
+  drawSupplierPlans();
+}
+// The manager's owner-approved, still-unpaid plan items: pay each one through the pre-filled form (carries the plan).
+function drawSupplierPlans() {
+  const box = $('#sp-plans'); if (!box) return;
+  if (!canPropose()) { box.innerHTML = ''; return; }
+  const items = [];
+  (SUP.plans || []).forEach(p => (p.items || []).forEach(it => { if (it.approved && !it.paid) items.push({ p, it }); }));
+  if (!items.length) { box.innerHTML = ''; return; }
+  items.sort((a, b) => (a.it.priority || 0) - (b.it.priority || 0));
+  box.innerHTML = `<div class="card pad" style="margin-bottom:12px"><h3 style="margin:0 0 6px">${ic('check')} ${esc(t('pp.to_pay'))}</h3>
+    <div class="list" id="sp-plan-rows">${items.map(({ p, it }) => `<div class="li" data-pp-plan="${esc(p.request_id)}" data-pp-idx="${it.index}" data-sup="${esc(it.supplier)}"><span class="act-ic">${ic('wallet')}</span>
+      <div class="grow"><div class="t">${esc(it.supplier)}</div><div class="s">${esc(t('pp.proposed_by', { by: p.by }))}${it.note ? ' · ' + esc(it.note) : ''} · ${esc(t('pp.priority'))} ${fmtNum(it.priority || 0)}</div></div>
+      <div class="right"><div class="num" style="font-weight:800">${fmtRp(it.amount)}</div><button class="btn xs primary" data-act="pp-record" data-plan="${esc(p.request_id)}" data-idx="${it.index}" data-sup="${esc(it.supplier)}" data-amt="${it.amount}">${esc(t('pp.record'))}</button></div></div>`).join('')}</div></div>`;
 }
 function drawSuppliers() {
   const box = $('#sp-list'), kp = $('#sp-kpis'); if (!box) return;
@@ -6288,12 +6368,56 @@ function drawSuppliers() {
 }
 async function openSupplierDetail(name) {
   const party = { name };
+  // The manager proposes this supplier for payment (owner authorizes); the owner's direct-pay button is hidden by omon.
+  const btn = canPropose() ? `<button class="btn primary" data-act="sp-propose" data-name="${esc(name)}">${ic('send')} ${esc(t('pp.propose'))}</button>` : `<button class="btn primary" data-act="sp-pay" data-name="${esc(name)}">${ic('wallet')} ${esc(t('sp.pay'))}</button>`;
   openModal({
     title: name, cls: 'wide', id: 'sd-modal',
-    body: `<div class="row wrap" style="margin-bottom:12px"><button class="btn primary" data-act="sp-pay" data-name="${esc(name)}">${ic('wallet')} ${esc(t('sp.pay'))}</button></div>
+    body: `<div class="row wrap" style="margin-bottom:12px">${btn}</div>
       <div id="sd-ledger" class="muted">${esc(t('loading'))}</div>`
   });
   drawLedgerInto($('#sd-ledger'), 'supplier', party);
+}
+async function openProposePayment(prefill) {
+  if (!canPropose()) return;
+  const names = await supplierNameList();
+  const el = openModal({
+    title: t('pp.title'), cls: 'wide', id: 'propose-modal',
+    body: `<p class="muted small" style="margin-top:0">${esc(t('pp.hint'))}</p>
+      <datalist id="dl-pp-sup">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+      <div id="pp-rows"></div>
+      <button type="button" class="btn sm" id="pp-add" style="margin-top:4px">${ic('plus')} ${esc(t('pp.add_row'))}</button>
+      <div class="red" id="pp-err" role="alert" style="margin-top:8px"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="pp-send">${ic('send')} ${esc(t('pp.send'))}</button>`
+  });
+  const rowsBox = $('#pp-rows', el);
+  const addRow = sup => {
+    const i = rowsBox.children.length + 1;
+    const row = document.createElement('div');
+    row.className = 'card pad pp-row'; row.style.marginBottom = '8px';
+    row.innerHTML = `<div class="grid2"><div class="field"><label class="f">${esc(t('pp.supplier'))}</label><input class="input" data-pp-sup list="dl-pp-sup" autocomplete="off" value="${esc(sup || '')}"></div>
+        <div class="field"><label class="f">${esc(t('pp.amount'))}</label><input class="input num" data-pp-amt inputmode="numeric"></div></div>
+      <div class="grid2"><div class="field"><label class="f">${esc(t('pp.priority'))}</label><input class="input num" data-pp-pri inputmode="numeric" value="${i}" placeholder="${esc(t('pp.priority_ph'))}"></div>
+        <div class="field"><label class="f">${esc(t('pp.note'))}</label><input class="input" data-pp-note maxlength="200"></div></div>
+      <div class="row" style="justify-content:flex-end"><button type="button" class="btn xs danger" data-act="pp-del">${ic('trash')} ${esc(t('delete'))}</button></div>`;
+    rowsBox.appendChild(row);
+    $('[data-pp-amt]', row).addEventListener('change', e => { const v = moneyVal(e.target.value); e.target.value = v ? fmtNum(v) : ''; });
+  };
+  rowsBox.addEventListener('click', e => { const b = e.target.closest('[data-act="pp-del"]'); if (b && rowsBox.children.length > 1) b.closest('.pp-row').remove(); });
+  $('#pp-add', el).onclick = () => addRow('');
+  addRow(prefill || '');
+  $('#pp-send', el).onclick = async () => {
+    const err = $('#pp-err', el);
+    const items = $$('.pp-row', rowsBox).map((row, i) => ({ supplier: $('[data-pp-sup]', row).value.trim(), amount: moneyVal($('[data-pp-amt]', row).value), priority: $('[data-pp-pri]', row).value.trim() === '' ? i + 1 : int($('[data-pp-pri]', row).value), note: $('[data-pp-note]', row).value.trim() }))
+      .filter(x => x.supplier && x.amount > 0);
+    if (!items.length) { err.textContent = t('pp.need_item'); return; }
+    $('#pp-send', el).disabled = true; err.textContent = '';
+    try {
+      await api('propose_payment', { items });
+      closeModal(true);
+      toast(t('pp.sent_ok', { n: items.length }), 'ok', 4000);
+      pollApprovals();
+    } catch (e) { $('#pp-send', el).disabled = false; err.textContent = errMsg(e); }
+  };
 }
 async function pickSupplierThenPay() {
   const names = await supplierNameList();
@@ -6303,6 +6427,82 @@ async function pickSupplierThenPay() {
     foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="sp-pick-ok">${esc(t('next'))}</button>`
   });
   $('#sp-pick-ok', el).onclick = () => { const v = $('#sp-pick', el).value.trim(); if (!v) { $('#sp-pick-err', el).textContent = t('required'); return; } closeModal(); openPayForm('supplier', { name: v }); };
+}
+
+/* ---- Owner-approved bank transfers (v29): the manager raises a request, the owner approves, the manager records
+   the transfer executed via the company bank (BNI). The owner only monitors — money-out stays hidden by omon. ---- */
+const TF = { list: null };
+async function loadTransfers() {
+  if (!canPropose()) { TF.list = []; drawTransfers(); return; }
+  try { TF.list = (await api('list_transfers')).transfers || []; } catch (e) { TF.list = TF.list || []; }
+  drawTransfers();
+}
+// The manager's owner-approved, still-unrecorded transfers: record each one (collect bank / transfer_ref).
+function drawTransfers() {
+  const box = $('#bk-transfers'); if (!box) return;
+  if (!canPropose()) { box.innerHTML = ''; return; }
+  const items = (TF.list || []);
+  if (!items.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="card pad" style="margin-bottom:12px"><h3 style="margin:0 0 6px">${ic('check')} ${esc(t('tf.to_record'))}</h3>
+    <div class="list" id="tf-rows">${items.map(it => `<div class="li" data-tf-req="${esc(it.request_id)}"><span class="act-ic">${ic('bank')}</span>
+      <div class="grow"><div class="t">${esc(it.payee)}</div><div class="s">${esc(t('pp.proposed_by', { by: it.by }))}${it.reason ? ' · ' + esc(it.reason) : ''}</div></div>
+      <div class="right"><div class="num" style="font-weight:800">${fmtRp(it.amount)}</div><button class="btn xs primary" data-act="tf-record" data-req="${esc(it.request_id)}" data-payee="${esc(it.payee)}" data-amt="${it.amount}">${esc(t('tf.record'))}</button></div></div>`).join('')}</div></div>`;
+}
+async function openRequestTransfer() {
+  if (!canPropose()) return;
+  const accs = bankAccountsList();
+  const el = openModal({
+    title: t('tf.title'), id: 'tf-request-modal',
+    body: `<p class="muted small" style="margin-top:0">${esc(t('tf.hint'))}</p>
+      <div class="field"><label class="f" for="tf-payee">${esc(t('tf.payee'))}</label><input class="input" id="tf-payee" maxlength="80" autocomplete="off" autofocus></div>
+      <div class="field"><label class="f" for="tf-amt">${esc(t('tf.amount'))}</label><input class="input num" id="tf-amt" inputmode="numeric"></div>
+      <div class="field"><label class="f" for="tf-reason">${esc(t('tf.reason'))}</label><input class="input" id="tf-reason" maxlength="300"></div>
+      ${accs.length ? `<div class="field"><label class="f" for="tf-acc">${esc(t('tf.account'))}</label><select class="input" id="tf-acc"><option value="">${esc(t('tf.account_any'))}</option>${accs.map(a => `<option value="${esc(a.id)}">${esc(accLabel(a))}</option>`).join('')}</select></div>` : ''}
+      <div class="red" id="tf-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="tf-send">${ic('send')} ${esc(t('tf.send'))}</button>`
+  });
+  $('#tf-amt', el).addEventListener('change', e => { const v = moneyVal(e.target.value); e.target.value = v ? fmtNum(v) : ''; });
+  $('#tf-send', el).onclick = async () => {
+    const err = $('#tf-err', el), payee = $('#tf-payee', el).value.trim(), amount = moneyVal($('#tf-amt', el).value);
+    if (!payee) { err.textContent = t('required') + ': ' + t('tf.payee'); return; }
+    if (!(amount > 0)) { err.textContent = t('cust.amount_invalid'); return; }
+    const data = { payee, amount, reason: $('#tf-reason', el).value.trim() };
+    const acc = $('#tf-acc', el); if (acc && acc.value) data.account_id = acc.value;
+    $('#tf-send', el).disabled = true; err.textContent = '';
+    try {
+      await api('request_transfer', data);
+      closeModal(true);
+      toast(t('tf.sent_ok', { payee }), 'ok', 4000);
+      pollApprovals();
+    } catch (e) { $('#tf-send', el).disabled = false; err.textContent = errMsg(e); }
+  };
+}
+async function openRecordTransfer(req) {
+  if (!canPropose()) return;
+  const accs = bankAccountsList();
+  const el = openModal({
+    title: t('tf.record'), id: 'tf-record-modal',
+    body: `<p style="margin-top:0"><b>${esc(req.payee)}</b> · <b class="num">${fmtRp(req.amount)}</b></p>
+      <p class="muted small">${esc(t('tf.record_hint'))}</p>
+      <div class="field"><label class="f" for="tf-bank">${esc(t('tf.bank'))}</label><input class="input" id="tf-bank" maxlength="60" value="${esc((accById(accs.length ? (accs.find(a => a.active !== false) || accs[0]).id : '') || {}).bank || '')}" autocomplete="off"></div>
+      <div class="field"><label class="f" for="tf-ref">${esc(t('tf.ref'))}</label><input class="input" id="tf-ref" maxlength="80" autocomplete="off"></div>
+      ${accs.length ? `<div class="field"><label class="f" for="tf-racc">${esc(t('tf.account'))}</label><select class="input" id="tf-racc">${accs.map(a => `<option value="${esc(a.id)}" ${a.active !== false ? 'selected' : ''}>${esc(accLabel(a))}</option>`).join('')}</select></div>` : ''}
+      <div class="field"><label class="f" for="tf-note">${esc(t('notes'))}</label><input class="input" id="tf-note" maxlength="200"></div>
+      <div class="red" id="tf-rec-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="tf-rec-ok">${ic('wallet')} ${esc(t('tf.record'))}</button>`
+  });
+  $('#tf-rec-ok', el).onclick = async () => {
+    const err = $('#tf-rec-err', el);
+    const data = { request_id: req.request_id, payee: req.payee, amount: req.amount, bank: $('#tf-bank', el).value.trim(), transfer_ref: $('#tf-ref', el).value.trim(), note: $('#tf-note', el).value.trim() };
+    const racc = $('#tf-racc', el); if (racc && racc.value) data.account_id = racc.value;
+    $('#tf-rec-ok', el).disabled = true; err.textContent = '';
+    try {
+      await api('record_transfer', data);
+      closeModal(true);
+      toast(t('tf.recorded_ok', { payee: req.payee, amount: fmtRp(req.amount) }), 'ok', 4000);
+      TF.list = null; loadTransfers(); loadBank(); pollApprovals();
+    } catch (e) { $('#tf-rec-ok', el).disabled = false; err.textContent = errMsg(e); }
+  };
 }
 
 /* ---- Rekening Bank Toko: the month's bank payments + reconciliation with the bank statement (v14) ---- */
@@ -6320,11 +6520,14 @@ RENDER.bank = function () {
     v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.bank'))}</h1></div><div class="card pad center" id="bk-noacc"><p>${esc(t('bk.no_account'))}</p>${isOwner() ? `<button class="btn primary" data-act="go" data-view="settings">${ic('gear')} ${esc(t('nav.settings'))}</button>` : `<p class="muted small">${esc(t('bk.ask_owner'))}</p>`}</div>`;
     return;
   }
-  v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.bank'))}</h1><button class="btn" data-act="bk-csv" id="bk-csv">${ic('download')} ${esc(t('bk.export'))}</button><button class="btn primary" data-act="bk-import" id="bk-import-btn">${ic('upload')} ${esc(t('bk.import'))}</button></div>
+  v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.bank'))}</h1>${canPropose() ? `<button class="btn primary" data-act="tf-request">${ic('send')} ${esc(t('tf.request'))}</button>` : ''}<button class="btn" data-act="bk-csv" id="bk-csv">${ic('download')} ${esc(t('bk.export'))}</button><button class="btn primary" data-act="bk-import" id="bk-import-btn">${ic('upload')} ${esc(t('bk.import'))}</button></div>
     <p class="muted small" style="margin-top:0">${esc(t('bk.hint'))}</p>
+    <div id="bk-transfers"></div>
     <div class="toolbar"><select class="input" id="bk-acc" aria-label="${esc(t('pay.account'))}">${accs.map(a => `<option value="${esc(a.id)}" ${String(a.id) === String(BK.acc) ? 'selected' : ''}>${esc(accLabel(a))}${a.active === false ? ' (' + esc(t('inactive')) + ')' : ''}</option>`).join('')}</select>
       <label class="f" style="margin:0">${esc(t('bk.month'))} <input class="input" type="month" id="bk-period" value="${esc(BK.period)}" style="width:auto"></label></div>
     <div id="bk-body"><div class="empty">${esc(t('loading'))}</div></div>`;
+  if (TF.list) drawTransfers();
+  loadTransfers();
   $('#bk-acc').onchange = e => { BK.acc = e.target.value; loadBank(); };
   $('#bk-period').onchange = e => { if (/^\d{4}-\d{2}$/.test(e.target.value)) { BK.period = e.target.value; loadBank(); } };
   loadBank();
@@ -6348,7 +6551,7 @@ function bkPayInfo(p) {
   const slipAmt = ex && ex.amount != null ? int(ex.amount) : null;
   return { amtOk: p.proof_photo_id ? (slipAmt == null ? null : slipAmt === int(p.amount)) : null, dateOk: p.proof_photo_id && p.slip_date ? p.slip_date === p.pay_date : null, url: ph && ph.drive_url, slipAmt };
 }
-const partyOf = p => p.customer_name || p.supplier || '—';
+const partyOf = p => p.customer_name || p.supplier || p.payee || '—';
 function drawBank() {
   const body = $('#bk-body'); if (!body) return;
   body.style.opacity = '';
@@ -6659,6 +6862,10 @@ Object.assign(ACT, {
   'sp-open': el => openSupplierDetail(el.dataset.name),
   'sp-pay': el => { closeModal(); openPayForm('supplier', { name: el.dataset.name }); },
   'sp-pay-new': () => pickSupplierThenPay(),
+  'sp-propose': el => { closeModal(); openProposePayment(el.dataset.name || ''); },
+  'pp-record': el => { closeModal(); openPayForm('supplier', { name: el.dataset.sup }, { plan_request_id: el.dataset.plan, item_index: int(el.dataset.idx), amount: int(el.dataset.amt) }); },
+  'tf-request': () => openRequestTransfer(),
+  'tf-record': el => openRecordTransfer({ request_id: el.dataset.req, payee: el.dataset.payee, amount: int(el.dataset.amt) }),
   'bk-import': () => openBankImport(),
   'bk-csv': () => bkCsv(),
   'bk-match': el => bkMatchLine(el.dataset.line),
@@ -6842,6 +7049,50 @@ Object.assign(I18N.ar, {
   'set.bank_title': 'الحساب البنكي للشركة', 'set.bank_hint': 'الحساب الذي يستخدمه المدير / المحاسب لكل المدفوعات البنكية. أول حساب نشط هو الاختيار الافتراضي.', 'set.bank_add': 'إضافة حساب', 'set.bank_name': 'البنك', 'set.bank_no': 'رقم الحساب', 'set.bank_holder': 'باسم', 'set.bank_bad': 'أدخل اسم البنك ورقم الحساب (أرقام فقط)',
   'set.report_title': 'التقرير اليومي (واتساب)', 'set.wa_company': 'واتساب المتجر / الشركة', 'set.wa_manager': 'واتساب المدير', 'set.wa_owner': 'واتساب المالك', 'set.report_time': 'تذكير إرسال التقرير (الساعة)', 'set.report_time_bad': 'ساعة غير صالحة'
 });
+// v23: supplier pay plan — the manager proposes, the owner authorizes, the manager records the payment.
+Object.assign(I18N.id, {
+  'pp.propose': 'Usul bayar pemasok', 'pp.title': 'Usul rencana bayar pemasok',
+  'pp.hint': 'Buat daftar tagihan pemasok yang mau dibayar (paling mendesak dulu) lalu kirim ke pemilik. Uang belum keluar — pemilik yang memilih mana yang dibayar sekarang.',
+  'pp.supplier': 'Pemasok', 'pp.amount': 'Jumlah (Rp)', 'pp.priority': 'Prioritas', 'pp.priority_ph': '1 = paling mendesak', 'pp.note': 'Catatan',
+  'pp.add_row': 'Tambah pemasok', 'pp.send': 'Kirim ke pemilik', 'pp.sent_ok': 'Rencana bayar dikirim ke pemilik ({n} pemasok)', 'pp.need_item': 'Isi nama pemasok dan jumlah untuk minimal satu baris',
+  'pp.to_pay': 'Disetujui pemilik — siap dibayar', 'pp.record': 'Catat pembayaran', 'pp.proposed_by': 'Diusulkan {by}',
+  'apr.kind_payplan': 'Rencana bayar pemasok', 'pp.pick_items': 'Centang tagihan yang dibayar sekarang (sisanya tetap menunggu):', 'pp.need_pick': 'Centang minimal satu tagihan untuk disetujui',
+  'apr.new_payplan': 'Rencana bayar pemasok dari {cashier} menunggu persetujuan →',
+  'ak.minta_bayar': 'Usul rencana bayar', 'ak.setuju_bayar': 'Setuju rencana bayar', 'ak.tolak_bayar': 'Tolak rencana bayar'
+});
+Object.assign(I18N.ar, {
+  'pp.propose': 'اقتراح دفع للموردين', 'pp.title': 'اقتراح خطة دفع للموردين',
+  'pp.hint': 'أنشئ قائمة بفواتير الموردين المراد دفعها (الأكثر إلحاحًا أولًا) ثم أرسلها إلى المالك. لم يخرج المال بعد — المالك يختار ما يُدفع الآن.',
+  'pp.supplier': 'المورد', 'pp.amount': 'المبلغ (روبية)', 'pp.priority': 'الأولوية', 'pp.priority_ph': '1 = الأكثر إلحاحًا', 'pp.note': 'ملاحظة',
+  'pp.add_row': 'إضافة مورد', 'pp.send': 'إرسال إلى المالك', 'pp.sent_ok': 'أُرسلت خطة الدفع إلى المالك ({n} موردين)', 'pp.need_item': 'أدخل اسم المورد والمبلغ في سطر واحد على الأقل',
+  'pp.to_pay': 'موافَق عليه من المالك — جاهز للدفع', 'pp.record': 'تسجيل الدفع', 'pp.proposed_by': 'اقترحها {by}',
+  'apr.kind_payplan': 'خطة دفع للموردين', 'pp.pick_items': 'اختر الفواتير التي تُدفع الآن (يبقى الباقي بانتظار):', 'pp.need_pick': 'اختر فاتورة واحدة على الأقل للموافقة',
+  'apr.new_payplan': 'خطة دفع للموردين من {cashier} بانتظار الموافقة ←',
+  'ak.minta_bayar': 'اقتراح خطة دفع', 'ak.setuju_bayar': 'الموافقة على خطة الدفع', 'ak.tolak_bayar': 'رفض خطة الدفع'
+});
+// v29: owner-approved bank transfers — the manager requests, the owner approves, the manager records the transfer (BNI).
+Object.assign(I18N.id, {
+  'tf.request': 'Minta transfer', 'tf.title': 'Minta persetujuan transfer',
+  'tf.hint': 'Isi penerima, jumlah dan alasan transfer. Uang belum keluar — pemilik yang menyetujui dulu, lalu Anda melakukan transfer lewat rekening perusahaan (BNI) dan mencatatnya.',
+  'tf.payee': 'Penerima', 'tf.amount': 'Jumlah (Rp)', 'tf.reason': 'Alasan', 'tf.account': 'Rekening perusahaan', 'tf.account_any': '— pilih saat mencatat —',
+  'tf.send': 'Kirim ke pemilik', 'tf.sent_ok': 'Permintaan transfer dikirim ke pemilik ({payee})',
+  'tf.to_record': 'Disetujui pemilik — siap ditransfer', 'tf.record': 'Catat transfer',
+  'tf.record_hint': 'Lakukan transfer lewat rekening perusahaan (BNI), lalu catat bukti di sini.', 'tf.bank': 'Bank', 'tf.ref': 'No. referensi transfer',
+  'tf.recorded_ok': 'Transfer dicatat: {payee} {amount}',
+  'apr.kind_transfer': 'Permintaan transfer', 'apr.new_transfer': 'Permintaan transfer dari {cashier} menunggu persetujuan →',
+  'ak.minta_transfer': 'Minta transfer', 'ak.transfer_keluar': 'Transfer keluar'
+});
+Object.assign(I18N.ar, {
+  'tf.request': 'طلب تحويل', 'tf.title': 'طلب الموافقة على تحويل',
+  'tf.hint': 'أدخل المستفيد والمبلغ وسبب التحويل. لم يخرج المال بعد — يوافق المالك أولًا، ثم تنفّذ التحويل عبر حساب الشركة (BNI) وتسجّله.',
+  'tf.payee': 'المستفيد', 'tf.amount': 'المبلغ (روبية)', 'tf.reason': 'السبب', 'tf.account': 'حساب الشركة', 'tf.account_any': '— يُختار عند التسجيل —',
+  'tf.send': 'إرسال إلى المالك', 'tf.sent_ok': 'أُرسل طلب التحويل إلى المالك ({payee})',
+  'tf.to_record': 'موافَق عليه من المالك — جاهز للتحويل', 'tf.record': 'تسجيل التحويل',
+  'tf.record_hint': 'نفّذ التحويل عبر حساب الشركة (BNI)، ثم سجّل الإثبات هنا.', 'tf.bank': 'البنك', 'tf.ref': 'رقم مرجع التحويل',
+  'tf.recorded_ok': 'سُجّل التحويل: {payee} {amount}',
+  'apr.kind_transfer': 'طلب تحويل', 'apr.new_transfer': 'طلب تحويل من {cashier} بانتظار الموافقة ←',
+  'ak.minta_transfer': 'طلب تحويل', 'ak.transfer_keluar': 'تحويل صادر'
+});
 
 /* ========== v16: owner master code, own PINs, lock after wrong PINs, discount approvals, members, warehouse vs shelf ========== */
 /** Master code (8 digits): sha256(KEY + ':__master__:' + code) — opens every account; never stored on this device. */
@@ -6982,7 +7233,7 @@ RENDER.absensi = function () {
   if (!isApprover()) { go('pos'); return; }
   const v = $('#view-absensi');
   if (!AT.from) [AT.from, AT.to] = attRange('month');
-  v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.absensi'))}</h1><div class="row wrap"><button class="btn primary" data-act="att-kiosk" id="att-kiosk">${ic('camera')} ${esc(t('att.kiosk'))}</button><button class="btn" data-act="att-add" id="att-add">${ic('plus')} ${esc(t('att.add'))}</button></div></div>
+  v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.absensi'))}</h1>${isOwner() ? '' : `<div class="row wrap"><button class="btn primary" data-act="att-kiosk" id="att-kiosk">${ic('camera')} ${esc(t('att.kiosk'))}</button><button class="btn" data-act="att-add" id="att-add">${ic('plus')} ${esc(t('att.add'))}</button></div>`}</div>
     <p class="small muted" style="margin-top:0">${esc(t('att.hint'))}</p>
     <div class="panel" style="margin-bottom:14px"><h3>${ic('clock')} ${esc(t('att.today'))}</h3><div class="pb" id="att-today">${esc(t('loading'))}</div></div>
     <div class="panel" style="margin-bottom:14px"><h3>${ic('users')} ${esc(t('att.workers'))}</h3><div class="pb" id="att-workers">${esc(t('loading'))}</div></div>
@@ -7021,7 +7272,7 @@ function drawAttWorkers() {
     ${ws.map(w => `<tr data-w="${esc(w.worker_id)}" class="${w.active ? '' : 'void'}"><td>${w.face_thumb ? `<img src="${esc(w.face_thumb)}" alt="${esc(t('att.thumb'))}" style="width:32px;height:32px;border-radius:50%;vertical-align:middle;margin-inline-end:6px">` : ''}<b>${esc(w.name)}</b>${w.active ? '' : ` <span class="badge gray">${esc(t('att.inactive'))}</span>`}</td>
       <td class="hide-phone">${esc(w.job || '—')}</td><td class="hide-phone num">${esc(w.phone ? localPhone(w.phone) : '—')}</td>${own ? `<td class="r num" data-wage>${fmtRp(w.daily_wage || 0)}</td>` : ''}
       <td>${w.enrolled ? `<span class="badge green" data-face="1">${esc(t('att.enrolled'))}</span>` : `<span class="badge amber" data-face="0">${esc(t('att.not_enrolled'))}</span>`}</td>
-      <td class="r" style="white-space:nowrap"><button class="btn xs" data-act="att-edit" data-w="${esc(w.worker_id)}">${ic('edit')}</button> ${w.active ? `<button class="btn xs ${w.enrolled ? '' : 'primary'}" data-act="att-enroll" data-w="${esc(w.worker_id)}">${ic('camera')} ${esc(t(w.enrolled ? 'att.reenroll' : 'att.enroll'))}</button>` : ''}${own && w.enrolled ? ` <button class="btn xs danger" data-act="att-forget" data-w="${esc(w.worker_id)}">${esc(t('att.forget'))}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : `<div class="muted" id="att-none">${esc(t('att.none'))}</div>`);
+      <td class="r" style="white-space:nowrap">${own ? `<button class="btn xs" data-act="att-wage" data-w="${esc(w.worker_id)}">${ic('tag')} ${esc(t('att.set_wage'))}</button>${w.enrolled ? ` <button class="btn xs danger" data-act="att-forget" data-w="${esc(w.worker_id)}">${esc(t('att.forget'))}</button>` : ''}` : `<button class="btn xs" data-act="att-edit" data-w="${esc(w.worker_id)}">${ic('edit')}</button> ${w.active ? `<button class="btn xs ${w.enrolled ? '' : 'primary'}" data-act="att-enroll" data-w="${esc(w.worker_id)}">${ic('camera')} ${esc(t(w.enrolled ? 'att.reenroll' : 'att.enroll'))}</button>` : ''}`}</td></tr>`).join('')}</tbody></table></div>` : `<div class="muted" id="att-none">${esc(t('att.none'))}</div>`);
 }
 async function loadAttReport() {
   const box = $('#att-rep'); if (!box) return;
@@ -7074,6 +7325,20 @@ function openWorkerEditor(w) {
     catch (e) { $('#aw-save', el).disabled = false; $('#aw-err', el).textContent = errMsg(e); }
   };
 }
+// Owner monitoring: wages are owner-exclusive, so the owner gets a wage-only editor (the full worker form stays with the manager).
+function openWageEditor(w) {
+  if (!w) return;
+  const el = openModal({ title: t('att.set_wage'), id: 'att-wage-editor', cls: 'narrow',
+    body: `<div class="small muted" style="margin-bottom:8px"><b>${esc(w.name)}</b>${w.job ? ' · ' + esc(w.job) : ''}</div>
+      <div class="field"><label class="f" for="aw-wage">${esc(t('att.wage'))}</label><input class="input num" id="aw-wage" inputmode="numeric" value="${esc(fmtNum(w.daily_wage || 0))}"><div class="small muted">${esc(t('att.wage_hint'))}</div></div>
+      <div class="red small" id="aw-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="aw-save">${esc(t('save'))}</button>` });
+  $('#aw-save', el).onclick = async () => {
+    $('#aw-save', el).disabled = true;
+    try { await attApi('worker_save', { worker_id: w.worker_id, name: w.name, daily_wage: moneyVal($('#aw-wage', el).value) }); closeModal(); toast(t('att.saved'), 'ok'); await loadAtt(); }
+    catch (e) { $('#aw-save', el).disabled = false; $('#aw-err', el).textContent = errMsg(e); }
+  };
+}
 function startEnroll(w) {
   if (!window.KAttKiosk) { toast(t('doc.not_loaded'), 'err'); return; }
   KAttKiosk.enroll({ api: attApi, lang: S.lang, worker: w, onClose: () => { if (S.view === 'absensi') loadAtt(); } });
@@ -7092,10 +7357,11 @@ function attCsv() {
   } catch (e) { toast(errMsg(e), 'err'); }
 }
 Object.assign(ACT, {
-  'att-kiosk': () => { if (!window.KAttKiosk) { toast(t('doc.not_loaded'), 'err'); return; } KAttKiosk.open({ api: attApi, lang: S.lang, deviceId: deviceId(), onClose: () => { if (S.view === 'absensi') loadAtt(); } }); },
-  'att-add': () => openWorkerEditor(null),
-  'att-edit': el => openWorkerEditor((AT.boot.workers || []).find(w => w.worker_id === el.dataset.w)),
-  'att-enroll': el => startEnroll((AT.boot.workers || []).find(w => w.worker_id === el.dataset.w)),
+  'att-kiosk': () => { if (isOwner()) return; if (!window.KAttKiosk) { toast(t('doc.not_loaded'), 'err'); return; } KAttKiosk.open({ api: attApi, lang: S.lang, deviceId: deviceId(), onClose: () => { if (S.view === 'absensi') loadAtt(); } }); },
+  'att-add': () => { if (isOwner()) return; openWorkerEditor(null); },
+  'att-edit': el => { if (isOwner()) return; openWorkerEditor((AT.boot.workers || []).find(w => w.worker_id === el.dataset.w)); },
+  'att-enroll': el => { if (isOwner()) return; startEnroll((AT.boot.workers || []).find(w => w.worker_id === el.dataset.w)); },
+  'att-wage': el => openWageEditor((AT.boot.workers || []).find(w => w.worker_id === el.dataset.w)),
   'att-forget': async el => {
     const w = (AT.boot.workers || []).find(x => x.worker_id === el.dataset.w); if (!w) return;
     const r = await confirmBox(t('att.forget_q', { name: w.name }), { danger: true, ok: t('att.forget') }); if (!r.ok) return;
@@ -7328,8 +7594,8 @@ Object.assign(ACT, {
 });
 function logoutUser() { S.pin_hash = ''; S.viaMaster = false; sessSet(S.user, S.role, ''); L.sel = S.user; S.inApp = false; try { if (window.KChatUI) KChatUI.stop(); } catch (e) { } showLogin('pin'); }
 Object.assign(I18N.id, {
-  'role.akuntan': 'Akuntan', 'role.pekerja': 'Pekerja harian (absen wajah, tanpa PIN)', 'ro.denied': 'Akun akuntan hanya untuk melihat data', 'ro.hint': 'Akun akuntan: lihat saja, tidak bisa mengubah.', 'set.inv_title': 'Faktur & akuntan', 'set.due_days': 'Jatuh tempo faktur hutang (hari)', 'set.due_bad': 'Isi 0–120 hari', 'set.ak_cost': 'Akuntan boleh melihat harga beli (modal)', 'set.ak_cost_hint': 'Laba tetap hanya untuk pemilik. Tanpa centang, akuntan melihat jumlah barang dan pembayaran tanpa harga beli.',
-  'nav.cold': "Gudang Dingin", 'navs.cold': "Gd. Dingin", 'nav.absensi': "Absensi", 'navs.absensi': "Absensi", 'att.kiosk': "Buka layar absen", 'att.add': "Tambah pekerja", 'att.hint': "Pekerja absen dengan wajah di perangkat toko. Catatan tidak bisa diubah atau dihapus siapa pun; perubahan apa pun pada data terlihat di laporan.", 'att.today': "Hari ini", 'att.workers': "Pekerja", 'att.report': "Laporan", 'att.p_month': "Bulan ini", 'att.p_lastmonth': "Bulan lalu", 'att.p_7d': "7 hari", 'att.show': "Tampilkan", 'att.settings': "Jam kerja", 'att.st_hadir': "Hadir", 'att.st_terlambat': "Terlambat", 'att.st_tidak_hadir': "Tidak hadir", 'att.st_libur': "Libur", 'att.st_belum': "Belum datang", 'att.in': "Masuk", 'att.out': "Pulang", 'att.still_in': "masih di toko", 'att.hours': "Jam kerja", 'att.late': "Terlambat", 'att.present': "Hadir", 'att.absent': "Tidak hadir", 'att.fails': "Gagal wajah", 'att.wage': "Upah/hari", 'att.wage_due': "Upah dibayar", 'att.wage_total': "Total upah", 'att.ok': "Data utuh: {n} catatan, {d} hari disegel — tidak ada yang diubah atau dihapus.", 'att.bad': "PERINGATAN: data absensi berubah", 'att.print': "Cetak laporan (A4)", 'att.csv': "Unduh CSV", 'att.events': "Kejadian ({n})", 'att.ev_fail': "Gagal absen", 'att.ev_enroll': "Daftar wajah", 'att.ev_forget': "Hapus wajah", 'att.ev_worker': "Data pekerja", 'att.ev_setting': "Jam kerja diubah", 'att.face': "Wajah", 'att.enrolled': "Terdaftar", 'att.not_enrolled': "Belum", 'att.enroll': "Daftar wajah", 'att.reenroll': "Ulang", 'att.forget': "Hapus wajah", 'att.forget_q': "Hapus data wajah {name}? Absen lama tetap ada; untuk absen lagi wajahnya harus didaftarkan ulang.", 'att.none': "Belum ada pekerja. Tambahkan pekerja lalu daftarkan wajahnya.", 'att.inactive': "nonaktif", 'att.editor_new': "Pekerja baru", 'att.editor_edit': "Ubah pekerja", 'att.job': "Pekerjaan", 'att.active': "Aktif", 'att.wage_hint': "Hanya pemilik yang melihat upah.", 'att.name_req': "Nama wajib", 'att.start': "Jam masuk", 'att.end': "Jam pulang", 'att.grace': "Toleransi terlambat (menit)", 'att.radius': "Jarak dari toko (m)", 'att.season': "Musim jam panjang", 'att.season_name': "Nama", 'att.season_from': "Dari", 'att.season_to': "Sampai", 'att.season_end': "Jam tutup", 'att.season_hint': "Contoh: dua bulan sebelum Ramadan toko tutup 23:00.", 'att.saved': "Tersimpan", 'att.no_store_loc': "Lokasi toko belum diatur, jadi jarak absen belum dicek. Atur di Pengaturan → Lokasi toko.", 'att.thumb': "Foto wajah",
+  'role.akuntan': 'Akuntan', 'role.pekerja': 'Pekerja harian (absen wajah, tanpa PIN)', 'ro.denied': 'Akun akuntan hanya untuk melihat data', 'ro.hint': 'Akun akuntan: lihat saja, tidak bisa mengubah.', 'set.inv_title': 'Faktur & akuntan', 'set.due_days': 'Jatuh tempo faktur hutang (hari)', 'set.due_bad': 'Isi 0–120 hari', 'set.ak_cost': 'Akuntan & manajer boleh melihat harga beli (modal)', 'set.ak_cost_hint': 'Laba tetap hanya untuk pemilik. Tanpa centang, akuntan dan manajer melihat jumlah barang dan pembayaran tanpa harga beli.',
+  'nav.cold': "Gudang Dingin", 'navs.cold': "Gd. Dingin", 'nav.absensi': "Absensi", 'navs.absensi': "Absensi", 'att.kiosk': "Buka layar absen", 'att.add': "Tambah pekerja", 'att.hint': "Pekerja absen dengan wajah di perangkat toko. Catatan tidak bisa diubah atau dihapus siapa pun; perubahan apa pun pada data terlihat di laporan.", 'att.today': "Hari ini", 'att.workers': "Pekerja", 'att.report': "Laporan", 'att.p_month': "Bulan ini", 'att.p_lastmonth': "Bulan lalu", 'att.p_7d': "7 hari", 'att.show': "Tampilkan", 'att.settings': "Jam kerja", 'att.st_hadir': "Hadir", 'att.st_terlambat': "Terlambat", 'att.st_tidak_hadir': "Tidak hadir", 'att.st_libur': "Libur", 'att.st_belum': "Belum datang", 'att.in': "Masuk", 'att.out': "Pulang", 'att.still_in': "masih di toko", 'att.hours': "Jam kerja", 'att.late': "Terlambat", 'att.present': "Hadir", 'att.absent': "Tidak hadir", 'att.fails': "Gagal wajah", 'att.wage': "Upah/hari", 'att.set_wage': "Atur upah", 'att.wage_due': "Upah dibayar", 'att.wage_total': "Total upah", 'att.ok': "Data utuh: {n} catatan, {d} hari disegel — tidak ada yang diubah atau dihapus.", 'att.bad': "PERINGATAN: data absensi berubah", 'att.print': "Cetak laporan (A4)", 'att.csv': "Unduh CSV", 'att.events': "Kejadian ({n})", 'att.ev_fail': "Gagal absen", 'att.ev_enroll': "Daftar wajah", 'att.ev_forget': "Hapus wajah", 'att.ev_worker': "Data pekerja", 'att.ev_setting': "Jam kerja diubah", 'att.face': "Wajah", 'att.enrolled': "Terdaftar", 'att.not_enrolled': "Belum", 'att.enroll': "Daftar wajah", 'att.reenroll': "Ulang", 'att.forget': "Hapus wajah", 'att.forget_q': "Hapus data wajah {name}? Absen lama tetap ada; untuk absen lagi wajahnya harus didaftarkan ulang.", 'att.none': "Belum ada pekerja. Tambahkan pekerja lalu daftarkan wajahnya.", 'att.inactive': "nonaktif", 'att.editor_new': "Pekerja baru", 'att.editor_edit': "Ubah pekerja", 'att.job': "Pekerjaan", 'att.active': "Aktif", 'att.wage_hint': "Hanya pemilik yang melihat upah.", 'att.name_req': "Nama wajib", 'att.start': "Jam masuk", 'att.end': "Jam pulang", 'att.grace': "Toleransi terlambat (menit)", 'att.radius': "Jarak dari toko (m)", 'att.season': "Musim jam panjang", 'att.season_name': "Nama", 'att.season_from': "Dari", 'att.season_to': "Sampai", 'att.season_end': "Jam tutup", 'att.season_hint': "Contoh: dua bulan sebelum Ramadan toko tutup 23:00.", 'att.saved': "Tersimpan", 'att.no_store_loc': "Lokasi toko belum diatur, jadi jarak absen belum dicek. Atur di Pengaturan → Lokasi toko.", 'att.thumb': "Foto wajah",
   'nav.members': 'Member', 'navs.members': 'Member',
   'mc.title': 'Kode pemilik', 'mc.hint': 'Kode 8 angka yang hanya diketahui pemilik. Dengan kode ini pemilik bisa masuk ke akun siapa pun (misalnya saat kasir lupa PIN atau akun terkunci). Setiap masuk dengan kode ini dicatat di Aktivitas. Kode tidak disimpan di perangkat ini.',
   'mc.code': 'Kode pemilik (8 angka)', 'mc.code2': 'Ulangi kode', 'mc.set': 'Simpan kode pemilik', 'mc.change': 'Ganti kode pemilik', 'mc.has': 'Kode pemilik aktif', 'mc.none': 'Belum ada',
@@ -7341,7 +7607,7 @@ Object.assign(I18N.id, {
   'pc.title': 'Buat PIN baru', 'pc.hint': 'Halo {name}, PIN Anda dibuat oleh pemilik (sementara). Buat PIN sendiri {n} angka — jangan beri tahu siapa pun.',
   'pc.step1': 'Masukkan PIN baru ({n} angka)', 'pc.step2': 'Ulangi PIN baru', 'pc.len': 'PIN harus {n} angka', 'pc.same': 'PIN baru harus berbeda dari PIN sementara', 'pc.save': 'Lanjut', 'pc.cancel': 'Keluar', 'pc.done': 'PIN baru disimpan',
   'tamper.locked': 'Akun ini dikunci setelah percobaan menulis kode. Hanya pemilik yang membukanya.', 'tamper.badge': 'dikunci (coba kode)', 'tamper.unlock': 'Buka kunci', 'tamper.unlock_confirm': 'Buka kunci akun {name}? Hanya lakukan jika Anda yakin.', 'tamper.unlocked': 'Akun {name} dibuka', 'tamper.banner': '{n} akun dikunci setelah percobaan menulis kode. Buka dari Pengaturan → Pengguna.',
-  'usr.must_change': 'belum ganti PIN', 'usr.locked': 'terkunci', 'usr.temp_notice': 'PIN untuk {name} adalah PIN sementara: saat pertama masuk, {name} wajib membuat PIN sendiri.',
+  'usr.must_change': 'belum ganti PIN', 'usr.locked': 'terkunci', 'usr.suspended': 'Nonaktif', 'usr.suspended_ok': '{name} dinonaktifkan — tidak bisa masuk lagi.', 'usr.reenabled': '{name} diaktifkan kembali.', 'usr.temp_notice': 'PIN untuk {name} adalah PIN sementara: saat pertama masuk, {name} wajib membuat PIN sendiri.',
   'usr.temp_hint': 'PIN yang Anda buat untuk orang lain bersifat sementara — mereka membuat PIN sendiri saat pertama masuk.',
   'apr.kind_disc': 'Diskon {pct}', 'apr.new_disc': 'Permintaan diskon dari {cashier} →',
   'dsc.list': 'Harga normal', 'dsc.amount': 'Diskon', 'dsc.total': 'Total dibayar', 'dsc.limit': 'Batas tanpa persetujuan', 'dsc.member': 'member {pct}',
@@ -7366,8 +7632,8 @@ Object.assign(I18N.id, {
   'ak.pindah_stok': 'Pindah stok gudang/rak', 'ak.jual_tanpa_rak': 'Jual melebihi stok rak'
 });
 Object.assign(I18N.ar, {
-  'role.akuntan': 'محاسب', 'role.pekerja': 'عامل يومي (حضور بالوجه، بدون رقم سري)', 'ro.denied': 'حساب المحاسب للاطلاع فقط', 'ro.hint': 'حساب المحاسب: اطلاع فقط دون تعديل.', 'set.inv_title': 'الفواتير والمحاسب', 'set.due_days': 'مهلة سداد فاتورة الدين (أيام)', 'set.due_bad': 'أدخل من 0 إلى 120 يومًا', 'set.ak_cost': 'يسمح للمحاسب برؤية سعر الشراء', 'set.ak_cost_hint': 'الربح يبقى للمالك فقط. بدون التحديد يرى المحاسب الكميات والمدفوعات دون أسعار الشراء.',
-  'nav.cold': "المخازن المبرّدة", 'navs.cold': "المبرّدة", 'nav.absensi': "الحضور", 'navs.absensi': "الحضور", 'att.kiosk': "فتح شاشة الحضور", 'att.add': "إضافة عامل", 'att.hint': "يسجّل العمال حضورهم بالوجه على جهاز المحل. لا يستطيع أحد تعديل السجلات أو حذفها، وأي تغيير في البيانات يظهر في التقرير.", 'att.today': "اليوم", 'att.workers': "العمال", 'att.report': "التقرير", 'att.p_month': "هذا الشهر", 'att.p_lastmonth': "الشهر الماضي", 'att.p_7d': "7 أيام", 'att.show': "عرض", 'att.settings': "ساعات العمل", 'att.st_hadir': "حاضر", 'att.st_terlambat': "متأخر", 'att.st_tidak_hadir': "غائب", 'att.st_libur': "عطلة", 'att.st_belum': "لم يصل بعد", 'att.in': "دخول", 'att.out': "خروج", 'att.still_in': "ما زال في المحل", 'att.hours': "ساعات العمل", 'att.late': "التأخير", 'att.present': "أيام الحضور", 'att.absent': "أيام الغياب", 'att.fails': "محاولات فاشلة", 'att.wage': "الأجر اليومي", 'att.wage_due': "الأجر المستحق", 'att.wage_total': "مجموع الأجور", 'att.ok': "البيانات سليمة: {n} سجل و{d} يوم مختوم — لم يُعدَّل أو يُحذف شيء.", 'att.bad': "تحذير: تغيّرت بيانات الحضور", 'att.print': "طباعة التقرير (A4)", 'att.csv': "تنزيل CSV", 'att.events': "الأحداث ({n})", 'att.ev_fail': "محاولة فاشلة", 'att.ev_enroll': "تسجيل وجه", 'att.ev_forget': "حذف وجه", 'att.ev_worker': "بيانات عامل", 'att.ev_setting': "تغيير ساعات العمل", 'att.face': "الوجه", 'att.enrolled': "مسجّل", 'att.not_enrolled': "غير مسجّل", 'att.enroll': "تسجيل الوجه", 'att.reenroll': "إعادة", 'att.forget': "حذف الوجه", 'att.forget_q': "حذف بيانات وجه {name}؟ يبقى الحضور القديم، وللتسجيل مجددًا يجب تسجيل الوجه من جديد.", 'att.none': "لا يوجد عمال بعد. أضف عاملًا ثم سجّل وجهه.", 'att.inactive': "غير نشط", 'att.editor_new': "عامل جديد", 'att.editor_edit': "تعديل عامل", 'att.job': "العمل", 'att.active': "نشط", 'att.wage_hint': "الأجر يراه المالك فقط.", 'att.name_req': "الاسم مطلوب", 'att.start': "وقت الدخول", 'att.end': "وقت الخروج", 'att.grace': "سماحية التأخير (دقائق)", 'att.radius': "المسافة من المحل (م)", 'att.season': "موسم ساعات أطول", 'att.season_name': "الاسم", 'att.season_from': "من", 'att.season_to': "إلى", 'att.season_end': "وقت الإغلاق", 'att.season_hint': "مثال: قبل رمضان بشهرين يغلق المحل الساعة 23:00.", 'att.saved': "تم الحفظ", 'att.no_store_loc': "موقع المحل غير مضبوط، لذلك لا تُفحص المسافة عند التسجيل. اضبطه من الإعدادات ← موقع المحل.", 'att.thumb': "صورة الوجه",
+  'role.akuntan': 'محاسب', 'role.pekerja': 'عامل يومي (حضور بالوجه، بدون رقم سري)', 'ro.denied': 'حساب المحاسب للاطلاع فقط', 'ro.hint': 'حساب المحاسب: اطلاع فقط دون تعديل.', 'set.inv_title': 'الفواتير والمحاسب', 'set.due_days': 'مهلة سداد فاتورة الدين (أيام)', 'set.due_bad': 'أدخل من 0 إلى 120 يومًا', 'set.ak_cost': 'يسمح للمحاسب والمديرة برؤية سعر الشراء (التكلفة)', 'set.ak_cost_hint': 'الربح يبقى للمالك فقط. بدون التحديد يرى المحاسب والمديرة الكميات والمدفوعات دون أسعار الشراء.',
+  'nav.cold': "المخازن المبرّدة", 'navs.cold': "المبرّدة", 'nav.absensi': "الحضور", 'navs.absensi': "الحضور", 'att.kiosk': "فتح شاشة الحضور", 'att.add': "إضافة عامل", 'att.hint': "يسجّل العمال حضورهم بالوجه على جهاز المحل. لا يستطيع أحد تعديل السجلات أو حذفها، وأي تغيير في البيانات يظهر في التقرير.", 'att.today': "اليوم", 'att.workers': "العمال", 'att.report': "التقرير", 'att.p_month': "هذا الشهر", 'att.p_lastmonth': "الشهر الماضي", 'att.p_7d': "7 أيام", 'att.show': "عرض", 'att.settings': "ساعات العمل", 'att.st_hadir': "حاضر", 'att.st_terlambat': "متأخر", 'att.st_tidak_hadir': "غائب", 'att.st_libur': "عطلة", 'att.st_belum': "لم يصل بعد", 'att.in': "دخول", 'att.out': "خروج", 'att.still_in': "ما زال في المحل", 'att.hours': "ساعات العمل", 'att.late': "التأخير", 'att.present': "أيام الحضور", 'att.absent': "أيام الغياب", 'att.fails': "محاولات فاشلة", 'att.wage': "الأجر اليومي", 'att.set_wage': "تعيين الأجر", 'att.wage_due': "الأجر المستحق", 'att.wage_total': "مجموع الأجور", 'att.ok': "البيانات سليمة: {n} سجل و{d} يوم مختوم — لم يُعدَّل أو يُحذف شيء.", 'att.bad': "تحذير: تغيّرت بيانات الحضور", 'att.print': "طباعة التقرير (A4)", 'att.csv': "تنزيل CSV", 'att.events': "الأحداث ({n})", 'att.ev_fail': "محاولة فاشلة", 'att.ev_enroll': "تسجيل وجه", 'att.ev_forget': "حذف وجه", 'att.ev_worker': "بيانات عامل", 'att.ev_setting': "تغيير ساعات العمل", 'att.face': "الوجه", 'att.enrolled': "مسجّل", 'att.not_enrolled': "غير مسجّل", 'att.enroll': "تسجيل الوجه", 'att.reenroll': "إعادة", 'att.forget': "حذف الوجه", 'att.forget_q': "حذف بيانات وجه {name}؟ يبقى الحضور القديم، وللتسجيل مجددًا يجب تسجيل الوجه من جديد.", 'att.none': "لا يوجد عمال بعد. أضف عاملًا ثم سجّل وجهه.", 'att.inactive': "غير نشط", 'att.editor_new': "عامل جديد", 'att.editor_edit': "تعديل عامل", 'att.job': "العمل", 'att.active': "نشط", 'att.wage_hint': "الأجر يراه المالك فقط.", 'att.name_req': "الاسم مطلوب", 'att.start': "وقت الدخول", 'att.end': "وقت الخروج", 'att.grace': "سماحية التأخير (دقائق)", 'att.radius': "المسافة من المحل (م)", 'att.season': "موسم ساعات أطول", 'att.season_name': "الاسم", 'att.season_from': "من", 'att.season_to': "إلى", 'att.season_end': "وقت الإغلاق", 'att.season_hint': "مثال: قبل رمضان بشهرين يغلق المحل الساعة 23:00.", 'att.saved': "تم الحفظ", 'att.no_store_loc': "موقع المحل غير مضبوط، لذلك لا تُفحص المسافة عند التسجيل. اضبطه من الإعدادات ← موقع المحل.", 'att.thumb': "صورة الوجه",
   'nav.members': 'الأعضاء', 'navs.members': 'الأعضاء',
   'mc.title': 'رمز المالك', 'mc.hint': 'رمز من 8 أرقام يعرفه المالك وحده. به يستطيع المالك الدخول إلى أي حساب (مثلاً إذا نسي الكاشير رقمه أو قُفل الحساب). كل دخول بهذا الرمز يُسجَّل في سجل النشاط. لا يُحفظ الرمز على هذا الجهاز.',
   'mc.code': 'رمز المالك (8 أرقام)', 'mc.code2': 'أعد الرمز', 'mc.set': 'حفظ رمز المالك', 'mc.change': 'تغيير رمز المالك', 'mc.has': 'رمز المالك مفعّل', 'mc.none': 'غير موجود',
@@ -7379,7 +7645,7 @@ Object.assign(I18N.ar, {
   'pc.title': 'أنشئ رقماً سرياً جديداً', 'pc.hint': 'مرحباً {name}، رقمك السري وضعه المالك (مؤقت). أنشئ رقمك الخاص من {n} أرقام — لا تخبر به أحداً.',
   'pc.step1': 'أدخل الرقم الجديد ({n} أرقام)', 'pc.step2': 'أعد الرقم الجديد', 'pc.len': 'الرقم السري {n} أرقام', 'pc.same': 'يجب أن يختلف الرقم الجديد عن المؤقت', 'pc.save': 'متابعة', 'pc.cancel': 'خروج', 'pc.done': 'تم حفظ الرقم الجديد',
   'tamper.locked': 'أُوقف هذا الحساب بعد محاولة كتابة كود. لا يفتحه إلا المالك.', 'tamper.badge': 'موقوف (محاولة كود)', 'tamper.unlock': 'فتح القفل', 'tamper.unlock_confirm': 'فتح قفل حساب {name}؟ لا تفعل إلا إذا كنت متأكدًا.', 'tamper.unlocked': 'فُتح حساب {name}', 'tamper.banner': '{n} حساب أُوقف بعد محاولة كتابة كود. افتحه من الإعدادات ← المستخدمون.',
-  'usr.must_change': 'لم يغيّر الرقم بعد', 'usr.locked': 'مقفل', 'usr.temp_notice': 'رقم {name} مؤقت: عند أول دخول يجب على {name} إنشاء رقمه الخاص.',
+  'usr.must_change': 'لم يغيّر الرقم بعد', 'usr.locked': 'مقفل', 'usr.suspended': 'موقوف', 'usr.suspended_ok': 'تم إيقاف {name} — لا يستطيع الدخول.', 'usr.reenabled': 'تمت إعادة تفعيل {name}.', 'usr.temp_notice': 'رقم {name} مؤقت: عند أول دخول يجب على {name} إنشاء رقمه الخاص.',
   'usr.temp_hint': 'الرقم الذي تضعه لشخص آخر مؤقت — ينشئ رقمه الخاص عند أول دخول.',
   'apr.kind_disc': 'خصم {pct}', 'apr.new_disc': 'طلب خصم من {cashier} ←',
   'dsc.list': 'السعر العادي', 'dsc.amount': 'الخصم', 'dsc.total': 'المبلغ المدفوع', 'dsc.limit': 'الحد دون موافقة', 'dsc.member': 'عضو {pct}',
@@ -7890,7 +8156,12 @@ const pinLenFor = role => role === 'owner' || role === 'manager' ? 6 : 4;
 // v19 (owner's decision): the manager creates/manages only cashier and sales accounts — never an accountant, manager or owner.
 const MGR_ROLES = ['kasir', 'sales'];
 const assignableRoles = () => isOwner() ? ['kasir', 'sales', 'manager', 'akuntan', 'owner'] : MGR_ROLES;
+// Create/edit (role, swap, reset PIN) stays kasir/sales for the manager; the owner edits anyone.
 const canManageUser = u => isOwner() || (S.role === 'manager' && MGR_ROLES.includes(u.role || 'kasir'));
+// v28 (owner's decision): the owner AND the manager may SUSPEND any account — owner any but their own, manager any NON-owner
+// but their own. Only the owner RE-ENABLES. These mirror the server rule in set_account_active.
+const isSelfUser = u => !!(S.user && u.name && u.name.toLowerCase() === S.user.toLowerCase());
+const canSuspend = u => isApprover() && !isSelfUser(u) && (isOwner() || (u.role || 'kasir') !== 'owner');
 function usersPanelHTML() {
   return `<div class="panel"><h3>${esc(t('set.users'))}</h3><div class="pb">
       <div id="st-users" style="margin-bottom:12px">${usersByRoleHTML()}</div>
@@ -7904,12 +8175,17 @@ function usersPanelHTML() {
       <div class="red" id="nu-err"></div><button class="btn primary" data-act="user-add">${ic('plus')} ${esc(t('set.add_user'))}</button></div></div>`;
 }
 function usersByRoleHTML() {
-  return ROLE_ORDER.filter(r => isOwner() || MGR_ROLES.includes(r)).map(r => {
+  // The owner sees every group; the manager sees all NON-owner groups (so any non-owner account can be suspended) but
+  // only edits kasir/sales (role, swap, PIN) and never re-enables. v19 kept the manager to kasir/sales for edit; v28
+  // broadens the manager's SUSPEND reach to any non-owner, so the groups are now visible to the manager too.
+  return ROLE_ORDER.filter(r => isOwner() || r !== 'owner').map(r => {
     const list = S.users.filter(u => (u.role || 'kasir') === r);
     return `<div class="usr-group" data-role-group="${r}"><h4 style="margin:10px 0 6px">${esc(t('usr.group_' + r))} <span class="muted small">(${list.length})</span></h4>
-      ${list.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>${list.map(u => `<tr data-user="${esc(u.name)}"><td><b>${esc(u.name)}</b> ${u.active === false ? `<span class="badge red">${esc(t('inactive'))}</span>` : ''}${u.must_change ? ` <span class="badge amber" data-must="1">${esc(t('usr.must_change'))}</span>` : ''}${u.locked ? ` <span class="badge red" data-locked="1">${esc(t('usr.locked'))}</span>` : ''}${u.tamper ? ` <span class="badge red" data-tamper="1">${ic('lock')} ${esc(t('tamper.badge'))}</span>` : ''}${u.has_master ? ` <span class="badge gold" data-has-master="1">${ic('lock')} ${esc(t('mc.has'))}</span>` : ''}<br>
-        <select class="input" style="width:auto;min-height:32px;padding:2px 6px;margin-top:4px" data-user-role="${esc(u.name)}" aria-label="${esc(t('set.role'))}">${assignableRoles().map(x => `<option value="${x}" ${u.role === x ? 'selected' : ''}>${esc(t('role.' + x))}</option>`).join('')}</select></td>
-        <td class="r" style="white-space:nowrap">${u.tamper && isOwner() ? `<button class="btn xs danger" data-act="user-unlock" data-name="${esc(u.name)}">${ic('lock')} ${esc(t('tamper.unlock'))}</button> ` : ''}<button class="btn xs" data-act="user-swap" data-name="${esc(u.name)}">${ic('users')} ${esc(t('usr.swap'))}</button> <button class="btn xs" data-act="user-pin" data-name="${esc(u.name)}">${esc(t('set.reset_pin'))}</button> <button class="btn xs ${u.active === false ? '' : 'danger'}" data-act="user-toggle" data-name="${esc(u.name)}">${esc(u.active === false ? t('set.activate') : t('set.deactivate'))}</button></td></tr>`).join('')}</tbody></table></div>`
+      ${list.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>${list.map(u => `<tr data-user="${esc(u.name)}"><td><b>${esc(u.name)}</b> ${u.active === false ? `<span class="badge red" data-suspended="1">${esc(t('usr.suspended'))}</span>` : ''}${u.must_change ? ` <span class="badge amber" data-must="1">${esc(t('usr.must_change'))}</span>` : ''}${u.locked ? ` <span class="badge red" data-locked="1">${esc(t('usr.locked'))}</span>` : ''}${u.tamper ? ` <span class="badge red" data-tamper="1">${ic('lock')} ${esc(t('tamper.badge'))}</span>` : ''}${u.has_master ? ` <span class="badge gold" data-has-master="1">${ic('lock')} ${esc(t('mc.has'))}</span>` : ''}${canManageUser(u) ? `<br>
+        <select class="input" style="width:auto;min-height:32px;padding:2px 6px;margin-top:4px" data-user-role="${esc(u.name)}" aria-label="${esc(t('set.role'))}">${assignableRoles().map(x => `<option value="${x}" ${u.role === x ? 'selected' : ''}>${esc(t('role.' + x))}</option>`).join('')}</select>` : ''}</td>
+        <td class="r" style="white-space:nowrap">${u.tamper && isOwner() ? `<button class="btn xs danger" data-act="user-unlock" data-name="${esc(u.name)}">${ic('lock')} ${esc(t('tamper.unlock'))}</button> ` : ''}${canManageUser(u) ? `<button class="btn xs" data-act="user-swap" data-name="${esc(u.name)}">${ic('users')} ${esc(t('usr.swap'))}</button> <button class="btn xs" data-act="user-pin" data-name="${esc(u.name)}">${esc(t('set.reset_pin'))}</button> ` : ''}${u.active === false
+          ? (isOwner() ? `<button class="btn xs" data-act="user-reenable" data-name="${esc(u.name)}">${ic('check')} ${esc(t('set.reenable'))}</button>` : '')
+          : (canSuspend(u) ? `<button class="btn xs danger" data-act="user-suspend" data-name="${esc(u.name)}">${esc(t('set.suspend'))}</button>` : '')}</td></tr>`).join('')}</tbody></table></div>`
       : `<div class="small muted" data-empty-group>${esc(t(r === 'akuntan' ? 'usr.akuntan_note' : 'usr.group_empty'))}</div>`}</div>`;
   }).join('');
 }
