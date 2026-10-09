@@ -2120,17 +2120,20 @@ switch (req.action) {
     if (!pf.found) return fail('NOT_FOUND', 'Barang masuk tidak ditemukan');
     if (!pf.changes.length) return fail('INVALID', 'Tidak ada perubahan');
     const summary = fixSummary(no, pf.changes);
-    if (isApprover) {
+    // Owner monitoring: only the owner applies a goods-in correction directly.
+    // The manager REQUESTS it (owner approves); the cashier requests it (manager approves).
+    if (role === 'owner') {
       const stock = applyPurchaseFix(no, pf.changes, reason, me.name);
       logAct('koreksi_masuk', summary + ' | ' + reason, no, pf.changes.reduce(function (a1, c) { return a1 + c.d_total; }, 0), 'warn');
-      return done({ ok: true, applied: true, changes: role === 'owner' ? pf.changes : pf.changes.map(qtyOnly), stock: stock });
+      return done({ ok: true, applied: true, changes: pf.changes, stock: stock });
     }
-    const a = newApproval({ kind: 'purchase_fix', approver_role: 'manager', ref: no, note: reason, summary: summary.slice(0, 1500),
+    const need = role === 'manager' ? 'owner' : 'manager';
+    const a = newApproval({ kind: 'purchase_fix', approver_role: need, ref: no, note: reason, summary: summary.slice(0, 1500),
       total: pf.changes.reduce(function (a1, c) { return a1 + c.to_total; }, 0),
       payload: JSON.stringify({ purchase_no: no, lines: data.lines, reason: reason, changes: pf.changes }) });
     ops.approvals.push(forWrite(a, -1));
     logAct('minta_koreksi', 'Minta ' + summary + ' | ' + reason, no, 0, 'warn');
-    return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a), changes: pf.changes.map(qtyOnly) });
+    return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a), approver_role: need, changes: isApprover ? pf.changes : pf.changes.map(qtyOnly) });
   }
 
   case 'list_activity': {

@@ -97,15 +97,15 @@ test('customer return from the sales history: form → manager-level request →
 });
 
 test('supplier return from the goods-in history: carrier, outgoing note, photo; value only for the owner; above the limit only the owner decides', async ({ page }) => {
-  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await login(page, 'Jihan', '2222', '', { stay: true }); // the manager starts supplier returns; the owner only watches & decides
   let db = await getDb(page);
   const ajwa = P(db, /Kurma Ajwa/);
-  const ph = await asUser(page, 'Pemilik', '1234', 'scan_purchase', { image_base64: 'AAAA', mime: 'image/jpeg' });
+  const ph = await asUser(page, 'Jihan', '2222', 'scan_purchase', { image_base64: 'AAAA', mime: 'image/jpeg' });
   // carrier is required (CARRIER_REQUIRED), public transport needs its number
   const base = { purchase_date: jktToday(), supplier: 'PT Kurma Nusantara', photo_id: ph.photo_id, items: [{ product_id: ajwa.id, qty: 10, cost_price: 130000, exp_none: true }], mismatch_reason: 'uji retur' };
-  expect(await asUser(page, 'Pemilik', '1234', 'save_purchase', base)).toMatchObject({ error: 'CARRIER_REQUIRED' });
-  expect(await asUser(page, 'Pemilik', '1234', 'save_purchase', Object.assign({ carrier: { type: 'umum', kind: 'ojek' } }, base))).toMatchObject({ error: 'CARRIER_REQUIRED', message: expect.stringContaining('nomor kendaraan') });
-  const pu = await asUser(page, 'Pemilik', '1234', 'save_purchase', Object.assign({ carrier: CARRIER }, base));
+  expect(await asUser(page, 'Jihan', '2222', 'save_purchase', base)).toMatchObject({ error: 'CARRIER_REQUIRED' });
+  expect(await asUser(page, 'Jihan', '2222', 'save_purchase', Object.assign({ carrier: { type: 'umum', kind: 'ojek' } }, base))).toMatchObject({ error: 'CARRIER_REQUIRED', message: expect.stringContaining('nomor kendaraan') });
+  const pu = await asUser(page, 'Jihan', '2222', 'save_purchase', Object.assign({ carrier: CARRIER }, base));
   db = await getDb(page);
   expect(db.purchases.filter(r => r.purchase_no === pu.purchase_no)[0]).toMatchObject({ carrier_type: 'pemasok', carrier_name: 'Pak Darto', carrier_vehicle: 'B 9012 TTF' });
   expect(db.activity.filter(a => a.kind === 'masuk').slice(-1)[0].summary).toContain('dibawa sopir pemasok Pak Darto B 9012 TTF');
@@ -141,14 +141,11 @@ test('supplier return from the goods-in history: carrier, outgoing note, photo; 
   expect(ap).toMatchObject({ approver_role: 'manager', total: 260000 });
   expect(db.photos.find(x => x.photo_id === rec.photo_id)).toMatchObject({ kind: 'retur', ref: pu.purchase_no }); // v17: own photo kind
   expect(rec).toMatchObject({ kind: 'pemasok', ref: pu.purchase_no, out_doc_no: 'SJ/07-A', carrier_type: 'umum', carrier_vehicle: 'B 4455 KJT', carrier_phone: '6281377778888', value: 260000 });
-  await expect(page.locator(`.rt-card[data-rt="${rec.return_id}"] [data-value]`)).toHaveText(rp(260000));
 
-  // manager: card and list without values; approves
-  await relogin(page, 'Jihan', '2222');
+  // the manager who started it sees the card and list WITHOUT values (own API view stripped too)
   const mca = await asUser(page, 'Jihan', '2222', 'check_approval', { request_id: ap.request_id });
   expect(mca.approval.total).toBe(0);
   expect(JSON.parse(mca.approval.payload).value).toBeUndefined();
-  await nav(page, 'retur');
   await expect(page.locator(`.rt-card[data-rt="${rec.return_id}"] [data-out-doc]`)).toContainText('SJ/07-A');
   await expect(page.locator(`.rt-card[data-rt="${rec.return_id}"] [data-value]`)).toHaveCount(0);
   await nav(page, 'approvals');
@@ -157,8 +154,17 @@ test('supplier return from the goods-in history: carrier, outgoing note, photo; 
   await expect(mc.locator('[data-v="value"]')).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: path.join(SHOTS, 'phone-approvals-retur-supplier-manager.png') });
-  await mc.locator('[data-d="approved"]').click();
-  await expect(mc).toHaveCount(0);
+  await page.setViewportSize({ width: 1366, height: 768 });
+
+  // the owner sees the value (value only for the owner) and decides the return
+  await relogin(page, 'Pemilik', '1234');
+  await nav(page, 'retur');
+  await expect(page.locator(`.rt-card[data-rt="${rec.return_id}"] [data-value]`)).toHaveText(rp(260000));
+  await nav(page, 'approvals');
+  const oc0 = page.locator(`.apr-card[data-req="${ap.request_id}"]`);
+  await expect(oc0.locator('[data-v="value"]')).toBeVisible();
+  await oc0.locator('[data-d="approved"]').click();
+  await expect(oc0).toHaveCount(0);
   db = await getDb(page);
   expect(P(db, /Kurma Ajwa/).stock).toBe(stock0 - 2);
   expect(db.purchases.filter(r => r.purchase_no === rec.return_id)).toEqual([expect.objectContaining({ qty: -2, total: -260000, match_status: 'retur', supplier: 'PT Kurma Nusantara' })]);
@@ -168,6 +174,8 @@ test('supplier return from the goods-in history: carrier, outgoing note, photo; 
   await editDb(page, `db.settings.return_owner_min_value = 1000000;`); // as if agreed earlier (see the agreement test)
   const big = await asUser(page, 'Jihan', '2222', 'request_return', { kind: 'pemasok', purchase_no: pu.purchase_no, lines: [{ product_id: ajwa.id, qty: 8 }], reason_code: 'rusak', out_doc_no: 'SJ2', photo_id: ph.photo_id, carrier: CARRIER });
   expect(big.approver_role).toBe('owner');
+  // the manager sees "needs owner" and cannot decide the big return
+  await relogin(page, 'Jihan', '2222');
   await page.evaluate(() => pollApprovals());
   await nav(page, 'approvals');
   const oc = page.locator(`.apr-card[data-req="${big.request_id}"]`);
@@ -194,8 +202,9 @@ test('settings: return limits, fee, photo and carrier switches; goods-in form ne
   const s = await asUser(page, 'Pemilik', '1234', 'save_sale', { client_id: 'rf-' + Date.now(), sale_date: jktToday(), items: [{ product_id: kis.id, qty: 2, unit_price: kis.retail_price, price_type: 'eceran' }], discount: 0, payment_method: 'tunai', paid_amount: 2 * kis.retail_price });
   const rq = await asUser(page, 'Siti', '1111', 'request_return', { kind: 'pelanggan', invoice_no: s.invoice_no, lines: [{ product_id: kis.id, qty: 2, condition: 'baik' }], reason_code: 'berubah_pikiran', refund_method: 'tunai' });
   expect(JSON.parse(rq.approval.payload)).toMatchObject({ fee_pct: 5, fee: Math.round(2 * kis.retail_price * 0.05), refund: 2 * kis.retail_price - Math.round(2 * kis.retail_price * 0.05) });
-  // goods-in form: the save button waits for the carrier; Teman needs a name
-  await page.evaluate(() => saveSettings({ require_purchase_photo: false }));
+  // goods-in form: the save button waits for the carrier; Teman needs a name (the manager enters goods-in)
+  await page.evaluate(() => saveSettings({ require_purchase_photo: false })); // owner-only setting
+  await switchUser(page, 'Jihan', '2222');
   await nav(page, 'purchases');
   await page.fill('#pu-q', 'almond');
   await page.locator('[data-act="pu-add"]').first().click();
@@ -211,6 +220,7 @@ test('settings: return limits, fee, photo and carrier switches; goods-in form ne
   await page.locator('#pu-carrier').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(SHOTS, 'phone-goodsin-carrier.png') });
   await page.setViewportSize({ width: 1366, height: 768 });
+  await switchUser(page, 'Pemilik', '1234'); // back to the owner for the owner-only validations below
   // product names: only allowed characters reach the field; the server refuses the rest with its message
   await nav(page, 'products');
   await page.click('[data-act="prod-new"]');
