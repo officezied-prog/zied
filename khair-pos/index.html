@@ -431,6 +431,8 @@ const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|tog
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
+// Purchase / cost price (never profit) is visible to the owner always, and to the manager / accountant when the owner allows it (akuntan_sees_cost).
+const canSeeCost = () => isOwner() || ((isApprover() || isAudit()) && settings().akuntan_sees_cost === true);
 const surveyQuestions = () => { const q = settings().survey_questions; return Array.isArray(q) ? q.filter(x => String(x).trim()) : DEFAULT_SURVEY; };
 
 /* ========== i18n ========== */
@@ -1547,7 +1549,7 @@ function localExitRequired(v) {
   return (minT > 0 && v.total >= minT) || (minQ > 0 && v.lines.some(l => num(l.line ? l.line.qty : l.qty) >= minQ));
 }
 function applyStock(list) {
-  (list || []).forEach(s => { const p = prodById(s.product_id); if (p) { const sh0 = shelfOf(p); p.stock = roundQty(num(s.stock) - pendingQty(p.id)); p.shop_stock = s.shop_stock != null ? roundQty(num(s.shop_stock) - pendingQty(p.id)) : Math.min(sh0, p.stock); if (s.cost_price != null && isOwner()) p.cost_price = int(s.cost_price); if (s.exp_date !== undefined) p.exp_date = s.exp_date; if (s.exp_none !== undefined) p.exp_none = s.exp_none; } });
+  (list || []).forEach(s => { const p = prodById(s.product_id); if (p) { const sh0 = shelfOf(p); p.stock = roundQty(num(s.stock) - pendingQty(p.id)); p.shop_stock = s.shop_stock != null ? roundQty(num(s.shop_stock) - pendingQty(p.id)) : Math.min(sh0, p.stock); if (s.cost_price != null && canSeeCost()) p.cost_price = int(s.cost_price); if (s.exp_date !== undefined) p.exp_date = s.exp_date; if (s.exp_none !== undefined) p.exp_none = s.exp_none; } });
   saveCache();
 }
 function finishSale(rc) {
@@ -3132,12 +3134,12 @@ function drawProducts() {
   $('#pr-list').innerHTML = `<p class="muted small">${esc(t('n_products', { n: list.length }))}</p>
     <div class="tbl-wrap"><table class="tbl" id="prod-table"><thead><tr>
       <th>${esc(t('product'))}</th><th class="hide-phone">${esc(t('category'))}</th>
-      ${own ? `<th class="r" data-col="cost">${esc(t('cost'))}</th>` : ''}
+      ${canSeeCost() ? `<th class="r" data-col="cost">${esc(t('cost'))}</th>` : ''}
       <th class="r">${esc(t('eceran'))}</th><th class="r">${esc(t('grosir'))}</th><th class="r">${esc(t('stock'))}</th><th></th></tr></thead>
     <tbody>${shown.map(p => `<tr class="${own ? 'click' : ''}" ${own ? `data-act="prod-edit" data-id="${esc(p.id)}"` : ''} data-pid="${esc(p.id)}">
       <td><div class="row" style="align-items:flex-start">${productImg(p) ? `<img class="pthumb" src="${esc(productImg(p))}" alt="">` : (p.image_updated ? '<span class="pthumb"></span>' : '')}<div><b>${esc(p.name)}</b>${p.active === false ? ` <span class="badge gray">${esc(t('inactive'))}</span>` : ''}<div class="small muted">${esc(p.sku || '—')} · ${esc(p.unit || '')}</div></div></div></td>
       <td class="hide-phone">${esc(p.category || '')}</td>
-      ${own ? `<td class="r num">${fmtRp(p.cost_price)}${p.retail_price ? `<div class="small muted">${fmtPct((p.retail_price - p.cost_price) / p.retail_price * 100)}</div>` : ''}</td>` : ''}
+      ${canSeeCost() ? `<td class="r num">${fmtRp(p.cost_price)}${p.retail_price ? `<div class="small muted">${fmtPct((p.retail_price - p.cost_price) / p.retail_price * 100)}</div>` : ''}</td>` : ''}
       <td class="r num">${fmtRp(p.retail_price)}</td>
       <td class="r num">${int(p.wholesale_price) ? fmtRp(p.wholesale_price) + `<div class="small muted">≥ ${fmtQty(p.wholesale_min_qty)}</div>` : '—'}</td>
       <td class="r num"><b class="${isLow(p) || prodExpState(p) === 'expired' || prodExpState(p) === 'soon' ? 'red' : ''}">${fmtQty(p.stock)}</b><div class="small muted">min ${fmtQty(p.min_stock)}</div>${prodExpBadge(p)}</td>
@@ -3428,7 +3430,7 @@ RENDER.purchases = function () {
       <div class="panel"><h3>${esc(t('pu.history'))}</h3><div id="pu-recent" class="pb"><div class="muted">${esc(t('loading'))}</div></div></div>`;
     loadRecentPurchases(); return;
   }
-  const own = isOwner();
+  const own = canSeeCost();
   if (!PU.date) PU.date = today();
   const total = sum(PU.lines, l => Math.round(num(l.qty) * int(l.cost)));
   const prodOptions = sel => `<option value="">— ${esc(t('pu.pick_product'))} —</option>` + S.products.filter(p => p.active !== false).slice().sort((a, b) => a.name.localeCompare(b.name)).map(p => `<option value="${esc(p.id)}" ${p.id == sel ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
@@ -3524,7 +3526,7 @@ async function scanPurchasePhoto(file) {
 function puAdd(p) {
   const ex = PU.lines.find(l => l.product_id == p.id && !l.ext);
   if (ex) ex.qty = roundQty(num(ex.qty) + 1);
-  else PU.lines.push({ product_id: p.id, name: p.name, qty: 1, cost: isOwner() ? int(p.cost_price) : 0 });
+  else PU.lines.push({ product_id: p.id, name: p.name, qty: 1, cost: canSeeCost() ? int(p.cost_price) : 0 });
   PU.q = ''; PU.result = null; savePuDraft(); RENDER.purchases();
   const idx = PU.lines.findIndex(l => l.product_id == p.id && !l.ext);
   const inp = $$('[data-pu-qty]')[idx]; if (inp) { inp.focus(); inp.select(); }
@@ -3556,7 +3558,7 @@ async function savePurchase(mismatchReason) {
     PU.mismatch = null;
     applyStock(r.stock);
     const sups = store.get('suppliers', []); if (PU.supplier.trim() && !sups.includes(PU.supplier.trim())) { sups.unshift(PU.supplier.trim()); store.set('suppliers', sups.slice(0, 30)); }
-    const own = isOwner();
+    const own = canSeeCost();
     const mst = (r.match || {}).status || (PU.photo_id ? '' : 'tanpa_foto');
     PU.result = `<div class="panel" style="margin-bottom:16px;border-color:var(--ok)" id="pu-res" data-no="${esc(r.purchase_no || '')}"><h3>${ic('box')} ${esc(t('pu.saved'))}${r.purchase_no ? ` · <b id="pu-no">${esc(r.purchase_no)}</b>` : ''} ${matchBadge(mst, 'pu-match-badge')}</h3><div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('stock'))}</th>${own ? `<th class="r">${esc(t('pu.new_cost'))}</th>` : ''}</tr></thead><tbody>
       ${(r.stock || []).map(s => { const p = prodById(s.product_id) || {}; const b = before.get(s.product_id) || before.get(Number(s.product_id)) || {}; return `<tr><td>${esc(p.name || s.product_id)}</td><td class="r num">${fmtQty(b.stock)} → <b>${fmtQty(s.stock)}</b></td>${own ? `<td class="r num" data-newcost="${esc(s.product_id)}">${b.cost != null ? fmtRp(b.cost) + ' → ' : ''}<b>${fmtRp(s.cost_price)}</b></td>` : ''}</tr>`; }).join('')}</tbody></table></div></div>`;
@@ -4902,7 +4904,7 @@ function gdDraw(full) {
 
 /* ---- Ringkasan ---- */
 function gdOverviewHTML() {
-  const rows = gdRows(), own = isOwner(), T = today();
+  const rows = gdRows(), own = canSeeCost(), T = today();
   const pos = r => Math.max(0, r.stock);
   const cnt = st => rows.filter(r => r.status === st).length;
   const expN = GD.year ? rows.filter(r => r.exp).length : null;
@@ -4963,7 +4965,7 @@ function gdDrawListRows() {
   const sorts = { name: byName, stock: (a, b) => a.stock - b.stock || byName(a, b), stock_desc: (a, b) => b.stock - a.stock || byName(a, b), days: (a, b) => (a.days ?? Infinity) - (b.days ?? Infinity) || a.stock - b.stock || byName(a, b) };
   rows.sort(sorts[GD.sort] || byName);
   const waitYear = (GD.status === 'kedaluwarsa' || GD.group === 'expiry' || GD.group === 'supplier') && !GD.year;
-  const own = isOwner(), ctx = GD.group ? gdGroupCtx() : null;
+  const own = canSeeCost(), ctx = GD.group ? gdGroupCtx() : null;
   const rowHTML = r => `<tr class="click ${r.gudang > 0 && r.shelf <= 0 ? 'shelf-empty' : ''}" data-act="gd-card" data-id="${esc(r.p.id)}" data-pid="${esc(r.p.id)}">
       <td><b>${esc(r.p.name)}</b><div class="small muted">${esc(r.p.category || '')}${r.exp ? ` · ${esc(t('gd.exp_short'))} ${esc(fmtDate(r.exp.exp))}` : ''}${num(r.p.repack_from) > 0 ? ` · <span class="badge blue">${esc(t('gd.pk_pack'))}</span>` : ''}</div></td>
       <td class="r num" data-col="stock"><b class="${r.stock <= 0 ? 'red' : ''}">${fmtQty(r.stock)}</b> <span class="small muted">${esc(r.p.unit || '')}</span></td>
@@ -5197,7 +5199,7 @@ async function gdoSubmit() {
 }
 /** Approvals inbox card for kind 'opname': lines with system / counted / difference and its value. */
 function opnameAprHTML(a, pl) {
-  const own = isOwner(), lines = (pl.lines || []).slice().sort((x, y) => !!num(y.diff) - !!num(x.diff) || String(x.name).localeCompare(String(y.name)));
+  const own = canSeeCost(), lines = (pl.lines || []).slice().sort((x, y) => !!num(y.diff) - !!num(x.diff) || String(x.name).localeCompare(String(y.name)));
   const diffs = lines.filter(l => num(l.diff)), same = lines.filter(l => !num(l.diff));
   let vr = 0, vc = 0;
   const row = l => { const p = prodById(l.product_id) || {}, d = num(l.diff), r = Math.round(d * int(p.retail_price)), c = Math.round(d * int(p.cost_price)); vr += r; vc += c;
@@ -7447,7 +7449,7 @@ Object.assign(ACT, {
 });
 function logoutUser() { S.pin_hash = ''; S.viaMaster = false; sessSet(S.user, S.role, ''); L.sel = S.user; S.inApp = false; try { if (window.KChatUI) KChatUI.stop(); } catch (e) { } showLogin('pin'); }
 Object.assign(I18N.id, {
-  'role.akuntan': 'Akuntan', 'role.pekerja': 'Pekerja harian (absen wajah, tanpa PIN)', 'ro.denied': 'Akun akuntan hanya untuk melihat data', 'ro.hint': 'Akun akuntan: lihat saja, tidak bisa mengubah.', 'set.inv_title': 'Faktur & akuntan', 'set.due_days': 'Jatuh tempo faktur hutang (hari)', 'set.due_bad': 'Isi 0–120 hari', 'set.ak_cost': 'Akuntan boleh melihat harga beli (modal)', 'set.ak_cost_hint': 'Laba tetap hanya untuk pemilik. Tanpa centang, akuntan melihat jumlah barang dan pembayaran tanpa harga beli.',
+  'role.akuntan': 'Akuntan', 'role.pekerja': 'Pekerja harian (absen wajah, tanpa PIN)', 'ro.denied': 'Akun akuntan hanya untuk melihat data', 'ro.hint': 'Akun akuntan: lihat saja, tidak bisa mengubah.', 'set.inv_title': 'Faktur & akuntan', 'set.due_days': 'Jatuh tempo faktur hutang (hari)', 'set.due_bad': 'Isi 0–120 hari', 'set.ak_cost': 'Akuntan & manajer boleh melihat harga beli (modal)', 'set.ak_cost_hint': 'Laba tetap hanya untuk pemilik. Tanpa centang, akuntan dan manajer melihat jumlah barang dan pembayaran tanpa harga beli.',
   'nav.cold': "Gudang Dingin", 'navs.cold': "Gd. Dingin", 'nav.absensi': "Absensi", 'navs.absensi': "Absensi", 'att.kiosk': "Buka layar absen", 'att.add': "Tambah pekerja", 'att.hint': "Pekerja absen dengan wajah di perangkat toko. Catatan tidak bisa diubah atau dihapus siapa pun; perubahan apa pun pada data terlihat di laporan.", 'att.today': "Hari ini", 'att.workers': "Pekerja", 'att.report': "Laporan", 'att.p_month': "Bulan ini", 'att.p_lastmonth': "Bulan lalu", 'att.p_7d': "7 hari", 'att.show': "Tampilkan", 'att.settings': "Jam kerja", 'att.st_hadir': "Hadir", 'att.st_terlambat': "Terlambat", 'att.st_tidak_hadir': "Tidak hadir", 'att.st_libur': "Libur", 'att.st_belum': "Belum datang", 'att.in': "Masuk", 'att.out': "Pulang", 'att.still_in': "masih di toko", 'att.hours': "Jam kerja", 'att.late': "Terlambat", 'att.present': "Hadir", 'att.absent': "Tidak hadir", 'att.fails': "Gagal wajah", 'att.wage': "Upah/hari", 'att.wage_due': "Upah dibayar", 'att.wage_total': "Total upah", 'att.ok': "Data utuh: {n} catatan, {d} hari disegel — tidak ada yang diubah atau dihapus.", 'att.bad': "PERINGATAN: data absensi berubah", 'att.print': "Cetak laporan (A4)", 'att.csv': "Unduh CSV", 'att.events': "Kejadian ({n})", 'att.ev_fail': "Gagal absen", 'att.ev_enroll': "Daftar wajah", 'att.ev_forget': "Hapus wajah", 'att.ev_worker': "Data pekerja", 'att.ev_setting': "Jam kerja diubah", 'att.face': "Wajah", 'att.enrolled': "Terdaftar", 'att.not_enrolled': "Belum", 'att.enroll': "Daftar wajah", 'att.reenroll': "Ulang", 'att.forget': "Hapus wajah", 'att.forget_q': "Hapus data wajah {name}? Absen lama tetap ada; untuk absen lagi wajahnya harus didaftarkan ulang.", 'att.none': "Belum ada pekerja. Tambahkan pekerja lalu daftarkan wajahnya.", 'att.inactive': "nonaktif", 'att.editor_new': "Pekerja baru", 'att.editor_edit': "Ubah pekerja", 'att.job': "Pekerjaan", 'att.active': "Aktif", 'att.wage_hint': "Hanya pemilik yang melihat upah.", 'att.name_req': "Nama wajib", 'att.start': "Jam masuk", 'att.end': "Jam pulang", 'att.grace': "Toleransi terlambat (menit)", 'att.radius': "Jarak dari toko (m)", 'att.season': "Musim jam panjang", 'att.season_name': "Nama", 'att.season_from': "Dari", 'att.season_to': "Sampai", 'att.season_end': "Jam tutup", 'att.season_hint': "Contoh: dua bulan sebelum Ramadan toko tutup 23:00.", 'att.saved': "Tersimpan", 'att.no_store_loc': "Lokasi toko belum diatur, jadi jarak absen belum dicek. Atur di Pengaturan → Lokasi toko.", 'att.thumb': "Foto wajah",
   'nav.members': 'Member', 'navs.members': 'Member',
   'mc.title': 'Kode pemilik', 'mc.hint': 'Kode 8 angka yang hanya diketahui pemilik. Dengan kode ini pemilik bisa masuk ke akun siapa pun (misalnya saat kasir lupa PIN atau akun terkunci). Setiap masuk dengan kode ini dicatat di Aktivitas. Kode tidak disimpan di perangkat ini.',
@@ -7485,7 +7487,7 @@ Object.assign(I18N.id, {
   'ak.pindah_stok': 'Pindah stok gudang/rak', 'ak.jual_tanpa_rak': 'Jual melebihi stok rak'
 });
 Object.assign(I18N.ar, {
-  'role.akuntan': 'محاسب', 'role.pekerja': 'عامل يومي (حضور بالوجه، بدون رقم سري)', 'ro.denied': 'حساب المحاسب للاطلاع فقط', 'ro.hint': 'حساب المحاسب: اطلاع فقط دون تعديل.', 'set.inv_title': 'الفواتير والمحاسب', 'set.due_days': 'مهلة سداد فاتورة الدين (أيام)', 'set.due_bad': 'أدخل من 0 إلى 120 يومًا', 'set.ak_cost': 'يسمح للمحاسب برؤية سعر الشراء', 'set.ak_cost_hint': 'الربح يبقى للمالك فقط. بدون التحديد يرى المحاسب الكميات والمدفوعات دون أسعار الشراء.',
+  'role.akuntan': 'محاسب', 'role.pekerja': 'عامل يومي (حضور بالوجه، بدون رقم سري)', 'ro.denied': 'حساب المحاسب للاطلاع فقط', 'ro.hint': 'حساب المحاسب: اطلاع فقط دون تعديل.', 'set.inv_title': 'الفواتير والمحاسب', 'set.due_days': 'مهلة سداد فاتورة الدين (أيام)', 'set.due_bad': 'أدخل من 0 إلى 120 يومًا', 'set.ak_cost': 'يسمح للمحاسب والمديرة برؤية سعر الشراء (التكلفة)', 'set.ak_cost_hint': 'الربح يبقى للمالك فقط. بدون التحديد يرى المحاسب والمديرة الكميات والمدفوعات دون أسعار الشراء.',
   'nav.cold': "المخازن المبرّدة", 'navs.cold': "المبرّدة", 'nav.absensi': "الحضور", 'navs.absensi': "الحضور", 'att.kiosk': "فتح شاشة الحضور", 'att.add': "إضافة عامل", 'att.hint': "يسجّل العمال حضورهم بالوجه على جهاز المحل. لا يستطيع أحد تعديل السجلات أو حذفها، وأي تغيير في البيانات يظهر في التقرير.", 'att.today': "اليوم", 'att.workers': "العمال", 'att.report': "التقرير", 'att.p_month': "هذا الشهر", 'att.p_lastmonth': "الشهر الماضي", 'att.p_7d': "7 أيام", 'att.show': "عرض", 'att.settings': "ساعات العمل", 'att.st_hadir': "حاضر", 'att.st_terlambat': "متأخر", 'att.st_tidak_hadir': "غائب", 'att.st_libur': "عطلة", 'att.st_belum': "لم يصل بعد", 'att.in': "دخول", 'att.out': "خروج", 'att.still_in': "ما زال في المحل", 'att.hours': "ساعات العمل", 'att.late': "التأخير", 'att.present': "أيام الحضور", 'att.absent': "أيام الغياب", 'att.fails': "محاولات فاشلة", 'att.wage': "الأجر اليومي", 'att.wage_due': "الأجر المستحق", 'att.wage_total': "مجموع الأجور", 'att.ok': "البيانات سليمة: {n} سجل و{d} يوم مختوم — لم يُعدَّل أو يُحذف شيء.", 'att.bad': "تحذير: تغيّرت بيانات الحضور", 'att.print': "طباعة التقرير (A4)", 'att.csv': "تنزيل CSV", 'att.events': "الأحداث ({n})", 'att.ev_fail': "محاولة فاشلة", 'att.ev_enroll': "تسجيل وجه", 'att.ev_forget': "حذف وجه", 'att.ev_worker': "بيانات عامل", 'att.ev_setting': "تغيير ساعات العمل", 'att.face': "الوجه", 'att.enrolled': "مسجّل", 'att.not_enrolled': "غير مسجّل", 'att.enroll': "تسجيل الوجه", 'att.reenroll': "إعادة", 'att.forget': "حذف الوجه", 'att.forget_q': "حذف بيانات وجه {name}؟ يبقى الحضور القديم، وللتسجيل مجددًا يجب تسجيل الوجه من جديد.", 'att.none': "لا يوجد عمال بعد. أضف عاملًا ثم سجّل وجهه.", 'att.inactive': "غير نشط", 'att.editor_new': "عامل جديد", 'att.editor_edit': "تعديل عامل", 'att.job': "العمل", 'att.active': "نشط", 'att.wage_hint': "الأجر يراه المالك فقط.", 'att.name_req': "الاسم مطلوب", 'att.start': "وقت الدخول", 'att.end': "وقت الخروج", 'att.grace': "سماحية التأخير (دقائق)", 'att.radius': "المسافة من المحل (م)", 'att.season': "موسم ساعات أطول", 'att.season_name': "الاسم", 'att.season_from': "من", 'att.season_to': "إلى", 'att.season_end': "وقت الإغلاق", 'att.season_hint': "مثال: قبل رمضان بشهرين يغلق المحل الساعة 23:00.", 'att.saved': "تم الحفظ", 'att.no_store_loc': "موقع المحل غير مضبوط، لذلك لا تُفحص المسافة عند التسجيل. اضبطه من الإعدادات ← موقع المحل.", 'att.thumb': "صورة الوجه",
   'nav.members': 'الأعضاء', 'navs.members': 'الأعضاء',
   'mc.title': 'رمز المالك', 'mc.hint': 'رمز من 8 أرقام يعرفه المالك وحده. به يستطيع المالك الدخول إلى أي حساب (مثلاً إذا نسي الكاشير رقمه أو قُفل الحساب). كل دخول بهذا الرمز يُسجَّل في سجل النشاط. لا يُحفظ الرمز على هذا الجهاز.',

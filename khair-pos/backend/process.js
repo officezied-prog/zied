@@ -66,13 +66,15 @@ function forWrite(r, id) {
   return o;
 }
 const COST_FIELDS = ['cost_price', 'total_cost', 'profit', 'line_profit'];
-// The accountant sees purchase prices only when the owner allows it (settings.akuntan_sees_cost); profit stays owner-only.
+// The accountant AND the manager see purchase prices only when the owner allows it (settings.akuntan_sees_cost); profit stays owner-only.
 function strip(r, role) {
   const o = clean(r);
-  if (role === 'akuntan' && readSettings().akuntan_sees_cost === true) { delete o.profit; delete o.line_profit; return o; }
+  if ((role === 'akuntan' || role === 'manager') && readSettings().akuntan_sees_cost === true) { delete o.profit; delete o.line_profit; return o; }
   if (role !== 'owner') COST_FIELDS.forEach(function (f) { delete o[f]; });
   return o;
 }
+// Purchase prices (never profit) reach the owner always, and the accountant / manager when the owner allows it (akuntan_sees_cost).
+function costOk() { return role === 'owner' || ((role === 'akuntan' || role === 'manager') && readSettings().akuntan_sees_cost === true); }
 function jkDate() { return new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10); }
 function rand(n) {
   const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -566,7 +568,7 @@ function applyPurchaseFix(no, changes, reason, byName) {
       purchase_no: no, match_status: 'koreksi', match_notes: str(reason).slice(0, 300)
     }, -1));
     const o = { product_id: p.id, stock: ns };
-    if (role === 'owner') o.cost_price = nc;
+    if (costOk()) o.cost_price = nc;
     out.push(o);
   });
   return out;
@@ -2180,7 +2182,7 @@ switch (req.action) {
       const p = state[pid];
       ops.products.push(forWrite(p, p.id));
       const o = { product_id: p.id, stock: p.stock, exp_date: p.exp_date || '', exp_none: p.exp_none === true };
-      if (role === 'owner') o.cost_price = p.cost_price;
+      if (costOk()) o.cost_price = p.cost_price;
       stockOut.push(o);
     });
     const sumTotal = ops.purchases.reduce(function (a1, r) { return a1 + money(r.total); }, 0);
