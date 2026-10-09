@@ -59,9 +59,10 @@ test('login: wrong PIN is rejected, keyboard PIN entry works, bad store key is r
   await expect(page.locator('#shift-open')).toHaveCount(0);
   // manager has no owner-only panels
   await page.click('#nav [data-view="settings"]');
-  // v19: the manager manages only cashier and sales accounts (no accountant) — 2 groups
-  await expect(page.locator('#st-users [data-role-group]')).toHaveCount(2);
-  await expect(page.locator('#st-users [data-role-group="owner"], #st-users [data-role-group="manager"], #st-users [data-role-group="akuntan"]')).toHaveCount(0);
+  // v28: the manager may suspend any non-owner, so it sees the non-owner groups (manager, kasir, sales, akuntan) — 4 groups,
+  // never the owner group. Create/edit stays kasir/sales only (add-user role options unchanged).
+  await expect(page.locator('#st-users [data-role-group]')).toHaveCount(4);
+  await expect(page.locator('#st-users [data-role-group="owner"]')).toHaveCount(0);
   expect(await page.locator('#nu-role option').evaluateAll(o => o.map(x => x.value))).toEqual(['pekerja', 'kasir', 'sales']);
   await expect(page.locator('#st-outbox')).toBeVisible();
   await expect(page.locator('#st-kasir-app')).toHaveAttribute('href', './kasir/?mock=1');

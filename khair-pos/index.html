@@ -4118,6 +4118,7 @@ const I18N = {
     'set.store': 'Info toko & struk', 'set.store_name': 'Nama toko', 'set.footer': 'Catatan bawah struk', 'set.paper': 'Lebar kertas printer', 'set.survey': 'Pertanyaan survei',
     'set.survey_auto': 'Tampilkan banner survei suara otomatis saat bayar', 'set.survey_voice': 'Survei suara saat bayar', 'set.survey_voice_hint': 'Kasir minta izin pelanggan dulu; hanya teks yang disimpan, suara tidak. Butuh Chrome di Android.', 'set.wa_shop': 'Nomor WhatsApp toko', 'set.wa_shop_hint': 'Tombol “Kirim ke WA toko” di struk mengirim nomor pelanggan baru ke nomor ini.', 'set.survey_new': 'Pertanyaan baru…', 'set.survey_reset': 'Kembalikan ke bawaan', 'set.users': 'Pengguna', 'set.add_user': 'Tambah pengguna',
     'set.role': 'Peran', 'set.reset_pin': 'Ganti PIN', 'set.activate': 'Aktifkan', 'set.deactivate': 'Nonaktifkan', 'set.deactivate_confirm': 'Nonaktifkan {name}? Ia tidak bisa masuk lagi.', 'set.user_exists': 'Nama sudah dipakai',
+    'set.suspend': 'Nonaktifkan', 'set.reenable': 'Aktifkan kembali',
     'set.app': 'Aplikasi', 'set.language': 'Bahasa', 'set.autolock': 'Kunci otomatis jika tidak dipakai', 'set.reload_data': 'Muat ulang data', 'set.data_reloaded': 'Data diperbarui',
     'set.logout_store': 'Keluar dari toko', 'set.logout_confirm': 'Keluar dan hapus kode toko dari perangkat ini?', 'set.outbox': 'Antrian offline',
     'set.mock_hint': 'Mode DEMO: data hanya tersimpan di browser ini (kode toko: demo, Pemilik PIN 1234, Siti PIN 1111).', 'set.mock_reset': 'Reset data demo'
@@ -4194,6 +4195,7 @@ const I18N = {
     'set.store': 'بيانات المتجر والإيصال', 'set.store_name': 'اسم المتجر', 'set.footer': 'ملاحظة أسفل الإيصال', 'set.paper': 'عرض ورق الطابعة', 'set.survey': 'أسئلة الاستبيان',
     'set.survey_auto': 'إظهار شريط الاستبيان الصوتي تلقائيًا عند الدفع', 'set.survey_voice': 'استبيان صوتي أثناء الدفع', 'set.survey_voice_hint': 'يطلب الكاشير إذن العميل أولًا؛ يُحفظ النص فقط دون الصوت. يحتاج Chrome على أندرويد.', 'set.wa_shop': 'رقم واتساب المتجر', 'set.wa_shop_hint': 'زر «إرسال إلى واتساب المتجر» في الإيصال يرسل رقم العميل الجديد إلى هذا الرقم.', 'set.survey_new': 'سؤال جديد…', 'set.survey_reset': 'استعادة الأسئلة الافتراضية', 'set.users': 'المستخدمون', 'set.add_user': 'إضافة مستخدم',
     'set.role': 'الدور', 'set.reset_pin': 'تغيير الرقم السري', 'set.activate': 'تفعيل', 'set.deactivate': 'تعطيل', 'set.deactivate_confirm': 'تعطيل {name}؟ لن يستطيع الدخول.', 'set.user_exists': 'الاسم مستخدم',
+    'set.suspend': 'إيقاف', 'set.reenable': 'تفعيل',
     'set.app': 'التطبيق', 'set.language': 'اللغة', 'set.autolock': 'القفل التلقائي عند عدم الاستخدام', 'set.reload_data': 'تحديث البيانات', 'set.data_reloaded': 'تم تحديث البيانات',
     'set.logout_store': 'الخروج من المتجر', 'set.logout_confirm': 'الخروج وحذف رمز المتجر من هذا الجهاز؟', 'set.outbox': 'العمليات غير المرسلة',
     'set.mock_hint': 'وضع تجريبي: البيانات محفوظة في هذا المتصفح فقط (الرمز: demo، المالك 1234، سيتي 1111).', 'set.mock_reset': 'إعادة ضبط البيانات التجريبية'
@@ -4496,6 +4498,14 @@ async function saveUser(data, errEl) {
     toast(t('saved'), 'ok'); RENDER.settings(); return true;
   } catch (e) { if (errEl) errEl.textContent = errMsg(e); else toast(errMsg(e), 'err'); return false; }
 }
+// v28: suspend / re-enable a staff account through the dedicated set_account_active action.
+async function setAccountActive(u, active) {
+  try {
+    const r = await api('set_account_active', { name: u.name, active });
+    upsertByName(S.users, r.user || { name: u.name, role: u.role, active });
+    saveCache(); toast(t(active ? 'usr.reenabled' : 'usr.suspended_ok', { name: u.name }), 'ok'); RENDER.settings(); return true;
+  } catch (e) { toast(errMsg(e), 'err'); return false; }
+}
 function upsertByName(arr, u) { const i = arr.findIndex(x => x.name.toLowerCase() === u.name.toLowerCase()); const clean = Object.assign({}, i >= 0 ? arr[i] : {}, { name: u.name, role: u.role, active: u.active !== false }); if (u.must_change !== undefined) clean.must_change = u.must_change === true; if (i >= 0) arr[i] = clean; else arr.push(clean); }
 function askNewPin(name) {
   return new Promise(resolve => {
@@ -4731,10 +4741,15 @@ const ACT = {
       else { ST.tempPin = u.name; RENDER.settings(); }
     }
   },
-  'user-toggle': async el => {
+  // v28: suspend (owner + manager, any non-owner but self) / re-enable (owner only) — via the dedicated action.
+  'user-suspend': async el => {
     const u = S.users.find(x => x.name === el.dataset.name); if (!u) return;
-    if (u.active !== false) { const r = await confirmBox(t('set.deactivate_confirm', { name: u.name }), { danger: true }); if (!r.ok) return; }
-    saveUser({ name: u.name, role: u.role, active: u.active === false });
+    const r = await confirmBox(t('set.deactivate_confirm', { name: u.name }), { danger: true }); if (!r.ok) return;
+    setAccountActive(u, false);
+  },
+  'user-reenable': el => {
+    const u = S.users.find(x => x.name === el.dataset.name); if (!u) return;
+    setAccountActive(u, true);
   },
   'user-unlock': async el => {
     const name = el.dataset.name; const c = await confirmBox(t('tamper.unlock_confirm', { name }), { danger: true }); if (!c.ok) return;
@@ -7462,7 +7477,7 @@ Object.assign(I18N.id, {
   'pc.title': 'Buat PIN baru', 'pc.hint': 'Halo {name}, PIN Anda dibuat oleh pemilik (sementara). Buat PIN sendiri {n} angka — jangan beri tahu siapa pun.',
   'pc.step1': 'Masukkan PIN baru ({n} angka)', 'pc.step2': 'Ulangi PIN baru', 'pc.len': 'PIN harus {n} angka', 'pc.same': 'PIN baru harus berbeda dari PIN sementara', 'pc.save': 'Lanjut', 'pc.cancel': 'Keluar', 'pc.done': 'PIN baru disimpan',
   'tamper.locked': 'Akun ini dikunci setelah percobaan menulis kode. Hanya pemilik yang membukanya.', 'tamper.badge': 'dikunci (coba kode)', 'tamper.unlock': 'Buka kunci', 'tamper.unlock_confirm': 'Buka kunci akun {name}? Hanya lakukan jika Anda yakin.', 'tamper.unlocked': 'Akun {name} dibuka', 'tamper.banner': '{n} akun dikunci setelah percobaan menulis kode. Buka dari Pengaturan → Pengguna.',
-  'usr.must_change': 'belum ganti PIN', 'usr.locked': 'terkunci', 'usr.temp_notice': 'PIN untuk {name} adalah PIN sementara: saat pertama masuk, {name} wajib membuat PIN sendiri.',
+  'usr.must_change': 'belum ganti PIN', 'usr.locked': 'terkunci', 'usr.suspended': 'Nonaktif', 'usr.suspended_ok': '{name} dinonaktifkan — tidak bisa masuk lagi.', 'usr.reenabled': '{name} diaktifkan kembali.', 'usr.temp_notice': 'PIN untuk {name} adalah PIN sementara: saat pertama masuk, {name} wajib membuat PIN sendiri.',
   'usr.temp_hint': 'PIN yang Anda buat untuk orang lain bersifat sementara — mereka membuat PIN sendiri saat pertama masuk.',
   'apr.kind_disc': 'Diskon {pct}', 'apr.new_disc': 'Permintaan diskon dari {cashier} →',
   'dsc.list': 'Harga normal', 'dsc.amount': 'Diskon', 'dsc.total': 'Total dibayar', 'dsc.limit': 'Batas tanpa persetujuan', 'dsc.member': 'member {pct}',
@@ -7500,7 +7515,7 @@ Object.assign(I18N.ar, {
   'pc.title': 'أنشئ رقماً سرياً جديداً', 'pc.hint': 'مرحباً {name}، رقمك السري وضعه المالك (مؤقت). أنشئ رقمك الخاص من {n} أرقام — لا تخبر به أحداً.',
   'pc.step1': 'أدخل الرقم الجديد ({n} أرقام)', 'pc.step2': 'أعد الرقم الجديد', 'pc.len': 'الرقم السري {n} أرقام', 'pc.same': 'يجب أن يختلف الرقم الجديد عن المؤقت', 'pc.save': 'متابعة', 'pc.cancel': 'خروج', 'pc.done': 'تم حفظ الرقم الجديد',
   'tamper.locked': 'أُوقف هذا الحساب بعد محاولة كتابة كود. لا يفتحه إلا المالك.', 'tamper.badge': 'موقوف (محاولة كود)', 'tamper.unlock': 'فتح القفل', 'tamper.unlock_confirm': 'فتح قفل حساب {name}؟ لا تفعل إلا إذا كنت متأكدًا.', 'tamper.unlocked': 'فُتح حساب {name}', 'tamper.banner': '{n} حساب أُوقف بعد محاولة كتابة كود. افتحه من الإعدادات ← المستخدمون.',
-  'usr.must_change': 'لم يغيّر الرقم بعد', 'usr.locked': 'مقفل', 'usr.temp_notice': 'رقم {name} مؤقت: عند أول دخول يجب على {name} إنشاء رقمه الخاص.',
+  'usr.must_change': 'لم يغيّر الرقم بعد', 'usr.locked': 'مقفل', 'usr.suspended': 'موقوف', 'usr.suspended_ok': 'تم إيقاف {name} — لا يستطيع الدخول.', 'usr.reenabled': 'تمت إعادة تفعيل {name}.', 'usr.temp_notice': 'رقم {name} مؤقت: عند أول دخول يجب على {name} إنشاء رقمه الخاص.',
   'usr.temp_hint': 'الرقم الذي تضعه لشخص آخر مؤقت — ينشئ رقمه الخاص عند أول دخول.',
   'apr.kind_disc': 'خصم {pct}', 'apr.new_disc': 'طلب خصم من {cashier} ←',
   'dsc.list': 'السعر العادي', 'dsc.amount': 'الخصم', 'dsc.total': 'المبلغ المدفوع', 'dsc.limit': 'الحد دون موافقة', 'dsc.member': 'عضو {pct}',
@@ -8011,7 +8026,12 @@ const pinLenFor = role => role === 'owner' || role === 'manager' ? 6 : 4;
 // v19 (owner's decision): the manager creates/manages only cashier and sales accounts — never an accountant, manager or owner.
 const MGR_ROLES = ['kasir', 'sales'];
 const assignableRoles = () => isOwner() ? ['kasir', 'sales', 'manager', 'akuntan', 'owner'] : MGR_ROLES;
+// Create/edit (role, swap, reset PIN) stays kasir/sales for the manager; the owner edits anyone.
 const canManageUser = u => isOwner() || (S.role === 'manager' && MGR_ROLES.includes(u.role || 'kasir'));
+// v28 (owner's decision): the owner AND the manager may SUSPEND any account — owner any but their own, manager any NON-owner
+// but their own. Only the owner RE-ENABLES. These mirror the server rule in set_account_active.
+const isSelfUser = u => !!(S.user && u.name && u.name.toLowerCase() === S.user.toLowerCase());
+const canSuspend = u => isApprover() && !isSelfUser(u) && (isOwner() || (u.role || 'kasir') !== 'owner');
 function usersPanelHTML() {
   return `<div class="panel"><h3>${esc(t('set.users'))}</h3><div class="pb">
       <div id="st-users" style="margin-bottom:12px">${usersByRoleHTML()}</div>
@@ -8025,12 +8045,17 @@ function usersPanelHTML() {
       <div class="red" id="nu-err"></div><button class="btn primary" data-act="user-add">${ic('plus')} ${esc(t('set.add_user'))}</button></div></div>`;
 }
 function usersByRoleHTML() {
-  return ROLE_ORDER.filter(r => isOwner() || MGR_ROLES.includes(r)).map(r => {
+  // The owner sees every group; the manager sees all NON-owner groups (so any non-owner account can be suspended) but
+  // only edits kasir/sales (role, swap, PIN) and never re-enables. v19 kept the manager to kasir/sales for edit; v28
+  // broadens the manager's SUSPEND reach to any non-owner, so the groups are now visible to the manager too.
+  return ROLE_ORDER.filter(r => isOwner() || r !== 'owner').map(r => {
     const list = S.users.filter(u => (u.role || 'kasir') === r);
     return `<div class="usr-group" data-role-group="${r}"><h4 style="margin:10px 0 6px">${esc(t('usr.group_' + r))} <span class="muted small">(${list.length})</span></h4>
-      ${list.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>${list.map(u => `<tr data-user="${esc(u.name)}"><td><b>${esc(u.name)}</b> ${u.active === false ? `<span class="badge red">${esc(t('inactive'))}</span>` : ''}${u.must_change ? ` <span class="badge amber" data-must="1">${esc(t('usr.must_change'))}</span>` : ''}${u.locked ? ` <span class="badge red" data-locked="1">${esc(t('usr.locked'))}</span>` : ''}${u.tamper ? ` <span class="badge red" data-tamper="1">${ic('lock')} ${esc(t('tamper.badge'))}</span>` : ''}${u.has_master ? ` <span class="badge gold" data-has-master="1">${ic('lock')} ${esc(t('mc.has'))}</span>` : ''}<br>
-        <select class="input" style="width:auto;min-height:32px;padding:2px 6px;margin-top:4px" data-user-role="${esc(u.name)}" aria-label="${esc(t('set.role'))}">${assignableRoles().map(x => `<option value="${x}" ${u.role === x ? 'selected' : ''}>${esc(t('role.' + x))}</option>`).join('')}</select></td>
-        <td class="r" style="white-space:nowrap">${u.tamper && isOwner() ? `<button class="btn xs danger" data-act="user-unlock" data-name="${esc(u.name)}">${ic('lock')} ${esc(t('tamper.unlock'))}</button> ` : ''}<button class="btn xs" data-act="user-swap" data-name="${esc(u.name)}">${ic('users')} ${esc(t('usr.swap'))}</button> <button class="btn xs" data-act="user-pin" data-name="${esc(u.name)}">${esc(t('set.reset_pin'))}</button> <button class="btn xs ${u.active === false ? '' : 'danger'}" data-act="user-toggle" data-name="${esc(u.name)}">${esc(u.active === false ? t('set.activate') : t('set.deactivate'))}</button></td></tr>`).join('')}</tbody></table></div>`
+      ${list.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>${list.map(u => `<tr data-user="${esc(u.name)}"><td><b>${esc(u.name)}</b> ${u.active === false ? `<span class="badge red" data-suspended="1">${esc(t('usr.suspended'))}</span>` : ''}${u.must_change ? ` <span class="badge amber" data-must="1">${esc(t('usr.must_change'))}</span>` : ''}${u.locked ? ` <span class="badge red" data-locked="1">${esc(t('usr.locked'))}</span>` : ''}${u.tamper ? ` <span class="badge red" data-tamper="1">${ic('lock')} ${esc(t('tamper.badge'))}</span>` : ''}${u.has_master ? ` <span class="badge gold" data-has-master="1">${ic('lock')} ${esc(t('mc.has'))}</span>` : ''}${canManageUser(u) ? `<br>
+        <select class="input" style="width:auto;min-height:32px;padding:2px 6px;margin-top:4px" data-user-role="${esc(u.name)}" aria-label="${esc(t('set.role'))}">${assignableRoles().map(x => `<option value="${x}" ${u.role === x ? 'selected' : ''}>${esc(t('role.' + x))}</option>`).join('')}</select>` : ''}</td>
+        <td class="r" style="white-space:nowrap">${u.tamper && isOwner() ? `<button class="btn xs danger" data-act="user-unlock" data-name="${esc(u.name)}">${ic('lock')} ${esc(t('tamper.unlock'))}</button> ` : ''}${canManageUser(u) ? `<button class="btn xs" data-act="user-swap" data-name="${esc(u.name)}">${ic('users')} ${esc(t('usr.swap'))}</button> <button class="btn xs" data-act="user-pin" data-name="${esc(u.name)}">${esc(t('set.reset_pin'))}</button> ` : ''}${u.active === false
+          ? (isOwner() ? `<button class="btn xs" data-act="user-reenable" data-name="${esc(u.name)}">${ic('check')} ${esc(t('set.reenable'))}</button>` : '')
+          : (canSuspend(u) ? `<button class="btn xs danger" data-act="user-suspend" data-name="${esc(u.name)}">${esc(t('set.suspend'))}</button>` : '')}</td></tr>`).join('')}</tbody></table></div>`
       : `<div class="small muted" data-empty-group>${esc(t(r === 'akuntan' ? 'usr.akuntan_note' : 'usr.group_empty'))}</div>`}</div>`;
   }).join('');
 }

@@ -1928,6 +1928,26 @@ const MockServer = (() => {
         logAct(db, u, 'tamper', 'Pemilik membuka kunci akun ' + tu.name, tu.name, 0, 'warn'); db._dirty = true;
         return { user: { name: tu.name, role: tu.role, active: tu.active !== false } };
       }
+      // v28: owner + manager may SUSPEND any non-owner account; only the owner re-enables. No one suspends their own account.
+      case 'set_account_active': {
+        if (!(owner || u.role === 'manager')) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
+        if (typeof data.active !== 'boolean') throw E('INVALID', 'Status aktif wajib true atau false');
+        let target = null;
+        if (data.id !== undefined && data.id !== null && String(data.id) !== '') target = db.users.find(v => String(v.id) === String(data.id));
+        else { const tn = String(data.name || '').trim().toLowerCase(); if (tn) target = db.users.find(v => v.name.toLowerCase() === tn); }
+        if (!target) throw E('NOT_FOUND', 'Pengguna tidak ditemukan');
+        const selfTarget = target === u || target.name.toLowerCase() === u.name.toLowerCase();
+        if (data.active === false) {
+          if (selfTarget) throw E('FORBIDDEN', 'Tidak bisa menonaktifkan akun sendiri');
+          if (u.role === 'manager' && target.role === 'owner') throw E('FORBIDDEN', 'Manajer tidak boleh menonaktifkan akun pemilik');
+          if (target.role === 'owner' && db.users.filter(v => v.role === 'owner' && v.active !== false).length <= 1) throw E('INVALID', 'Harus ada minimal satu pemilik aktif');
+        } else {
+          if (!owner) throw E('FORBIDDEN', 'Hanya pemilik yang boleh mengaktifkan kembali akun');
+        }
+        target.active = data.active; db._dirty = true;
+        logAct(db, u, data.active ? 'akun_aktif' : 'akun_nonaktif', (data.active ? 'Mengaktifkan kembali akun ' : 'Menonaktifkan akun ') + target.name + ' (' + target.role + ') oleh ' + u.name, target.name, 0, 'warn');
+        return { user: { name: target.name, role: target.role, active: data.active, must_change: target.must_change === true } };
+      }
       case 'save_user': {
         if (u.role !== 'owner') {
           if (u.role !== 'manager') throw E('FORBIDDEN', 'Owner only');
@@ -1940,6 +1960,9 @@ const MockServer = (() => {
         if (data.pin_hash && !/^[0-9a-f]{64}$/.test(data.pin_hash)) throw E('INVALID', 'pin_hash');
         let x = db.users.find(v => v.name.toLowerCase() === name.toLowerCase());
         const active = data.active === undefined ? true : !!data.active;
+        // v28: re-enabling a suspended account is owner-only, and no one suspends their own account, even through save_user.
+        if (x && x.active === false && active && u.role !== 'owner') throw E('FORBIDDEN', 'Hanya pemilik yang boleh mengaktifkan kembali akun');
+        if (x && x === u && !active && x.active !== false) throw E('FORBIDDEN', 'Tidak bisa menonaktifkan akun sendiri');
         // another person takes this account / role (new name): a new temporary PIN made with the new name
         let newName = '';
         if (strv(data.new_name)) {
