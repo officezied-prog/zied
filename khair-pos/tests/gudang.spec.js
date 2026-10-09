@@ -314,7 +314,7 @@ test('manager opname → owner approval; approved diff is added to the CURRENT s
 });
 
 test('Barang Masuk: optional expiry date per line is sent as exp_date and shows up in the expiry list', async ({ page }) => {
-  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await login(page, 'Jihan', '2222', '', { stay: true }); // goods-in is the manager's job; the owner only watches
   const T = jktToday(), p = productByName(await getDb(page), /Kismis Hitam/);
   await openGudang(page, 'expiry'); // loads (and caches) the 12-month data first
   await expect(page.locator('#gd-exp-table')).toBeVisible();

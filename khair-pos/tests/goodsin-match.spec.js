@@ -17,7 +17,7 @@ async function scanNote(page) {
 }
 
 test('live comparison with the note; MISMATCH shows the differences; fix quantities → saved "cocok" with a purchase number', async ({ page }) => {
-  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await login(page, 'Jihan', '2222', '', { stay: true }); // goods-in is the manager's job; the owner only watches
   const db0 = await getDb(page), med = productByName(db0, /Medjool/), gula = productByName(db0, /Gula Pasir/);
   await scanNote(page);
   await expect(page.locator('#pu-cmp-panel')).toHaveAttribute('data-status', 'cocok');
@@ -57,8 +57,8 @@ test('live comparison with the note; MISMATCH shows the differences; fix quantit
   await expect(page.locator(`#pu-hist tr[data-no="${no}"] [data-status="cocok"]`)).toBeVisible();
 });
 
-test('"Simpan dengan alasan" saves a different quantity as tidak_cocok with the reason; the owner corrects later (cost visible)', async ({ page }) => {
-  await login(page, 'Pemilik', '1234', '', { stay: true });
+test('"Simpan dengan alasan" saves a different quantity as tidak_cocok; the manager\'s correction waits for the owner (cost visible to owner)', async ({ page }) => {
+  await login(page, 'Jihan', '2222', '', { stay: true }); // the manager enters goods-in and requests the correction
   const gula = productByName(await getDb(page), /Gula Pasir/);
   await scanNote(page);
   await page.locator('[data-pu-qty="1"]').fill('52');
@@ -75,29 +75,47 @@ test('"Simpan dengan alasan" saves a different quantity as tidak_cocok with the 
   expect(db.activity.slice(-1)[0]).toMatchObject({ kind: 'masuk', level: 'warn' });
   const before = productByName(db, /Gula Pasir/);
 
-  // correction by the owner: applied at once, cost field visible
+  // the manager REQUESTS the correction: no cost field in the manager's form, nothing applied yet — it waits for the owner
   await page.locator(`#pu-hist tr[data-no="${no}"] [data-act="pu-fix"]`).click();
-  await expect(page.locator(`#fx-table [data-fix-cost="${gula.id}"]`)).toBeVisible();
+  await expect(page.locator('#fx-table [data-fix-qty]')).toHaveCount(2);
+  await expect(page.locator('#fx-table [data-fix-cost]')).toHaveCount(0);
   await page.fill(`#fx-table [data-fix-qty="${gula.id}"]`, '50');
   await page.click('#fx-save');
   await expect(page.locator('#fx-err')).toContainText('Alasan');
   await page.fill('#fx-reason', 'Bonus dikembalikan');
   await page.click('#fx-save');
-  await expect(page.locator('.toast.ok').filter({ hasText: no })).toBeVisible();
+  await expect(page.locator('#fix-modal')).toHaveCount(0);
+  db = await getDb(page);
+  expect(db.purchases.filter(r => r.purchase_no === no && r.match_status === 'koreksi')).toHaveLength(0); // not applied
+  expect(productByName(db, /Gula Pasir/).stock).toBe(before.stock);
+  const req = db.approvals.filter(a => a.kind === 'purchase_fix').slice(-1)[0];
+  expect(req).toMatchObject({ approver_role: 'owner', status: 'pending', ref: no });
+
+  // the owner approves it in the inbox: the money column is visible, applied at once
+  await switchUser(page, 'Pemilik', '1234');
+  await nav(page, 'approvals');
+  const card = page.locator(`.apr-card[data-req="${req.request_id}"]`);
+  await expect(card).toHaveAttribute('data-kind', 'purchase_fix');
+  await expect(card.locator('[data-fix-changes] th')).toHaveCount(4); // owner sees the money column
+  await expect(card).toContainText('Bonus dikembalikan');
+  await card.locator('[data-d="approved"]').click();
+  await expect(page.locator('.toast.ok').filter({ hasText: req.request_id })).toBeVisible();
   db = await getDb(page);
   const fix = db.purchases.filter(r => r.purchase_no === no && r.match_status === 'koreksi');
   expect(fix).toHaveLength(1);
   expect(fix[0]).toMatchObject({ product_id: gula.id, qty: -2, total: -2 * 15000 });
+  expect(fix[0].note).toContain('disetujui Pemilik');
   const after = productByName(db, /Gula Pasir/);
   expect(after.stock).toBe(before.stock - 2);
   const ns = before.stock - 2;
   expect(after.cost_price).toBe(Math.round((before.stock * before.cost_price - 30000) / ns));
-  expect(db.activity.slice(-1)[0]).toMatchObject({ kind: 'koreksi_masuk', level: 'warn', ref: no });
+  expect(db.activity.filter(a => a.kind === 'keputusan').slice(-1)[0].summary).toContain('purchase_fix'); // approved via the inbox
+  await nav(page, 'purchases');
   await expect(page.locator(`#pu-hist tr[data-no="${no}"] [data-status="koreksi"]`)).toBeVisible();
 });
 
 test('a cashier\'s correction waits for the manager: before → after card without cost, approve with purchase_no; stock and cost updated', async ({ page }) => {
-  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await login(page, 'Jihan', '2222', '', { stay: true }); // the manager enters goods-in; a cashier then asks for a fix
   const med = productByName(await getDb(page), /Medjool/);
   await scanNote(page);
   await pickCarrier(page);

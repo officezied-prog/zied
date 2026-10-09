@@ -66,9 +66,11 @@ for (const [label, vp] of [['desktop', { width: 1366, height: 768 }], ['phone', 
       await shot(page, `${label}-home-full`, true);
       if (label === 'phone') { await page.click('#nav-more'); await page.waitForTimeout(250); await shot(page, 'phone-more-menu'); await closeModals(page); }
       await nav(page, 'purchases');
-      await page.setInputFiles('#pu-photo', await photoFile(page));
-      await expect(page.locator('#pu-photo-card'), 'purchase photo card never reached .done').toHaveClass(/\bdone\b/, { timeout: 15000 });
-      await shot(page, `${label}-purchase-photo`);
+      // owner monitoring: goods-in is read-only (history only, no entry form or photo step)
+      await expect(page.locator('#pu-photo')).toHaveCount(0);
+      await expect(page.locator('#pu-recent')).toBeVisible();
+      await page.waitForTimeout(500);
+      await shot(page, `${label}-purchases-monitor`);
       await nav(page, 'kas');
       await shot(page, `${label}-kas-owner`);
       await nav(page, 'orders');

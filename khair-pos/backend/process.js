@@ -125,7 +125,8 @@ if (me.must_change === true && !viaMaster && ['login', 'change_pin', 'users', 'd
 }
 const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' : (me.role === 'sales' ? 'sales' : (me.role === 'akuntan' ? 'akuntan' : 'kasir')));
 // v17 accountant: reads goods in/out, invoices, payments, returns, ledgers and reports; never sells or changes anything.
-const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections'];
+// v22: the accountant may ADD a new product (e.g. a new item on a goods-in note); the save_product handler limits them to creating, never editing.
+const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'save_product'];
 if (role === 'akuntan' && AKUNTAN_READ.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
 if (role === 'sales' && ['login', 'bootstrap', 'device_ping', 'change_pin'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
 const isApprover = role === 'owner' || role === 'manager';
@@ -164,7 +165,7 @@ function addMove(x, type, amount, note) {
   mv.push({ t: new Date().toISOString(), type: type, amount: amount, note: note, by: me.name });
   x.moves = JSON.stringify(mv.slice(-100));
 }
-const OWNER_ONLY = ['void_sale', 'save_product', 'import_products', 'stock_adjust', 'save_settings', 'list_devices', 'list_activity'];
+const OWNER_ONLY = ['void_sale', 'import_products', 'stock_adjust', 'save_settings', 'list_devices', 'list_activity'];
 // v18 (owner's decision 07 Oct): save_user is the owner's, or a manager's for staff accounts only (checked in the action)
 const STAFF_ROLES = ['kasir', 'sales', 'akuntan'];
 // v19 (owner's decision): the manager creates/manages only cashier and sales accounts — never an accountant (akuntan) or a manager/owner.
@@ -1640,6 +1641,11 @@ switch (req.action) {
   }
 
   case 'save_product': {
+    // v22: owner may add + edit; manager / accountant may ADD a new product only (editing an existing product's prices stays the owner's).
+    if (role !== 'owner') {
+      if (role !== 'manager' && role !== 'akuntan') return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+      if (data.id) return fail('FORBIDDEN', 'Hanya pemilik yang boleh mengubah produk yang sudah ada');
+    }
     const name = safeName(data.name, 80);
     if (!name) return fail('INVALID', str(data.name) ? 'Nama produk hanya boleh huruf, angka dan . , \' & ( ) / % + # -' : 'Nama produk wajib');
     const sku = str(data.sku);
@@ -2114,17 +2120,20 @@ switch (req.action) {
     if (!pf.found) return fail('NOT_FOUND', 'Barang masuk tidak ditemukan');
     if (!pf.changes.length) return fail('INVALID', 'Tidak ada perubahan');
     const summary = fixSummary(no, pf.changes);
-    if (isApprover) {
+    // Owner monitoring: only the owner applies a goods-in correction directly.
+    // The manager REQUESTS it (owner approves); the cashier requests it (manager approves).
+    if (role === 'owner') {
       const stock = applyPurchaseFix(no, pf.changes, reason, me.name);
       logAct('koreksi_masuk', summary + ' | ' + reason, no, pf.changes.reduce(function (a1, c) { return a1 + c.d_total; }, 0), 'warn');
-      return done({ ok: true, applied: true, changes: role === 'owner' ? pf.changes : pf.changes.map(qtyOnly), stock: stock });
+      return done({ ok: true, applied: true, changes: pf.changes, stock: stock });
     }
-    const a = newApproval({ kind: 'purchase_fix', approver_role: 'manager', ref: no, note: reason, summary: summary.slice(0, 1500),
+    const need = role === 'manager' ? 'owner' : 'manager';
+    const a = newApproval({ kind: 'purchase_fix', approver_role: need, ref: no, note: reason, summary: summary.slice(0, 1500),
       total: pf.changes.reduce(function (a1, c) { return a1 + c.to_total; }, 0),
       payload: JSON.stringify({ purchase_no: no, lines: data.lines, reason: reason, changes: pf.changes }) });
     ops.approvals.push(forWrite(a, -1));
     logAct('minta_koreksi', 'Minta ' + summary + ' | ' + reason, no, 0, 'warn');
-    return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a), changes: pf.changes.map(qtyOnly) });
+    return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a), approver_role: need, changes: isApprover ? pf.changes : pf.changes.map(qtyOnly) });
   }
 
   case 'list_activity': {
