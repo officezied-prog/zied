@@ -1369,6 +1369,34 @@ const MockServer = (() => {
     const one = src => new Promise(res => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = res; document.head.appendChild(sc); });
     return chatLoad || (chatLoad = one('../backend/chat/chat-core.js').then(() => one('../shared/chat-mock.js')));
   }
+  /* ---- Field sales: handled by shared/field-mock.js (loaded statically by the page; lazy-load fallback kept).
+     The cashier app only reaches cashier_orders (read-only); the field mock's per-action role gate forbids the kasir
+     every other field action (field_order, list_field, …), mirroring the server's KASIR_ONLY gate. ---- */
+  const FIELD_ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop', 'cashier_orders'];
+  const ext = () => (window.KhairFieldMock && typeof window.KhairFieldMock.handle === 'function') ? window.KhairFieldMock : null;
+  /** Seeds the field tables (and demo rep Ahmad) — synchronous and idempotent; skipped until the store has users. */
+  function ensureField(db) {
+    const X = ext();
+    if (!X || typeof X.seed !== 'function' || !db.users.length) return false;
+    return !!X.seed(db);
+  }
+  function fieldHandle(db, body) {
+    if (body.key !== 'demo') throw E('BAD_KEY', 'Store key not found');
+    const u = db.users.find(x => x.active && x.name.toLowerCase() === String(body.user || '').toLowerCase());
+    if (!u || u.pin_hash !== body.pin_hash) throw E('BAD_PIN', 'Wrong user or PIN');
+    const X = ext();
+    if (!X || (Array.isArray(X.actions) && !X.actions.includes(body.action))) throw E('SERVER', 'Field mock (shared/field-mock.js) not loaded');
+    return X.handle(body.action, body.data || {}, { name: u.name, role: u.role }, db, { now: () => new Date(), jktDate, jktISO });
+  }
+  function loadExtFieldMock() {
+    return new Promise(res => {
+      if (ext()) return res();
+      const sc = document.createElement('script'); sc.src = '../shared/field-mock.js';
+      const done = () => res(); sc.onload = done; sc.onerror = done; setTimeout(done, 3000);
+      document.head.appendChild(sc);
+    });
+  }
+  let extLoad = null;
   async function request(body) {
     await ensure();
     if (/^(att_|worker_)/.test(body.action)) await loadAttMock();
@@ -1386,6 +1414,21 @@ const MockServer = (() => {
       const out = window.KChatMock.handle(cdb, body, E);
       if (cdb._dirty) { delete cdb._dirty; save(cdb); }
       return out;
+    }
+    // Field-sales backend (separate workflow khair-field): delegated to shared/field-mock.js, which strips cost itself.
+    if (FIELD_ACTIONS.includes(body.action)) {
+      if (!extLoad) extLoad = loadExtFieldMock();
+      await extLoad;
+      const fdb = load(); // fresh read AFTER the async load
+      if (ensureField(fdb)) save(fdb);
+      let fres;
+      try {
+        fres = Object.assign({ ok: true }, strip(fieldHandle(fdb, body))); // strip() = defence-in-depth; orders carry no cost
+        save(fdb); // field-mock mutates fdb in place (write actions); a no-op for the read-only cashier_orders
+      } catch (e) {
+        fres = Object.assign({ ok: false, error: e.code || 'SERVER', message: e.message }, e.extra || {});
+      }
+      return JSON.parse(JSON.stringify(fres));
     }
     LOG.push({ action: body.action, user: body.user || '', device: body.data && body.data.device ? JSON.parse(JSON.stringify(body.data.device)) : null, at: Date.now() });
     if (LOG.length > 300) LOG.shift();

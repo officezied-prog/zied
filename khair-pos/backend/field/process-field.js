@@ -82,11 +82,16 @@ if (Date.parse(me.locked_until) > Date.now()) return fail('LOCKED', 'Akun dikunc
 const viaMaster = /^[a-f0-9]{64}$/.test(str(req.pin_hash)) && users.some(function (u) { return u.role === 'owner' && u.master_hash && u.master_hash === req.pin_hash; });
 if (me.pin_hash !== req.pin_hash && !viaMaster) return fail('BAD_PIN', 'Nama atau PIN salah');
 if (me.must_change === true && !viaMaster) return fail('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
-const role = ['owner', 'manager', 'sales'].indexOf(me.role) >= 0 ? me.role : 'kasir';
-if (role === 'kasir') return fail('FORBIDDEN', 'Aplikasi ini untuk sales lapangan');
+// A real kasir is allowed here ONLY for the read-only cashier view (the counter reads field orders to fulfil them);
+// any OTHER / unknown role is still rejected outright.
+const role = ['owner', 'manager', 'sales', 'kasir'].indexOf(me.role) >= 0 ? me.role : 'other';
+if (role === 'other') return fail('FORBIDDEN', 'Aplikasi ini untuk sales lapangan');
 const isBoss = role === 'owner' || role === 'manager';
 const SALES_ONLY = ['day_start', 'day_end', 'track', 'check_in', 'field_order'];
 const BOSS_ONLY = ['list_field', 'update_order', 'set_product_image', 'link_shop'];
+// The kasir may reach ONLY cashier_orders — every other field action (including field_bootstrap) is forbidden for them.
+const KASIR_ONLY = ['cashier_orders'];
+if (role === 'kasir' && KASIR_ONLY.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Kasir hanya boleh melihat pesanan');
 if (BOSS_ONLY.indexOf(req.action) >= 0 && !isBoss) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
 if (SALES_ONLY.indexOf(req.action) >= 0 && role !== 'sales') return fail('FORBIDDEN', 'Hanya untuk akun sales');
 
@@ -294,6 +299,14 @@ switch (req.action) {
       orders: Object.keys(orderMap).map(function (k) { return orderMap[k]; }).filter(byUser),
       days: rows('Get Range Days').filter(byUser).map(clean)
     });
+  }
+
+  case 'cashier_orders': {
+    // Read-only list of open field orders for the counter cashier to prepare/fulfil. No tracks, no costs.
+    // Reuses the existing 'Get Open Orders' node (already read by list_field above); orders carry selling prices only.
+    const open = rows('Get Open Orders').map(function (o) { return clean(o); });
+    open.sort(function (a, b) { return String(a.order_time) < String(b.order_time) ? 1 : -1; });
+    return done({ ok: true, orders: open });
   }
 
   case 'update_order': {

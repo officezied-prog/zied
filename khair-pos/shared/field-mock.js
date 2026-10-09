@@ -21,7 +21,7 @@
  */
 (function () {
   'use strict';
-  var ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop'];
+  var ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop', 'cashier_orders'];
   // Shop type ids: taken from window.KhairShopTypes (shared/shop-types.js) when the page loaded it; this copy is the
   // fallback for pages that load only this file (e.g. the owner app). Same list as backend/field/process-field.js.
   var SHOP_TYPES_FALLBACK = ['perlengkapan_haji', 'travel_umrah', 'oleh_oleh_haji', 'toko_kurma', 'herbal', 'busana_muslim', 'toko_buku_islam', 'warung', 'toko', 'grosir_sembako', 'pasar', 'minimarket', 'supermarket', 'hypermarket', 'grosir_modern', 'bakery', 'toko_kue', 'katering', 'restoran', 'kafe', 'hotel', 'oleh_oleh', 'parsel', 'toko_buah', 'masjid', 'pesantren', 'sekolah', 'majelis_taklim', 'kantor', 'koperasi', 'reseller', 'toko_online', 'lainnya'];
@@ -274,6 +274,15 @@
           days: db.field_days.filter(function (x) { return inR(x.day_date) && who(x.user); }).map(function (x) { if (x.ended_at) return x; var o = dayOut(db, x.user, x.day_date); return Object.assign({}, x, { km: o.km_today, visits: o.visits_today, orders: o.orders_today }); }),
           include_tracks: withTracks, include_photos: withPhotos
         };
+      }
+      case 'cashier_orders': {
+        // Read-only list of OPEN field orders (baru/diproses) for the counter cashier to prepare/fulfil, newest first.
+        // No role gate here — the server's KASIR_ONLY gate authorises the kasir, and owner/manager may read it too.
+        // No tracks, no costs (orders carry selling prices only; noCost is defence-in-depth).
+        var open = db.field_orders.filter(function (o) { return o.status === 'baru' || o.status === 'diproses'; })
+          .slice().sort(function (a, b) { return String(b.order_time).localeCompare(String(a.order_time)); })
+          .map(function (o) { return noCost(clone(o)); });
+        return { orders: open };
       }
       case 'link_shop': {
         needRole(user, ['owner', 'manager']);
