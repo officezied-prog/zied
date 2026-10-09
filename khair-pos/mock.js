@@ -20,6 +20,9 @@ const MockServer = (() => {
   }
   let stripRole = ''; // owner decisions 07 Oct: the manager also sees the profit on discount requests
   function stripProfit(o) {
+    // cost prices stay, profit never — but approval payloads (prices / fix / retur values) are still owner-only, as in strip().
+    if (o && typeof o === 'object' && !Array.isArray(o) && typeof o.payload === 'string' && o.kind === 'price') o = Object.assign({}, o, { payload: stripPayload(o.payload) });
+    if (o && typeof o === 'object' && !Array.isArray(o) && o.request_id && (o.kind === 'purchase_fix' || (o.kind === 'discount' && stripRole !== 'manager') || o.kind === 'retur')) o = aprOut(o);
     if (Array.isArray(o)) return o.map(stripProfit);
     if (o && typeof o === 'object') { const r = {}; for (const k in o) if (k !== 'profit' && k !== 'line_profit') r[k] = stripProfit(o[k]); return r; }
     return o;
@@ -2048,8 +2051,8 @@ const MockServer = (() => {
       const dirty = db._dirty; ['_dirty', '_role', '_shopSet', '_saveErr'].forEach(k => delete db[k]);
       if (!READ_ONLY.includes(body.action) || dirty) save(db);
       stripRole = role || '';
-      // v17: the accountant sees purchase prices only when the owner allows it; profit never
-      const akCost = role === 'akuntan' && (load().settings || {}).akuntan_sees_cost === true;
+      // v17: the accountant AND the manager see purchase prices only when the owner allows it; profit never
+      const akCost = (role === 'akuntan' || role === 'manager') && (load().settings || {}).akuntan_sees_cost === true;
       res = Object.assign({ ok: true }, role === 'owner' || ['users', 'setup'].includes(body.action) ? res : akCost ? stripProfit(res) : strip(res));
     } catch (e) {
       if (e.attState) { const fresh = load(); fresh.att = e.attState; save(fresh); } // v17: refused check-ins stay recorded
