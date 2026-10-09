@@ -22,7 +22,7 @@ const openDocs = (db, cid) => ledger(db, cid).filter(d => d.free > 0);
 test('customer: slip photo pre-fills amount/bank/ref/date, MISMATCH needs a reason, part of a chosen invoice; ledger and "Atur alokasi"', async ({ page }) => {
   // the demo seed depends on the time of day (around 09:30 it adds a payment that clears Toko Berkah's debt): fix the clock
   await page.clock.setFixedTime(new Date(`${jktToday()}T08:00:00+07:00`));
-  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await login(page, 'Jihan', '2222', '', { stay: true }); // receiving & allocating customer money is the manager's job; the owner only monitors
   const T = jktToday();
   await page.evaluate(t => localStorage.setItem('kmock.pay', JSON.stringify({ date: t, amount: 250000, sender_name: 'TOKO BERKAH CONDET', bank: 'BCA', transfer_ref: '8800112233', readable: true, notes: '' })), T);
   let db = await getDb(page);
