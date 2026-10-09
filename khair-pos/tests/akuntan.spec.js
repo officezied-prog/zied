@@ -22,7 +22,7 @@ test('accountant: lands on reports, sees only the audit views, cannot change any
   await expect(page.locator('#view-reports')).toBeVisible();
   await expect(page.locator('body')).toHaveClass(/\bro\b/);
   const views = await page.locator('#nav [data-view]').evaluateAll(b => b.map(x => x.dataset.view));
-  expect(views.sort()).toEqual(['bank', 'cold', 'customers', 'history', 'koreksi', 'purchases', 'reports', 'retur', 'settings', 'suppliers']); // cold = Gudang Dingin page (read-only there too)
+  expect(views.sort()).toEqual(['bank', 'cold', 'customers', 'history', 'koreksi', 'products', 'purchases', 'reports', 'retur', 'settings', 'suppliers']); // cold = Gudang Dingin page (read-only there too); products = create-only (v22)
   await page.evaluate(() => go('pos'));
   await expect(page.locator('#view-reports')).toBeVisible(); // POS is not reachable
   await nav(page, 'purchases');
@@ -46,6 +46,36 @@ test('accountant: lands on reports, sees only the audit views, cannot change any
   }
   const r = await asUser(page, 'Lestari', '5555', 'daily_report', { date: await page.evaluate(() => today()) });
   expect(r.report).toBeTruthy(); expect(r.report.profit).toBeUndefined();
+});
+
+test('accountant: Products is read-only but can ADD a new product; editing an existing one stays blocked (v22)', async ({ page }) => {
+  await addAkuntan(page);
+  await loginRina(page);
+  await nav(page, 'products');
+  await expect(page.locator('#view-products')).toBeVisible();
+  await expect(page.locator('body')).toHaveClass(/\bro\b/);
+  // read-only view: the owner/manager per-product controls are gone, only "add new" is offered
+  await expect(page.locator('#view-products [data-act="prod-new"]')).toBeVisible();
+  await expect(page.locator('#view-products [data-act="import-csv"]')).toHaveCount(0); // no CSV import (owner only)
+  await expect(page.locator('#pr-inact')).toHaveCount(0); // no "show inactive" toggle (owner only)
+  await expect(page.locator('#prod-table [data-act="price-change"]')).toHaveCount(0); // no price edit (manager only)
+  await expect(page.locator('#prod-table [data-act="stock-adj"]')).toHaveCount(0); // no stock adjust (owner only)
+  await expect(page.locator('#prod-table tr.click')).toHaveCount(0); // rows are not click-to-edit
+  // create a NEW product end-to-end
+  const before = (await getDb(page)).products.length;
+  await page.click('#view-products [data-act="prod-new"]');
+  await expect(page.locator('#pf')).toBeVisible();
+  await page.fill('#pf-name', 'Teh Akuntan');
+  await page.fill('#pf-retail_price', '5000');
+  await page.click('#pf-save');
+  await expect(page.locator('.toast.ok').first()).toBeVisible();
+  const db = await getDb(page);
+  expect(db.products.length).toBe(before + 1);
+  const made = db.products.find(p => p.name === 'Teh Akuntan');
+  expect(made && made.retail_price).toBe(5000);
+  // editing an existing product is refused by the server (create-only)
+  const other = db.products.find(p => p.name !== 'Teh Akuntan');
+  expect((await asUser(page, 'Lestari', '5555', 'save_product', { id: other.id, name: other.name, retail_price: 1 })).error).toBe('FORBIDDEN');
 });
 
 test('owner allows purchase prices for the accountant; profit stays hidden; invoice due days saved', async ({ page }) => {
