@@ -36,13 +36,14 @@ test('owner: seeded workers with wages, report verified, monthly A4 and CSV', as
   expect(dl.suggestedFilename()).toMatch(/^absensi-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}\.csv$/);
 });
 
+// v? owner-monitoring: the operational flow (add worker, run the kiosk, enrol faces) is the MANAGER's —
+// the owner's attendance screen is monitoring-only (see attendance-monitor.spec.js).
 test('add a worker → consent → face enrolled; kiosk: in, double tap, wrong face, out-of-shop', async ({ page, context }) => {
-  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await login(page, 'Jihan', '2222', '', { stay: true });
   await nav(page, 'absensi');
   await page.click('#att-add');
   await page.fill('#aw-name', 'Joko Susilo');
   await page.fill('#aw-job', 'Kuli angkut');
-  await page.fill('#aw-wage', '100.000');
   await page.click('#aw-save');
   const k = page.locator('#att-kiosk.kak');
   await expect(k).toContainText('Daftarkan wajah: Joko Susilo');
@@ -56,7 +57,8 @@ test('add a worker → consent → face enrolled; kiosk: in, double tap, wrong f
   await expect(page.locator('#att-w-tbl tr').filter({ hasText: 'Joko Susilo' }).locator('[data-face="1"]')).toBeVisible();
   let db = await getDb(page);
   const joko = db.att.workers.find(w => w.name === 'Joko Susilo');
-  expect(joko).toMatchObject({ daily_wage: 100000, consent_by: 'Pemilik' });
+  // the manager adds and enrols the worker; wages stay owner-only, so a manager-added worker has no wage yet
+  expect(joko).toMatchObject({ daily_wage: 0, consent_by: 'Jihan' });
   expect(db.att.records.slice(-1)[0]).toMatchObject({ kind: 'enroll', worker_name: 'Joko Susilo' });
   // the same face cannot be enrolled for another worker
   await page.locator('#att-w-tbl tr').filter({ hasText: 'Budi Santoso' }).locator('[data-act="att-enroll"]').click();
