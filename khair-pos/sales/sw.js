@@ -2,8 +2,8 @@
    Network-first for the app files (+ the shared shop-type list, the shared mock script and Leaflet from ../vendor/leaflet),
    cache fallback when offline. API calls (POST to n8n) and map tiles are never cached here.
    Only old "khair-sales-*" caches are removed on activate. */
-const CACHE = 'khair-sales-v4';
-const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg', '../shared/shop-types.js', '../shared/field-mock.js', '../shared/chat-ui.js', '../vendor/leaflet/leaflet.js', '../vendor/leaflet/leaflet.css'];
+const CACHE = 'khair-sales-v5';
+const SHELL = ['./', './index.html', './styles.css', './mock.js', './manifest.webmanifest', './icon.svg', '../shared/shop-types.js', '../shared/field-mock.js', '../shared/chat-ui.js', '../vendor/leaflet/leaflet.js', '../vendor/leaflet/leaflet.css'];
 self.addEventListener('install', e => {
   // one file at a time: a file that cannot be fetched (e.g. the map library) must not leave the whole shell uncached
   e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(u).catch(() => {})))).catch(() => {}));

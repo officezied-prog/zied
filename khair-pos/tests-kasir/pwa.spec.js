@@ -3,7 +3,7 @@ const { test, expect } = require('@playwright/test');
 
 test.use({ serviceWorkers: 'allow' });
 
-test('manifest + service worker (scope kasir/, cache khair-kasir-v3)', async ({ page, request }) => {
+test('manifest + service worker (scope kasir/, cache khair-kasir-v4)', async ({ page, request }) => {
   const m = await (await request.get('kasir/manifest.webmanifest')).json();
   expect(m).toMatchObject({ name: 'Khair Kasir', start_url: './', scope: './', theme_color: '#1E40AF' });
   expect((await request.get('kasir/icon.svg')).ok()).toBe(true);
@@ -11,10 +11,10 @@ test('manifest + service worker (scope kasir/, cache khair-kasir-v3)', async ({ 
   await expect(page.locator('link[rel="manifest"]')).toHaveAttribute('href', 'manifest.webmanifest');
   const info = await page.evaluate(async () => {
     const reg = await navigator.serviceWorker.ready;
-    for (let i = 0; i < 50 && !(await caches.keys()).includes('khair-kasir-v3'); i++) await new Promise(r => setTimeout(r, 100));
+    for (let i = 0; i < 50 && !(await caches.keys()).includes('khair-kasir-v4'); i++) await new Promise(r => setTimeout(r, 100));
     return { scope: reg.scope, keys: await caches.keys() };
   });
   expect(info.scope).toMatch(/\/kasir\/$/);
-  expect(info.keys).toContain('khair-kasir-v3');
+  expect(info.keys).toContain('khair-kasir-v4');
   expect(info.keys).not.toContain('khair-pos-v1');
 });

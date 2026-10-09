@@ -4,7 +4,7 @@ const path = require('path');
 const { rp, SHOTS, jktToday, asUser, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, photoFile, pickCarrier, CARRIER } = require('./helpers');
 
 test('purchase is blocked without a photo; mock AI scan prefills editable lines; save stores photo_id', async ({ page }) => {
-  await login(page);
+  await login(page, 'Jihan', '2222'); // goods-in is the manager's job; the owner only watches
   const db0 = await getDb(page);
   const medjool = productByName(db0, /Medjool/), gula = productByName(db0, /Gula Pasir/);
   await nav(page, 'purchases');
@@ -30,7 +30,7 @@ test('purchase is blocked without a photo; mock AI scan prefills editable lines;
   await expect(page.locator('#pu-block')).toContainText('Cocokkan');
   await page.screenshot({ path: path.join(SHOTS, 'desktop-purchase-photo.png'), fullPage: false });
 
-  // owner creates the unknown product right from the line
+  // the manager creates the unknown product right from the line
   await unmatched.locator('[data-act="pu-newprod"]').click();
   await expect(page.locator('#pf-name')).toHaveValue('Madu Sidr Yaman 500gr');
   await page.fill('#pf-retail_price', '275000');
