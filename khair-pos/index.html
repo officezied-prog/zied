@@ -426,7 +426,7 @@ const isApprover = () => S.role === 'owner' || S.role === 'manager';
 // v17 accountant: reads sales, invoices, goods in/out, returns, ledgers, bank and reports; changes nothing (the server refuses too)
 const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
-const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'settings'];
+const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'settings'];
 const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|prod-new)$/;
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
@@ -3143,7 +3143,7 @@ function drawProducts() {
       <td class="r num">${fmtRp(p.retail_price)}</td>
       <td class="r num">${int(p.wholesale_price) ? fmtRp(p.wholesale_price) + `<div class="small muted">≥ ${fmtQty(p.wholesale_min_qty)}</div>` : '—'}</td>
       <td class="r num"><b class="${isLow(p) || prodExpState(p) === 'expired' || prodExpState(p) === 'soon' ? 'red' : ''}">${fmtQty(p.stock)}</b><div class="small muted">min ${fmtQty(p.min_stock)}</div>${prodExpBadge(p)}</td>
-      <td class="r" style="white-space:nowrap">${isApprover() ? `<button class="icon-btn sm" data-act="prod-photo" data-id="${esc(p.id)}" title="${esc(t('img.title'))}" aria-label="${esc(t('img.title'))}">${ic('camera')}</button> ` : ''}${own ? `<button class="btn xs" data-act="stock-adj" data-id="${esc(p.id)}">${esc(t('prod.adjust'))}</button>` : `<button class="btn xs" data-act="price-change" data-id="${esc(p.id)}">${ic('tag')} ${esc(t('price.title'))}</button>`}</td>
+      <td class="r" style="white-space:nowrap">${isApprover() ? `<button class="icon-btn sm" data-act="prod-photo" data-id="${esc(p.id)}" title="${esc(t('img.title'))}" aria-label="${esc(t('img.title'))}">${ic('camera')}</button> ` : ''}${own ? `<button class="btn xs" data-act="stock-adj" data-id="${esc(p.id)}">${esc(t('prod.adjust'))}</button>` : (isAudit() ? '' : `<button class="btn xs" data-act="price-change" data-id="${esc(p.id)}">${ic('tag')} ${esc(t('price.title'))}</button>`)}</td>
     </tr>`).join('') || `<tr><td colspan="7" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div>`;
 }
 function productForm(p) {
