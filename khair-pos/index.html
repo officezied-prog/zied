@@ -2611,20 +2611,23 @@ function brandOf(s, itemsByInv) {
 }
 RENDER.home = function () {
   if (!isApprover()) { go('pos'); return; }
-  $('#view-home').innerHTML = `<div class="view-head"><h1>${esc(t('nav.home'))}</h1><button class="btn sm" data-act="home-daily" id="home-daily">${ic('report')} ${esc(t('dr.title'))}</button><button class="btn sm" data-act="home-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
+  $('#view-home').innerHTML = `<div class="view-head"><h1>${esc(t('nav.home'))}</h1>${HM.preset === 'today' ? `<span class="badge green" id="home-live" style="margin-inline-end:auto" title="${esc(t('home.live_hint'))}">● ${esc(t('home.live'))} <span class="muted" id="home-updated"></span></span>` : ''}<button class="btn sm" data-act="home-daily" id="home-daily">${ic('report')} ${esc(t('dr.title'))}</button><button class="btn sm" data-act="home-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
     <div class="chips" style="margin-bottom:4px">${['today', 'yesterday', '7d', 'month', 'lastmonth', 'year'].map(p => `<button class="chip ${HM.preset === p ? 'on' : ''}" data-act="home-preset" data-p="${p}">${esc(t('pr.' + p))}</button>`).join('')}</div>
     <div class="chips" style="margin-bottom:10px">${['all', 'eceran', 'grosir'].map(b => `<button class="chip ${HM.brand === b ? 'on' : ''}" data-act="home-brand" data-b="${b}">${esc(t('brand.' + b))}</button>`).join('')}</div>
     <div id="home-body"><div class="empty">${esc(t('loading'))}</div></div>`;
   loadHome();
 };
 let homeSeq = 0;
-async function loadHome() {
+async function loadHome(opts = {}) {
   const [from, to] = homeRange(HM.preset), seq = ++homeSeq;
-  const b = $('#home-body'); if (b) b.style.opacity = '.55';
-  try { const d = await loadSales(from, to, true); if (seq !== homeSeq) return; HM.data = d; HM.err = ''; } catch (e) { if (seq !== homeSeq) return; HM.data = null; HM.err = errMsg(e); }
+  const b = $('#home-body'); if (b && !opts.silent) b.style.opacity = '.55';
+  try { const d = await loadSales(from, to, !opts.fresh); if (seq !== homeSeq) return; HM.data = d; HM.err = ''; } catch (e) { if (seq !== homeSeq) return; HM.data = null; HM.err = errMsg(e); }
   drawHome();
+  const up = $('#home-updated'); if (up && HM.preset === 'today') up.textContent = t('home.updated', { time: DTF_TIME.format(new Date()) });
   refreshAttention();
 }
+// Owner/manager live sales monitor: while viewing today's dashboard, refresh it quietly (fresh data, no flicker) every 30s.
+setInterval(() => { if (S.inApp && S.view === 'home' && HM.preset === 'today') loadHome({ silent: true, fresh: true }); }, 30000);
 function computeHome(d, brand) {
   const byInv = {}; d.items.forEach(i => (byInv[i.invoice_no] = byInv[i.invoice_no] || []).push(i));
   const inBrand = s => brand === 'all' || brandOf(s, byInv) === brand;
@@ -4306,7 +4309,7 @@ Object.assign(I18N.ar, {
 Object.assign(I18N.id, {
   'nav.home': 'Beranda', 'navs.home': 'Beranda', 'nav.kas': 'Kas Kasir', 'navs.kas': 'Kas', 'pr.year': 'Tahun ini', 'rp.mode_kas': 'Kas Kasir',
   'brand.all': 'Semua', 'brand.eceran': 'Khair Mart (eceran)', 'brand.grosir': 'Khair Grosir (grosir)',
-  'home.avg': 'Rata-rata / struk', 'home.top': 'Produk terlaris', 'home.hourly': 'Transaksi & omzet per jam', 'home.tx': 'transaksi', 'home.all': 'Semua', 'home.channels': 'Kanal penjualan', 'home.cashiers': 'Per kasir',
+  'home.avg': 'Rata-rata / struk', 'home.top': 'Produk terlaris', 'home.hourly': 'Transaksi & omzet per jam', 'home.tx': 'transaksi', 'home.all': 'Semua', 'home.channels': 'Kanal penjualan', 'home.cashiers': 'Per kasir', 'home.live': 'Langsung', 'home.live_hint': 'Penjualan hari ini diperbarui otomatis setiap 30 detik.', 'home.updated': 'diperbarui {time}',
   'att.title': 'Perlu perhatian', 'att.none': 'Semua aman, tidak ada yang perlu dicek.', 'att.approvals': '{n} permintaan menunggu persetujuan', 'att.exit': '{n} penjualan besar belum ada foto keluar',
   'att.diff': '{n} tutup kasir dengan selisih (total {amount})', 'att.stale': 'Kasir {name} belum ditutup sejak {date}', 'att.neg': '{n} produk stok minus', 'att.low': '{n} produk stok menipis',
   'notif.title': 'Notifikasi', 'notif.results': 'Hasil permintaan saya', 'notif.none': 'Belum ada.', 'notif.approved': '{label} disetujui {name}', 'notif.rejected': '{label} ditolak {name}',
@@ -4328,7 +4331,7 @@ Object.assign(I18N.id, {
 Object.assign(I18N.ar, {
   'nav.home': 'الرئيسية', 'navs.home': 'الرئيسية', 'nav.kas': 'صندوق الكاشير', 'navs.kas': 'الصندوق', 'pr.year': 'هذه السنة', 'rp.mode_kas': 'الصندوق',
   'brand.all': 'الكل', 'brand.eceran': 'خير مارت (تجزئة)', 'brand.grosir': 'خير جملة (جملة)',
-  'home.avg': 'متوسط الفاتورة', 'home.top': 'الأكثر مبيعًا', 'home.hourly': 'العمليات والمبيعات بالساعة', 'home.tx': 'عملية', 'home.all': 'الكل', 'home.channels': 'قنوات البيع', 'home.cashiers': 'حسب الكاشير',
+  'home.avg': 'متوسط الفاتورة', 'home.top': 'الأكثر مبيعًا', 'home.hourly': 'العمليات والمبيعات بالساعة', 'home.tx': 'عملية', 'home.all': 'الكل', 'home.channels': 'قنوات البيع', 'home.cashiers': 'حسب الكاشير', 'home.live': 'مباشر', 'home.live_hint': 'مبيعات اليوم تُحدَّث تلقائيًا كل ٣٠ ثانية.', 'home.updated': 'آخر تحديث {time}',
   'att.title': 'يحتاج انتباه', 'att.none': 'كل شيء على ما يرام.', 'att.approvals': '{n} طلبات بانتظار الموافقة', 'att.exit': '{n} مبيعات كبيرة بلا صورة خروج',
   'att.diff': '{n} إغلاقات صندوق بفرق (الإجمالي {amount})', 'att.stale': 'صندوق {name} لم يُغلق منذ {date}', 'att.neg': '{n} منتجات مخزونها سالب', 'att.low': '{n} منتجات مخزونها منخفض',
   'notif.title': 'الإشعارات', 'notif.results': 'نتائج طلباتي', 'notif.none': 'لا شيء بعد.', 'notif.approved': 'وافق {name} على {label}', 'notif.rejected': 'رفض {name} {label}',
