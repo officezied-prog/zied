@@ -2259,6 +2259,32 @@ switch (req.action) {
     return done({ ok: true, settings: merged });
   }
 
+  // v28 (owner's decision): the owner AND the manager may SUSPEND (deactivate) any non-owner staff account at once;
+  // only the OWNER re-enables. No one suspends their own account; a manager never touches an owner account.
+  // This action is the single source of truth for "who may set a user active true/false".
+  case 'set_account_active': {
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    if (typeof data.active !== 'boolean') return fail('INVALID', 'Status aktif wajib true atau false');
+    let target = null;
+    if (data.id !== undefined && data.id !== null && String(data.id) !== '') target = users.find(function (u) { return String(u.id) === String(data.id); });
+    else { const tn = str(data.name).toLowerCase(); if (tn) target = users.find(function (u) { return str(u.name).toLowerCase() === tn; }); }
+    if (!target) return fail('NOT_FOUND', 'Pengguna tidak ditemukan');
+    const selfTarget = target.id === me.id || str(target.name).toLowerCase() === str(me.name).toLowerCase();
+    if (data.active === false) {
+      // SUSPEND: never your own account; a manager may not suspend an owner.
+      if (selfTarget) return fail('FORBIDDEN', 'Tidak bisa menonaktifkan akun sendiri');
+      if (role === 'manager' && target.role === 'owner') return fail('FORBIDDEN', 'Manajer tidak boleh menonaktifkan akun pemilik');
+      if (target.role === 'owner' && activeUsers.filter(function (u) { return u.role === 'owner'; }).length <= 1) return fail('INVALID', 'Harus ada minimal satu pemilik aktif');
+    } else {
+      // RE-ENABLE: owner only.
+      if (role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik yang boleh mengaktifkan kembali akun');
+    }
+    const upd = Object.assign({}, clean(target), { active: data.active });
+    ops.users.push(forWrite(upd, target.id));
+    logAct(data.active ? 'akun_aktif' : 'akun_nonaktif', (data.active ? 'Mengaktifkan kembali akun ' : 'Menonaktifkan akun ') + target.name + ' (' + target.role + ') oleh ' + me.name, target.name, 0, 'warn');
+    return done({ ok: true, user: { name: target.name, role: target.role, active: data.active, must_change: target.must_change === true } });
+  }
+
   case 'save_user': {
     if (role !== 'owner') {
       if (role !== 'manager') return fail('FORBIDDEN', 'Hanya untuk pemilik');
@@ -2270,6 +2296,10 @@ switch (req.action) {
     const newRole = ['owner', 'manager', 'sales', 'akuntan'].indexOf(data.role) >= 0 ? data.role : 'kasir';
     const ex = users.find(function (u) { return str(u.name).toLowerCase() === name.toLowerCase(); });
     const active = data.active !== false;
+    // v28: active is set by the same rule as set_account_active — re-enabling a suspended account is owner-only, and no
+    // one suspends their own account, even through save_user. (A manager is already limited to kasir/sales targets above.)
+    if (ex && ex.active === false && active && role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik yang boleh mengaktifkan kembali akun');
+    if (ex && ex.id === me.id && !active && ex.active !== false) return fail('FORBIDDEN', 'Tidak bisa menonaktifkan akun sendiri');
     // Another person takes this account / role (new name): needs a new PIN made with the new name (hash includes it).
     let newName = '';
     if (str(data.new_name)) {
