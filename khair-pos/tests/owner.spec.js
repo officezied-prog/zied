@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { rp, pct, jktToday, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect, pickCarrier, CARRIER, editDb } = require('./helpers');
+const { rp, pct, jktToday, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect, pickCarrier, CARRIER, editDb, switchUser } = require('./helpers');
 
 test('owner voids a sale from history: status void, stock restored, debt reversed', async ({ page }) => {
   await login(page);
@@ -39,7 +39,7 @@ test('owner voids a sale from history: status void, stock restored, debt reverse
 });
 
 test('purchase (barang masuk) updates stock and weighted average cost; stock adjustment is excluded from purchase totals', async ({ page }) => {
-  await login(page);
+  await login(page, 'Jihan', '2222'); // goods-in is the manager's job; the owner only watches
   const p = productByName(await getDb(page), /Medjool/);
   await nav(page, 'purchases');
   await page.setInputFiles('#pu-photo', await photoFile(page));
@@ -65,10 +65,11 @@ test('purchase (barang masuk) updates stock and weighted average cost; stock adj
   const after = productByName(db, /Medjool/);
   expect(after.stock).toBe(p.stock + 10);
   expect(after.cost_price).toBe(expectedCost);
-  expect(db.purchases.slice(-1)[0]).toMatchObject({ supplier: 'PT Kurma Nusantara', product_id: p.id, qty: 10, cost_price: 175000, total: 1750000, user: 'Pemilik' });
-  await expect(page.locator(`[data-newcost="${p.id}"]`)).toContainText(rp(expectedCost));
+  expect(db.purchases.slice(-1)[0]).toMatchObject({ supplier: 'PT Kurma Nusantara', product_id: p.id, qty: 10, cost_price: 175000, total: 1750000, user: 'Jihan' });
+  await expect(page.locator('[data-newcost]')).toHaveCount(0); // the weighted-average cost in the result is for the owner only
 
-  // stock opname: writes a 'PENYESUAIAN STOK' purchase row with qty = difference, total 0
+  // stock opname is the owner's (stock_adjust is owner-only): writes a 'PENYESUAIAN STOK' purchase row with qty = difference, total 0
+  await switchUser(page, 'Pemilik', '1234');
   await nav(page, 'products');
   await page.fill('#pr-q', 'medjool');
   await expect(page.locator('#prod-table tbody tr')).toHaveCount(1);

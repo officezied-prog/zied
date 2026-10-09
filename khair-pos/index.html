@@ -2654,15 +2654,18 @@ const MockServer = (() => {
         if (!pf.found) throw E('NOT_FOUND', 'Barang masuk tidak ditemukan');
         if (!pf.changes.length) throw E('INVALID', 'Tidak ada perubahan');
         const summary = fixSummary(no, pf.changes);
-        if (isAppr(u)) {
+        // Owner monitoring: only the owner applies a goods-in correction directly.
+        // The manager REQUESTS it (owner approves); the cashier requests it (manager approves).
+        if (u.role === 'owner') {
           const stock = applyPurchaseFix(db, no, pf.changes, reason, u.name);
           logAct(db, u, 'koreksi_masuk', summary + ' | ' + reason, no, sum(pf.changes, c => c.d_total), 'warn');
-          return { applied: true, changes: owner ? pf.changes : pf.changes.map(qtyOnly), stock };
+          return { applied: true, changes: pf.changes, stock };
         }
-        const approval = newApproval(db, u, { kind: 'purchase_fix', approver_role: 'manager', ref: no, note: reason, summary: summary.slice(0, 1500), total: sum(pf.changes, c => c.to_total),
+        const need = u.role === 'manager' ? 'owner' : 'manager';
+        const approval = newApproval(db, u, { kind: 'purchase_fix', approver_role: need, ref: no, note: reason, summary: summary.slice(0, 1500), total: sum(pf.changes, c => c.to_total),
           payload: JSON.stringify({ purchase_no: no, lines: data.lines, reason, changes: pf.changes }) });
         logAct(db, u, 'minta_koreksi', 'Minta ' + summary + ' | ' + reason, no, 0, 'warn');
-        return { applied: false, request_id: approval.request_id, approval, changes: pf.changes.map(qtyOnly) };
+        return { applied: false, request_id: approval.request_id, approval, approver_role: need, changes: isAppr(u) ? pf.changes : pf.changes.map(qtyOnly) };
       }
       case 'list_corrections': {
         if (!(isAppr(u) || u.role === 'akuntan')) throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
@@ -6169,8 +6172,10 @@ function photoStepHTML() {
     ${PHOTO_INPUT('pu-photo')}</div>`;
 }
 RENDER.purchases = function () {
-  if (isAudit()) {
-    $('#view-purchases').innerHTML = `<div class="view-head"><h1>${esc(t('nav.purchases'))}</h1></div><p class="small muted" style="margin-top:0">${esc(t('ro.hint'))}</p>
+  // Owner monitoring: the owner (like the accountant) only watches goods-in — no entry form.
+  // The manager enters goods-in and requests any correction; the owner approves it.
+  if (isAudit() || isOwner()) {
+    $('#view-purchases').innerHTML = `<div class="view-head"><h1>${esc(t('nav.purchases'))}</h1></div><p class="small muted" style="margin-top:0">${esc(t(isOwner() ? 'mon.purchases_hint' : 'ro.hint'))}</p>
       <div class="panel"><h3>${esc(t('pu.history'))}</h3><div id="pu-recent" class="pb"><div class="muted">${esc(t('loading'))}</div></div></div>`;
     loadRecentPurchases(); return;
   }
@@ -7990,7 +7995,7 @@ Object.assign(ACT, {
   'gdo-submit': () => gdoSubmit()
 });
 Object.assign(I18N.id, {
-  'nav.gudang': 'Gudang', 'navs.gudang': 'Gudang', 'pu.exp': 'Kedaluwarsa', 'pu.exp_hint': 'Wajib: tanggal kedaluwarsa, atau centang "tak ada"', 'pu.exp_none': 'Tak ada', 'prod.size': 'Ukuran', 'prod.weight': 'Berat', 'prod.expiry': 'Tanggal kedaluwarsa', 'prod.no_expiry': 'Tak ada (tidak kedaluwarsa)', 'prod.expiry_hint': 'Kosongkan & centang "tak ada" untuk barang tanpa kedaluwarsa (gelas, madu, …)', 'exp.soon': 'Kedaluwarsa {n} hari lagi', 'exp.expired': 'KEDALUWARSA', 'exp.ok': 'Kedaluwarsa', 'pu.exp_required': 'Isi tanggal kedaluwarsa tiap baris, atau centang "tak ada"', 'mon.view_only': 'Pantau saja',
+  'nav.gudang': 'Gudang', 'navs.gudang': 'Gudang', 'pu.exp': 'Kedaluwarsa', 'pu.exp_hint': 'Wajib: tanggal kedaluwarsa, atau centang "tak ada"', 'pu.exp_none': 'Tak ada', 'prod.size': 'Ukuran', 'prod.weight': 'Berat', 'prod.expiry': 'Tanggal kedaluwarsa', 'prod.no_expiry': 'Tak ada (tidak kedaluwarsa)', 'prod.expiry_hint': 'Kosongkan & centang "tak ada" untuk barang tanpa kedaluwarsa (gelas, madu, …)', 'exp.soon': 'Kedaluwarsa {n} hari lagi', 'exp.expired': 'KEDALUWARSA', 'exp.ok': 'Kedaluwarsa', 'pu.exp_required': 'Isi tanggal kedaluwarsa tiap baris, atau centang "tak ada"', 'mon.view_only': 'Pantau saja', 'mon.purchases_hint': 'Pemilik: pantau saja. Manajer memasukkan barang masuk & meminta koreksi; Anda menyetujuinya.',
   'att.expiring': '{n} barang hampir kedaluwarsa', 'att.opname': 'Opname menunggu persetujuan ({n})',
   'gd.tab_overview': 'Ringkasan', 'gd.tab_list': 'Daftar stok', 'gd.tab_expiry': 'Kedaluwarsa', 'gd.tab_opname': 'Stok opname',
   'gd.items': 'Jumlah barang', 'gd.units': 'Total unit', 'gd.value_cost': 'Nilai stok (harga modal)', 'gd.value_retail': 'Nilai stok (harga eceran)',
@@ -8023,7 +8028,7 @@ Object.assign(I18N.id, {
   'gd.apr_hint': 'Jika disetujui, selisih ditambahkan ke stok saat ini — penjualan sesudah penghitungan tetap terhitung.', 'gd.apr_same': '{n} barang sesuai (tanpa selisih)', 'gd.apr_nodiff': 'Tidak ada selisih.', 'gd.total': 'Total', 'gd.new_toast': 'Stok opname baru dari {cashier} →'
 });
 Object.assign(I18N.ar, {
-  'nav.gudang': 'المخزن', 'navs.gudang': 'المخزن', 'pu.exp': 'تاريخ الانتهاء', 'pu.exp_hint': 'إلزامي: تاريخ الانتهاء، أو ضع علامة "غير موجود"', 'pu.exp_none': 'غير موجود', 'prod.size': 'الحجم', 'prod.weight': 'الوزن', 'prod.expiry': 'تاريخ الانتهاء', 'prod.no_expiry': 'غير موجود (لا ينتهي)', 'prod.expiry_hint': 'اتركه فارغاً وضع علامة "غير موجود" للبضائع بلا صلاحية (أكواب، عسل، …)', 'exp.soon': 'ينتهي خلال {n} يوماً', 'exp.expired': 'منتهي', 'exp.ok': 'ينتهي', 'pu.exp_required': 'املأ تاريخ الانتهاء لكل سطر، أو ضع علامة "غير موجود"', 'mon.view_only': 'مراقبة فقط',
+  'nav.gudang': 'المخزن', 'navs.gudang': 'المخزن', 'pu.exp': 'تاريخ الانتهاء', 'pu.exp_hint': 'إلزامي: تاريخ الانتهاء، أو ضع علامة "غير موجود"', 'pu.exp_none': 'غير موجود', 'prod.size': 'الحجم', 'prod.weight': 'الوزن', 'prod.expiry': 'تاريخ الانتهاء', 'prod.no_expiry': 'غير موجود (لا ينتهي)', 'prod.expiry_hint': 'اتركه فارغاً وضع علامة "غير موجود" للبضائع بلا صلاحية (أكواب، عسل، …)', 'exp.soon': 'ينتهي خلال {n} يوماً', 'exp.expired': 'منتهي', 'exp.ok': 'ينتهي', 'pu.exp_required': 'املأ تاريخ الانتهاء لكل سطر، أو ضع علامة "غير موجود"', 'mon.view_only': 'مراقبة فقط', 'mon.purchases_hint': 'المالك: مراقبة فقط. المدير يُدخل الواردات ويطلب التصحيح، وأنت توافق عليه.',
   'att.expiring': '{n} أصناف قاربت صلاحيتها على الانتهاء', 'att.opname': 'جرد بانتظار الموافقة ({n})',
   'gd.tab_overview': 'ملخص', 'gd.tab_list': 'قائمة المخزون', 'gd.tab_expiry': 'الصلاحية', 'gd.tab_opname': 'جرد المخزون',
   'gd.items': 'عدد الأصناف', 'gd.units': 'إجمالي الوحدات', 'gd.value_cost': 'قيمة المخزون (بالتكلفة)', 'gd.value_retail': 'قيمة المخزون (بسعر التجزئة)',
@@ -8727,7 +8732,7 @@ function drawPurchaseHistory() {
     ${notes.map(n => `<tr data-no="${esc(n.no)}"><td class="num">${esc(fmtDate(n.date))}</td><td class="small"><b>${esc(n.no || '—')}</b></td><td>${esc(n.supplier || '—')}${n.carrier ? `<div class="small muted" data-carrier>${ic('truck')} ${esc(n.carrier)}</div>` : ''}</td>
       <td class="hide-phone small">${noteProducts(n).slice(0, 4).map(a => `${esc(a.name)} <b class="num">×${fmtQty(a.qty)}</b>`).join(', ')}${noteProducts(n).length > 4 ? ' …' : ''}</td>
       <td class="r num">${fmtRp(n.total)}</td><td>${matchBadge(n.status)}${n.fixed ? ' ' + matchBadge('koreksi') : ''}${n.notes && n.status === 'tidak_cocok' ? `<div class="small muted">${esc(n.notes)}</div>` : ''}</td>
-      <td class="r" style="white-space:nowrap">${n.no && n.status !== 'retur' ? `<button class="btn xs" data-act="pu-fix" data-no="${esc(n.no)}">${ic('edit')} ${esc(t('fix.button'))}</button>${isApprover() ? ` <button class="btn xs" data-act="pu-retur" data-no="${esc(n.no)}">${ic('return')} ${esc(t('rt.btn'))}</button>` : ''}` : ''}${n.no ? ` <button class="btn xs" data-act="pu-doc" data-no="${esc(n.no)}">${ic('print')} ${esc(t('doc.goods_in'))}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
+      <td class="r" style="white-space:nowrap">${n.no && n.status !== 'retur' && isApprover() && !isOwner() ? `<button class="btn xs" data-act="pu-fix" data-no="${esc(n.no)}">${ic('edit')} ${esc(t('fix.button'))}</button> <button class="btn xs" data-act="pu-retur" data-no="${esc(n.no)}">${ic('return')} ${esc(t('rt.btn'))}</button>` : ''}${n.no ? ` <button class="btn xs" data-act="pu-doc" data-no="${esc(n.no)}">${ic('print')} ${esc(t('doc.goods_in'))}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
     <p class="small muted">${esc(t('pu.locked_hint'))}</p>` : `<div class="muted">${esc(t('no_data'))}</div>`;
 }
 function openPurchaseFix(no) {
@@ -8736,7 +8741,7 @@ function openPurchaseFix(no) {
   const el = openModal({
     title: `${t('fix.title')} · ${no}`, id: 'fix-modal',
     body: `<p style="margin-top:0"><b>${esc(n.supplier || '—')}</b> · ${esc(fmtDate(n.date))} ${matchBadge(n.status)}</p>
-      <p class="small muted">${esc(t(isApprover() ? 'fix.hint_apply' : 'fix.hint_request'))}</p>
+      <p class="small muted">${esc(t(isOwner() ? 'fix.hint_apply' : 'fix.hint_request'))}</p>
       <div class="tbl-wrap"><table class="tbl" id="fx-table"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('fix.now'))}</th><th class="r">${esc(t('fix.new_qty'))}</th>${own ? `<th class="r">${esc(t('pu.cost_unit'))}</th>` : ''}</tr></thead><tbody>
       ${prods.map(a => `<tr data-pid="${esc(a.pid)}"><td>${esc(a.name)}</td><td class="r num">${fmtQty(a.qty)}</td><td class="r"><input class="input num" style="width:96px" inputmode="decimal" data-fix-qty="${esc(a.pid)}" value="${esc(fmtQtyInput(a.qty))}" aria-label="${esc(t('fix.new_qty'))} ${esc(a.name)}"></td>
         ${own ? `<td class="r"><input class="input num" style="width:120px" inputmode="numeric" data-fix-cost="${esc(a.pid)}" data-cur="${a.qty > 0 ? Math.round(a.total / a.qty) : 0}" value="${a.qty > 0 ? esc(fmtNum(Math.round(a.total / a.qty))) : ''}" aria-label="${esc(t('pu.cost_unit'))}"></td>` : ''}</tr>`).join('')}</tbody></table></div>
