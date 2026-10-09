@@ -1943,7 +1943,7 @@ async function pollApprovals() {
     AP.fresh = new Set(fresh.map(a => a.request_id));
     if (fresh.length) {
       beep(); try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) { }
-      toast(t(fresh[0].kind === 'opname' ? 'gd.new_toast' : fresh[0].kind === 'purchase_fix' ? 'apr.new_fix' : fresh[0].kind === 'buka_kas' ? 'apr.new_bukakas' : fresh[0].kind === 'discount' ? 'apr.new_disc' : fresh[0].kind === 'retur' ? 'apr.new_retur' : fresh[0].kind === 'kesepakatan' ? 'apr.new_agree' : 'apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name, no: fresh[0].ref }), 'warn', 6000);
+      toast(t(fresh[0].kind === 'opname' ? 'gd.new_toast' : fresh[0].kind === 'purchase_fix' ? 'apr.new_fix' : fresh[0].kind === 'buka_kas' ? 'apr.new_bukakas' : fresh[0].kind === 'discount' ? 'apr.new_disc' : fresh[0].kind === 'retur' ? 'apr.new_retur' : fresh[0].kind === 'pay_plan' ? 'apr.new_payplan' : fresh[0].kind === 'kesepakatan' ? 'apr.new_agree' : 'apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name, no: fresh[0].ref }), 'warn', 6000);
     }
     updateApprovalBadge();
     if (S.view === 'approvals') drawApprovals();
@@ -1964,6 +1964,7 @@ function aprBodyHTML(a) {
   if (kind === 'buka_kas') return bukaKasAprHTML(a, pl);
   if (kind === 'discount') return discountAprHTML(a, pl);
   if (kind === 'retur') return returAprHTML(a, pl);
+  if (kind === 'pay_plan') return payPlanAprHTML(a, pl);
   if (kind === 'kesepakatan') return agreeAprHTML(a, pl);
   if (kind === 'transfer_confirm') return `<div class="row wrap"><b class="grow" style="font-size:17px">${ic('bank')} ${esc(t('tc.title'))}</b><span class="badge blue">${esc(a.request_id)}</span></div>
     <div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('tc.who'))}</div><div class="v">${esc(a.customer_name || '—')}</div></div><div><div class="k">${esc(t('tc.amount'))}</div><div class="v num"><b>${esc(fmtRp(a.total))}</b></div></div></div>
@@ -1985,6 +1986,19 @@ function aprBodyHTML(a) {
     ${aprSummaryHTML(null, int(a.customer_debt_before), int(a.debt_amount), int(a.total))}
     ${a.summary ? `<div class="small" style="margin-bottom:8px">${esc(a.summary)}</div>` : ''}`;
 }
+function payPlanAprHTML(a, pl) {
+  // Supplier pay plan: the owner ticks which items to pay now (default all), then approves (or rejects the whole plan).
+  const items = Array.isArray(pl.items) ? pl.items : [];
+  const can = a.can_decide !== false; // owner only
+  const rows = items.map((it, i) => `<label class="li" style="align-items:center"><input type="checkbox" data-pp-item data-idx="${i}" ${can ? 'checked' : 'disabled'} style="width:20px;height:20px;margin-inline-end:10px">
+    <div class="grow"><div class="t">${esc(it.supplier)}</div><div class="s">${esc(t('pp.priority'))} ${fmtNum(it.priority || 0)}${it.note ? ' · ' + esc(it.note) : ''}</div></div>
+    <div class="right num" style="font-weight:800">${fmtRp(it.amount)}</div></label>`).join('');
+  return `<div class="row wrap"><b class="grow" style="font-size:17px">${ic('wallet')} ${esc(t('apr.kind_payplan'))}</b><span class="badge amber">${esc(a.request_id)}</span></div>
+    <div class="small muted">${esc(t('pp.proposed_by', { by: a.cashier }))} · ${esc(fmtDateTime(a.created_at))}</div>
+    <div class="small" style="margin:6px 0 2px">${esc(t('pp.pick_items'))}</div>
+    <div class="list">${rows}</div>
+    <div class="apr-sum" style="grid-template-columns:1fr;margin-top:6px"><div><div class="k">${esc(t('total'))}</div><div class="v num"><b>${fmtRp(a.total)}</b></div></div></div>`;
+}
 function drawApprovals() {
   const box = $('#apr-list'); if (!box) return;
   const sig = AP.list.map(a => a.request_id).join('|') + '#' + S.lang;
@@ -2005,11 +2019,19 @@ async function decideApproval(id, decision, btn) {
   const card = btn.closest('.apr-card');
   const ap = AP.list.find(a => a.request_id === id) || {};
   const note = card ? $('[data-note]', card).value.trim() : '';
+  if (ap.kind === 'pay_plan') {
+    if (decision === 'approved') {
+      const picks = $$('[data-pp-item]', card).filter(c => c.checked).map(c => int(c.dataset.idx));
+      if (!picks.length) { toast(t('pp.need_pick'), 'warn'); return; }
+      ap.__picks = picks;
+    } else ap.__picks = [];
+  }
   $$('button', card).forEach(b => b.disabled = true);
   try {
     const data = { request_id: id, decision, note };
     if (ap.kind === 'void') data.invoice_no = ap.ref;
     if (ap.kind === 'purchase_fix') data.purchase_no = ap.ref;
+    if (ap.kind === 'pay_plan') data.approve_items = ap.__picks || [];
     const r = await api('decide_approval', data);
     AP.list = AP.list.filter(a => a.request_id !== id); AP.count = AP.list.length;
     updateApprovalBadge(); renderShell(); drawApprovals();
@@ -5533,10 +5555,10 @@ function openDeviceDetail(id) {
 /* ========== Activity log (v12, owner) ========== */
 const ACTV = { recent: [], preset: '7d', from: '', to: '', group: '', user: '', q: '', data: null, err: '' };
 const ACT_GROUPS = { masuk: ['masuk', 'minta_koreksi', 'koreksi_masuk'], harga: ['harga', 'minta_harga'], stok: ['stok', 'opname', 'minta_opname', 'kemas_ulang', 'produk', 'produk_baru', 'impor', 'pindah_stok', 'jual_tanpa_rak'], retur: ['minta_retur', 'retur'],
-  kas: ['biaya', 'kas', 'tutup_kas', 'buka_kas'], jual: ['batal', 'minta_batal', 'hutang', 'minta_diskon', 'diskon', 'member_baru', 'member_berhenti'], bayar: ['bayar_masuk', 'bayar_keluar', 'alokasi', 'rekening'], pengguna: ['pengguna', 'pengaturan', 'masuk_master', 'ganti_pin', 'kode_pemilik', 'usul_kesepakatan', 'kesepakatan'], perangkat: ['perangkat_baru'] };
+  kas: ['biaya', 'kas', 'tutup_kas', 'buka_kas'], jual: ['batal', 'minta_batal', 'hutang', 'minta_diskon', 'diskon', 'member_baru', 'member_berhenti'], bayar: ['bayar_masuk', 'bayar_keluar', 'alokasi', 'rekening', 'minta_bayar', 'setuju_bayar', 'tolak_bayar'], pengguna: ['pengguna', 'pengaturan', 'masuk_master', 'ganti_pin', 'kode_pemilik', 'usul_kesepakatan', 'kesepakatan'], perangkat: ['perangkat_baru'] };
 const ACT_ICON = { retur: 'return', masuk: 'truck', harga: 'tag', stok: 'warehouse', kas: 'cash', jual: 'cart', bayar: 'wallet', pengguna: 'gear', perangkat: 'device', lain: 'activity' };
 function actGroup(a) {
-  if (a.kind === 'keputusan') { const m = /\((\w+)/.exec(a.summary || ''); return { credit: 'jual', void: 'jual', discount: 'jual', retur: 'retur', kesepakatan: 'pengguna', price: 'harga', opname: 'stok', purchase_fix: 'masuk', buka_kas: 'kas' }[m ? m[1] : 'credit'] || 'jual'; }
+  if (a.kind === 'keputusan') { const m = /\((\w+)/.exec(a.summary || ''); return { credit: 'jual', void: 'jual', discount: 'jual', retur: 'retur', kesepakatan: 'pengguna', price: 'harga', opname: 'stok', purchase_fix: 'masuk', buka_kas: 'kas', pay_plan: 'bayar' }[m ? m[1] : 'credit'] || 'jual'; }
   for (const [g, ks] of Object.entries(ACT_GROUPS)) if (ks.includes(a.kind)) return g;
   return 'lain';
 }
@@ -6102,15 +6124,17 @@ function allocUI(root, docs, getAmount, pre) {
   draw();
   return { read, err, upd, auto, setDocs: (d, p) => { docs = d; pre = p; draw(); } };
 }
-async function openPayForm(kind, party) {
+async function openPayForm(kind, party, opts = {}) {
   const isCust = kind === 'customer';
+  const plan = opts.plan_request_id ? { plan_request_id: opts.plan_request_id, item_index: opts.item_index } : null;
+  const preAmt = isCust ? party.debt_balance : (opts.amount != null ? opts.amount : '');
   const P = { photo_id: '', slip: null, method: isCust ? 'tunai' : 'transfer', ui: null, docs: [], scanning: false, serverMM: null };
   const accs = bankAccountsList().filter(a => a.active !== false);
   const el = openModal({
     title: isCust ? t('cust.receive') : t('sp.pay'), id: 'pay-modal',
     body: `<p style="margin-top:0"><b id="py-party">${esc(isCust ? party.name : party.name)}</b><br><span class="muted">${isCust ? `${esc(t('debt'))}: <b class="red num">${fmtRp(party.debt_balance)}</b>` : `${esc(t('sp.balance'))}: <b class="num" id="py-sbal">…</b>`}</span></p>
       <div class="slip-row" id="py-slip-row"><label class="btn" for="py-slip" id="py-slip-btn">${ic('camera')} ${esc(t('pay.slip_take'))}</label>${PHOTO_INPUT('py-slip')}<div class="grow small" id="py-slip-st"><span class="muted">${esc(t('pay.slip_hint'))}</span></div></div>
-      <div class="field"><label class="f" for="py-amt">${esc(t('amount'))} (Rp)</label><input class="input num" id="py-amt" inputmode="numeric" value="${isCust ? esc(fmtNum(party.debt_balance)) : ''}" autofocus style="font-size:20px;font-weight:800"></div>
+      <div class="field"><label class="f" for="py-amt">${esc(t('amount'))} (Rp)</label><input class="input num" id="py-amt" inputmode="numeric" value="${preAmt === '' ? '' : esc(fmtNum(preAmt))}" autofocus style="font-size:20px;font-weight:800"></div>
       <div class="field"><label class="f">${esc(t('pos.method'))}</label><div class="seg" id="py-m">${['tunai', 'transfer', 'qris'].map(m => `<button type="button" data-m="${m}" class="${m === P.method ? 'on' : ''}">${esc(t('pm.' + m))}</button>`).join('')}</div></div>
       <div id="py-bankbox" hidden><div class="grid2"><div class="field"><label class="f" for="py-acc">${esc(t('pay.account'))}</label><select class="input" id="py-acc">${accs.map(a => `<option value="${esc(a.id)}">${esc(accLabel(a))}</option>`).join('') || `<option value="">${esc(t('pay.no_account'))}</option>`}</select></div>
         <div class="field"><label class="f" for="py-bank">${esc(t(isCust ? 'pay.bank_from' : 'pay.bank_to'))}</label><input class="input" id="py-bank" list="dl-banks" autocomplete="off"><datalist id="dl-banks">${BANK_NAMES.map(b => `<option value="${esc(b)}">`).join('')}</datalist></div></div>
@@ -6192,6 +6216,7 @@ async function openPayForm(kind, party) {
     if (isCust) data.customer_id = party.id; else data.supplier = party.name;
     if (P.method !== 'tunai') { const b = $('#py-bank', el).value.trim(), r = $('#py-ref', el).value.trim(), a = $('#py-acc', el).value; if (b) data.bank = b; if (r) data.transfer_ref = r; if (a) data.account_id = a; }
     if (!isCust) data.paid_from = P.method === 'tunai' ? (($('#py-from .on', el) || { dataset: { f: 'lain' } }).dataset.f) : 'lain';
+    if (plan) { data.plan_request_id = plan.plan_request_id; data.item_index = plan.item_index; }
     if (P.photo_id) data.photo_id = P.photo_id;
     if (mmOn && reason) data.mismatch_reason = reason;
     const alloc = P.ui.read(); if (alloc.length) data.alloc = alloc;
@@ -6211,7 +6236,9 @@ async function openPayForm(kind, party) {
         closeModal(true);
         toast(t('sp.paid_ok', { amount: fmtRp(amount), name: party.name }), 'ok', 4000);
         if (data.paid_from === 'kas') refreshData(true);
-        SUP.list = null; if (S.view === 'suppliers') loadSuppliers(); openSupplierDetail(party.name);
+        SUP.list = null; SUP.plans = null;
+        if (plan) { if (S.view === 'suppliers') loadSuppliers(); else loadPayPlans(); pollApprovals(); }
+        else { if (S.view === 'suppliers') loadSuppliers(); openSupplierDetail(party.name); }
       }
     } catch (e) {
       $('#py-save', el).disabled = false;
@@ -6247,7 +6274,8 @@ function openAllocate(kind, party, pay, L) {
 }
 
 /* ---- Pemasok (suppliers): open goods-in notes, payments, balance ---- */
-const SUP = { list: null, err: '', q: '', seq: 0 };
+const SUP = { list: null, err: '', q: '', seq: 0, plans: null };
+const canPropose = () => isApprover() && !isOwner(); // the manager operates; the owner only monitors (money-out hidden by omon)
 async function supplierNameList() {
   try { await gdYear(false, 10 * 60000); } catch (e) { }
   return knownSuppliers().filter(n => !internalName(n));
@@ -6255,17 +6283,22 @@ async function supplierNameList() {
 const internalName = n => ['PENYESUAIAN STOK', 'STOK OPNAME', REPACK_SUPPLIER].includes(String(n || '').trim().toUpperCase());
 RENDER.suppliers = function () {
   if (!canAudit()) { go('pos'); return; }
-  $('#view-suppliers').innerHTML = `<div class="view-head"><h1>${esc(t('nav.suppliers'))}</h1><button class="btn sm" data-act="sp-refresh">${ic('refresh')} ${esc(t('refresh'))}</button><button class="btn primary" data-act="sp-pay-new">${ic('wallet')} ${esc(t('sp.pay'))}</button></div>
+  // The owner only monitors (sp-pay-new hidden by omon). The manager pays via owner-approved plans, so he proposes here.
+  const headBtn = canPropose() ? `<button class="btn primary" data-act="sp-propose">${ic('send')} ${esc(t('pp.propose'))}</button>` : `<button class="btn primary" data-act="sp-pay-new">${ic('wallet')} ${esc(t('sp.pay'))}</button>`;
+  $('#view-suppliers').innerHTML = `<div class="view-head"><h1>${esc(t('nav.suppliers'))}</h1><button class="btn sm" data-act="sp-refresh">${ic('refresh')} ${esc(t('refresh'))}</button>${headBtn}</div>
     <p class="muted small" style="margin-top:0">${esc(t('sp.hint'))}</p>
+    <div id="sp-plans"></div>
     <div id="sp-kpis"></div>
     <div class="toolbar"><input class="input" id="sp-q" type="search" placeholder="${esc(t('sp.search_ph'))}" value="${esc(SUP.q)}" aria-label="${esc(t('sp.search_ph'))}"></div>
     <div id="sp-list"><div class="empty">${esc(t('loading'))}</div></div>`;
   $('#sp-q').addEventListener('input', e => { SUP.q = e.target.value; drawSuppliers(); });
   if (SUP.list) drawSuppliers();
+  if (SUP.plans) drawSupplierPlans();
   loadSuppliers();
 };
 async function loadSuppliers() {
   const seq = ++SUP.seq;
+  if (canPropose()) loadPayPlans();
   try {
     const names = await supplierNameList();
     const res = await Promise.all(names.map(n => loadLedger('supplier', { name: n }).then(L => ({ name: n, L })).catch(e => ({ name: n, err: errMsg(e) }))));
@@ -6273,6 +6306,24 @@ async function loadSuppliers() {
     SUP.list = res; SUP.err = '';
   } catch (e) { if (seq !== SUP.seq) return; SUP.err = errMsg(e); }
   drawSuppliers();
+}
+async function loadPayPlans() {
+  if (!canPropose()) { SUP.plans = []; drawSupplierPlans(); return; }
+  try { SUP.plans = (await api('list_pay_plans')).pay_plans || []; } catch (e) { SUP.plans = SUP.plans || []; }
+  drawSupplierPlans();
+}
+// The manager's owner-approved, still-unpaid plan items: pay each one through the pre-filled form (carries the plan).
+function drawSupplierPlans() {
+  const box = $('#sp-plans'); if (!box) return;
+  if (!canPropose()) { box.innerHTML = ''; return; }
+  const items = [];
+  (SUP.plans || []).forEach(p => (p.items || []).forEach(it => { if (it.approved && !it.paid) items.push({ p, it }); }));
+  if (!items.length) { box.innerHTML = ''; return; }
+  items.sort((a, b) => (a.it.priority || 0) - (b.it.priority || 0));
+  box.innerHTML = `<div class="card pad" style="margin-bottom:12px"><h3 style="margin:0 0 6px">${ic('check')} ${esc(t('pp.to_pay'))}</h3>
+    <div class="list" id="sp-plan-rows">${items.map(({ p, it }) => `<div class="li" data-pp-plan="${esc(p.request_id)}" data-pp-idx="${it.index}" data-sup="${esc(it.supplier)}"><span class="act-ic">${ic('wallet')}</span>
+      <div class="grow"><div class="t">${esc(it.supplier)}</div><div class="s">${esc(t('pp.proposed_by', { by: p.by }))}${it.note ? ' · ' + esc(it.note) : ''} · ${esc(t('pp.priority'))} ${fmtNum(it.priority || 0)}</div></div>
+      <div class="right"><div class="num" style="font-weight:800">${fmtRp(it.amount)}</div><button class="btn xs primary" data-act="pp-record" data-plan="${esc(p.request_id)}" data-idx="${it.index}" data-sup="${esc(it.supplier)}" data-amt="${it.amount}">${esc(t('pp.record'))}</button></div></div>`).join('')}</div></div>`;
 }
 function drawSuppliers() {
   const box = $('#sp-list'), kp = $('#sp-kpis'); if (!box) return;
@@ -6289,12 +6340,56 @@ function drawSuppliers() {
 }
 async function openSupplierDetail(name) {
   const party = { name };
+  // The manager proposes this supplier for payment (owner authorizes); the owner's direct-pay button is hidden by omon.
+  const btn = canPropose() ? `<button class="btn primary" data-act="sp-propose" data-name="${esc(name)}">${ic('send')} ${esc(t('pp.propose'))}</button>` : `<button class="btn primary" data-act="sp-pay" data-name="${esc(name)}">${ic('wallet')} ${esc(t('sp.pay'))}</button>`;
   openModal({
     title: name, cls: 'wide', id: 'sd-modal',
-    body: `<div class="row wrap" style="margin-bottom:12px"><button class="btn primary" data-act="sp-pay" data-name="${esc(name)}">${ic('wallet')} ${esc(t('sp.pay'))}</button></div>
+    body: `<div class="row wrap" style="margin-bottom:12px">${btn}</div>
       <div id="sd-ledger" class="muted">${esc(t('loading'))}</div>`
   });
   drawLedgerInto($('#sd-ledger'), 'supplier', party);
+}
+async function openProposePayment(prefill) {
+  if (!canPropose()) return;
+  const names = await supplierNameList();
+  const el = openModal({
+    title: t('pp.title'), cls: 'wide', id: 'propose-modal',
+    body: `<p class="muted small" style="margin-top:0">${esc(t('pp.hint'))}</p>
+      <datalist id="dl-pp-sup">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+      <div id="pp-rows"></div>
+      <button type="button" class="btn sm" id="pp-add" style="margin-top:4px">${ic('plus')} ${esc(t('pp.add_row'))}</button>
+      <div class="red" id="pp-err" role="alert" style="margin-top:8px"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="pp-send">${ic('send')} ${esc(t('pp.send'))}</button>`
+  });
+  const rowsBox = $('#pp-rows', el);
+  const addRow = sup => {
+    const i = rowsBox.children.length + 1;
+    const row = document.createElement('div');
+    row.className = 'card pad pp-row'; row.style.marginBottom = '8px';
+    row.innerHTML = `<div class="grid2"><div class="field"><label class="f">${esc(t('pp.supplier'))}</label><input class="input" data-pp-sup list="dl-pp-sup" autocomplete="off" value="${esc(sup || '')}"></div>
+        <div class="field"><label class="f">${esc(t('pp.amount'))}</label><input class="input num" data-pp-amt inputmode="numeric"></div></div>
+      <div class="grid2"><div class="field"><label class="f">${esc(t('pp.priority'))}</label><input class="input num" data-pp-pri inputmode="numeric" value="${i}" placeholder="${esc(t('pp.priority_ph'))}"></div>
+        <div class="field"><label class="f">${esc(t('pp.note'))}</label><input class="input" data-pp-note maxlength="200"></div></div>
+      <div class="row" style="justify-content:flex-end"><button type="button" class="btn xs danger" data-act="pp-del">${ic('trash')} ${esc(t('delete'))}</button></div>`;
+    rowsBox.appendChild(row);
+    $('[data-pp-amt]', row).addEventListener('change', e => { const v = moneyVal(e.target.value); e.target.value = v ? fmtNum(v) : ''; });
+  };
+  rowsBox.addEventListener('click', e => { const b = e.target.closest('[data-act="pp-del"]'); if (b && rowsBox.children.length > 1) b.closest('.pp-row').remove(); });
+  $('#pp-add', el).onclick = () => addRow('');
+  addRow(prefill || '');
+  $('#pp-send', el).onclick = async () => {
+    const err = $('#pp-err', el);
+    const items = $$('.pp-row', rowsBox).map((row, i) => ({ supplier: $('[data-pp-sup]', row).value.trim(), amount: moneyVal($('[data-pp-amt]', row).value), priority: $('[data-pp-pri]', row).value.trim() === '' ? i + 1 : int($('[data-pp-pri]', row).value), note: $('[data-pp-note]', row).value.trim() }))
+      .filter(x => x.supplier && x.amount > 0);
+    if (!items.length) { err.textContent = t('pp.need_item'); return; }
+    $('#pp-send', el).disabled = true; err.textContent = '';
+    try {
+      await api('propose_payment', { items });
+      closeModal(true);
+      toast(t('pp.sent_ok', { n: items.length }), 'ok', 4000);
+      pollApprovals();
+    } catch (e) { $('#pp-send', el).disabled = false; err.textContent = errMsg(e); }
+  };
 }
 async function pickSupplierThenPay() {
   const names = await supplierNameList();
@@ -6660,6 +6755,8 @@ Object.assign(ACT, {
   'sp-open': el => openSupplierDetail(el.dataset.name),
   'sp-pay': el => { closeModal(); openPayForm('supplier', { name: el.dataset.name }); },
   'sp-pay-new': () => pickSupplierThenPay(),
+  'sp-propose': el => { closeModal(); openProposePayment(el.dataset.name || ''); },
+  'pp-record': el => { closeModal(); openPayForm('supplier', { name: el.dataset.sup }, { plan_request_id: el.dataset.plan, item_index: int(el.dataset.idx), amount: int(el.dataset.amt) }); },
   'bk-import': () => openBankImport(),
   'bk-csv': () => bkCsv(),
   'bk-match': el => bkMatchLine(el.dataset.line),
@@ -6842,6 +6939,27 @@ Object.assign(I18N.ar, {
   'set.loc_bad': 'إحداثيات غير صالحة', 'set.req_loc': 'إلزام الكاشير والمدير بمشاركة موقع الجهاز', 'set.req_loc_hint': 'لا يُفتح تطبيق الكاشير / المدير قبل السماح بالموقع.',
   'set.bank_title': 'الحساب البنكي للشركة', 'set.bank_hint': 'الحساب الذي يستخدمه المدير / المحاسب لكل المدفوعات البنكية. أول حساب نشط هو الاختيار الافتراضي.', 'set.bank_add': 'إضافة حساب', 'set.bank_name': 'البنك', 'set.bank_no': 'رقم الحساب', 'set.bank_holder': 'باسم', 'set.bank_bad': 'أدخل اسم البنك ورقم الحساب (أرقام فقط)',
   'set.report_title': 'التقرير اليومي (واتساب)', 'set.wa_company': 'واتساب المتجر / الشركة', 'set.wa_manager': 'واتساب المدير', 'set.wa_owner': 'واتساب المالك', 'set.report_time': 'تذكير إرسال التقرير (الساعة)', 'set.report_time_bad': 'ساعة غير صالحة'
+});
+// v23: supplier pay plan — the manager proposes, the owner authorizes, the manager records the payment.
+Object.assign(I18N.id, {
+  'pp.propose': 'Usul bayar pemasok', 'pp.title': 'Usul rencana bayar pemasok',
+  'pp.hint': 'Buat daftar tagihan pemasok yang mau dibayar (paling mendesak dulu) lalu kirim ke pemilik. Uang belum keluar — pemilik yang memilih mana yang dibayar sekarang.',
+  'pp.supplier': 'Pemasok', 'pp.amount': 'Jumlah (Rp)', 'pp.priority': 'Prioritas', 'pp.priority_ph': '1 = paling mendesak', 'pp.note': 'Catatan',
+  'pp.add_row': 'Tambah pemasok', 'pp.send': 'Kirim ke pemilik', 'pp.sent_ok': 'Rencana bayar dikirim ke pemilik ({n} pemasok)', 'pp.need_item': 'Isi nama pemasok dan jumlah untuk minimal satu baris',
+  'pp.to_pay': 'Disetujui pemilik — siap dibayar', 'pp.record': 'Catat pembayaran', 'pp.proposed_by': 'Diusulkan {by}',
+  'apr.kind_payplan': 'Rencana bayar pemasok', 'pp.pick_items': 'Centang tagihan yang dibayar sekarang (sisanya tetap menunggu):', 'pp.need_pick': 'Centang minimal satu tagihan untuk disetujui',
+  'apr.new_payplan': 'Rencana bayar pemasok dari {cashier} menunggu persetujuan →',
+  'ak.minta_bayar': 'Usul rencana bayar', 'ak.setuju_bayar': 'Setuju rencana bayar', 'ak.tolak_bayar': 'Tolak rencana bayar'
+});
+Object.assign(I18N.ar, {
+  'pp.propose': 'اقتراح دفع للموردين', 'pp.title': 'اقتراح خطة دفع للموردين',
+  'pp.hint': 'أنشئ قائمة بفواتير الموردين المراد دفعها (الأكثر إلحاحًا أولًا) ثم أرسلها إلى المالك. لم يخرج المال بعد — المالك يختار ما يُدفع الآن.',
+  'pp.supplier': 'المورد', 'pp.amount': 'المبلغ (روبية)', 'pp.priority': 'الأولوية', 'pp.priority_ph': '1 = الأكثر إلحاحًا', 'pp.note': 'ملاحظة',
+  'pp.add_row': 'إضافة مورد', 'pp.send': 'إرسال إلى المالك', 'pp.sent_ok': 'أُرسلت خطة الدفع إلى المالك ({n} موردين)', 'pp.need_item': 'أدخل اسم المورد والمبلغ في سطر واحد على الأقل',
+  'pp.to_pay': 'موافَق عليه من المالك — جاهز للدفع', 'pp.record': 'تسجيل الدفع', 'pp.proposed_by': 'اقترحها {by}',
+  'apr.kind_payplan': 'خطة دفع للموردين', 'pp.pick_items': 'اختر الفواتير التي تُدفع الآن (يبقى الباقي بانتظار):', 'pp.need_pick': 'اختر فاتورة واحدة على الأقل للموافقة',
+  'apr.new_payplan': 'خطة دفع للموردين من {cashier} بانتظار الموافقة ←',
+  'ak.minta_bayar': 'اقتراح خطة دفع', 'ak.setuju_bayar': 'الموافقة على خطة الدفع', 'ak.tolak_bayar': 'رفض خطة الدفع'
 });
 
 /* ========== v16: owner master code, own PINs, lock after wrong PINs, discount approvals, members, warehouse vs shelf ========== */

@@ -1625,6 +1625,20 @@ switch (req.action) {
       out.return_id = str(rec.return_id);
       finalStatus = decision === 'approved' ? 'used' : 'rejected';
     }
+    if (a.kind === 'pay_plan') {
+      // v23 supplier pay plan: the owner ticks which items (data.approve_items) to authorize paying now.
+      let pl = {};
+      try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+      const items = Array.isArray(pl.items) ? pl.items : [];
+      const picks = {};
+      (Array.isArray(data.approve_items) ? data.approve_items : []).forEach(function (i) { const n = num(i); if (n >= 0 && n === Math.floor(n)) picks[n] = true; });
+      let nApproved = 0;
+      items.forEach(function (it, i) { const yes = decision === 'approved' && picks[i] === true; it.approved = yes; if (yes) nApproved++; });
+      a.payload = JSON.stringify({ items: items });
+      finalStatus = (decision === 'approved' && nApproved > 0) ? 'approved' : 'rejected';
+      logAct(finalStatus === 'approved' ? 'setuju_bayar' : 'tolak_bayar',
+        (finalStatus === 'approved' ? 'Setuju bayar ' + nApproved + ' pemasok: ' : 'Tolak rencana bayar: ') + str(a.summary).slice(0, 500), a.request_id, money(a.total), finalStatus === 'approved' ? 'info' : 'warn');
+    }
     const na = Object.assign({}, a, { status: finalStatus === 'used' ? 'approved' : finalStatus, decided_by: me.name, decided_at: new Date().toISOString(), note: str(data.note) || str(a.note) });
     ops.approvals.push(forWrite(na, a.id));
     logAct('keputusan', (decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + str(a.kind || 'credit') + ', diminta ' + str(a.cashier) + '): ' + str(a.summary).slice(0, 600) + (str(data.note) ? ' | ' + str(data.note) : ''), a.request_id, money(a.total), decision === 'approved' ? 'info' : 'warn');
@@ -1830,6 +1844,21 @@ switch (req.action) {
     if (!sup) return fail('INVALID', 'Nama pemasok wajib (huruf dan angka saja)');
     const amount = money(data.amount);
     if (!(amount > 0)) return fail('INVALID', 'Jumlah pembayaran tidak valid');
+    // v23 owner monitoring: the manager may only record a supplier payment the owner authorized in a pay plan
+    // (propose_payment → decide_approval). The owner still pays directly. kasir/sales/akuntan are already blocked above.
+    let planAp = null, planIdx = -1, planItems = null;
+    if (role === 'manager') {
+      planAp = approvalById(str(data.plan_request_id));
+      planIdx = num(data.item_index);
+      let ppl = {};
+      try { ppl = JSON.parse(planAp ? planAp.payload : '{}'); } catch (e) { ppl = {}; }
+      planItems = planAp && Array.isArray(ppl.items) ? ppl.items : null;
+      const it = planItems && planIdx >= 0 && planIdx < planItems.length && planIdx === Math.floor(planIdx) ? planItems[planIdx] : null;
+      if (!planAp || planAp.kind !== 'pay_plan' || planAp.status !== 'approved' || !it || it.approved !== true || it.paid === true
+        || safeName(it.supplier, 80) !== sup || money(it.amount) !== amount) {
+        return fail('NEEDS_OWNER', 'Pembayaran pemasok butuh persetujuan pemilik (rencana bayar)');
+      }
+    }
     const method = ['tunai', 'transfer', 'qris'].indexOf(data.method) >= 0 ? data.method : 'transfer';
     const fromKas = data.paid_from === 'kas' && method === 'tunai';
     if (fromKas && !myShift) return fail('SHIFT_REQUIRED', 'Buka kasir (shift) dulu untuk bayar dari kas');
@@ -1857,7 +1886,56 @@ switch (req.action) {
       (chk.alloc.length ? ' untuk ' + chk.alloc.map(function (a1) { return a1.ref + ' Rp ' + a1.amount; }).join(', ') : ' — belum dialokasi') + (str(data.mismatch_reason) ? ' | beda dengan bukti: ' + str(data.mismatch_reason) : '') +
       (pay.slip_date && pay.slip_date !== pay.pay_date ? ' | tanggal bukti ' + pay.slip_date + ' ≠ dicatat ' + pay.pay_date : ''),
       pay.pay_id, amount, str(data.mismatch_reason) || (pay.slip_date && pay.slip_date !== pay.pay_date) ? 'warn' : 'info');
+    if (role === 'manager' && planAp && planItems) {
+      // Mark this plan item paid; when every owner-approved item is paid, the whole plan is done.
+      planItems[planIdx].paid = true;
+      planItems[planIdx].pay_id = pay.pay_id;
+      const allPaid = planItems.filter(function (x) { return x.approved === true; }).every(function (x) { return x.paid === true; });
+      ops.approvals.push(forWrite(Object.assign({}, planAp, { payload: JSON.stringify({ items: planItems }), status: allPaid ? 'done' : 'approved' }), planAp.id));
+      return done({ ok: true, payment: Object.assign({ id: null }, payOut(pay)), plan: { request_id: planAp.request_id, item_index: planIdx, status: allPaid ? 'done' : 'approved' } });
+    }
     return done({ ok: true, payment: Object.assign({ id: null }, payOut(pay)) });
+  }
+
+  case 'propose_payment': {
+    // v23 owner monitoring: the manager proposes a LIST of supplier bills to pay; the owner authorizes which to pay now.
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    const src = Array.isArray(data.items) ? data.items : [];
+    if (!src.length) return fail('INVALID', 'Tambah minimal satu tagihan pemasok');
+    if (src.length > 50) return fail('INVALID', 'Terlalu banyak tagihan (maks 50)');
+    const items = [];
+    for (let i = 0; i < src.length; i++) {
+      const it = src[i] || {};
+      const sup = safeName(it.supplier, 80);
+      if (!sup) return fail('INVALID', 'Nama pemasok wajib (huruf dan angka saja)');
+      const amt = money(it.amount);
+      if (!(amt > 0)) return fail('INVALID', 'Jumlah pembayaran tidak valid: ' + sup);
+      items.push({ supplier: sup, amount: amt, priority: Math.round(num(it.priority)), note: str(it.note).slice(0, 200), approved: false, paid: false, pay_id: '' });
+    }
+    const total = items.reduce(function (s, it) { return s + it.amount; }, 0);
+    const summary = items.map(function (it) { return it.supplier + ' Rp ' + it.amount; }).join(', ').slice(0, 1500);
+    const a = newApproval({ kind: 'pay_plan', approver_role: 'owner', total: total, summary: summary, payload: JSON.stringify({ items: items }) });
+    ops.approvals.push(forWrite(a, -1));
+    logAct('minta_bayar', summary, a.request_id, total, 'warn');
+    return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a) });
+  }
+
+  case 'list_pay_plans': {
+    // The manager's own owner-approved supplier pay plans that still have items to pay.
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    const plans = approvalRows.filter(function (a) {
+      if (a.kind !== 'pay_plan' || a.status !== 'approved') return false;
+      if (role === 'manager' && str(a.cashier).toLowerCase() !== me.name.toLowerCase()) return false;
+      return true;
+    }).map(function (a) {
+      var pl = {};
+      try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+      const items = (Array.isArray(pl.items) ? pl.items : []).map(function (it, i) {
+        return { index: i, supplier: str(it.supplier), amount: money(it.amount), priority: num(it.priority), note: str(it.note), approved: it.approved === true, paid: it.paid === true, pay_id: str(it.pay_id) };
+      });
+      return { request_id: a.request_id, created_at: str(a.created_at), by: str(a.cashier), summary: str(a.summary), total: money(a.total), status: a.status, items: items };
+    }).filter(function (p) { return p.items.some(function (it) { return it.approved && !it.paid; }); });
+    return done({ ok: true, pay_plans: plans });
   }
 
   case 'allocate_payment': {

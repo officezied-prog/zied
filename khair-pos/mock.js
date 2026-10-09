@@ -4,7 +4,7 @@ const MockServer = (() => {
   const DBKEY = 'kmock.db';
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
-  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_photos', 'field_bootstrap', 'list_field', 'product_images', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon'];
+  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_photos', 'field_bootstrap', 'list_field', 'product_images', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon'];
   class MockErr extends Error { constructor(code, message, extra) { super(message || code); this.code = code; this.extra = extra || null; } }
   const E = (code, msg, extra) => new MockErr(code, msg, extra);
   let ready = null;
@@ -1089,6 +1089,7 @@ const MockServer = (() => {
         if (ap.status !== 'pending') throw E('INVALID', 'Already decided: ' + ap.status);
         if (ap.approver_role === 'owner' && u.role !== 'owner') throw E('NEEDS_OWNER', 'Only the owner can decide this request');
         const out = {};
+        let planFinal = '';
         if (data.decision === 'approved' && ap.kind === 'void') {
           if (data.invoice_no !== ap.ref) throw E('INVALID', 'invoice_no must equal approval.ref');
           let reason = ''; try { reason = JSON.parse(ap.payload || '{}').reason || ''; } catch (e) { }
@@ -1156,9 +1157,21 @@ const MockServer = (() => {
           logAct(db, u, 'retur', (data.decision === 'approved' ? 'Retur disetujui ' : 'Retur ditolak ') + u.name + ': ' + strv(ap.summary).slice(0, 600), strv(rec.return_id), int(ap.total), 'warn');
           out.return_id = strv(rec.return_id);
         }
+        if (ap.kind === 'pay_plan') {
+          // v23 supplier pay plan: the owner ticks which items (data.approve_items) to authorize paying now.
+          let pl = {}; try { pl = JSON.parse(ap.payload || '{}'); } catch (e) { pl = {}; }
+          const items = Array.isArray(pl.items) ? pl.items : [];
+          const picks = {};
+          (Array.isArray(data.approve_items) ? data.approve_items : []).forEach(i => { const n = num(i); if (n >= 0 && n === Math.floor(n)) picks[n] = true; });
+          let nApproved = 0;
+          items.forEach((it, i) => { const yes = data.decision === 'approved' && picks[i] === true; it.approved = yes; if (yes) nApproved++; });
+          ap.payload = JSON.stringify({ items });
+          planFinal = (data.decision === 'approved' && nApproved > 0) ? 'approved' : 'rejected';
+          logAct(db, u, planFinal === 'approved' ? 'setuju_bayar' : 'tolak_bayar', (planFinal === 'approved' ? 'Setuju bayar ' + nApproved + ' pemasok: ' : 'Tolak rencana bayar: ') + strv(ap.summary).slice(0, 500), ap.request_id, int(ap.total), planFinal === 'approved' ? 'info' : 'warn');
+        }
         if (ap.kind === 'transfer_confirm') logAct(db, u, data.decision === 'approved' ? 'transfer_ok' : 'transfer_gagal', (data.decision === 'approved' ? 'Transfer masuk DIKONFIRMASI oleh ' + u.name : 'Transfer TIDAK diterima — ' + u.name + (String(data.note || '') ? ': ' + data.note : '')) + ' | ' + strv(ap.summary), strv(ap.ref), int(ap.total), data.decision === 'approved' ? 'info' : 'warn');
         logAct(db, u, 'keputusan', (data.decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + (ap.kind || 'credit') + ', diminta ' + ap.cashier + '): ' + strv(ap.summary).slice(0, 600) + (strv(data.note) ? ' | ' + strv(data.note) : ''), ap.request_id, int(ap.total), data.decision === 'approved' ? 'info' : 'warn');
-        Object.assign(ap, { status: data.decision, decided_by: u.name, decided_at: jktISO(), note: String(data.note || '') });
+        Object.assign(ap, { status: ap.kind === 'pay_plan' ? planFinal : data.decision, decided_by: u.name, decided_at: jktISO(), note: String(data.note || '') });
         return Object.assign({ approval: ap }, out);
       }
       case 'scan_purchase': {
@@ -1469,6 +1482,19 @@ const MockServer = (() => {
         if (!sup) throw E('INVALID', 'Nama pemasok wajib (huruf dan angka saja)');
         const amount = int(data.amount);
         if (!(amount > 0)) throw E('INVALID', 'Jumlah pembayaran tidak valid');
+        // v23 owner monitoring: the manager may only record a supplier payment the owner authorized in a pay plan.
+        let planAp = null, planIdx = -1, planItems = null;
+        if (u.role === 'manager') {
+          planAp = db.approvals.find(x => x.request_id === strv(data.plan_request_id)) || null;
+          planIdx = num(data.item_index);
+          let ppl = {}; try { ppl = JSON.parse(planAp ? planAp.payload : '{}'); } catch (e) { ppl = {}; }
+          planItems = planAp && Array.isArray(ppl.items) ? ppl.items : null;
+          const it = planItems && planIdx >= 0 && planIdx < planItems.length && planIdx === Math.floor(planIdx) ? planItems[planIdx] : null;
+          if (!planAp || planAp.kind !== 'pay_plan' || planAp.status !== 'approved' || !it || it.approved !== true || it.paid === true
+            || safeName(it.supplier, 80) !== sup || int(it.amount) !== amount) {
+            throw E('NEEDS_OWNER', 'Pembayaran pemasok butuh persetujuan pemilik (rencana bayar)');
+          }
+        }
         const method = ['tunai', 'transfer', 'qris'].includes(data.method) ? data.method : 'transfer';
         const myShift = openShiftOf(db, u.name);
         const fromKas = data.paid_from === 'kas' && method === 'tunai';
@@ -1489,7 +1515,47 @@ const MockServer = (() => {
         logAct(db, u, 'bayar_keluar', 'Bayar pemasok ' + sup + ' Rp ' + amount + ' (' + method + (pay.bank ? ' ' + pay.bank : '') + (pay.transfer_ref ? ', ref ' + pay.transfer_ref : '') + (fromKas ? ', dari kas' : '') + ')' +
           (chk.alloc.length ? ' untuk ' + chk.alloc.map(a => a.ref + ' Rp ' + a.amount).join(', ') : ' — belum dialokasi') + (strv(data.mismatch_reason) ? ' | beda dengan bukti: ' + strv(data.mismatch_reason) : '') +
           (dateOff ? ' | tanggal bukti ' + pay.slip_date + ' ≠ dicatat ' + pay.pay_date : ''), pay.pay_id, amount, strv(data.mismatch_reason) || dateOff ? 'warn' : 'info');
+        if (u.role === 'manager' && planAp && planItems) {
+          planItems[planIdx].paid = true; planItems[planIdx].pay_id = pay.pay_id;
+          const allPaid = planItems.filter(x => x.approved === true).every(x => x.paid === true);
+          planAp.payload = JSON.stringify({ items: planItems }); planAp.status = allPaid ? 'done' : 'approved';
+          return { payment: payOut(pay), plan: { request_id: planAp.request_id, item_index: planIdx, status: planAp.status } };
+        }
         return { payment: payOut(pay) };
+      }
+      case 'propose_payment': {
+        // v23 owner monitoring: the manager proposes a LIST of supplier bills to pay; the owner authorizes which to pay now.
+        if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
+        const src = Array.isArray(data.items) ? data.items : [];
+        if (!src.length) throw E('INVALID', 'Tambah minimal satu tagihan pemasok');
+        if (src.length > 50) throw E('INVALID', 'Terlalu banyak tagihan (maks 50)');
+        const items = [];
+        for (let i = 0; i < src.length; i++) {
+          const it = src[i] || {};
+          const sup = safeName(it.supplier, 80);
+          if (!sup) throw E('INVALID', 'Nama pemasok wajib (huruf dan angka saja)');
+          const amt = int(it.amount);
+          if (!(amt > 0)) throw E('INVALID', 'Jumlah pembayaran tidak valid: ' + sup);
+          items.push({ supplier: sup, amount: amt, priority: Math.round(num(it.priority)), note: strv(it.note).slice(0, 200), approved: false, paid: false, pay_id: '' });
+        }
+        const total = sum(items, it => it.amount);
+        const summary = items.map(it => it.supplier + ' Rp ' + it.amount).join(', ').slice(0, 1500);
+        const approval = newApproval(db, u, { kind: 'pay_plan', approver_role: 'owner', total, summary, payload: JSON.stringify({ items }) });
+        logAct(db, u, 'minta_bayar', summary, approval.request_id, total, 'warn');
+        return { applied: false, request_id: approval.request_id, approval };
+      }
+      case 'list_pay_plans': {
+        if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
+        const plans = db.approvals.filter(a => {
+          if (a.kind !== 'pay_plan' || a.status !== 'approved') return false;
+          if (u.role === 'manager' && strv(a.cashier).toLowerCase() !== u.name.toLowerCase()) return false;
+          return true;
+        }).map(a => {
+          let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+          const items = (Array.isArray(pl.items) ? pl.items : []).map((it, i) => ({ index: i, supplier: strv(it.supplier), amount: int(it.amount), priority: num(it.priority), note: strv(it.note), approved: it.approved === true, paid: it.paid === true, pay_id: strv(it.pay_id) }));
+          return { request_id: a.request_id, created_at: strv(a.created_at), by: strv(a.cashier), summary: strv(a.summary), total: int(a.total), status: a.status, items };
+        }).filter(p => p.items.some(it => it.approved && !it.paid));
+        return { pay_plans: plans };
       }
       case 'allocate_payment': {
         if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
