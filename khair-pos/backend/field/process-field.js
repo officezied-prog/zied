@@ -1,11 +1,4 @@
-// Keyless deploy (v29): the store key is read from an n8n Variable ($vars.STORE_KEY), set once by the owner in n8n, so the
-// code carries no real key and can be republished freely. (This instance blocks $env access inside Code nodes, so we never
-// touch $env.) The placeholder returned last is swapped for the test key only in the local harness; in production it is
-// never reached once the Variable is set, and if the Variable is missing every request simply fails with BAD_KEY (no crash).
-const STORE_KEY = (function () {
-  try { if (typeof $vars !== 'undefined' && $vars && $vars.STORE_KEY) return String($vars.STORE_KEY); } catch (e) { }
-  return '__STORE_KEY__';
-})();
+const STORE_KEY = '__STORE_KEY__';
 const req = $('Parse Field').first().json;
 const data = req.data && typeof req.data === 'object' ? req.data : {};
 // Plain text only (v16): control / direction characters and HTML tags are removed and keys that reach JavaScript
