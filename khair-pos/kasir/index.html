@@ -941,10 +941,10 @@ function renderGate() {
 /* ========== Devices (v11): where this phone / tablet / computer is while the app is open ==========
    A one-time notice on this device (Setuju / Tidak, remembered for every app on this browser) comes before the first
    location request. With consent the location is watched while the app is open (high accuracy, fixes up to 60 s old) and
-   goes with EVERY main-API request as data.device (see apiRawInner); device_ping on open/login and every 30 min while the
+   goes with EVERY main-API request as data.device (see apiRawInner); device_ping on open/login and every 60 min while the
    app is visible and nothing else was sent. The device id (kpos.device_id) is shared by the apps on this browser.
    settings.require_device_location: a kasir/manager cannot use the app until location is allowed (owner never blocked). */
-const DEV_ID_KEY = 'kpos.device_id', DEV_CONSENT_KEY = 'kpos.device_consent', DEV_PING_MS = 30 * 60000;
+const DEV_ID_KEY = 'kpos.device_id', DEV_CONSENT_KEY = 'kpos.device_consent', DEV_PING_MS = 60 * 60000;
 const DEV = { app: 'kasir', id: '', label: '', fix: null, status: 'prompt', watch: null, lastMain: 0, battery: null, require: false, booted: false, asking: false, waiters: [], pinged: false, pingedFix: false };
 function deviceId() {
   if (DEV.id) return DEV.id;
@@ -3642,7 +3642,7 @@ async function checkMyRequests() {
   }
   if (changed) { KS.set('my_requests', MYREQ.list); renderShell(); if (S.view === 'more') RENDER.more(); if (S.view === 'kas') RENDER.kas(); if (S.view === 'masuk') { PUH.groups = null; loadPuHistory(); } const m = $('#myreq'); if (m) drawMyRequests(m.closest('.modal-bg')); }
 }
-setInterval(() => checkMyRequests(), 30000);
+setInterval(() => { if (document.hidden) return; checkMyRequests(); }, 90000);
 const REQ_BADGE = { pending: 'warn', approved: 'ok', used: 'ok', auto: 'ok', rejected: 'red', gone: 'gray' };
 function openMyRequests() {
   const el = openModal({ title: t('more.myreq'), id: 'myreq', body: '', foot: `<button class="btn" id="mr-refresh">${ic('refresh')} ${esc(t('refresh'))}</button><button class="btn primary" data-act="modal-close">${esc(t('close'))}</button>` });
@@ -3679,7 +3679,9 @@ async function pollApprovals() {
     const box = $('#apr-inbox'); if (box) drawInbox(box.closest('.modal-bg'));
   } catch (e) { }
 }
-setInterval(pollApprovals, 15000);
+setInterval(pollApprovals, 60000);
+// When the app becomes visible again, do one immediate poll so returning users get fresh data without waiting for the next tick.
+document.addEventListener('visibilitychange', () => { if (!document.hidden && S.inApp && S.pin_hash) { try { pollApprovals(); } catch(e){} try { checkMyRequests(); } catch(e){} } });
 function aprPayload(a) { try { return typeof a.payload === 'string' ? JSON.parse(a.payload || '{}') : (a.payload || {}); } catch (e) { return {}; } }
 function aprBodyHTML(a) {
   const kind = a.kind || 'credit', pl = aprPayload(a);

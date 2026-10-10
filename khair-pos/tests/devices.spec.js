@@ -9,7 +9,7 @@ const deviceRow = async (page, id) => (await getDb(page)).devices.find(d => d.de
 /** Records every request body the app sends to the mock backend. */
 const spyRequests = page => page.evaluate(() => { window.__bodies = []; const orig = MockServer.request; MockServer.request = (b, o) => { window.__bodies.push(JSON.parse(JSON.stringify(b))); return orig(b, o); }; });
 
-test('consent bar → location shared; every request carries the device; ping on open and after 30 idle minutes', async ({ browser }) => {
+test('consent bar → location shared; every request carries the device; ping on open and after 60 idle minutes', async ({ browser }) => {
   const ctx = await browser.newContext(Object.assign({ geolocation: HERE, permissions: ['geolocation'] }, CTX));
   const page = await ctx.newPage();
   await blockMapNetwork(page);
@@ -42,10 +42,10 @@ test('consent bar → location shared; every request carries the device; ping on
   expect(bodies.length).toBeGreaterThan(1);
   for (const b of bodies) expect(b.data.device).toMatchObject({ id, app: 'owner', loc_status: 'granted', lat: HERE.latitude, lng: HERE.longitude, acc: 15 });
 
-  // ping: not while requests are flowing; after 30 minutes without any request it is sent (forced write)
+  // ping: not while requests are flowing; after 60 minutes without any request it is sent (forced write)
   expect(await page.evaluate(() => KPOS.devicePingTick(Date.now()))).toBe(false);
   const pings = r1.pings;
-  expect(await page.evaluate(() => KPOS.devicePingTick(Date.now() + 31 * 60000))).toBe(true);
+  expect(await page.evaluate(() => KPOS.devicePingTick(Date.now() + 61 * 60000))).toBe(true);
   await expect.poll(async () => (await deviceRow(page, id)).pings).toBeGreaterThan(pings);
   expect((await page.evaluate(() => window.__bodies)).some(b => b.action === 'device_ping' && b.data.device.id === id)).toBe(true);
   // the label from the user agent
