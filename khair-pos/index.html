@@ -141,7 +141,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.1.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -226,10 +226,13 @@ const store = {
   set(k, v) { try { localStorage.setItem(PREFIX + k, JSON.stringify(v)); return true; } catch (e) { return false; } },
   del(k) { try { localStorage.removeItem(PREFIX + k); } catch (e) { } }
 };
-/* Owner's decision 07 Oct: names only (no role words), and this app's login lists only the owner. Staff (manager, accountant,
-   cashier, sales) log in through Khair Kasir, which opens the right screens for each; a manager or accountant arrives here
-   already logged in. A locked staff session still shows its own name. The server checks every PIN and role as before. */
-const loginUsers = () => DEMO ? L.users : L.users.filter(u => u.role === 'owner' || (u.name === L.sel && u.name === S.user));
+/* Owner's decision 07 Oct, refined 2026-10-10 (owner asked why only his name showed here): this one link serves the
+   owner, the MANAGER and the ACCOUNTANT — all three appear in the login list and sign in directly with their own
+   name + PIN; the app then opens each their own screens (owner: everything, manager: management + approvals,
+   accountant: read-only reports). Only the CASHIER and SALES rep use a different app (Khair Kasir / Khair Sales), so
+   the footer link is for them; if one of them opens this link the server redirects them. The server checks every PIN
+   and role as before, so access is decided by the account, not by the link. */
+const loginUsers = () => DEMO ? L.users : L.users.filter(u => u.role === 'owner' || u.role === 'manager' || u.role === 'akuntan' || (u.name === L.sel && u.name === S.user));
 const roleNames = role => { const n = (S.users || []).filter(u => u.role === role && u.active !== false).map(u => u.name); return n.length ? n.join(' / ') : t('role.' + role); };
 
 /* ========== Session (H2): the live pin_hash lives only in sessionStorage (this tab); localStorage keeps {user, role}.
@@ -426,7 +429,7 @@ const isApprover = () => S.role === 'owner' || S.role === 'manager';
 // v17 accountant: reads sales, invoices, goods in/out, returns, ledgers, bank and reports; changes nothing (the server refuses too)
 const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
-const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'settings'];
+const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'approvals', 'settings'];
 const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|prod-new)$/;
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
@@ -538,7 +541,7 @@ const viewAllowed = v => isAudit() ? AUDIT_VIEWS.includes(v.id) : (!v.approver |
 const phoneViews = () => isAudit() ? ['reports', 'history', 'purchases', 'customers'] : isApprover() ? ['home', 'pos', 'history', 'customers'] : ['pos', 'products', 'customers', 'history'];
 const RENDER = {};
 function renderShell() {
-  $('#nav').innerHTML = VIEWS.filter(v => viewAllowed(v) && !v.tab).map(v => `<button class="nav-btn ${S.view === v.id ? 'on' : ''} ${phoneViews().includes(v.id) ? '' : 'hide-phone'}" data-act="go" data-view="${v.id}" ${S.view === v.id ? 'aria-current="page"' : ''}>${ic(v.icon)}<span class="l-long">${esc(t(v.label))}</span><span class="l-short" aria-hidden="true">${esc(t(v.label.replace('nav.', 'navs.')))}</span>${v.id === 'orders' && FO.newCount ? `<b class="dot" data-orders-new>${FO.newCount}</b>` : ''}</button>`).join('') + `<button class="nav-btn show-phone ${phoneViews().includes(S.view) ? '' : 'on'}" id="nav-more" data-act="nav-more">${ic('menu')}<span>${esc(t('nav.more'))}</span>${isApprover() && AP.count ? `<b class="dot">${AP.count}</b>` : ''}</button>`;
+  $('#nav').innerHTML = VIEWS.filter(v => viewAllowed(v) && !v.tab).map(v => `<button class="nav-btn ${S.view === v.id ? 'on' : ''} ${phoneViews().includes(v.id) ? '' : 'hide-phone'}" data-act="go" data-view="${v.id}" ${S.view === v.id ? 'aria-current="page"' : ''}>${ic(v.icon)}<span class="l-long">${esc(t(v.label))}</span><span class="l-short" aria-hidden="true">${esc(t(v.label.replace('nav.', 'navs.')))}</span>${v.id === 'orders' && FO.newCount ? `<b class="dot" data-orders-new>${FO.newCount}</b>` : ''}</button>`).join('') + `<button class="nav-btn show-phone ${phoneViews().includes(S.view) ? '' : 'on'}" id="nav-more" data-act="nav-more">${ic('menu')}<span>${esc(t('nav.more'))}</span>${canAudit() && AP.count ? `<b class="dot">${AP.count}</b>` : ''}</button>`;
   $('#tb-store').textContent = settings().store_name || 'Khair Mart';
   $('#tb-sub').textContent = 'POS · ' + (MOCK ? 'demo' : maskKey(S.key));
   $('#tb-user').textContent = S.user;
@@ -1936,16 +1939,16 @@ function openWaiting(ap) {
   timer = setTimeout(tick, 600);
 }
 
-/* ========== Approvals inbox (owner / manager) ========== */
+/* ========== Approvals inbox (owner / manager; v29: accountant for the shared mgr_akuntan requests) ========== */
 const AP = { list: [], count: 0, seen: null, loaded: false };
 function updateApprovalBadge() {
   const b = $('#tb-appr'); if (!b) return;
-  b.hidden = !isApprover() || !S.inApp;
+  b.hidden = !canAudit() || !S.inApp;
   b.innerHTML = `${ic('check')}<span class="hide-phone">${esc(t('nav.approvals'))}</span>${AP.count ? `<b>${AP.count}</b>` : ''}`;
   b.setAttribute('aria-label', `${t('nav.approvals')} (${AP.count})`);
 }
 async function pollApprovals() {
-  if (!isApprover() || !S.inApp || !S.pin_hash || $('#app').hidden) return;
+  if (!canAudit() || !S.inApp || !S.pin_hash || $('#app').hidden) return;
   try {
     const r = await api('list_approvals');
     // an agreement is shown only to the other party (owner proposal → manager; manager proposal → owner)
@@ -1996,6 +1999,20 @@ function aprBodyHTML(a) {
       <div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))}</div>
       <table class="tbl" style="margin:8px 0" data-price-changes><thead><tr><th></th><th class="r">${esc(t('price.old'))}</th><th class="r">${esc(t('price.new'))}</th></tr></thead><tbody>${rows}</tbody></table>
       ${pl.reason ? `<div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason)}”</b></div>` : ''}`;
+  }
+  if (kind === 'purchase_mismatch') {
+    const diffs = Array.isArray(pl.diffs) ? pl.diffs : [];
+    const rows = diffs.map(d => `<tr><td>${esc(d.name || '')}</td><td class="r num">${d.recorded_qty == null ? '—' : fmtQty(d.recorded_qty)}</td><td class="r num">${d.photo_qty == null ? '—' : fmtQty(d.photo_qty)}</td></tr>`).join('');
+    return `<div class="row wrap"><b class="grow" style="font-size:17px">${ic('truck')} ${esc(t('apr.kind_mismatch', { no: a.ref }))}</b><span class="badge amber">${esc(a.request_id)}</span></div>
+      <div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b>${pl.supplier ? ' · ' + esc(pl.supplier) : ''} · ${esc(fmtDateTime(a.created_at))}</div>
+      <table class="tbl" style="margin:8px 0"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('apr.mm_counted'))}</th><th class="r">${esc(t('apr.mm_note'))}</th></tr></thead><tbody>${rows}</tbody></table>
+      ${pl.reason ? `<div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason)}”</b></div>` : ''}
+      <div class="small muted" style="margin-bottom:6px">${esc(t('apr.mm_hint'))}</div>`;
+  }
+  if (kind === 'member') {
+    return `<div class="row wrap"><b class="grow" style="font-size:17px">${ic('user')} ${esc(t('apr.kind_member', { name: a.customer_name || pl.name || '' }))}</b><span class="badge blue">${esc(a.request_id)}</span></div>
+      <div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))}</div>
+      <div class="small" style="margin:6px 0 8px">${esc([pl.phone, pl.email, pl.type].filter(Boolean).join(' · ')) || '—'}</div>`;
   }
   return `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(a.customer_name)}</b><span class="badge amber">${esc(a.request_id)}</span></div>
     <div class="small muted">${esc(t('apr.kind_credit'))} · ${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))}</div>
@@ -4093,7 +4110,7 @@ const I18N = {
     'pin': 'PIN (4–6 angka)', 'pin_again': 'Ulangi PIN', 'pin_mismatch': 'PIN tidak sama', 'search_customer': 'Cari nama / no. HP pelanggan', 'n_products': '{n} produk',
     'login.key_title': 'Masukkan kode toko', 'login.key': 'Kode toko', 'login.key_hint': 'Kode toko diberikan oleh pemilik. Cukup diisi sekali di perangkat ini.',
     'login.pick_user': 'Siapa yang bertugas?', 'login.locked': 'Aplikasi terkunci — masukkan PIN', 'login.pick_user_first': 'Pilih nama dulu', 'login.pin_len': 'PIN harus 4–6 angka',
-    'login.enter': 'Masuk', 'login.change_key': 'Ganti kode toko', 'login.staff': 'Karyawan: masuk lewat Khair Kasir', 'login.store': 'Toko',
+    'login.enter': 'Masuk', 'login.change_key': 'Ganti kode toko', 'login.staff': 'Kasir & sales: masuk lewat Khair Kasir', 'login.store': 'Toko',
     'setup.title': 'Selamat datang! Buat akun pemilik', 'setup.hint': 'Toko ini belum punya pengguna. Akun pertama adalah pemilik (owner).', 'setup.owner_name': 'Nama pemilik', 'setup.create': 'Buat akun & masuk', 'setup.done': 'Akun pemilik dibuat',
     'pos.search_ph': 'Cari produk atau scan barcode…', 'pos.camera': 'Scan dengan kamera', 'pos.camera_hint': 'Arahkan kamera ke barcode', 'pos.camera_fail': 'Kamera tidak bisa dibuka',
     'pos.cart': 'Keranjang', 'pos.cart_empty': 'Keranjang kosong', 'pos.cart_empty_hint': 'Ketuk produk atau scan barcode', 'pos.walkin': 'Umum', 'pos.walkin_hint': 'Pembeli tanpa nama',
@@ -4170,7 +4187,7 @@ const I18N = {
     'pin': 'الرقم السري (4–6 أرقام)', 'pin_again': 'أعد الرقم السري', 'pin_mismatch': 'الرقمان غير متطابقين', 'search_customer': 'ابحث باسم العميل أو هاتفه', 'n_products': '{n} منتج',
     'login.key_title': 'أدخل رمز المتجر', 'login.key': 'رمز المتجر', 'login.key_hint': 'يُدخَل رمز المتجر مرة واحدة فقط على هذا الجهاز.',
     'login.pick_user': 'من المناوب الآن؟', 'login.locked': 'التطبيق مقفل — أدخل الرقم السري', 'login.pick_user_first': 'اختر الاسم أولًا', 'login.pin_len': 'الرقم السري من 4 إلى 6 أرقام',
-    'login.enter': 'دخول', 'login.change_key': 'تغيير رمز المتجر', 'login.staff': 'الموظفون: الدخول من Khair Kasir', 'login.store': 'المتجر',
+    'login.enter': 'دخول', 'login.change_key': 'تغيير رمز المتجر', 'login.staff': 'الكاشير والمندوب: الدخول من Khair Kasir', 'login.store': 'المتجر',
     'setup.title': 'أهلًا بك! أنشئ حساب المالك', 'setup.hint': 'لا يوجد مستخدمون لهذا المتجر بعد. الحساب الأول هو المالك.', 'setup.owner_name': 'اسم المالك', 'setup.create': 'إنشاء الحساب والدخول', 'setup.done': 'تم إنشاء حساب المالك',
     'pos.search_ph': 'ابحث عن منتج أو امسح الباركود…', 'pos.camera': 'المسح بالكاميرا', 'pos.camera_hint': 'وجّه الكاميرا نحو الباركود', 'pos.camera_fail': 'تعذّر فتح الكاميرا',
     'pos.cart': 'السلة', 'pos.cart_empty': 'السلة فارغة', 'pos.cart_empty_hint': 'اضغط على منتج أو امسح الباركود', 'pos.walkin': 'عميل عام', 'pos.walkin_hint': 'مشترٍ بدون اسم',
@@ -4286,6 +4303,7 @@ Object.assign(I18N.ar, {
 Object.assign(I18N.id, {
   'nav.more': 'Lainnya', 'nav.expenses': 'Pengeluaran', 'navs.expenses': 'Biaya', 'err.NEEDS_OWNER': 'Butuh persetujuan pemilik.',
   'apr.kind_credit': 'Hutang', 'apr.kind_void': 'Pembatalan nota {inv}', 'apr.kind_price': 'Ubah harga: {name}', 'apr.owner_only': 'Hanya pemilik',
+  'apr.kind_mismatch': 'Selisih barang masuk {no}', 'apr.mm_counted': 'Dihitung', 'apr.mm_note': 'Di nota', 'apr.mm_hint': 'Barang sudah masuk stok sesuai hitungan penerima; setujui untuk menandai sudah diperiksa.', 'apr.kind_member': 'Daftar member: {name}',
   'price.title': 'Ubah harga', 'price.now': 'Sekarang', 'price.old': 'Lama', 'price.new': 'Baru', 'price.cost_req': 'Harga modal baru (perlu persetujuan pemilik)', 'price.cost_ph': 'kosongkan jika tidak berubah',
   'price.reason_ph': 'mis. harga supplier naik', 'price.hint_kasir': 'Perubahan harga dari kasir dikirim sebagai permintaan ke pemilik/manajer.',
   'price.hint_manager': 'Harga eceran & grosir langsung berlaku. Harga modal perlu persetujuan pemilik.', 'price.hint_owner': 'Semua perubahan langsung berlaku dan tercatat.',
@@ -4304,6 +4322,7 @@ Object.assign(I18N.id, {
 Object.assign(I18N.ar, {
   'nav.more': 'المزيد', 'nav.expenses': 'المصروفات', 'navs.expenses': 'المصروفات', 'err.NEEDS_OWNER': 'يحتاج موافقة المالك.',
   'apr.kind_credit': 'دَين', 'apr.kind_void': 'إلغاء الفاتورة {inv}', 'apr.kind_price': 'تغيير سعر: {name}', 'apr.owner_only': 'للمالك فقط',
+  'apr.kind_mismatch': 'فرق في بضاعة واردة {no}', 'apr.mm_counted': 'المعدود', 'apr.mm_note': 'في الفاتورة', 'apr.mm_hint': 'دخلت البضاعة للمخزون حسب عدّ المستلم؛ الموافقة تعني أنه تمت المراجعة.', 'apr.kind_member': 'تسجيل عضو: {name}',
   'price.title': 'تغيير السعر', 'price.now': 'الحالي', 'price.old': 'القديم', 'price.new': 'الجديد', 'price.cost_req': 'سعر التكلفة الجديد (يحتاج موافقة المالك)', 'price.cost_ph': 'اتركه فارغًا إن لم يتغير',
   'price.reason_ph': 'مثلًا: ارتفع سعر المورّد', 'price.hint_kasir': 'تغيير السعر من الكاشير يُرسل طلبًا إلى المالك أو المديرة.',
   'price.hint_manager': 'سعر التجزئة والجملة يُطبَّق مباشرة. سعر التكلفة يحتاج موافقة المالك.', 'price.hint_owner': 'كل التغييرات تُطبَّق مباشرة وتُسجَّل.',

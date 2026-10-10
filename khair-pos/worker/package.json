@@ -1,0 +1,15 @@
+{
+  "name": "khair-mart-jumla",
+  "private": true,
+  "type": "module",
+  "description": "Khair Mart Jumla (الخير مارت جملة) — code backend on Cloudflare Workers + D1; replaces n8n (kept as reference).",
+  "scripts": {
+    "build": "node build.js",
+    "test": "node build.js && node --experimental-sqlite --test \"test/*.test.js\"",
+    "dev": "wrangler dev",
+    "deploy": "node build.js && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}

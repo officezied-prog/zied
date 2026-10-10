@@ -1,0 +1,4 @@
+node_modules/
+.wrangler/
+# generated at build time (npm run build / test / deploy all regenerate it)
+src/generated/

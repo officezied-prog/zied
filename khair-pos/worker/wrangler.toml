@@ -1,0 +1,13 @@
+# Cloudflare Worker config for Khair Mart Jumla (الخير مارت جملة) — the code backend that
+# replaces n8n. The old n8n workflows are kept as a reference and are not touched.
+# STORE_KEY (and optional ANTHROPIC_API_KEY) are secrets, NOT set here:
+#   wrangler secret put STORE_KEY
+# database_id is filled in at cut-over: `wrangler d1 create khair_mart_jumla` prints it.
+name = "khair-mart-jumla"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "khair_mart_jumla"
+database_id = "9330a847-d474-45bd-9400-ebad5bf01a27"
