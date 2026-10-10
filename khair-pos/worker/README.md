@@ -1,6 +1,8 @@
-# Khair POS — code backend (Cloudflare Workers + D1)
+# Khair Mart Jumla (الخير مارت جملة) — code backend (Cloudflare Workers + D1)
 
-This is the **direct-code backend** that replaces the n8n Cloud workflow for the POS API.
+This is **Khair Mart Jumla**, the direct-code backend that replaces the n8n Cloud workflows.
+The old n8n workflows are kept **as a reference** (not deleted, not modified); this code is the
+new version the apps will point to after cut-over.
 Goal: a strong, always-on backend with **no monthly execution wall** that can halt the
 shop (the n8n Starter plan's quota caused the 2026-10-10 outage). Owner's standing rule:
 reliability first, then cost. Cloudflare Workers free tier = 100k requests/day (far above
@@ -50,7 +52,7 @@ So the Worker runs the identical logic over identical data, with a thin HTTP + S
 ## Safe cut-over (no downtime, instant rollback)
 
 1. Build + pass the full local parity suite (`npm test`) — must match n8n byte-for-byte.
-2. Owner creates a free Cloudflare account; `wrangler d1 create khair_pos`; apply `schema.sql`.
+2. Owner creates a free Cloudflare account; `wrangler d1 create khair_mart_jumla`; apply `schema.sql`.
 3. Export live n8n data tables → import into D1; verify row counts + money/stock totals.
 4. Run the Worker **in parallel** with n8n (apps still on n8n); mirror real requests and
    diff responses for a few days.

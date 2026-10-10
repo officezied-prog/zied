@@ -5,6 +5,13 @@ field-sales `sales/`, cold-storage `gudang/`), served via GitHub Pages from `mai
 Backend today is n8n Cloud (ziedapp.app.n8n.cloud) — logic lives in the "Process" Code
 node, mirrored by `khair-pos/backend/*`. Tests: Playwright under `khair-pos/tests*`.
 
+**New code backend — "Khair Mart Jumla" (الخير مارت جملة)** under `khair-pos/worker/`:
+all five n8n workflows (POS, Field, Chat, Attendance, Photo) rebuilt on Cloudflare Workers +
+D1, reusing `backend/*` as the single source of truth (wrapped at build time). It removes
+n8n's monthly execution wall (the outage cause). The **old n8n workflows are kept as a
+reference — never delete or modify them**; the apps will just point to the new backend after
+cut-over (`worker/migrate/README.md`: parallel run + instant rollback). Not deployed yet.
+
 ## Owner standing rules — ALWAYS honor
 
 - **Reliability FIRST, then cost (recommend best + cheapest, proactively).** The owner
