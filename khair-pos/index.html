@@ -1951,7 +1951,7 @@ async function pollApprovals() {
     if (S.view === 'approvals') drawApprovals();
   } catch (e) { if (S.view === 'approvals' && !AP.loaded) { const b = $('#apr-list'); if (b) b.innerHTML = `<div class="empty red">${esc(errMsg(e))}</div>`; } }
 }
-setInterval(pollApprovals, 15000);
+setInterval(pollApprovals, 60000);
 RENDER.approvals = function () {
   $('#view-approvals').innerHTML = `<div class="view-head"><h1>${esc(t('nav.approvals'))}</h1><button class="btn" data-act="apr-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
     <p class="muted" style="margin-top:0">${esc(t('apr.inbox_hint'))}</p><div id="apr-list"><div class="empty">${esc(t('loading'))}</div></div>`;
@@ -2596,8 +2596,8 @@ function openBell() {
   });
   if (unread.length) { ATT.notifs.forEach(x => x.read = true); store.set('notifs', ATT.notifs); updateBell(); }
 }
-setInterval(() => { refreshAttention(); checkMyRequests(); if (store.get('order_updates', []).length) flushOrderUpdates(); }, 120000);
-setInterval(() => checkMyRequests(), 30000);
+setInterval(() => { if (document.hidden) return; refreshAttention(); checkMyRequests(); if (store.get('order_updates', []).length) flushOrderUpdates(); }, 240000);
+setInterval(() => { if (document.hidden) return; checkMyRequests(); }, 90000);
 
 /* ========== Dashboard (Beranda) — calm, one screen, 1 tap to details ========== */
 const HM = { preset: 'today', brand: 'all', data: null, err: '' };
@@ -2626,8 +2626,10 @@ async function loadHome(opts = {}) {
   const up = $('#home-updated'); if (up && HM.preset === 'today') up.textContent = t('home.updated', { time: DTF_TIME.format(new Date()) });
   refreshAttention();
 }
-// Owner/manager live sales monitor: while viewing today's dashboard, refresh it quietly (fresh data, no flicker) every 30s.
-setInterval(() => { if (S.inApp && S.view === 'home' && HM.preset === 'today') loadHome({ silent: true, fresh: true }); }, 30000);
+// Owner/manager live sales monitor: while viewing today's dashboard, refresh it quietly (fresh data, no flicker) every 120s, and only while the tab is visible.
+setInterval(() => { if (!document.hidden && S.inApp && S.view === 'home' && HM.preset === 'today') loadHome({ silent: true, fresh: true }); }, 120000);
+// When the app becomes visible again, do one immediate refresh so returning users get fresh data without waiting for the next tick.
+document.addEventListener('visibilitychange', () => { if (!document.hidden && S.inApp && S.pin_hash) { try { pollApprovals(); } catch(e){} try { checkMyRequests(); } catch(e){} if (S.view === 'home' && HM.preset === 'today') { try { loadHome({ silent: true, fresh: true }); } catch(e){} } } });
 function computeHome(d, brand) {
   const byInv = {}; d.items.forEach(i => (byInv[i.invoice_no] = byInv[i.invoice_no] || []).push(i));
   const inBrand = s => brand === 'all' || brandOf(s, byInv) === brand;
@@ -5341,7 +5343,7 @@ Object.assign(I18N.ar, {
 /* ========== Devices (v11): id per browser, consent, location, battery, ping; owner map ==========
    The location is shared only after the consent notice; "Tidak" sends loc_status 'denied' and never asks the browser. */
 const DEV = { id: '', label: '', fix: null, status: 'prompt', battery: null, watch: null, lastReq: 0, requireLoc: false, err: '' };
-const DEV_ID_KEY = 'kpos.device_id', DEV_CONSENT_KEY = 'kpos.loc_consent', DEV_PING_MS = 30 * 60000, DEV_ACTIVE_MS = 10 * 60000;
+const DEV_ID_KEY = 'kpos.device_id', DEV_CONSENT_KEY = 'kpos.loc_consent', DEV_PING_MS = 60 * 60000, DEV_ACTIVE_MS = 10 * 60000;
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { } }
 function deviceId() {
@@ -5396,7 +5398,7 @@ async function devicePing() {
   if (!S.inApp || !S.pin_hash) return null;
   try { const r = await api('device_ping', {}); DEV.requireLoc = r.require_location === true; devBlockCheck(); return r; } catch (e) { return null; }
 }
-/** Every minute: ping when the tab is visible and nothing was sent for 30 minutes (any request carries the device anyway). */
+/** Every minute: ping when the tab is visible and nothing was sent for 60 minutes (any request carries the device anyway). */
 function devicePingTick(now = Date.now()) {
   if (!S.inApp || !S.pin_hash || $('#app').hidden) return false;
   if (document.visibilityState && document.visibilityState !== 'visible') return false;

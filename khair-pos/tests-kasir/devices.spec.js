@@ -1,5 +1,5 @@
 // v11 devices: a one-time location notice per device, the location with every main-API request (data.device),
-// device_ping on open and every 30 min when idle, and settings.require_device_location blocking kasir/manager (never the owner).
+// device_ping on open and every 60 min when idle, and settings.require_device_location blocking kasir/manager (never the owner).
 const { test, expect } = require('@playwright/test');
 const H = require('./helpers');
 
@@ -65,12 +65,12 @@ test.describe('location allowed in the browser', () => {
     expect(await page.evaluate(() => localStorage.getItem('kpos.device_id'))).toBe(id);
     expect((await log(page)).find(e => e.action === 'device_ping').device.id).toBe(id);
 
-    // every 30 min while visible and idle: device_ping; not when another request was just sent
+    // every 60 min while visible and idle: device_ping; not when another request was just sent
     const n0 = (await log(page)).filter(e => e.action === 'device_ping').length;
     await page.evaluate(() => window.KASIR.devTick());
     await page.waitForTimeout(300);
     expect((await log(page)).filter(e => e.action === 'device_ping').length).toBe(n0);
-    await page.evaluate(() => { window.KASIR.DEV.lastMain = Date.now() - 31 * 60000; window.KASIR.devTick(); });
+    await page.evaluate(() => { window.KASIR.DEV.lastMain = Date.now() - 61 * 60000; window.KASIR.devTick(); });
     await expect.poll(async () => (await log(page)).filter(e => e.action === 'device_ping').length).toBe(n0 + 1);
   });
 
