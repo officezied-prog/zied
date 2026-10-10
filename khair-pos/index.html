@@ -516,7 +516,7 @@ const VIEWS = [
   { id: 'gudang', icon: 'warehouse', label: 'nav.gudang', approver: true },
   { id: 'retur', icon: 'return', label: 'nav.retur', approver: true },
   { id: 'expenses', icon: 'wallet', label: 'nav.expenses' },
-  { id: 'kas', icon: 'cash', label: 'nav.kas' },
+  { id: 'kas', icon: 'cash', label: 'nav.kas', tab: 'pos' }, // merged into the cashier page as a sub-tab (not its own nav button)
   { id: 'customers', icon: 'users', label: 'nav.customers' },
   { id: 'members', icon: 'member', label: 'nav.members', approver: true },
   { id: 'absensi', icon: 'camera', label: 'nav.absensi', approver: true },
@@ -538,7 +538,7 @@ const viewAllowed = v => isAudit() ? AUDIT_VIEWS.includes(v.id) : (!v.approver |
 const phoneViews = () => isAudit() ? ['reports', 'history', 'purchases', 'customers'] : isApprover() ? ['home', 'pos', 'history', 'customers'] : ['pos', 'products', 'customers', 'history'];
 const RENDER = {};
 function renderShell() {
-  $('#nav').innerHTML = VIEWS.filter(viewAllowed).map(v => `<button class="nav-btn ${S.view === v.id ? 'on' : ''} ${phoneViews().includes(v.id) ? '' : 'hide-phone'}" data-act="go" data-view="${v.id}" ${S.view === v.id ? 'aria-current="page"' : ''}>${ic(v.icon)}<span class="l-long">${esc(t(v.label))}</span><span class="l-short" aria-hidden="true">${esc(t(v.label.replace('nav.', 'navs.')))}</span>${v.id === 'orders' && FO.newCount ? `<b class="dot" data-orders-new>${FO.newCount}</b>` : ''}</button>`).join('') + `<button class="nav-btn show-phone ${phoneViews().includes(S.view) ? '' : 'on'}" id="nav-more" data-act="nav-more">${ic('menu')}<span>${esc(t('nav.more'))}</span>${isApprover() && AP.count ? `<b class="dot">${AP.count}</b>` : ''}</button>`;
+  $('#nav').innerHTML = VIEWS.filter(v => viewAllowed(v) && !v.tab).map(v => `<button class="nav-btn ${S.view === v.id ? 'on' : ''} ${phoneViews().includes(v.id) ? '' : 'hide-phone'}" data-act="go" data-view="${v.id}" ${S.view === v.id ? 'aria-current="page"' : ''}>${ic(v.icon)}<span class="l-long">${esc(t(v.label))}</span><span class="l-short" aria-hidden="true">${esc(t(v.label.replace('nav.', 'navs.')))}</span>${v.id === 'orders' && FO.newCount ? `<b class="dot" data-orders-new>${FO.newCount}</b>` : ''}</button>`).join('') + `<button class="nav-btn show-phone ${phoneViews().includes(S.view) ? '' : 'on'}" id="nav-more" data-act="nav-more">${ic('menu')}<span>${esc(t('nav.more'))}</span>${isApprover() && AP.count ? `<b class="dot">${AP.count}</b>` : ''}</button>`;
   $('#tb-store').textContent = settings().store_name || 'Khair Mart';
   $('#tb-sub').textContent = 'POS · ' + (MOCK ? 'demo' : maskKey(S.key));
   $('#tb-user').textContent = S.user;
@@ -557,9 +557,13 @@ function go(view, force) {
   if (!vd || !viewAllowed(vd) || vd.href) view = isAudit() ? 'reports' : 'pos';
   const changed = S.view !== view;
   S.view = view;
+  // 'kas' (صندوق) is a sub-tab of the cashier page: it has no nav button of its own, so the
+  // nav highlight/phone-tab logic uses its parent ('pos'). S.kasTab drives the sub-tab bar.
+  S.kasTab = view === 'kas' ? 'kas' : 'sell';
+  const navId = (vd && vd.tab) ? vd.tab : view;
   VIEWS.forEach(v => { const el = $('#view-' + v.id); if (el) el.hidden = v.id !== view; });
-  const more = $('#nav-more'); if (more) more.classList.toggle('on', !phoneViews().includes(view));
-  $$('#nav .nav-btn[data-view]').forEach(b => { const on = b.dataset.view === view; b.classList.toggle('on', on); on ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'); });
+  const more = $('#nav-more'); if (more) more.classList.toggle('on', !phoneViews().includes(navId));
+  $$('#nav .nav-btn[data-view]').forEach(b => { const on = b.dataset.view === navId; b.classList.toggle('on', on); on ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'); });
   if (view !== 'pos') { closeCartSheet(); stopVoice(); }
   if (changed || force || view !== 'pos') (RENDER[view] || (() => { }))();
   if (view === 'pos') { renderGrid(); renderCart(); focusSearch(); }
@@ -983,9 +987,18 @@ function openQtySheet(p) {
 
 /* ========== POS: rendering ========== */
 const POS = { q: '', cat: '', limit: 60, keyTimes: [] };
+// The cashier page and the cash-drawer (صندوق) page are merged into one page with a sub-tab
+// bar: "بيع" (this selling view) and "الصندوق" (the kas view). One nav entry, fewer windows.
+function cashierTabs(active) {
+  return `<div class="seg cashier-tabs" role="tablist" aria-label="${esc(t('nav.pos'))}">
+    <button class="${active === 'sell' ? 'on' : ''}" data-act="cashier-tab" data-tab="sell" role="tab" aria-selected="${active === 'sell'}">${ic('cart')} ${esc(t('cashier.sell'))}</button>
+    <button class="${active === 'kas' ? 'on' : ''}" data-act="cashier-tab" data-tab="kas" role="tab" aria-selected="${active === 'kas'}">${ic('cash')} ${esc(t('navs.kas'))}</button>
+  </div>`;
+}
 function renderPosSkeleton() {
   $('#view-pos').innerHTML = `<div class="pos">
     <div class="pos-left">
+      ${cashierTabs('sell')}
       <div class="search-row">
         <div class="search-box">${ic('search')}<input id="pos-search" class="input" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="${esc(t('pos.search_ph'))}" aria-label="${esc(t('pos.search_ph'))}" value="${esc(POS.q)}"></div>
         <button class="icon-btn" style="width:50px;height:50px" id="pos-cam" data-act="cam-scan" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}" ${'BarcodeDetector' in window ? '' : 'hidden'}>${ic('scan')}</button>
@@ -2125,7 +2138,7 @@ function missingExitHTML(sales) {
 
 /* ========== Phone "Lainnya" menu ========== */
 function openMoreMenu() {
-  const items = VIEWS.filter(v => !phoneViews().includes(v.id) && viewAllowed(v));
+  const items = VIEWS.filter(v => !phoneViews().includes(v.id) && viewAllowed(v) && !v.tab);
   openModal({
     title: t('nav.more'), cls: 'narrow',
     body: `<div class="list" id="more-list">${items.map(v => `<button class="li" data-act="go" data-view="${v.id}">${ic(v.icon)}<div class="grow t">${esc(t(v.label))}</div>${v.id === 'approvals' && AP.count ? `<span class="badge accent">${AP.count}</span>` : ''}${v.id === 'orders' && FO.newCount ? `<span class="badge accent">${FO.newCount}</span>` : ''}</button>`).join('')}</div>
@@ -2406,7 +2419,7 @@ function shiftRows(sh, withExpected) {
 RENDER.kas = function () {
   const v = $('#view-kas');
   const sh = S.shift;
-  if (!S.shiftsSupported) { v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.kas'))}</h1></div><div class="empty">${esc(t('shift.unsupported'))}</div>`; return; }
+  if (!S.shiftsSupported) { v.innerHTML = cashierTabs('kas') + `<div class="view-head"><h1>${esc(t('nav.kas'))}</h1></div><div class="empty">${esc(t('shift.unsupported'))}</div>`; return; }
   const mine = !sh ? (S.role === 'kasir' ? `<div class="card pad center" id="kas-none"><p style="font-size:17px;margin-top:0"><b>${esc(t('shift.closed_now'))}</b></p><button class="btn primary big" data-act="shift-open">${ic('cash')} ${esc(t('shift.open'))}</button></div>`
     : `<div class="card pad" id="kas-none"><p style="margin-top:0"><b>${esc(t('shift.no_drawer_title'))}</b></p><p class="muted small" style="margin-bottom:0">${esc(t('shift.no_drawer_hint'))}</p></div>`)
     : `<div class="card pad" id="kas-mine"><div class="row wrap"><b class="grow" style="font-size:17px">${esc(t('shift.mine'))} · ${esc(sh.shift_id || '')}</b><span class="badge green">${esc(t('shift.status_open'))}</span></div>
@@ -2415,7 +2428,7 @@ RENDER.kas = function () {
         ${shiftBlind(sh) ? `<p class="small muted" id="kas-blind">${ic('lock')} ${esc(t('shift.blind_hint'))}</p>` : ''}
         <div class="row wrap"><button class="btn" data-act="cash-move" data-type="in">${ic('plus')} ${esc(t('shift.cash_in'))}</button><button class="btn" data-act="cash-move" data-type="out">− ${esc(t('shift.cash_out'))}</button><span class="grow"></span><button class="btn primary" data-act="shift-close">${ic('lock')} ${esc(t('shift.close'))}</button></div></div>`;
   const others = isApprover() ? (S.openShifts || []).filter(x => !sh || x.shift_id !== sh.shift_id) : [];
-  v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.kas'))}</h1><button class="btn" data-act="kas-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
+  v.innerHTML = cashierTabs('kas') + `<div class="view-head"><h1>${esc(t('nav.kas'))}</h1><button class="btn" data-act="kas-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
     <div class="rgrid">${mine}
     ${isApprover() ? `<div class="panel" id="kas-open"><h3>${esc(t('shift.others_open'))} <span class="badge ${others.length ? 'amber' : 'gray'}">${others.length}</span></h3><div class="pb list">${others.map(o => `<div class="li" style="min-height:0"><div class="grow"><div class="t">${esc(o.cashier)} ${o.shift_date < today() ? `<span class="badge red">${esc(t('shift.stale'))}</span>` : ''}</div><div class="s">${esc(t('shift.since'))} ${esc(fmtDateTime(o.opened_at, o.shift_date))}${o.expected_cash != null ? ` · ${esc(t('shift.expected'))} <b class="num">${fmtRp(o.expected_cash)}</b>` : ''}</div></div><button class="btn sm" data-act="shift-close" data-cashier="${esc(o.cashier)}">${esc(t('shift.close'))}</button></div>`).join('') || `<div class="muted">${esc(t('no_data'))}</div>`}</div></div>` : ''}</div>
     <div class="panel" style="margin-top:14px"><h3>${esc(t('shift.recent'))}</h3><div class="pb" id="kas-recent"><div class="muted">${esc(t('loading'))}</div></div></div>`;
@@ -4309,7 +4322,7 @@ Object.assign(I18N.ar, {
 
 /* i18n v4: dashboard, shifts, channels, notifications */
 Object.assign(I18N.id, {
-  'nav.home': 'Beranda', 'navs.home': 'Beranda', 'nav.kas': 'Kas Kasir', 'navs.kas': 'Kas', 'pr.year': 'Tahun ini', 'rp.mode_kas': 'Kas Kasir',
+  'nav.home': 'Beranda', 'navs.home': 'Beranda', 'nav.kas': 'Kas Kasir', 'navs.kas': 'Kas', 'cashier.sell': 'Jual', 'pr.year': 'Tahun ini', 'rp.mode_kas': 'Kas Kasir',
   'brand.all': 'Semua', 'brand.eceran': 'Khair Mart (eceran)', 'brand.grosir': 'Khair Grosir (grosir)',
   'home.avg': 'Rata-rata / struk', 'home.top': 'Produk terlaris', 'home.hourly': 'Transaksi & omzet per jam', 'home.tx': 'transaksi', 'home.all': 'Semua', 'home.channels': 'Kanal penjualan', 'home.cashiers': 'Per kasir', 'home.live': 'Langsung', 'home.live_hint': 'Penjualan hari ini diperbarui otomatis setiap 30 detik.', 'home.updated': 'diperbarui {time}',
   'att.title': 'Perlu perhatian', 'att.none': 'Semua aman, tidak ada yang perlu dicek.', 'att.approvals': '{n} permintaan menunggu persetujuan', 'att.exit': '{n} penjualan besar belum ada foto keluar',
@@ -4331,7 +4344,7 @@ Object.assign(I18N.id, {
   'err.SHIFT_REQUIRED': 'Buka kasir dulu sebelum menjual.'
 });
 Object.assign(I18N.ar, {
-  'nav.home': 'الرئيسية', 'navs.home': 'الرئيسية', 'nav.kas': 'صندوق الكاشير', 'navs.kas': 'الصندوق', 'pr.year': 'هذه السنة', 'rp.mode_kas': 'الصندوق',
+  'nav.home': 'الرئيسية', 'navs.home': 'الرئيسية', 'nav.kas': 'صندوق الكاشير', 'navs.kas': 'الصندوق', 'cashier.sell': 'بيع', 'pr.year': 'هذه السنة', 'rp.mode_kas': 'الصندوق',
   'brand.all': 'الكل', 'brand.eceran': 'خير مارت (تجزئة)', 'brand.grosir': 'خير جملة (جملة)',
   'home.avg': 'متوسط الفاتورة', 'home.top': 'الأكثر مبيعًا', 'home.hourly': 'العمليات والمبيعات بالساعة', 'home.tx': 'عملية', 'home.all': 'الكل', 'home.channels': 'قنوات البيع', 'home.cashiers': 'حسب الكاشير', 'home.live': 'مباشر', 'home.live_hint': 'مبيعات اليوم تُحدَّث تلقائيًا كل ٣٠ ثانية.', 'home.updated': 'آخر تحديث {time}',
   'att.title': 'يحتاج انتباه', 'att.none': 'كل شيء على ما يرام.', 'att.approvals': '{n} طلبات بانتظار الموافقة', 'att.exit': '{n} مبيعات كبيرة بلا صورة خروج',
@@ -4543,6 +4556,7 @@ function pinError(a, b) { if (!/^\d{4,6}$/.test(a)) return t('login.pin_len'); i
 const ACT = {
   'go': el => { if (el.closest('.modal-bg')) closeModal(); go(el.dataset.view); },
   'nav-more': () => openMoreMenu(),
+  'cashier-tab': el => go(el.dataset.tab === 'kas' ? 'kas' : 'pos'),
   'field-refresh': () => { clearFieldCache(); loadFieldView(); },
   'field-rep': el => { FD.user = el.dataset.u === FD.user ? '' : el.dataset.u; const s2 = $('#fd-user'); if (s2) s2.value = FD.user; drawFieldView(); },
   'lead-convert': async el => {
