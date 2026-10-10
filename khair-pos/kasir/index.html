@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- security M8: CSP (GitHub Pages cannot send headers). connect-src = the n8n webhooks only. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://ziedapp.app.n8n.cloud; media-src 'self' blob: mediastream:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://khair-mart-jumla.officezied.workers.dev; media-src 'self' blob: mediastream:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="theme-color" content="#1E40AF">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -95,12 +95,12 @@
 <script src="mock.js"></script>
 <script>
 'use strict';
-const CONFIG = { API_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-pos', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
-CONFIG.PHOTO_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-pos-photo';
-CONFIG.ATT_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-att';
-CONFIG.CHAT_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-chat';
+const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
+CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
+CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
+CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
-CONFIG.FIELD_URL = 'https://ziedapp.app.n8n.cloud/webhook/khair-field';
+CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 const APP_VERSION = 'kasir-1.0.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
