@@ -169,3 +169,51 @@ test('bad store key → BAD_KEY (business error, not a crash)', async () => {
   assert.equal(r.ok, false);
   assert.equal(r.error, 'BAD_KEY');
 });
+
+test('void_sale restores stock and marks the sale void (invoice loaders + multi-table write)', async () => {
+  const db = seed();
+  const a = sqliteAdapter(db);
+  const s = await handleRequest(a, base('save_sale', 'Siti', '1111', { client_id: 'v1', sale_date: '2026-10-06', items: [{ product_id: 1, qty: 3, unit_price: 185000 }], payment_method: 'tunai', paid_amount: 600000 }), {}, KEY);
+  assert.equal(s.ok, true, JSON.stringify(s));
+  assert.equal(a.all('SELECT stock FROM pos_products WHERE id = 1', [])[0].stock, 17);
+  const inv = a.all('SELECT invoice_no FROM pos_sales', [])[0].invoice_no;
+  const r = await handleRequest(a, { action: 'void_sale', key: KEY, user: 'Pemilik', pin_hash: h('Pemilik', '1234'), data: { invoice_no: inv, reason: 'salah' } }, {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const p = a.all('SELECT stock, shop_stock FROM pos_products WHERE id = 1', [])[0];
+  assert.equal(p.stock, 20); // restored
+  assert.equal(p.shop_stock, 20);
+  assert.equal(a.all('SELECT status FROM pos_sales WHERE invoice_no = ?', [inv])[0].status, 'void');
+});
+
+test('receive_payment reduces debt and records an inbound payment (party loaders + updates)', async () => {
+  const db = seed();
+  const a = sqliteAdapter(db);
+  const r = await handleRequest(a, { action: 'receive_payment', key: KEY, user: 'Siti', pin_hash: h('Siti', '1111'), data: { customer_id: 7, amount: 40000, method: 'tunai' } }, {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(a.all('SELECT debt_balance FROM pos_customers WHERE id = 7', [])[0].debt_balance, 60000);
+  const pays = a.all('SELECT * FROM pos_payments', []);
+  assert.equal(pays.length, 1);
+  assert.equal(pays[0].amount, 40000);
+  assert.equal(pays[0].direction, 'in');
+});
+
+test('discount-approval flow end-to-end across separate calls (OR loader + insert/update persistence)', async () => {
+  const db = seed();
+  const a = sqliteAdapter(db);
+  // 5% discount (9250 on a 185000 line) is over the kasir 3% limit → needs approval.
+  const req1 = await handleRequest(a, base('request_discount', 'Siti', '1111', { client_id: 'd2', sale_date: '2026-10-06', items: [{ product_id: 1, qty: 1, unit_price: 185000 }], discount: 9250, reason: 'pelanggan tetap' }), {}, KEY);
+  assert.equal(req1.ok, true, JSON.stringify(req1));
+  const ap = a.all('SELECT request_id, status FROM pos_approvals', []);
+  assert.equal(ap.length, 1);
+  assert.equal(ap[0].status, 'pending');
+  const rid = ap[0].request_id;
+  const list = await handleRequest(a, base('list_approvals', 'Jihan', '2222', {}), {}, KEY);
+  assert.ok(list.approvals.find((x) => x.request_id === rid), 'manager sees the pending approval');
+  const dec = await handleRequest(a, { action: 'decide_approval', key: KEY, user: 'Jihan', pin_hash: h('Jihan', '2222'), data: { request_id: rid, decision: 'approved' } }, {}, KEY);
+  assert.equal(dec.ok, true, JSON.stringify(dec));
+  assert.equal(a.all('SELECT status FROM pos_approvals WHERE request_id = ?', [rid])[0].status, 'approved');
+  // The sale now succeeds; Get Approvals (OR) must fetch the approved (non-pending) approval by id.
+  const sale = await handleRequest(a, base('save_sale', 'Siti', '1111', { client_id: 'd2', sale_date: '2026-10-06', items: [{ product_id: 1, qty: 1, unit_price: 185000 }], discount: 9250, payment_method: 'tunai', paid_amount: 200000, discount_approval_id: rid }), {}, KEY);
+  assert.equal(sale.ok, true, JSON.stringify(sale));
+  assert.equal(a.all('SELECT COUNT(*) n FROM pos_sales', [])[0].n, 1);
+});
