@@ -69,6 +69,16 @@ const getDb = page => page.evaluate(() => JSON.parse(localStorage.getItem('kmock
 const productByName = (db, re) => db.products.find(p => re.test(p.name));
 
 async function nav(page, view) {
+  // The cash-drawer ('kas') is merged into the cashier page as a sub-tab (no nav button of
+  // its own): go to the cashier page, then click the صندوق sub-tab.
+  if (view === 'kas') {
+    const posBtn = page.locator('#nav [data-view="pos"]');
+    if (await posBtn.isVisible()) await posBtn.click();
+    else { await page.click('#nav-more'); await page.click('#more-list [data-view="pos"]'); }
+    await page.click('[data-act="cashier-tab"][data-tab="kas"]');
+    await expect(page.locator('#view-kas')).toBeVisible();
+    return;
+  }
   const btn = page.locator(`#nav [data-view="${view}"]`);
   if (await btn.isVisible()) await btn.click();
   else { await page.click('#nav-more'); await page.click(`#more-list [data-view="${view}"]`); }

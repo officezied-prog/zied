@@ -154,6 +154,7 @@ button.li:hover{border-color:var(--brand)}
 .pos{display:grid;grid-template-columns:1fr minmax(360px,410px);height:100%}
 .pos-left{display:flex;flex-direction:column;min-width:0;min-height:0;padding:14px 16px 0}
 .search-row{display:flex;gap:8px;margin-bottom:10px}
+.cashier-tabs{margin-bottom:10px}
 .search-box{position:relative;flex:1}
 .search-box svg.i{position:absolute;inset-inline-start:12px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none}
 .search-box .input{padding-inline-start:42px;min-height:50px;font-size:16px;border-width:2px}
