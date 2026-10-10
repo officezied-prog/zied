@@ -37,6 +37,9 @@ var KCold = (function () {
     return c;
   }
   var ZONES = ['FROZEN', 'CHILLER', 'DRY'];
+  // Batch C (owner): a cooler's operating MODE, shown on the home page per named cooler (Bosco/DP/BP).
+  // tabrid=تبريد (chilling), takhzin=تخزين (storage), tajmid=تجميد (freezing), biasa=براد عادي (normal).
+  var MODES = ['tabrid', 'takhzin', 'tajmid', 'biasa'];
   /** FROZEN (beku / تجميد), CHILLER (dingin / تبريد), DRY (kering, biasa / عادي); empty → CHILLER. */
   function zoneOf(v) {
     var z = str(v).toUpperCase();
@@ -171,7 +174,7 @@ var KCold = (function () {
   /* ---------- the request ---------- */
   function core(state, req, nowIso) {
     var st = {};
-    ['warehouses', 'products', 'containers', 'pallets', 'movements', 'checks', 'orders', 'users'].forEach(function (k) { st[k] = (state[k] || []).slice(); });
+    ['warehouses', 'products', 'containers', 'pallets', 'movements', 'checks', 'orders', 'users', 'customers'].forEach(function (k) { st[k] = (state[k] || []).slice(); });
     st.settings = state.settings || {};
     st.movements.forEach(function (m) { m.seq = num(m.seq); m.cartons = num(m.cartons); });
     st.movements.sort(function (a, b) { return a.seq - b.seq; });
@@ -199,6 +202,7 @@ var KCold = (function () {
     function product(c) { return st.products.find(function (p) { return p.code === code(c); }); }
     function pallet(c) { var k = code(c); return st.pallets.find(function (p) { return p.pallet_code === k; }); }
     function order(no) { return st.orders.find(function (o) { return o.order_no === str(no).toUpperCase(); }); }
+    function cust(id) { return st.customers.find(function (c) { return c.id === int(id); }); } // Batch C: customer registry (pos_customers)
     function nextSeq() { return st.movements.reduce(function (m, x) { return Math.max(m, x.seq); }, 0) + 1; }
     function move(o) {
       var row = { seq: nextSeq(), move_date: o.move_date || today, at: now, type: o.type, pallet_code: o.pallet_code, warehouse: o.warehouse, cartons: o.cartons,
@@ -206,7 +210,7 @@ var KCold = (function () {
       if (!row.grp) row.grp = row.seq;
       put('movements', row); return row;
     }
-    function whOut(w) { var o = { id: w.id, code: w.code, name: w.name, address: str(w.address), pic_name: str(w.pic_name), pic_wa: str(w.pic_wa), customer_id: str(w.customer_id), parser: str(w.parser) || 'generic', active: active(w) }; if (seesCost) { o.rate = num(w.rate); o.rate_frozen = rateOf(w, 'FROZEN'); o.rate_chiller = rateOf(w, 'CHILLER'); o.rate_dry = rateOf(w, 'DRY'); o.rate_unit = w.rate_unit || 'month'; } return o; }
+    function whOut(w) { var o = { id: w.id, code: w.code, name: w.name, mode: str(w.mode), address: str(w.address), pic_name: str(w.pic_name), pic_wa: str(w.pic_wa), customer_id: str(w.customer_id), parser: str(w.parser) || 'generic', active: active(w) }; if (seesCost) { o.rate = num(w.rate); o.rate_frozen = rateOf(w, 'FROZEN'); o.rate_chiller = rateOf(w, 'CHILLER'); o.rate_dry = rateOf(w, 'DRY'); o.rate_unit = w.rate_unit || 'month'; } return o; }
     /** Containers with what came in, what is left and the day the last carton went out (finished). */
     function contOut(c) {
       var pals = st.pallets.filter(function (p) { return p.container_no === c.container_no; }).map(function (p) { return p.pallet_code; });
@@ -254,6 +258,7 @@ var KCold = (function () {
           me: { name: by, role: role }, today: today, sees_cost: seesCost,
           company: { name: str(s.cold_company) || 'PT. SAIDA REZEKI ABADI', store: str(s.store_name) || 'Khair Mart', address: str(s.address), phone: str(s.phone) },
           drivers: json(s.cold_drivers, []), wa: { owner: str(s.wa_owner_number), manager: str(s.wa_manager_number) },
+          customers: st.customers.filter(function (c) { return str(c.name); }).map(function (c) { return { id: c.id, name: str(c.name), phone: str(c.phone), address: str(c.address), type: str(c.type) }; }),
           warehouses: st.warehouses.map(whOut), products: st.products.map(function (p) { return { id: p.id, code: p.code, name: p.name, kg_per_ctn: num(p.kg_per_ctn), ctn_per_pallet: num(p.ctn_per_pallet), aliases: str(p.aliases), active: active(p) }; }),
           containers: st.containers.map(contOut), pallets: st.pallets, stock: stockRows(st, ''),
           movements: st.movements.slice(-500).reverse(), checks: st.checks.slice(-60).reverse().map(function (c) { return checkOut(c, true); }),
@@ -270,7 +275,8 @@ var KCold = (function () {
         var unit = data.rate_unit === 'day' ? 'day' : 'month', parser = P && P.parsers[str(data.parser)] ? str(data.parser) : 'generic';
         var waRaw = str(data.pic_wa), wa = waRaw ? normPhone(waRaw) : '';
         if (waRaw && !wa) return fail('INVALID', 'Nomor WhatsApp tidak valid');
-        var row = Object.assign({}, ex || { created_at: now, created_by: by }, { code: c, name: name, address: clean(data.address, 200), pic_name: clean(data.pic_name, 40), pic_wa: wa,
+        var mode = MODES.indexOf(str(data.mode)) >= 0 ? str(data.mode) : (ex ? str(ex.mode) : ''); // Batch C: cooler operating mode
+        var row = Object.assign({}, ex || { created_at: now, created_by: by }, { code: c, name: name, mode: mode, address: clean(data.address, 200), pic_name: clean(data.pic_name, 40), pic_wa: wa,
           customer_id: clean(data.customer_id, 20), rate: rate, rate_frozen: rz.rate_frozen, rate_chiller: rz.rate_chiller, rate_dry: rz.rate_dry, rate_unit: unit, parser: parser, active: data.active === undefined ? true : bool(data.active) });
         put('warehouses', row);
         return done({ warehouse: whOut(row) });
@@ -300,6 +306,22 @@ var KCold = (function () {
         }
         if (data.company !== undefined) { var cn = clean(data.company, 60); if (!cn) return fail('INVALID', 'Nama perusahaan wajib'); put('settings', { skey: 'cold_company', svalue: JSON.stringify(cn) }); }
         return done({});
+      }
+      case 'customer_save': {
+        // Batch C: the reusable customer registry (shared pos_customers). Owner + manager (akuntan is read-only).
+        // A new record only sets the fields the cold app owns; an edit touches name/phone/address — never POS-only
+        // columns (debt, member, …), so the writer leaves those intact.
+        var cnm = clean(data.name, 80);
+        if (!cnm) return fail('INVALID', 'Nama pelanggan wajib');
+        var cwa = str(data.phone) ? normPhone(data.phone) : '';
+        if (str(data.phone) && !cwa) return fail('INVALID', 'Nomor telepon tidak valid');
+        var ccid = int(data.id), cex2 = ccid ? cust(ccid) : null;
+        if (ccid && !cex2) return fail('NOT_FOUND', 'Pelanggan tidak ada');
+        var crow = cex2
+          ? { id: cex2.id, name: cnm, phone: cwa, address: clean(data.address, 200) }
+          : { name: cnm, phone: cwa, address: clean(data.address, 200), type: clean(data.type, 20) || 'grosir', debt_balance: 0, source: 'gudang' };
+        put('customers', crow);
+        return done({ customer: Object.assign({ id: cex2 ? cex2.id : 0 }, crow) });
       }
       case 'container_save': {
         var kind = data.kind === 'in_place' ? 'in_place' : 'container', no = str(data.container_no).toUpperCase().replace(/[\s-]/g, ''), cw = wh(data.warehouse);
@@ -435,13 +457,15 @@ var KCold = (function () {
         if (oe && oe.status !== 'open' && oe.status !== 'rejected') return fail('INVALID', 'Order sudah ' + oe.status);
         if (oe && oe.warehouse !== ow.code) return fail('INVALID', 'Gudang order tidak bisa diganti; batalkan dan buat baru');
         var od = data.order_date || today; if (!isDate(od) || od < addDays(today, -7)) return fail('INVALID', 'Tanggal ambil tidak valid');
-        var dt = data.dest_type === 'pelanggan' ? 'pelanggan' : 'toko', dn2 = clean(data.dest_name, 60);
+        var ocid = int(data.customer_id), ocust = ocid ? cust(ocid) : null; // Batch C: link to the customer registry
+        var dt = data.dest_type === 'pelanggan' ? 'pelanggan' : 'toko', dn2 = clean(data.dest_name, 60) || (ocust ? clean(ocust.name, 60) : '');
         if (dt === 'pelanggan' && !dn2) return fail('INVALID', 'Nama pelanggan wajib');
         var ll = lineList(data.lines, ow, oe ? oe.order_no : '');
         if (ll.err) return fail(ll.code || 'INVALID', ll.err);
         var nth2 = st.orders.filter(function (o) { return str(o.order_no).indexOf('SPB-' + yymmdd) === 0; }).length + 1;
         var orow = Object.assign({}, oe || { order_no: 'SPB-' + yymmdd + '-' + pad3(nth2), status: 'open', created_at: now, created_by: by, trip: '' }, {
-          order_date: od, warehouse: ow.code, dest_type: dt, dest_name: dt === 'toko' ? (dn2 || 'Khair Mart') : dn2, dest_address: clean(data.dest_address, 200),
+          order_date: od, warehouse: ow.code, dest_type: dt, dest_name: dt === 'toko' ? (dn2 || 'Khair Mart') : dn2, dest_address: clean(data.dest_address, 200) || (ocust ? clean(ocust.address, 200) : ''),
+          customer_id: dt === 'pelanggan' ? (ocid || 0) : 0,
           pickup_person: clean(data.pickup_person, 40), vehicle: clean(data.vehicle, 40), note: clean(data.note, 200), lines: JSON.stringify(ll.lines) });
         if (!oe) orow = step(orow, 'open'); else if (oe.status === 'rejected') orow = step(orow, 'open', 'Diubah');
         put('orders', orow);
@@ -507,6 +531,6 @@ var KCold = (function () {
         return fail('INVALID', 'Aksi tidak dikenal: ' + action);
     }
   }
-  return { core: core, stockRows: stockRows, fefo: fefo, storage: storage, compare: compare, FLOW: FLOW, CFLOW: CFLOW, HOLD: HOLD, vehicleFor: vehicleFor, zoneOf: zoneOf, ZONES: ZONES, VEHICLES: VEHICLES, EXPIRY_DAYS: EXPIRY_DAYS };
+  return { core: core, stockRows: stockRows, fefo: fefo, storage: storage, compare: compare, FLOW: FLOW, CFLOW: CFLOW, HOLD: HOLD, vehicleFor: vehicleFor, zoneOf: zoneOf, ZONES: ZONES, MODES: MODES, VEHICLES: VEHICLES, EXPIRY_DAYS: EXPIRY_DAYS };
 })();
 if (typeof window !== 'undefined') window.KCold = KCold;
