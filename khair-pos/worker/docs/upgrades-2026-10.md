@@ -72,3 +72,42 @@ n8n is kept as reference — never touched.
 Order of work: finish Batch A (cashier) first (in progress), then Batch B (field), then Batch C
 (cold storage). Phase 2 proper (cold inline + WhatsApp Cloud API + Lalamove dispatch) folds into
 Batch C. gudang/ is still on n8n today — moves to the Worker as part of this.
+
+## STATUS — 2026-10-10 (overnight)
+
+**SHIPPED & LIVE:**
+- **Batch A (cashier v29)** — all 8 features + the owner/manager/accountant login fix. Worker
+  deployed; apps published (PR #19). 48/48 tests.
+- **Batch B part 1 (field v30)** — bigger map + fullscreen, numbered order pins (#6), visit star
+  rating (#3), order grouping region/largest/payment + payment_method (#5), accountant field-report
+  read access, Today "next visits" grouped by region (#2 first slice). Worker deployed (self-migrates
+  pos_visits.rating + pos_field_orders.payment_method on the first field write); apps published (PR #20).
+  51/51 tests.
+- **Installable apps** — PNG icons + manifests for all 4 apps, gudang made installable,
+  `khair-pos/install.html` landing page (per-app cards + QR + per-platform install steps). Published.
+
+**DEFERRED (not built overnight — need the owner / more definition):**
+- Batch B #2 advanced: street-level tracking, manager-agreed return interval to good streets, owner
+  notification. (First slice — plan by region — is shipped.)
+- Batch B #4 second photo (with the owner): the new-shop form already captures
+  name/owner/phone/address/area/type/GPS + 1 photo; a 2nd photo is a small follow-up.
+- Downloadable Android **APK** (PWABuilder/Bubblewrap) — Android-only; iPhone installs via
+  Add-to-Home-Screen regardless. The free PWA install already covers all platforms.
+
+## Batch C — cold storage (gudang) — PLAN (do WITH the owner, not unattended)
+
+NOT started overnight on purpose: it migrates the live gudang app off n8n (which must stay untouched)
+and touches a live surface, so it deserves the owner present + a parallel-run/rollback like the
+Phase-1 cut-over, rather than an unattended deploy.
+
+Approach (reuses the proven pattern):
+1. Port `backend/cold/*` into the Worker like the other four workflows (build.js wrap → runProcessCold,
+   routed at `/webhook/khair-cold`); keep n8n as instant rollback (host swap).
+2. **Customers**: reuse `pos_customers` with a segment flag so the cold app shows a reusable list
+   (name + address + phone), tap-to-fill. Unified with the rest of the system (recommended).
+3. **Coolers home page**: `pos_coolers` (id, name e.g. Bosco/DP/BP, mode = tabrid/takhzin/tajmid/biasa,
+   owner-editable) + `pos_cold_stock` (cooler_id, date variety, pallets, cartons, kg). Home lists each
+   cooler with its mode + date type and the totals underneath (pallets / cartons / kg).
+   - **Ask the owner** (default if unanswered: interdependent): are pallet/carton/kg linked
+     (1 pallet = N cartons = M kg per variety)? If yes, enter one → compute the rest; else enter all three.
+4. Then Phase-2 proper: WhatsApp Cloud API + Lalamove dispatch (see phase2-plan.md).

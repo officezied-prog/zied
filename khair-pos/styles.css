@@ -393,7 +393,7 @@ tr.diff td{background:var(--danger-l)}
 .vnum{display:inline-grid;place-items:center;min-width:26px;height:26px;border-radius:13px;background:var(--brand);color:#fff;font-weight:800;font-size:13px;flex:none}
 .vnum.far{background:var(--accent)}
 .vnum.map{box-shadow:0 0 0 2px #fff}
-.fd-map{height:380px;border-radius:10px;overflow:hidden;background:var(--surface-2)}
+.fd-map{height:380px;border-radius:10px;overflow:hidden;background:var(--surface-2);isolation:isolate}/* contain Leaflet panes (z-index 200–1000) so a map can't paint over a dialog */
 .fd-map[data-mode="svg"]{height:auto;overflow:visible;background:none}
 .fd-svg{width:100%;height:auto;display:block}
 .c-mapbg{fill:var(--surface)} .c-route{fill:none;stroke:var(--brand);stroke-width:3.5;stroke-linejoin:round;stroke-linecap:round;opacity:.85}
