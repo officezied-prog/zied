@@ -60,14 +60,22 @@ So the Worker runs the identical logic over identical data, with a thin HTTP + S
 Phase 2 (later): WhatsApp (official Cloud API) + cold-storage → Lalamove dispatch, built
 directly on this backend.
 
-## Status
+## Status — all five workflows ported (28/28 parity tests pass)
 
-- **POS API** (`/webhook/khair-pos`): ported + tested (login, sales, inventory, payments,
-  approvals, returns, shifts). 16/16 parity tests pass.
-- **Field API** (`/webhook/khair-field`): ported + tested (bootstrap, day start/end, tracks,
-  check-in, orders, product images). Routed in `src/index.js` by path.
-- **Chat API** (`/webhook/khair-chat`): ported + tested (bootstrap, poll, send, retention).
-- **Attendance API** (`/webhook/khair-att`): ported + tested (bootstrap, worker save/enroll,
-  tamper-proof hash chain via att-core's pure-JS sha256 — no crypto dependency).
-- Remaining to be fully off n8n: photo (AI image analysis) workflow.
-- Not yet deployed. Live service is still on n8n and untouched.
+One Worker routes every endpoint by path (`src/index.js`), all on one D1 database:
+
+| Endpoint | Path | Notes |
+|----------|------|-------|
+| POS      | `/webhook/khair-pos`       | login, sales, inventory, payments, approvals, returns, shifts |
+| Field    | `/webhook/khair-field`     | rep bootstrap, day start/end, tracks, check-in, orders, product images |
+| Chat     | `/webhook/khair-chat`      | bootstrap, poll, send, retention |
+| Attendance | `/webhook/khair-att`     | worker save/enroll, tamper-proof hash chain (pure-JS sha256) |
+| Photo    | `/webhook/khair-pos-photo` | supplier notes / exit receipts / payment slips |
+
+Secrets: `STORE_KEY` (required). `ANTHROPIC_API_KEY` (optional) enables the photo AI reader;
+without it, photos still save for manual check (`perlu_cek`) — exactly as the n8n workflow
+behaved when its AI step failed. Google Drive upload is not ported (photos store their
+extracted data, not the image, same as the current unconnected n8n state).
+
+**Not yet deployed. Live service is still on n8n and untouched.** Cut-over steps are in
+`migrate/README.md` (parallel run + instant rollback, no downtime).

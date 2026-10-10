@@ -6,6 +6,7 @@ import { handleRequest } from './core.js';
 import { handleField } from './field.js';
 import { handleChat } from './chat.js';
 import { handleAtt } from './attendance.js';
+import { handlePhoto } from './photo.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*', // store-key auth, no cookies → safe
@@ -50,15 +51,21 @@ export default {
     const text = await request.text();
     const headers = {};
     request.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
-    // Route by path. khair-field → Field, khair-chat → Chat, khair-att → Attendance,
-    // everything else → POS API.
+    // Route by path. khair-pos-photo → Photo (needs env for the AI key), khair-field →
+    // Field, khair-chat → Chat, khair-att → Attendance, everything else → POS API.
     const path = new URL(request.url).pathname;
-    const handler = path.endsWith('khair-field') ? handleField
-      : path.endsWith('khair-chat') ? handleChat
-        : path.endsWith('khair-att') ? handleAtt
-          : handleRequest;
+    const adapter = d1Adapter(env.DB);
     try {
-      const response = await handler(d1Adapter(env.DB), text, headers, env.STORE_KEY);
+      let response;
+      if (path.endsWith('khair-pos-photo')) {
+        response = await handlePhoto(adapter, text, headers, env.STORE_KEY, env);
+      } else {
+        const handler = path.endsWith('khair-field') ? handleField
+          : path.endsWith('khair-chat') ? handleChat
+            : path.endsWith('khair-att') ? handleAtt
+              : handleRequest;
+        response = await handler(adapter, text, headers, env.STORE_KEY);
+      }
       return json(response, 200); // business errors (ok:false) are 200, as n8n returned them
     } catch (e) {
       // Only true server faults reach here. Keep the message generic (the apps map it to

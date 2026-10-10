@@ -14,7 +14,12 @@ npx wrangler d1 create khair_pos      # copy the printed database_id into wrangl
 npm run build                         # writes schema.sql + src/generated/
 npx wrangler d1 execute khair_pos --remote --file schema.sql
 npx wrangler secret put STORE_KEY     # paste the real store key (never committed)
+# optional — enables the photo AI reader (without it, photos save as 'perlu_cek'):
+npx wrangler secret put ANTHROPIC_API_KEY
 ```
+
+One Worker serves all five endpoints (`khair-pos`, `khair-field`, `khair-chat`, `khair-att`,
+`khair-pos-photo`) on the one D1 database, so a single deploy covers every app.
 
 ## 2. Export the live n8n data (through this session's n8n MCP)
 
