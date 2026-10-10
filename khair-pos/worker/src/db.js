@@ -95,17 +95,29 @@ function loaderSpecs(req) {
   };
 }
 
-// Run every loader and return a node-name -> row[] map (booleans coerced). Reads are
-// independent, so they run concurrently.
-export async function loadNodes(adapter, req) {
-  const specs = loaderSpecs(req);
+// Run a {nodeName: {table, sql, params}} spec map and return nodeName -> row[] (booleans
+// coerced). Reads are independent, so they run concurrently. Shared by every workflow.
+export async function execSpecs(adapter, specs) {
   const names = Object.keys(specs);
   const results = await Promise.all(names.map(async (name) => {
     const { table, sql, params } = specs[name];
     const rows = await adapter.all(sql, params);
     return [name, (rows || []).map((r) => coerceOut(table, r))];
   }));
-  const nodes = Object.fromEntries(results);
+  return Object.fromEntries(results);
+}
+
+// Small SQL builders reused by each workflow's loader specs.
+export const Q = {
+  all: (table) => ({ table, sql: `SELECT * FROM ${table} ORDER BY id`, params: [] }),
+  eq: (table, col, val) => ({ table, sql: `SELECT * FROM ${table} WHERE ${col} = ? ORDER BY id`, params: [val] }),
+  range: (table, col, from, to) => ({ table, sql: `SELECT * FROM ${table} WHERE ${col} >= ? AND ${col} <= ? ORDER BY id`, params: [from, to] }),
+  gte: (table, col, from) => ({ table, sql: `SELECT * FROM ${table} WHERE ${col} >= ? ORDER BY id`, params: [from] }),
+};
+
+// POS loaders.
+export async function loadNodes(adapter, req) {
+  const nodes = await execSpecs(adapter, loaderSpecs(req));
   nodes['Parse Request'] = [req];
   return nodes;
 }
@@ -123,9 +135,9 @@ export function makeAccessor(nodes) {
 // row, otherwise updates the row with that id. Only known columns present in the row are
 // written (process emits full rows for updates, partial for inserts). Returns the written
 // rows (with ids) per ops key, which Finalize uses to fill new customer/product/payment ids.
-export async function applyOps(adapter, ops) {
+export async function applyOps(adapter, ops, opsMap = OPS_TABLE) {
   const upserts = {};
-  for (const [key, table] of Object.entries(OPS_TABLE)) {
+  for (const [key, table] of Object.entries(opsMap)) {
     const rows = (ops && ops[key]) || [];
     if (!rows.length) continue;
     const known = Object.keys(TABLES[table]);

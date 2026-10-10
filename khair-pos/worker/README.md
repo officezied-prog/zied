@@ -62,4 +62,9 @@ directly on this backend.
 
 ## Status
 
-Foundation build in progress — not yet deployed. Live service is still on n8n and untouched.
+- **POS API** (`/webhook/khair-pos`): ported + tested (login, sales, inventory, payments,
+  approvals, returns, shifts). 16/16 parity tests pass.
+- **Field API** (`/webhook/khair-field`): ported + tested (bootstrap, day start/end, tracks,
+  check-in, orders, product images). Routed in `src/index.js` by path.
+- Remaining to be fully off n8n: chat, attendance, photo (AI) workflows.
+- Not yet deployed. Live service is still on n8n and untouched.

@@ -181,3 +181,12 @@ export const OPS_TABLE = {
   repacks: 'pos_repacks', activity: 'pos_activity', bank_lines: 'pos_bank_lines',
   returns: 'pos_returns',
 };
+
+// Field (sales-lapangan) workflow ops key → table. `product_flags` is a partial UPDATE of
+// pos_products.image_updated (the live "Update product_flags" node); the writer only touches
+// the columns present in the row, so a {_id, image_updated} row updates just that column.
+export const OPS_TABLE_FIELD = {
+  shops: 'pos_shops', visits: 'pos_visits', tracks: 'pos_tracks',
+  days: 'pos_field_days', orders: 'pos_field_orders', images: 'pos_product_images',
+  product_flags: 'pos_products',
+};
