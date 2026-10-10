@@ -4,7 +4,7 @@ const req = $('Parse Cold').first().json;
 function rows(name) {
   try { return $(name).all().map(function (i) { return i.json; }).filter(function (r) { return r && r.id !== undefined && r.id !== null; }); } catch (e) { return []; }
 }
-const TABLES = ['warehouses', 'products', 'containers', 'pallets', 'movements', 'checks', 'orders'];
+const TABLES = ['warehouses', 'products', 'containers', 'pallets', 'movements', 'checks', 'orders', 'customers'];
 function out(o, ops) { const e = { settings: [] }; TABLES.forEach(function (t) { e[t] = []; }); return [{ json: { response: o, ops: ops || e } }]; }
 if ($('Check Key').first().json.key_ok !== true) return out({ ok: false, error: 'BAD_KEY', message: 'Kunci toko salah' });
 const settings = {}, settingId = {};

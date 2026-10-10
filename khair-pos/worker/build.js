@@ -27,6 +27,10 @@ const INDEXES = {
   pos_bank_lines: ['account_id', 'period'],
   pos_returns: ['return_date', 'ref'],
   pos_photos: ['photo_id'],
+  cold_checks: ['check_date'],
+  cold_movements: ['pallet_code', 'warehouse'],
+  cold_pallets: ['warehouse', 'pallet_code'],
+  cold_orders: ['status', 'order_date'],
 };
 
 function buildSchema() {
@@ -66,6 +70,10 @@ const PROCESSES = [
   // output. They take different accessors ($ / STORE_KEY vs $ / $input), so params vary.
   { srcs: [['..', 'backend', 'photo', 'auth-route.js']], fn: 'runPhotoAuth', out: 'photo-auth.gen.js', params: ['$', 'STORE_KEY'] },
   { srcs: [['..', 'backend', 'photo', 'match.js']], fn: 'runPhotoMatch', out: 'photo-match.gen.js', params: ['$', '$input'] },
+  // Cold = cold-parsers.js + cold-core.js + process-cold.js. The store-key check is a SEPARATE
+  // node (check-key.js) that is NOT concatenated here, so this node body has no STORE_KEY decl:
+  // params is ['$'] only, and handleCold feeds a synthetic 'Check Key' node.
+  { srcs: [['..', 'backend', 'cold', 'cold-parsers.js'], ['..', 'backend', 'cold', 'cold-core.js'], ['..', 'backend', 'cold', 'process-cold.js']], fn: 'runProcessCold', out: 'process-cold.gen.js', params: ['$'] },
 ];
 const STORE_KEY_DECL = /(?:const|var) STORE_KEY = '__STORE_KEY__';/;
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://ziedapp.app.n8n.cloud; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://khair-mart-jumla.officezied.workers.dev https://ziedapp.app.n8n.cloud; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Khair Gudang Dingin</title>
 <meta name="theme-color" content="#0E7490">
@@ -94,7 +94,9 @@
 <script>
 'use strict';
 if (window.top !== window.self) { try { window.top.location = window.location.href; } catch (e) { document.documentElement.innerHTML = ''; } }
-const CONFIG = { COLD_URL: 'https://ziedapp.app.n8n.cloud/webhook/khair-cold', LALAMOVE_URL: 'https://web.lalamove.com/' };
+// Backend = Khair Mart Jumla Worker (code, no monthly execution cap). Rollback: swap COLD_URL back to
+// the n8n host (both hosts are allowed in the CSP connect-src, so no other change is needed). n8n is kept.
+const CONFIG = { COLD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-cold', LALAMOVE_URL: 'https://web.lalamove.com/' };
 const MOCK = /[?&](mock|demo)=1\b/.test(location.search);
 const KP = MOCK ? 'kpos.mock.' : 'kpos.'; // the owner app's storage (same site): its key and this tab's session are reused
 const LS = {
@@ -111,8 +113,10 @@ const I18N = {
   id: {
     title: 'Khair Gudang Dingin', login: 'Masuk', key: 'Kunci toko', key_hint: 'Diisi sekali di perangkat ini', change_key: 'Ganti kunci', user: 'Nama pengguna', pin: 'PIN', logout: 'Keluar',
     demo: 'Mode demo — data contoh. Kunci: demo · Pemilik 1234 · Jihan 2222 · Akuntan 3333', demo_reset: 'Ulang data demo',
-    t_dash: 'Dasbor', t_stok: 'Stok', t_cont: 'Kontainer', t_mut: 'Mutasi', t_cek: 'Cek stok harian', t_ord: 'Order ambil', t_set: 'Pengaturan',
+    t_dash: 'Brad (ruang dingin)', t_stok: 'Stok', t_cont: 'Kontainer', t_mut: 'Mutasi', t_cek: 'Cek stok harian', t_ord: 'Order ambil', t_cust: 'Pelanggan', t_set: 'Pengaturan',
     role_owner: 'Pemilik', role_manager: 'Manajer', role_akuntan: 'Akuntan', ro: 'Hanya lihat',
+    cu_add: 'Pelanggan baru', cu_search: 'Cari nama / telepon…', phone: 'Telepon / WA', cu_pick: 'Pilih dari daftar pelanggan', varieties: 'Jenis kurma', empty_wh: 'Masih kosong',
+    mode: 'Mode', mode_tabrid: 'Pendinginan (chiller)', mode_takhzin: 'Penyimpanan', mode_tajmid: 'Pembekuan (frozen)', mode_biasa: 'Biasa', mode_none: 'Mode belum diatur',
     wh: 'Gudang', all: 'Semua', product: 'Produk', pallet: 'Palet (PID)', lot: 'Lot', exp: 'Kedaluwarsa', cartons: 'Karton', kg: 'Kg', zone: 'Zona', position: 'Posisi', container: 'Kontainer', date_in: 'Masuk', date: 'Tanggal', search: 'Cari palet, lot, produk…',
     pallets: 'palet', ctn: 'ctn', days_left: '{n} hari lagi', expired: 'sudah lewat {n} hari',
     al_exp: 'Kedaluwarsa ≤ 60 hari (ambil ini dulu)', al_check: 'Belum cek stok hari ini', al_diff: 'Selisih belum dijelaskan', al_cost: 'Biaya sewa bulan ini', all_good: 'Tidak ada.',
@@ -147,8 +151,10 @@ const I18N = {
   ar: {
     title: 'مخازن خير المبرّدة', login: 'دخول', key: 'مفتاح المتجر', key_hint: 'يُكتب مرة واحدة على هذا الجهاز', change_key: 'تغيير المفتاح', user: 'اسم المستخدم', pin: 'الرمز السري', logout: 'خروج',
     demo: 'وضع تجريبي — بيانات مثال. المفتاح: demo · Pemilik 1234 · Jihan 2222 · Akuntan 3333', demo_reset: 'إعادة البيانات التجريبية',
-    t_dash: 'الرئيسية', t_stok: 'المخزون', t_cont: 'الحاويات', t_mut: 'الحركات', t_cek: 'الجرد اليومي', t_ord: 'أوامر السحب', t_set: 'الإعدادات',
+    t_dash: 'البرّادات', t_stok: 'المخزون', t_cont: 'الحاويات', t_mut: 'الحركات', t_cek: 'الجرد اليومي', t_ord: 'أوامر السحب', t_cust: 'الزبائن', t_set: 'الإعدادات',
     role_owner: 'المالك', role_manager: 'المدير', role_akuntan: 'المحاسب', ro: 'عرض فقط',
+    cu_add: 'زبون جديد', cu_search: 'ابحث بالاسم أو الهاتف…', phone: 'هاتف / واتساب', cu_pick: 'اختر من قائمة الزبائن', varieties: 'نوع التمر', empty_wh: 'فارغ حاليًا',
+    mode: 'الوضع', mode_tabrid: 'تبريد', mode_takhzin: 'تخزين', mode_tajmid: 'تجميد', mode_biasa: 'براد عادي', mode_none: 'لم يُحدَّد الوضع',
     wh: 'المخزن', all: 'الكل', product: 'المنتج', pallet: 'البالِت (PID)', lot: 'الدفعة', exp: 'الانتهاء', cartons: 'كراتين', kg: 'كغ', zone: 'المنطقة', position: 'الموقع', container: 'الحاوية', date_in: 'الدخول', date: 'التاريخ', search: 'ابحث عن بالِت أو دفعة أو منتج…',
     pallets: 'بالِت', ctn: 'كرتون', days_left: 'بعد {n} يوم', expired: 'انتهى منذ {n} يوم',
     al_exp: 'ينتهي خلال 60 يومًا (اسحبه أولًا)', al_check: 'لم يُجرَد اليوم', al_diff: 'فروق بلا تفسير', al_cost: 'تكلفة التخزين هذا الشهر', all_good: 'لا شيء.',
@@ -279,7 +285,7 @@ async function doLogin() {
 }
 
 /* ---------- shell ---------- */
-const TABS = ['dash', 'stok', 'cont', 'mut', 'cek', 'ord', 'set'];
+const TABS = ['dash', 'stok', 'cont', 'mut', 'cek', 'ord', 'cust', 'set'];
 function render() {
   document.documentElement.lang = S.lang; document.documentElement.dir = S.lang === 'ar' ? 'rtl' : 'ltr';
   $('#title').textContent = t('title'); $('#lang').textContent = S.lang === 'ar' ? 'ID' : 'AR';
@@ -290,7 +296,7 @@ function render() {
   if (!tabs.includes(S.tab)) S.tab = 'dash';
   const nav = $('#nav'); nav.hidden = false;
   nav.replaceChildren(...tabs.map(x => h('button', { type: 'button', 'data-tab': x, class: S.tab === x ? 'on' : '', onclick: () => { S.tab = x; render(); } }, t('t_' + x))));
-  const v = ({ dash: vDash, stok: vStok, cont: vCont, mut: vMut, cek: vCek, ord: vOrd, set: vSet })[S.tab]();
+  const v = ({ dash: vDash, stok: vStok, cont: vCont, mut: vMut, cek: vCek, ord: vOrd, cust: vCust, set: vSet })[S.tab]();
   v.id = 'v-' + S.tab;
   $('#app').replaceChildren(v);
 }
@@ -314,8 +320,17 @@ function expCell(d) { if (!d) return h('td'); const n = daysTo(d); return h('td'
 /* ---------- dashboard ---------- */
 function vDash() {
   const D = S.D, A = D.alerts, per = {};
-  D.stock.forEach(r => { if (r.cartons <= 0) return; const a = per[r.warehouse] = per[r.warehouse] || { p: 0, c: 0, k: 0 }; a.p++; a.c += r.cartons; a.k += r.kg; });
-  const kpis = h('div', { class: 'grid' }, D.warehouses.filter(w => w.active).map(w => { const a = per[w.code] || { p: 0, c: 0, k: 0 }; return h('div', { class: 'card kpi', 'data-wh': w.code }, h('div', { class: 'muted', text: w.name }), h('b', null, n0(a.p) + ' ' + t('pallets')), h('div', null, n0(a.c) + ' ' + t('ctn') + ' · ' + kgf(a.k) + ' kg')); }));
+  D.stock.forEach(r => { if (r.cartons <= 0) return; const a = per[r.warehouse] = per[r.warehouse] || { p: 0, c: 0, k: 0, kinds: {} }; a.p++; a.c += r.cartons; a.k += r.kg; if (r.product_name) a.kinds[r.product_name] = (a.kinds[r.product_name] || 0) + r.cartons; });
+  // Batch C (owner): the home page IS the coolers (البرّادات) — each named cooler (Bosco/DP/BP) with its mode,
+  // the date varieties stored inside (نوع التمر), and the totals underneath: pallets / cartons / kg.
+  const kpis = h('div', { class: 'grid' }, D.warehouses.filter(w => w.active).map(w => {
+    const a = per[w.code] || { p: 0, c: 0, k: 0, kinds: {} }, kinds = Object.keys(a.kinds).sort((x, y) => a.kinds[y] - a.kinds[x]);
+    return h('div', { class: 'card kpi', 'data-wh': w.code },
+      h('div', { class: 'row', style: 'justify-content:space-between;align-items:flex-start;gap:6px' }, h('b', { style: 'font-size:16px', text: w.name }), h('span', { class: 'chip', 'data-mode': w.mode || '', text: w.mode ? t('mode_' + w.mode) : t('mode_none') })),
+      h('div', { class: 'muted', style: 'margin:4px 0 8px', text: kinds.length ? kinds.slice(0, 4).join(' · ') + (kinds.length > 4 ? ' …' : '') : t('empty_wh') }),
+      h('b', null, n0(a.p) + ' ' + t('pallets')),
+      h('div', { class: 'muted', text: n0(a.c) + ' ' + t('ctn') + ' · ' + kgf(a.k) + ' kg' }));
+  }));
   const exp = A.expiring.length ? table([t('pallet'), t('product'), t('wh'), t('exp'), [t('cartons'), 'n']], A.expiring.map(r => h('tr', { 'data-pallet': r.pallet_code }, h('td', { text: r.pallet_code }), h('td', { text: r.product_name }), h('td', { text: WH(r.warehouse).name }), expCell(r.exp_date), h('td', { class: 'n', text: n0(r.cartons) }))), { id: 'al-exp' }) : h('p', { class: 'muted', text: t('all_good') });
   const chk = h('div', { id: 'al-check' }, A.no_check_today.length ? A.no_check_today.map(c => h('button', { class: 'btn sm', type: 'button', 'data-wh': c, onclick: () => { S.tab = 'cek'; S.ckWh = c; render(); } }, WH(c).name)) : h('p', { class: 'muted', text: t('all_good') }));
   const diff = h('div', { class: 'list', id: 'al-diff' }, A.unexplained.length ? A.unexplained.map(c => h('div', { class: 'row', 'data-check': c.check_no }, h('span', { style: 'flex:1' }, c.check_no + ' · ' + WH(c.warehouse).name + ' · ' + fd(c.check_date) + ' · ', h('b', { class: 'bad', text: n0(c.n_diff) + ' ' + t('ck_diff') })),
@@ -618,6 +633,9 @@ function orderForm(o) {
   const dtype = sel('of-dtype', [['toko', t('dest_toko')], ['pelanggan', t('dest_cust')]], o ? o.dest_type : 'toko'), dname = h('input', { id: 'of-dname', value: o && o.dest_type === 'pelanggan' ? o.dest_name : '' });
   const daddr = h('input', { id: 'of-daddr', value: o ? o.dest_address : (S.D.company.address || '') }), pick = h('input', { id: 'of-pick', value: o ? o.pickup_person : '' });
   const veh = h('input', { id: 'of-veh', value: o ? o.vehicle : '', list: 'veh-list' }), note = h('input', { id: 'of-note', value: o ? o.note : '' });
+  // Batch C: pick a customer from the registry → fills destination name + address, links the order.
+  const cpick = sel('of-cust', [['', t('cu_pick')]].concat((S.D.customers || []).map(c => [String(c.id), c.name + (c.phone ? ' · ' + c.phone : '')])), o && o.customer_id ? String(o.customer_id) : '');
+  cpick.addEventListener('change', () => { const c = (S.D.customers || []).find(x => String(x.id) === cpick.value); if (c) { dtype.value = 'pelanggan'; dname.value = c.name; if (c.address) daddr.value = c.address; } });
   const fp = sel('of-fp', prOpts(false), ''), fc = h('input', { id: 'of-fc', inputmode: 'numeric', placeholder: t('cartons'), style: 'max-width:110px' });
   const tb = h('tbody', { id: 'of-lines' }), sum = h('div', { class: 'muted', id: 'of-sum' });
   const avail = () => S.D.stock.filter(r => r.warehouse === wh.value && r.cartons > 0);
@@ -642,13 +660,14 @@ function orderForm(o) {
   modal(o ? t('or_edit') + ' ' + o.order_no : t('or_new'), h('div', null,
     h('datalist', { id: 'veh-list' }, S.D.vehicles.map(v => h('option', { value: v.name }))),
     h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('wh'), wh)), h('div', { style: 'flex:1;min-width:140px' }, field(t('date'), date))),
+    (S.D.customers || []).length ? field(t('dest_cust'), cpick) : null,
     h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('dest'), dtype)), h('div', { style: 'flex:1;min-width:140px' }, field(t('dest_name'), dname))),
     field(t('dest_addr'), daddr), h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('pickup'), pick)), h('div', { style: 'flex:1;min-width:140px' }, field(t('vehicle'), veh))), field(t('note'), note),
     h('h3', { style: 'margin-top:12px', text: t('lines') }), h('div', { class: 'row' }, h('div', { style: 'flex:2;min-width:140px' }, fp), fc, fefoBtn),
     h('div', { class: 'tw' }, h('table', { class: 'lines' }, tb)), h('div', { class: 'row' }, h('button', { class: 'btn sm', type: 'button', id: 'of-add', onclick: () => addLine() }, t('add_row')), sum)),
     [h('button', { class: 'btn pri', type: 'button', id: 'of-save', onclick: async () => {
       const lines = Array.from(tb.querySelectorAll('tr')).map(tr => ({ pallet_code: tr.querySelector('[data-f="pallet_code"]').value, cartons: Number(tr.querySelector('[data-f="cartons"]').value) })).filter(l => l.pallet_code);
-      const r = await act('order_save', { order_no: o ? o.order_no : undefined, warehouse: wh.value, order_date: date.value, dest_type: dtype.value, dest_name: dname.value, dest_address: daddr.value, pickup_person: pick.value, vehicle: veh.value, note: note.value, lines });
+      const r = await act('order_save', { order_no: o ? o.order_no : undefined, warehouse: wh.value, order_date: date.value, dest_type: dtype.value, dest_name: dname.value, dest_address: daddr.value, customer_id: dtype.value === 'pelanggan' ? (Number(cpick.value) || 0) : 0, pickup_person: pick.value, vehicle: veh.value, note: note.value, lines });
       if (r) { closeModal(); S.f.ost = 'active'; render(); }
     } }, t('save'))]);
 }
@@ -696,12 +715,13 @@ function vSet() {
 function whForm(w) {
   const f = {}, inp = (k, attrs) => (f[k] = h('input', Object.assign({ id: 'wf-' + k, value: w ? (w[k] === undefined ? '' : w[k]) : '' }, attrs || {})));
   const unit = sel('wf-unit', [['month', t('per_month')], ['day', t('per_day')]], w ? w.rate_unit : 'month'), parser = sel('wf-parser', Object.keys(KColdParsers.parsers).map(k => [k, k]), w ? w.parser : 'generic');
+  const mode = sel('wf-mode', [['', t('mode_none')]].concat((KCold.MODES || []).map(m => [m, t('mode_' + m)])), w ? w.mode : ''); // Batch C: cooler mode
   const active = h('input', { id: 'wf-active', type: 'checkbox', checked: w ? w.active : true, style: 'width:auto;min-height:0' });
-  modal(w ? t('edit') + ' ' + w.code : t('s_wh'), h('div', null, field(w ? t('code') : t('code_auto'), inp('code', w ? { readonly: true } : { placeholder: 'DPP' })), field(t('name'), inp('name')), field(t('address'), inp('address')),
+  modal(w ? t('edit') + ' ' + w.code : t('s_wh'), h('div', null, field(w ? t('code') : t('code_auto'), inp('code', w ? { readonly: true } : { placeholder: 'DPP' })), field(t('name'), inp('name')), field(t('mode'), mode), field(t('address'), inp('address')),
     h('div', { class: 'row' }, h('div', { style: 'flex:1' }, field(t('pic'), inp('pic_name'))), h('div', { style: 'flex:1' }, field(t('pic_wa'), inp('pic_wa', { inputmode: 'tel' })))), field(t('cust_id'), inp('customer_id')),
     h('div', { class: 'row' }, KCold.ZONES.map(z => h('div', { style: 'flex:1;min-width:120px' }, field(t('rate_z', { z: t('z_' + z) }), inp('rate_' + z.toLowerCase(), { inputmode: 'numeric' }))))), field(t('unit'), unit), field(t('parser'), parser), h('label', null, active, ' ' + t('active'))),
     [h('button', { class: 'btn pri', type: 'button', id: 'wf-save', onclick: async () => {
-      const d = {}; Object.keys(f).forEach(k => { d[k] = f[k].value; }); KCold.ZONES.forEach(z => { const k = 'rate_' + z.toLowerCase(); d[k] = Number(String(d[k]).replace(/\D/g, '')) || 0; }); d.rate_unit = unit.value; d.parser = parser.value; d.active = active.checked;
+      const d = {}; Object.keys(f).forEach(k => { d[k] = f[k].value; }); KCold.ZONES.forEach(z => { const k = 'rate_' + z.toLowerCase(); d[k] = Number(String(d[k]).replace(/\D/g, '')) || 0; }); d.rate_unit = unit.value; d.parser = parser.value; d.mode = mode.value; d.active = active.checked;
       if (await act('warehouse_save', d)) closeModal();
     } }, t('save'))]);
 }
@@ -711,6 +731,26 @@ function prForm(p) {
   const active = h('input', { id: 'pf-active', type: 'checkbox', checked: p ? p.active : true, style: 'width:auto;min-height:0' });
   modal(p ? t('edit') + ' ' + p.code : t('s_pr'), h('div', null, field(p ? t('code') : t('code_auto'), code), field(t('name'), name), h('div', { class: 'row' }, h('div', { style: 'flex:1' }, field(t('kg_ctn'), kg)), h('div', { style: 'flex:1' }, field(t('ctn_pallet'), cpp))), field(t('aliases'), al), h('label', null, active, ' ' + t('active'))),
     [h('button', { class: 'btn pri', type: 'button', id: 'pf-save', onclick: async () => { if (await act('product_save', { code: code.value, name: name.value, kg_per_ctn: Number(String(kg.value).replace(',', '.')) || 0, ctn_per_pallet: Number(String(cpp.value).replace(/\D/g, '')) || 0, aliases: al.value, active: active.checked })) closeModal(); } }, t('save'))]);
+}
+
+/* ---------- customers (Batch C: reusable registry, shared pos_customers) ---------- */
+function vCust() {
+  const q = (S.f.cq || '').toLowerCase();
+  const list = (S.D.customers || []).filter(c => !q || [c.name, c.phone, c.address].join(' ').toLowerCase().indexOf(q) >= 0).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const rows = list.map(c => h('tr', { 'data-cid': c.id },
+    h('td', null, h('b', { text: c.name }), c.address ? h('div', { class: 'muted', text: c.address }) : null),
+    h('td', { class: 'hp', text: c.phone }),
+    can() ? h('td', null, h('button', { class: 'btn sm', type: 'button', 'data-act': 'cu-edit', onclick: () => custForm(c) }, t('edit'))) : null));
+  return h('div', null,
+    h('div', { class: 'card row' },
+      can() ? h('button', { class: 'btn pri', type: 'button', id: 'cu-add', onclick: () => custForm(null) }, '+ ' + t('cu_add')) : null,
+      h('div', { style: 'flex:1;min-width:180px' }, h('input', { id: 'cu-q', placeholder: t('cu_search'), value: S.f.cq || '', oninput: e => { S.f.cq = e.target.value; const p = e.target.selectionStart; render(); const i = $('#cu-q'); i.focus(); i.setSelectionRange(p, p); } }))),
+    h('div', { class: 'card' }, list.length ? table([t('name'), [t('phone'), 'hp']].concat(can() ? [''] : []), rows, { id: 'cu-tbl' }) : h('p', { class: 'muted', text: t('none') })));
+}
+function custForm(c) {
+  const name = h('input', { id: 'cu-name', value: c ? c.name : '' }), phone = h('input', { id: 'cu-phone', inputmode: 'tel', value: c ? c.phone : '' }), addr = h('input', { id: 'cu-addr', value: c ? c.address : '' });
+  modal(c ? t('edit') + ' ' + c.name : t('cu_add'), h('div', null, field(t('name'), name), field(t('phone'), phone), field(t('address'), addr)),
+    [h('button', { class: 'btn pri', type: 'button', id: 'cu-save', onclick: async () => { if (await act('customer_save', { id: c ? c.id : undefined, name: name.value, phone: phone.value, address: addr.value })) closeModal(); } }, t('save'))]);
 }
 
 /* ---------- start ---------- */

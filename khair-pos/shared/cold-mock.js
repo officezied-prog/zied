@@ -4,7 +4,7 @@
    Seed: DPP, Bosko and Kawanishi, one container, 15 date pallets (some near expiry), 10 days of movements, one open pick order,
    one daily check with a difference. KColdMock.reset() starts again. */
 (function (root) {
-  var DBKEY = 'kcold.mock.db', TABLES = ['warehouses', 'products', 'containers', 'pallets', 'movements', 'checks', 'orders'];
+  var DBKEY = 'kcold.mock.db', TABLES = ['warehouses', 'products', 'containers', 'pallets', 'movements', 'checks', 'orders', 'customers'];
   function hex(buf) { return Array.from(new Uint8Array(buf)).map(function (b) { return ('0' + b.toString(16)).slice(-2); }).join(''); }
   function sha(s) { return crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)).then(hex); }
   function load() { try { return JSON.parse(localStorage.getItem(DBKEY) || 'null'); } catch (e) { return null; } }
@@ -31,9 +31,11 @@
       db.users = people.map(function (p, i) { return { id: 900 + i, name: p[0], role: p[1], pin_hash: hs[i], active: true }; });
       var O = function (action, data, n, hm) { var r = run(db, { action: action, user: 'Pemilik', pin_hash: hs[0], data: data }, at(n, hm)); if (!r.ok) throw new Error(action + ': ' + r.message); return r; };
       var M = function (action, data, n, hm) { var r = run(db, { action: action, user: 'Jihan', pin_hash: hs[1], data: data }, at(n, hm)); if (!r.ok) throw new Error(action + ': ' + r.message); return r; };
-      O('warehouse_save', { code: 'DPP', name: 'DPP Cold Storage', address: 'Jl. Contoh Pergudangan No. 1, Jakarta Utara', pic_name: 'Admin DPP', pic_wa: '081200000001', customer_id: '0157', rate_frozen: 600000, rate_chiller: 450000, rate_dry: 300000, rate_unit: 'month', parser: 'dpp' }, 12);
-      O('warehouse_save', { code: 'BOSKO', name: 'Bosko', address: 'Jl. Contoh Industri No. 2, Bekasi', pic_name: 'Admin Bosko', pic_wa: '081200000002', rate_frozen: 20000, rate_chiller: 16000, rate_dry: 10000, rate_unit: 'day', parser: 'bosko' }, 12);
-      O('warehouse_save', { code: 'KAWANISHI', name: 'Kawanishi', address: 'Jl. Contoh Logistik No. 3, Cikarang', pic_name: 'Admin Kawanishi', pic_wa: '081200000003', rate_frozen: 550000, rate_chiller: 400000, rate_dry: 250000, rate_unit: 'month', parser: 'kawanishi' }, 12);
+      O('warehouse_save', { code: 'DPP', name: 'DPP Cold Storage', mode: 'takhzin', address: 'Jl. Contoh Pergudangan No. 1, Jakarta Utara', pic_name: 'Admin DPP', pic_wa: '081200000001', customer_id: '0157', rate_frozen: 600000, rate_chiller: 450000, rate_dry: 300000, rate_unit: 'month', parser: 'dpp' }, 12);
+      O('warehouse_save', { code: 'BOSKO', name: 'Bosko', mode: 'tabrid', address: 'Jl. Contoh Industri No. 2, Bekasi', pic_name: 'Admin Bosko', pic_wa: '081200000002', rate_frozen: 20000, rate_chiller: 16000, rate_dry: 10000, rate_unit: 'day', parser: 'bosko' }, 12);
+      O('warehouse_save', { code: 'KAWANISHI', name: 'Kawanishi', mode: 'tajmid', address: 'Jl. Contoh Logistik No. 3, Cikarang', pic_name: 'Admin Kawanishi', pic_wa: '081200000003', rate_frozen: 550000, rate_chiller: 400000, rate_dry: 250000, rate_unit: 'month', parser: 'kawanishi' }, 12);
+      O('customer_save', { name: 'Toko Barokah', phone: '081300000020', address: 'Jl. Dewi Sartika 5, Jakarta Timur' }, 12);
+      O('customer_save', { name: 'Toko Al Amin', phone: '081300000021', address: 'Jl. Kalimalang 12, Bekasi' }, 12);
       [['SUKARI-3', 'Kurma Sukari 3kg', 3, 'sukari, sukkari', 286], ['AJWA-5', 'Kurma Ajwa Jumbo 5kg', 5, 'ajwa', 121], ['MEDJOOL-5', 'Kurma Medjool 5kg', 5, 'medjool, majhool', 120],
         ['KHALAS-10', 'Kurma Khalas 10kg', 10, 'khalas, khalash', 100], ['RUTHAB-2', 'Ruthab Dates 2kg', 2, 'ruthab, 157-007', 286]].forEach(function (p) { O('product_save', { code: p[0], name: p[1], kg_per_ctn: p[2], aliases: p[3], ctn_per_pallet: p[4] }, 12); });
       O('settings_save', { drivers: [{ name: 'Pak Udin', wa: '081300000010', vehicle: 'Engkel (CDE)', plate: 'B 9123 KXT' }, { name: 'Pak Rahmat', wa: '081300000011', vehicle: 'Pickup (bak)', plate: 'B 9456 PQR' }] }, 12);

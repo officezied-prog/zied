@@ -524,3 +524,135 @@ CREATE TABLE IF NOT EXISTS pos_att_seals (
   prev_hash TEXT,
   hash TEXT
 );
+
+CREATE TABLE IF NOT EXISTS cold_warehouses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT,
+  name TEXT,
+  address TEXT,
+  pic_name TEXT,
+  pic_wa TEXT,
+  customer_id TEXT,
+  rate REAL,
+  rate_unit TEXT,
+  parser TEXT,
+  active INTEGER,
+  created_at TEXT,
+  created_by TEXT,
+  rate_frozen REAL,
+  rate_chiller REAL,
+  rate_dry REAL,
+  mode TEXT
+);
+
+CREATE TABLE IF NOT EXISTS cold_products (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT,
+  name TEXT,
+  kg_per_ctn REAL,
+  aliases TEXT,
+  active INTEGER,
+  created_at TEXT,
+  created_by TEXT,
+  ctn_per_pallet REAL
+);
+
+CREATE TABLE IF NOT EXISTS cold_containers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  container_no TEXT,
+  size TEXT,
+  arrival_date TEXT,
+  supplier TEXT,
+  warehouse TEXT,
+  note TEXT,
+  created_at TEXT,
+  created_by TEXT,
+  origin TEXT,
+  product TEXT,
+  cartons REAL,
+  kind TEXT,
+  status TEXT,
+  log TEXT
+);
+
+CREATE TABLE IF NOT EXISTS cold_pallets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pallet_code TEXT,
+  product TEXT,
+  lot TEXT,
+  prod_date TEXT,
+  exp_date TEXT,
+  kg_per_ctn REAL,
+  position TEXT,
+  zone TEXT,
+  container_no TEXT,
+  date_in TEXT,
+  ext_item TEXT,
+  warehouse TEXT,
+  created_at TEXT,
+  created_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cold_pallets_warehouse ON cold_pallets (warehouse);
+CREATE INDEX IF NOT EXISTS idx_cold_pallets_pallet_code ON cold_pallets (pallet_code);
+
+CREATE TABLE IF NOT EXISTS cold_movements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  seq REAL,
+  move_date TEXT,
+  at TEXT,
+  type TEXT,
+  pallet_code TEXT,
+  warehouse TEXT,
+  cartons REAL,
+  ref_seq REAL,
+  grp REAL,
+  order_no TEXT,
+  reason TEXT,
+  by_user TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cold_movements_pallet_code ON cold_movements (pallet_code);
+CREATE INDEX IF NOT EXISTS idx_cold_movements_warehouse ON cold_movements (warehouse);
+
+CREATE TABLE IF NOT EXISTS cold_checks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  check_no TEXT,
+  check_date TEXT,
+  warehouse TEXT,
+  at TEXT,
+  by_user TEXT,
+  raw_text TEXT,
+  result TEXT,
+  n_diff REAL,
+  explained_note TEXT,
+  explained_by TEXT,
+  explained_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cold_checks_check_date ON cold_checks (check_date);
+
+CREATE TABLE IF NOT EXISTS cold_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_no TEXT,
+  order_date TEXT,
+  warehouse TEXT,
+  dest_type TEXT,
+  dest_name TEXT,
+  dest_address TEXT,
+  pickup_person TEXT,
+  vehicle TEXT,
+  note TEXT,
+  lines TEXT,
+  status TEXT,
+  created_at TEXT,
+  created_by TEXT,
+  picked_at TEXT,
+  picked_by TEXT,
+  pick_date TEXT,
+  cancel_reason TEXT,
+  cancelled_at TEXT,
+  cancelled_by TEXT,
+  trip TEXT,
+  log TEXT,
+  customer_id REAL
+);
+CREATE INDEX IF NOT EXISTS idx_cold_orders_status ON cold_orders (status);
+CREATE INDEX IF NOT EXISTS idx_cold_orders_order_date ON cold_orders (order_date);
