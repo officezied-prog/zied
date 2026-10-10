@@ -63,11 +63,37 @@ function createSql(table) {
   for (const [c, t] of Object.entries(TABLES[table])) cols.push(`${c} ${SQL_TYPE[t]}`);
   return `CREATE TABLE IF NOT EXISTS ${table} (${cols.join(', ')})`;
 }
+// One-time cut-over bootstrap: the live n8n cold tables held only the initial setup — 3 coolers and
+// 1 product, with NO stock/pallets/movements/orders/checks (verified 2026-10-10). Rather than ask the
+// owner to re-enter them, seed those rows into the fresh D1. Each insert is guarded (WHERE NOT EXISTS by
+// code) so it is idempotent and race-safe, and never runs again once a warehouse/product exists.
+// Safe to delete once the cold app is live and the owner has started entering stock.
+const COLD_SEED_WH = [
+  { code: 'DPP', name: 'DPP', rate_unit: 'day', parser: 'generic', active: 1, created_at: '2026-10-07T11:30:51.451Z', created_by: 'zied salah', rate_frozen: 9500, rate_chiller: 8000, rate_dry: 6500 },
+  { code: 'BOSKO', name: 'BOSKO', rate_unit: 'day', parser: 'generic', active: 1, created_at: '2026-10-07T11:59:58.658Z', created_by: 'zied salah', rate_frozen: 9500, rate_chiller: 8500, rate_dry: 7000 },
+  { code: 'KAWANISHI', name: 'KAWANISHI', rate_unit: 'day', parser: 'generic', active: 1, created_at: '2026-10-07T12:00:47.340Z', created_by: 'zied salah', rate_frozen: 8500, rate_chiller: 6500, rate_dry: 5000 },
+];
+const COLD_SEED_PR = [
+  { code: 'P1', name: 'تمر عجوة', kg_per_ctn: 5, ctn_per_pallet: 125, aliases: '', active: 1, created_at: '2026-10-07T11:31:45.555Z', created_by: 'zied salah' },
+];
+async function seedRow(adapter, table, row) {
+  const cols = Object.keys(row);
+  const sql = `INSERT INTO ${table} (${cols.join(', ')}) SELECT ${cols.map(() => '?').join(', ')} WHERE NOT EXISTS (SELECT 1 FROM ${table} WHERE code = ?)`;
+  try { await adapter.run(sql, [...cols.map((c) => row[c]), row.code]); } catch (e) { /* ignore */ }
+}
 let coldSchemaEnsured = false;
 async function ensureColdSchema(adapter) {
   if (coldSchemaEnsured) return;
   for (const t of COLD_TABLES) { try { await adapter.run(createSql(t), []); } catch (e) { /* exists */ } }
   for (const sql of COLD_INDEXES) { try { await adapter.run(sql, []); } catch (e) { /* exists */ } }
+  // Seed the cut-over setup ONLY into a fresh (empty) cold DB — never once any cooler exists.
+  try {
+    const any = await adapter.all('SELECT 1 FROM cold_warehouses LIMIT 1', []);
+    if (!any.length) {
+      for (const w of COLD_SEED_WH) await seedRow(adapter, 'cold_warehouses', w);
+      for (const p of COLD_SEED_PR) await seedRow(adapter, 'cold_products', p);
+    }
+  } catch (e) { /* ignore */ }
   coldSchemaEnsured = true;
 }
 

@@ -64,6 +64,20 @@ test('cold: generated runProcessCold == original cold-core concat', async () => 
   }
 });
 
+// Runs before the other handleCold tests so the once-per-process schema flag is still fresh.
+test('cold C: a fresh (empty) cold DB is seeded with the cut-over setup (3 coolers + 1 product)', async () => {
+  const db = newDb();
+  insert(db, 'pos_users', { id: 1, name: 'Pemilik', role: 'owner', pin_hash: h('Pemilik', '1234'), active: true });
+  insert(db, 'pos_settings', { id: 1, skey: 'cold_company', svalue: JSON.stringify('PT. SAIDA REZEKI ABADI') });
+  const a = sqliteAdapter(db);
+  const b = await handleCold(a, base('bootstrap', 'Pemilik', '1234'), {}, KEY);
+  assert.equal(b.ok, true, JSON.stringify(b));
+  assert.deepEqual(b.warehouses.map((w) => w.code).sort(), ['BOSKO', 'DPP', 'KAWANISHI']);
+  assert.equal(b.products.length, 1);
+  assert.equal(b.products[0].name, 'تمر عجوة');
+  assert.equal(b.warehouses.find((w) => w.code === 'DPP').rate_frozen, 9500);
+});
+
 test('cold: login + bootstrap for the owner', async () => {
   const a = sqliteAdapter(seed());
   const r = await handleCold(a, base('login', 'Pemilik', '1234'), {}, KEY);
