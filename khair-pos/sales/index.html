@@ -79,7 +79,7 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.0.0';
+const APP_VERSION = 'sales-1.1.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1009,29 +1009,35 @@ const stockChip = p => { const l = stockLevel(p); return `<span class="stock ${l
 
 /* ========== Map: Leaflet (vendor/leaflet + OSM tiles) when available, SVG plot otherwise ========== */
 const MAPS = { failed: false };
-function renderMap(el, { points = [], shops = [], current = null, tall = false }) {
+function renderMap(el, { points = [], shops = [], current = null, orders = [], tall = false, full = false, zoom = false }) {
   if (!el) return;
-  el.className = 'map' + (tall ? ' tall' : '');
+  el.className = 'map' + (tall ? ' tall' : '') + (full ? ' full' : '');
   const useLeaflet = window.L && navigator.onLine && !MAPS.failed;
-  if (useLeaflet) { try { return leafletMap(el, points, shops, current); } catch (e) { MAPS.failed = true; } }
-  svgMap(el, points, shops, current);
+  if (useLeaflet) { try { return leafletMap(el, points, shops, current, orders, zoom); } catch (e) { MAPS.failed = true; } }
+  svgMap(el, points, shops, current, orders);
 }
-function leafletMap(el, points, shops, current) {
+function leafletMap(el, points, shops, current, orders, zoom) {
+  orders = orders || [];
   el.dataset.mode = 'leaflet'; el.innerHTML = '';
-  const m = window.L.map(el, { zoomControl: false, attributionControl: true });
+  const m = window.L.map(el, { zoomControl: !!zoom, attributionControl: true });
   let errs = 0, loaded = 0;
   const tiles = window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(m);
   tiles.on('tileload', () => { loaded++; });
-  tiles.on('tileerror', () => { if (++errs >= 3 && !loaded) { MAPS.failed = true; try { m.remove(); } catch (e) { } svgMap(el, points, shops, current); } });
+  tiles.on('tileerror', () => { if (++errs >= 3 && !loaded) { MAPS.failed = true; try { m.remove(); } catch (e) { } svgMap(el, points, shops, current, orders); } });
   const ll = [];
   if (points.length > 1) { const line = points.map(p => [p.lat, p.lng]); window.L.polyline(line, { color: '#1E40AF', weight: 4 }).addTo(m); ll.push(...line); }
   shops.forEach(s => { if (!validPos(s)) return; ll.push([s.lat, s.lng]); window.L.circleMarker([s.lat, s.lng], { radius: 7, color: '#fff', weight: 2, fillColor: shopColor(s), fillOpacity: 1 }).bindTooltip(esc(s.name + ' · ' + shopLabel(s))).addTo(m); }); // Leaflet tooltips are HTML: escape (security C1) // colour = shop group
+  // v30 (owner 2026-10-10): each accepted order is a numbered pin at its shop (acceptance order), so areas with
+  // the most orders stand out and "who ordered first" is visible.
+  orders.forEach(o => { if (!validPos(o)) return; ll.push([o.lat, o.lng]); window.L.marker([o.lat, o.lng], { icon: window.L.divIcon({ className: 'ord-pin-wrap', html: '<span class="ord-pin">' + esc(String(o.seq)) + '</span>', iconSize: [28, 28], iconAnchor: [14, 14] }), zIndexOffset: 1000 }).bindTooltip(esc(o.label || '')).addTo(m); });
   if (validPos(current)) { ll.push([current.lat, current.lng]); window.L.circleMarker([current.lat, current.lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#1E40AF', fillOpacity: 1 }).addTo(m); }
   if (ll.length) m.fitBounds(ll, { padding: [24, 24], maxZoom: 17 }); else m.setView([-6.2655, 106.8605], 14);
+  return m;
 }
-function svgMap(el, points, shops, current) {
+function svgMap(el, points, shops, current, orders) {
+  orders = orders || [];
   el.dataset.mode = 'svg';
-  const all = points.concat(shops.filter(validPos)).concat(validPos(current) ? [current] : []);
+  const all = points.concat(shops.filter(validPos)).concat(orders.filter(validPos)).concat(validPos(current) ? [current] : []);
   if (!all.length) { el.innerHTML = `<div class="empty" style="padding-top:80px">${esc(t('map.empty'))}</div>`; return; }
   let minLat = Math.min(...all.map(p => p.lat)), maxLat = Math.max(...all.map(p => p.lat)), minLng = Math.min(...all.map(p => p.lng)), maxLng = Math.max(...all.map(p => p.lng));
   const k = Math.cos((minLat + maxLat) / 2 * Math.PI / 180);
@@ -1045,8 +1051,9 @@ function svgMap(el, points, shops, current) {
   const start = points.length ? `<circle cx="${X(points[0])}" cy="${Y(points[0])}" r="5" fill="#fff" stroke="#1E40AF" stroke-width="3"/>` : '';
   const sh = shops.filter(validPos).map(s => `<g data-shop="${esc(s.shop_id)}" data-group="${esc(shopGroup(s))}"><circle cx="${X(s)}" cy="${Y(s)}" r="7" fill="${shopColor(s)}" stroke="#fff" stroke-width="2"><title>${esc(s.name + ' · ' + shopLabel(s))}</title></circle></g>`).join('');
   const cur = validPos(current) ? `<circle cx="${X(current)}" cy="${Y(current)}" r="12" fill="#1E40AF" opacity=".18"/><circle cx="${X(current)}" cy="${Y(current)}" r="6" fill="#1E40AF" stroke="#fff" stroke-width="2.5"/>` : '';
+  const ord = orders.filter(validPos).map(o => `<g><circle cx="${X(o)}" cy="${Y(o)}" r="10" fill="#EA580C" stroke="#fff" stroke-width="2"><title>${esc(o.label || '')}</title></circle><text x="${X(o)}" y="${Y(o)}" dy="3.5" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">${esc(String(o.seq))}</text></g>`).join('');
   const kmw = (W - 2 * pad) / sc * 111.32 / k * k; // width of the box in km (approx.)
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${esc(t('map.label'))}"><rect width="${W}" height="${Hh}" fill="#EEF3FA"/>${grid}${line}${start}${sh}${cur}</svg><div class="note">${esc(t('map.offline'))} · ≈ ${NF1.format(kmw)} km</div>`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${esc(t('map.label'))}"><rect width="${W}" height="${Hh}" fill="#EEF3FA"/>${grid}${line}${start}${sh}${ord}${cur}</svg><div class="note">${esc(t('map.offline'))} · ≈ ${NF1.format(kmw)} km</div>`;
 }
 
 /* ========== Hari ini ========== */
@@ -1068,7 +1075,7 @@ RENDER.today = function () {
         <button class="btn big block" id="day-start" data-act="day-start">${ic('play')} ${esc(t('today.start'))}</button></div>`;
   const due = dueShops();
   $('#v-today').innerHTML = `<div class="wrapc">${hero}
-    <div class="card pad" style="margin-top:12px"><h3>${ic('route')} ${esc(t('today.route'))}</h3><div class="map" id="today-map"></div></div>
+    <div class="card pad" style="margin-top:12px"><div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">${ic('route')} ${esc(t('today.route'))}</h3><button class="btn xs" data-act="map-full" id="map-expand">${ic('locate')} ${esc(t('map.expand'))}</button></div><div class="map tall" id="today-map" style="margin-top:8px"></div></div>
     <div class="card pad" style="margin-top:12px" id="next-card"><h3>${ic('store')} ${esc(t('today.next'))} <span class="badge ${due.length ? 'red' : 'gray'}">${due.length}</span></h3>
       <div class="list" id="next-list">${due.slice(0, 12).map(s => shopRow(s, s._d)).join('') || `<div class="muted">${esc(t('today.next_none'))}</div>`}</div></div></div>`;
   drawTodayStats();
@@ -1083,7 +1090,27 @@ function drawTodayStats() {
     box.innerHTML = `<div class="stat"><b id="st-visits">${visits}</b><span>${esc(t('today.visits'))}</span></div><div class="stat"><b id="st-km">${NF1.format(km)}</b><span>km</span></div><div class="stat"><b id="st-orders">${orders}</b><span>${esc(t('today.orders'))}</span></div>`;
   }
   const visitedIds = new Set(vs.map(v => v.shop_id));
-  renderMap($('#today-map'), { points: pts, shops: S.shops.filter(s => visitedIds.has(s.shop_id)), current: S.day.status === 'working' ? S.pos : null });
+  renderMap($('#today-map'), { points: pts, shops: S.shops.filter(s => visitedIds.has(s.shop_id)), current: S.day.status === 'working' ? S.pos : null, orders: todayOrderMarkers(), tall: true });
+}
+// v30 (owner 2026-10-10): today's accepted orders as numbered pins (acceptance order) at their shop's location.
+function todayOrderMarkers() {
+  return FS.get(uk('orders'), []).filter(o => o.order_date === today() && o.status !== 'batal')
+    .sort((a, b) => String(a.order_time || a.order_date || '').localeCompare(String(b.order_time || b.order_date || '')))
+    .map((o, i) => { const s = shopById(o.shop_id); return s && validPos(s) ? { lat: s.lat, lng: s.lng, seq: i + 1, label: (i + 1) + '. ' + (o.shop_name || s.name) + ' · ' + fmtRp(o.total) } : null; })
+    .filter(Boolean);
+}
+// A big, zoomable map of the day: route, visited + all shops, and today's numbered order pins.
+function openMapFull() {
+  const pts = todayPts(), vs = todayVisits(), visitedIds = new Set(vs.map(v => v.shop_id)), om = todayOrderMarkers();
+  const el = openModal({
+    title: t('today.route'), id: 'map-full', cls: 'map-modal',
+    body: `<div class="map full" id="full-map"></div><div class="small muted" style="margin-top:8px">${esc(t('map.legend'))}</div>`,
+    foot: `<button class="btn primary grow" data-act="modal-close">${esc(t('done'))}</button>`
+  });
+  setTimeout(() => {
+    const mm = renderMap($('#full-map', el), { points: pts, shops: S.shops.length ? S.shops : S.shops.filter(s => visitedIds.has(s.shop_id)), current: S.day.status === 'working' ? S.pos : null, orders: om, full: true, zoom: true });
+    if (mm && mm.invalidateSize) setTimeout(() => { try { mm.invalidateSize(); } catch (e) { } }, 150);
+  }, 60);
 }
 function shopRow(s, dist) {
   return `<div class="li shop-li" data-shop="${esc(s.shop_id)}" style="flex-direction:column;align-items:stretch;gap:4px">
@@ -1153,7 +1180,7 @@ async function dayEnd() {
 const CI = { fix: null, fixErr: '', shop_id: '', isNew: false, photo: '', photoKB: 0, consent: false, outcome: '', client_id: '', busy: false, locating: false };
 // tp = type picker of the new-shop form, re = type picker of "Ubah jenis toko" (existing shop; null = closed)
 const blankTP = () => ({ type: '', type_other: '', chain: '', group: '', q: '', orig: '' });
-function resetCheckin(shopId) { Object.assign(CI, { fix: null, fixErr: '', shop_id: shopId || '', isNew: false, photo: '', photoKB: 0, consent: false, outcome: '', client_id: uuid(), busy: false, form: {}, tp: blankTP(), re: null, notes: '', next: addDays(today(), 7) }); }
+function resetCheckin(shopId) { Object.assign(CI, { fix: null, fixErr: '', shop_id: shopId || '', isNew: false, photo: '', photoKB: 0, consent: false, outcome: '', client_id: uuid(), busy: false, form: {}, tp: blankTP(), re: null, notes: '', rating: 0, next: addDays(today(), 7) }); }
 resetCheckin();
 RENDER.visit = function () {
   if (!isRep()) { $('#v-visit').innerHTML = `<div class="wrapc"><div class="card pad empty">${esc(t('visit.rep_only'))}</div></div>`; return; }
@@ -1191,6 +1218,9 @@ RENDER.visit = function () {
       <label class="check" style="margin-top:10px"><input type="checkbox" id="ci-consent" ${CI.consent ? 'checked' : ''}><span><b>${esc(t('visit.consent'))}</b><br><span class="small muted">${esc(t('visit.consent_hint'))}</span></span></label></div>
     <div class="card pad" style="margin-top:12px"><div class="step-h"><span class="n">4</span>${esc(t('visit.result'))}</div>
       <div class="opt" id="ci-outcome">${OUTCOMES.map(o => `<button type="button" data-act="ci-outcome" data-o="${o}" id="oc-${o}" class="${CI.outcome === o ? 'on' : ''}">${esc(t('oc.' + o))}</button>`).join('')}</div>
+      <div class="field" style="margin-top:12px"><label class="f">${esc(t('visit.rating'))}</label>
+        <div class="stars" id="ci-stars" role="radiogroup" aria-label="${esc(t('visit.rating'))}">${[1, 2, 3, 4, 5].map(n => `<button type="button" class="star ${CI.rating >= n ? 'on' : ''}" data-act="ci-star" data-n="${n}" aria-label="${n}" aria-pressed="${CI.rating >= n}">★</button>`).join('')}</div>
+        <div class="small muted" style="margin-top:2px">${esc(t('visit.rating_hint'))}</div></div>
       <div class="field" style="margin-top:12px"><label class="f" for="ci-notes">${esc(t('notes'))}</label><textarea class="input" id="ci-notes" rows="2">${esc(CI.notes || '')}</textarea></div>
       <div class="field"><label class="f" for="ci-next">${esc(t('visit.next'))}</label><input class="input" type="date" id="ci-next" value="${esc(CI.next || '')}">
         <div class="quick">${[3, 7, 14].map(n => `<button type="button" class="btn xs" data-act="ci-next" data-n="${n}">+${n} ${esc(t('days'))}</button>`).join('')}<button type="button" class="btn xs" data-act="ci-next" data-n="">${esc(t('visit.no_next'))}</button></div></div>
@@ -1317,6 +1347,7 @@ async function saveCheckin() {
   else data.shop = shopData;
   if (shop && cat) data.shop = cat; // re-categorise the existing shop with this check-in (also when queued offline)
   if (CI.photo && CI.consent) data.photo_base64 = CI.photo;
+  if (CI.rating) data.rating = CI.rating;
   if (CI.next) data.next_visit = CI.next;
   CI.busy = true; $('#ci-ok').disabled = true;
   const localVisit = { client_id: data.client_id, visit_date: today(), visit_time: jktISO(), shop_id: shop ? shop.shop_id : 'tmp:' + data.client_id, shop_name: shop ? shop.name : shopData.name, outcome: data.outcome, lat: data.lat, lng: data.lng, pending: true };
@@ -1412,7 +1443,8 @@ function bindSwipe(el) {
 function presentStep(d) { if (!$('#present')) return; CAT.idx = (CAT.idx + d + CAT.list.length) % CAT.list.length; drawPresent(); }
 
 /* ========== Pesanan ========== */
-function newOrderCart() { return { client_id: uuid(), shop_id: '', visit_id: '', lines: [], notes: '', delivery_date: addDays(today(), 1) }; }
+function newOrderCart() { return { client_id: uuid(), shop_id: '', visit_id: '', lines: [], notes: '', payment_method: 'tunai', delivery_date: addDays(today(), 1) }; }
+const PAY_METHODS = ['tunai', 'transfer', 'tempo', 'qris'];
 const saveOrderCart = () => FS.set(uk('order_cart'), S.cart);
 /** Display only: the same rule the server uses (grosir from wholesale_min_qty or a grosir customer). */
 function priceFor(p, qty, shop) {
@@ -1444,6 +1476,7 @@ RENDER.order = function () {
         <b class="num" style="min-width:90px;text-align:end" data-ref="lt">${fmtRp(l.total)}</b></div>`).join('') || `<div class="muted small">${esc(t('order.empty'))}</div>`}</div>
       <div class="total-row" style="margin-top:8px"><span>${esc(t('total'))}</span><span class="num" id="po-total">${fmtRp(total)}</span></div>
       <p class="small muted" style="margin:0 0 10px">${esc(t('order.price_note'))}</p>
+      <div class="field"><label class="f">${esc(t('order.payment'))}</label><div class="seg" id="po-pay">${PAY_METHODS.map(m => `<button type="button" data-act="po-pay" data-m="${m}" class="${(c.payment_method || 'tunai') === m ? 'on' : ''}">${esc(t('pm.' + m))}</button>`).join('')}</div></div>
       <div class="grid2"><div class="field"><label class="f" for="po-date">${esc(t('order.delivery'))}</label><input class="input" type="date" id="po-date" value="${esc(c.delivery_date || '')}"></div>
       <div class="field"><label class="f" for="po-notes">${esc(t('notes'))}</label><input class="input" id="po-notes" value="${esc(c.notes || '')}"></div></div>
       <div class="err" id="po-err" role="alert"></div>
@@ -1456,9 +1489,34 @@ RENDER.order = function () {
   $('#po-notes', v).oninput = e => { c.notes = e.target.value; saveOrderCart(); };
   $$('[data-po-qty]', v).forEach(inp => inp.addEventListener('change', () => { const qn = qtyVal(inp.value); const i = +inp.dataset.poQty; if (qn > 0) c.lines[i].qty = qn; else c.lines.splice(i, 1); saveOrderCart(); RENDER.order(); }));
 };
+// v30 (owner 2026-10-10): organise orders by region (to batch deliveries), by quantity (biggest first) or by
+// payment method — the rep/boss picks the grouping with the buttons on top of the list.
+const OG = { by: '' };
+function orderGroupKey(o, by) {
+  if (by === 'region') { const s = shopById(o.shop_id); return (s && s.area) ? s.area : t('order.no_area'); }
+  if (by === 'payment') return t('pm.' + (o.payment_method || 'tunai'));
+  return '';
+}
+function orderRowHTML(o) {
+  const items = typeof o.items === 'string' ? (() => { try { return JSON.parse(o.items); } catch (e) { return []; } })() : (o.items || []);
+  const pm = o.payment_method || '';
+  return `<div class="li" data-order="${esc(o.order_id || o.client_id)}"><div class="grow"><div class="t">${esc(o.shop_name || '')}</div><div class="s">${esc(o.order_id || t('pending'))} · ${esc(fmtDate(o.order_date))} · ${esc(t('order.n_items', { n: items.length }))}${pm ? ' · ' + esc(t('pm.' + pm)) : ''}${o.delivery_date ? ' · ' + esc(t('order.deliver_on', { date: fmtDate(o.delivery_date) })) : ''}</div></div><div style="text-align:end"><b class="num">${fmtRp(o.total)}</b><div><span class="ostatus ${esc(o.pending ? 'pending' : o.status)}" data-status="${esc(o.pending ? 'pending' : o.status)}">${esc(t('ost.' + (o.pending ? 'pending' : o.status)))}</span></div></div></div>`;
+}
 function ordersListHTML() {
   const list = myOrders();
-  return `<div class="list" id="po-list">${list.slice(0, 40).map(o => { const items = typeof o.items === 'string' ? (() => { try { return JSON.parse(o.items); } catch (e) { return []; } })() : (o.items || []); return `<div class="li" data-order="${esc(o.order_id || o.client_id)}"><div class="grow"><div class="t">${esc(o.shop_name || '')}</div><div class="s">${esc(o.order_id || t('pending'))} · ${esc(fmtDate(o.order_date))} · ${esc(t('order.n_items', { n: items.length }))}${o.delivery_date ? ' · ' + esc(t('order.deliver_on', { date: fmtDate(o.delivery_date) })) : ''}</div></div><div style="text-align:end"><b class="num">${fmtRp(o.total)}</b><div><span class="ostatus ${esc(o.pending ? 'pending' : o.status)}" data-status="${esc(o.pending ? 'pending' : o.status)}">${esc(t('ost.' + (o.pending ? 'pending' : o.status)))}</span></div></div></div>`; }).join('') || `<div class="muted">${esc(t('no_data'))}</div>`}</div>`;
+  const toggle = `<div class="seg sm" id="og-seg" style="margin:0 0 10px">${[['', 'og.none'], ['region', 'og.region'], ['qty', 'og.qty'], ['payment', 'og.payment']].map(([g, k]) => `<button type="button" class="${(OG.by || '') === g ? 'on' : ''}" data-act="og-by" data-g="${g}">${esc(t(k))}</button>`).join('')}</div>`;
+  let body;
+  if (!list.length) body = `<div class="muted">${esc(t('no_data'))}</div>`;
+  else if (OG.by === 'qty') body = list.slice().sort((a, b) => num(b.total) - num(a.total)).map(orderRowHTML).join('');
+  else if (OG.by === 'region' || OG.by === 'payment') {
+    const groups = {};
+    list.forEach(o => { const k = orderGroupKey(o, OG.by); (groups[k] = groups[k] || []).push(o); });
+    body = Object.keys(groups).sort((a, b) => groups[b].length - groups[a].length).map(k => {
+      const g = groups[k], tot = sum(g, o => num(o.total));
+      return `<div class="og-head"><b>${esc(k)}</b> <span class="badge gray">${g.length}</span><span class="grow"></span><b class="num">${fmtRp(tot)}</b></div>` + g.map(orderRowHTML).join('');
+    }).join('');
+  } else body = list.slice(0, 60).map(orderRowHTML).join('');
+  return `<div id="po-list">${toggle}<div class="list">${body}</div></div>`;
 }
 async function saveOrder() {
   const c = S.cart, err = $('#po-err');
@@ -1466,7 +1524,7 @@ async function saveOrder() {
   if (!shop) { err.textContent = t('order.pick_shop'); return; }
   if (!c.lines.length) { err.textContent = t('order.empty'); return; }
   const items = c.lines.map(l => { const p = prodById(l.product_id); const pr = priceFor(p, l.qty, shop); return { product_id: l.product_id, qty: roundQty(l.qty), unit_price: pr.unit_price, price_type: pr.price_type }; });
-  const data = { client_id: c.client_id, shop_id: shop.shop_id, items, notes: (c.notes || '').trim() };
+  const data = { client_id: c.client_id, shop_id: shop.shop_id, items, notes: (c.notes || '').trim(), payment_method: c.payment_method || 'tunai' };
   if (c.visit_id) data.visit_id = c.visit_id;
   if (c.delivery_date) data.delivery_date = c.delivery_date;
   $('#po-ok').disabled = true;
@@ -1474,7 +1532,7 @@ async function saveOrder() {
   try { if (String(resolveIds(data).shop_id || '').startsWith('tmp:')) throw new NetError('shop pending'); const r = await api('field_order', resolveIds(data)); order = r.order; upsertOrder(order); S.day.orders_today = int(S.day.orders_today) + 1; }
   catch (e) {
     if (!(e instanceof NetError)) { err.textContent = errMsg(e); $('#po-ok').disabled = false; return; }
-    order = { client_id: data.client_id, order_id: '', shop_name: shop.name, order_date: today(), order_time: jktISO(), items: items.map(i => Object.assign({ name: (prodById(i.product_id) || {}).name }, i)), total: sum(items, i => Math.round(i.qty * i.unit_price)), delivery_date: data.delivery_date || '', status: 'baru', pending: true };
+    order = { client_id: data.client_id, order_id: '', shop_id: shop.shop_id, shop_name: shop.name, order_date: today(), order_time: jktISO(), items: items.map(i => Object.assign({ name: (prodById(i.product_id) || {}).name }, i)), total: sum(items, i => Math.round(i.qty * i.unit_price)), payment_method: data.payment_method, delivery_date: data.delivery_date || '', status: 'baru', pending: true };
     queueOp('field_order', data, { preview: order }); upsertOrder(order);
     toast(t('outbox.queued'), 'warn', 4000);
   }
@@ -1587,6 +1645,7 @@ const ACT = {
   'tp-chain': el => { const st = tpState(); if (!st) return; st.chain = st.chain === el.dataset.c ? '' : el.dataset.c; drawTP(); },
   'ci-new': () => { CI.shop_id = ''; CI.isNew = true; CI.form = CI.form || {}; RENDER.visit(); const n = $('#ci-name'); if (n) n.focus(); },
   'ci-outcome': el => { CI.outcome = el.dataset.o; $$('#ci-outcome button').forEach(b => b.classList.toggle('on', b === el)); },
+  'ci-star': el => { const n = +el.dataset.n || 0; CI.rating = (CI.rating === n) ? 0 : n; $$('#ci-stars .star').forEach((b, i) => { b.classList.toggle('on', CI.rating >= i + 1); b.setAttribute('aria-pressed', CI.rating >= i + 1); }); },
   'ci-next': el => { CI.next = el.dataset.n ? addDays(today(), +el.dataset.n) : ''; $('#ci-next').value = CI.next; },
   'ci-photo-del': () => { CI.photo = ''; CI.photoKB = 0; RENDER.visit(); },
   'ci-save': () => saveCheckin(),
@@ -1600,7 +1659,10 @@ const ACT = {
   'po-add': el => { orderLineQtyAdd(prodById(el.dataset.id), 1); RENDER.order(); },
   'po-inc': el => { S.cart.lines[+el.dataset.i].qty = roundQty(Math.floor(S.cart.lines[+el.dataset.i].qty) + 1); saveOrderCart(); RENDER.order(); },
   'po-dec': el => { const l = S.cart.lines[+el.dataset.i]; const nq = Math.ceil(l.qty) - 1; if (nq <= 0) S.cart.lines.splice(+el.dataset.i, 1); else l.qty = nq; saveOrderCart(); RENDER.order(); },
+  'po-pay': el => { S.cart.payment_method = el.dataset.m; $$('#po-pay button').forEach(b => b.classList.toggle('on', b === el)); saveOrderCart(); },
   'po-save': () => saveOrder(),
+  'og-by': el => { OG.by = el.dataset.g || ''; if (S.view === 'order') { const l = $('#po-list'); if (l) l.outerHTML = ordersListHTML(); } },
+  'map-full': () => openMapFull(),
   'sh-map': () => { SH.map = !SH.map; RENDER.shops(); },
   'sh-group': el => { SH.group = el.dataset.g || ''; RENDER.shops(); },
   'sh-mode': el => { SH.mode = el.dataset.m === 'target' ? 'target' : 'mine'; RENDER.shops(); $('#v-shops').scrollTop = 0; }
@@ -1653,7 +1715,7 @@ const I18N = {
     'visit.where': 'Lokasi Anda', 'visit.which': 'Toko yang dikunjungi', 'visit.none_near': 'Tidak ada toko tersimpan dalam 150 m.', 'visit.need_fix': 'Tunggu lokasi GPS dulu.', 'visit.new_shop': 'Toko baru',
     'visit.change': 'Ganti', 'visit.far': 'Anda {d} dari lokasi toko yang tersimpan.', 'visit.back_list': '← Pilih toko terdekat', 'visit.photo': 'Foto bersama pemilik toko', 'visit.cam_back': 'Kamera belakang', 'visit.cam_front': 'Kamera depan (selfie)',
     'visit.consent': 'Pemilik toko setuju difoto', 'visit.consent_hint': 'Wajib dicentang agar foto dikirim. Foto dikecilkan (≤ 400 px).', 'visit.result': 'Hasil kunjungan', 'visit.next': 'Kunjungan berikutnya', 'visit.no_next': 'Tidak perlu',
-    'visit.save': 'Simpan kunjungan', 'visit.pick_shop': 'Pilih toko atau isi toko baru', 'visit.pick_outcome': 'Pilih hasil kunjungan', 'visit.need_consent': 'Centang persetujuan pemilik toko, atau hapus fotonya.',
+    'visit.save': 'Simpan kunjungan', 'visit.pick_shop': 'Pilih toko atau isi toko baru', 'visit.pick_outcome': 'Pilih hasil kunjungan', 'visit.need_consent': 'Centang persetujuan pemilik toko, atau hapus fotonya.', 'visit.rating': 'Kesan toko (bintang)', 'visit.rating_hint': 'Seberapa bagus toko ini untuk kerja sama (opsional).',
     'visit.photo_fail': 'Foto tidak bisa diproses', 'visit.saved': 'Kunjungan {name} tersimpan', 'visit.rep_only': 'Kunjungan hanya untuk akun sales.',
     'oc.order': 'Pesan', 'oc.tertarik': 'Tertarik', 'oc.tidak': 'Tidak tertarik', 'oc.tutup': 'Toko tutup', 'oc.sudah_pelanggan': 'Sudah pelanggan',
     'shop.name': 'Nama toko', 'shop.owner': 'Nama pemilik', 'shop.address': 'Alamat', 'shop.area': 'Daerah', 'shop.prospek': 'Prospek', 'shop.pelanggan': 'Pelanggan', 'shop.last': 'kunjungan terakhir {date}',
@@ -1703,10 +1765,12 @@ const I18N = {
     'stock.ada': 'Tersedia', 'stock.sedikit': 'Sedikit', 'stock.habis': 'Habis',
     'order.title': 'Pesanan toko', 'order.shop': 'Toko', 'order.pick_shop': 'Pilih toko', 'order.add': 'Tambah barang…', 'order.from_catalog': 'Pilih dari katalog', 'order.empty': 'Belum ada barang',
     'order.price_note': 'Harga eceran/grosir otomatis dari toko (tidak bisa diubah).', 'order.delivery': 'Tanggal kirim', 'order.send': 'Kirim pesanan', 'order.mine': 'Pesanan saya', 'order.n_items': '{n} barang',
+    'order.payment': 'Cara bayar', 'order.no_area': 'Tanpa wilayah', 'pm.tunai': 'Tunai', 'pm.transfer': 'Transfer', 'pm.tempo': 'Tempo', 'pm.qris': 'QRIS',
+    'og.none': 'Semua', 'og.region': 'Wilayah', 'og.qty': 'Terbesar', 'og.payment': 'Cara bayar',
     'order.deliver_on': 'kirim {date}', 'order.saved_title': 'Pesanan {id} terkirim', 'order.queued_title': 'Pesanan disimpan (offline)', 'order.saved_hint': 'Harga dihitung ulang oleh server. Toko memproses pesanan ini.',
     'order.queued_hint': 'Akan dikirim otomatis saat online.',
     'ost.baru': 'Baru', 'ost.diproses': 'Diproses', 'ost.dikirim': 'Dikirim', 'ost.batal': 'Batal', 'ost.pending': 'Belum terkirim',
-    'map.empty': 'Belum ada titik lokasi', 'map.label': 'Peta rute', 'map.offline': 'Peta sederhana',
+    'map.empty': 'Belum ada titik lokasi', 'map.label': 'Peta rute', 'map.offline': 'Peta sederhana', 'map.expand': 'Perbesar', 'map.legend': 'Titik oranye bernomor = pesanan hari ini (urutan masuk). Lingkaran = toko. Garis biru = rute.',
     'outbox.title': 'Data tertunda', 'outbox.badge': '{n} data tertunda', 'outbox.queued': 'Offline — disimpan, dikirim otomatis', 'outbox.empty': 'Semua data sudah terkirim', 'outbox.synced': '{n} data terkirim',
     'outbox.still': 'Masih {n} data tertunda', 'outbox.send_now': 'Kirim sekarang',
     'ob.day_start': 'Mulai kerja', 'ob.day_end': 'Selesai kerja', 'ob.track': 'Titik lokasi', 'ob.check_in': 'Kunjungan', 'ob.field_order': 'Pesanan',
@@ -1741,7 +1805,7 @@ const I18N = {
     'visit.where': 'موقعك', 'visit.which': 'المتجر المزار', 'visit.none_near': 'لا يوجد متجر محفوظ ضمن 150 م.', 'visit.need_fix': 'انتظر تحديد الموقع.', 'visit.new_shop': 'متجر جديد',
     'visit.change': 'تغيير', 'visit.far': 'أنت على بعد {d} من موقع المتجر المحفوظ.', 'visit.back_list': '→ اختر متجرًا قريبًا', 'visit.photo': 'صورة مع صاحب المتجر', 'visit.cam_back': 'الكاميرا الخلفية', 'visit.cam_front': 'الكاميرا الأمامية',
     'visit.consent': 'صاحب المتجر موافق على التصوير', 'visit.consent_hint': 'مطلوب لإرسال الصورة. تُصغَّر الصورة (≤ 400 بكسل).', 'visit.result': 'نتيجة الزيارة', 'visit.next': 'الزيارة القادمة', 'visit.no_next': 'لا حاجة',
-    'visit.save': 'حفظ الزيارة', 'visit.pick_shop': 'اختر متجرًا أو أضف متجرًا جديدًا', 'visit.pick_outcome': 'اختر نتيجة الزيارة', 'visit.need_consent': 'ضع علامة موافقة صاحب المتجر أو احذف الصورة.',
+    'visit.save': 'حفظ الزيارة', 'visit.pick_shop': 'اختر متجرًا أو أضف متجرًا جديدًا', 'visit.pick_outcome': 'اختر نتيجة الزيارة', 'visit.need_consent': 'ضع علامة موافقة صاحب المتجر أو احذف الصورة.', 'visit.rating': 'انطباعك عن المحل (نجوم)', 'visit.rating_hint': 'ما مدى جودة هذا المحل للتعامل معه (اختياري).',
     'visit.photo_fail': 'تعذّرت معالجة الصورة', 'visit.saved': 'حُفظت زيارة {name}', 'visit.rep_only': 'الزيارات لحساب المندوب فقط.',
     'oc.order': 'طلب', 'oc.tertarik': 'مهتم', 'oc.tidak': 'غير مهتم', 'oc.tutup': 'المتجر مغلق', 'oc.sudah_pelanggan': 'عميل حالي',
     'shop.name': 'اسم المتجر', 'shop.owner': 'اسم المالك', 'shop.address': 'العنوان', 'shop.area': 'المنطقة', 'shop.prospek': 'محتمل', 'shop.pelanggan': 'عميل', 'shop.last': 'آخر زيارة {date}',
@@ -1791,10 +1855,12 @@ const I18N = {
     'stock.ada': 'متوفر', 'stock.sedikit': 'قليل', 'stock.habis': 'نفد',
     'order.title': 'طلب متجر', 'order.shop': 'المتجر', 'order.pick_shop': 'اختر متجرًا', 'order.add': 'أضف صنفًا…', 'order.from_catalog': 'اختر من الكتالوج', 'order.empty': 'لا توجد أصناف',
     'order.price_note': 'سعر التجزئة/الجملة تلقائي من المتجر (لا يمكن تغييره).', 'order.delivery': 'تاريخ التسليم', 'order.send': 'إرسال الطلب', 'order.mine': 'طلباتي', 'order.n_items': '{n} أصناف',
+    'order.payment': 'طريقة الدفع', 'order.no_area': 'بدون منطقة', 'pm.tunai': 'نقدًا', 'pm.transfer': 'تحويل', 'pm.tempo': 'آجل', 'pm.qris': 'QRIS',
+    'og.none': 'الكل', 'og.region': 'المنطقة', 'og.qty': 'الأكبر', 'og.payment': 'طريقة الدفع',
     'order.deliver_on': 'تسليم {date}', 'order.saved_title': 'أُرسل الطلب {id}', 'order.queued_title': 'حُفظ الطلب (بدون اتصال)', 'order.saved_hint': 'يعيد الخادم حساب الأسعار. المتجر يعالج الطلب.',
     'order.queued_hint': 'سيُرسل تلقائيًا عند الاتصال.',
     'ost.baru': 'جديد', 'ost.diproses': 'قيد المعالجة', 'ost.dikirim': 'أُرسل', 'ost.batal': 'ملغى', 'ost.pending': 'لم يُرسل',
-    'map.empty': 'لا توجد نقاط موقع', 'map.label': 'خريطة المسار', 'map.offline': 'خريطة مبسطة',
+    'map.empty': 'لا توجد نقاط موقع', 'map.label': 'خريطة المسار', 'map.offline': 'خريطة مبسطة', 'map.expand': 'تكبير', 'map.legend': 'النقاط البرتقالية المرقّمة = طلبات اليوم (ترتيب الاستلام). الدوائر = المحلات. الخط الأزرق = المسار.',
     'outbox.title': 'بيانات معلّقة', 'outbox.badge': '{n} بيانات معلّقة', 'outbox.queued': 'بدون اتصال — حُفظ وسيُرسل تلقائيًا', 'outbox.empty': 'تم إرسال كل البيانات', 'outbox.synced': 'أُرسلت {n}',
     'outbox.still': 'ما زال {n} معلّقًا', 'outbox.send_now': 'أرسل الآن',
     'ob.day_start': 'بدء العمل', 'ob.day_end': 'إنهاء العمل', 'ob.track': 'نقاط الموقع', 'ob.check_in': 'زيارة', 'ob.field_order': 'طلب',

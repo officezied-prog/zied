@@ -124,7 +124,7 @@ export const TABLES = {
     visit_id: 'string', client_id: 'string', user: 'string', visit_date: 'string',
     visit_time: 'string', shop_id: 'string', shop_name: 'string', lat: 'number', lng: 'number',
     acc: 'number', distance_m: 'number', outcome: 'string', notes: 'string', next_visit: 'string',
-    photo_thumb: 'string', drive_url: 'string',
+    photo_thumb: 'string', drive_url: 'string', rating: 'number',
   },
   pos_tracks: {
     user: 'string', track_date: 'string', t: 'string', lat: 'number', lng: 'number',
@@ -139,7 +139,7 @@ export const TABLES = {
     order_id: 'string', client_id: 'string', user: 'string', order_date: 'string',
     shop_id: 'string', shop_name: 'string', items: 'string', total: 'number', notes: 'string',
     delivery_date: 'string', status: 'string', invoice_no: 'string', updated_by: 'string',
-    order_time: 'string', status_note: 'string',
+    order_time: 'string', status_note: 'string', payment_method: 'string',
   },
   pos_product_images: {
     product_id: 'number', image_base64: 'string', updated_at: 'string',
