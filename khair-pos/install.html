@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1E40AF">
+<title>تطبيقات الخير مارت — التثبيت</title>
+<style>
+  :root{--p:#1E40AF;--pd:#1E3A8A;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--bg:#f1f5f9;--card:#fff}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"Segoe UI",Tahoma,Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.6}
+  .wrap{max-width:860px;margin:0 auto;padding:16px}
+  header{background:linear-gradient(135deg,var(--p),var(--pd));color:#fff;border-radius:18px;padding:22px;margin:16px 0;display:flex;align-items:center;gap:14px}
+  header img{width:60px;height:60px;border-radius:14px}
+  header h1{margin:0;font-size:22px}
+  header p{margin:4px 0 0;opacity:.9;font-size:14px}
+  .lead{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:0 0 16px;font-size:15px}
+  .lead b{color:var(--p)}
+  .grid{display:grid;gap:14px}
+  @media(min-width:640px){.grid{grid-template-columns:1fr 1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:10px}
+  .card .top{display:flex;align-items:center;gap:12px}
+  .card img.ic{width:56px;height:56px;border-radius:14px;flex:none}
+  .card h2{margin:0;font-size:18px}
+  .card .who{color:var(--muted);font-size:13px;margin-top:2px}
+  .card .desc{font-size:14px;color:#334155;margin:0}
+  .card .qr{display:flex;align-items:center;gap:12px;background:#f8fafc;border:1px solid var(--line);border-radius:12px;padding:10px}
+  .card .qr img{width:96px;height:96px;flex:none;border-radius:8px;background:#fff}
+  .card .qr span{font-size:13px;color:var(--muted)}
+  .btn{display:flex;align-items:center;justify-content:center;gap:8px;background:var(--p);color:#fff;text-decoration:none;font-weight:800;font-size:16px;border-radius:12px;padding:12px;margin-top:auto}
+  .btn:active{background:var(--pd)}
+  .btn.gudang{background:#0E7490}
+  details{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px 16px;margin:12px 0}
+  summary{font-weight:800;cursor:pointer;padding:12px 0;font-size:16px}
+  details ol{margin:6px 0 14px;padding-inline-start:22px}
+  details li{margin:6px 0;font-size:14.5px}
+  .en{direction:ltr;unicode-bidi:isolate;font-family:"Segoe UI",Roboto,Arial,sans-serif;font-weight:700}
+  footer{text-align:center;color:var(--muted);font-size:13px;margin:22px 0}
+  .note{font-size:13px;color:var(--muted);margin-top:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img src="icon-192.png" alt="">
+    <div><h1>تطبيقات الخير مارت</h1><p>ثبّت التطبيق على الهاتف أو الحاسوب — يعمل كأي تطبيق (أيقونة، ملء الشاشة، وبدون إنترنت للواجهة).</p></div>
+  </header>
+
+  <div class="lead">
+    اختر تطبيقك، اضغط <b>فتح التطبيق</b>، ثم <b>ثبّته</b> حسب جهازك (الخطوات بالأسفل). أو امسح رمز
+    <span class="en">QR</span>
+    بكاميرا الهاتف ليفتح مباشرة. كل شخص يدخل باسمه ورمزه السري.
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="top"><img class="ic" src="icon-192.png" alt=""><div><h2>الخير مارت — الإدارة</h2><div class="who">المالك · المدير · المحاسب</div></div></div>
+      <p class="desc">لوحة الإدارة: المبيعات، المخزون، الأسعار، الموافقات والتقارير. كل واحد يدخل بحسابه فتظهر له صلاحياته.</p>
+      <div class="qr"><img src="install-assets/qr-owner.png" alt="QR"><span>امسح الرمز بكاميرا الهاتف لفتح التطبيق</span></div>
+      <a class="btn" href="./">فتح تطبيق الإدارة</a>
+    </div>
+
+    <div class="card">
+      <div class="top"><img class="ic" src="kasir/icon-192.png" alt=""><div><h2>الخير كاشير</h2><div class="who">الكاشير (نقطة البيع)</div></div></div>
+      <p class="desc">البيع، استلام البضائع، الصندوق، والإيصالات — تطبيق بسيط وسريع لجهاز الكاشير.</p>
+      <div class="qr"><img src="install-assets/qr-kasir.png" alt="QR"><span>امسح الرمز بكاميرا الهاتف لفتح التطبيق</span></div>
+      <a class="btn" href="kasir/">فتح تطبيق الكاشير</a>
+    </div>
+
+    <div class="card">
+      <div class="top"><img class="ic" src="sales/icon-192.png" alt=""><div><h2>الخير مندوب</h2><div class="who">مندوب المبيعات (الميدان)</div></div></div>
+      <p class="desc">زيارات المحلات على الخريطة، تسجيل محل جديد، الكتالوج، والطلبات — مع تتبّع المسار.</p>
+      <div class="qr"><img src="install-assets/qr-sales.png" alt="QR"><span>امسح الرمز بكاميرا الهاتف لفتح التطبيق</span></div>
+      <a class="btn" href="sales/">فتح تطبيق المندوب</a>
+    </div>
+
+    <div class="card">
+      <div class="top"><img class="ic" src="gudang/icon-192.png" alt=""><div><h2>الخير برادات</h2><div class="who">المخازن والتبريد</div></div></div>
+      <p class="desc">مخازن التبريد: البرادات، أنواع التمر، الكميات (بالت/كرتون/كيلو) وحركة البضاعة.</p>
+      <div class="qr"><img src="install-assets/qr-gudang.png" alt="QR"><span>امسح الرمز بكاميرا الهاتف لفتح التطبيق</span></div>
+      <a class="btn gudang" href="gudang/">فتح تطبيق البرادات</a>
+    </div>
+  </div>
+
+  <h3 style="margin:22px 2px 8px">طريقة التثبيت حسب الجهاز</h3>
+
+  <details open>
+    <summary>📱 آيفون (iPhone / iPad)</summary>
+    <ol>
+      <li>افتح التطبيق من الزر بالأعلى بمتصفح <span class="en">Safari</span>.</li>
+      <li>اضغط زر المشاركة <span class="en">Share</span> (المربع بسهم للأعلى، أسفل الشاشة).</li>
+      <li>اختر <b>«أضف إلى الشاشة الرئيسية»</b> <span class="en">Add to Home Screen</span>.</li>
+      <li>اضغط <b>«إضافة»</b> — تظهر أيقونة التطبيق على الشاشة ويعمل بملء الشاشة.</li>
+    </ol>
+    <div class="note">ملاحظة: على الآيفون يجب أن يكون المتصفح <span class="en">Safari</span> (ليس Chrome) لتظهر «أضف إلى الشاشة الرئيسية».</div>
+  </details>
+
+  <details>
+    <summary>🤖 أندرويد (Android)</summary>
+    <ol>
+      <li>افتح التطبيق من الزر بالأعلى بمتصفح <span class="en">Chrome</span>.</li>
+      <li>سيظهر شريط <b>«تثبيت التطبيق»</b> <span class="en">Install app</span> — اضغطه. (أو من قائمة ⋮ أعلى اليمين اختر <b>«تثبيت التطبيق»</b> / <b>«إضافة إلى الشاشة الرئيسية»</b>.)</li>
+      <li>اضغط <b>«تثبيت»</b> — تظهر أيقونة التطبيق مع بقية تطبيقاتك.</li>
+    </ol>
+  </details>
+
+  <details>
+    <summary>💻 الحاسوب (Windows / Mac)</summary>
+    <ol>
+      <li>افتح التطبيق من الزر بالأعلى بمتصفح <span class="en">Chrome</span> أو <span class="en">Edge</span>.</li>
+      <li>في شريط العنوان (يمين)، اضغط أيقونة التثبيت <span class="en">⊕ / Install</span>.</li>
+      <li>اضغط <b>«تثبيت»</b> — يُفتح التطبيق في نافذة خاصة، وتظهر أيقونته على سطح المكتب / قائمة البدء.</li>
+    </ol>
+  </details>
+
+  <footer>الخير مارت — جاكرتا · هذه الصفحة للتوزيع الداخلي على الفريق</footer>
+</div>
+</body>
+</html>

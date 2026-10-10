@@ -87,3 +87,35 @@ test('field: kasir may not use field actions beyond cashier_orders', async () =>
   assert.equal(r.ok, false);
   assert.equal(r.error, 'FORBIDDEN');
 });
+
+test('field v30: check_in stores the star rating on the visit', async () => {
+  const db = seed();
+  const a = sqliteAdapter(db);
+  const r = await handleField(a, base('check_in', 'Rani', '3333', { client_id: 'ci1', shop_id: 'S1', lat: -6.26, lng: 106.86, acc: 10, outcome: 'tertarik', rating: 4, notes: 'ramah' }), {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const v = a.all("SELECT * FROM pos_visits WHERE client_id = 'ci1'", [])[0];
+  assert.ok(v, 'visit saved');
+  assert.equal(v.rating, 4);
+});
+
+test('field v30: field_order stores the payment method', async () => {
+  const db = seed();
+  const a = sqliteAdapter(db);
+  const r = await handleField(a, base('field_order', 'Rani', '3333', { client_id: 'fo1', shop_id: 'S1', payment_method: 'tempo', items: [{ product_id: 1, qty: 3 }] }), {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const o = a.all("SELECT * FROM pos_field_orders WHERE client_id = 'fo1'", [])[0];
+  assert.ok(o, 'order saved');
+  assert.equal(o.payment_method, 'tempo');
+});
+
+test('field v30: the accountant may read the field report; a sales rep may not', async () => {
+  const db = seed();
+  insert(db, 'pos_users', { id: 5, name: 'Aqil', role: 'akuntan', pin_hash: h('Aqil', '4444'), active: true });
+  const a = sqliteAdapter(db);
+  const ra = await handleField(a, base('list_field', 'Aqil', '4444', { from: '2026-10-01', to: '2026-10-31' }), {}, KEY);
+  assert.equal(ra.ok, true, JSON.stringify(ra));
+  assert.ok(Array.isArray(ra.visits), 'visits array returned to the accountant');
+  const rs = await handleField(a, base('list_field', 'Rani', '3333', { from: '2026-10-01', to: '2026-10-31' }), {}, KEY);
+  assert.equal(rs.ok, false);
+  assert.equal(rs.error, 'FORBIDDEN');
+});

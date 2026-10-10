@@ -84,14 +84,18 @@ if (me.pin_hash !== req.pin_hash && !viaMaster) return fail('BAD_PIN', 'Nama ata
 if (me.must_change === true && !viaMaster) return fail('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
 // A real kasir is allowed here ONLY for the read-only cashier view (the counter reads field orders to fulfil them);
 // any OTHER / unknown role is still rejected outright.
-const role = ['owner', 'manager', 'sales', 'kasir'].indexOf(me.role) >= 0 ? me.role : 'other';
+const role = ['owner', 'manager', 'sales', 'kasir', 'akuntan'].indexOf(me.role) >= 0 ? me.role : 'other';
 if (role === 'other') return fail('FORBIDDEN', 'Aplikasi ini untuk sales lapangan');
 const isBoss = role === 'owner' || role === 'manager';
 const SALES_ONLY = ['day_start', 'day_end', 'track', 'check_in', 'field_order'];
-const BOSS_ONLY = ['list_field', 'update_order', 'set_product_image', 'link_shop'];
-// The kasir may reach ONLY cashier_orders — every other field action (including field_bootstrap) is forbidden for them.
+const BOSS_ONLY = ['update_order', 'set_product_image', 'link_shop'];
+// The kasir may reach ONLY cashier_orders. v30 (owner 2026-10-10): the accountant may READ the field report
+// (visits + orders table) for monitoring — field_bootstrap / list_field / product_images only, nothing that writes.
 const KASIR_ONLY = ['cashier_orders'];
+const AKUNTAN_OK = ['field_bootstrap', 'list_field', 'product_images'];
 if (role === 'kasir' && KASIR_ONLY.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Kasir hanya boleh melihat pesanan');
+if (role === 'akuntan' && AKUNTAN_OK.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akuntan hanya melihat laporan lapangan');
+if (req.action === 'list_field' && !isBoss && role !== 'akuntan') return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
 if (BOSS_ONLY.indexOf(req.action) >= 0 && !isBoss) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
 if (SALES_ONLY.indexOf(req.action) >= 0 && role !== 'sales') return fail('FORBIDDEN', 'Hanya untuk akun sales');
 
@@ -244,6 +248,8 @@ switch (req.action) {
       visit_id: 'VS' + rand(7), client_id: req.client_id, user: me.name, visit_date: req.today, visit_time: now, shop_id: shopId, shop_name: str(shop.name),
       lat: Math.round(num(data.lat) * 1e6) / 1e6, lng: Math.round(num(data.lng) * 1e6) / 1e6, acc: Math.round(num(data.acc)), distance_m: distance,
       outcome: OUTCOMES.indexOf(data.outcome) >= 0 ? data.outcome : 'tertarik', notes: str(data.notes).slice(0, 500),
+      // v30 (owner 2026-10-10): the rep's impression of the shop, 1–5 stars (0 = not rated).
+      rating: Math.max(0, Math.min(5, Math.round(num(data.rating)))),
       next_visit: isDate(data.next_visit) ? data.next_visit : '', photo_thumb: photo, drive_url: ''
     };
     ops.visits.push(forWrite(visit, -1));
@@ -276,6 +282,8 @@ switch (req.action) {
     const order = {
       order_id: 'SO' + rand(7), client_id: req.client_id, user: me.name, order_date: req.today, shop_id: shop.shop_id, shop_name: str(shop.name),
       items: JSON.stringify(lines), total: lines.reduce(function (a, l) { return a + l.line_total; }, 0), notes: str(data.notes).slice(0, 500),
+      // v30 (owner 2026-10-10): payment method, so orders can be organised by how they'll be paid.
+      payment_method: ['tunai', 'transfer', 'tempo', 'qris'].indexOf(data.payment_method) >= 0 ? data.payment_method : 'tunai',
       delivery_date: isDate(data.delivery_date) ? data.delivery_date : '', status: 'baru', invoice_no: '', updated_by: '',
       order_time: new Date().toISOString(), status_note: ''
     };
