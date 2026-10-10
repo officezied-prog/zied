@@ -2,7 +2,7 @@
    Network-first for the app files, cache fallback when offline. API calls (POST to n8n) are
    never cached or intercepted. The cache name is distinct from the owner app's ("khair-pos-v1"),
    and only old "khair-kasir-*" caches are removed on activate. */
-const CACHE = 'khair-kasir-v7';
+const CACHE = 'khair-kasir-v8';
 // ../shared/docs.js (A4 documents, v17), ../shared/chat-ui.js (chat, Phase 3) and ../shared/field-mock.js (field reps' orders, read-only) are outside this scope's folder but loaded by the page, so they are cached and served here too.
 const SHELL = ['./', './index.html', './styles.css', './mock.js', './manifest.webmanifest', './icon.svg', '../shared/docs.js', '../shared/face.js', '../shared/att-kiosk.js', '../shared/chat-ui.js', '../shared/field-mock.js'];
 self.addEventListener('install', e => {

@@ -28,7 +28,7 @@ if (req.action === 'list_photos') {
   });
   return respond({ ok: true, photos: photos });
 }
-if (['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return'].indexOf(req.action) < 0) return fail('INVALID', 'Aksi tidak dikenal: ' + req.action);
+if (['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'scan_expense'].indexOf(req.action) < 0) return fail('INVALID', 'Aksi tidak dikenal: ' + req.action);
 if (req.too_big) return fail('INVALID', 'Foto terlalu besar, kecilkan dulu (maks ±5 MB)');
 if (req.img.length < 200) return fail('INVALID', 'Foto wajib dikirim');
 
@@ -43,6 +43,13 @@ if (req.action === 'scan_payment') {
   const prompt = 'Kamu kasir/akuntan toko Khair Mart. Foto ini adalah bukti pembayaran: bukti transfer bank / m-banking / QRIS / setoran tunai, untuk pembayaran dari pelanggan atau ke pemasok. Baca datanya. ' + JSON_ONLY +
     ' Format: {"date": "YYYY-MM-DD"|null, "time": "HH:MM"|null, "amount": number|null, "sender_name": string|null, "sender_bank": string|null, "receiver_name": string|null, "receiver_bank": string|null, "bank": string|null, "transfer_ref": string|null, "description": string|null, "status": "berhasil"|"gagal"|"tidak_jelas", "readable": boolean, "notes": string}. transfer_ref = nomor referensi / no. transaksi / ID transaksi. bank = bank/aplikasi pengirim. Tulis notes dalam Bahasa Indonesia singkat.';
   return [{ json: { mode: 'scan', kind: 'bayar', action: req.action, img: req.img, mime: req.mime, prompt: prompt, user: me.name, ref: '' } }];
+}
+if (req.action === 'scan_expense') {
+  // Operating-expense invoice / receipt (v29): rent, salaries, electricity/water, transport, ads, packaging,
+  // maintenance… Read the grand total (to check it against the amount the cashier typed) and the line items. Kind 'biaya'.
+  const prompt = 'Kamu akuntan toko grosir Khair Mart. Foto ini adalah nota/faktur/struk PENGELUARAN (biaya operasional: sewa, gaji, listrik/air, transport, iklan, kemasan, perawatan, dll). Baca total yang harus dibayar dan rincian barang/jasa. ' + JSON_ONLY +
+    ' Format: {"vendor": string|null, "date": "YYYY-MM-DD"|null, "items": [{"name": string, "qty": number|null, "unit_price": number|null, "total": number|null}], "total": number|null, "amount": number|null, "readable": boolean, "notes": string}. amount = total akhir yang dibayar (sama dengan total). Tulis notes dalam Bahasa Indonesia singkat.';
+  return [{ json: { mode: 'scan', kind: 'biaya', action: req.action, img: req.img, mime: req.mime, prompt: prompt, user: me.name, ref: '' } }];
 }
 if (req.action === 'scan_supplier_return') {
   // Goods going back to a supplier (v17): the outgoing return note / delivery order and/or the goods leaving. Own kind 'retur'.

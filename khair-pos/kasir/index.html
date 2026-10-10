@@ -101,7 +101,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.0.0';
+const APP_VERSION = 'kasir-1.1.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1538,7 +1538,7 @@ function openCustomerPicker(onPick, opts = {}) {
         <div class="grid2"><div class="field"><label class="f" for="cn-phone">${esc(t('phone'))}</label><input class="input" data-rule="phone" id="cn-phone" inputmode="tel"></div>
         <div class="field"><label class="f" for="cn-type">${esc(t('type'))}</label><select class="input" id="cn-type"><option value="eceran">${esc(t('type.eceran'))}</option><option value="grosir">${esc(t('type.grosir'))}</option></select></div></div>
         <div class="field"><label class="f" for="cn-email">${esc(t('mem.email'))}</label><input class="input" data-rule="email" id="cn-email" type="email" inputmode="email" autocomplete="off" placeholder="nama@email.com"></div>
-        <label class="check" id="cn-member-l"><input type="checkbox" id="cn-member" ${opts.member ? 'checked' : ''}><span><b>${esc(t('mem.make'))}</b><br><span class="small muted">${esc(t('mem.consent'))}</span></span></label>
+        ${isApprover() ? `<label class="check" id="cn-member-l"><input type="checkbox" id="cn-member" ${opts.member ? 'checked' : ''}><span><b>${esc(t('mem.make'))}</b><br><span class="small muted">${esc(t('mem.consent'))}</span></span></label>` : ''}
         <button class="btn primary block" id="cp-save">${esc(t('save'))}</button><div class="red small" id="cp-err"></div></div></details>`}`
   });
   const draw = () => {
@@ -1553,7 +1553,8 @@ function openCustomerPicker(onPick, opts = {}) {
   $('#cp-list', el).addEventListener('click', e => { const b = e.target.closest('[data-pick]'); if (!b) return; dropModal(el); onPick(b.dataset.pick === '' ? null : custById(b.dataset.pick)); });
   const sv = $('#cp-save', el);
   if (sv) sv.addEventListener('click', async () => {
-    const data = { name: $('#cn-name', el).value.trim(), phone: $('#cn-phone', el).value.trim(), type: $('#cn-type', el).value, email: $('#cn-email', el).value.trim().toLowerCase(), member: $('#cn-member', el).checked };
+    const mchk = $('#cn-member', el);
+    const data = { name: $('#cn-name', el).value.trim(), phone: $('#cn-phone', el).value.trim(), type: $('#cn-type', el).value, email: $('#cn-email', el).value.trim().toLowerCase(), member: !!(mchk && mchk.checked) };
     if (!data.name) { $('#cp-err', el).textContent = t('required') + ': ' + t('name'); return; }
     if (data.email && !okEmail(data.email)) { $('#cp-err', el).textContent = t('mem.bad_email'); return; }
     if (!data.email) delete data.email;
@@ -2258,6 +2259,17 @@ function showReceipt(rc, opts = {}) {
   drawRcSend(el, rc);
   drawWaCard(el, rc);
 }
+/* v29 (owner 2026-10-10): "Struk terakhir" shows the LAST FOUR receipts with their times; tap one to open it. */
+function openLastReceipts() {
+  const all = KS.get('receipts', []).slice(0, 4);
+  if (!all.length) { toast(t('no_data'), 'warn'); return; }
+  if (all.length === 1) { showReceipt(all[0]); return; }
+  const el = openModal({
+    title: t('more.last_rc'), id: 'last-rc',
+    body: `<div class="list" id="lrc-list">${all.map((rc, i) => `<button class="li" data-lrc="${i}">${ic('receipt')}<div class="grow"><div class="t">${esc(rc.invoice_no || t('rc.title'))}${rc.pending ? ` <span class="badge warn">${esc(t('outbox.queued_short'))}</span>` : ''}</div><div class="s">${esc(fmtDateTime(rc.sale_time, rc.sale_date))}${rc.customer_name ? ' · ' + esc(rc.customer_name) : ''}</div></div><b class="num">${fmtRp(rc.total)}</b></button>`).join('')}</div>`
+  });
+  $$('[data-lrc]', el).forEach(b => b.onclick = () => { const rc = all[+b.dataset.lrc]; dropModal(el); showReceipt(rc); });
+}
 /* v16: send the receipt as plain text — WhatsApp (wa.me to the customer's phone, or a number typed here) and e-mail (mailto),
    one tap each; the cashier presses Send in WhatsApp / the mail app. Always Indonesian. */
 function receiptPlain(rc) {
@@ -2676,6 +2688,7 @@ async function savePurchase(reason) {
     PU.result = `<div class="card pad" id="pu-res" data-no="${esc(no)}" data-match="${esc(m.status)}" style="border-color:#5EEAD4">
       <div class="row wrap" style="margin-bottom:8px"><span class="badge ok">${ic('check')} ${esc(t('pu.saved'))}</span>${no ? `<b class="num" id="pu-res-no">${esc(no)}</b>` : ''}<span class="badge ${MATCH_BADGE[m.status] || 'gray'}" id="pu-res-match">${esc(t('pu.m_' + m.status))}</span></div>
       ${reason ? `<div class="small" id="pu-res-reason" style="margin-bottom:6px">${esc(t('pu.mm_reason'))}: <b>“${esc(reason)}”</b></div>` : ''}
+      ${r.mismatch_request_id ? `<div class="small" id="pu-res-review" style="margin-bottom:6px;color:var(--warn)"><b>${esc(t('pu.mm_sent_review'))}</b></div>` : ''}
       <table class="tbl"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('qty'))}</th><th class="r">${esc(t('stock'))}</th></tr></thead><tbody>
       ${(r.stock || []).map(s => { const p = prodById(s.product_id) || {}; return `<tr><td>${esc(p.name || s.product_id)}</td><td class="r num">${fmtQty(qtyOf.get(String(s.product_id)))} ${esc(p.unit || '')}</td><td class="r num">${fmtQty(before.get(String(s.product_id)))} → <b>${fmtQty(s.stock)}</b></td></tr>`; }).join('')}</tbody></table>
       <div class="lockline" id="pu-res-locked">${ic('lock')} ${esc(t('pu.locked'))}</div>
@@ -2815,7 +2828,9 @@ function carrierHTML(px, c, titleKey = 'car.title') {
   const ty = c.type || '', fld = (id, label, rule, val, req, ph = '') => `<div class="field"><label class="f" for="${px}-car-${id}">${esc(label)}${req ? ' *' : ''}</label><input class="input" id="${px}-car-${id}" data-car-f="${id}" data-rule="${rule}" autocomplete="off" value="${esc(val || '')}" ${ph ? `placeholder="${esc(ph)}"` : ''}${rule === 'phone' ? ' type="tel"' : ''}></div>`;
   let fields = '';
   if (ty === 'umum') fields = `<div class="grid2"><div class="field"><label class="f" for="${px}-car-kind">${esc(t('car.kind'))}</label><select class="input" id="${px}-car-kind" data-car-f="kind">${CARRIER_KINDS.map(k => `<option value="${k}" ${(c.kind || 'ojek') === k ? 'selected' : ''}>${esc(t('car.k_' + k))}</option>`).join('')}</select></div>${fld('vehicle', t('car.vehicle'), 'doc', c.vehicle, true, 'B 1234 XYZ')}</div>`;
-  else if (ty === 'teman' || ty === 'karyawan') fields = fld('name', t('car.name'), 'name', c.name, true);
+  else if (ty === 'teman') fields = fld('name', t('car.name'), 'name', c.name, true) +
+    `<div class="grid2"><div class="field"><label class="f" for="${px}-car-vkind">${esc(t('car.vkind'))}</label><select class="input" id="${px}-car-vkind" data-car-f="kind"><option value="">—</option>${['motor', 'mobil', 'sepeda'].map(k => `<option value="${k}" ${c.kind === k ? 'selected' : ''}>${esc(t('car.vk_' + k))}</option>`).join('')}</select></div>${fld('vehicle', t('car.plate'), 'doc', c.vehicle, false, 'B 1234 XYZ')}</div>`;
+  else if (ty === 'karyawan') fields = fld('name', t('car.name'), 'name', c.name, true);
   else if (ty === 'pemasok') fields = `<div class="grid2">${fld('name', t('car.driver') + ' ' + t('car.optional'), 'name', c.name, false)}${fld('vehicle', t('car.plate') + ' ' + t('car.optional'), 'doc', c.vehicle, false, 'B 1234 XYZ')}</div>`;
   return `<div class="carrier" id="${px}-car" data-type="${esc(ty)}"><div class="f" style="font-weight:800;margin-bottom:6px">${esc(t(titleKey))}${carrierRequired() || px === 'sr' ? ' *' : ''}</div>
     <div class="seg seg2" id="${px}-car-types" role="group" aria-label="${esc(t(titleKey))}">${CARRIER_TYPES.map(x => `<button type="button" data-car="${x}" id="${px}-car-${x}" class="${ty === x ? 'on' : ''}" aria-pressed="${ty === x}">${esc(t('car.t_' + x))}</button>`).join('')}</div>
@@ -2839,7 +2854,7 @@ function carrierCheck(c, required) {
   if (nm && !/^[\p{L}\p{M}]/u.test(nm)) return { msg: t('rule.name'), focus: 'name' };
   return null;
 }
-const carrierPayload = c => c && c.type ? { type: c.type, kind: c.type === 'umum' ? c.kind || 'ojek' : '', name: String(c.name || '').trim(), vehicle: String(c.vehicle || '').trim(), phone: String(c.phone || '').trim() } : undefined;
+const carrierPayload = c => c && c.type ? { type: c.type, kind: c.type === 'umum' ? (c.kind || 'ojek') : (c.type === 'teman' ? String(c.kind || '') : ''), name: String(c.name || '').trim(), vehicle: String(c.vehicle || '').trim(), phone: String(c.phone || '').trim() } : undefined;
 function carrierShow(root, px, chk) {
   const err = $(`#${px}-car-err`, root); if (err) err.textContent = chk ? chk.msg : '';
   if (chk && chk.focus) { const i = $(`#${px}-car-${chk.focus}`, root); if (i) { i.focus(); i.scrollIntoView({ block: 'center' }); } }
@@ -3234,30 +3249,81 @@ function openCashMove(type) {
   };
 }
 function openExpense() {
-  let from = S.shift ? 'kas' : 'lain';
+  // v29 (owner 2026-10-10): an expense may carry a photo of the invoice; the AI reads its total and the app
+  // checks it against the typed amount. A clear difference needs a reason (like the debt-payment slip flow).
+  const E = { from: S.shift ? 'kas' : 'lain', amount: 0, note: '', photo_id: '', thumb: '', scan: null, scanning: false, scanErr: '', reason: '' };
   const el = openModal({
-    title: t('kas.btn_exp'), id: 'expense',
-    body: `<div class="field"><label class="f" for="ex-cat">${esc(t('ex.category'))}</label><select class="input" id="ex-cat">${EXP_CATS.map(c => `<option value="${c}" ${c === 'lain' ? 'selected' : ''}>${esc(t('excat.' + c))}</option>`).join('')}</select></div>
-      <div class="field"><label class="f" for="ex-amt">${esc(t('amount'))} (Rp)</label><input class="input money" data-rule="num" id="ex-amt" inputmode="numeric" autofocus></div>
-      <div class="field"><label class="f" for="ex-note">${esc(t('notes'))}</label><input class="input" id="ex-note"></div>
-      <div class="field"><label class="f">${esc(t('ex.paid_from'))}</label><div class="seg" id="ex-from">${['kas', 'lain'].map(f => `<button type="button" data-f="${f}" class="${from === f ? 'on' : ''}" ${f === 'kas' && !S.shift ? 'disabled' : ''}>${esc(t('ex.from_' + f))}</button>`).join('')}</div></div>
-      <div class="err" id="ex-err" role="alert"></div>`,
+    title: t('kas.btn_exp'), id: 'expense', focus: false, body: '',
     foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="ex-ok">${esc(t('save'))}</button>`
   });
-  $('#ex-from', el).onclick = e => { const b = e.target.closest('[data-f]'); if (!b || b.disabled) return; from = b.dataset.f; $$('#ex-from button', el).forEach(x => x.classList.toggle('on', x === b)); };
+  const body = $('.modal-b', el);
+  const scanAmt = () => E.scan ? int(E.scan.amount) : 0;
+  const mismatch = () => !!E.photo_id && scanAmt() > 0 && E.amount > 0 && scanAmt() !== E.amount;
+  const drawMM = () => {
+    const box = $('#ex-mm', body); if (!box) return;
+    if (!mismatch()) { box.innerHTML = ''; return; }
+    box.innerHTML = `<div class="mm" id="ex-mismatch"><div class="ttl">${esc(t('ex.mm_title'))}</div>
+      <div class="two"><div><div class="k">${esc(t('py.mm_typed'))}</div><div class="v num" id="ex-mm-typed">${fmtRp(E.amount)}</div></div><div><div class="k">${esc(t('ex.mm_photo'))}</div><div class="v num" id="ex-mm-photo">${fmtRp(scanAmt())}</div></div></div>
+      <button type="button" class="btn sm block" id="ex-use-photo">${esc(t('py.mm_use'))}</button>
+      <div class="field" style="margin:10px 0 0"><label class="f" for="ex-reason">${esc(t('py.mm_reason'))} *</label><input class="input" id="ex-reason" maxlength="300" placeholder="${esc(t('py.mm_reason_ph'))}" value="${esc(E.reason)}"></div></div>`;
+    $('#ex-use-photo', box).onclick = () => { E.amount = scanAmt(); const a = $('#ex-amt', body); if (a) a.value = fmtNum(E.amount); drawMM(); };
+    $('#ex-reason', box).addEventListener('input', e => { E.reason = e.target.value; });
+  };
+  const draw = () => {
+    const sc = E.scan || {};
+    body.innerHTML = `<div class="field"><label class="f" for="ex-cat">${esc(t('ex.category'))}</label><select class="input" id="ex-cat">${EXP_CATS.map(c => `<option value="${c}" ${c === 'lain' ? 'selected' : ''}>${esc(t('excat.' + c))}</option>`).join('')}</select></div>
+      <div class="field"><label class="f" for="ex-amt">${esc(t('amount'))} (Rp)</label><input class="input money" data-rule="num" id="ex-amt" inputmode="numeric" value="${esc(E.amount ? fmtNum(E.amount) : '')}" autofocus></div>
+      <div class="field"><label class="f" for="ex-note">${esc(t('notes'))}</label><input class="input" id="ex-note" value="${esc(E.note)}"></div>
+      <div class="field"><label class="f">${esc(t('ex.paid_from'))}</label><div class="seg" id="ex-from">${['kas', 'lain'].map(f => `<button type="button" data-f="${f}" class="${E.from === f ? 'on' : ''}" ${f === 'kas' && !S.shift ? 'disabled' : ''}>${esc(t('ex.from_' + f))}</button>`).join('')}</div></div>
+      <div class="slip ${E.photo_id ? 'ok' : ''}" id="ex-slip">
+        ${E.thumb ? `<img class="thumb" src="${esc(E.thumb)}" alt="${esc(t('ex.photo'))}">` : `<div class="thumb">${ic('camera')}</div>`}
+        <div class="grow" style="min-width:150px">${E.scanning ? `<div class="row"><div class="spinner" style="width:22px;height:22px;border-width:3px;margin:0"></div><b>${esc(t('py.reading'))}</b></div>`
+          : E.photo_id ? `<b class="okc" id="ex-slip-ok">${esc(t('ex.photo_ok'))}</b><div class="small muted">${esc([sc.vendor, scanAmt() ? fmtRp(scanAmt()) : ''].filter(Boolean).join(' · '))}</div>${sc.readable === false ? `<div class="small" style="color:var(--warn);font-weight:800">${esc(t('py.unreadable'))}</div>` : ''}`
+          : E.scanErr ? `<span class="red small">${esc(E.scanErr)}</span>` : `<b>${esc(t('ex.photo'))}</b><div class="small muted">${esc(t('ex.photo_hint'))}</div>`}</div>
+        <label class="btn ${E.photo_id ? 'sm' : ''}" for="ex-photo" id="ex-photo-btn" ${E.scanning ? 'aria-disabled="true" style="pointer-events:none"' : ''}>${ic('camera')} ${esc(E.photo_id ? t('pu.photo_retake') : t('ex.photo_take'))}</label>${PHOTO_INPUT('ex-photo')}</div>
+      <div id="ex-mm"></div>
+      <div class="err" id="ex-err" role="alert"></div>`;
+    $('#ex-from', body).onclick = e => { const b = e.target.closest('[data-f]'); if (!b || b.disabled) return; E.from = b.dataset.f; $$('#ex-from button', body).forEach(x => x.classList.toggle('on', x === b)); };
+    const amt = $('#ex-amt', body);
+    amt.addEventListener('input', () => { E.amount = moneyVal(amt.value); drawMM(); });
+    amt.addEventListener('change', () => { amt.value = E.amount ? fmtNum(E.amount) : ''; });
+    $('#ex-note', body).addEventListener('input', e => { E.note = e.target.value; });
+    const ph = $('#ex-photo', body); if (ph) ph.onchange = () => { const f = ph.files[0]; if (f) scanExpensePhoto(f); };
+    drawMM();
+  };
+  async function scanExpensePhoto(file) {
+    E.scanning = true; E.scanErr = ''; draw();
+    try {
+      const img = await imageToJpeg(file);
+      E.thumb = img.thumb; draw();
+      const r = await apiPhoto('scan_expense', { image_base64: img.base64, mime: img.mime });
+      const ex = r.extracted || {};
+      E.photo_id = r.photo_id || '';
+      E.scan = { amount: ex.amount === null || ex.amount === undefined ? int(ex.total) : int(ex.amount), vendor: ex.vendor || '', readable: ex.readable !== false };
+      if (!E.amount && scanAmt() > 0) E.amount = scanAmt();
+    } catch (e) { E.scanErr = (e instanceof NetError ? t('pu.scan_net') : errMsg(e)) + ' ' + t('pu.scan_retry'); }
+    E.scanning = false; draw();
+  }
   $('#ex-ok', el).onclick = async () => {
-    const data = { expense_date: today(), category: $('#ex-cat', el).value, amount: moneyVal($('#ex-amt', el).value), note: $('#ex-note', el).value.trim(), paid_from: from };
     const err = $('#ex-err', el);
-    if (!(data.amount > 0)) { err.textContent = t('amount_invalid'); return; }
+    if (!(E.amount > 0)) { err.textContent = t('amount_invalid'); return; }
+    if (mismatch() && !E.reason.trim()) { err.textContent = t('ex.mm_need_reason'); const r = $('#ex-reason', el); if (r) r.focus(); return; }
+    const data = { expense_date: today(), category: $('#ex-cat', el).value, amount: E.amount, note: E.note.trim(), paid_from: E.from };
+    if (E.photo_id) data.photo_id = E.photo_id;
+    if (mismatch()) data.mismatch_reason = E.reason.trim();
     $('#ex-ok', el).disabled = true;
-    try { await api('save_expense', data); dropModal(el); toast(t('ex.saved', { amount: fmtRp(data.amount) }), 'ok'); if (from === 'kas') await refreshData(true); }
+    try { await api('save_expense', data); dropModal(el); toast(t('ex.saved', { amount: fmtRp(data.amount) }), 'ok'); if (E.from === 'kas') await refreshData(true); }
     catch (e) {
-      if (isRetryable(e)) { queueOp('expense', 'save_expense', data); dropModal(el); toast(t('outbox.queued'), 'warn'); }
+      if (e && e.code === 'MISMATCH') { err.textContent = e.message || t('ex.mm_title'); $('#ex-ok', el).disabled = false; return; }
+      if (isRetryable(e) && !E.photo_id) { queueOp('expense', 'save_expense', data); dropModal(el); toast(t('outbox.queued'), 'warn'); }
       else { err.textContent = errMsg(e); $('#ex-ok', el).disabled = false; return; }
     }
     if (S.view === 'kas') RENDER.kas();
   };
+  draw();
 }
+// v29 (owner 2026-10-10): count the cash drawer by banknote / coin denomination; the app sums to the total.
+const CASH_DENOMS = [100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100];
 async function openCloseShift() {
   const nHeld = heldList().length;
   if (nHeld) { const r = await confirmBox(t('hold.close_warn', { n: nHeld }), { ok: t('hold.close_anyway'), title: t('kas.btn_close') }); if (!r.ok) return; }
@@ -3268,16 +3334,34 @@ async function openCloseShift() {
   const el = openModal({
     title: t('kas.btn_close'), id: 'shift-close',
     body: `<p class="small muted" style="margin-top:0">${ic('lock')} ${esc(t('kas.blind_close'))}</p>
-      <div class="field"><label class="f" for="cs-counted">${esc(t('kas.counted'))} (Rp)</label><input class="input money" data-rule="num" id="cs-counted" inputmode="numeric" autofocus></div>
+      <div class="small" style="font-weight:800;margin:0 0 4px">${esc(t('kas.denom_title'))}</div>
+      <div class="small muted" style="margin:0 0 8px">${esc(t('kas.denom_hint'))}</div>
+      <table id="cs-denoms" style="width:100%;border-collapse:collapse"><tbody>
+        ${CASH_DENOMS.map(v => `<tr><td class="num" style="white-space:nowrap;padding:3px 6px 3px 0">${fmtRp(v)}</td><td style="width:1%;color:var(--muted)">×</td><td style="padding:3px 6px"><input class="input" data-denom="${v}" inputmode="numeric" autocomplete="off" value="" style="max-width:120px;padding:6px 8px"></td><td class="num" data-denom-sub="${v}" style="text-align:end;white-space:nowrap">0</td></tr>`).join('')}
+      </tbody></table>
+      <div class="field" style="margin-top:8px"><label class="f" for="cs-counted">${esc(t('kas.counted'))} (Rp)</label><input class="input money" data-rule="num" id="cs-counted" inputmode="numeric" value="0"></div>
       <div class="field"><label class="f" for="cs-note">${esc(t('notes'))}</label><input class="input" id="cs-note"></div><div class="err" id="cs-err" role="alert"></div>`,
     foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="cs-ok">${ic('lock')} ${esc(t('kas.btn_close'))}</button>`
   });
+  const denomCount = i => Math.max(0, parseInt(String(i.value || '').replace(/\D/g, '') || '0', 10) || 0);
+  const recompute = () => {
+    let sum = 0;
+    $$('[data-denom]', el).forEach(i => { const v = +i.dataset.denom, sub = v * denomCount(i); sum += sub; const s = $(`[data-denom-sub="${v}"]`, el); if (s) s.textContent = fmtNum(sub); });
+    const cc = $('#cs-counted', el); cc.value = fmtNum(sum); cc.readOnly = true; cc.dataset.auto = '1';
+  };
+  $('#cs-denoms', el).addEventListener('input', e => { if (e.target.dataset.denom) recompute(); });
+  // If the cashier edits the total directly (e.g. only coins), unlock it and clear the denomination grid.
+  $('#cs-counted', el).addEventListener('focus', e => { if (e.target.dataset.auto) { $$('[data-denom]', el).forEach(i => { i.value = ''; }); $$('[data-denom-sub]', el).forEach(s => s.textContent = '0'); e.target.readOnly = false; e.target.dataset.auto = ''; e.target.value = ''; } });
   $('#cs-ok', el).onclick = async () => {
+    const denoms = $$('[data-denom]', el).map(i => ({ value: +i.dataset.denom, count: denomCount(i) })).filter(d => d.count > 0);
     const raw = $('#cs-counted', el).value.trim();
-    if (raw === '') { $('#cs-err', el).textContent = t('required') + ': ' + t('kas.counted'); return; }
+    if (!denoms.length && (raw === '' || moneyVal(raw) < 0)) { $('#cs-err', el).textContent = t('required') + ': ' + t('kas.counted'); return; }
+    const payload = { note: $('#cs-note', el).value.trim() };
+    if (denoms.length) { payload.denoms = denoms; payload.counted_cash = denoms.reduce((s, d) => s + d.value * d.count, 0); }
+    else payload.counted_cash = moneyVal(raw);
     $('#cs-ok', el).disabled = true;
     try {
-      const r = await api('close_shift', { counted_cash: moneyVal(raw), note: $('#cs-note', el).value.trim() });
+      const r = await api('close_shift', payload);
       S.shift = null; saveCache();
       dropModal(el);
       showShiftReport(r.shift);
@@ -3363,7 +3447,7 @@ RENDER.more = function () {
     <div class="list" id="more-list">
       ${S.role === 'manager' || S.role === 'owner' ? `<button class="li" data-act="to-mgmt" id="m-mgmt">${ic('list')}<div class="grow"><div class="t">${esc(t('mgmt.open'))}</div><div class="s">${esc(t('mgmt.open_s'))}</div></div></button>` : ''}
       <button class="li" data-act="att-kiosk" id="m-att">${ic('camera')}<div class="grow"><div class="t">${esc(t('att.kiosk'))}</div><div class="s">${esc(t('att.kiosk_s'))}</div></div></button>
-      <button class="li" data-act="member-new" id="m-member">${ic('user')}<div class="grow"><div class="t">${esc(t('mem.new'))}</div><div class="s">${esc(t('mem.new_s'))}</div></div></button>
+      ${isApprover() ? `<button class="li" data-act="member-new" id="m-member">${ic('user')}<div class="grow"><div class="t">${esc(t('mem.new'))}</div><div class="s">${esc(t('mem.new_s'))}</div></div></button>` : ''}
       <button class="li" data-act="debt-pay" id="m-debt">${ic('wallet')}<div class="grow"><div class="t">${esc(t('more.debt_pay'))}</div><div class="s">${esc(t('more.debt_pay_s'))}</div></div></button>
       ${S.role === 'manager' && !S.shift ? `<button class="li" data-act="gate-open" id="m-kas-open">${ic('cash')}<div class="grow"><div class="t">${esc(t('gate.title_mgr'))}</div><div class="s">${esc(t('kas.mgr_hint'))}</div></div></button>` : ''}
       <button class="li" data-act="field-orders" id="m-field">${ic('truck')}<div class="grow"><div class="t">${esc(t('more.field'))}</div><div class="s">${esc(t('more.field_s'))}</div></div></button>
@@ -3887,7 +3971,7 @@ const ACT = {
   'price-req': () => openPricePicker(),
   'price-pick': el => { const p = prodById(el.dataset.id); closeModal(); if (p) openPriceChange(p); },
   'my-req': () => openMyRequests(),
-  'last-rc': () => { const rc = KS.get('receipts', [])[0]; if (rc) showReceipt(rc); else toast(t('no_data'), 'warn'); },
+  'last-rc': () => openLastReceipts(),
   'outbox-open': () => openOutbox(),
   'ob-drop': async el => { const r = await confirmBox(t('outbox.drop_confirm'), { danger: true }); if (!r.ok) return; S.outbox = S.outbox.filter(x => x.id !== el.dataset.id); saveOutbox(); const ob = $('#outbox'); if (ob) drawOutbox(ob.closest('.modal-bg')); },
   'apr-open': () => openInbox(),
@@ -3998,16 +4082,18 @@ const I18N = {
     'kas.pending': '{n} catatan kas masih tertunda (offline)', 'kas.btn_in': 'Kas masuk', 'kas.btn_out': 'Kas keluar', 'kas.btn_exp': 'Pengeluaran', 'kas.btn_close': 'Tutup kasir',
     'kas.moves': 'Catatan kas', 'kas.in_ph': 'mis. tambah uang kecil', 'kas.out_ph': 'mis. beli galon', 'kas.sync_first': 'Kirim dulu {n} data tertunda (perlu online)',
     'kas.blind_close': 'Hitung semua uang di laci, lalu isi. Selisih terlihat setelah kasir ditutup.', 'kas.counted': 'Uang di laci (hasil hitung)', 'kas.need_online': 'Tutup kasir perlu koneksi internet',
+    'kas.denom_title': 'Hitung per lembar / koin', 'kas.denom_hint': 'Isi berapa lembar tiap pecahan — total dihitung otomatis. (Atau ketik total langsung di bawah.)',
     'kas.report': 'Laporan tutup kasir', 'kas.t_open': 'Buka', 'kas.t_close': 'Tutup', 'kas.n_sales': 'Transaksi', 'kas.sales_total': 'Penjualan', 'kas.cash_sales': 'Penjualan tunai',
     'kas.cash_payments': 'Bayar hutang tunai', 'kas.expected': 'Seharusnya', 'kas.difference': 'Selisih', 'kas.balanced': 'Pas, tidak ada selisih', 'kas.short': 'Kurang {amount}', 'kas.over': 'Lebih {amount}',
     'ex.category': 'Kategori', 'ex.paid_from': 'Dibayar dari', 'ex.from_kas': 'Laci kasir', 'ex.from_lain': 'Uang lain', 'ex.saved': 'Pengeluaran {amount} tersimpan',
+    'ex.photo': 'Foto nota (boleh kosong)', 'ex.photo_hint': 'Foto nota/struk pengeluaran — dicek dengan jumlah yang diisi.', 'ex.photo_ok': 'Nota terbaca', 'ex.photo_take': 'Foto nota', 'ex.mm_title': 'Jumlah beda dengan nota', 'ex.mm_photo': 'Di nota', 'ex.mm_need_reason': 'Isi alasan selisih dulu',
     'excat.sewa': 'Sewa', 'excat.gaji': 'Gaji', 'excat.listrik_air': 'Listrik & air', 'excat.transport': 'Transport', 'excat.iklan': 'Iklan', 'excat.kemasan': 'Kemasan', 'excat.perawatan': 'Perawatan', 'excat.lain': 'Lain-lain',
-    'more.debt_pay': 'Terima bayar hutang', 'more.debt_pay_s': 'Pelanggan membayar cicilan', 'more.void': 'Batalkan nota hari ini', 'more.void_s': 'Kirim permintaan ke pemilik',
+    'more.debt_pay': 'Terima bayar hutang', 'more.debt_pay_s': 'Pelanggan membayar cicilan', 'more.void': 'Batalkan nota hari ini', 'more.void_s': 'Kirim permintaan ke manajer / akuntan',
     'more.price': 'Ubah harga', 'more.price_s': 'Kirim permintaan ubah harga', 'more.price_s_mgr': 'Harga eceran / grosir', 'more.myreq': 'Permintaan saya', 'more.myreq_s': 'Status persetujuan',
     'more.last_rc': 'Struk terakhir', 'more.lang': 'Bahasa', 'more.voice': 'Suara barang', 'more.voice_s': 'Sebut nama & jumlah barang (tanpa harga)', 'more.lock': 'Kunci layar', 'more.logout': 'Keluar / ganti kasir',
     'more.amount_exceeds': 'Melebihi hutang', 'more.paid_ok': 'Diterima {amount}. Sisa hutang {rest}',
-    'void.hint': 'Pilih nota hari ini yang mau dibatalkan. Pemilik yang menyetujui.', 'void.confirm': 'Minta pembatalan nota {inv}?', 'void.send': 'Kirim permintaan', 'void.sent': 'Permintaan {id} terkirim ke pemilik',
-    'price.now': 'Sekarang', 'price.retail': 'Harga eceran baru', 'price.wholesale': 'Harga grosir baru', 'price.reason_ph': 'mis. harga supplier naik', 'price.hint_kasir': 'Perubahan harga perlu persetujuan pemilik/manajer.',
+    'void.hint': 'Pilih nota hari ini yang mau dibatalkan. Manajer atau akuntan menyetujui (pemilik diberi tahu).', 'void.confirm': 'Minta pembatalan nota {inv}?', 'void.send': 'Kirim permintaan', 'void.sent': 'Permintaan {id} terkirim ke manajer / akuntan',
+    'price.now': 'Sekarang', 'price.retail': 'Harga eceran baru', 'price.wholesale': 'Harga grosir baru', 'price.reason_ph': 'mis. harga supplier naik', 'price.hint_kasir': 'Perubahan harga dikirim ke manajer & akuntan; pemilik diberi tahu.',
     'price.hint_mgr': 'Harga langsung berubah dan tercatat.', 'price.send': 'Kirim permintaan', 'price.nothing': 'Tidak ada harga yang berubah', 'price.applied': 'Harga diperbarui',
     'price.pending': 'Menunggu persetujuan', 'price.old': 'Lama', 'price.new': 'Baru', 'price.f_retail_price': 'Eceran', 'price.f_wholesale_price': 'Grosir',
     'req.credit': 'Hutang {name} {amount}', 'req.void': 'Batal nota {inv}', 'req.price': 'Harga {name}', 'req.toast_ok': '{label}: disetujui {name}', 'req.toast_rej': '{label}: ditolak {name}',
@@ -4104,16 +4190,18 @@ const I18N = {
     'kas.pending': '{n} قيود نقدية معلّقة', 'kas.btn_in': 'إدخال نقد', 'kas.btn_out': 'إخراج نقد', 'kas.btn_exp': 'مصروف', 'kas.btn_close': 'إغلاق الصندوق',
     'kas.moves': 'قيود الصندوق', 'kas.in_ph': 'مثل: فكّة إضافية', 'kas.out_ph': 'مثل: شراء ماء', 'kas.sync_first': 'أرسل أولًا {n} بيانات معلّقة (يلزم اتصال)',
     'kas.blind_close': 'عُدّ كل النقد في الدرج ثم أدخله. يظهر الفرق بعد الإغلاق.', 'kas.counted': 'النقد في الدرج (المعدود)', 'kas.need_online': 'إغلاق الصندوق يحتاج اتصالًا',
+    'kas.denom_title': 'العدّ حسب الفئة', 'kas.denom_hint': 'أدخل عدد الأوراق لكل فئة — يُحسب المجموع تلقائيًا. (أو اكتب المجموع مباشرة بالأسفل.)',
     'kas.report': 'تقرير إغلاق الصندوق', 'kas.t_open': 'فتح', 'kas.t_close': 'إغلاق', 'kas.n_sales': 'العمليات', 'kas.sales_total': 'المبيعات', 'kas.cash_sales': 'مبيعات نقدية',
     'kas.cash_payments': 'سداد ديون نقدًا', 'kas.expected': 'المفترض', 'kas.difference': 'الفرق', 'kas.balanced': 'مطابق، لا فرق', 'kas.short': 'ناقص {amount}', 'kas.over': 'زائد {amount}',
     'ex.category': 'الفئة', 'ex.paid_from': 'مدفوع من', 'ex.from_kas': 'درج الكاشير', 'ex.from_lain': 'مصدر آخر', 'ex.saved': 'حُفظ مصروف {amount}',
+    'ex.photo': 'صورة الفاتورة (اختياري)', 'ex.photo_hint': 'صوّر فاتورة/إيصال المصروف — يُطابَق مع المبلغ المُدخَل.', 'ex.photo_ok': 'الفاتورة مقروءة', 'ex.photo_take': 'صوّر الفاتورة', 'ex.mm_title': 'المبلغ يختلف عن الفاتورة', 'ex.mm_photo': 'في الفاتورة', 'ex.mm_need_reason': 'اكتب سبب الاختلاف أولًا',
     'excat.sewa': 'الإيجار', 'excat.gaji': 'الرواتب', 'excat.listrik_air': 'الكهرباء والماء', 'excat.transport': 'النقل', 'excat.iklan': 'الإعلانات', 'excat.kemasan': 'التغليف', 'excat.perawatan': 'الصيانة', 'excat.lain': 'أخرى',
-    'more.debt_pay': 'استلام سداد دَين', 'more.debt_pay_s': 'العميل يدفع قسطًا', 'more.void': 'إلغاء فاتورة اليوم', 'more.void_s': 'إرسال طلب إلى المالك',
+    'more.debt_pay': 'استلام سداد دَين', 'more.debt_pay_s': 'العميل يدفع قسطًا', 'more.void': 'إلغاء فاتورة اليوم', 'more.void_s': 'إرسال طلب إلى المدير / المحاسب',
     'more.price': 'تغيير السعر', 'more.price_s': 'إرسال طلب تغيير سعر', 'more.price_s_mgr': 'سعر التجزئة / الجملة', 'more.myreq': 'طلباتي', 'more.myreq_s': 'حالة الموافقات',
     'more.last_rc': 'آخر إيصال', 'more.lang': 'اللغة', 'more.voice': 'صوت الأصناف', 'more.voice_s': 'نطق اسم الصنف والكمية (بدون سعر)', 'more.lock': 'قفل الشاشة', 'more.logout': 'خروج / تغيير الكاشير',
     'more.amount_exceeds': 'أكبر من الدَّين', 'more.paid_ok': 'استُلم {amount}. المتبقي {rest}',
-    'void.hint': 'اختر فاتورة اليوم المراد إلغاؤها. المالك يوافق.', 'void.confirm': 'طلب إلغاء الفاتورة {inv}؟', 'void.send': 'إرسال الطلب', 'void.sent': 'أُرسل الطلب {id} إلى المالك',
-    'price.now': 'الحالي', 'price.retail': 'سعر التجزئة الجديد', 'price.wholesale': 'سعر الجملة الجديد', 'price.reason_ph': 'مثل: ارتفاع سعر المورد', 'price.hint_kasir': 'تغيير السعر يحتاج موافقة المالك/المدير.',
+    'void.hint': 'اختر فاتورة اليوم المراد إلغاؤها. يوافق المدير أو المحاسب (ويُبلَّغ المالك).', 'void.confirm': 'طلب إلغاء الفاتورة {inv}؟', 'void.send': 'إرسال الطلب', 'void.sent': 'أُرسل الطلب {id} إلى المدير / المحاسب',
+    'price.now': 'الحالي', 'price.retail': 'سعر التجزئة الجديد', 'price.wholesale': 'سعر الجملة الجديد', 'price.reason_ph': 'مثل: ارتفاع سعر المورد', 'price.hint_kasir': 'طلب تغيير السعر يُرسَل إلى المدير والمحاسب، ويُبلَّغ المالك.',
     'price.hint_mgr': 'يتغير السعر فورًا ويُسجَّل.', 'price.send': 'إرسال الطلب', 'price.nothing': 'لم يتغير أي سعر', 'price.applied': 'تم تحديث السعر',
     'price.pending': 'بانتظار الموافقة', 'price.old': 'القديم', 'price.new': 'الجديد', 'price.f_retail_price': 'تجزئة', 'price.f_wholesale_price': 'جملة',
     'req.credit': 'دَين {name} {amount}', 'req.void': 'إلغاء {inv}', 'req.price': 'سعر {name}', 'req.toast_ok': '{label}: وافق {name}', 'req.toast_rej': '{label}: رفض {name}',
@@ -4257,7 +4345,7 @@ Object.assign(I18N.id, {
   'pu.mh_cocok': 'Semua barang dan jumlah sama dengan nota.', 'pu.mh_tidak_cocok': 'Perbaiki jumlahnya, atau simpan dengan alasan (mis. "2 dus bonus").', 'pu.mh_perlu_cek': 'Nota kurang jelas atau ada jumlah yang tidak terbaca — cek dengan teliti.',
   'pu.line_diff': 'Diketik {typed}, di nota {note}', 'pu.lock_hint': 'Setelah disimpan, jumlah tidak bisa diubah lagi (koreksi hanya dengan izin manajer).',
   'pu.mm_title': 'Jumlah beda dengan nota', 'pu.mm_head': '{n} baris beda dengan nota', 'pu.mm_hint': 'Merah = jumlah yang diketik tidak sama dengan nota. Perbaiki jumlahnya, atau tulis alasannya.',
-  'pu.mm_reason': 'Alasan', 'pu.mm_reason_ph': 'mis. 2 dus bonus dari supplier', 'pu.mm_fix': 'Perbaiki jumlah', 'pu.mm_save': 'Simpan dengan alasan',
+  'pu.mm_reason': 'Alasan', 'pu.mm_reason_ph': 'mis. 2 dus bonus dari supplier', 'pu.mm_fix': 'Perbaiki jumlah', 'pu.mm_save': 'Simpan dengan alasan', 'pu.mm_sent_review': 'Selisih dikirim ke manajer / akuntan untuk diperiksa',
   'pu.locked': 'Jumlah terkunci. Koreksi hanya lewat "Minta koreksi" (disetujui manajer, pemilik diberi tahu).', 'pu.locked_short': 'Terkunci',
   'pu.hist': 'Riwayat barang masuk', 'pu.hist_s': 'Hari ini dan 13 hari terakhir, per nota', 'pu.hist_offline': 'Riwayat butuh internet.', 'pu.hist_none': 'Belum ada barang masuk.',
   'pu.n_fixes': '{n} koreksi', 'pu.fix_btn': 'Minta koreksi', 'pu.fix_title': 'Minta koreksi {no}', 'pu.fix_waiting': 'Menunggu persetujuan manajer',
@@ -4290,7 +4378,7 @@ Object.assign(I18N.ar, {
   'pu.mh_cocok': 'كل الأصناف والكميات مطابقة للفاتورة.', 'pu.mh_tidak_cocok': 'صحّح الكميات أو احفظ مع ذكر السبب (مثل: كرتونتان هدية).', 'pu.mh_perlu_cek': 'الفاتورة غير واضحة أو توجد كمية غير مقروءة — راجع بدقة.',
   'pu.line_diff': 'المُدخَل {typed}، في الفاتورة {note}', 'pu.lock_hint': 'بعد الحفظ لا يمكن تعديل الكميات (التصحيح بإذن المدير فقط).',
   'pu.mm_title': 'الكمية تختلف عن الفاتورة', 'pu.mm_head': '{n} سطور تختلف عن الفاتورة', 'pu.mm_hint': 'الأحمر = الكمية المُدخلة لا تطابق الفاتورة. صحّحها أو اكتب السبب.',
-  'pu.mm_reason': 'السبب', 'pu.mm_reason_ph': 'مثل: كرتونتان هدية من المورد', 'pu.mm_fix': 'تصحيح الكمية', 'pu.mm_save': 'حفظ مع السبب',
+  'pu.mm_reason': 'السبب', 'pu.mm_reason_ph': 'مثل: كرتونتان هدية من المورد', 'pu.mm_fix': 'تصحيح الكمية', 'pu.mm_save': 'حفظ مع السبب', 'pu.mm_sent_review': 'أُرسل الفرق إلى المدير / المحاسب للمراجعة',
   'pu.locked': 'الكميات مقفلة. التصحيح فقط عبر "طلب تصحيح" (بموافقة المدير، ويُبلَّغ المالك).', 'pu.locked_short': 'مقفل',
   'pu.hist': 'سجل البضاعة المستلمة', 'pu.hist_s': 'اليوم وآخر 13 يومًا، حسب الفاتورة', 'pu.hist_offline': 'السجل يحتاج إلى الإنترنت.', 'pu.hist_none': 'لا توجد بضاعة مستلمة بعد.',
   'pu.n_fixes': '{n} تصحيح', 'pu.fix_btn': 'طلب تصحيح', 'pu.fix_title': 'طلب تصحيح {no}', 'pu.fix_waiting': 'بانتظار موافقة المدير',
@@ -4394,6 +4482,7 @@ Object.assign(I18N.id, {
   'car.title': 'Siapa yang membawa barang?', 'car.title_out': 'Siapa yang membawa barang keluar?', 'car.t_umum': 'Kendaraan umum', 'car.t_teman': 'Teman', 'car.t_pemasok': 'Sopir pemasok', 'car.t_karyawan': 'Karyawan',
   'car.pick': 'Pilih salah satu.', 'car.kind': 'Jenis kendaraan', 'car.k_ojek': 'Ojek', 'car.k_angkot': 'Angkot', 'car.k_taksi': 'Taksi', 'car.k_truk': 'Truk', 'car.k_lainnya': 'Lainnya',
   'car.vehicle': 'Nomor kendaraan / angkot', 'car.plate': 'Plat nomor', 'car.name': 'Nama', 'car.driver': 'Nama sopir', 'car.optional': '(boleh kosong)', 'car.phone': 'No. HP (boleh kosong)',
+  'car.vkind': 'Kendaraan', 'car.vk_motor': 'Motor', 'car.vk_mobil': 'Mobil', 'car.vk_sepeda': 'Sepeda',
   'car.need': 'Pilih siapa yang membawa barang', 'car.need_vehicle': 'Tulis nomor kendaraannya (plat / nomor angkot)', 'car.need_name': 'Tulis nama orang yang membawa barang', 'car.bad_phone': 'Nomor HP tidak valid',
   'err.CARRIER_REQUIRED': 'Pembawa barang wajib diisi',
   'more.retur': 'Retur pelanggan', 'more.retur_s': 'Barang dikembalikan — disetujui manajer',
@@ -4432,6 +4521,7 @@ Object.assign(I18N.ar, {
   'car.title': 'من أحضر البضاعة؟', 'car.title_out': 'من يأخذ البضاعة إلى الخارج؟', 'car.t_umum': 'مواصلات عامة', 'car.t_teman': 'صديق', 'car.t_pemasok': 'سائق المورد', 'car.t_karyawan': 'موظف',
   'car.pick': 'اختر واحدًا.', 'car.kind': 'نوع المركبة', 'car.k_ojek': 'دراجة أجرة', 'car.k_angkot': 'حافلة صغيرة', 'car.k_taksi': 'سيارة أجرة', 'car.k_truk': 'شاحنة', 'car.k_lainnya': 'أخرى',
   'car.vehicle': 'رقم المركبة / الحافلة', 'car.plate': 'رقم اللوحة', 'car.name': 'الاسم', 'car.driver': 'اسم السائق', 'car.optional': '(اختياري)', 'car.phone': 'رقم الهاتف (اختياري)',
+  'car.vkind': 'المركبة', 'car.vk_motor': 'دراجة نارية', 'car.vk_mobil': 'سيارة', 'car.vk_sepeda': 'دراجة',
   'car.need': 'اختر من أحضر البضاعة', 'car.need_vehicle': 'اكتب رقم المركبة (اللوحة / رقم الحافلة)', 'car.need_name': 'اكتب اسم الشخص الذي أحضر البضاعة', 'car.bad_phone': 'رقم الهاتف غير صالح',
   'err.CARRIER_REQUIRED': 'يجب تحديد من أحضر البضاعة',
   'more.retur': 'مرتجع عميل', 'more.retur_s': 'بضاعة مُعادة — بموافقة المدير',

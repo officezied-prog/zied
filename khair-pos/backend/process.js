@@ -128,7 +128,10 @@ if (me.must_change === true && !viaMaster && ['login', 'change_pin', 'users', 'd
 const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' : (me.role === 'sales' ? 'sales' : (me.role === 'akuntan' ? 'akuntan' : 'kasir')));
 // v17 accountant: reads goods in/out, invoices, payments, returns, ledgers and reports; never sells or changes anything.
 // v22: the accountant may ADD a new product (e.g. a new item on a goods-in note); the save_product handler limits them to creating, never editing.
-const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'save_product'];
+// v29 (owner 2026-10-10): the accountant also shares the "manager or accountant" approvals (goods-in mismatch,
+// void today's invoice, price change) — list_approvals + decide_approval, limited to approver_role 'mgr_akuntan'
+// by canDecide — and may register a member (save_customer); the cashier may no longer create members.
+const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product'];
 if (role === 'akuntan' && AKUNTAN_READ.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
 if (role === 'sales' && ['login', 'bootstrap', 'device_ping', 'change_pin'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
 const isApprover = role === 'owner' || role === 'manager';
@@ -224,7 +227,14 @@ const DEFAULT_SETTINGS = {
 const settingRows = rows('Get Settings');
 const approvalRows = rows('Get Approvals');
 function approvalById(id) { return approvalRows.find(function (a) { return a.request_id === id; }) || null; }
-function canDecide(a) { return role === 'owner' || (role === 'manager' && a.approver_role !== 'owner'); }
+// Who may decide an approval: the owner decides anything; a manager decides everything except
+// owner-only ones; the accountant decides only the shared "manager or accountant" ones (mgr_akuntan).
+function canDecide(a) {
+  if (role === 'owner') return true;
+  if (a.approver_role === 'owner') return false;
+  if (a.approver_role === 'mgr_akuntan') return role === 'manager' || role === 'akuntan';
+  return role === 'manager';
+}
 function qtyOnly(c) { const x = Object.assign({}, c); ['cost_price', 'from_total', 'to_total', 'd_total'].forEach(function (f) { delete x[f]; }); return x; }
 function approvalOut(a) {
   const o = clean(a);
@@ -424,12 +434,17 @@ function readCarrier(c, required) {
   if (!type) return required ? { error: 'Pilih siapa yang membawa barang (kendaraan umum / teman / sopir pemasok / karyawan)' } : { type: '', name: '', vehicle: '', phone: '' };
   const name = str(c.name) ? personName(c.name) : '';
   if (str(c.name) && !name) return { error: 'Nama pembawa barang hanya boleh huruf' };
-  const vehicle = str(c.vehicle) ? docNo(c.vehicle) : '';
+  let vehicle = str(c.vehicle) ? docNo(c.vehicle) : '';
   if (str(c.vehicle) && !vehicle) return { error: 'Nomor kendaraan hanya boleh huruf dan angka' };
   const phone = str(c.phone) ? normPhone(c.phone) : '';
   if (str(c.phone) && !phone) return { error: 'Nomor HP pembawa tidak valid' };
   if (type === 'umum' && !vehicle) return { error: 'Kendaraan umum: tulis nomor kendaraannya (plat / nomor angkot)' };
   if ((type === 'teman' || type === 'karyawan') && !name) return { error: 'Tulis nama orang yang membawa barang' };
+  // v29 (owner 2026-10-10): a friend / staff carrier records the vehicle kind (motor / mobil / sepeda) with the
+  // plate; the kind is folded into the stored plate label so it shows in the goods-in history (no schema change).
+  const VKIND = { motor: 'Motor', mobil: 'Mobil', sepeda: 'Sepeda' };
+  const vkind = (type === 'teman' || type === 'karyawan') ? (VKIND[str(c.kind).toLowerCase()] || '') : '';
+  if (vkind && vehicle && vehicle.toUpperCase().indexOf(vkind.toUpperCase()) !== 0) vehicle = (vkind + ' ' + vehicle).slice(0, 40);
   const kindText = str(c.kind) ? str(c.kind).replace(/[^\p{L}\p{N} -]/gu, '').slice(0, 30) : '';
   return { type: type, name: name || kindText, vehicle: vehicle, phone: phone };
 }
@@ -472,6 +487,16 @@ function logAct(kind, summary, ref, amount, level) {
   ops.activity.push(forWrite({
     act_id: 'AC' + rand(8), at: new Date().toISOString(), act_date: jkDate(), user: me.name, role: role, kind: kind,
     summary: str(summary).slice(0, 1000), ref: str(ref).slice(0, 60), amount: money(amount), level: level || 'info'
+  }, -1));
+}
+// v29 (owner 2026-10-10): a notification addressed to specific roles (owner / manager / akuntan). Stored as an
+// activity entry of kind 'notifikasi' with the target roles in `ref`; each role's app surfaces the notices
+// addressed to it (bootstrap returns them). The owner also sees it in the full activity log.
+function notify(toRoles, summary, level) {
+  const to = (Array.isArray(toRoles) ? toRoles : [toRoles]).join(',');
+  ops.activity.push(forWrite({
+    act_id: 'AC' + rand(8), at: new Date().toISOString(), act_date: jkDate(), user: me.name, role: role, kind: 'notifikasi',
+    summary: str(summary).slice(0, 1000), ref: to.slice(0, 60), amount: 0, level: level || 'info'
   }, -1));
 }
 function fmtN(v) { return String(Math.round(num(v) * 1000) / 1000); }
@@ -835,7 +860,7 @@ switch (req.action) {
     return done({
       ok: true,
       user: { name: me.name, role: role },
-      approvals_pending: isApprover ? approvalRows.filter(function (a) { return a.status === 'pending' && canDecide(a); }).length : 0,
+      approvals_pending: (isApprover || role === 'akuntan') ? approvalRows.filter(function (a) { return a.status === 'pending' && canDecide(a); }).length : 0,
       products: products.map(productOut),
       customers: customers.map(clean),
       settings: readSettings(),
@@ -844,6 +869,9 @@ switch (req.action) {
       shift: shiftOut(myShift),
       open_shifts: isApprover ? openShifts.map(shiftOut) : [],
       activity_recent: role === 'owner' ? rows('Get Range Activity').map(clean).sort(function (a1, b1) { return String(b1.at).localeCompare(String(a1.at)); }).slice(0, 100) : [],
+      // v29 (owner 2026-10-10): role-addressed notifications (kind 'notifikasi', target roles in ref) for the
+      // owner / manager / accountant — e.g. "accountant approved a void", "price change by cashier".
+      notifications: (role === 'owner' || role === 'manager' || role === 'akuntan') ? rows('Get Range Activity').filter(function (a) { return a.kind === 'notifikasi' && String(a.ref || '').split(',').indexOf(role) >= 0; }).map(clean).sort(function (a1, b1) { return String(b1.at).localeCompare(String(a1.at)); }).slice(0, 40) : [],
       server_time: new Date().toISOString()
     });
 
@@ -1007,10 +1035,12 @@ switch (req.action) {
     const a = newApproval({
       customer_id: num(sale.customer_id), customer_name: str(sale.customer_name), total: money(sale.total), debt_amount: money(sale.debt_amount),
       summary: ('Batalkan faktur ' + sale.invoice_no + ' (' + sale.sale_date + ', kasir ' + str(sale.cashier) + ')').slice(0, 1500),
-      note: str(data.reason), kind: 'void', ref: sale.invoice_no, approver_role: 'owner'
+      note: str(data.reason), kind: 'void', ref: sale.invoice_no, approver_role: 'mgr_akuntan'
     });
     ops.approvals.push(forWrite(a, -1));
+    // v29 (owner 2026-10-10): cashier's void request goes to the manager OR accountant; the owner is kept informed.
     logAct('minta_batal', 'Minta batal faktur ' + sale.invoice_no + ': ' + str(data.reason), sale.invoice_no, money(sale.total), 'warn');
+    notify(['owner', 'manager'], 'Permintaan batal faktur ' + sale.invoice_no + ' Rp ' + money(sale.total) + ' oleh ' + me.name + ': ' + str(data.reason).slice(0, 200), 'warn');
     return done({ ok: true, request_id: a.request_id, approval: approvalOut(a) });
   }
 
@@ -1026,21 +1056,27 @@ switch (req.action) {
       if (to !== money(p[f])) changes[f] = { from: money(p[f]), to: to };
     }
     if (!Object.keys(changes).length) return fail('INVALID', 'Tidak ada perubahan harga');
-    const need = changes.cost_price ? 'owner' : 'manager';
+    // v29 (owner 2026-10-10): a cashier's price-change request goes to the manager AND accountant (mgr_akuntan);
+    // a cost-price change still needs the owner. The owner is notified of every price change. The manager still
+    // applies a non-cost change directly (she is an approver).
+    const costChange = !!changes.cost_price;
+    const need = costChange ? 'owner' : 'mgr_akuntan';
     const payload = JSON.stringify({ product_id: p.id, product_name: str(p.name), changes: changes, reason: str(data.reason) });
     const summary = 'Ubah harga ' + str(p.name) + ': ' + Object.keys(changes).map(function (f) { return f + ' ' + changes[f].from + '→' + changes[f].to; }).join(', ');
-    const allowed = role === 'owner' || (role === 'manager' && need === 'manager');
+    const allowed = role === 'owner' || (role === 'manager' && !costChange);
     if (allowed) {
       const np = applyPrices(p, changes);
       const now = new Date().toISOString();
       ops.approvals.push(forWrite(newApproval({ summary: summary, note: str(data.reason), kind: 'price', ref: String(p.id), payload: payload,
-        approver_role: need, status: 'auto', decided_by: me.name, decided_at: now }), -1));
+        approver_role: costChange ? 'owner' : 'manager', status: 'auto', decided_by: me.name, decided_at: now }), -1));
       logAct('harga', summary + (str(data.reason) ? ' | ' + str(data.reason) : ''), String(p.id), 0, 'warn');
+      if (role !== 'owner') notify(['owner'], 'Harga diubah oleh ' + me.name + ': ' + summary.slice(0, 300), 'warn');
       return done({ ok: true, applied: true, product: productOut(np) });
     }
     const a = newApproval({ summary: summary, note: str(data.reason), kind: 'price', ref: String(p.id), payload: payload, approver_role: need });
     ops.approvals.push(forWrite(a, -1));
     logAct('minta_harga', 'Minta ' + summary + (str(data.reason) ? ' | ' + str(data.reason) : ''), String(p.id), 0, 'info');
+    notify(['owner', 'manager'], 'Permintaan ubah harga oleh ' + me.name + ': ' + summary.slice(0, 300), 'info');
     return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a) });
   }
 
@@ -1204,10 +1240,26 @@ switch (req.action) {
     const CATS = ['sewa', 'gaji', 'listrik_air', 'transport', 'iklan', 'kemasan', 'perawatan', 'lain'];
     const amount = money(data.amount);
     if (!(amount > 0)) return fail('INVALID', 'Jumlah tidak valid');
+    // v29 (owner 2026-10-10): an expense may carry a photo of the invoice; the AI reads its total (photo kind
+    // 'biaya') and we check it against the typed amount. A clear difference needs a reason (as goods-in / payments do).
+    const expPhotoId = str(data.photo_id);
+    let photoNote = '';
+    if (expPhotoId) {
+      const ph = rows('Get Photo').find(function (x) { return x.photo_id === expPhotoId; });
+      if (!ph || ph.kind !== 'biaya') return fail('INVALID', 'Foto nota pengeluaran tidak ditemukan');
+      let pex = {};
+      try { pex = JSON.parse(ph.extracted || '{}'); } catch (e2) { pex = {}; }
+      const pamt = pex.amount === null || pex.amount === undefined ? null : money(pex.amount);
+      const reason = str(data.mismatch_reason).slice(0, 300);
+      if (pamt !== null && Math.abs(pamt - amount) > 0.5) {
+        if (!reason) { Object.keys(ops).forEach(function (k) { ops[k] = []; }); return done({ ok: false, error: 'MISMATCH', message: 'Jumlah tidak sama dengan nota: input Rp ' + amount + ' / nota Rp ' + pamt, photo_amount: pamt }); }
+        photoNote = ' [nota: selisih input Rp ' + amount + ' / nota Rp ' + pamt + ' — alasan: ' + reason + ']';
+      } else photoNote = pamt !== null ? ' [nota: cocok Rp ' + pamt + ']' : ' [nota: perlu cek]';
+    }
     const e = {
       expense_date: isDate(data.expense_date) ? data.expense_date : new Date().toISOString().slice(0, 10),
       category: CATS.indexOf(data.category) >= 0 ? data.category : 'lain', amount: amount,
-      note: str(data.note).slice(0, 500), user: me.name, photo_id: str(data.photo_id),
+      note: (str(data.note) + photoNote).slice(0, 500), user: me.name, photo_id: expPhotoId,
       paid_from: data.paid_from === 'lain' ? 'lain' : (data.paid_from === 'kas' || myShift ? 'kas' : 'lain')
     };
     ops.expenses.push(forWrite(e, -1));
@@ -1263,12 +1315,24 @@ switch (req.action) {
   case 'close_shift': {
     const target = data.cashier && isApprover ? shiftOf(data.cashier) : myShift;
     if (!target) return fail('NOT_FOUND', 'Tidak ada shift yang terbuka');
-    if (data.counted_cash === undefined || data.counted_cash === null || data.counted_cash === '') return fail('INVALID', 'Isi jumlah uang yang dihitung');
-    const counted = money(data.counted_cash);
+    // v29 (owner 2026-10-10): the cashier may count the cash drawer by banknote denomination. The app sends
+    // data.denoms = [{value, count}] and the app-computed total; when present the server re-sums them (authoritative)
+    // and records a readable breakdown in the shift note. A plain typed total still works (offline / coins only).
+    const hasDenoms = Array.isArray(data.denoms) && data.denoms.some(function (d) { return num(d && d.value) > 0 && num(d && d.count) > 0; });
+    if (!hasDenoms && (data.counted_cash === undefined || data.counted_cash === null || data.counted_cash === '')) return fail('INVALID', 'Isi jumlah uang yang dihitung');
+    let denomSum = 0; const denomParts = [];
+    if (hasDenoms) {
+      data.denoms.forEach(function (d) {
+        const val = Math.round(num(d && d.value)), cnt = Math.round(num(d && d.count));
+        if (val > 0 && cnt > 0) { denomSum += val * cnt; denomParts.push(fmtN(val) + '×' + cnt); }
+      });
+    }
+    const counted = hasDenoms ? denomSum : money(data.counted_cash);
+    const denomNote = denomParts.length ? 'Rincian uang: ' + denomParts.join(', ') + ' = Rp ' + denomSum : '';
     const expected = money(target.opening_cash) + money(target.cash_sales) + money(target.cash_payments) + money(target.cash_in) - money(target.cash_out);
     const sh = Object.assign({}, target, {
       status: 'closed', closed_at: new Date().toISOString(), counted_cash: counted, expected_cash: expected, difference: counted - expected,
-      note: (str(target.note) + (str(data.note) ? ' | ' + str(data.note) : '') + (target.cashier !== me.name ? ' [ditutup oleh ' + me.name + ']' : '')).trim()
+      note: (str(target.note) + (str(data.note) ? ' | ' + str(data.note) : '') + (denomNote ? ' | ' + denomNote : '') + (target.cashier !== me.name ? ' [ditutup oleh ' + me.name + ']' : '')).trim()
     });
     ops.shifts.push(forWrite(sh, target.id));
     logAct('tutup_kas', 'Tutup kas ' + str(target.cashier) + ': dihitung Rp ' + counted + ', seharusnya Rp ' + expected + ', selisih Rp ' + (counted - expected), str(target.shift_id), counted - expected, counted !== expected ? 'warn' : 'info');
@@ -1437,8 +1501,9 @@ switch (req.action) {
   }
 
   case 'list_approvals': {
-    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
-    return done({ ok: true, approvals: approvalRows.filter(function (a) { return a.status === 'pending'; }).map(approvalOut) });
+    if (!isApprover && role !== 'akuntan') return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+    // The accountant only sees the shared "manager or accountant" approvals; owner/manager see all.
+    return done({ ok: true, approvals: approvalRows.filter(function (a) { return a.status === 'pending' && (isApprover || a.approver_role === 'mgr_akuntan'); }).map(approvalOut) });
   }
 
   case 'list_disputes': {
@@ -1504,11 +1569,11 @@ switch (req.action) {
   }
 
   case 'decide_approval': {
-    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    if (!isApprover && role !== 'akuntan') return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
     const a = approvalById(String(data.request_id || ''));
     if (!a) return fail('NOT_FOUND', 'Permintaan tidak ditemukan');
     if (a.status !== 'pending') return fail('INVALID', 'Permintaan sudah diputuskan: ' + a.status);
-    if (!canDecide(a)) return fail('NEEDS_OWNER', 'Butuh persetujuan pemilik');
+    if (!canDecide(a)) return fail(a.approver_role === 'owner' ? 'NEEDS_OWNER' : 'FORBIDDEN', a.approver_role === 'owner' ? 'Butuh persetujuan pemilik' : 'Tidak diizinkan memutuskan permintaan ini');
     const decision = data.decision === 'approved' ? 'approved' : 'rejected';
     const out = { ok: true };
     let finalStatus = decision;
@@ -1641,9 +1706,45 @@ switch (req.action) {
       logAct(finalStatus === 'approved' ? 'setuju_bayar' : 'tolak_bayar',
         (finalStatus === 'approved' ? 'Setuju bayar ' + nApproved + ' pemasok: ' : 'Tolak rencana bayar: ') + str(a.summary).slice(0, 500), a.request_id, money(a.total), finalStatus === 'approved' ? 'info' : 'warn');
     }
+    if (decision === 'approved' && a.kind === 'member') {
+      // A member registered by the accountant, now approved by the manager / owner → create/mark the customer.
+      let pl = {};
+      try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
+      const exc = num(pl.existing_id) > 0 ? customerById[String(pl.existing_id)] : (str(pl.phone) ? customers.find(function (x) { return normPhone(x.phone) === normPhone(pl.phone); }) : null);
+      const base = exc ? clean(exc) : {};
+      const nc = Object.assign({}, base, {
+        name: str(pl.name) || str(base.name), phone: normPhone(pl.phone) || str(base.phone),
+        type: pl.type === 'grosir' ? 'grosir' : (str(base.type) || 'eceran'),
+        address: str(pl.address) || str(base.address), notes: str(pl.notes) || str(base.notes),
+        email: str(pl.email) || str(base.email), debt_balance: money(base.debt_balance),
+        member: true, member_no: exc && str(exc.member_no) ? str(exc.member_no) : 'M' + rand(6),
+        member_since: exc && str(exc.member_since) ? str(exc.member_since) : jkDate(),
+        visits: exc ? Math.max(0, Math.round(num(exc.visits))) : 0,
+        receipts_sent: exc ? Math.max(0, Math.round(num(exc.receipts_sent))) : 0,
+        last_visit: exc ? str(exc.last_visit) : '', wa_optin: !!(exc && exc.wa_optin === true), source: str(base.source) || str(pl.source)
+      });
+      delete nc.id;
+      ops.customers.push(forWrite(nc, exc ? exc.id : -1));
+      logAct('member_baru', 'Member baru: ' + nc.name + ' (' + nc.member_no + ')' + (nc.phone ? ' ' + nc.phone : '') + ' — didaftarkan akuntan ' + str(a.cashier) + ', disetujui ' + me.name, nc.member_no, 0, 'info');
+      out.customer = Object.assign({ id: exc ? exc.id : null }, nc);
+      finalStatus = 'used';
+    }
+    if (a.kind === 'purchase_mismatch') {
+      // Goods-in discrepancy review: the stock was already recorded at the receiver's counted quantity;
+      // approving confirms the discrepancy was reviewed, rejecting flags it for a correction (request_purchase_fix).
+      finalStatus = decision === 'approved' ? 'used' : 'rejected';
+    }
     const na = Object.assign({}, a, { status: finalStatus === 'used' ? 'approved' : finalStatus, decided_by: me.name, decided_at: new Date().toISOString(), note: str(data.note) || str(a.note) });
     ops.approvals.push(forWrite(na, a.id));
     logAct('keputusan', (decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + str(a.kind || 'credit') + ', diminta ' + str(a.cashier) + '): ' + str(a.summary).slice(0, 600) + (str(data.note) ? ' | ' + str(data.note) : ''), a.request_id, money(a.total), decision === 'approved' ? 'info' : 'warn');
+    // v29 notifications: the owner always sees the log above. When the ACCOUNTANT decides a shared request,
+    // also drop a manager + owner notice; a manager deciding void / price / goods-in mismatch notifies the owner.
+    if (a.approver_role === 'mgr_akuntan' || a.kind === 'member') {
+      const whatTxt = { purchase_mismatch: 'selisih penerimaan barang', void: 'pembatalan faktur', price: 'perubahan harga', member: 'pendaftaran member' }[a.kind] || str(a.kind);
+      const verb = decision === 'approved' ? 'disetujui' : 'ditolak';
+      if (role === 'akuntan') notify(['manager', 'owner'], 'Akuntan ' + me.name + ' ' + verb + ' ' + whatTxt + ': ' + str(a.summary).slice(0, 300), decision === 'approved' ? 'info' : 'warn');
+      else if (role === 'manager' && ['void', 'price', 'purchase_mismatch'].indexOf(a.kind) >= 0) notify(['owner'], 'Manajer ' + me.name + ' ' + verb + ' ' + whatTxt + ': ' + str(a.summary).slice(0, 300), decision === 'approved' ? 'info' : 'warn');
+    }
     out.approval = approvalOut(na);
     return done(out);
   }
@@ -1785,11 +1886,25 @@ switch (req.action) {
       debt_balance: ex ? money(ex.debt_balance) : 0,
       wa_optin: optin, source: str(data.source).slice(0, 20) || (ex ? str(ex.source) : '')
     };
-    // E-mail and membership (v16). Any user may register a member; only owner / manager may end a membership.
+    // E-mail and membership (v16). v29 (owner 2026-10-10): the cashier may NO LONGER register a member —
+    // only the manager, owner or accountant. The accountant's new registration needs the manager's approval
+    // (kind 'member'); the owner and manager register directly. Only owner / manager may END a membership.
     let email = data.email !== undefined ? str(data.email).toLowerCase() : (ex ? str(ex.email) : '');
     if (email && !isEmail(email)) return fail('INVALID', 'Alamat e-mail tidak valid');
     const wasMember = !!(ex && ex.member === true);
     const member = typeof data.member === 'boolean' ? data.member : wasMember;
+    if (member && !wasMember) {
+      if (role === 'kasir') return fail('FORBIDDEN', 'Pendaftaran member lewat manajer atau akuntan, bukan kasir');
+      if (role === 'akuntan') {
+        const mp = { name: name, phone: c.phone, type: c.type, address: c.address, notes: c.notes, email: email, source: c.source || 'akuntan', existing_id: ex ? ex.id : 0 };
+        const ap = newApproval({ kind: 'member', approver_role: 'manager', customer_id: ex ? ex.id : 0, customer_name: name,
+          summary: ('Daftar member ' + name + (c.phone ? ' ' + c.phone : '') + ' — diminta akuntan ' + me.name).slice(0, 1500),
+          payload: JSON.stringify(mp) });
+        ops.approvals.push(forWrite(ap, -1));
+        logAct('minta_member', 'Minta daftar member ' + name + (c.phone ? ' ' + c.phone : '') + ' (akuntan ' + me.name + ')', ap.request_id, 0, 'info');
+        return done({ ok: true, applied: false, request_id: ap.request_id, approval: approvalOut(ap) });
+      }
+    }
     if (wasMember && !member && !isApprover) return fail('FORBIDDEN', 'Hanya pemilik / manajer yang bisa menghapus member');
     c.email = email;
     c.member = member;
@@ -2257,7 +2372,20 @@ switch (req.action) {
     });
     const sumTotal = ops.purchases.reduce(function (a1, r) { return a1 + money(r.total); }, 0);
     logAct('masuk', 'Barang masuk ' + purchaseNo + (str(data.supplier) ? ' dari ' + str(data.supplier) : '') + ': ' + items.length + ' baris, Rp ' + sumTotal + ' — nota: ' + match.status + (matchNotes ? ' (' + matchNotes + ')' : '') + (carrier.type ? ' — dibawa ' + ({ umum: 'kendaraan umum', teman: 'teman', pemasok: 'sopir pemasok', karyawan: 'karyawan' })[carrier.type] + (carrier.name ? ' ' + carrier.name : '') + (carrier.vehicle ? ' ' + carrier.vehicle : '') : ''), purchaseNo, sumTotal, match.status === 'cocok' ? 'info' : 'warn');
-    return done({ ok: true, stock: stockOut, purchase_no: purchaseNo, match: match });
+    const outResp = { ok: true, stock: stockOut, purchase_no: purchaseNo, match: match };
+    // v29 (owner 2026-10-10): when the receiver's counted quantities differ from the photographed invoice,
+    // the stock is still recorded at the counted quantity (the goods are physically here), AND a goods-in
+    // mismatch review is raised to the manager OR accountant (mgr_akuntan). The owner is notified.
+    if (match.status === 'tidak_cocok' && !isApprover) {
+      const ap = newApproval({ kind: 'purchase_mismatch', approver_role: 'mgr_akuntan', ref: purchaseNo, total: 0,
+        summary: ('Selisih penerimaan ' + purchaseNo + (str(data.supplier) ? ' (' + str(data.supplier) + ')' : '') + ': ' + diffText(match.diffs) + (reason ? ' | alasan: ' + reason : '')).slice(0, 1500),
+        note: reason, payload: JSON.stringify({ purchase_no: purchaseNo, supplier: str(data.supplier), photo_id: photoId, diffs: match.diffs.slice(0, 50), reason: reason, received_by: me.name }) });
+      ops.approvals.push(forWrite(ap, -1));
+      notify(['owner', 'manager'], 'Selisih penerimaan barang ' + purchaseNo + ' oleh ' + me.name + ': ' + diffText(match.diffs).slice(0, 250), 'warn');
+      outResp.mismatch_request_id = ap.request_id;
+      outResp.approval = approvalOut(ap);
+    }
+    return done(outResp);
   }
 
   case 'request_purchase_fix': {
