@@ -25,6 +25,25 @@ export function sqliteAdapter(db) {
   };
 }
 
+// A Cloudflare-D1-shaped binding over node:sqlite: prepare(sql).bind(...p).all()/.run(),
+// matching the shape src/index.js's d1Adapter expects. Lets the real Worker fetch handler be
+// tested end-to-end (routing, CORS, error handling) against a real in-memory SQLite.
+export function d1Mock(db) {
+  return {
+    prepare(sql) {
+      const stmt = db.prepare(sql);
+      return {
+        bind(...params) {
+          return {
+            async all() { return { results: stmt.all(...params), meta: {} }; },
+            async run() { const r = stmt.run(...params); return { meta: { last_row_id: Number(r.lastInsertRowid), changes: r.changes } }; },
+          };
+        },
+      };
+    },
+  };
+}
+
 // Seed a row (explicit id allowed) with the same boolean→0/1 / object→JSON coercion the
 // writer uses, so fixtures match what the live n8n data would look like in D1.
 export function insert(db, table, row) {
