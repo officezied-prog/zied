@@ -1074,10 +1074,19 @@ RENDER.today = function () {
     : `<div class="hero" id="day-card" data-status="off"><h2>${esc(t('today.hello', { name: S.user }))}</h2><p>${esc(t('today.start_hint'))}</p>
         <button class="btn big block" id="day-start" data-act="day-start">${ic('play')} ${esc(t('today.start'))}</button></div>`;
   const due = dueShops();
+  // v30 (owner 2026-10-10): plan the day by area — group the shops due for a visit by region so the rep works
+  // one area at a time (the start of the morning route plan). Advanced street-level tracking / manager-agreed
+  // return interval is a later step.
+  const dueAreas = {};
+  due.forEach(s => { const a = s.area || t('order.no_area'); (dueAreas[a] = dueAreas[a] || []).push(s); });
+  const dueAreaKeys = Object.keys(dueAreas).sort((a, b) => dueAreas[b].length - dueAreas[a].length);
+  const nextBody = !due.length ? `<div class="muted">${esc(t('today.next_none'))}</div>`
+    : dueAreaKeys.length <= 1 ? due.slice(0, 20).map(s => shopRow(s, s._d)).join('')
+    : dueAreaKeys.map(a => `<div class="og-head"><b>${esc(a)}</b> <span class="badge gray">${dueAreas[a].length}</span></div>` + dueAreas[a].slice(0, 12).map(s => shopRow(s, s._d)).join('')).join('');
   $('#v-today').innerHTML = `<div class="wrapc">${hero}
     <div class="card pad" style="margin-top:12px"><div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">${ic('route')} ${esc(t('today.route'))}</h3><button class="btn xs" data-act="map-full" id="map-expand">${ic('locate')} ${esc(t('map.expand'))}</button></div><div class="map tall" id="today-map" style="margin-top:8px"></div></div>
     <div class="card pad" style="margin-top:12px" id="next-card"><h3>${ic('store')} ${esc(t('today.next'))} <span class="badge ${due.length ? 'red' : 'gray'}">${due.length}</span></h3>
-      <div class="list" id="next-list">${due.slice(0, 12).map(s => shopRow(s, s._d)).join('') || `<div class="muted">${esc(t('today.next_none'))}</div>`}</div></div></div>`;
+      <div class="list" id="next-list">${nextBody}</div></div></div>`;
   drawTodayStats();
 };
 function drawTodayStats() {
