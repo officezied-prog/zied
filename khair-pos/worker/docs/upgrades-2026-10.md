@@ -94,6 +94,26 @@ Batch C. gudang/ is still on n8n today — moves to the Worker as part of this.
 - Downloadable Android **APK** (PWABuilder/Bubblewrap) — Android-only; iPhone installs via
   Add-to-Home-Screen regardless. The free PWA install already covers all platforms.
 
+## STATUS — Batch C (2026-10-10)
+
+**CODE DONE (on the dev branch, not yet cut over):**
+- Worker port of the cold workflow: `worker/src/cold.js` (handleCold), build wrap `runProcessCold`
+  (cold-parsers + cold-core + process-cold), `/webhook/khair-cold` route, 7 `cold_*` tables in
+  `tables.js` + `OPS_TABLE_COLD`, runtime self-migration (CREATE TABLE IF NOT EXISTS — the cold_*
+  tables are new to D1). The separate n8n "Check Key" node is synthesized in handleCold.
+- Feature (a) **customer registry**: `customer_save` action + `customers` in bootstrap, reusing the
+  shared `pos_customers` (edits never touch POS-only columns). gudang: a "Pelanggan" tab (list +
+  add/edit) and a customer picker in the order form (tap-to-fill name/address, links the order).
+- Feature (b) **coolers home page**: a `mode` on each cooler (tabrid/takhzin/tajmid/biasa) + the
+  dashboard reworked into named-cooler cards with mode, date varieties and totals (pallets/cartons/kg).
+- gudang host swapped to the Worker (both hosts in the CSP, so rollback = one-line COLD_URL revert).
+  Demo mode updated (shared/cold-mock.js). 61/61 worker tests pass; demo verified in a headless browser.
+
+**STILL TO DO before cut-over (needs the Worker deploy + data move, keep n8n as rollback):**
+1. Redeploy the Worker (now carries the cold route) — sibling session with the Cloudflare token.
+2. Move the existing cold data from the n8n data tables → D1 (if any), then parallel-run verify.
+3. Merge the dev branch → main (host swap goes live). n8n untouched as instant rollback.
+
 ## Batch C — cold storage (gudang) — PLAN (do WITH the owner, not unattended)
 
 NOT started overnight on purpose: it migrates the live gudang app off n8n (which must stay untouched)

@@ -164,6 +164,47 @@ export const TABLES = {
     period: 'string', kind: 'string', count: 'number', first_seq: 'number', last_seq: 'number',
     last_hash: 'string', summary: 'string', created_at: 'string', prev_hash: 'string', hash: 'string',
   },
+  // ---- cold storage / gudang (the "Khair Gudang Dingin" workflow, POST /webhook/khair-cold).
+  //      Ported from n8n; cold reuses pos_users + pos_settings, all else is its own cold_* tables.
+  //      Columns transcribed from backend/cold/build-workflow.js. `mode` on a warehouse (the
+  //      cooler) is the owner's Batch-C addition: tabrid/takhzin/tajmid/biasa.
+  cold_warehouses: {
+    code: 'string', name: 'string', address: 'string', pic_name: 'string', pic_wa: 'string',
+    customer_id: 'string', rate: 'number', rate_unit: 'string', parser: 'string', active: 'boolean',
+    created_at: 'string', created_by: 'string', rate_frozen: 'number', rate_chiller: 'number',
+    rate_dry: 'number', mode: 'string',
+  },
+  cold_products: {
+    code: 'string', name: 'string', kg_per_ctn: 'number', aliases: 'string', active: 'boolean',
+    created_at: 'string', created_by: 'string', ctn_per_pallet: 'number',
+  },
+  cold_containers: {
+    container_no: 'string', size: 'string', arrival_date: 'string', supplier: 'string',
+    warehouse: 'string', note: 'string', created_at: 'string', created_by: 'string', origin: 'string',
+    product: 'string', cartons: 'number', kind: 'string', status: 'string', log: 'string',
+  },
+  cold_pallets: {
+    pallet_code: 'string', product: 'string', lot: 'string', prod_date: 'string', exp_date: 'string',
+    kg_per_ctn: 'number', position: 'string', zone: 'string', container_no: 'string', date_in: 'string',
+    ext_item: 'string', warehouse: 'string', created_at: 'string', created_by: 'string',
+  },
+  cold_movements: {
+    seq: 'number', move_date: 'string', at: 'string', type: 'string', pallet_code: 'string',
+    warehouse: 'string', cartons: 'number', ref_seq: 'number', grp: 'number', order_no: 'string',
+    reason: 'string', by_user: 'string',
+  },
+  cold_checks: {
+    check_no: 'string', check_date: 'string', warehouse: 'string', at: 'string', by_user: 'string',
+    raw_text: 'string', result: 'string', n_diff: 'number', explained_note: 'string',
+    explained_by: 'string', explained_at: 'string',
+  },
+  cold_orders: {
+    order_no: 'string', order_date: 'string', warehouse: 'string', dest_type: 'string',
+    dest_name: 'string', dest_address: 'string', pickup_person: 'string', vehicle: 'string',
+    note: 'string', lines: 'string', status: 'string', created_at: 'string', created_by: 'string',
+    picked_at: 'string', picked_by: 'string', pick_date: 'string', cancel_reason: 'string',
+    cancelled_at: 'string', cancelled_by: 'string', trip: 'string', log: 'string', customer_id: 'number',
+  },
 };
 
 // Convenience: boolean column lookup per table (used by the D1 read/write coercion).
@@ -197,4 +238,13 @@ export const OPS_TABLE_CHAT = { chat: 'pos_chat', settings: 'pos_settings' };
 // Attendance workflow ops key → table.
 export const OPS_TABLE_ATT = {
   workers: 'pos_workers', records: 'pos_attendance', seals: 'pos_att_seals', settings: 'pos_settings',
+};
+
+// Cold-storage (gudang) workflow ops key → table. process-cold.js emits ops keyed by the short
+// name; settings (cold_company / cold_drivers) live in the shared pos_settings. customers is the
+// Batch-C registry, reusing pos_customers (same table the POS + Field apps share).
+export const OPS_TABLE_COLD = {
+  warehouses: 'cold_warehouses', products: 'cold_products', containers: 'cold_containers',
+  pallets: 'cold_pallets', movements: 'cold_movements', checks: 'cold_checks',
+  orders: 'cold_orders', customers: 'pos_customers', settings: 'pos_settings',
 };

@@ -7,6 +7,7 @@ import { handleField } from './field.js';
 import { handleChat } from './chat.js';
 import { handleAtt } from './attendance.js';
 import { handlePhoto } from './photo.js';
+import { handleCold } from './cold.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*', // store-key auth, no cookies → safe
@@ -63,7 +64,8 @@ export default {
         const handler = path.endsWith('khair-field') ? handleField
           : path.endsWith('khair-chat') ? handleChat
             : path.endsWith('khair-att') ? handleAtt
-              : handleRequest;
+              : path.endsWith('khair-cold') ? handleCold
+                : handleRequest;
         response = await handler(adapter, text, headers, env.STORE_KEY);
       }
       return json(response, 200); // business errors (ok:false) are 200, as n8n returned them
