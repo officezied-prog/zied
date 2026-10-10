@@ -1,0 +1,11 @@
+# Cloudflare Worker config for the Khair POS API.
+# STORE_KEY is a secret, NOT set here: `wrangler secret put STORE_KEY`.
+# database_id is filled in at cut-over: `wrangler d1 create khair_pos` prints it.
+name = "khair-pos-api"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "khair_pos"
+database_id = "REPLACE_AT_CUTOVER"
