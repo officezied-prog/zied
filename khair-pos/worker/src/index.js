@@ -4,6 +4,7 @@
 //   env.STORE_KEY : store key secret (wrangler secret put STORE_KEY) — never committed
 import { handleRequest } from './core.js';
 import { handleField } from './field.js';
+import { handleChat } from './chat.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*', // store-key auth, no cookies → safe
@@ -48,9 +49,11 @@ export default {
     const text = await request.text();
     const headers = {};
     request.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
-    // Route by path: the Field app posts to .../khair-field, everything else is the POS API.
-    const isField = new URL(request.url).pathname.endsWith('khair-field');
-    const handler = isField ? handleField : handleRequest;
+    // Route by path. khair-field → Field, khair-chat → Chat, everything else → POS API.
+    const path = new URL(request.url).pathname;
+    const handler = path.endsWith('khair-field') ? handleField
+      : path.endsWith('khair-chat') ? handleChat
+        : handleRequest;
     try {
       const response = await handler(d1Adapter(env.DB), text, headers, env.STORE_KEY);
       return json(response, 200); // business errors (ok:false) are 200, as n8n returned them

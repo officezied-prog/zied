@@ -190,3 +190,6 @@ export const OPS_TABLE_FIELD = {
   days: 'pos_field_days', orders: 'pos_field_orders', images: 'pos_product_images',
   product_flags: 'pos_products',
 };
+
+// Chat workflow ops key → table.
+export const OPS_TABLE_CHAT = { chat: 'pos_chat', settings: 'pos_settings' };
