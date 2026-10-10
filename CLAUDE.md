@@ -2,15 +2,22 @@
 
 Self-contained HTML PWAs under `khair-pos/` (owner `index.html`, cashier `kasir/`,
 field-sales `sales/`, cold-storage `gudang/`), served via GitHub Pages from `main`.
-Backend today is n8n Cloud (ziedapp.app.n8n.cloud) — logic lives in the "Process" Code
-node, mirrored by `khair-pos/backend/*`. Tests: Playwright under `khair-pos/tests*`.
+Tests: Playwright under `khair-pos/tests*`.
 
-**New code backend — "Khair Mart Jumla" (الخير مارت جملة)** under `khair-pos/worker/`:
-all five n8n workflows (POS, Field, Chat, Attendance, Photo) rebuilt on Cloudflare Workers +
-D1, reusing `backend/*` as the single source of truth (wrapped at build time). It removes
-n8n's monthly execution wall (the outage cause). The **old n8n workflows are kept as a
-reference — never delete or modify them**; the apps will just point to the new backend after
-cut-over (`worker/migrate/README.md`: parallel run + instant rollback). Not deployed yet.
+**Backend = "Khair Mart Jumla" (الخير مارت جملة) — LIVE since 2026-10-10.** The owner, cashier
+and field-sales apps point at the Cloudflare Worker `https://khair-mart-jumla.officezied.workers.dev`
+(D1 database `khair_mart_jumla`, account `c82e2561b81c97de7c59166d7a915924`). Source under
+`khair-pos/worker/`: all five workflows (POS, Field, Chat, Attendance, Photo) built from
+`khair-pos/backend/*` (the single source of truth, wrapped at build time) — so edit backend
+logic in `backend/*`, then `cd khair-pos/worker && npm run build && npx wrangler deploy`
+(needs a fresh Cloudflare API token with Workers Scripts:Edit + D1:Edit, and api.cloudflare.com
+allowed in the env network settings). This removed n8n's monthly execution wall (the outage cause).
+
+- **n8n (ziedapp.app.n8n.cloud) is KEPT PERMANENTLY as a reference — NEVER delete or modify it**
+  (owner's standing instruction). It also stands as instant rollback: revert the apps' host
+  swap (`ziedapp.app.n8n.cloud` ↔ the Worker host) in `index.html`/`kasir/`/`sales/` + CSP.
+- `gudang/` (cold storage, `/webhook/khair-cold`) is still on n8n — migrates in Phase 2
+  (cold inline + WhatsApp + Lalamove; plan in `khair-pos/worker/docs/phase2-plan.md`).
 
 ## Owner standing rules — ALWAYS honor
 
