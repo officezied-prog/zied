@@ -10,4 +10,4 @@ compatibility_date = "2025-06-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "khair_mart_jumla"
-database_id = "REPLACE_AT_CUTOVER"
+database_id = "9330a847-d474-45bd-9400-ebad5bf01a27"
