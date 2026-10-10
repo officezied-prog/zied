@@ -36,13 +36,13 @@ test('a new rep: one consent at open (work location + this device) → device_pi
   await expect(page.locator('#tb-gps')).toBeVisible();
   await expect(page.locator('#tb-loc')).toBeHidden();
 
-  // reopen: no notice at all, a new device_ping on open; every 30 min when idle
+  // reopen: no notice at all, a new device_ping on open; every 60 min when idle
   await page.reload();
   await expect(page.locator('#app')).toBeVisible();
   await expect.poll(async () => (await log(page)).filter(e => e.action === 'device_ping').length).toBeGreaterThanOrEqual(1);
   await expect(page.locator('#consent, #dev-consent')).toHaveCount(0);
   const n0 = (await log(page)).filter(e => e.action === 'device_ping').length;
-  await page.evaluate(() => { window.SALES.DEV.lastMain = Date.now() - 31 * 60000; window.SALES.devTick(); });
+  await page.evaluate(() => { window.SALES.DEV.lastMain = Date.now() - 61 * 60000; window.SALES.devTick(); });
   await expect.poll(async () => (await log(page)).filter(e => e.action === 'device_ping').length).toBe(n0 + 1);
 });
 

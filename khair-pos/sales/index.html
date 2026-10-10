@@ -519,9 +519,9 @@ const mapsDir = s => `https://www.google.com/maps/dir/?api=1&destination=${encod
 /* ========== Devices (v11): where this phone is while Khair Sales is open ==========
    A rep's work-location consent (Mulai kerja) also covers this (one extra line in that notice), so a rep is never asked
    twice; owner / manager get the short device notice once per device. The fix goes as data.device with every MAIN-API
-   request (field actions go to the field workflow and carry nothing) and with device_ping on open and every 30 min while
+   request (field actions go to the field workflow and carry nothing) and with device_ping on open and every 60 min while
    the app is visible. The sales app never blocks on location. Device id kpos.device_id is shared with the other apps. */
-const DEV_ID_KEY = 'kpos.device_id', DEV_CONSENT_KEY = 'kpos.device_consent', DEV_PING_MS = 30 * 60000;
+const DEV_ID_KEY = 'kpos.device_id', DEV_CONSENT_KEY = 'kpos.device_consent', DEV_PING_MS = 60 * 60000;
 const DEV = { app: 'sales', id: '', label: '', fix: null, status: 'prompt', watch: null, lastMain: 0, battery: null, asking: false, waiters: [], pinged: false, pingedFix: false };
 function deviceId() {
   if (DEV.id) return DEV.id;
@@ -608,6 +608,8 @@ async function devBoot() {
 function devTick() { if (S.inApp && S.pin_hash && document.visibilityState === 'visible' && Date.now() - DEV.lastMain >= DEV_PING_MS) devPing(); }
 setInterval(devTick, 60000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') devTick(); });
+// When the app becomes visible again, pull fresh data once so a returning rep sees current orders/shops without waiting.
+document.addEventListener('visibilitychange', () => { if (!document.hidden && S.inApp && S.pin_hash) { try { refreshData(true); } catch(e){} } });
 function devIndicator() {
   const b = $('#tb-loc'); if (!b) return;
   b.hidden = !(S.inApp && DEV.status === 'granted' && DEV.watch != null && $('#tb-gps').hidden);
