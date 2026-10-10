@@ -193,3 +193,8 @@ export const OPS_TABLE_FIELD = {
 
 // Chat workflow ops key → table.
 export const OPS_TABLE_CHAT = { chat: 'pos_chat', settings: 'pos_settings' };
+
+// Attendance workflow ops key → table.
+export const OPS_TABLE_ATT = {
+  workers: 'pos_workers', records: 'pos_attendance', seals: 'pos_att_seals', settings: 'pos_settings',
+};

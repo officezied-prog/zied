@@ -61,6 +61,7 @@ const PROCESSES = [
   { srcs: [['..', 'backend', 'process.js']], fn: 'runProcess', out: 'process.gen.js' },
   { srcs: [['..', 'backend', 'field', 'process-field.js']], fn: 'runProcessField', out: 'process-field.gen.js' },
   { srcs: [['..', 'backend', 'chat', 'chat-core.js'], ['..', 'backend', 'chat', 'process-chat.js']], fn: 'runProcessChat', out: 'process-chat.gen.js' },
+  { srcs: [['..', 'backend', 'attendance', 'att-core.js'], ['..', 'backend', 'attendance', 'process-att.js']], fn: 'runProcessAtt', out: 'process-att.gen.js' },
 ];
 const STORE_KEY_DECL = /(?:const|var) STORE_KEY = '__STORE_KEY__';/;
 

@@ -5,6 +5,7 @@
 import { handleRequest } from './core.js';
 import { handleField } from './field.js';
 import { handleChat } from './chat.js';
+import { handleAtt } from './attendance.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*', // store-key auth, no cookies → safe
@@ -49,11 +50,13 @@ export default {
     const text = await request.text();
     const headers = {};
     request.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
-    // Route by path. khair-field → Field, khair-chat → Chat, everything else → POS API.
+    // Route by path. khair-field → Field, khair-chat → Chat, khair-att → Attendance,
+    // everything else → POS API.
     const path = new URL(request.url).pathname;
     const handler = path.endsWith('khair-field') ? handleField
       : path.endsWith('khair-chat') ? handleChat
-        : handleRequest;
+        : path.endsWith('khair-att') ? handleAtt
+          : handleRequest;
     try {
       const response = await handler(d1Adapter(env.DB), text, headers, env.STORE_KEY);
       return json(response, 200); // business errors (ok:false) are 200, as n8n returned them

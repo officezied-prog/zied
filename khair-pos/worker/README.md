@@ -67,5 +67,7 @@ directly on this backend.
 - **Field API** (`/webhook/khair-field`): ported + tested (bootstrap, day start/end, tracks,
   check-in, orders, product images). Routed in `src/index.js` by path.
 - **Chat API** (`/webhook/khair-chat`): ported + tested (bootstrap, poll, send, retention).
-- Remaining to be fully off n8n: attendance, photo (AI) workflows.
+- **Attendance API** (`/webhook/khair-att`): ported + tested (bootstrap, worker save/enroll,
+  tamper-proof hash chain via att-core's pure-JS sha256 — no crypto dependency).
+- Remaining to be fully off n8n: photo (AI image analysis) workflow.
 - Not yet deployed. Live service is still on n8n and untouched.
