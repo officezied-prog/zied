@@ -54,6 +54,9 @@ label.f{display:block;font-size:14px;font-weight:700;color:var(--muted);margin:0
 .seg button{min-height:52px;border-radius:var(--rs);border:1px solid var(--line2);background:#fff;font-weight:800;font-size:15px;padding:0 4px}
 .seg button.on{background:var(--p);color:#fff;border-color:var(--p)}
 .seg button:disabled{opacity:.45}
+.seg.sm button{min-height:38px;font-size:13px}
+.og-head{display:flex;align-items:center;gap:8px;margin:10px 2px 4px;font-size:13px;color:var(--muted)}
+.og-head b{color:var(--ink,#0f172a)}
 .chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 6px;scrollbar-width:none}
 .chips::-webkit-scrollbar{display:none}
 .chip{flex:none;min-height:40px;padding:0 14px;border-radius:999px;border:1px solid var(--line2);background:#fff;font-size:15px;font-weight:700;color:var(--muted)}
@@ -175,10 +178,20 @@ main{overflow:hidden;position:relative;min-width:0}
 .stat b{display:block;font-size:24px;line-height:1.1}
 .stat span{font-size:12.5px;opacity:.9}
 .card h3{margin:0 0 10px;font-size:16px;display:flex;align-items:center;gap:8px}
-.map{width:100%;height:220px;border-radius:14px;overflow:hidden;background:#E8EEF8;border:1px solid var(--line);position:relative}
-.map.tall{height:340px}
+.map{width:100%;height:300px;border-radius:14px;overflow:hidden;background:#E8EEF8;border:1px solid var(--line);position:relative}
+.map.tall{height:380px}
+.map.full{height:72vh;max-height:600px;border-radius:12px}
 .map svg{width:100%;height:100%;display:block}
 .map .note{position:absolute;bottom:6px;inset-inline-start:8px;font-size:11.5px;color:var(--muted);background:rgba(255,255,255,.85);padding:1px 6px;border-radius:6px}
+/* v30: numbered order pin (Leaflet divIcon) — orange circle with a white sequence number */
+.ord-pin-wrap{background:none;border:0}
+.ord-pin{display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:#EA580C;color:#fff;font-weight:800;font-size:13px;line-height:1;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.4)}
+.modal.map-modal{max-width:760px;width:96vw}
+/* v30: star rating for shop impression */
+.stars{display:flex;gap:2px;align-items:center}
+.star{font-size:30px;line-height:1;background:none;border:0;color:#CBD5E1;cursor:pointer;padding:2px 3px}
+.star.on{color:#F59E0B}
+.rstars{color:#F59E0B;font-size:13px;letter-spacing:1px;white-space:nowrap}
 .shop-li .dist{font-weight:900;color:var(--pd);white-space:nowrap}
 .status-chip{font-size:12px;font-weight:800;padding:2px 8px;border-radius:999px}
 .status-chip.pelanggan{background:var(--okt);color:var(--ok)}

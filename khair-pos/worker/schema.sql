@@ -402,7 +402,8 @@ CREATE TABLE IF NOT EXISTS pos_visits (
   notes TEXT,
   next_visit TEXT,
   photo_thumb TEXT,
-  drive_url TEXT
+  drive_url TEXT,
+  rating REAL
 );
 
 CREATE TABLE IF NOT EXISTS pos_tracks (
@@ -449,7 +450,8 @@ CREATE TABLE IF NOT EXISTS pos_field_orders (
   invoice_no TEXT,
   updated_by TEXT,
   order_time TEXT,
-  status_note TEXT
+  status_note TEXT,
+  payment_method TEXT
 );
 
 CREATE TABLE IF NOT EXISTS pos_product_images (

@@ -61,11 +61,32 @@ export async function loadFieldNodes(adapter, req) {
   return nodes;
 }
 
+// v30 self-migration: the live D1 predates the rating / payment_method columns. Rather than a separate
+// one-off `wrangler d1 execute` (blocked for an unattended deploy), the Worker adds the columns itself on the
+// first field request after this version ships — idempotent (a duplicate-column error is swallowed) and run
+// at most once per isolate via the module flag, so the ongoing cost is nil. These are ADD COLUMN only, never
+// destructive. Remove once the columns are known-present everywhere.
+let fieldSchemaEnsured = false;
+const FIELD_MIGRATIONS = [
+  "ALTER TABLE pos_visits ADD COLUMN rating INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE pos_field_orders ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'tunai'",
+];
+async function ensureFieldSchema(adapter) {
+  if (fieldSchemaEnsured) return;
+  for (const sql of FIELD_MIGRATIONS) {
+    try { await adapter.run(sql, []); } catch (e) { /* column already exists — already migrated */ }
+  }
+  fieldSchemaEnsured = true;
+}
+
 export async function handleField(adapter, body, headers, STORE_KEY) {
   const req = parseField(body, headers);
   const nodes = await loadFieldNodes(adapter, req);
   const $ = makeAccessor(nodes);
   const out = runProcessField($, STORE_KEY)[0].json; // { response, ops, action }
-  await applyOps(adapter, out.ops || {}, OPS_TABLE_FIELD);
+  const ops = out.ops || {};
+  // Only touch schema when there is something to write (reads skip the DDL entirely).
+  if (Object.keys(ops).some((k) => (ops[k] || []).length)) await ensureFieldSchema(adapter);
+  await applyOps(adapter, ops, OPS_TABLE_FIELD);
   return out.response; // field workflow has no Finalize node
 }
