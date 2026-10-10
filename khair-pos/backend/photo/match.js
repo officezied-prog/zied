@@ -94,6 +94,16 @@ if (a.kind === 'bayar') {
   if (ex.date && !/^\d{4}-\d{2}-\d{2}$/.test(ex.date)) ex.date = null;
   matchStatus = ex.readable === false || ex.amount === null || ex.status === 'gagal' ? 'perlu_cek' : '';
   matchNotes = str(ex.notes).slice(0, 500);
+} else if (a.kind === 'biaya') {
+  // Expense receipt (v29): the grand total to check against the amount the cashier typed.
+  const rawTotal = ex.amount !== null && ex.amount !== undefined ? ex.amount : ex.total;
+  const amt = Number(rawTotal);
+  ex.amount = rawTotal !== null && rawTotal !== undefined && isFinite(amt) ? Math.round(amt) : null;
+  ex.total = ex.total !== null && ex.total !== undefined && isFinite(Number(ex.total)) ? Math.round(Number(ex.total)) : ex.amount;
+  ['vendor', 'date'].forEach(function (k) { ex[k] = ex[k] === null || ex[k] === undefined ? null : str(ex[k]).slice(0, 120); });
+  if (ex.date && !/^\d{4}-\d{2}-\d{2}$/.test(ex.date)) ex.date = null;
+  matchStatus = ex.readable === false || ex.amount === null ? 'perlu_cek' : '';
+  matchNotes = str(ex.notes).slice(0, 500);
 } else if (a.kind === 'masuk') {
   let products = [];
   try { products = $('Get Products').all().map(function (i) { return i.json; }).filter(function (p) { return p && p.id !== undefined && p.active !== false; }); } catch (err) { products = []; }

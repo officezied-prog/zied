@@ -39,7 +39,7 @@ export function parseRequest(body, headers) {
     bank_account: bankAction && data.account_id ? String(data.account_id) : '__none__',
     bank_period: period || '__none__',
     approval_id: String(data.approval_id || data.request_id || '__none__'),
-    photo_id: ['save_purchase', 'receive_payment', 'pay_supplier'].indexOf(action) >= 0 && data.photo_id ? String(data.photo_id) : '__none__',
+    photo_id: ['save_purchase', 'receive_payment', 'pay_supplier', 'save_expense'].indexOf(action) >= 0 && data.photo_id ? String(data.photo_id) : '__none__',
     ip: String(headers['x-forwarded-for'] || headers['x-real-ip'] || '').split(',')[0].trim(),
     ua: String(headers['user-agent'] || '').slice(0, 300),
     purchase_no: ['request_purchase_fix', 'decide_approval'].indexOf(action) >= 0 && data.purchase_no ? String(data.purchase_no) : '__none__',
