@@ -59,8 +59,22 @@ These must match the n8n figures exactly before going further.
 
 1. `npm run deploy` → note the Worker URL (`https://khair-mart-jumla.<subdomain>.workers.dev`).
 2. Leave the apps on n8n; mirror real requests to the Worker and diff responses for a few days.
-3. Flip each app's `CONFIG` backend URL (owner `index.html`, `kasir/`, `sales/`) from the n8n
-   webhook to the Worker URL. Keep n8n frozen as rollback for a week.
-4. After a clean week, decommission the n8n POS workflow.
+3. **Switch the apps — a pure host swap.** The webhook *paths* are unchanged (`/webhook/khair-pos`,
+   `-field`, `-chat`, `-att`, `-pos-photo`), so in each of `index.html`, `kasir/index.html`,
+   `sales/index.html` replace the host **everywhere it appears**:
 
-(The field / chat / attendance workflows migrate the same way afterward, onto the same D1.)
+   ```
+   https://ziedapp.app.n8n.cloud   →   https://khair-mart-jumla.<subdomain>.workers.dev
+   ```
+
+   This covers BOTH the `CONFIG.*_URL` constants AND the CSP `connect-src` meta tag. ⚠️ The CSP
+   is the easy miss: if `connect-src` still lists only the n8n host, the browser **silently
+   blocks** every call to the new backend and the app looks broken. One find/replace of the
+   host per file handles both. Bump each app's `sw.js` cache version too, so phones pick up the
+   change. (The cold-storage app `gudang/` stays on n8n — it migrates with Phase 2 / Lalamove.)
+4. Keep n8n frozen as instant rollback for a week (revert = swap the host back). After a clean
+   week, decommission the n8n POS/Field/Chat/Attendance/Photo workflows (keep them archived as
+   reference — never delete).
+
+(All five workflows are already in code on the one D1 database, so step 3 switches them all at
+once. The cold-storage workflow migrates later with Phase 2.)
