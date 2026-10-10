@@ -170,6 +170,43 @@ test('bad store key → BAD_KEY (business error, not a crash)', async () => {
   assert.equal(r.error, 'BAD_KEY');
 });
 
+test('save_purchase (goods-in) inserts a purchase and adds to warehouse stock', async () => {
+  const db = seed();
+  const a = sqliteAdapter(db);
+  insert(db, 'pos_settings', { id: 10, skey: 'require_purchase_photo', svalue: 'false' });
+  const r = await handleRequest(a, base('save_purchase', 'Siti', '1111', { supplier: 'PT Sumber', carrier: { type: 'teman', name: 'Pak Udin' }, items: [{ product_id: 2, qty: 10, cost_price: 20000, exp_date: '2027-06-01' }] }), {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const purch = a.all('SELECT * FROM pos_purchases', []);
+  assert.equal(purch.length, 1);
+  assert.equal(purch[0].product_id, 2);
+  assert.equal(purch[0].qty, 10);
+  const p2 = a.all('SELECT stock, shop_stock FROM pos_products WHERE id = 2', [])[0];
+  assert.equal(p2.stock, 60); // 50 + 10 received into the warehouse
+  assert.equal(p2.shop_stock, 50); // shelf unchanged
+});
+
+test('Get Bank Lines loader filters by account AND period (two-condition AND)', async () => {
+  const db = seed();
+  const a = sqliteAdapter(db);
+  insert(db, 'pos_bank_lines', { id: 1, line_id: 'L1', account_id: 'BCA', period: '2026-10', amount: 5000 });
+  insert(db, 'pos_bank_lines', { id: 2, line_id: 'L2', account_id: 'BCA', period: '2026-09', amount: 7000 });
+  insert(db, 'pos_bank_lines', { id: 3, line_id: 'L3', account_id: 'MANDIRI', period: '2026-10', amount: 9000 });
+  const req = parseRequest({ action: 'import_statement', key: KEY, user: 'Pemilik', pin_hash: h('Pemilik', '1234'), data: { account_id: 'BCA', period: '2026-10' } }, {});
+  const nodes = await loadNodes(a, req);
+  assert.deepEqual(nodes['Get Bank Lines'].map((x) => x.line_id), ['L1']); // only BCA + 2026-10
+});
+
+test('Get Party Payments loader uses OR (this customer OR this supplier)', async () => {
+  const db = seed();
+  const a = sqliteAdapter(db);
+  insert(db, 'pos_payments', { id: 1, pay_id: 'P1', customer_id: 7, direction: 'in', amount: 1000 });
+  insert(db, 'pos_payments', { id: 2, pay_id: 'P2', supplier: 'PT X', direction: 'out', amount: 2000 });
+  insert(db, 'pos_payments', { id: 3, pay_id: 'P3', customer_id: 99, direction: 'in', amount: 3000 });
+  const req = parseRequest({ action: 'party_ledger', key: KEY, user: 'Pemilik', pin_hash: h('Pemilik', '1234'), data: { party_type: 'customer', customer_id: 7 } }, {});
+  const nodes = await loadNodes(a, req);
+  assert.deepEqual(nodes['Get Party Payments'].map((x) => x.pay_id), ['P1']); // customer 7 only
+});
+
 test('void_sale restores stock and marks the sale void (invoice loaders + multi-table write)', async () => {
   const db = seed();
   const a = sqliteAdapter(db);
