@@ -415,6 +415,80 @@ const NoteMatch = (() => {
   return { normName, nameScore, match, diffText };
 })();
 
+/* ========== v36 (owner 2026-10-11: "في فاتورة المصاريف التطبيق يقارن ما كتب وما جاءته من فواتير لضبط عملية الصرف"):
+   expense item lines vs the AI-read invoice — the server's expenseLinesIn / expenseCompare rules (backend/process.js).
+   Used live in the expense form and by the demo backend. ========== */
+const ExpenseMatch = (() => {
+  const s = v => v === undefined || v === null ? '' : String(v).trim();
+  const n = v => { const x = Number(v); return isFinite(x) ? x : 0; };
+  const money = v => Math.round(n(v));
+  const nn = x => x === null || x === undefined || x === '' || !isFinite(Number(x)) ? null : Number(x);
+  /** → {lines: [{name, qty, unit_price, total}]} or {error} */
+  function linesIn(raw) {
+    const list = Array.isArray(raw) ? raw.slice(0, 50) : [], out = [];
+    for (let i = 0; i < list.length; i++) {
+      const l = list[i] || {}, name = s(l.name).replace(/\s+/g, ' ').slice(0, 80), qty = Math.round(n(l.qty) * 1000) / 1000, price = money(l.unit_price);
+      if (!name && !qty && !price) continue;
+      if (!name) return { error: 'Nama barang wajib di baris ' + (i + 1), row: i, field: 'name' };
+      if (!(qty > 0)) return { error: 'Jumlah tidak valid: ' + name, row: i, field: 'qty' };
+      if (price < 0) return { error: 'Harga tidak valid: ' + name, row: i, field: 'price' };
+      out.push({ name, qty, unit_price: price, total: Math.round(qty * price) });
+    }
+    return { lines: out };
+  }
+  /** → {status: cocok | selisih | cek_manual, diffs: [{field, name, typed, invoice}], rows, invoice: {count, total, vendor}} */
+  function compare(lines, amount, ex) {
+    if (typeof ex === 'string') { try { ex = JSON.parse(ex || '{}'); } catch (e) { ex = {}; } }
+    ex = ex && typeof ex === 'object' ? ex : {};
+    const items = (Array.isArray(ex.items) ? ex.items : []).filter(it => it && s(it.name));
+    let pamt = nn(ex.amount); if (pamt === null) pamt = nn(ex.total); if (pamt !== null) pamt = money(pamt);
+    const invoice = { count: items.length, total: pamt, vendor: ex.vendor ? s(ex.vendor).slice(0, 120) : '' };
+    if (ex.readable === false || (pamt === null && !items.length)) return { status: 'cek_manual', diffs: [], rows: [], invoice };
+    const diffs = [], rows = [];
+    let unsure = false;
+    if (pamt !== null && Math.abs(pamt - money(amount)) > 0.5) diffs.push({ field: 'total', name: '', typed: money(amount), invoice: pamt });
+    if (lines.length && !items.length) unsure = true;
+    else if (lines.length) {
+      if (lines.length !== items.length) diffs.push({ field: 'count', name: '', typed: lines.length, invoice: items.length });
+      const used = {}, pair = [];
+      lines.forEach((l, i) => {
+        let best = -1, bs = 0;
+        items.forEach((it, k) => { if (used[k]) return; const sc = NoteMatch.nameScore(it.name, l.name); if (sc > bs) { bs = sc; best = k; } });
+        if (bs >= 0.5) { used[best] = true; pair[i] = best; }
+      });
+      if (lines.length === items.length) lines.forEach((l, i) => { if (pair[i] === undefined && !used[i]) { used[i] = true; pair[i] = i; } });
+      lines.forEach((l, i) => {
+        const row = { name: l.name, qty: l.qty, unit_price: money(l.unit_price), inv_name: '', inv_qty: null, inv_price: null, bad: [] };
+        rows.push(row);
+        if (pair[i] === undefined) { row.bad.push('extra'); diffs.push({ field: 'extra', name: l.name, typed: l.total, invoice: null }); return; }
+        const it = items[pair[i]], iq = nn(it.qty);
+        let ip = nn(it.unit_price);
+        if (ip === null && nn(it.total) !== null && iq) ip = Math.round(Number(it.total) / iq);
+        row.inv_name = s(it.name).slice(0, 80); row.inv_qty = iq; row.inv_price = ip === null ? null : money(ip);
+        if (iq === null || ip === null) unsure = true;
+        if (iq !== null && Math.abs(iq - n(l.qty)) > 0.001) { row.bad.push('qty'); diffs.push({ field: 'qty', name: l.name, typed: l.qty, invoice: iq }); }
+        if (ip !== null && Math.abs(money(ip) - money(l.unit_price)) > 0.5) { row.bad.push('price'); diffs.push({ field: 'price', name: l.name, typed: money(l.unit_price), invoice: money(ip) }); }
+      });
+      items.forEach((it, k) => {
+        if (used[k]) return;
+        const iq = nn(it.qty), ip = nn(it.unit_price);
+        rows.push({ name: '', qty: null, unit_price: null, inv_name: s(it.name).slice(0, 80), inv_qty: iq, inv_price: ip === null ? null : money(ip), bad: ['missing'] });
+        diffs.push({ field: 'missing', name: s(it.name).slice(0, 80), typed: null, invoice: nn(it.total) });
+      });
+    }
+    return { status: diffs.length ? 'selisih' : (unsure ? 'cek_manual' : 'cocok'), diffs: diffs.slice(0, 60), rows: rows.slice(0, 60), invoice };
+  }
+  function diffText(diffs) {
+    const fN = x => String(Math.round(n(x) * 1000) / 1000);
+    const v = (f, x) => x === null || x === undefined ? '-' : (f === 'qty' || f === 'count' ? fN(x) : 'Rp ' + money(x));
+    return diffs.map(d => {
+      const what = { total: 'Total', count: 'Jumlah jenis barang', qty: 'Qty ' + s(d.name), price: 'Harga ' + s(d.name), extra: 'Tidak ada di nota: ' + s(d.name), missing: 'Tidak diketik: ' + s(d.name) }[d.field] || d.field;
+      return d.field === 'extra' || d.field === 'missing' ? what : what + ' input ' + v(d.field, d.typed) + ' / nota ' + v(d.field, d.invoice);
+    }).join('; ');
+  }
+  return { linesIn, compare, diffText };
+})();
+
 /* ========== Mock backend (?mock=1) — copied verbatim from the owner app; same localStorage DB key (kmock.db) ========== */
 
 /* ========== State ========== */
@@ -2583,7 +2657,7 @@ RENDER.masuk = function (force) {
         const p = prodById(l.product_id), it = noteItem(l), bad = lineDiffers(l);
         return `<div class="pu-line ${p ? '' : 'unmatched'} ${bad ? 'diff' : ''}" data-line="${i}" ${hasIdx(l) ? `data-idx="${esc(l.photo_index)}"` : ''}>
           ${l.ext ? `<div class="note">${esc(t('pu.on_note'))}: <b>${esc(l.ext.name)}</b>${it && it.qty != null ? ` · <b class="num" data-note-qty>${esc(fmtQty(it.qty))} ${esc(it.unit || '')}</b>` : ''}${l.ext.score != null ? ` <span class="badge ${l.ext.score >= 0.75 ? 'ok' : l.ext.score >= 0.5 ? '' : 'warn'}">${Math.round(l.ext.score * 100)}%</span>` : ''}</div>` : ''}
-          ${l.ext ? `<select class="input" data-pu-prod="${i}" aria-label="${esc(t('product'))}">${prodOptions(l.product_id)}</select>${p ? '' : `<div class="small" style="color:var(--warn);font-weight:800;margin-top:4px">${esc(t('pu.unmatched'))}</div>`}` : `<b>${esc(p ? p.name : l.name)}</b> <span class="badge gray">${esc(t('pu.manual'))}</span>`}
+          ${l.ext ? `<select class="input" data-pu-prod="${i}" aria-label="${esc(t('product'))}">${prodOptions(l.product_id)}</select>${p ? '' : `<div class="small row wrap" style="color:var(--warn);font-weight:800;margin-top:4px;gap:6px"><span>${esc(t('pu.unmatched'))}</span><button type="button" class="btn xs" data-act="pu-newprod" data-i="${i}" id="pu-newprod-${i}">${ic('plus')} ${esc(t('newp.btn'))}</button></div>`}` : `<b>${esc(p ? p.name : l.name)}</b> <span class="badge gray">${esc(t('pu.manual'))}</span>`}${p && p.review ? ` <span class="badge warn" data-new-check>${esc(t('newp.badge'))}</span>` : ''}
           <div class="g3"><div><label class="f">${esc(t('qty'))}${p ? ` (${esc(p.unit || '')})` : ''}</label><input class="input num" inputmode="decimal" data-rule="num" data-pu-qty="${i}" value="${esc(fmtQtyInput(l.qty))}"></div>
           <div><label class="f">${esc(t('pu.price_note'))}</label><input class="input num" inputmode="numeric" data-rule="num" data-pu-cost="${i}" value="${l.cost ? esc(fmtNum(l.cost)) : ''}"></div>
           <button class="icon-btn" data-act="pu-del" data-i="${i}" aria-label="${esc(t('delete'))}" style="color:var(--redd)">${ic('trash')}</button></div>
@@ -2610,7 +2684,9 @@ RENDER.masuk = function (force) {
   const sug = () => {
     PU.q = q.value;
     const list = q.value.trim() ? filterProducts(q.value).slice(0, 6) : [];
-    $('#pu-sug', v).innerHTML = list.map(p => `<button class="li" data-act="pu-add" data-id="${esc(p.id)}" style="min-height:52px"><div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${esc(t('stock'))} ${fmtQty(p.stock)} ${esc(p.unit || '')}</div></div>${ic('plus')}</button>`).join('');
+    $('#pu-sug', v).innerHTML = list.map(p => `<button class="li" data-act="pu-add" data-id="${esc(p.id)}" style="min-height:52px"><div class="grow"><div class="t">${esc(p.name)}</div><div class="s">${esc(t('stock'))} ${fmtQty(p.stock)} ${esc(p.unit || '')}</div></div>${ic('plus')}</button>`).join('')
+      // v36 (owner 2026-10-11): goods not in the app yet → the cashier adds the new product right here
+      + (q.value.trim().length >= 2 ? `<button class="li" data-act="pu-newprod-q" id="pu-newprod-q" style="min-height:48px"><div class="grow"><div class="t">${ic('plus')} ${esc(t('newp.btn'))}: “${esc(q.value.trim())}”</div><div class="s">${esc(t('newp.not_found'))}</div></div></button>` : '');
   };
   q.addEventListener('input', sug);
   q.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const p = findBySku(q.value) || (filterProducts(q.value).length === 1 ? filterProducts(q.value)[0] : null); if (p) puAdd(p); } });
@@ -2658,6 +2734,65 @@ function puAdd(p) {
   if (ex) ex.qty = roundQty(num(ex.qty) + 1);
   else PU.lines.push({ product_id: p.id, name: p.name, qty: 1, cost: 0 });
   PU.q = ''; PU.result = null; savePuDraft(); RENDER.masuk();
+}
+/* v36 (owner 2026-10-11: "الكاشير يمكنه إضافة بضاعة جديدة إن لم تكن متوفرة في التطبيق أو الصنف الجديد عند استلام البضاعة";
+   earlier: "بضاعة جديدة في فاتورة المزود ← يسأل الحجم والوزن والفئة"): a NEW product while receiving goods. Category and
+   size/weight are required, plus the selling price; the cost comes from the invoice line, the expiry from the goods-in
+   line (as for every product). It is usable at once; the manager / accountant confirms it (and its prices). */
+const NP_UNITS = ['pcs', 'kg', 'box', 'pak', 'dus', 'botol', 'liter', 'karung', 'pouch', 'set', 'lusin'];
+const NP_MEASURES = ['g', 'kg', 'ml', 'L', 'cm', 'isi'];
+function npTitle(name) { return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/(^|\s)\S/g, c => c.toUpperCase()).slice(0, 80); }
+function openNewProduct(init, after) {
+  init = init || {};
+  const cats = [...new Set(S.products.map(p => String(p.category || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const unit0 = String(init.unit || '').toLowerCase();
+  const el = openModal({
+    title: t('newp.title'), id: 'new-product', focus: false,
+    body: `<p class="small muted" style="margin-top:0">${esc(t('newp.hint'))}</p>
+      <div class="field"><label class="f" for="np-name">${esc(t('name'))} *</label><input class="input" data-rule="pname" id="np-name" maxlength="80" value="${esc(npTitle(init.name))}"></div>
+      <div class="field"><label class="f" for="np-cat">${esc(t('newp.category'))} *</label><input class="input" data-rule="pname" id="np-cat" maxlength="40" list="np-cats" autocomplete="off"><datalist id="np-cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
+      <div class="field"><label class="f" for="np-size">${esc(t('newp.size'))} *</label><div class="row" style="gap:6px"><input class="input num grow" data-rule="num" inputmode="decimal" id="np-size" placeholder="500" style="min-width:0"><select class="input" id="np-measure" style="width:auto;flex:0 0 auto" aria-label="${esc(t('newp.measure'))}">${NP_MEASURES.map(m => `<option value="${m}">${esc(m === 'isi' ? t('newp.m_isi') : m)}</option>`).join('')}</select></div><div class="small muted">${esc(t('newp.size_hint'))}</div></div>
+      <div class="grid2"><div class="field"><label class="f" for="np-unit">${esc(t('newp.unit'))}</label><select class="input" id="np-unit">${NP_UNITS.map(u => `<option value="${u}" ${u === (NP_UNITS.includes(unit0) ? unit0 : 'pcs') ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></div>
+      <div class="field"><label class="f" for="np-sku">${esc(t('newp.barcode'))}</label><div class="row" style="gap:6px"><input class="input grow" id="np-sku" maxlength="40" inputmode="text" autocomplete="off" style="min-width:0">${'BarcodeDetector' in window ? `<button type="button" class="icon-btn" id="np-sku-cam" aria-label="${esc(t('sell.camera'))}" style="flex:0 0 auto">${ic('scan')}</button>` : ''}</div></div></div>
+      <div class="grid2"><div class="field"><label class="f" for="np-retail">${esc(t('newp.retail'))} *</label><input class="input num" data-rule="num" inputmode="numeric" id="np-retail"></div>
+      <div class="field"><label class="f" for="np-whole">${esc(t('newp.wholesale'))}</label><input class="input num" data-rule="num" inputmode="numeric" id="np-whole"></div></div>
+      <div class="field"><label class="f" for="np-wmin">${esc(t('newp.wmin'))}</label><input class="input num" data-rule="num" inputmode="decimal" id="np-wmin"></div>
+      ${int(init.cost) ? `<div class="small" id="np-cost">${esc(t('newp.cost_from_note'))}: <b class="num">${fmtRp(init.cost)}</b></div>` : ''}
+      <div class="small muted" style="margin-top:6px">${ic('lock')} ${esc(t('newp.review_hint'))}</div>
+      <div class="err" id="np-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="np-ok">${esc(t('save'))}</button>`
+  });
+  const cam = $('#np-sku-cam', el); if (cam) cam.onclick = () => cameraScan(code => { const i = $('#np-sku', el); if (i) i.value = String(code || '').trim().slice(0, 40); });
+  ['#np-retail', '#np-whole'].forEach(id => { const i = $(id, el); i.addEventListener('change', () => { const v = moneyVal(i.value); i.value = v ? fmtNum(v) : ''; }); });
+  setTimeout(() => { const f = $('#np-cat', el); if (f && f.isConnected) f.focus(); }, 50);
+  $('#np-ok', el).onclick = async () => {
+    const err = $('#np-err', el), v = id => $(id, el).value.trim();
+    const name = v('#np-name').replace(/\s+/g, ' '), cat = v('#np-cat'), size = qtyVal(v('#np-size')), m = v('#np-measure'), sku = v('#np-sku');
+    const retail = moneyVal(v('#np-retail')), whole = moneyVal(v('#np-whole')), wmin = qtyVal(v('#np-wmin'));
+    const bad = (msg, id) => { err.textContent = msg; const f = $(id, el); if (f) f.focus(); };
+    if (!name) return bad(t('required') + ': ' + t('name'), '#np-name');
+    if (!cat) return bad(t('newp.need_cat'), '#np-cat');
+    if (!(size > 0)) return bad(t('newp.need_size'), '#np-size');
+    if (!(retail > 0)) return bad(t('newp.need_price'), '#np-retail');
+    if (sku && !/^[A-Za-z0-9._-]{1,40}$/.test(sku)) return bad(t('newp.bad_sku'), '#np-sku');
+    if (sku && S.products.some(p => String(p.sku || '') === sku)) return bad(t('newp.sku_used'), '#np-sku');
+    const dup = S.products.find(p => String(p.name || '').trim().toLowerCase() === name.toLowerCase());
+    if (dup) return bad(t('newp.dup', { name: dup.name }), '#np-name');
+    const meas = (m === 'isi' ? 'isi ' : '') + String(size).replace('.', ',') + (m === 'isi' ? '' : ' ' + m);
+    const data = { name, category: cat, unit: v('#np-unit') || 'pcs', sku, retail_price: retail, wholesale_price: whole, wholesale_min_qty: whole ? wmin : 0, cost_price: int(init.cost), from_goods_in: true,
+      weight: m === 'g' || m === 'kg' ? meas : '', size: m === 'g' || m === 'kg' ? '' : meas };
+    $('#np-ok', el).disabled = true; err.textContent = '';
+    try {
+      const r = await api('save_product', data);
+      const p = noCost(Object.assign({}, r.product, { review: r.product.review || r.review_request_id || '' }));
+      p.id = isNaN(Number(p.id)) ? p.id : Number(p.id); p.stock = num(p.stock); p.active = p.active !== false;
+      ['retail_price', 'wholesale_price'].forEach(k => { p[k] = int(p[k]); }); p.wholesale_min_qty = num(p.wholesale_min_qty);
+      if (!prodById(p.id)) S.products.push(p);
+      saveCache(); dropModal(el);
+      toast(t('newp.saved', { name: p.name }), 'ok', 4000);
+      if (after) after(prodById(p.id) || p);
+    } catch (e) { err.textContent = errMsg(e); $('#np-ok', el).disabled = false; }
+  };
 }
 let puSaving = false;
 /** reason = the cashier's explanation after a MISMATCH ("Simpan dengan alasan"). */
@@ -3252,45 +3387,88 @@ function openCashMove(type) {
 function openExpense() {
   // v29 (owner 2026-10-10): an expense may carry a photo of the invoice; the AI reads its total and the app
   // checks it against the typed amount. A clear difference needs a reason (like the debt-payment slip flow).
-  const E = { from: S.shift ? 'kas' : 'lain', amount: 0, note: '', photo_id: '', thumb: '', scan: null, scanning: false, scanErr: '', reason: '' };
+  // v36 (owner 2026-10-11: "صورة فاتورة المصاريف والتطبيق يتحقق من العدد والكمية والسعر المكتوب"): optional item lines
+  // (item, qty, unit price → line total; the sum must equal the amount). With a read invoice every line is compared
+  // (number of items, qty, price, total) and each difference is shown in red; a difference needs a reason and goes to
+  // the manager / accountant. Without the AI (no key / unreadable photo) it is "cek manual" — saving is never blocked.
+  const E = { from: S.shift ? 'kas' : 'lain', amount: 0, note: '', photo_id: '', thumb: '', scan: null, scanning: false, scanErr: '', reason: '', lines: [], cat: 'lain' };
   const el = openModal({
     title: t('kas.btn_exp'), id: 'expense', focus: false, body: '',
     foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="ex-ok">${esc(t('save'))}</button>`
   });
   const body = $('.modal-b', el);
   const scanAmt = () => E.scan ? int(E.scan.amount) : 0;
-  const mismatch = () => !!E.photo_id && scanAmt() > 0 && E.amount > 0 && scanAmt() !== E.amount;
+  const typedLines = () => { const r = ExpenseMatch.linesIn(E.lines); return r.lines || []; };
+  const linesSum = () => sum(typedLines(), l => l.total);
+  const linesOff = () => typedLines().length > 0 && E.amount > 0 && linesSum() !== E.amount;
+  const check = () => E.photo_id && E.scan ? ExpenseMatch.compare(typedLines(), E.amount, E.scan.ex) : null;
+  const mismatch = () => { const c = check(); return !!c && c.status === 'selisih' && E.amount > 0; };
+  const q = v => v === null || v === undefined ? '—' : fmtQty(v);
+  const rp = v => v === null || v === undefined ? '—' : fmtRp(v);
+  const drawSum = () => {
+    const box = $('#ex-lsum', body); if (!box) return;
+    const n = typedLines().length;
+    box.innerHTML = n ? `<div class="sumrow" style="font-weight:900"><span>${esc(t('ex.lines_total'))}</span><b class="num ${linesOff() ? 'red' : ''}" id="ex-lines-total">${fmtRp(linesSum())}</b></div>
+      ${linesOff() ? `<div class="small red" id="ex-lines-off" style="font-weight:800">${esc(t('ex.lines_off', { lines: fmtRp(linesSum()), amount: fmtRp(E.amount) }))} <button type="button" class="btn xs" id="ex-use-lines">${esc(t('ex.use_lines'))}</button></div>` : ''}` : '';
+    const u = $('#ex-use-lines', box); if (u) u.onclick = () => { E.amount = linesSum(); const a = $('#ex-amt', body); if (a) a.value = fmtNum(E.amount); drawSum(); drawMM(); };
+  };
   const drawMM = () => {
     const box = $('#ex-mm', body); if (!box) return;
-    if (!mismatch()) { box.innerHTML = ''; return; }
-    box.innerHTML = `<div class="mm" id="ex-mismatch"><div class="ttl">${esc(t('ex.mm_title'))}</div>
-      <div class="two"><div><div class="k">${esc(t('py.mm_typed'))}</div><div class="v num" id="ex-mm-typed">${fmtRp(E.amount)}</div></div><div><div class="k">${esc(t('ex.mm_photo'))}</div><div class="v num" id="ex-mm-photo">${fmtRp(scanAmt())}</div></div></div>
-      <button type="button" class="btn sm block" id="ex-use-photo">${esc(t('py.mm_use'))}</button>
-      <div class="field" style="margin:10px 0 0"><label class="f" for="ex-reason">${esc(t('py.mm_reason'))} *</label><input class="input" id="ex-reason" maxlength="300" placeholder="${esc(t('py.mm_reason_ph'))}" value="${esc(E.reason)}"></div></div>`;
-    $('#ex-use-photo', box).onclick = () => { E.amount = scanAmt(); const a = $('#ex-amt', body); if (a) a.value = fmtNum(E.amount); drawMM(); };
+    const c = check();
+    if (!c || !E.amount) { box.innerHTML = ''; return; }
+    if (c.status === 'cek_manual') { box.innerHTML = `<div class="status perlu_cek" id="ex-manual" data-status="cek_manual"><div class="st">${ic('receipt')} ${esc(t('ex.cmp_manual'))}</div><div class="small">${esc(t('ex.cmp_manual_hint'))}</div></div>`; return; }
+    const rowsT = c.rows.length ? `<table class="tbl" id="ex-cmp-rows" style="margin-top:8px"><thead><tr><th>${esc(t('ex.l_item'))}</th><th class="r">${esc(t('qty'))}</th><th class="r">${esc(t('ex.l_price'))}</th></tr></thead><tbody>
+      ${c.rows.map(r => `<tr data-bad="${esc(r.bad.join(' '))}"><td class="${r.bad.includes('extra') || r.bad.includes('missing') ? 'bad' : ''}">${r.name ? esc(r.name) : `<i>${esc(t('ex.not_typed'))}</i>`}${r.inv_name && r.inv_name !== r.name ? `<div class="small muted">${esc(t('ex.mm_photo'))}: ${esc(r.inv_name)}</div>` : (r.bad.includes('extra') ? `<div class="small">${esc(t('ex.not_on_invoice'))}</div>` : '')}</td>
+        <td class="r num ${r.bad.includes('qty') ? 'bad' : ''}">${q(r.qty)}${r.bad.includes('qty') || r.bad.includes('missing') ? `<div class="small">${esc(t('ex.mm_photo'))} ${q(r.inv_qty)}</div>` : ''}</td>
+        <td class="r num ${r.bad.includes('price') ? 'bad' : ''}">${rp(r.unit_price)}${r.bad.includes('price') || r.bad.includes('missing') ? `<div class="small">${esc(t('ex.mm_photo'))} ${rp(r.inv_price)}</div>` : ''}</td></tr>`).join('')}</tbody></table>` : '';
+    if (c.status === 'cocok') { box.innerHTML = `<div class="status cocok" id="ex-match-ok" data-status="cocok"><div class="st">${ic('check')} ${esc(t('ex.cmp_ok'))}</div><div class="small">${esc(t('ex.cmp_ok_hint', { n: c.invoice.count }))}</div>${rowsT}</div>`; return; }
+    const tot = c.diffs.find(d => d.field === 'total'), cnt = c.diffs.find(d => d.field === 'count');
+    box.innerHTML = `<div class="mm" id="ex-mismatch" data-n="${c.diffs.length}"><div class="ttl">${esc(t('ex.mm_title'))} (${c.diffs.length})</div>
+      <div class="two"><div><div class="k">${esc(t('py.mm_typed'))}</div><div class="v num" id="ex-mm-typed">${fmtRp(E.amount)}</div></div><div><div class="k">${esc(t('ex.mm_photo'))}</div><div class="v num ${tot ? 'red' : ''}" id="ex-mm-photo">${rp(c.invoice.total)}</div></div></div>
+      ${cnt ? `<div class="small red" id="ex-mm-count" style="font-weight:800">${esc(t('ex.mm_count', { typed: cnt.typed, invoice: cnt.invoice }))}</div>` : ''}
+      ${rowsT}
+      ${tot ? `<button type="button" class="btn sm block" id="ex-use-photo" style="margin-top:8px">${esc(t('py.mm_use'))}</button>` : ''}
+      <div class="field" style="margin:10px 0 0"><label class="f" for="ex-reason">${esc(t('py.mm_reason'))} *</label><input class="input" id="ex-reason" maxlength="300" placeholder="${esc(t('py.mm_reason_ph'))}" value="${esc(E.reason)}"></div>
+      <div class="small muted" style="margin-top:4px">${esc(t('ex.mm_review'))}</div></div>`;
+    const up = $('#ex-use-photo', box); if (up) up.onclick = () => { E.amount = c.invoice.total; const a = $('#ex-amt', body); if (a) a.value = fmtNum(E.amount); drawSum(); drawMM(); };
     $('#ex-reason', box).addEventListener('input', e => { E.reason = e.target.value; });
   };
+  const lineHTML = (l, i) => `<div class="exl" data-exl="${i}"><input class="input" data-exl-name="${i}" maxlength="80" placeholder="${esc(t('ex.l_item'))}" aria-label="${esc(t('ex.l_item'))}" value="${esc(l.name || '')}">
+    <input class="input num" data-rule="num" inputmode="decimal" data-exl-qty="${i}" placeholder="${esc(t('qty'))}" aria-label="${esc(t('qty'))}" value="${l.qty ? esc(fmtQtyInput(l.qty)) : ''}">
+    <input class="input num" data-rule="num" inputmode="numeric" data-exl-price="${i}" placeholder="${esc(t('ex.l_price'))}" aria-label="${esc(t('ex.l_price'))}" value="${l.unit_price ? esc(fmtNum(l.unit_price)) : ''}">
+    <button type="button" class="icon-btn" data-exl-del="${i}" aria-label="${esc(t('delete'))}" style="color:var(--redd)">${ic('trash')}</button>
+    <div class="small muted num exl-tot" data-exl-tot="${i}">= ${fmtRp(Math.round(num(l.qty) * int(l.unit_price)))}</div></div>`;
   const draw = () => {
     const sc = E.scan || {};
-    body.innerHTML = `<div class="field"><label class="f" for="ex-cat">${esc(t('ex.category'))}</label><select class="input" id="ex-cat">${EXP_CATS.map(c => `<option value="${c}" ${c === 'lain' ? 'selected' : ''}>${esc(t('excat.' + c))}</option>`).join('')}</select></div>
+    body.innerHTML = `<div class="field"><label class="f" for="ex-cat">${esc(t('ex.category'))}</label><select class="input" id="ex-cat">${EXP_CATS.map(c => `<option value="${c}" ${c === E.cat ? 'selected' : ''}>${esc(t('excat.' + c))}</option>`).join('')}</select></div>
       <div class="field"><label class="f" for="ex-amt">${esc(t('amount'))} (Rp)</label><input class="input money" data-rule="num" id="ex-amt" inputmode="numeric" value="${esc(E.amount ? fmtNum(E.amount) : '')}" autofocus></div>
       <div class="field"><label class="f" for="ex-note">${esc(t('notes'))}</label><input class="input" id="ex-note" value="${esc(E.note)}"></div>
       <div class="field"><label class="f">${esc(t('ex.paid_from'))}</label><div class="seg" id="ex-from">${['kas', 'lain'].map(f => `<button type="button" data-f="${f}" class="${E.from === f ? 'on' : ''}" ${f === 'kas' && !S.shift ? 'disabled' : ''}>${esc(t('ex.from_' + f))}</button>`).join('')}</div></div>
+      <div class="field" id="ex-lines-box"><label class="f">${esc(t('ex.lines'))}</label><div class="small muted" style="margin-bottom:6px">${esc(t('ex.lines_hint'))}</div>
+        <div id="ex-lines">${E.lines.map(lineHTML).join('')}</div>
+        <button type="button" class="btn sm" id="ex-add-line">${ic('plus')} ${esc(t('ex.add_line'))}</button><div id="ex-lsum" style="margin-top:6px"></div></div>
       <div class="slip ${E.photo_id ? 'ok' : ''}" id="ex-slip">
         ${E.thumb ? `<img class="thumb" src="${esc(E.thumb)}" alt="${esc(t('ex.photo'))}">` : `<div class="thumb">${ic('camera')}</div>`}
         <div class="grow" style="min-width:150px">${E.scanning ? `<div class="row"><div class="spinner" style="width:22px;height:22px;border-width:3px;margin:0"></div><b>${esc(t('py.reading'))}</b></div>`
-          : E.photo_id ? `<b class="okc" id="ex-slip-ok">${esc(t('ex.photo_ok'))}</b><div class="small muted">${esc([sc.vendor, scanAmt() ? fmtRp(scanAmt()) : ''].filter(Boolean).join(' · '))}</div>${sc.readable === false ? `<div class="small" style="color:var(--warn);font-weight:800">${esc(t('py.unreadable'))}</div>` : ''}`
+          : E.photo_id ? `<b class="okc" id="ex-slip-ok">${esc(sc.readable === false ? t('ex.photo_saved') : t('ex.photo_ok'))}</b><div class="small muted">${esc([sc.vendor, scanAmt() ? fmtRp(scanAmt()) : '', sc.n ? t('ex.n_lines', { n: sc.n }) : ''].filter(Boolean).join(' · '))}</div>${sc.readable === false ? `<div class="small" style="color:var(--warn);font-weight:800">${esc(t('ex.cmp_manual'))}</div>` : ''}`
           : E.scanErr ? `<span class="red small">${esc(E.scanErr)}</span>` : `<b>${esc(t('ex.photo'))}</b><div class="small muted">${esc(t('ex.photo_hint'))}</div>`}</div>
         <label class="btn ${E.photo_id ? 'sm' : ''}" for="ex-photo" id="ex-photo-btn" ${E.scanning ? 'aria-disabled="true" style="pointer-events:none"' : ''}>${ic('camera')} ${esc(E.photo_id ? t('pu.photo_retake') : t('ex.photo_take'))}</label>${PHOTO_INPUT('ex-photo')}</div>
       <div id="ex-mm"></div>
       <div class="err" id="ex-err" role="alert"></div>`;
+    $('#ex-cat', body).onchange = e => { E.cat = e.target.value; };
     $('#ex-from', body).onclick = e => { const b = e.target.closest('[data-f]'); if (!b || b.disabled) return; E.from = b.dataset.f; $$('#ex-from button', body).forEach(x => x.classList.toggle('on', x === b)); };
     const amt = $('#ex-amt', body);
-    amt.addEventListener('input', () => { E.amount = moneyVal(amt.value); drawMM(); });
+    amt.addEventListener('input', () => { E.amount = moneyVal(amt.value); drawSum(); drawMM(); });
     amt.addEventListener('change', () => { amt.value = E.amount ? fmtNum(E.amount) : ''; });
     $('#ex-note', body).addEventListener('input', e => { E.note = e.target.value; });
+    $('#ex-add-line', body).onclick = () => { E.lines.push({ name: '', qty: 1, unit_price: 0 }); draw(); const n = $(`[data-exl-name="${E.lines.length - 1}"]`, body); if (n) n.focus(); };
+    const lineChanged = i => { const tt = $(`[data-exl-tot="${i}"]`, body); if (tt) tt.textContent = '= ' + fmtRp(Math.round(num(E.lines[i].qty) * int(E.lines[i].unit_price))); drawSum(); drawMM(); };
+    $$('[data-exl-name]', body).forEach(i => i.addEventListener('input', () => { E.lines[+i.dataset.exlName].name = i.value; lineChanged(+i.dataset.exlName); }));
+    $$('[data-exl-qty]', body).forEach(i => i.addEventListener('input', () => { E.lines[+i.dataset.exlQty].qty = qtyVal(i.value); lineChanged(+i.dataset.exlQty); }));
+    $$('[data-exl-price]', body).forEach(i => i.addEventListener('input', () => { E.lines[+i.dataset.exlPrice].unit_price = moneyVal(i.value); lineChanged(+i.dataset.exlPrice); }));
+    $$('[data-exl-del]', body).forEach(b => b.onclick = () => { E.lines.splice(+b.dataset.exlDel, 1); draw(); });
     const ph = $('#ex-photo', body); if (ph) ph.onchange = () => { const f = ph.files[0]; if (f) scanExpensePhoto(f); };
-    drawMM();
+    drawSum(); drawMM();
   };
   async function scanExpensePhoto(file) {
     E.scanning = true; E.scanErr = ''; draw();
@@ -3300,7 +3478,7 @@ function openExpense() {
       const r = await apiPhoto('scan_expense', { image_base64: img.base64, mime: img.mime });
       const ex = r.extracted || {};
       E.photo_id = r.photo_id || '';
-      E.scan = { amount: ex.amount === null || ex.amount === undefined ? int(ex.total) : int(ex.amount), vendor: ex.vendor || '', readable: ex.readable !== false };
+      E.scan = { amount: ex.amount === null || ex.amount === undefined ? int(ex.total) : int(ex.amount), vendor: ex.vendor || '', readable: ex.readable !== false, n: Array.isArray(ex.items) ? ex.items.length : 0, ex };
       if (!E.amount && scanAmt() > 0) E.amount = scanAmt();
     } catch (e) { E.scanErr = (e instanceof NetError ? t('pu.scan_net') : errMsg(e)) + ' ' + t('pu.scan_retry'); }
     E.scanning = false; draw();
@@ -3308,12 +3486,21 @@ function openExpense() {
   $('#ex-ok', el).onclick = async () => {
     const err = $('#ex-err', el);
     if (!(E.amount > 0)) { err.textContent = t('amount_invalid'); return; }
+    const li = ExpenseMatch.linesIn(E.lines);
+    if (li.error) { err.textContent = t('ex.line_bad'); const f = $(`[data-exl-${li.field}="${li.row}"]`, el); if (f) f.focus(); return; }
+    if (linesOff()) { err.textContent = t('ex.lines_off', { lines: fmtRp(linesSum()), amount: fmtRp(E.amount) }); return; }
     if (mismatch() && !E.reason.trim()) { err.textContent = t('ex.mm_need_reason'); const r = $('#ex-reason', el); if (r) r.focus(); return; }
     const data = { expense_date: today(), category: $('#ex-cat', el).value, amount: E.amount, note: E.note.trim(), paid_from: E.from };
+    if (li.lines.length) data.lines = li.lines.map(l => ({ name: l.name, qty: l.qty, unit_price: l.unit_price }));
     if (E.photo_id) data.photo_id = E.photo_id;
     if (mismatch()) data.mismatch_reason = E.reason.trim();
     $('#ex-ok', el).disabled = true;
-    try { await api('save_expense', data); dropModal(el); toast(t('ex.saved', { amount: fmtRp(data.amount) }), 'ok'); if (E.from === 'kas') await refreshData(true); }
+    try {
+      const r = await api('save_expense', data); dropModal(el);
+      const st = r.check && r.check.status, review = st === 'selisih' || st === 'cek_manual';
+      toast(t('ex.saved', { amount: fmtRp(data.amount) }) + (review && r.check_request_id ? ' — ' + t('ex.sent_review') : ''), st === 'selisih' ? 'warn' : 'ok', review ? 5000 : undefined);
+      if (E.from === 'kas') await refreshData(true);
+    }
     catch (e) {
       if (e && e.code === 'MISMATCH') { err.textContent = e.message || t('ex.mm_title'); $('#ex-ok', el).disabled = false; return; }
       if (isRetryable(e) && !E.photo_id) { queueOp('expense', 'save_expense', data); dropModal(el); toast(t('outbox.queued'), 'warn'); }
@@ -3821,11 +4008,42 @@ function aprBodyHTML(a) {
     <div class="small">${esc(pl.ref_type === 'faktur' ? t('tc.invoice') : t('tc.payment'))}: <b>${esc(pl.ref || a.ref)}</b>${pl.bank ? ' · ' + esc(pl.bank) : ''}${pl.transfer_ref ? ' · ' + esc(t('tc.ref')) + ' ' + esc(pl.transfer_ref) : ''}</div>
     <div class="small muted" style="margin-bottom:8px">${esc(t('tc.hint'))}</div>`;
   if (kind === 'void') return head(t('apr.kind_void', { inv: a.ref }), 'red') + `<div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('rc.customer'))}</div><div class="v">${esc(a.customer_name || t('sell.walkin'))}</div></div><div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(a.total)}</div></div></div><div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason || a.summary || '')}”</b></div>`;
+  if (kind === 'expense_check') return head(t(pl.status === 'cek_manual' ? 'apr.kind_exp_manual' : 'apr.kind_exp_mm', { amount: fmtRp(pl.amount != null ? pl.amount : a.total) }), 'warn') + expenseCheckBodyHTML(pl);
+  if (kind === 'product_new') return head(t('apr.kind_newprod', { name: pl.product_name || '' }), 'warn') + productNewBodyHTML(a, pl);
   if (kind === 'price') {
     const rows = Object.entries(pl.changes || {}).filter(([f]) => f !== 'cost_price').map(([f, ch]) => `<tr><td>${esc(t('price.f_' + f))}</td><td class="r num">${ch.from == null ? '—' : fmtRp(ch.from)}</td><td class="r num"><b>${ch.to == null ? '—' : fmtRp(ch.to)}</b></td></tr>`).join('');
     return head(t('apr.kind_price', { name: pl.product_name || a.summary || '' }), '') + `<table class="tbl" style="margin:8px 0"><thead><tr><th></th><th class="r">${esc(t('price.old'))}</th><th class="r">${esc(t('price.new'))}</th></tr></thead><tbody>${rows}</tbody></table>${pl.changes && pl.changes.cost_price ? `<div class="small muted">${esc(t('apr.cost_hidden'))}</div>` : ''}${pl.reason ? `<div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason)}”</b></div>` : ''}`;
   }
   return head(a.customer_name, 'warn') + `<div class="small muted">${esc(t('apr.kind_credit'))}</div>${aprSummaryHTML(int(a.customer_debt_before), int(a.debt_amount), int(a.total))}${a.summary ? `<div class="small" style="margin-bottom:8px">${esc(a.summary)}</div>` : ''}`;
+}
+/* v36: the expense invoice check (line by line) and a cashier's new product — same cards in the owner app. */
+function expenseCheckBodyHTML(pl) {
+  const q = v => v === null || v === undefined ? '—' : fmtQty(v), rp = v => v === null || v === undefined ? '—' : fmtRp(v);
+  const inv = pl.invoice || {}, diffs = Array.isArray(pl.diffs) ? pl.diffs : [], rows = Array.isArray(pl.rows) && pl.rows.length ? pl.rows : (Array.isArray(pl.lines) ? pl.lines.map(l => ({ name: l.name, qty: l.qty, unit_price: l.unit_price, inv_name: '', inv_qty: null, inv_price: null, bad: [] })) : []);
+  const tot = diffs.find(d => d.field === 'total'), cnt = diffs.find(d => d.field === 'count');
+  return `<div class="small" style="margin-top:4px" data-exp-check="${esc(pl.status || '')}">${esc(t('excat.' + (pl.category || 'lain')))}${inv.vendor ? ' · ' + esc(inv.vendor) : ''}${pl.note ? ' · ' + esc(pl.note) : ''}</div>
+    <div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('py.mm_typed'))}</div><div class="v num">${fmtRp(pl.amount)}</div></div><div><div class="k">${esc(t('ex.mm_photo'))}</div><div class="v num ${tot ? 'red' : ''}">${rp(inv.total)}</div></div></div>
+    ${cnt ? `<div class="small red" style="font-weight:800">${esc(t('ex.mm_count', { typed: cnt.typed, invoice: cnt.invoice }))}</div>` : ''}
+    ${rows.length ? `<table class="tbl" style="margin:8px 0" data-exp-rows><thead><tr><th>${esc(t('ex.l_item'))}</th><th class="r">${esc(t('qty'))}</th><th class="r">${esc(t('ex.l_price'))}</th></tr></thead><tbody>${rows.map(r => { const b = Array.isArray(r.bad) ? r.bad : [];
+      return `<tr><td class="${b.includes('extra') || b.includes('missing') ? 'bad' : ''}">${r.name ? esc(r.name) : `<i>${esc(t('ex.not_typed'))}</i>`}${r.inv_name && r.inv_name !== r.name ? `<div class="small muted">${esc(t('ex.mm_photo'))}: ${esc(r.inv_name)}</div>` : ''}</td><td class="r num ${b.includes('qty') ? 'bad' : ''}">${q(r.qty)}${b.includes('qty') || b.includes('missing') ? `<div class="small">${esc(t('ex.mm_photo'))} ${q(r.inv_qty)}</div>` : ''}</td><td class="r num ${b.includes('price') ? 'bad' : ''}">${rp(r.unit_price)}${b.includes('price') || b.includes('missing') ? `<div class="small">${esc(t('ex.mm_photo'))} ${rp(r.inv_price)}</div>` : ''}</td></tr>`; }).join('')}</tbody></table>` : ''}
+    ${pl.reason ? `<div style="margin-bottom:6px">${esc(t('reason'))}: <b>“${esc(pl.reason)}”</b></div>` : ''}
+    <div class="small muted" style="margin-bottom:8px">${esc(t(pl.status === 'cek_manual' ? 'apr.exp_manual_hint' : 'apr.exp_mm_hint'))}</div>`;
+}
+function productNewBodyHTML(a, pl) {
+  const can = a.can_decide !== false;
+  const meas = [pl.size, pl.weight].filter(Boolean).join(' · ');
+  return `<div class="small" style="margin-top:4px" data-newprod>${esc([pl.category, meas, pl.unit, pl.sku ? t('newp.barcode') + ' ' + pl.sku : '', pl.supplier].filter(Boolean).join(' · '))}</div>
+    ${pl.cost_price != null ? `<div class="small">${esc(t('newp.cost_from_note'))}: <b class="num">${fmtRp(pl.cost_price)}</b></div>` : ''}
+    <div class="grid2" style="margin-top:6px"><div class="field"><label class="f">${esc(t('newp.retail'))}</label><input class="input num" data-rule="num" inputmode="numeric" data-np-price="retail_price" value="${esc(fmtNum(pl.retail_price || 0))}" ${can ? '' : 'disabled'}></div>
+    <div class="field"><label class="f">${esc(t('newp.wholesale'))}</label><input class="input num" data-rule="num" inputmode="numeric" data-np-price="wholesale_price" value="${pl.wholesale_price ? esc(fmtNum(pl.wholesale_price)) : ''}" ${can ? '' : 'disabled'}></div></div>
+    <div class="field"><label class="f">${esc(t('newp.wmin'))}</label><input class="input num" data-rule="num" inputmode="decimal" data-np-price="wholesale_min_qty" value="${pl.wholesale_min_qty ? esc(fmtQtyInput(pl.wholesale_min_qty)) : ''}" ${can ? '' : 'disabled'}></div>
+    <div class="small muted" style="margin-bottom:8px">${esc(t('apr.newprod_hint'))}</div>`;
+}
+/** Prices the manager / accountant set on a new-product card (sent with the approval). */
+function newProdPrices(card) {
+  const o = {};
+  $$('[data-np-price]', card).forEach(i => { const f = i.dataset.npPrice; if (i.value.trim() !== '') o[f] = f === 'wholesale_min_qty' ? qtyVal(i.value) : moneyVal(i.value); });
+  return o;
 }
 function openInbox() {
   const el = openModal({ title: t('apr.inbox'), id: 'apr-inbox', body: `<div class="spinner"></div>` });
@@ -3860,6 +4078,7 @@ async function decideApproval(id, decision, btn) {
     const data = { request_id: id, decision, note };
     if (ap.kind === 'void') data.invoice_no = ap.ref;
     if (ap.kind === 'purchase_fix') data.purchase_no = ap.ref;
+    if (ap.kind === 'product_new' && decision === 'approved' && card) data.prices = newProdPrices(card);
     const r = await api('decide_approval', data);
     AP.list = AP.list.filter(a => a.request_id !== id); AP.count = AP.list.length;
     updateApprovalBadge();
@@ -3940,6 +4159,8 @@ const ACT = {
 
   /* masuk */
   'pu-add': el => puAdd(prodById(el.dataset.id)),
+  'pu-newprod': el => { const l = PU.lines[+el.dataset.i]; if (l) openNewProduct({ name: l.ext ? l.ext.name : l.name, unit: l.ext && l.ext.unit, cost: l.cost }, p => { l.product_id = p.id; savePuDraft(); RENDER.masuk(); }); },
+  'pu-newprod-q': () => openNewProduct({ name: PU.q }, p => puAdd(p)),
   'pu-del': el => { PU.lines.splice(+el.dataset.i, 1); savePuDraft(); RENDER.masuk(); },
   'pu-clear': () => { Object.assign(PU, { lines: [], photo_id: '', thumb: '', scan: null, result: null, scanErr: '', carrier: { type: '' } }); savePuDraft(); RENDER.masuk(); },
   'pu-retur': el => openSupReturn(el.dataset.no),
@@ -4588,6 +4809,49 @@ Object.assign(I18N.ar, {
   'agree.items': 'صنف', 'agree.by': 'اقترحه {name}', 'agree.hint': 'يسري بعد تأكيد الطرف الآخر (المالك ↔ المدير). يُسجَّل في سجل الاتفاقات.',
   'agree.confirm': 'تأكيد', 'agree.manager_only': 'يؤكده المدير', 'err.AGREEMENT_REQUIRED': 'يحتاج إلى اتفاق المالك والمدير'
 });
+/* v36 i18n: expense item lines + invoice check, new product at goods-in, their approval cards */
+Object.assign(I18N.id, {
+  'ex.lines': 'Rincian barang (boleh kosong)', 'ex.lines_hint': 'Barang, jumlah dan harga satuan — totalnya harus sama dengan jumlah, lalu dicek dengan nota.',
+  'ex.add_line': 'Tambah baris', 'ex.lines_total': 'Total rincian', 'ex.lines_off': 'Total rincian {lines} ≠ jumlah {amount}', 'ex.use_lines': 'Pakai total rincian',
+  'ex.l_item': 'Barang', 'ex.l_price': 'Harga satuan', 'ex.not_typed': 'tidak diketik', 'ex.not_on_invoice': 'tidak ada di nota',
+  'ex.cmp_manual': 'Cek manual', 'ex.cmp_manual_hint': 'Nota belum bisa dibaca otomatis. Tetap bisa disimpan — manajer / akuntan mencocokkan nota fisik.',
+  'ex.cmp_ok': 'Cocok dengan nota', 'ex.cmp_ok_hint': 'Jumlah, banyak barang, qty dan harga sama ({n} baris di nota).',
+  'ex.mm_title': 'Beda dengan nota', 'ex.mm_count': 'Banyak barang: diketik {typed}, di nota {invoice}', 'ex.mm_review': 'Disimpan dengan alasan, lalu dicek manajer / akuntan.',
+  'ex.photo_saved': 'Foto nota tersimpan', 'ex.n_lines': '{n} baris', 'ex.line_bad': 'Lengkapi baris rincian (barang, jumlah > 0) atau hapus barisnya',
+  'ex.sent_review': 'dikirim ke manajer / akuntan untuk dicek',
+  'newp.btn': 'Produk baru', 'newp.badge': 'Baru — dicek', 'newp.not_found': 'Belum ada di aplikasi? Tambahkan sebagai produk baru',
+  'newp.title': 'Produk baru (barang masuk)', 'newp.hint': 'Barang ini belum ada di aplikasi. Isi datanya — langsung bisa dipakai untuk barang masuk ini.',
+  'newp.category': 'Kategori', 'newp.size': 'Ukuran / berat', 'newp.measure': 'Satuan ukuran', 'newp.m_isi': 'isi (pcs)', 'newp.size_hint': 'Contoh: 500 g, 1 kg, 250 ml, 1 L, isi 12.',
+  'newp.unit': 'Satuan jual', 'newp.barcode': 'Barcode (boleh kosong)', 'newp.retail': 'Harga jual eceran', 'newp.wholesale': 'Harga grosir (boleh kosong)', 'newp.wmin': 'Minimal qty grosir',
+  'newp.cost_from_note': 'Harga beli dari nota', 'newp.review_hint': 'Produk baru dari kasir ditandai "baru — dicek": manajer / akuntan memeriksa harganya.',
+  'newp.need_cat': 'Kategori wajib diisi', 'newp.need_size': 'Ukuran / berat wajib diisi', 'newp.need_price': 'Harga jual wajib diisi', 'newp.bad_sku': 'Barcode hanya huruf, angka, titik, garis',
+  'newp.sku_used': 'Barcode sudah dipakai produk lain', 'newp.dup': 'Sudah ada: {name} — pilih dari daftar', 'newp.saved': 'Produk baru {name} tersimpan — menunggu dicek',
+  'apr.kind_exp_mm': 'Pengeluaran {amount} beda dengan nota', 'apr.kind_exp_manual': 'Pengeluaran {amount} — cek nota manual', 'apr.kind_newprod': 'Produk baru dari kasir: {name}',
+  'apr.exp_mm_hint': 'Uang sudah keluar. Setujui = selisih diterima; tolak = ditandai untuk pemilik.',
+  'apr.exp_manual_hint': 'Nota tidak terbaca otomatis: cocokkan nota fisik dengan rincian, lalu setujui atau tolak.',
+  'apr.newprod_hint': 'Cek harga jual (boleh diperbaiki). Setujui = produk dikonfirmasi; tolak = produk dinonaktifkan sampai pemilik memperbaikinya (stok tetap tercatat).'
+});
+Object.assign(I18N.ar, {
+  'ex.lines': 'تفاصيل الأصناف (اختياري)', 'ex.lines_hint': 'الصنف والكمية وسعر الوحدة — يجب أن يساوي مجموعها المبلغ، ثم تُطابَق مع الفاتورة.',
+  'ex.add_line': 'إضافة سطر', 'ex.lines_total': 'مجموع التفاصيل', 'ex.lines_off': 'مجموع التفاصيل {lines} ≠ المبلغ {amount}', 'ex.use_lines': 'استخدم مجموع التفاصيل',
+  'ex.l_item': 'الصنف', 'ex.l_price': 'سعر الوحدة', 'ex.not_typed': 'لم يُكتب', 'ex.not_on_invoice': 'غير موجود في الفاتورة',
+  'ex.cmp_manual': 'تدقيق يدوي', 'ex.cmp_manual_hint': 'تعذّرت قراءة الفاتورة آليًا. يمكن الحفظ — المدير / المحاسب يطابق الفاتورة الورقية.',
+  'ex.cmp_ok': 'مطابق للفاتورة', 'ex.cmp_ok_hint': 'المبلغ وعدد الأصناف والكميات والأسعار متطابقة ({n} سطر في الفاتورة).',
+  'ex.mm_title': 'يختلف عن الفاتورة', 'ex.mm_count': 'عدد الأصناف: المكتوب {typed}، في الفاتورة {invoice}', 'ex.mm_review': 'يُحفظ مع السبب، ثم يدققه المدير / المحاسب.',
+  'ex.photo_saved': 'حُفظت صورة الفاتورة', 'ex.n_lines': '{n} سطر', 'ex.line_bad': 'أكمل سطر التفاصيل (الصنف، كمية > 0) أو احذفه',
+  'ex.sent_review': 'أُرسل إلى المدير / المحاسب للتدقيق',
+  'newp.btn': 'صنف جديد', 'newp.badge': 'جديد — قيد التدقيق', 'newp.not_found': 'غير موجود في التطبيق؟ أضفه صنفًا جديدًا',
+  'newp.title': 'صنف جديد (بضاعة واردة)', 'newp.hint': 'هذه البضاعة غير موجودة في التطبيق. أدخل بياناتها — تُستخدم فورًا في هذا الاستلام.',
+  'newp.category': 'الفئة', 'newp.size': 'الحجم / الوزن', 'newp.measure': 'وحدة القياس', 'newp.m_isi': 'عدد (قطع)', 'newp.size_hint': 'مثال: 500 غ، 1 كغ، 250 مل، 1 لتر، 12 قطعة.',
+  'newp.unit': 'وحدة البيع', 'newp.barcode': 'الباركود (اختياري)', 'newp.retail': 'سعر البيع بالتجزئة', 'newp.wholesale': 'سعر الجملة (اختياري)', 'newp.wmin': 'أقل كمية للجملة',
+  'newp.cost_from_note': 'سعر الشراء من الفاتورة', 'newp.review_hint': 'الصنف الجديد من الكاشير يُعلَّم "جديد — قيد التدقيق": المدير / المحاسب يراجع أسعاره.',
+  'newp.need_cat': 'الفئة مطلوبة', 'newp.need_size': 'الحجم / الوزن مطلوب', 'newp.need_price': 'سعر البيع مطلوب', 'newp.bad_sku': 'الباركود حروف وأرقام ونقطة وشرطة فقط',
+  'newp.sku_used': 'الباركود مستخدم لصنف آخر', 'newp.dup': 'موجود مسبقًا: {name} — اختره من القائمة', 'newp.saved': 'حُفظ الصنف الجديد {name} — بانتظار التدقيق',
+  'apr.kind_exp_mm': 'مصروف {amount} يختلف عن الفاتورة', 'apr.kind_exp_manual': 'مصروف {amount} — تدقيق الفاتورة يدويًا', 'apr.kind_newprod': 'صنف جديد من الكاشير: {name}',
+  'apr.exp_mm_hint': 'المال صُرف. موافقة = قبول الفرق؛ رفض = يُعلَّم للمالك.',
+  'apr.exp_manual_hint': 'لم تُقرأ الفاتورة آليًا: طابق الفاتورة الورقية مع التفاصيل ثم وافق أو ارفض.',
+  'apr.newprod_hint': 'راجع سعر البيع (يمكن تصحيحه). موافقة = تأكيد الصنف؛ رفض = إيقاف الصنف حتى يصلحه المالك (المخزون يبقى مسجّلًا).'
+});
 /* ========== Boot ========== */
 /* ========== Trial links (?demo=1 / ?mock=1) can be closed by the owner ==========
    khair-pos/demo.json {"open": false} (or deleting the file) closes every trial link and wipes the trial data
@@ -4636,7 +4900,7 @@ async function init() {
   if (S.key) { if (last) { L.sel = last; showLogin('pin'); } else showLogin('users'); return; }
   showLogin('key');
 }
-window.KASIR = { S, MOCK, cartView, pinHash, syncOutbox, lineCalc, speakableName, I18N, DEV, devTick, devicePayload, deviceLabel, NoteMatch, PU, mockLog: () => MockServer.log };
+window.KASIR = { S, MOCK, cartView, pinHash, syncOutbox, lineCalc, speakableName, I18N, DEV, devTick, devicePayload, deviceLabel, NoteMatch, ExpenseMatch, PU, mockLog: () => MockServer.log };
 init();
 </script>
 </body>

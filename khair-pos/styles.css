@@ -143,6 +143,9 @@ table.tbl{width:100%;border-collapse:collapse;font-size:14px}
 .tbl th{position:sticky;top:0;background:var(--surface);text-align:start;font-size:12px;text-transform:uppercase;letter-spacing:.3px;color:var(--muted);padding:10px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
 .tbl td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
 .tbl tr:last-child td{border-bottom:0}
+/* v36 expense invoice check: a differing cell; expense item lines */
+.tbl td.bad{background:var(--danger-l);color:var(--danger);font-weight:700}
+.exl{display:grid;grid-template-columns:minmax(0,1fr) 72px 110px auto;gap:6px;align-items:center;margin-bottom:6px}
 .tbl tr.click{cursor:pointer}
 .tbl tr.click:hover td{background:var(--brand-ll)}
 .tbl th.r,.tbl td.r{text-align:end}

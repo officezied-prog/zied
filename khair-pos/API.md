@@ -636,3 +636,33 @@ read or post in it; nobody else (the owner included) receives it. Bootstrap/poll
 fixed rooms plus the private rooms named in `cursors`, `unread` covers every room of the user (from `seen`). No extra calls: the
 existing poll (4 s open / 20 s closed, paused with the tab) carries it all. The apps show names only, never a role word.
 
+
+## Expense invoice check and new products at goods-in (v36, owner 2026-10-11)
+
+### Expense item lines + invoice check (`save_expense`)
+- New optional `data.lines: [{name, qty, unit_price}]` (≤ 50). Each line needs a name and qty > 0; the server adds
+  `total = round(qty × unit_price)`. When lines are given their sum must equal `amount` (else `INVALID`).
+- With `photo_id` (a `scan_expense` photo, kind `biaya`) the read invoice is compared line by line: the total, the
+  number of items (`count`), and for each line its `qty` and `unit_price` (lines matched by name, or by position when
+  the counts agree); typed lines missing from the invoice are `extra`, invoice lines not typed are `missing`.
+  Result `check: {status: cocok | selisih | cek_manual, diffs: [{field, name, typed, invoice}], rows, invoice: {count, total, vendor}}`.
+- `selisih` without `mismatch_reason` → `{ok:false, error:'MISMATCH', check, photo_amount}`; nothing saved.
+- `cek_manual` = the photo could not be read (no `ANTHROPIC_API_KEY` in the Worker, or an unreadable photo): saved at
+  once, never blocked.
+- `selisih` (with a reason) and `cek_manual` from a non-owner raise an approval `kind: 'expense_check'`
+  (`approver_role` `mgr_akuntan` for a cashier, `owner` for a manager / accountant); response `check_request_id`.
+- `pos_expenses` gains `lines` (JSON), `check_status` (`'' | cocok | selisih | cek_manual | disetujui | ditolak`),
+  `request_id`, `checked_by`. `decide_approval` on an `expense_check` sets `check_status` disetujui / ditolak.
+- `daily_report.report.expenses` gains `flagged`, `approved`, `rejected`, `flagged_total`.
+
+### New product at goods-in (`save_product` with `from_goods_in: true`)
+- Creating only (no `id`). `category` and `size` or `weight` are required; a cashier also needs `retail_price > 0`;
+  a name that already exists (any case) is refused.
+- Role `kasir` may call it (nothing else in `save_product`). The product is created with stock 0 (stock comes from the
+  goods-in that follows) and `review` = the id of an approval `kind: 'product_new'`, `approver_role: 'mgr_akuntan'`;
+  response `review_request_id`; the cost from the invoice is not echoed to the cashier.
+- `decide_approval` on a `product_new`: approved → `review` cleared, optional `data.prices {retail_price,
+  wholesale_price, wholesale_min_qty}` applied; rejected → the product is switched off (`active: false`), the stock stays.
+  The payload's `cost_price` is shown only to whoever may see costs (owner; manager / accountant with `akuntan_sees_cost`).
+- `pos_products` gains `review`. The Worker adds the new columns itself on the first request (`POS_MIGRATIONS` in
+  `worker/src/core.js`).

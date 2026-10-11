@@ -70,6 +70,8 @@ function loaderSpecs(req) {
     'Get Range Payments': range('pos_payments', 'pay_date', req.pay_from, req.pay_to),
     'Get Range Purchases': range('pos_purchases', 'purchase_date', req.from, req.to),
     'Get Range Expenses': range('pos_expenses', 'expense_date', req.from, req.to),
+    // v36: the expense an expense_check approval belongs to (decide_approval marks it checked / rejected)
+    'Get Expense By Request': eq('pos_expenses', 'request_id', req.action === 'decide_approval' ? req.approval_id : SENTINEL_NONE),
     'Get Range Shifts': range('pos_shifts', 'shift_date', req.shift_from, req.shift_to),
     'Get Range Repacks': range('pos_repacks', 'repack_date', req.from, req.to),
     'Get Range Activity': range('pos_activity', 'act_date', req.act_from, req.act_to),

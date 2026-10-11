@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS pos_products (
   size TEXT,
   weight TEXT,
   exp_date TEXT,
-  exp_none INTEGER
+  exp_none INTEGER,
+  review TEXT
 );
 
 CREATE TABLE IF NOT EXISTS pos_customers (
@@ -199,9 +200,14 @@ CREATE TABLE IF NOT EXISTS pos_expenses (
   note TEXT,
   user TEXT,
   photo_id TEXT,
-  paid_from TEXT
+  paid_from TEXT,
+  lines TEXT,
+  check_status TEXT,
+  request_id TEXT,
+  checked_by TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pos_expenses_expense_date ON pos_expenses (expense_date);
+CREATE INDEX IF NOT EXISTS idx_pos_expenses_request_id ON pos_expenses (request_id);
 
 CREATE TABLE IF NOT EXISTS pos_shifts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
