@@ -21,7 +21,7 @@
  */
 (function () {
   'use strict';
-  var ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop', 'cashier_orders', 'plan_save', 'streets_worked'];
+  var ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop', 'cashier_orders', 'plan_save', 'streets_worked', 'list_send', 'list_reps', 'lists_sent', 'list_ack', 'resolve_links'];
   // Shop type ids: taken from window.KhairShopTypes (shared/shop-types.js) when the page loaded it; this copy is the
   // fallback for pages that load only this file (e.g. the owner app). Same list as backend/field/process-field.js.
   var SHOP_TYPES_FALLBACK = ['perlengkapan_haji', 'travel_umrah', 'oleh_oleh_haji', 'toko_kurma', 'herbal', 'busana_muslim', 'toko_buku_islam', 'warung', 'toko', 'grosir_sembako', 'pasar', 'minimarket', 'supermarket', 'hypermarket', 'grosir_modern', 'bakery', 'toko_kue', 'katering', 'restoran', 'kafe', 'hotel', 'oleh_oleh', 'parsel', 'toko_buah', 'masjid', 'pesantren', 'sekolah', 'majelis_taklim', 'kantor', 'koperasi', 'reseller', 'toko_online', 'lainnya'];
@@ -73,7 +73,7 @@
   }
   function nextId(db, k) { db.seq = db.seq || {}; db.seq[k] = (db.seq[k] || 0) + 1; return db.seq[k]; }
   function ensureTables(db) {
-    ['shops', 'visits', 'tracks', 'field_days', 'field_orders', 'product_images', 'route_plans'].forEach(function (k) { if (!Array.isArray(db[k])) db[k] = []; });
+    ['shops', 'visits', 'tracks', 'field_days', 'field_orders', 'product_images', 'route_plans', 'shop_lists'].forEach(function (k) { if (!Array.isArray(db[k])) db[k] = []; });
   }
   function noCost(p) { var o = {}; for (var k in p) if (COST_KEYS.indexOf(k) < 0) o[k] = p[k]; return o; }
   function needRole(user, roles) { if (roles.indexOf(user.role) < 0) throw E('FORBIDDEN', 'Role ' + user.role + ' not allowed'); }
@@ -141,6 +141,7 @@
           // mock extension (not in API.md yet): the rep's own orders of the last 30 days, so the app can show their status
           orders: user.role === 'sales' ? clone(db.field_orders.filter(function (o) { return sameUser(o.user, user.name) && o.order_date >= h.jktDate(h.now().getTime() - 30 * 86400000); })) : [],
           plans: user.role === 'sales' ? clone(db.route_plans.filter(function (p) { return sameUser(p.user, user.name) && p.plan_date >= today; })) : [],
+          lists: user.role === 'sales' ? clone(db.shop_lists.filter(function (l) { return sameUser(l.to_user, user.name) && l.status === 'sent'; })) : [],
           settings: { store_name: st.store_name, address: st.address, phone: st.phone, field_min_move_m: st.field_min_move_m || 30, field_interval_s: st.field_interval_s || 180, field_batch_min: st.field_batch_min || 10, field_max_acc_m: st.field_max_acc_m || MAX_ACC }
         };
       }
@@ -274,8 +275,8 @@
           if (!nm) throw E('INVALID', 'Nama titik ' + (i + 1) + ' wajib');
           return { ref: String(x.ref || '').slice(0, 40) || ('s' + (i + 1)), kind: sh ? 'shop' : 'place', shop_id: sh ? sh.shop_id : '', name: nm,
             lat: Math.round(Number(x.lat) * 1e6) / 1e6, lng: Math.round(Number(x.lng) * 1e6) / 1e6, address: String(x.address || '').slice(0, 200),
-            type: TYPES.indexOf(x.type) >= 0 ? x.type : '', src: ['osm', 'map', 'shop'].indexOf(x.src) >= 0 ? x.src : '' };
-        }).map(function (o, i) { var c = String((raw[i] || {}).cat || ''); if (/^[a-z_]{1,20}$/.test(c)) o.cat = c; return o; });
+            type: TYPES.indexOf(x.type) >= 0 ? x.type : '', src: ['osm', 'map', 'shop', 'gm'].indexOf(x.src) >= 0 ? x.src : '' };
+        }).map(function (o, i) { var c = String((raw[i] || {}).cat || ''), ph = String((raw[i] || {}).phone || '').replace(/[^\d+]/g, '').slice(0, 20); if (/^[a-z_]{1,20}$/.test(c)) o.cat = c; if (ph) o.phone = ph; return o; });
         var st0 = data.start || {}, hasSt = okPos(st0.lat, st0.lng), en0 = data.end || {}, hasEn = okPos(en0.lat, en0.lng), budget = 3000;
         var streets = (Array.isArray(data.streets) ? data.streets : []).slice(0, 15).map(function (x) {
           x = x || {}; var nm = String(x.name || '').trim().slice(0, 100); if (!nm) return null;
@@ -294,6 +295,57 @@
           stops: stops, streets: streets, note: String(data.note || '').slice(0, 300), updated_at: h.now().toISOString() };
         if (ex) Object.assign(ex, plan); else db.route_plans.push(plan);
         return { plan: clone(plan) };
+      }
+      // v33: shop lists (Google Maps places of a street) from the office to a rep — same rules as backend/field/process-field.js
+      case 'list_reps': {
+        needRole(user, ['owner', 'manager', 'akuntan', 'kasir', 'sales']);
+        return { reps: (db.users || []).filter(function (u) { return u.role === 'sales' && u.active !== false; }).map(function (u) { return u.name; }) };
+      }
+      case 'list_send': {
+        needRole(user, ['owner', 'manager', 'akuntan', 'kasir']);
+        var to = (db.users || []).find(function (u) { return u.role === 'sales' && u.active !== false && sameUser(u.name, data.to_user); });
+        if (!to) throw E('INVALID', 'Pilih sales tujuan');
+        var lpd = String(data.plan_date || ''), llim = h.jktDate(Date.parse(today + 'T00:00:00Z') + 14 * 86400000);
+        if (!isYmd(lpd) || lpd < today || lpd > llim) throw E('INVALID', 'Tanggal: hari ini sampai 14 hari lagi');
+        var GU = /^https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl|(?:www\.)?google\.[a-z.]+|maps\.google\.[a-z.]+)\//i;
+        var places = (Array.isArray(data.places) ? data.places : []).slice(0, 60).map(function (x) {
+          x = x || {}; var nm = String(x.name || '').trim().slice(0, 100); if (!nm) return null;
+          var la = Number(x.lat), ln = Number(x.lng), has = x.lat != null && x.lng != null && isFinite(la) && isFinite(ln) && Math.abs(la) <= 90 && Math.abs(ln) <= 180 && !(la === 0 && ln === 0), u = String(x.url || '').slice(0, 300);
+          return { name: nm, address: String(x.address || '').slice(0, 200), phone: String(x.phone || '').replace(/[^\d+]/g, '').slice(0, 20), url: GU.test(u) ? u : '',
+            lat: has ? Math.round(la * 1e6) / 1e6 : null, lng: has ? Math.round(ln * 1e6) / 1e6 : null, type: shopTypes().indexOf(x.type) >= 0 ? x.type : '' };
+        }).filter(Boolean);
+        if (!places.length) throw E('INVALID', 'Daftar toko kosong');
+        var sl = { list_id: 'SL' + Math.random().toString(36).slice(2, 9).toUpperCase(), from_user: user.name, from_role: user.role, to_user: to.name, plan_date: lpd,
+          street: String(data.street || '').slice(0, 100), places: places, note: String(data.note || '').slice(0, 300), status: 'sent', created_at: h.now().toISOString(), received_at: '' };
+        db.shop_lists.push(sl);
+        return { list: clone(sl) };
+      }
+      case 'lists_sent': {
+        needRole(user, ['owner', 'manager', 'akuntan', 'kasir', 'sales']);
+        var allL = ['owner', 'manager', 'akuntan'].indexOf(user.role) >= 0;
+        return { lists: db.shop_lists.filter(function (l) { return allL || sameUser(l.from_user, user.name); }).slice().sort(function (a, b) { return String(b.created_at).localeCompare(String(a.created_at)); })
+          .slice(0, 100).map(function (l) { var o = clone(l); o.n = (l.places || []).length; delete o.places; return o; }) };
+      }
+      case 'list_ack': {
+        needRole(user, ['sales']);
+        var ids = (Array.isArray(data.list_ids) ? data.list_ids : []).slice(0, 20).map(String), nAck = 0;
+        db.shop_lists.forEach(function (l) { if (ids.indexOf(l.list_id) >= 0 && sameUser(l.to_user, user.name) && l.status === 'sent') { l.status = 'received'; l.received_at = h.now().toISOString(); nAck++; } });
+        return { acked: nAck };
+      }
+      case 'resolve_links': {
+        // the server follows Google's redirects; the demo knows the links listed in db.gmaps_links (url → full link)
+        needRole(user, ['owner', 'manager', 'akuntan', 'kasir', 'sales']);
+        var GU2 = /^https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl|(?:www\.)?google\.[a-z.]+|maps\.google\.[a-z.]+)\//i;
+        var urls = (Array.isArray(data.urls) ? data.urls : []).map(String).filter(function (u) { return u.length <= 300 && GU2.test(u); }).slice(0, 8);
+        if (!urls.length) throw E('INVALID', 'Tidak ada link Google Maps');
+        var known = db.gmaps_links || {};
+        return { links: urls.map(function (u) {
+          var fin = known[u] || u, d = fin, m;
+          try { d = decodeURIComponent(fin); } catch (e) { d = fin; }
+          m = d.match(/!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/) || d.match(/[?&](?:q|ll)=(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/) || d.match(/@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/);
+          var nm = (d.match(/\/maps\/place\/([^/@?]+)/) || [])[1] || '';
+          return { url: u, final: fin, ok: !!m, lat: m ? Number(m[1]) : null, lng: m ? Number(m[2]) : null, exact: !!m && !/@/.test(m[0]), name: nm.replace(/\+/g, ' ') };
+        }) };
       }
       case 'streets_worked': {
         // v31b/v32: same as backend/field/process-field.js — every rep's streets, KEPT FOREVER (+ planned), latest per street + rep
