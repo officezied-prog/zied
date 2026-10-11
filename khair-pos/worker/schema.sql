@@ -461,6 +461,26 @@ CREATE TABLE IF NOT EXISTS pos_product_images (
   updated_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS pos_route_plans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  plan_id TEXT,
+  user TEXT,
+  plan_date TEXT,
+  start_label TEXT,
+  start_lat REAL,
+  start_lng REAL,
+  stops TEXT,
+  note TEXT,
+  created_at TEXT,
+  updated_at TEXT,
+  end_label TEXT,
+  end_lat REAL,
+  end_lng REAL,
+  streets TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pos_route_plans_plan_date ON pos_route_plans (plan_date);
+CREATE INDEX IF NOT EXISTS idx_pos_route_plans_user ON pos_route_plans (user);
+
 CREATE TABLE IF NOT EXISTS pos_chat (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   channel TEXT,
