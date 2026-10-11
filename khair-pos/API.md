@@ -302,6 +302,19 @@ Mock mode: demo field rep **Ahmad** (role `sales`, PIN 4444) with about 14 days 
 Condet/Kramat Jati/Cililitan, visits, shops (prospek and pelanggan) and orders. Mock mode keeps these tables inside `kmock.db` under the keys `shops`, `visits`, `tracks`, `field_days`,
 `field_orders` and `product_images`, with the shapes above.
 
+### v36 (owner 2026-10-11): new-shop photos, visits table for the accountant, orders map, good streets to go back to
+
+| action | who | data | response |
+|---|---|---|---|
+| `check_in` (new shop) | sales | as above, plus `shop_photo_base64` (shop front, ≤ 45 KB, a photo of the place: no consent needed) and `owner_photo_refused: true` when the owner does not want to be photographed. The app now requires phone, address, the shop photo and the owner photo (unless refused or a black result); the server still accepts an old app copy and returns `warnings[]` | the visit keeps `shop_photo`; the shop gets `photo_visit` (the visit holding its photos). Photos are never echoed back |
+| `shop_photos` | sales, owner, manager, akuntan | `{shop_id}` | `owner_photo, shop_photo, visit_id, visit_time, user` (read only when opened; shops[] stay small) |
+| `orders_map` | owner, manager, akuntan | `{from, to (≤ 3 months), user?}` | `orders[]` — not cancelled, oldest first (the number on the map), each with the shop's `lat, lng, area, address` |
+| `street_returns` | sales (own streets, with `lines`), owner, manager, akuntan (all) | – | `days, today, streets[]: {skey, name, user, last_date, next_date, due_date, due, overdue, score, shops, customers, orders, value, interested, rating, drawn?, ref?}` — good streets only (score = orders×3 + customers×2 + interested visits + value/1,000,000 ≥ 2, shops ≤ 60 m of the line or with the street name in their address, last 90 days); `due` = the return time passed and not planned again |
+| `street_return_set` | owner, manager | `{days: 3–90}` | `days` (setting `street_return_days`, default 14) |
+
+`list_field`, `field_bootstrap` and `streets_worked` are also readable by the accountant. Visits carry `rating` (0–5) and, within 31 days, `shop_photo`.
+New D1 columns (added by the Worker itself, once per isolate): `pos_visits.shop_photo`, `pos_shops.photo_visit`.
+
 ## Devices: where each app is open (v11)
 
 Every request may carry `data.device = {id, app: "owner"|"kasir"|"sales", label, lat, lng, acc, loc_status: "granted"|"denied"|"unavailable"|"prompt"|"off", battery?}`.

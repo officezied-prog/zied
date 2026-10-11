@@ -435,8 +435,9 @@ const isApprover = () => S.role === 'owner' || S.role === 'manager';
 // v17 accountant: reads sales, invoices, goods in/out, returns, ledgers, bank and reports; changes nothing (the server refuses too)
 const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
-const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'approvals', 'shoplist', 'settings'];
-const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|prod-new)$/;
+// v36 (owner 2026-10-11: "the visits table … a copy for the manager, the accountant and the owner"): + the field page, read-only
+const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'approvals', 'shoplist', 'field', 'settings'];
+const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|prod-new|field-rep|field-refresh|lead-photos|fd-.*)$/;
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
@@ -2741,7 +2742,7 @@ function computeAttention(d) {
 }
 async function refreshAttention(force) {
   if (!S.inApp || !S.pin_hash) return;
-  if (force) { clearFieldCache(); Object.keys(salesCache).forEach(k => delete salesCache[k]); }
+  if (force) { clearFieldCache(); FD.sr.at = 0; Object.keys(salesCache).forEach(k => delete salesCache[k]); }
   let d = null;
   try { d = await loadSales(addDays(today(), -30), today(), true); } catch (e) { }
   ATT.items = computeAttention(d).concat(await gudangAttention(), await loadFieldAttention(), await bankAttention(), laterAttention());
@@ -2971,7 +2972,8 @@ function openProductPhoto(p) {
 }
 
 /* ---- Field data (list_field), cached briefly ---- */
-const FD = { date: today(), user: '', data: null, err: '', map: null, cache: {}, routes: null, routesAt: 0, rmap: null, rlay: null, rf: { from: addDays(today(), -29), to: today(), user: '', view: false }, rhl: -1 };
+const FD = { date: today(), user: '', data: null, err: '', map: null, cache: {}, routes: null, routesAt: 0, rmap: null, rlay: null, rf: { from: addDays(today(), -29), to: today(), user: '', view: false }, rhl: -1,
+  om: { range: 'today', user: '', list: null, key: '', at: 0, err: '' }, omap: null, sr: { data: null, at: 0, err: '' }, shopMap: null }; // v36: orders map, streets to go back to
 const FO = { list: [], newCount: 0, status: 'baru', loaded: false, data: null };
 /** list_field. Server limits: tracks only for ranges ≤ 7 days, photo_thumb only ≤ 31 days; noTracks for long ranges. */
 async function loadField(from, to, user, useCache, noTracks) {
@@ -3037,17 +3039,18 @@ RENDER.shoplist = function () {
   KhairGmaps.officeUI($('#gl-host'), { api: (a, d) => apiField(a, d), lang: () => S.lang, today, addDays, toast, errMsg });
 };
 RENDER.field = function () {
-  if (!isApprover()) { go('pos'); return; }
-  const rs = reps();
+  if (!canAudit()) { go('pos'); return; }
+  const rs = reps(), boss = isApprover(); // the accountant reads the page; Google status / test and the boss actions are not his
   $('#view-field').innerHTML = `<div class="view-head"><h1>${esc(t('nav.field'))}</h1><div class="row" style="gap:6px"><button class="btn sm" data-act="go" data-view="shoplist" id="fd-shoplist">📋 ${esc(t('nav.shoplist'))}</button><button class="btn sm" data-act="field-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div></div>
     <div class="toolbar"><label class="f" style="margin:0">${esc(t('date'))} <input class="input" type="date" id="fd-date" value="${esc(FD.date)}" style="width:auto"></label>
       <select class="input" id="fd-user" aria-label="${esc(t('field.rep'))}"><option value="">${esc(t('field.all_reps'))}</option>${rs.map(u => `<option ${FD.user === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
-      <span class="small muted" id="fd-google"></span><button class="btn sm" type="button" id="fd-gtest">🔎 ${esc(t('field.g_test'))}</button></div>
+      ${boss ? `<span class="small muted" id="fd-google"></span><button class="btn sm" type="button" id="fd-gtest">🔎 ${esc(t('field.g_test'))}</button>` : ''}</div>
     <div class="small" id="fd-gtest-msg" role="status" hidden></div>
     <div id="fd-body"><div class="empty">${esc(t('loading'))}</div></div>`;
   $('#fd-date').onchange = e => { FD.date = e.target.value || today(); loadFieldView(); };
   $('#fd-user').onchange = e => { FD.user = e.target.value; loadFieldView(); };
   loadFieldView();
+  if (!boss) return;
   // v34: Google searches used this month by the reps (hard cap below Google's free 5,000 → no bill)
   apiField('places_status').then(r => { const el = $('#fd-google'); if (el && r && r.enabled) { el.textContent = t('field.google', { n: fmtNum(r.n), cap: fmtNum(r.cap) }); el.dataset.n = r.n; } }).catch(() => { });
   $('#fd-gtest').onclick = () => googleSelfTest();
@@ -3107,8 +3110,10 @@ function drawFieldView() {
   body.style.opacity = '';
   if (FD.map) { try { FD.map.remove(); } catch (e) { } FD.map = null; }
   if (FD.rmap) { try { FD.rmap.remove(); } catch (e) { } FD.rmap = null; FD.rlay = null; }
+  if (FD.omap) { try { FD.omap.remove(); } catch (e) { } FD.omap = null; FD.oclu = null; }
   if (!FD.data) { body.innerHTML = `<div class="empty red">${esc(FD.err || t('err.SERVER'))}</div>`; return; }
   const d = FD.data;
+  FD.shopMap = new Map(d.shops.map(s => [s.shop_id, s]));
   const users = [...new Set(reps().map(u => u.name).concat(d.days.map(x => x.user)))].filter(u => !FD.user || u === FD.user);
   const R = users.map(u => repDay(d, u, FD.date));
   const sel = FD.user || (R.find(r => r.pts.length || r.vis.length) || R[0] || {}).user || '';
@@ -3128,6 +3133,13 @@ function drawFieldView() {
       <div class="panel"><h3>${esc(t('field.visit_list'))} <span class="badge gray">${cur ? cur.vis.length : 0}</span></h3><div class="pb list" id="fd-visits">${cur && cur.vis.length ? cur.vis.slice().sort((a, b) => String(a.visit_time).localeCompare(String(b.visit_time))).map((v, i) => visitRowHTML(v, i + 1)).join('') : `<div class="muted">${esc(t('no_data'))}</div>`}</div></div>
       <div class="panel"><h3>${esc(t('field.leads'))} <span class="small muted">(${esc(t('last_n_days', { n: 14 }))})</span> <span class="badge gray">${leads.length}</span></h3><div class="pb list" id="fd-leads">${leads.map(s => leadRowHTML(s)).join('') || `<div class="muted">${esc(t('no_data'))}</div>`}</div></div>
     </div>
+    ${visitsTableHTML(d)}
+    <div class="panel" style="margin-top:14px" id="fd-om-panel"><h3>🛒 ${esc(t('om.title'))} <span class="badge gray" id="fd-om-n">…</span></h3><div class="pb">
+      <div class="small muted">${esc(t('om.hint'))}</div>
+      <div class="toolbar" style="margin-top:8px;flex-wrap:wrap" id="fd-om-bar"></div>
+      <div id="fd-om-map" class="fd-map"></div><div class="small" id="fd-om-legend" style="margin-top:6px"></div><div id="fd-om-detail" class="small" style="margin-top:8px"></div>
+      <div id="fd-om-areas" style="margin-top:8px"></div></div></div>
+    <div class="panel" style="margin-top:14px" id="fd-sr-panel"><h3>🔁 ${esc(t('sr.title'))} <span class="badge gray" id="fd-sr-n">…</span></h3><div class="pb" id="fd-sr-body"><div class="muted">${esc(t('loading'))}</div></div></div>
     <div class="panel" style="margin-top:14px" id="fd-routes-panel"><h3>🗂️ ${esc(t('field.routes'))} <span class="badge gray" id="fd-routes-n">…</span></h3><div class="pb">
       <div class="small muted">${esc(t('field.routes_hint'))}</div>
       <div class="toolbar" style="margin-top:8px;flex-wrap:wrap" id="fd-rf"></div>
@@ -3135,6 +3147,8 @@ function drawFieldView() {
       <div class="list" id="fd-routes" style="margin-top:8px"><div class="muted">${esc(t('loading'))}</div></div></div></div>`;
   if (cur) drawFieldMap(cur, d.shops);
   drawRoutesPanel();
+  drawOrdersMapPanel();
+  drawStreetReturnsPanel();
 }
 /* ---- v35 (owner 2026-10-11: "a button to choose the routes walked by DATE … all the routes in one place — all of them, by
    area, or the ones of the area the map is on"): every street / work line any rep worked or planned (kept forever, the same
@@ -3211,12 +3225,18 @@ function routesListO() {
     const pts = rLines(w).flat(); if (FD.rmap && pts.length) FD.rmap.fitBounds(pts, { padding: [30, 30], maxZoom: 17, animate: false });
   });
 }
+/* v36 (owner 2026-10-11: "visits table: name, place, shop type, shop owner, star rating, note"): the rep's star impression,
+   the shop type / owner / place, and a new shop's front photo, in the visit list, the popup and the visits table. */
+const visitShop = v => (FD.shopMap && FD.shopMap.get(v.shop_id)) || null;
+const starsHTML = n => { n = Math.max(0, Math.min(5, int(n))); return `<span class="stars-ro" data-rating="${n}" title="${n ? n + '/5' : esc(t('vt.no_rating'))}" aria-label="${n}/5">${n ? [1, 2, 3, 4, 5].map(i => `<span class="${i <= n ? 'on' : 'off'}">★</span>`).join('') : '—'}</span>`; };
+const visitPlace = sh => sh ? [sh.area, sh.address].filter(Boolean).join(' · ') : '';
+const zoomImg = (b64, alt, cls) => `<img class="${cls || 'vthumb'}" data-act="photo-zoom" data-src="${esc(b64Img(b64))}" src="${esc(b64Img(b64))}" alt="${esc(alt || '')}">`;
 function visitRowHTML(v, n) {
-  const far = v.distance_m != null && v.distance_m > FAR_M;
+  const far = v.distance_m != null && v.distance_m > FAR_M, sh = visitShop(v);
   return `<div class="li visit-row" data-visit="${esc(v.visit_id)}" style="min-height:0;padding:8px 10px">
     <span class="vnum oc-${ocKeyO(v.outcome)} ${far ? 'vfar' : ''}" data-oc="${ocKeyO(v.outcome)}">${n}</span>
-    ${v.photo_thumb ? `<img class="vthumb" data-act="photo-zoom" data-src="${esc(b64Img(v.photo_thumb))}" src="${esc(b64Img(v.photo_thumb))}" alt="${esc(v.shop_name)}">` : `<div class="vthumb">${ic('camera')}</div>`}
-    <div class="grow"><div class="t">${esc(v.shop_name)}</div><div class="s">${esc(jktTime(v.visit_time))} · ${esc(v.user)}${v.notes ? ' · ' + esc(v.notes) : ''}</div></div>
+    ${v.photo_thumb ? zoomImg(v.photo_thumb, v.shop_name) : `<div class="vthumb">${ic('camera')}</div>`}${v.shop_photo ? zoomImg(v.shop_photo, v.shop_name, 'vthumb vshop') : ''}
+    <div class="grow"><div class="t">${esc(v.shop_name)} ${starsHTML(v.rating)}</div><div class="s">${esc(jktTime(v.visit_time))} · ${esc(v.user)}${sh ? ' · ' + esc(shopTypeLabel(sh)) : ''}${sh && sh.owner_name ? ' · 👤 ' + esc(sh.owner_name) : ''}${v.notes ? ' · ' + esc(v.notes) : ''}</div>${visitPlace(sh) ? `<div class="s">📍 ${esc(visitPlace(sh))}</div>` : ''}</div>
     <div class="right"><span class="badge ${OUTCOME_CLS[v.outcome] || 'gray'}">${esc(t('out.' + v.outcome))}</span>${v.distance_m != null ? `<div class="small ${far ? 'red' : 'muted'}" style="margin-top:3px">${far ? '⚠ ' : ''}${fmtNum(v.distance_m)} m</div>` : ''}</div></div>`;
 }
 /** Shop category label (shared/shop-types.js; the old 8 labels if that file did not load). */
@@ -3224,14 +3244,185 @@ function shopTypeLabel(s) { return window.KhairShopTypes ? KhairShopTypes.label(
 function leadRowHTML(s) {
   const c = shopCustomer(s);
   return `<div class="li lead-row" data-shop="${esc(s.shop_id)}" style="min-height:0;padding:8px 12px"><div class="grow"><div class="t">${esc(s.name)} <span class="badge gray">${esc(shopTypeLabel(s))}</span></div>
-    <div class="s">${esc([s.area, s.owner_name, s.phone].filter(Boolean).join(' · '))} · ${esc(fmtDate(String(s.created_at).slice(0, 10)))} · ${esc(s.created_by || '')}</div></div>
-    ${c ? `<span class="badge green" data-linked>${esc(t('field.linked', { name: c.name }))}</span>` : `<button class="btn xs primary" data-act="lead-convert" data-shop="${esc(s.shop_id)}">${ic('plus')} ${esc(t('field.make_customer'))}</button>`}</div>`;
+    <div class="s">${esc([s.area, s.owner_name, s.phone].filter(Boolean).join(' · '))} · ${esc(fmtDate(String(s.created_at).slice(0, 10)))} · ${esc(s.created_by || '')}</div>${s.address ? `<div class="s" data-address>📍 ${esc(s.address)}</div>` : ''}</div>
+    ${s.photo_visit ? `<button class="btn xs" data-act="lead-photos" data-shop="${esc(s.shop_id)}">📷 ${esc(t('vt.photos'))}</button>` : ''}
+    ${c ? `<span class="badge green" data-linked>${esc(t('field.linked', { name: c.name }))}</span>` : isApprover() ? `<button class="btn xs primary" data-act="lead-convert" data-shop="${esc(s.shop_id)}">${ic('plus')} ${esc(t('field.make_customer'))}</button>` : ''}</div>`;
+}
+/** v36: a shop's photos (owner with the rep + shop front) — read from the server only when opened, kept for this session. */
+const SHOP_PH = new Map();
+async function openShopPhotosO(shopId) {
+  const sh = (FD.shopMap && FD.shopMap.get(shopId)) || null;
+  const el = openModal({ title: t('vt.photos') + (sh ? ' · ' + sh.name : ''), id: 'shop-photos', body: `<div id="sp-photos"><div class="muted">${esc(t('loading'))}</div></div>` });
+  let d = SHOP_PH.get(shopId);
+  if (!d) { try { d = await apiField('shop_photos', { shop_id: shopId }); SHOP_PH.set(shopId, d); } catch (e) { const b = $('#sp-photos', el); if (b) b.innerHTML = `<div class="red">${esc(errMsg(e))}</div>`; return; } }
+  const fig = (b64, label, k) => `<figure data-ph="${k}" style="margin:0 0 12px">${b64 ? `<img src="${esc(b64Img(b64))}" alt="${esc(label)}" style="width:100%;border-radius:10px">` : `<div class="muted small" style="padding:18px;text-align:center;border:1px dashed var(--border);border-radius:10px">${esc(t('vt.no_photo'))}</div>`}<figcaption class="small" style="font-weight:800;margin-top:4px">${esc(label)}</figcaption></figure>`;
+  const b = $('#sp-photos', el); if (!b) return;
+  b.innerHTML = fig(d.shop_photo, t('vt.photo_shop'), 'shop') + fig(d.owner_photo, t('vt.photo_owner'), 'owner')
+    + (sh ? `<div class="small muted">${esc([sh.owner_name, sh.phone, sh.address, sh.area].filter(Boolean).join(' · '))}</div>` : '') + (d.user ? `<div class="small muted">${esc(d.user)} · ${esc(d.visit_time ? fmtDate(String(d.visit_time).slice(0, 10)) : '')}</div>` : '');
+}
+/** v36: the day's visits of every rep (or the chosen one) as one table — the copy the owner, manager and accountant read. */
+function visitsTableHTML(d) {
+  const vis = d.visits.filter(v => v.visit_date === FD.date && (!FD.user || v.user === FD.user)).sort((a, b) => String(a.visit_time).localeCompare(String(b.visit_time)));
+  return `<div class="panel" style="margin-top:14px" id="fd-vtable-panel"><h3>📋 ${esc(t('vt.title'))} <span class="badge gray">${vis.length}</span></h3>
+    <div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl" id="fd-vtable"><thead><tr><th>#</th><th>${esc(t('vt.time'))}</th><th>${esc(t('field.rep'))}</th><th>${esc(t('vt.shop'))}</th><th>${esc(t('vt.place'))}</th><th>${esc(t('vt.type'))}</th><th>${esc(t('vt.owner'))}</th><th>${esc(t('vt.rating'))}</th><th>${esc(t('field.results'))}</th><th>${esc(t('notes'))}</th><th>${esc(t('vt.photos'))}</th></tr></thead><tbody>
+    ${vis.map((v, i) => { const sh = visitShop(v); return `<tr data-visit="${esc(v.visit_id)}"><td class="muted">${i + 1}</td><td class="num">${esc(jktTime(v.visit_time))}</td><td>${esc(v.user)}</td><td data-c="shop"><b>${esc(v.shop_name)}</b>${sh && sh.phone ? `<div class="small muted">📞 ${esc(sh.phone)}</div>` : ''}</td>
+      <td data-c="place">${esc(visitPlace(sh) || '—')}</td><td data-c="type">${esc(sh ? shopTypeLabel(sh) : '—')}</td><td data-c="owner">${esc((sh && sh.owner_name) || '—')}</td><td data-c="rating">${starsHTML(v.rating)}</td>
+      <td data-c="result"><span class="badge ${OUTCOME_CLS[v.outcome] || 'gray'}">${esc(t('out.' + v.outcome))}</span></td><td data-c="note">${esc(v.notes || '')}</td>
+      <td data-c="photos"><div class="row" style="gap:4px;flex-wrap:nowrap">${v.photo_thumb ? zoomImg(v.photo_thumb, v.shop_name, 'vthumb sm') : ''}${v.shop_photo ? zoomImg(v.shop_photo, v.shop_name, 'vthumb sm vshop') : ''}</div></td></tr>`; }).join('') || `<tr><td colspan="11" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div></div>`;
 }
 function visitPopupHTML(v, n) {
-  const far = v.distance_m != null && v.distance_m > FAR_M;
-  return `<div class="vpop"><b>${n}. ${esc(v.shop_name)}</b><br>${esc(t('out.' + v.outcome))} · ${esc(jktTime(v.visit_time))}${v.distance_m != null ? ` · ${fmtNum(v.distance_m)} m` : ''}
+  const far = v.distance_m != null && v.distance_m > FAR_M, sh = visitShop(v);
+  return `<div class="vpop"><b>${n}. ${esc(v.shop_name)}</b> ${starsHTML(v.rating)}<br>${esc(t('out.' + v.outcome))} · ${esc(jktTime(v.visit_time))}${v.distance_m != null ? ` · ${fmtNum(v.distance_m)} m` : ''}
+    ${sh ? `<div data-vp-shop>${esc(shopTypeLabel(sh))}${sh.owner_name ? ' · 👤 ' + esc(sh.owner_name) : ''}${visitPlace(sh) ? ' · 📍 ' + esc(visitPlace(sh)) : ''}</div>` : ''}${v.notes ? `<div>${esc(v.notes)}</div>` : ''}
     ${far ? `<div class="badge red" data-far style="margin-top:4px">⚠ ${esc(t('field.far'))}</div>` : ''}
-    ${v.photo_thumb ? `<div><img src="${esc(b64Img(v.photo_thumb))}" alt="" style="width:120px;border-radius:6px;margin-top:6px"></div>` : ''}</div>`;
+    ${v.photo_thumb || v.shop_photo ? `<div>${v.photo_thumb ? `<img src="${esc(b64Img(v.photo_thumb))}" alt="" style="width:120px;border-radius:6px;margin-top:6px">` : ''}${v.shop_photo ? ` <img data-vp-shopphoto src="${esc(b64Img(v.shop_photo))}" alt="" style="width:120px;border-radius:6px;margin-top:6px">` : ''}</div>` : ''}</div>`;
+}
+
+/* ---- v36 (owner 2026-10-11: "every order marked on the map with a sign and a sequence number, to know which area has the most
+   orders and who ordered first"): every rep's accepted orders of today / 7 / 30 days on one map — numbered in the order they
+   were taken, one colour per rep, grouped into count bubbles where crowded (as in Khair Sales), tap = the order. One small call
+   (orders_map) when the panel opens or the period changes, kept a minute. ---- */
+const OM_C = ['#E11D48', '#2563EB', '#16A34A', '#D97706', '#7C3AED', '#0891B2', '#DB2777', '#65A30D'];
+const omColor = u => { const us = [...new Set((FD.om.list || []).map(o => o.user).concat(reps().map(r => r.name)))].sort(); return OM_C[Math.max(0, us.indexOf(u)) % OM_C.length]; };
+const omRange = () => { const T = today(), k = FD.om.range; return k === '30' ? [addDays(T, -29), T] : k === '7' ? [addDays(T, -6), T] : [T, T]; };
+const okPos = o => o && o.lat != null && o.lng != null && isFinite(num(o.lat)) && isFinite(num(o.lng)) && !(num(o.lat) === 0 && num(o.lng) === 0);
+function omBar() {
+  const bar = $('#fd-om-bar'); if (!bar) return;
+  const users = [...new Set(reps().map(u => u.name).concat((FD.om.list || []).map(o => o.user)))].sort();
+  bar.innerHTML = ['today', '7', '30'].map(k => `<button type="button" class="chip ${FD.om.range === k ? 'on' : ''}" data-omr="${k}" id="fd-om-r-${k}" aria-pressed="${FD.om.range === k}">${esc(t('om.r_' + k))}</button>`).join('')
+    + `<select class="input" id="fd-om-user" aria-label="${esc(t('field.rep'))}" style="width:auto"><option value="">${esc(t('field.all_reps'))}</option>${users.map(u => `<option ${FD.om.user === u ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select>`;
+  bar.querySelectorAll('[data-omr]').forEach(b => b.onclick = () => { FD.om.range = b.dataset.omr; drawOrdersMapPanel(); });
+  $('#fd-om-user').onchange = e => { FD.om.user = e.target.value; drawOrdersMapPanel(); };
+}
+function omPopupHTML(o) {
+  return `<div class="vpop om-pop" data-order="${esc(o.order_id)}"><b>#${o.seq} · ${esc(o.shop_name)}</b><br>${esc(o.user)} · ${esc(fmtDate(o.order_date))}${o.order_time ? ' ' + esc(jktTime(o.order_time)) : ''}<br>
+    <b>${fmtRp(o.total)}</b> · ${o.itemsList.length} ${esc(t('items'))} · <span data-ost="${esc(o.status)}">${esc(t('ost.' + o.status))}</span>${o.area ? `<br>📍 ${esc([o.area, o.address].filter(Boolean).join(' · '))}` : ''}
+    <div style="margin-top:6px"><button class="btn xs primary" data-act="fd-om-open" data-id="${esc(o.order_id)}">${esc(t('om.open'))}</button></div></div>`;
+}
+function omPin(o) { return `<span class="om-pin" data-seq="${o.seq}" data-user="${esc(o.user)}" style="--c:${omColor(o.user)}">${o.seq}</span>`; }
+/** Crowded pins → one count bubble (tap = zoom in); from zoom 17 or with few pins in view every pin is drawn (as in Khair Sales). */
+function omCluster(m, items) {
+  const L = window.L, lay = L.layerGroup().addTo(m), PX = 60, Z = 17, FEW = 60;
+  // drawn again only when the zoom or the pins in view change — and never while an order popup is open (opening it pans the map)
+  let open = false, lastZ = null, lastSig = '';
+  m.on('popupopen', () => { open = true; }).on('popupclose', () => { open = false; });
+  const draw = () => {
+    if (!m._loaded || (open && m.getZoom() === lastZ)) return;
+    const z = m.getZoom(), b = m.getBounds().pad(0.3), vis = items.filter(o => b.contains([o.lat, o.lng])), sig = z + '|' + vis.map(o => o.seq).join(',');
+    if (sig === lastSig) return;
+    lay.clearLayers(); lastZ = z; lastSig = sig;
+    const one = o => L.marker([o.lat, o.lng], { icon: L.divIcon({ className: '', html: omPin(o), iconSize: [26, 26], iconAnchor: [13, 13] }), zIndexOffset: 1000 - o.seq, keyboard: false }).bindPopup(omPopupHTML(o)).addTo(lay);
+    if (z >= Z || vis.length <= FEW) { vis.forEach(one); return; }
+    const cells = new Map();
+    vis.forEach(o => { const q = m.project([o.lat, o.lng], z), k = Math.floor(q.x / PX) + ':' + Math.floor(q.y / PX); (cells.get(k) || cells.set(k, []).get(k)).push(o); });
+    cells.forEach(g => {
+      if (g.length === 1) { one(g[0]); return; }
+      const n = g.length, sz = n < 10 ? 30 : n < 100 ? 36 : 44, cnt = {};
+      g.forEach(o => { const c = omColor(o.user); cnt[c] = (cnt[c] || 0) + 1; });
+      const col = Object.keys(cnt).sort((a, c) => cnt[c] - cnt[a])[0];
+      L.marker([g.reduce((a, o) => a + o.lat, 0) / n, g.reduce((a, o) => a + o.lng, 0) / n], { icon: L.divIcon({ className: 'clu-wrap', html: `<span class="clu" data-n="${n}" style="width:${sz}px;height:${sz}px;border-color:${col}">${n}</span>`, iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2] }), bubblingMouseEvents: false })
+        .on('click', () => m.fitBounds(g.map(o => [o.lat, o.lng]), { padding: [30, 30], maxZoom: Z })).addTo(lay);
+    });
+  };
+  let tm = 0; m.on('zoomend moveend', () => { clearTimeout(tm); tm = setTimeout(draw, 60); });
+  m.whenReady(draw);
+  return { lay, draw };
+}
+function omSVG(items, Wpx) {
+  const all = items.map(o => ({ lat: num(o.lat), lng: num(o.lng) }));
+  const minLa = Math.min(...all.map(p => p.lat)), maxLa = Math.max(...all.map(p => p.lat)), minLo = Math.min(...all.map(p => p.lng)), maxLo = Math.max(...all.map(p => p.lng));
+  const k = Math.cos((minLa + maxLa) / 2 * Math.PI / 180), w = (maxLo - minLo) * k || 0.002, h = (maxLa - minLa) || 0.002;
+  const W = Wpx || 800, H = Math.round(W * (W < 560 ? 0.95 : 0.52)), pad = 30, sc = Math.min((W - 2 * pad) / w, (H - 2 * pad) / h), ox = (W - w * sc) / 2, oy = (H - h * sc) / 2;
+  const X = lo => ox + (lo - minLo) * k * sc, Y = la => oy + (maxLa - la) * sc;
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(t('om.title'))}" class="fd-svg"><rect width="${W}" height="${H}" class="c-mapbg" rx="10"/>`;
+  items.slice().reverse().forEach(o => { const x = X(num(o.lng)), y = Y(num(o.lat)); s += `<g data-oi="${o.seq}" class="om-svg" data-user="${esc(o.user)}" style="cursor:pointer"><circle cx="${x}" cy="${y}" r="12" fill="${omColor(o.user)}" stroke="#fff" stroke-width="2"/><text x="${x}" y="${y + 4.5}" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">${o.seq}</text><title>${esc(`#${o.seq} · ${o.shop_name} · ${o.user}`)}</title></g>`; });
+  return s + `</svg><div class="small muted">${esc(t('field.svg_note'))}</div>`;
+}
+async function drawOrdersMapPanel() {
+  const panel = $('#fd-om-panel'); if (!panel) return;
+  const seq = FD.om.seq = (FD.om.seq || 0) + 1, stale = () => seq !== FD.om.seq || $('#fd-om-panel') !== panel; // a newer draw (period / rep / page) wins
+  if (FD.omap) { try { FD.omap.remove(); } catch (e) { } FD.omap = null; }
+  omBar();
+  const [from, to] = omRange(), key = `${from}|${to}|${FD.om.user}`;
+  if (FD.om.key !== key || Date.now() - FD.om.at > 60000) {
+    $('#fd-om-n').textContent = '…';
+    try { const r = await apiField('orders_map', Object.assign({ from, to }, FD.om.user ? { user: FD.om.user } : {})); FD.om.list = r.orders || []; FD.om.key = key; FD.om.at = Date.now(); FD.om.err = ''; }
+    catch (e) { FD.om.err = errMsg(e); FD.om.list = null; FD.om.key = ''; }
+    if (stale()) return;
+  }
+  omBar();
+  const el = $('#fd-om-map'), det = $('#fd-om-detail');
+  if (!FD.om.list) { $('#fd-om-n').textContent = '—'; el.dataset.mode = 'none'; el.innerHTML = `<div class="empty red">${esc(FD.om.err || t('err.SERVER'))}</div>`; return; }
+  const all = FD.om.list.map((o, i) => Object.assign({}, o, { seq: i + 1, itemsList: parseItems(o.items), lat: okPos(o) ? num(o.lat) : null, lng: okPos(o) ? num(o.lng) : null }));
+  FD.om.items = all;
+  const pins = all.filter(okPos);
+  $('#fd-om-n').textContent = all.length;
+  // who took how many (colour per rep) + pins without a shop position
+  const byUser = {}; all.forEach(o => { byUser[o.user] = (byUser[o.user] || 0) + 1; });
+  $('#fd-om-legend').innerHTML = Object.keys(byUser).sort().map(u => `<span class="occ" data-om-user="${esc(u)}"><span class="ocdot" style="background:${omColor(u)}" aria-hidden="true"></span>${esc(u)}: <b>${byUser[u]}</b></span>`).join(' ')
+    + (all.length > pins.length ? ` <span class="muted" id="fd-om-nopos">· ${esc(t('om.no_pos', { n: all.length - pins.length }))}</span>` : '');
+  // which area has the most orders (the shop's area; first = lowest number there)
+  const areas = {}; all.forEach(o => { const a = o.area || t('om.no_area'), x = areas[a] || (areas[a] = { a, n: 0, total: 0, first: o.seq, users: new Set() }); x.n++; x.total += int(o.total); x.users.add(o.user); });
+  const top = Object.values(areas).sort((a, b) => b.n - a.n || b.total - a.total).slice(0, 6);
+  $('#fd-om-areas').innerHTML = top.length ? `<div class="small" style="font-weight:800;margin-bottom:4px">${esc(t('om.areas'))}</div><div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl" id="fd-om-area-table"><thead><tr><th>${esc(t('om.area'))}</th><th class="r">${esc(t('field.orders'))}</th><th class="r">${esc(t('total'))}</th><th class="r">${esc(t('om.first'))}</th><th>${esc(t('field.rep'))}</th></tr></thead><tbody>
+    ${top.map(x => `<tr data-area="${esc(x.a)}"><td><b>${esc(x.a)}</b></td><td class="r num" data-c="n">${x.n}</td><td class="r num">${fmtRp(x.total)}</td><td class="r num">#${x.first}</td><td>${esc([...x.users].join(', '))}</td></tr>`).join('')}</tbody></table></div>` : '';
+  det.innerHTML = '';
+  if (!pins.length) { el.dataset.mode = 'empty'; el.innerHTML = `<div class="empty">${esc(t(all.length ? 'om.none_pos' : 'om.none'))}</div>`; return; }
+  const ok = navigator.onLine && await loadLeaflet();
+  if (stale() || $('#fd-om-map') !== el) return;
+  if (ok) {
+    try {
+      if (FD.omap) { try { FD.omap.remove(); } catch (e) { } FD.omap = null; }
+      el.innerHTML = ''; el.dataset.mode = 'leaflet';
+      // keyboard: false — otherwise a tap focuses the map and the page scrolls it into view, moving the pin away from under the finger
+      const L = window.L, m = L.map(el, { zoomControl: true, attributionControl: true, keyboard: false });
+      FD.omap = m;
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(m);
+      m.fitBounds(pins.map(o => [o.lat, o.lng]), { padding: [30, 30], maxZoom: 16, animate: false });
+      FD.oclu = omCluster(m, pins);
+      return;
+    } catch (e) { if (FD.omap) { try { FD.omap.remove(); } catch (x) { } FD.omap = null; } }
+  }
+  el.dataset.mode = 'svg';
+  el.innerHTML = omSVG(pins, Math.max(320, Math.round(el.clientWidth || 800)));
+  el.onclick = e => { const c = e.target.closest('[data-oi]'); if (!c) return; const o = all[+c.dataset.oi - 1]; if (o) det.innerHTML = omPopupHTML(o); };
+}
+
+/* ---- v36 (owner 2026-10-11: "remind the rep to go back to the best streets; the return time is set with the manager; a notice to
+   the owner"): the server scores every worked street by the shops along it (orders, customers, interest — last 90 days); the good
+   ones whose return time has passed are listed here per rep and raise an attention item. Read at most once an hour. ---- */
+async function loadStreetReturnsO(force) {
+  if (!canAudit()) return null;
+  if (!force && FD.sr.data && Date.now() - FD.sr.at < 3600000) return FD.sr.data;
+  try { const r = await apiField('street_returns'); FD.sr = { data: { days: int(r.days) || 14, streets: r.streets || [] }, at: Date.now(), err: '' }; }
+  catch (e) { FD.sr.err = errMsg(e); }
+  return FD.sr.data;
+}
+const srWhyO = x => [x.orders ? t('sr.orders', { n: x.orders, rp: fmtRp(x.value) }) : '', x.customers ? t('sr.customers', { n: x.customers }) : '', x.interested ? t('sr.interested', { n: x.interested }) : '', x.rating ? '★ ' + NF1.format(x.rating) : ''].filter(Boolean).join(' · ');
+async function drawStreetReturnsPanel(force) {
+  const panel = $('#fd-sr-panel'); if (!panel) return;
+  const d = await loadStreetReturnsO(force);
+  if ($('#fd-sr-panel') !== panel) return;
+  const body = $('#fd-sr-body');
+  if (!d) { $('#fd-sr-n').textContent = '—'; body.innerHTML = `<div class="muted">${esc(FD.sr.err || t('field.unavailable'))}</div>`; return; }
+  const list = d.streets.filter(x => !FD.user || x.user === FD.user), due = list.filter(x => x.due), later = list.length - due.length;
+  $('#fd-sr-n').textContent = due.length; $('#fd-sr-n').className = 'badge ' + (due.length ? 'red' : 'gray');
+  const setting = isApprover() ? `<div class="row wrap" style="gap:6px;align-items:center" id="fd-sr-set"><label class="small" for="fd-sr-days">${esc(t('sr.days_label'))}</label><input class="input" type="number" min="3" max="90" id="fd-sr-days" value="${d.days}" style="width:80px"><span class="small">${esc(t('sr.days_unit'))}</span><button class="btn sm" type="button" id="fd-sr-save">${esc(t('save'))}</button></div>`
+    : `<div class="small" id="fd-sr-set" data-days="${d.days}">${esc(t('sr.days_ro', { n: d.days }))}</div>`;
+  const users = [...new Set(due.map(x => x.user))].sort();
+  body.innerHTML = `<div class="small muted" style="margin-bottom:6px">${esc(t('sr.hint'))}</div>${setting}
+    <div id="fd-sr-list" style="margin-top:10px">${users.map(u => `<div class="small" style="font-weight:800;margin:8px 0 4px" data-sr-user="${esc(u)}"><span class="ocdot" style="background:${omColor(u)}" aria-hidden="true"></span> ${esc(u)} <span class="badge red">${due.filter(x => x.user === u).length}</span></div>
+      <div class="list">${due.filter(x => x.user === u).map(x => `<div class="li sr-row" data-k="${esc(x.skey)}" data-user="${esc(x.user)}" style="min-height:0;padding:6px 10px"><span aria-hidden="true">${x.drawn ? '✏️' : '🛣️'}</span><div class="grow"><div class="t">${esc(x.name)}</div>
+        <div class="s">${esc(t('sr.last', { date: fmtDate(x.last_date) }))} · <b class="red">${esc(x.overdue ? t('sr.overdue', { n: x.overdue }) : t('sr.due_today'))}</b></div><div class="s" data-why>${esc(srWhyO(x))}</div></div><span class="badge gray" title="${esc(t('sr.score'))}">${x.score}</span></div>`).join('')}</div>`).join('') || `<div class="muted" id="fd-sr-none">${esc(t('sr.none'))}</div>`}
+    ${later ? `<div class="small muted" style="margin-top:8px" id="fd-sr-later">${esc(t('sr.later', { n: later }))}</div>` : ''}</div>`;
+  const sv = $('#fd-sr-save');
+  if (sv) sv.onclick = async () => {
+    const n = int($('#fd-sr-days').value);
+    if (!(n >= 3 && n <= 90)) { toast(t('sr.days_bad'), 'err'); return; }
+    sv.disabled = true;
+    try { await apiField('street_return_set', { days: n }); toast(t('sr.days_saved', { n }), 'ok'); await drawStreetReturnsPanel(true); refreshAttention(); }
+    catch (e) { toast(errMsg(e), 'err'); sv.disabled = false; }
+  };
 }
 
 /* ---- Map: Leaflet (vendor/leaflet, same site — no third-party script) + OSM tiles, with an SVG fallback ---- */
@@ -3326,9 +3517,10 @@ function drawOrders() {
   box.innerHTML = list.length ? `<div class="list">${list.map(o => `<button class="li fo-row" data-act="order-open" data-id="${esc(o.order_id)}"><div class="grow"><div class="t">${esc(o.shop_name)} <span class="small muted">${esc(o.order_id)}</span></div><div class="s">${esc(fmtDate(o.order_date))} · ${esc(o.user)} · ${o.itemsList.length} ${esc(t('items'))}${o.invoice_no ? ' · ' + esc(o.invoice_no) : ''}</div></div>
       <div class="right"><span class="badge ${cls[o.status] || 'gray'}" data-ost="${esc(o.status)}">${esc(t('ost.' + o.status))}</span><div class="num" style="font-weight:800;margin-top:3px">${fmtRp(o.total)}</div></div></button>`).join('')}</div>` : `<div class="empty">${esc(t('no_data'))}</div>`;
 }
-function openFieldOrder(o) {
+function openFieldOrder(o, shops) {
   if (!o) return;
-  const sh = (FO.data ? FO.data.shops : []).find(s => s.shop_id === o.shop_id);
+  const sh = (shops || (FO.data ? FO.data.shops : [])).find(s => s.shop_id === o.shop_id);
+  const ro = !isApprover(); // v36: the accountant reads the order (from the orders map), changes nothing
   const c = shopCustomer(sh || { name: o.shop_name });
   const its = o.itemsList;
   const el = openModal({
@@ -3340,8 +3532,8 @@ function openFieldOrder(o) {
         ${its.map(i => { const p = prodById(i.product_id); return `<tr><td>${esc(i.name || (p && p.name) || i.product_id)} ${i.price_type === 'grosir' ? `<span class="badge blue">${esc(t('grosir'))}</span>` : ''}</td><td class="r num">${fmtQty(i.qty)}</td><td class="r num">${fmtRp(i.unit_price)}</td><td class="r num">${fmtRp(i.line_total != null ? i.line_total : Math.round(num(i.qty) * int(i.unit_price)))}</td></tr>`; }).join('')}</tbody>
         <tfoot><tr style="font-weight:800"><td colspan="3">${esc(t('total'))}</td><td class="r num" id="fo-total">${fmtRp(o.total)}</td></tr></tfoot></table></div>
       ${o.notes ? `<p class="small">${esc(t('notes'))}: ${esc(o.notes)}</p>` : ''}${o.status_note || o.note ? `<p class="small muted">${esc(o.status_note || o.note)}</p>` : ''}
-      <div class="field" style="margin-top:10px"><label class="f" for="fo-note">${esc(t('notes'))}</label><input class="input" id="fo-note"></div><div class="red" id="fo-err" role="alert"></div>`,
-    foot: `${o.status !== 'batal' && o.status !== 'dikirim' ? `<button class="btn danger" id="fo-cancel">${esc(t('fo.cancel'))}</button>` : ''}
+      ${ro ? '' : `<div class="field" style="margin-top:10px"><label class="f" for="fo-note">${esc(t('notes'))}</label><input class="input" id="fo-note"></div><div class="red" id="fo-err" role="alert"></div>`}`,
+    foot: ro ? `<button class="btn primary grow" data-act="modal-close">${esc(t('close'))}</button>` : `${o.status !== 'batal' && o.status !== 'dikirim' ? `<button class="btn danger" id="fo-cancel">${esc(t('fo.cancel'))}</button>` : ''}
       ${['baru', 'diproses'].includes(o.status) ? `<button class="btn" id="fo-ship">${ic('truck')} ${esc(t('fo.ship'))}</button>` : ''}
       ${o.status === 'baru' ? `<button class="btn primary" id="fo-process">${ic('cart')} ${esc(t('fo.process'))}</button>` : ''}`
   });
@@ -3423,7 +3615,11 @@ async function loadFieldAttention() {
   try {
     const [d, td] = await Promise.all([loadField(addDays(today(), -30), today(), '', true, true), loadField(today(), today(), '', true)]);
     FO.newCount = d.orders.filter(o => o.status === 'baru').length;
-    return fieldAttention(Object.assign({}, d, { tracks: td.tracks, days: d.days.filter(x => x.day_date !== today()).concat(td.days) }));
+    const items = fieldAttention(Object.assign({}, d, { tracks: td.tracks, days: d.days.filter(x => x.day_date !== today()).concat(td.days) }));
+    // v36: good streets whose return time has passed (read at most once an hour) — the owner's notice
+    const sr = await loadStreetReturnsO(false).catch(() => null), nDue = sr ? sr.streets.filter(x => x.due).length : 0;
+    if (nDue) items.push({ key: 'streets', level: 'warn', icon: 'pin', text: t('att.streets_due', { n: nDue, days: sr.days }), go: 'field' });
+    return items;
   } catch (e) { return []; }
 }
 
@@ -3439,7 +3635,7 @@ function fieldPanelHTML(d, from, to) {
     ${rows.map(r => `<tr data-rep="${esc(r.u)}"><td>${esc(r.u)}</td><td class="r num" data-c="visits">${fmtNum(r.v)}</td><td class="r num" data-c="shops">${fmtNum(r.shops)}</td><td class="r num" data-c="orders">${fmtNum(r.o)}</td><td class="r num">${fmtRp(r.total)}</td><td class="r num" data-c="conv">${fmtPct(r.conv)}</td><td class="occs" data-c="results">${ocCountsO(r.vis)}</td></tr>`).join('') || `<tr><td colspan="7" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div>`;
 }
 async function loadFieldPanel(from, to) {
-  const box = $('#rp-field'); if (!box || !isApprover()) return;
+  const box = $('#rp-field'); if (!box || !canAudit()) return; // v36: the accountant too
   try { const d = await loadField(from, to, '', true, true); const b = $('#rp-field'); if (b) b.innerHTML = fieldPanelHTML(d, from, to); }
   catch (e) { const b = $('#rp-field'); if (b) b.innerHTML = `<div class="pb muted">${esc(t('field.unavailable'))}</div>`; }
 }
@@ -4788,6 +4984,32 @@ Object.assign(I18N.ar, {
   'att.field_orders': '{n} طلبات مندوبين جديدة', 'att.rep_silent': 'المندوب {name} يعمل ولم يرسل موقعه منذ أكثر من 30 دقيقة (آخر مرة {ago})', 'att.far': '{n} زيارات بعيدة عن موقع المتجر (> 200 م)', 'att.next_visit': '{n} متاجر تجاوزت موعد الزيارة التالية'
 });
 
+/* i18n v36 (owner 2026-10-11): visits table, new-shop photos, orders map, good streets to go back to */
+Object.assign(I18N.id, {
+  'vt.title': 'Tabel kunjungan', 'vt.time': 'Jam', 'vt.shop': 'Toko', 'vt.place': 'Tempat', 'vt.type': 'Jenis toko', 'vt.owner': 'Pemilik', 'vt.rating': 'Bintang', 'vt.no_rating': 'tanpa bintang',
+  'vt.photos': 'Foto', 'vt.photo_owner': 'Pemilik toko (bersama sales)', 'vt.photo_shop': 'Depan toko', 'vt.no_photo': 'Belum ada foto',
+  'om.title': 'Peta pesanan', 'om.hint': 'Pesanan semua sales di peta: nomor = urutan diterima (1 = paling awal), satu warna per sales. Gelembung angka = banyak pesanan di satu tempat — ketuk untuk memperbesar.',
+  'om.r_today': 'Hari ini', 'om.r_7': '7 hari', 'om.r_30': '30 hari', 'om.open': 'Buka pesanan', 'om.areas': 'Daerah dengan pesanan terbanyak', 'om.area': 'Daerah', 'om.first': 'Pertama',
+  'om.no_area': 'Tanpa daerah', 'om.no_pos': '{n} pesanan tanpa lokasi toko', 'om.none': 'Belum ada pesanan di periode ini.', 'om.none_pos': 'Toko pesanan ini belum punya lokasi di peta.',
+  'sr.title': 'Kembali ke jalan terbaik', 'sr.hint': 'Jalan yang sudah dikerjakan dinilai dari toko di sepanjang jalan (pesanan, pelanggan, minat — 90 hari terakhir). Jalan bagus yang sudah lewat jangka kembalinya dan belum direncanakan lagi muncul di sini dan di aplikasi sales.',
+  'sr.days_label': 'Kembali ke jalan bagus setelah', 'sr.days_unit': 'hari', 'sr.days_ro': 'Jangka kembali ke jalan bagus: {n} hari (diatur manajer / pemilik)', 'sr.days_bad': 'Isi 3–90 hari', 'sr.days_saved': 'Jangka kembali: {n} hari',
+  'sr.last': 'terakhir {date}', 'sr.overdue': 'lewat {n} hari', 'sr.due_today': 'waktunya hari ini', 'sr.orders': '{n} pesanan ({rp})', 'sr.customers': '{n} pelanggan', 'sr.interested': '{n} tertarik',
+  'sr.score': 'Nilai jalan', 'sr.none': 'Tidak ada jalan bagus yang sudah waktunya dikunjungi lagi.', 'sr.later': '{n} jalan bagus lainnya belum waktunya.',
+  'att.streets_due': '{n} jalan bagus sudah lewat {days} hari — waktunya sales kembali'
+});
+Object.assign(I18N.ar, {
+  'vt.title': 'جدول الزيارات', 'vt.time': 'الساعة', 'vt.shop': 'المحل', 'vt.place': 'المكان', 'vt.type': 'نوع المحل', 'vt.owner': 'صاحب المحل', 'vt.rating': 'النجوم', 'vt.no_rating': 'بلا تقييم',
+  'vt.photos': 'الصور', 'vt.photo_owner': 'صاحب المحل (مع المندوب)', 'vt.photo_shop': 'واجهة المحل', 'vt.no_photo': 'لا توجد صورة',
+  'om.title': 'خريطة الطلبيات', 'om.hint': 'طلبيات كل المندوبين على الخريطة: الرقم = ترتيب الاستلام (1 = الأول)، ولون لكل مندوب. فقاعة الرقم = طلبيات كثيرة في مكان واحد — اضغطها للتكبير.',
+  'om.r_today': 'اليوم', 'om.r_7': '7 أيام', 'om.r_30': '30 يومًا', 'om.open': 'فتح الطلبية', 'om.areas': 'المناطق الأكثر طلبيات', 'om.area': 'المنطقة', 'om.first': 'الأول',
+  'om.no_area': 'بلا منطقة', 'om.no_pos': '{n} طلبيات بلا موقع للمحل', 'om.none': 'لا طلبيات في هذه الفترة.', 'om.none_pos': 'محلات هذه الطلبيات ليس لها موقع على الخريطة بعد.',
+  'sr.title': 'العودة إلى أفضل الشوارع', 'sr.hint': 'يُقيَّم كل شارع عُمل فيه حسب المحلات على طوله (طلبيات، عملاء، اهتمام — آخر 90 يومًا). الشوارع الجيدة التي مرّت مدة العودة إليها ولم يُخطَّط لها من جديد تظهر هنا وفي تطبيق المندوب.',
+  'sr.days_label': 'العودة إلى الشارع الجيد بعد', 'sr.days_unit': 'يومًا', 'sr.days_ro': 'مدة العودة إلى الشارع الجيد: {n} يومًا (يحددها المدير / المالك)', 'sr.days_bad': 'أدخل من 3 إلى 90 يومًا', 'sr.days_saved': 'مدة العودة: {n} يومًا',
+  'sr.last': 'آخر مرة {date}', 'sr.overdue': 'متأخر {n} يوم', 'sr.due_today': 'موعده اليوم', 'sr.orders': '{n} طلبية ({rp})', 'sr.customers': '{n} عميل', 'sr.interested': '{n} مهتم',
+  'sr.score': 'تقييم الشارع', 'sr.none': 'لا توجد شوارع جيدة حان وقت العودة إليها.', 'sr.later': '{n} شوارع جيدة أخرى لم يحن وقتها.',
+  'att.streets_due': '{n} شوارع جيدة مرّ عليها {days} يومًا — حان وقت عودة المندوب'
+});
+
 /* ========== Settings (Pengaturan) ========== */
 const ST = { qs: null };
 RENDER.settings = function () {
@@ -4917,6 +5139,8 @@ const ACT = {
   'orders-refresh': () => { clearFieldCache(); loadOrders(false); },
   'orders-status': el => { FO.status = el.dataset.s; $$('[data-act="orders-status"]').forEach(c => c.classList.toggle('on', c === el)); drawOrders(); },
   'order-open': el => openFieldOrder(FO.list.find(o => o.order_id === el.dataset.id)),
+  'fd-om-open': el => openFieldOrder((FD.om.items || []).find(o => o.order_id === el.dataset.id), FD.data ? FD.data.shops : []), // v36 orders map
+  'lead-photos': el => openShopPhotosO(el.dataset.shop),
   'prod-photo': el => openProductPhoto(prodById(el.dataset.id)),
   'bell': () => openBell(),
   'att-go': el => { if (el.closest('.modal-bg')) closeModal(true); if (el.dataset.go === 'tamper') { openTamperShots(''); return; } if (el.dataset.low) PR.low = true; if (el.dataset.tab) GD.tab = el.dataset.tab; if (el.dataset.daily) { RP.mode = 'daily'; DR.date = today(); } go(el.dataset.go); },

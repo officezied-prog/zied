@@ -29,6 +29,7 @@ const INDEXES = {
   pos_photos: ['photo_id'],
   pos_tamper_shots: ['shot_id'],
   pos_route_plans: ['plan_date', 'user'],
+  pos_visits: ['shop_id'], // v36: a shop's photos are read by shop
   pos_street_log: ['plan_date', 'skey'],
   pos_shop_lists: ['status', 'created_at'],
   pos_api_usage: ['month'],
