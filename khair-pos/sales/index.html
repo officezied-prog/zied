@@ -80,7 +80,7 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.7.0';
+const APP_VERSION = 'sales-1.7.1';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1073,7 +1073,7 @@ function leafletMap(el, points, shops, current, orders, zoom, plan) {
   orders.forEach(o => { if (!validPos(o)) return; ll.push([o.lat, o.lng]); window.L.marker([o.lat, o.lng], { icon: window.L.divIcon({ className: 'ord-pin-wrap', html: '<span class="ord-pin">' + esc(String(o.seq)) + '</span>', iconSize: [28, 28], iconAnchor: [14, 14] }), zIndexOffset: 1000 }).bindTooltip(esc(o.label || '')).addTo(m); });
   // v31: the day's plan — dashed purple line from the start through the stops; numbered stops, ✓ once visited
   if (plan && ((plan.stops || []).length || (plan.streets || []).length)) {
-    (plan.streets || []).forEach(x => (x.lines || []).forEach(ln => { window.L.polyline(ln, x.drawn ? { color: '#0D9488', weight: 6, opacity: .6 } : { color: '#7C3AED', weight: 7, opacity: .3 }).bindTooltip(esc((x.drawn ? '✏️ ' : '🛣️ ') + x.name)).addTo(m); ln.forEach(q => ll.push(q)); }));
+    (plan.streets || []).forEach(x => (x.lines || []).forEach(ln => { window.L.polyline(ln, x.drawn ? { color: '#0D9488', weight: 6, opacity: .6 } : { color: STREET_C, weight: 7, opacity: .8 }).bindTooltip(esc((x.drawn ? '✏️ ' : '🛣️ ') + x.name)).addTo(m); ln.forEach(q => ll.push(q)); }));
     const pl = (plan.start ? [plan.start] : []).concat(plan.stops).concat(plan.end ? [plan.end] : []).filter(validPos).map(p => [p.lat, p.lng]);
     if (pl.length > 1) window.L.polyline(pl, { color: '#7C3AED', weight: 3, dashArray: '6 6', opacity: .9 }).addTo(m);
     if (plan.end && validPos(plan.end)) { ll.push([plan.end.lat, plan.end.lng]); window.L.marker([plan.end.lat, plan.end.lng], { icon: window.L.divIcon({ className: 'ord-pin-wrap', html: '<span class="start-pin">🏁</span>', iconSize: [30, 30], iconAnchor: [6, 28] }), zIndexOffset: 950 }).bindTooltip(esc(plan.end.label || t('plan.end'))).addTo(m); }
@@ -1316,12 +1316,22 @@ function tapStreet(seq, hit) {
   b.disabled = hit === null;
   b.innerHTML = '<span>🛣️ ' + (hit ? esc(t('plan.street_named', { name: '\u2063' })).replace('\u2063', '<bdi>' + esc(hit.name) + '</bdi>') : esc(t(hit === null ? 'plan.street_none_here' : 'plan.street_here'))) + '</span>'; // one span: the name flows inside the sentence
   if (hit && hit.geom && PL.prev) window.L.polyline(hit.geom, { color: '#F59E0B', weight: 9, opacity: .85 }).addTo(PL.prev);
+  if (hit) wholeStreet(hit).then(lines => { // owner: "when I choose the street I want the WHOLE street coloured" — every piece of it with that name
+    if (seq !== PL.tap || !PL.prev || !lines.length) return;
+    hit.lines = lines; PL.prev.clearLayers();
+    lines.forEach(ln => window.L.polyline(ln, { color: '#F59E0B', weight: 9, opacity: .85 }).addTo(PL.prev));
+  }, () => { });
+}
+/** All the pieces of a named street around a point (≈ 3 km either way), as lines — the same search as "Kerjakan jalan ini". */
+async function wholeStreet(r) {
+  const bb = r.bbox && r.bbox.length === 4 ? r.bbox : [r.lat, r.lat, r.lng, r.lng], pad = 0.03, nm = String(r.name).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return overpassItems(await overpass(`[out:json][timeout:25];way["highway"]["name"="${nm}"](${bb[0] - pad},${bb[2] - pad},${bb[1] + pad},${bb[3] + pad});out geom;`)).lines;
 }
 function drawPlanLayers() {
   const m = PL.map, L = window.L; if (!m || !PL.lay) return;
   PL.lay.clearLayers();
   drawWorkedLayer();
-  PL.streets.forEach(x => (x.lines || []).forEach(ln => L.polyline(ln, x.drawn ? { color: '#0D9488', weight: 6, opacity: .75 } : { color: '#7C3AED', weight: 8, opacity: .4 }).bindTooltip(esc((x.drawn ? '✏️ ' : '🛣️ ') + x.name)).addTo(PL.lay)));
+  PL.streets.forEach(x => (x.lines || []).forEach(ln => L.polyline(ln, x.drawn ? { color: '#0D9488', weight: 6, opacity: .75 } : { color: STREET_C, weight: 8, opacity: .85 }).bindTooltip(esc((x.drawn ? '✏️ ' : '🛣️ ') + x.name)).addTo(PL.lay)));
   if (PL.draw) { // the line being drawn: solid blue, a white dot per point (the last one bigger)
     const pts = PL.draw.pts;
     if (pts.length > 1) L.polyline(pts, { color: '#0EA5E9', weight: 5, opacity: .95 }).addTo(PL.lay);
@@ -1516,6 +1526,7 @@ function addDrawPt(lat, lng) {
    and, between two points on the same road, the line follows the road's own bends. A point with no road near it (or no
    internet) stays where it was drawn, so the line is never lost. */
 const SNAP_M = 35;
+const STREET_C = '#2563EB'; // v35b: a street chosen to work in — its own strong colour, the whole street
 function snapLine(pts, js) {
   const ways = ((js && js.elements) || []).filter(x => x.type === 'way' && x.tags && x.tags.highway && Array.isArray(x.geometry) && x.geometry.length > 1).map(x => x.geometry.map(g => [g.lat, g.lon]));
   if (!ways.length || pts.length < 2) return null;
@@ -2817,7 +2828,7 @@ const I18N = {
     'plan.end': 'Titik selesai', 'plan.end_same': 'Sama dengan awal', 'plan.set_end': 'Selesai di sini', 'plan.work_street': 'Kerjakan jalan ini', 'plan.street_in': 'Dalam rencana',
     'plan.streets': 'Jalan kerja ({n})', 'plan.stops': 'Titik kunjungan ({n})', 'plan.no_streets': 'Belum ada jalan. Ketuk jalan di peta → "Kerjakan seluruh jalan ini", atau cari nama jalan lalu ketuk "Kerjakan jalan ini" — seluruh jalan dicari tokonya.',
     'plan.street_shops': 'Toko', 'plan.max_streets': 'Maksimal 15 jalan per rencana', 'plan.worked_by': 'sudah dikerjakan {u} · {d}', 'plan.planned_by': 'direncanakan {u} · {d}',
-    'plan.legend': 'Ungu = jalan & rute rencana Anda · Hijau toska = garis kerja yang Anda gambar · Merah = jalan yang sudah dikerjakan sales lain (disimpan selamanya) · Abu-abu = jalan yang pernah Anda kerjakan',
+    'plan.legend': 'Biru = jalan kerja yang Anda pilih (seluruh jalan) · Oranye = jalan yang baru diketuk · Ungu = rute rencana Anda · Hijau toska = garis kerja yang Anda gambar · Merah = jalan yang sudah dikerjakan sales lain (disimpan selamanya) · Abu-abu = jalan yang pernah Anda kerjakan',
     'plan.tab_line': 'Garis kerja', 'plan.line_hint': 'Ketuk peta di sepanjang jalan yang mau Anda kerjakan: titik awal, lalu satu titik setiap beberapa ratus meter — titik, titik, titik. Tidak perlu ada toko di titik itu. Aplikasi menyambungkannya menjadi garis kerja Anda, lalu bisa mencari toko yang Anda mau di sepanjang garis itu.',
     'plan.draw_start': 'Gambar garis kerja', 'plan.drawing': '{n} titik · {km} km', 'plan.draw_undo': 'Hapus titik terakhir', 'plan.draw_mypos': 'Titik di posisi saya', 'plan.draw_done': 'Selesai',
     'plan.draw_tap': 'Ketuk peta di sepanjang jalan untuk menambah titik, lalu ketuk "Selesai".', 'plan.draw_nomap': 'Peta belum tampil (internet lemah): tambahkan titik dengan "Titik di posisi saya" sambil berjalan.',
@@ -2955,7 +2966,7 @@ const I18N = {
     'plan.end': 'نقطة النهاية', 'plan.end_same': 'نفس البداية', 'plan.set_end': 'أنهِ هنا', 'plan.work_street': 'اعمل في هذا الشارع', 'plan.street_in': 'في الخطة',
     'plan.streets': 'شوارع العمل ({n})', 'plan.stops': 'نقاط الزيارة ({n})', 'plan.no_streets': 'لا شوارع بعد. اضغط على الشارع في الخريطة ← «اعمل في هذا الشارع كاملًا»، أو ابحث عن اسمه ثم اضغط «اعمل في هذا الشارع» — يُبحث عن محلات الشارع كاملًا.',
     'plan.street_shops': 'المحلات', 'plan.max_streets': 'الحد الأقصى 15 شارعًا في الخطة', 'plan.worked_by': 'عمل فيه {u} · {d}', 'plan.planned_by': 'مخطط له {u} · {d}',
-    'plan.legend': 'البنفسجي = شوارع ومسار خطتك · الأخضر المزرق = خط العمل الذي رسمته · الأحمر = شوارع عمل فيها مندوب آخر (محفوظة دائمًا) · الرمادي = شوارع عملت فيها سابقًا',
+    'plan.legend': 'الأزرق = الشوارع التي اخترتها للعمل (الشارع كله) · البرتقالي = الشارع الذي ضغطت عليه الآن · البنفسجي = مسار خطتك · الأخضر المزرق = خط العمل الذي رسمته · الأحمر = شوارع عمل فيها مندوب آخر (محفوظة دائمًا) · الرمادي = شوارع عملت فيها سابقًا',
     'plan.tab_line': 'خط العمل', 'plan.line_hint': 'اضغط على الخريطة على طول الطريق الذي تريد العمل فيه: نقطة البداية، ثم نقطة كل بضع مئات من الأمتار — نقطة، نقطة، نقطة. لا يهم إن لم يكن هناك متجر عند النقطة. يصل التطبيق بينها ليصنع خط عملك، ثم يبحث لك عن المتاجر التي تريدها على طول هذا الخط.',
     'plan.draw_start': 'ارسم خط العمل', 'plan.drawing': '{n} نقطة · {km} كم', 'plan.draw_undo': 'احذف آخر نقطة', 'plan.draw_mypos': 'نقطة في موقعي', 'plan.draw_done': 'تم',
     'plan.draw_tap': 'اضغط على الخريطة على طول الطريق لإضافة النقاط، ثم اضغط «تم».', 'plan.draw_nomap': 'الخريطة لم تظهر (الإنترنت ضعيف): أضف النقاط بزر «نقطة في موقعي» وأنت تمشي.',

@@ -226,14 +226,19 @@ test('tap a street on the map → the whole street goes into the plan with its s
   await expect(page.locator('#pl-sel-street')).toHaveAttribute('data-state', 'found');
   await expect(page.locator('#pl-sel-street')).toContainText('Jalan Raya Condet');
   expect(await page.locator('#pl-map path.leaflet-interactive').evaluateAll(ps => ps.some(p => p.getAttribute('stroke') === '#F59E0B'))).toBe(true);
+  // … then the WHOLE street (every piece with that name, not only the piece under the finger) is lit
+  await expect.poll(() => seen.some(q => /way\["highway"\]\["name"="Jalan Raya Condet"\]\([^)]*\);out geom;/.test(q))).toBe(true);
+  await expect.poll(() => page.locator('#pl-map path.leaflet-interactive').evaluateAll(ps => ps.filter(p => p.getAttribute('stroke') === '#F59E0B').map(p => p.getAttribute('d')).join('|'))).toContain('L');
   await page.click('#pl-sel-street');
   await expect(page.locator('#pl-results .pl-res')).toHaveCount(4); // the shops along the WHOLE street
   expect(seen[0]).toMatch(/way\(around:40,-6\.\d{6},106\.\d{6}\)\["highway"\]\["name"\]/); // only the streets under the finger
-  expect(seen[1]).toContain('"name"="Jalan Raya Condet"'); // then the whole street by its name, as "Kerjakan jalan ini"
+  expect(seen.filter(q => /"name"="Jalan Raya Condet"/.test(q) && /out center/.test(q)).length).toBe(1); // then the whole street + its shops, as "Kerjakan jalan ini"
   await expect(page.locator('#pl-street')).toContainText('Jalan Raya Condet');
   await page.click('#pl-seg-plan');
   await expect(page.locator('#pl-streets .pl-street')).toHaveCount(1);
   await expect(page.locator('#pl-streets .pl-street')).toContainText('Jalan Raya Condet');
+  // v35b (owner: "when I choose the street I want the whole street coloured in another colour"): the chosen street, whole, in its own blue
+  expect(await page.locator('#pl-map path.leaflet-interactive').evaluateAll(ps => ps.filter(p => p.getAttribute('stroke') === '#2563EB').length)).toBeGreaterThan(0);
   await H.shot(page, 'plan-street-tap');
 
   // a tap where no named street is → a clear message, nothing added
