@@ -150,6 +150,11 @@ export const TABLES = {
     start_lng: 'number', stops: 'string', note: 'string', created_at: 'string', updated_at: 'string',
     end_label: 'string', end_lat: 'number', end_lng: 'number', streets: 'string',
   },
+  // v32: permanent log of every planned street / drawn work line (one row per street per plan) — the shared map
+  pos_street_log: {
+    skey: 'string', user: 'string', name: 'string', plan_date: 'string', plan_id: 'string', drawn: 'number', ref: 'string',
+    lines: 'string', min_lat: 'number', max_lat: 'number', min_lng: 'number', max_lng: 'number', removed: 'number', updated_at: 'string',
+  },
   // ---- chat / attendance (separate workflows; included for a complete database) ----
   pos_chat: {
     channel: 'string', cid: 'string', from_user: 'string', from_name: 'string',
@@ -235,7 +240,7 @@ export const OPS_TABLE = {
 export const OPS_TABLE_FIELD = {
   shops: 'pos_shops', visits: 'pos_visits', tracks: 'pos_tracks',
   days: 'pos_field_days', orders: 'pos_field_orders', images: 'pos_product_images',
-  product_flags: 'pos_products', plans: 'pos_route_plans',
+  product_flags: 'pos_products', plans: 'pos_route_plans', street_log: 'pos_street_log',
 };
 
 // Chat workflow ops key → table.

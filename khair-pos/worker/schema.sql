@@ -481,6 +481,26 @@ CREATE TABLE IF NOT EXISTS pos_route_plans (
 CREATE INDEX IF NOT EXISTS idx_pos_route_plans_plan_date ON pos_route_plans (plan_date);
 CREATE INDEX IF NOT EXISTS idx_pos_route_plans_user ON pos_route_plans (user);
 
+CREATE TABLE IF NOT EXISTS pos_street_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  skey TEXT,
+  user TEXT,
+  name TEXT,
+  plan_date TEXT,
+  plan_id TEXT,
+  drawn REAL,
+  ref TEXT,
+  lines TEXT,
+  min_lat REAL,
+  max_lat REAL,
+  min_lng REAL,
+  max_lng REAL,
+  removed REAL,
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pos_street_log_plan_date ON pos_street_log (plan_date);
+CREATE INDEX IF NOT EXISTS idx_pos_street_log_skey ON pos_street_log (skey);
+
 CREATE TABLE IF NOT EXISTS pos_chat (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   channel TEXT,

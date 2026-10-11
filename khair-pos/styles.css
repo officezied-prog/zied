@@ -575,3 +575,9 @@ tr.shelf-empty td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 body.ro [data-act="cust-pay"],body.ro [data-act="cust-edit"],body.ro [data-act="cust-new"],body.ro [data-act="void-request"],body.ro [data-act="void-sale"],body.ro [data-act="rt-cust"],body.ro [data-act="pu-fix"],body.ro [data-act="pu-retur"],body.ro [data-act="sp-pay"],body.ro [data-act="sp-pay-new"],body.ro [data-act="pay-alloc"],body.ro [data-act="bk-import"],body.ro [data-act="bk-match"],body.ro [data-act="bk-ignore"],body.ro [data-act="bk-reopen"],body.ro [data-act="rt-new-cust"],body.ro [data-act="rt-new-sup"],body.ro [data-act="apr-decide"],body.ro #cart-open{display:none!important}
 /* owner = monitoring only: hide money-out actions (receive payment, pay supplier, bank import/reconcile). Expenses and approvals stay. */
 body.omon [data-act="cust-pay"],body.omon [data-act="sp-pay"],body.omon [data-act="sp-pay-new"],body.omon [data-act="pay-alloc"],body.omon [data-act="bk-import"],body.omon [data-act="bk-match"],body.omon [data-act="bk-ignore"],body.omon [data-act="bk-reopen"],body.omon [data-act="tf-request"],body.omon [data-act="tf-record"]{display:none!important}
+
+/* v32 visit result colours (same as the rep's map) */
+.badge.oc-orange,.vnum.oc-orange{background:#EA580C;color:#fff}
+.badge.oc-blue,.vnum.oc-blue{background:#2563EB;color:#fff}
+.badge.oc-black,.vnum.oc-black{background:#111827;color:#fff}
+.vnum.green{background:#16A34A;color:#fff}

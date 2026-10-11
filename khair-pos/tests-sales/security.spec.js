@@ -7,7 +7,10 @@ const EVIL = '<img src=x onerror=window.__xss=1>';
 const fakeLeaflet = () => {
   const chain = { addTo() { return this; }, on() { return this; } };
   window.L = {
-    map: () => ({ fitBounds() { }, setView() { }, remove() { } }),
+    // v32: the map draws shops through a density layer (zoom / bounds / layer groups) — at zoom 18 every shop is drawn
+    map: () => ({ fitBounds() { }, setView() { }, remove() { }, on() { return this; }, whenReady(f) { f(); }, getZoom: () => 18, _loaded: true,
+      getBounds: () => ({ pad() { return this; }, contains: () => true }), project: () => ({ x: 0, y: 0 }) }),
+    layerGroup: () => Object.assign(Object.create(chain), { clearLayers() { } }), marker: () => Object.create(chain), divIcon: () => ({}),
     tileLayer: () => Object.create(chain), polyline: () => Object.create(chain),
     circleMarker: () => Object.assign(Object.create(chain), { bindTooltip(html) { const d = document.createElement('div'); d.className = 'fake-tip'; d.innerHTML = html; document.body.appendChild(d); return this; } })
   };

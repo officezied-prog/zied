@@ -79,7 +79,7 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.2.0';
+const APP_VERSION = 'sales-1.3.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -329,7 +329,15 @@ const gUI = gid => GROUP_UI[gid] || GROUP_UI.lainnya;
 const shopGroup = s => KST.groupOf(s && s.type);
 const shopColor = s => gUI(shopGroup(s)).c;
 const shopLabel = (s, lang) => KST.label(s, lang || S.lang);
-const OUTCOMES = ['order', 'tertarik', 'tidak', 'tutup', 'sudah_pelanggan'];
+// v32 (owner 2026-10-11): a visit result = a colour on the map. Green = order · orange = shop there, no order · blue = does
+// not want to work with us · BLACK = closed / owner not there / shop not found / changed business (a photo of the place is required).
+const OUTCOMES = ['order', 'tertarik', 'sudah_pelanggan', 'tidak', 'tutup', 'tidak_ada', 'tidak_ditemukan', 'ganti_usaha'];
+const BLACK_OC = ['tutup', 'tidak_ada', 'tidak_ditemukan', 'ganti_usaha'];
+const OC_COLOR = { order: '#16A34A', tertarik: '#EA580C', sudah_pelanggan: '#EA580C', tidak: '#2563EB', tutup: '#111827', tidak_ada: '#111827', tidak_ditemukan: '#111827', ganti_usaha: '#111827' };
+const ocColor = o => OC_COLOR[o] || OC_COLOR.tertarik;
+const ocKey = o => o === 'order' ? 'green' : BLACK_OC.includes(o) ? 'black' : o === 'tidak' ? 'blue' : 'orange';
+const ocMark = o => o === 'order' || ocKey(o) === 'orange' ? '✓' : '✕';
+const ocStyle = o => ` style="background:${ocColor(o)};border-color:${ocColor(o)};color:#fff"`; // fixed colours only
 const NEAR_M = 150;
 const DEFAULT_SURVEY = ['Apakah ini pertama kali belanja di Khair Mart?', 'Tahu Khair Mart dari mana?', 'Apa yang paling Kakak suka di toko kami?', 'Ada barang yang Kakak cari tapi tidak ada?', 'Boleh kami kabari promo lewat WhatsApp?'];
 const S = {
@@ -1018,6 +1026,35 @@ function renderMap(el, { points = [], shops = [], current = null, orders = [], p
   if (useLeaflet) { try { return leafletMap(el, points, shops, current, orders, zoom, plan); } catch (e) { MAPS.failed = true; } }
   svgMap(el, points, shops, current, orders, plan);
 }
+/* v32 (owner 2026-10-11: "split the map by how crowded it is, so it is not heavy"): points are grouped on a screen grid — a
+   crowded cell shows ONE bubble with its count (tap = zoom into it); from zoom 17, or when few points are in view, every
+   point is drawn. Only what is inside the view (plus a margin) is drawn, again each time the map moves — so a phone stays
+   fast with thousands of shops. */
+const CLU_PX = 60, CLU_Z = 17, CLU_FEW = 60;
+function clusterLayer(m, items, drawOne, colorOf) {
+  const L = window.L, lay = L.layerGroup().addTo(m);
+  let tm = 0;
+  const draw = () => {
+    if (!m._loaded) return;
+    lay.clearLayers();
+    const z = m.getZoom(), b = m.getBounds().pad(0.3), vis = items.filter(p => validPos(p) && b.contains([p.lat, p.lng]));
+    if (z >= CLU_Z || vis.length <= CLU_FEW) { vis.forEach(p => drawOne(p, lay)); return; }
+    const cells = new Map();
+    vis.forEach(p => { const q = m.project([p.lat, p.lng], z), k = Math.floor(q.x / CLU_PX) + ':' + Math.floor(q.y / CLU_PX); (cells.get(k) || cells.set(k, []).get(k)).push(p); });
+    cells.forEach(g => {
+      if (g.length === 1) { drawOne(g[0], lay); return; }
+      const n = g.length, sz = n < 10 ? 30 : n < 100 ? 36 : 44, cnt = {};
+      g.forEach(p => { const c = colorOf ? colorOf(p) : '#1E40AF'; cnt[c] = (cnt[c] || 0) + 1; });
+      const col = Object.keys(cnt).sort((a, c) => cnt[c] - cnt[a])[0]; // the most common kind in the bubble
+      L.marker([g.reduce((a, p) => a + p.lat, 0) / n, g.reduce((a, p) => a + p.lng, 0) / n], { icon: L.divIcon({ className: 'clu-wrap', html: `<span class="clu" data-n="${n}" style="width:${sz}px;height:${sz}px;border-color:${col}">${n}</span>`, iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2] }), bubblingMouseEvents: false })
+        .on('click', () => m.fitBounds(g.map(p => [p.lat, p.lng]), { padding: [30, 30], maxZoom: CLU_Z }))
+        .addTo(lay);
+    });
+  };
+  m.on('zoomend moveend', () => { clearTimeout(tm); tm = setTimeout(draw, 60); });
+  m.whenReady(draw);
+  return { lay, draw, set: list => { items = list; draw(); } };
+}
 function leafletMap(el, points, shops, current, orders, zoom, plan) {
   orders = orders || [];
   el.dataset.mode = 'leaflet'; el.innerHTML = '';
@@ -1028,17 +1065,18 @@ function leafletMap(el, points, shops, current, orders, zoom, plan) {
   tiles.on('tileerror', () => { if (++errs >= 3 && !loaded) { MAPS.failed = true; try { m.remove(); } catch (e) { } svgMap(el, points, shops, current, orders, plan); } });
   const ll = [];
   if (points.length > 1) { const line = points.map(p => [p.lat, p.lng]); window.L.polyline(line, { color: '#1E40AF', weight: 4 }).addTo(m); ll.push(...line); }
-  shops.forEach(s => { if (!validPos(s)) return; ll.push([s.lat, s.lng]); window.L.circleMarker([s.lat, s.lng], { radius: 7, color: '#fff', weight: 2, fillColor: shopColor(s), fillOpacity: 1 }).bindTooltip(esc(s.name + ' · ' + shopLabel(s))).addTo(m); }); // Leaflet tooltips are HTML: escape (security C1) // colour = shop group
+  shops.forEach(s => { if (validPos(s)) ll.push([s.lat, s.lng]); });
+  clusterLayer(m, shops, (s, lay) => window.L.circleMarker([s.lat, s.lng], { radius: 7, color: '#fff', weight: 2, fillColor: shopColor(s), fillOpacity: 1 }).bindTooltip(esc(s.name + ' · ' + shopLabel(s))).addTo(lay), shopColor); // Leaflet tooltips are HTML: escape (security C1) // colour = shop group; crowded areas grouped
   // v30 (owner 2026-10-10): each accepted order is a numbered pin at its shop (acceptance order), so areas with
   // the most orders stand out and "who ordered first" is visible.
   orders.forEach(o => { if (!validPos(o)) return; ll.push([o.lat, o.lng]); window.L.marker([o.lat, o.lng], { icon: window.L.divIcon({ className: 'ord-pin-wrap', html: '<span class="ord-pin">' + esc(String(o.seq)) + '</span>', iconSize: [28, 28], iconAnchor: [14, 14] }), zIndexOffset: 1000 }).bindTooltip(esc(o.label || '')).addTo(m); });
   // v31: the day's plan — dashed purple line from the start through the stops; numbered stops, ✓ once visited
   if (plan && ((plan.stops || []).length || (plan.streets || []).length)) {
-    (plan.streets || []).forEach(x => (x.lines || []).forEach(ln => { window.L.polyline(ln, { color: '#7C3AED', weight: 7, opacity: .3 }).bindTooltip(esc('🛣️ ' + x.name)).addTo(m); ln.forEach(q => ll.push(q)); }));
+    (plan.streets || []).forEach(x => (x.lines || []).forEach(ln => { window.L.polyline(ln, x.drawn ? { color: '#0D9488', weight: 6, opacity: .6 } : { color: '#7C3AED', weight: 7, opacity: .3 }).bindTooltip(esc((x.drawn ? '✏️ ' : '🛣️ ') + x.name)).addTo(m); ln.forEach(q => ll.push(q)); }));
     const pl = (plan.start ? [plan.start] : []).concat(plan.stops).concat(plan.end ? [plan.end] : []).filter(validPos).map(p => [p.lat, p.lng]);
     if (pl.length > 1) window.L.polyline(pl, { color: '#7C3AED', weight: 3, dashArray: '6 6', opacity: .9 }).addTo(m);
     if (plan.end && validPos(plan.end)) { ll.push([plan.end.lat, plan.end.lng]); window.L.marker([plan.end.lat, plan.end.lng], { icon: window.L.divIcon({ className: 'ord-pin-wrap', html: '<span class="start-pin">🏁</span>', iconSize: [30, 30], iconAnchor: [6, 28] }), zIndexOffset: 950 }).bindTooltip(esc(plan.end.label || t('plan.end'))).addTo(m); }
-    plan.stops.forEach(s => { if (!validPos(s)) return; ll.push([s.lat, s.lng]); window.L.marker([s.lat, s.lng], { icon: window.L.divIcon({ className: 'ord-pin-wrap', html: '<span class="plan-pin' + (s.done ? ' done' : '') + '">' + (s.done ? '✓' : esc(String(s.seq))) + '</span>', iconSize: [28, 28], iconAnchor: [14, 14] }), zIndexOffset: 900 }).bindTooltip(esc(s.seq + '. ' + s.name)).addTo(m); });
+    plan.stops.forEach(s => { if (!validPos(s)) return; ll.push([s.lat, s.lng]); window.L.marker([s.lat, s.lng], { icon: window.L.divIcon({ className: 'ord-pin-wrap', html: '<span class="plan-pin' + (s.done ? ' done' : '') + '" data-oc="' + (s.done ? ocKey(s.oc) : '') + '"' + (s.done ? ocStyle(s.oc) : pinStyle(s.cat)) + '>' + (s.done ? ocMark(s.oc) : esc(String(s.seq))) + '</span>', iconSize: [28, 28], iconAnchor: [14, 14] }), zIndexOffset: 900 }).bindTooltip(esc(s.seq + '. ' + s.name + (s.done ? ' · ' + t('oc.' + s.oc) : ''))).addTo(m); });
   }
   if (validPos(current)) { ll.push([current.lat, current.lng]); window.L.circleMarker([current.lat, current.lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#1E40AF', fillOpacity: 1 }).addTo(m); }
   if (ll.length) m.fitBounds(ll, { padding: [24, 24], maxZoom: 17 }); else m.setView([-6.2655, 106.8605], 14);
@@ -1065,7 +1103,7 @@ function svgMap(el, points, shops, current, orders, plan) {
   const cur = validPos(current) ? `<circle cx="${X(current)}" cy="${Y(current)}" r="12" fill="#1E40AF" opacity=".18"/><circle cx="${X(current)}" cy="${Y(current)}" r="6" fill="#1E40AF" stroke="#fff" stroke-width="2.5"/>` : '';
   const ppts = (plan && validPos(plan.start) ? [plan.start] : []).concat(pstops).concat(plan && validPos(plan.end) ? [plan.end] : []);
   const pln = ppts.length > 1 ? `<polyline points="${ppts.map(p => X(p) + ',' + Y(p)).join(' ')}" fill="none" stroke="#7C3AED" stroke-width="2.5" stroke-dasharray="6 6"/>` : '';
-  const pst = pstops.map(s => `<g><circle cx="${X(s)}" cy="${Y(s)}" r="9" fill="${s.done ? '#16A34A' : '#fff'}" stroke="${s.done ? '#16A34A' : '#7C3AED'}" stroke-width="2.5"><title>${esc(s.seq + '. ' + (s.name || ''))}</title></circle><text x="${X(s)}" y="${Y(s)}" dy="3.5" text-anchor="middle" font-size="10" font-weight="900" fill="${s.done ? '#fff' : '#6D28D9'}">${s.done ? '✓' : esc(String(s.seq))}</text></g>`).join('');
+  const pst = pstops.map(s => `<g><circle cx="${X(s)}" cy="${Y(s)}" r="9" fill="${s.done ? ocColor(s.oc) : '#fff'}" stroke="${s.done ? ocColor(s.oc) : (kindColor(s.cat) || '#7C3AED')}" stroke-width="2.5" data-oc="${s.done ? ocKey(s.oc) : ''}"><title>${esc(s.seq + '. ' + (s.name || '') + (s.done ? ' · ' + t('oc.' + s.oc) : ''))}</title></circle><text x="${X(s)}" y="${Y(s)}" dy="3.5" text-anchor="middle" font-size="10" font-weight="900" fill="${s.done ? '#fff' : '#6D28D9'}">${s.done ? ocMark(s.oc) : esc(String(s.seq))}</text></g>`).join('');
   const ord = orders.filter(validPos).map(o => `<g><circle cx="${X(o)}" cy="${Y(o)}" r="10" fill="#EA580C" stroke="#fff" stroke-width="2"><title>${esc(o.label || '')}</title></circle><text x="${X(o)}" y="${Y(o)}" dy="3.5" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">${esc(String(o.seq))}</text></g>`).join('');
   const kmw = (W - 2 * pad) / sc * 111.32 / k * k; // width of the box in km (approx.)
   el.innerHTML = `<svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${esc(t('map.label'))}"><rect width="${W}" height="${Hh}" fill="#EEF3FA"/>${grid}${line}${pln}${start}${sh}${pst}${ord}${cur}</svg><div class="note">${esc(t('map.offline'))} · ≈ ${NF1.format(kmw)} km</div>`;
@@ -1077,7 +1115,8 @@ function svgMap(el, points, shops, current, orders, plan) {
    Kept on the phone first (works with a weak signal) and sent to the server, where the manager and the owner see it.
    During the day the Today card shows the next stop, Google Maps directions, and "visit" (a new place opens the
    new-shop form already filled in, so it becomes a shop at the first visit). */
-const PL = { date: '', start: null, end: null, stops: [], streets: [], note: '', results: [], street: null, seg: 'search', q: '', msg: '', busy: false, map: null, lay: null, el: null, sel: null, worked: [], workedAt: 0 };
+const PL = { date: '', start: null, end: null, stops: [], streets: [], note: '', results: [], street: null, seg: 'search', q: '', msg: '', busy: false, map: null, lay: null, el: null, sel: null, worked: [], workedAt: 0,
+  draw: null, found: [], foundOn: '', lineRef: '', cats: null }; // v32: draw = the work line being drawn ({ pts, name }); found = shops of the chosen kinds along a line
 const OSM = { nomi: 'https://nominatim.openstreetmap.org/search', over: ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter'], last: 0 };
 const plansAll = () => FS.get(uk('plans'), {}) || {};
 const planFor = d => plansAll()[d] || null;
@@ -1112,16 +1151,20 @@ async function syncPlans() {
     }
   } finally { planSyncing = false; }
 }
-const stopDone = (s, vs) => vs.some(v => (s.shop_id && v.shop_id === s.shop_id) || (validPos(v) && validPos(s) && haversine(v, s) < NEAR_M));
+/** The latest visit of today that belongs to this stop (same shop, or within NEAR_M of it) — its result colours the point. */
+const stopVisit = (s, vs) => vs.filter(v => (s.shop_id && v.shop_id === s.shop_id) || (validPos(v) && validPos(s) && haversine(v, s) < NEAR_M)).slice(-1)[0] || null;
 function planProgress(p) {
-  const vs = todayVisits(), stops = (p && p.stops) || [], done = stops.map(s => stopDone(s, vs));
-  return { stops, done, n: stops.length, k: done.filter(Boolean).length, next: stops.find((s, i) => !done[i]) || null };
+  const vs = todayVisits(), stops = (p && p.stops) || [], vis = stops.map(s => stopVisit(s, vs)), done = vis.map(Boolean);
+  const oc = vis.map(v => v ? (v.outcome || 'tertarik') : ''), by = { green: 0, orange: 0, blue: 0, black: 0 };
+  oc.forEach(o => { if (o) by[ocKey(o)]++; });
+  return { stops, done, oc, by, n: stops.length, k: done.filter(Boolean).length, next: stops.find((s, i) => !done[i]) || null };
 }
+const ocCountsHTML = by => ['green', 'orange', 'blue', 'black'].filter(k => by[k]).map(k => `<span class="occ" data-oc="${k}"><span class="ocdot ${k}" aria-hidden="true"></span>${esc(t('occ.' + k))}: <b>${by[k]}</b></span>`).join('');
 /** Today's plan for the route map: dashed purple line + numbered stops (✓ once visited). */
 function todayPlanMarkers() {
   const p = planFor(today()); if (!p || !((p.stops || []).length || (p.streets || []).length)) return null;
   const g = planProgress(p);
-  return { start: p.start && validPos(p.start) ? p.start : null, end: p.end && validPos(p.end) ? p.end : null, streets: p.streets || [], stops: g.stops.map((s, i) => ({ lat: s.lat, lng: s.lng, seq: i + 1, name: s.name, done: g.done[i] })) };
+  return { start: p.start && validPos(p.start) ? p.start : null, end: p.end && validPos(p.end) ? p.end : null, streets: p.streets || [], stops: g.stops.map((s, i) => ({ lat: s.lat, lng: s.lng, seq: i + 1, name: s.name, done: g.done[i], oc: g.oc[i], cat: s.cat || '' })) };
 }
 /** Google Maps with the remaining stops as waypoints (Maps takes up to 9); the end point (if set) is the destination. */
 function planNavAll(p, g) {
@@ -1139,6 +1182,7 @@ function planCardHTML() {
   if (has) {
     const g = planProgress(pt), nx = g.next, d = nx && S.pos && validPos(S.pos) ? haversine(S.pos, nx) : null;
     body = `<div class="pl-prog" id="pl-prog" data-k="${g.k}" data-n="${g.n}"><b>${esc(t('plan.progress', { k: g.k, n: g.n }))}</b>${pt.dirty ? ` <span class="ostatus pending">${esc(t('pending'))}</span>` : ''}</div>
+      ${g.k ? `<div class="occs" id="pl-occ">${ocCountsHTML(g.by)}</div>` : ''}
       ${(pt.streets || []).length ? `<div class="small" style="margin-top:4px" id="pl-card-streets">🛣️ ${esc((pt.streets || []).map(x => x.name).join(' · '))}</div>` : ''}
       ${pt.end ? `<div class="small muted" style="margin-top:2px" id="pl-card-end">🏁 ${esc(t('plan.end'))}: ${esc(pt.end.label || '')}</div>` : ''}
       ${nx ? `<div class="li pl-next" id="pl-next" data-ref="${esc(nx.ref)}" style="margin-top:8px"><span class="plan-pin sm">${g.stops.indexOf(nx) + 1}</span><div class="grow"><div class="t">${esc(nx.name)}</div><div class="s">${esc([nx.kind === 'shop' ? t('plan.shop_ours') : t('plan.place'), nx.address].filter(Boolean).join(' · '))}${d != null ? ' · ' + fmtDist(d) : ''}</div></div></div>
@@ -1156,23 +1200,25 @@ function openPlanner(date) {
   const d = date || today(), p = planFor(d);
   Object.assign(PL, { date: d, start: p && p.start ? Object.assign({}, p.start) : null, end: p && p.end ? Object.assign({}, p.end) : null, stops: p ? clone(p.stops || []) : [],
     streets: p ? clone(p.streets || []) : [], note: p ? p.note || '' : '', results: [], street: null,
-    seg: p && ((p.stops || []).length || (p.streets || []).length) ? 'plan' : 'search', q: '', msg: '', busy: false, map: null, lay: null, sel: null });
+    seg: p && ((p.stops || []).length || (p.streets || []).length) ? 'plan' : 'search', q: '', msg: '', busy: false, map: null, lay: null, sel: null, draw: null, found: [], foundOn: '', lineRef: '' });
+  if (!PL.cats) { const c = FS.get('find_cats', null); PL.cats = Array.isArray(c) ? c.filter(id => FIND.some(k => k.id === id)) : ['kurma', 'haji', 'muslim']; }
   PL.el = openModal({ title: t('plan.title') + ' · ' + t(d === today() ? 'plan.today' : 'plan.tomorrow') + ' ' + fmtDate(d), id: 'plan', cls: 'map-modal plan-modal',
-    body: `<div id="pl-wrap"><div class="map full plan-map" id="pl-map"></div><div class="small muted" id="pl-legend" style="margin-top:4px">${esc(t('plan.legend'))}</div><div id="pl-startbox"></div><div class="seg sm" id="pl-seg" style="margin-top:10px"></div><div id="pl-body" style="margin-top:10px"></div></div>`,
+    body: `<div id="pl-wrap"><div id="pl-drawbar"></div><div class="map full plan-map" id="pl-map"></div><div class="small muted" id="pl-legend" style="margin-top:4px">${esc(t('plan.legend'))}</div><div id="pl-startbox"></div><div class="seg sm" id="pl-seg" style="margin-top:10px"></div><div id="pl-body" style="margin-top:10px"></div></div>`,
     foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary grow" data-act="pl-save" id="pl-save">${ic('check')} ${esc(t('plan.save'))}</button>`,
-    onClose: () => { try { if (PL.map) PL.map.remove(); } catch (e) { } PL.map = null; PL.lay = null; PL.el = null; } });
+    onClose: () => { try { if (PL.map) PL.map.remove(); } catch (e) { } PL.map = null; PL.lay = null; PL.wlay = null; PL.clu = null; PL.el = null; } });
   initPlanMap();
   drawPlanner();
   loadWorked().then(() => { if (PL.el) drawPlanner(); });
 }
-/** Streets worked / planned by every rep (last 60 days), so nobody repeats a street; cached on the phone for offline. */
+/** Streets worked / planned by every rep (kept forever; the ones around this rep), so nobody repeats a street; cached on the phone for offline. */
 async function loadWorked(force) {
   if (!force && PL.workedAt && Date.now() - PL.workedAt < 300000) return;
-  try { const r = await api('streets_worked'); PL.worked = r.streets || []; PL.workedAt = Date.now(); FS.set('worked_streets', { at: Date.now(), list: PL.worked }); }
+  const c = (PL.start && validPos(PL.start) ? PL.start : null) || (S.pos && validPos(S.pos) ? S.pos : null) || shopsCenter();
+  try { const r = await api('streets_worked', c ? { lat: c.lat, lng: c.lng } : {}); PL.worked = r.streets || []; PL.workedAt = Date.now(); FS.set('worked_streets', { at: Date.now(), list: PL.worked }); }
   catch (e) { const c = FS.get('worked_streets', null); if (c && Array.isArray(c.list)) PL.worked = c.list; }
 }
 /** Other reps who worked (or plan) this street — the rep is warned, not blocked. */
-const workedBy = name => (PL.worked || []).filter(w => normTxt(w.name) === normTxt(name) && normTxt(w.user) !== normTxt(S.user));
+const workedBy = name => (PL.worked || []).filter(w => !w.drawn && normTxt(w.name) === normTxt(name) && normTxt(w.user) !== normTxt(S.user)); // drawn lines: by shape (lineOverlap)
 const workedNote = name => workedBy(name).map(w => t(w.status === 'planned' ? 'plan.planned_by' : 'plan.worked_by', { u: w.user, d: fmtDate(w.plan_date) })).join(' · ');
 function pointBox(id, icon, label, pt, acts) {
   return `<div class="pl-start" id="${id}" data-set="${pt ? 1 : 0}"><span class="start-pin" aria-hidden="true">${icon}</span><div class="grow"><div class="small muted">${esc(label)}</div><b>${esc(pt ? (pt.label || (Number(pt.lat).toFixed(5) + ', ' + Number(pt.lng).toFixed(5))) : t('plan.start_none'))}</b></div><div class="row wrap" style="gap:4px;flex:none;justify-content:flex-end">${acts}</div></div>`;
@@ -1182,8 +1228,11 @@ function drawPlanner() {
   $('#pl-startbox', w).innerHTML = pointBox('pl-start', '🚩', t('plan.start'), PL.start, `<button class="btn xs" data-act="pl-mypos" id="pl-mypos">${ic('locate')} ${esc(t('plan.my_pos'))}</button>`)
     + pointBox('pl-end', '🏁', t('plan.end'), PL.end, `<button class="btn xs" data-act="pl-end-mypos" id="pl-end-mypos">${ic('locate')} ${esc(t('plan.my_pos'))}</button><button class="btn xs" data-act="pl-end-same" id="pl-end-same" ${PL.start ? '' : 'disabled'}>${esc(t('plan.end_same'))}</button>${PL.end ? `<button class="btn xs ghost" data-act="pl-end-clear" id="pl-end-clear" aria-label="${esc(t('plan.remove'))}">✕</button>` : ''}`)
     + `<div class="small muted" style="margin-top:4px">${esc(t('plan.tap_hint'))}</div>`;
-  $('#pl-seg', w).innerHTML = `<button type="button" data-act="pl-seg" data-v="search" class="${PL.seg === 'search' ? 'on' : ''}" id="pl-seg-search">${esc(t('plan.tab_search'))}</button><button type="button" data-act="pl-seg" data-v="plan" class="${PL.seg === 'plan' ? 'on' : ''}" id="pl-seg-plan">${esc(t('plan.tab_plan', { n: PL.stops.length + PL.streets.length }))}</button>`;
-  $('#pl-body', w).innerHTML = PL.seg === 'plan' ? planListHTML() : planSearchHTML();
+  $('#pl-seg', w).innerHTML = `<button type="button" data-act="pl-seg" data-v="search" class="${PL.seg === 'search' ? 'on' : ''}" id="pl-seg-search">${esc(t('plan.tab_search'))}</button><button type="button" data-act="pl-seg" data-v="line" class="${PL.seg === 'line' ? 'on' : ''}" id="pl-seg-line">✏️ ${esc(t('plan.tab_line'))}</button><button type="button" data-act="pl-seg" data-v="plan" class="${PL.seg === 'plan' ? 'on' : ''}" id="pl-seg-plan">${esc(t('plan.tab_plan', { n: PL.stops.length + PL.streets.length }))}</button>`;
+  $('#pl-drawbar', w).innerHTML = drawBarHTML();
+  const mp = $('#pl-map', w); if (mp) mp.classList.toggle('drawing', !!PL.draw);
+  $('#pl-body', w).innerHTML = PL.seg === 'plan' ? planListHTML() : PL.seg === 'line' ? planLineHTML() : planSearchHTML();
+  const ln = $('#pl-line-name', w); if (ln) ln.oninput = e => { if (PL.draw) PL.draw.name = e.target.value; };
   const q = $('#pl-q', w); if (q) { q.oninput = e => { PL.q = e.target.value; }; q.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); plSearch(); } }; }
   const nt = $('#pl-note', w); if (nt) nt.oninput = e => { PL.note = e.target.value; };
   drawPlanLayers();
@@ -1211,11 +1260,12 @@ function resultRowHTML(r, i) {
 function planKm() { const pts = (PL.start ? [PL.start] : []).concat(PL.stops).concat(PL.end ? [PL.end] : []); let m = 0; for (let i = 1; i < pts.length; i++) m += haversine(pts[i - 1], pts[i]); return m / 1000; }
 function planListHTML() {
   const streets = `<div class="small" style="font-weight:800;margin:2px 0 6px">🛣️ ${esc(t('plan.streets', { n: PL.streets.length }))}</div>
-    <div class="list" id="pl-streets">${PL.streets.length ? PL.streets.map((x, i) => { const warn = workedNote(x.name); return `<div class="li pl-stop pl-street" data-ref="${esc(x.ref)}"><span class="start-pin" aria-hidden="true">🛣️</span><div class="grow"><div class="t">${esc(x.name)}</div>${warn ? `<div class="small pl-warn" data-worked>⚠ ${esc(warn)}</div>` : ''}</div>
-      <div class="row" style="gap:2px;flex:none"><button class="btn xs" data-act="pl-street-shops" data-i="${i}">🔎 ${esc(t('plan.street_shops'))}</button><button class="btn xs ghost danger" data-act="pl-street-del" data-i="${i}" aria-label="${esc(t('plan.remove'))}">✕</button></div></div>`; }).join('') : `<div class="muted small" id="pl-no-streets">${esc(t('plan.no_streets'))}</div>`}</div>
+    <div class="list" id="pl-streets">${PL.streets.length ? PL.streets.map((x, i) => { const warn = streetNote(x); return `<div class="li pl-stop pl-street" data-ref="${esc(x.ref)}" data-drawn="${x.drawn ? 1 : 0}"><span class="start-pin" aria-hidden="true">${x.drawn ? '✏️' : '🛣️'}</span><div class="grow"><div class="t">${esc(x.name)}</div>${warn ? `<div class="small pl-warn" data-worked>⚠ ${esc(warn)}</div>` : ''}</div>
+      <div class="row" style="gap:2px;flex:none">${x.drawn ? `<button class="btn xs" data-act="pl-find" data-i="${i}">🔎 ${esc(t('plan.find_on'))}</button>` : `<button class="btn xs" data-act="pl-street-shops" data-i="${i}">🔎 ${esc(t('plan.street_shops'))}</button>`}<button class="btn xs ghost danger" data-act="pl-street-del" data-i="${i}" aria-label="${esc(t('plan.remove'))}">✕</button></div></div>`; }).join('') : `<div class="muted small" id="pl-no-streets">${esc(t('plan.no_streets'))}</div>`}</div>
     <div class="small" style="font-weight:800;margin:12px 0 6px">📍 ${esc(t('plan.stops', { n: PL.stops.length }))}</div>`;
+  const g = PL.date === today() ? planProgress({ stops: PL.stops }) : null;
   return streets + `<div class="row" style="justify-content:space-between;align-items:center;gap:8px"><button class="btn xs" data-act="pl-sort" id="pl-sort" ${PL.stops.length > 1 ? '' : 'disabled'}>↕ ${esc(t('plan.sort'))}</button><span class="small muted" id="pl-km">${PL.stops.length ? esc(t('plan.km', { km: NF1.format(planKm()) })) : ''}</span></div>
-    <div class="list" id="pl-stops" style="margin-top:8px">${PL.stops.length ? PL.stops.map((s, i) => `<div class="li pl-stop" data-ref="${esc(s.ref)}"><span class="plan-pin sm">${i + 1}</span><div class="grow"><div class="t">${esc(s.name)}</div><div class="s">${esc([s.kind === 'shop' ? t('plan.shop_ours') : t('plan.place'), s.address].filter(Boolean).join(' · '))}</div></div>
+    <div class="list" id="pl-stops" style="margin-top:8px">${PL.stops.length ? PL.stops.map((s, i) => `<div class="li pl-stop" data-ref="${esc(s.ref)}"${s.cat ? ` data-cat="${esc(s.cat)}"` : ''}${g && g.oc[i] ? ` data-oc="${ocKey(g.oc[i])}"` : ''}><span class="plan-pin sm"${g && g.oc[i] ? ocStyle(g.oc[i]) : pinStyle(s.cat)}>${g && g.oc[i] ? ocMark(g.oc[i]) : i + 1}</span><div class="grow"><div class="t">${esc(s.name)}</div><div class="s">${esc([s.kind === 'shop' ? t('plan.shop_ours') : t('plan.place'), s.address].filter(Boolean).join(' · '))}</div></div>
       <div class="row" style="gap:2px;flex:none"><button class="btn xs ghost" data-act="pl-up" data-i="${i}" aria-label="${esc(t('plan.up'))}" ${i ? '' : 'disabled'}>▲</button><button class="btn xs ghost" data-act="pl-down" data-i="${i}" aria-label="${esc(t('plan.down'))}" ${i < PL.stops.length - 1 ? '' : 'disabled'}>▼</button><button class="btn xs ghost danger" data-act="pl-del" data-i="${i}" aria-label="${esc(t('plan.remove'))}">✕</button></div></div>`).join('') : `<div class="muted" id="pl-empty">${esc(t('plan.empty'))}</div>`}</div>
     <div class="field" style="margin-top:10px"><label class="f" for="pl-note">${esc(t('notes'))}</label><textarea class="input" id="pl-note" rows="2">${esc(PL.note)}</textarea></div>`;
 }
@@ -1226,13 +1276,16 @@ function initPlanMap() {
   el.dataset.mode = 'leaflet';
   const L = window.L, m = L.map(el, { zoomControl: true, attributionControl: true });
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(m);
-  PL.map = m; PL.lay = L.layerGroup().addTo(m);
+  PL.map = m; PL.wlay = L.layerGroup().addTo(m); PL.lay = L.layerGroup().addTo(m);
+  PL.clu = clusterLayer(m, S.shops.filter(validPos), (s, lay) => L.circleMarker([s.lat, s.lng], { radius: 5, color: '#fff', weight: 1, fillColor: shopColor(s), fillOpacity: .6 }).bindTooltip(esc(s.name)).on('click', () => { if (!PL.draw) toggleStop(shopItem(s)); }).addTo(lay), shopColor);
+  m.on('moveend', () => drawWorkedLayer());
   const c = (PL.start && validPos(PL.start) ? PL.start : null) || (S.pos && validPos(S.pos) ? S.pos : null) || shopsCenter() || { lat: -6.2655, lng: 106.8605 };
   m.setView([c.lat, c.lng], 15);
   m.on('click', e => planMapClick(e.latlng));
   setTimeout(() => { try { m.invalidateSize(); } catch (e) { } }, 150);
 }
 function planMapClick(ll) {
+  if (PL.draw) { addDrawPt(ll.lat, ll.lng); return; } // drawing the work line: each tap = the next point
   PL.sel = { lat: ll.lat, lng: ll.lng };
   const html = `<div class="pl-pop"><div class="row" style="gap:6px"><button class="btn xs" data-act="pl-sel-start" id="pl-sel-start">🚩 ${esc(t('plan.set_start'))}</button><button class="btn xs" data-act="pl-sel-end" id="pl-sel-end">🏁 ${esc(t('plan.set_end'))}</button><button class="btn xs primary" data-act="pl-sel-add" id="pl-sel-add">+ ${esc(t('plan.point_here'))}</button></div></div>`;
   window.L.popup({ closeButton: true, autoPan: true }).setLatLng(ll).setContent(html).openOn(PL.map);
@@ -1240,26 +1293,41 @@ function planMapClick(ll) {
 function drawPlanLayers() {
   const m = PL.map, L = window.L; if (!m || !PL.lay) return;
   PL.lay.clearLayers();
-  const b = m.getBounds().pad(0.5);
-  S.shops.filter(s => validPos(s) && b.contains([s.lat, s.lng])).forEach(s => {
-    L.circleMarker([s.lat, s.lng], { radius: 5, color: '#fff', weight: 1, fillColor: shopColor(s), fillOpacity: .6 }).bindTooltip(esc(s.name)).on('click', () => toggleStop(shopItem(s))).addTo(PL.lay);
+  drawWorkedLayer();
+  PL.streets.forEach(x => (x.lines || []).forEach(ln => L.polyline(ln, x.drawn ? { color: '#0D9488', weight: 6, opacity: .75 } : { color: '#7C3AED', weight: 8, opacity: .4 }).bindTooltip(esc((x.drawn ? '✏️ ' : '🛣️ ') + x.name)).addTo(PL.lay)));
+  if (PL.draw) { // the line being drawn: solid blue, a white dot per point (the last one bigger)
+    const pts = PL.draw.pts;
+    if (pts.length > 1) L.polyline(pts, { color: '#0EA5E9', weight: 5, opacity: .95 }).addTo(PL.lay);
+    pts.forEach((q, i) => L.circleMarker(q, { radius: i === pts.length - 1 ? 7 : 5, color: '#0369A1', weight: 2, fillColor: '#fff', fillOpacity: 1, bubblingMouseEvents: false }).addTo(PL.lay));
+  }
+  foundShown().forEach(r => { // shops of the chosen kinds along a line — each kind its own colour
+    const on = PL.stops.some(s => s.ref === r.ref);
+    L.circleMarker([r.lat, r.lng], { radius: on ? 9 : 7, color: on ? '#111827' : '#fff', weight: on ? 3 : 2, fillColor: kindColor(r.cat) || '#EA580C', fillOpacity: 1 }).bindTooltip(esc(r.name + ' · ' + t('find.' + r.cat))).on('click', () => { if (!PL.draw) toggleStop(r); }).addTo(PL.lay);
   });
-  // streets other reps worked (red) / I worked before (grey) — last 60 days
-  (PL.worked || []).forEach(wk => {
-    const mine = normTxt(wk.user) === normTxt(S.user); if (mine && wk.plan_date === PL.date) return;
-    (wk.lines || []).forEach(ln => L.polyline(ln, { color: mine ? '#64748B' : '#E11D48', weight: 6, opacity: .45 }).bindTooltip(esc(wk.name + ' · ' + t(wk.status === 'planned' ? 'plan.planned_by' : 'plan.worked_by', { u: wk.user, d: fmtDate(wk.plan_date) }))).addTo(PL.lay));
-  });
-  PL.streets.forEach(x => (x.lines || []).forEach(ln => L.polyline(ln, { color: '#7C3AED', weight: 8, opacity: .4 }).bindTooltip(esc('🛣️ ' + x.name)).addTo(PL.lay)));
   if (PL.street && PL.street.lines && !PL.streets.some(x => normTxt(x.name) === normTxt(PL.street.name))) PL.street.lines.forEach(ln => L.polyline(ln, { color: '#7C3AED', weight: 7, opacity: .25, dashArray: '2 8' }).addTo(PL.lay));
   PL.results.filter(r => r.kind === 'poi' && !r.ours).forEach(r => {
     const on = PL.stops.some(s => s.ref === r.ref);
-    L.circleMarker([r.lat, r.lng], { radius: on ? 8 : 6, color: '#fff', weight: 2, fillColor: on ? '#16A34A' : '#EA580C', fillOpacity: 1 }).bindTooltip(esc(r.name)).on('click', () => toggleStop(r)).addTo(PL.lay);
+    L.circleMarker([r.lat, r.lng], { radius: on ? 8 : 6, color: '#fff', weight: 2, fillColor: on ? '#16A34A' : '#EA580C', fillOpacity: 1 }).bindTooltip(esc(r.name)).on('click', () => { if (!PL.draw) toggleStop(r); }).addTo(PL.lay);
   });
   const route = (PL.start && validPos(PL.start) ? [PL.start] : []).concat(PL.stops).concat(PL.end && validPos(PL.end) ? [PL.end] : []).map(p => [p.lat, p.lng]);
   if (route.length > 1) L.polyline(route, { color: '#7C3AED', weight: 3, dashArray: '6 6', opacity: .9 }).addTo(PL.lay);
-  PL.stops.forEach((s, i) => L.marker([s.lat, s.lng], { icon: L.divIcon({ className: 'ord-pin-wrap', html: '<span class="plan-pin">' + (i + 1) + '</span>', iconSize: [28, 28], iconAnchor: [14, 14] }), zIndexOffset: 1000 }).bindTooltip(esc((i + 1) + '. ' + s.name)).addTo(PL.lay));
+  PL.stops.forEach((s, i) => L.marker([s.lat, s.lng], { icon: L.divIcon({ className: 'ord-pin-wrap', html: '<span class="plan-pin"' + pinStyle(s.cat) + '>' + (i + 1) + '</span>', iconSize: [28, 28], iconAnchor: [14, 14] }), zIndexOffset: 1000 }).bindTooltip(esc((i + 1) + '. ' + s.name)).addTo(PL.lay));
   if (PL.start && validPos(PL.start)) L.marker([PL.start.lat, PL.start.lng], { icon: L.divIcon({ className: 'ord-pin-wrap', html: '<span class="start-pin">🚩</span>', iconSize: [30, 30], iconAnchor: [6, 28] }), zIndexOffset: 1100 }).bindTooltip(esc(PL.start.label || t('plan.start'))).addTo(PL.lay);
   if (PL.end && validPos(PL.end)) L.marker([PL.end.lat, PL.end.lng], { icon: L.divIcon({ className: 'ord-pin-wrap', html: '<span class="start-pin">🏁</span>', iconSize: [30, 30], iconAnchor: [6, 28] }), zIndexOffset: 1100 }).bindTooltip(esc(PL.end.label || t('plan.end'))).addTo(PL.lay);
+}
+/** Streets other reps worked (red) / I worked before (grey) — kept forever, so only the ones crossing the view are drawn. */
+function drawWorkedLayer() {
+  const m = PL.map, L = window.L; if (!m || !PL.wlay || !m._loaded) return;
+  PL.wlay.clearLayers();
+  const b = m.getBounds().pad(0.3), bw = [b.getSouth(), b.getNorth(), b.getWest(), b.getEast()];
+  (PL.worked || []).forEach(wk => {
+    const mine = normTxt(wk.user) === normTxt(S.user); if (mine && wk.plan_date === PL.date) return;
+    (wk.lines || []).forEach(ln => {
+      if (!Array.isArray(ln) || ln.length < 2) return;
+      const c = ln._b || (ln._b = boxOf(ln)); if (c[1] < bw[0] || c[0] > bw[1] || c[3] < bw[2] || c[2] > bw[3]) return; // outside the view
+      L.polyline(ln, { color: mine ? '#64748B' : '#E11D48', weight: 6, opacity: .45 }).bindTooltip(esc(wk.name + ' · ' + t(wk.status === 'planned' ? 'plan.planned_by' : 'plan.worked_by', { u: wk.user, d: fmtDate(wk.plan_date) }))).addTo(PL.wlay);
+    });
+  });
 }
 function fitPlan(items) {
   const m = PL.map; if (!m) return;
@@ -1273,10 +1341,11 @@ function toggleStop(it) {
   if (i >= 0) PL.stops.splice(i, 1);
   else {
     if (PL.stops.length >= 60) { toast(t('plan.max'), 'err'); return; }
-    PL.stops.push({ ref: it.ref, kind: it.shop_id ? 'shop' : 'place', shop_id: it.shop_id || '', name: it.name, lat: it.lat, lng: it.lng, address: it.address || '', type: it.type || '', src: it.src || 'map' });
+    PL.stops.push(stopOf(it));
   }
   drawPlanner();
 }
+const stopOf = it => Object.assign({ ref: it.ref, kind: it.shop_id ? 'shop' : 'place', shop_id: it.shop_id || '', name: it.name, lat: it.lat, lng: it.lng, address: it.address || '', type: it.type || '', src: it.src || 'map' }, it.cat ? { cat: it.cat } : {});
 /** Nearest stop first, starting from the start point (or the first stop). */
 function sortStops() {
   const left = PL.stops.slice(), out = [];
@@ -1286,11 +1355,183 @@ function sortStops() {
   PL.stops = out;
 }
 
+/* ---- v32 (owner 2026-10-11): a WORK LINE drawn point by point + the kinds of shop to look for along it ----
+   The rep taps the map along the road he wants to work (the start, then a point every so often — a shop there or not); the
+   app joins the points into his work line, kept in the plan and on the shared map like a street (other reps see it). Then
+   he picks the kinds of shop he wants (dates, Hajj & Umrah, …) and the app searches OpenStreetMap along that line (free):
+   each kind its own colour on the map, in the order he meets them along the line, ready to add as stops. */
+const FIND_R = 100; // metres either side of a drawn line
+const CHAIN_RE = 'indomaret|alfamart|alfamidi|alfaexpress|lawson|circle ?k|family ?mart|superindo|hypermart|transmart|lotte|giant|carrefour|yogya|foodmart|ranch market|grand lucky';
+// a rule = an Overpass filter + the same test on the phone (to give each place its kind)
+const nameRule = (keys, re) => keys.map(k => ({ f: `["${k}"]["name"~"${re}",i]`, t: tg => !!tg[k] && new RegExp(re, 'i').test(tg.name || '') }));
+const tagRule = (k, v, and, notName) => ({ f: `["${k}"~"^(${v})$"]` + Object.keys(and || {}).map(a => `["${a}"="${and[a]}"]`).join(''),
+  t: tg => new RegExp('^(' + v + ')$').test(tg[k] || '') && Object.keys(and || {}).every(a => tg[a] === and[a]) && !(notName && new RegExp(notName, 'i').test([tg.name, tg.brand].filter(Boolean).join(' '))) });
+const FIND = [ // first match wins (most specific first)
+  { id: 'kurma', e: '🌴', c: '#92400E', type: 'toko_kurma', rules: nameRule(['shop', 'office', 'craft'], 'kurma|korma|dates|tamr|ajwa|sukari') },
+  { id: 'haji', e: '🕋', c: '#0F172A', type: 'perlengkapan_haji', rules: nameRule(['shop', 'office'], 'haji ?(dan|&|n)? ?umr|perlengkapan haji|umr[ao]h|umroh|hajj|ihram|zam ?zam|makkah|mekkah|madinah') },
+  { id: 'muslim', e: '🌙', c: '#7C3AED', type: 'busana_muslim', rules: nameRule(['shop'], 'muslim|islami|syar.?i|hijab|gamis|jilbab|kerudung|timur tengah|attar|habbat|herbal|siwak').concat([tagRule('shop', 'herbalist|nutrition_supplements|health_food|religion')]) },
+  { id: 'oleh', e: '🎁', c: '#CA8A04', type: 'oleh_oleh', rules: nameRule(['shop'], 'oleh|parcel|parsel|hampers|buah').concat([tagRule('shop', 'gift|greengrocer|confectionery')]) },
+  { id: 'ritel', e: '🏬', c: '#DC2626', type: 'minimarket', rules: nameRule(['shop'], CHAIN_RE).concat([tagRule('shop', 'supermarket|department_store|mall')]) },
+  { id: 'sembako', e: '🛒', c: '#EA580C', type: 'toko', rules: [tagRule('shop', 'convenience|general|kiosk|grocery|wholesale|variety_store|frozen_food|rice|beverages', null, CHAIN_RE)] },
+  { id: 'kuliner', e: '🍞', c: '#DB2777', type: 'bakery', rules: [tagRule('shop', 'bakery|pastry'), tagRule('amenity', 'cafe|restaurant|fast_food|food_court')] },
+  { id: 'masjid', e: '🕌', c: '#16A34A', type: 'masjid', rules: [tagRule('amenity', 'place_of_worship', { religion: 'muslim' })].concat(nameRule(['amenity'], 'pesantren|pondok')) }];
+const kindColor = id => (FIND.find(k => k.id === id) || {}).c || '';
+const pinStyle = cat => { const c = kindColor(cat); return c ? ` style="border-color:${c};color:${c}"` : ''; }; // catalogue colours only (never user text)
+const findQL = (cats, F) => FIND.filter(k => cats.includes(k.id)).map(k => k.rules.map(r => `nwr${r.f}${F};`).join('')).join('');
+const findKind = (tg, cats) => FIND.find(k => cats.includes(k.id) && k.rules.some(r => r.t(tg))) || null;
+function findType(k, tg) {
+  if (k.id === 'masjid' && /pesantren|pondok/i.test(tg.name || '')) return 'pesantren';
+  const ot = osmType(tg);
+  return ot && KST.groupOf(ot) === KST.groupOf(k.type) ? ot : k.type;
+}
+/** Metres on a flat local grid (fine over a few km). */
+const gxy = (q, lat0) => [q[1] * 111320 * Math.cos(lat0 * Math.PI / 180), q[0] * 110574];
+/** Distance (m) from p to the line, and how far along the line (m) its nearest point lies. */
+function alongLine(ln, p) {
+  const lat0 = ln[0][0], P = gxy([p.lat, p.lng], lat0); let best = { d: Infinity, s: 0 }, acc = 0;
+  for (let i = 1; i < ln.length; i++) {
+    const A = gxy(ln[i - 1], lat0), B = gxy(ln[i], lat0), dx = B[0] - A[0], dy = B[1] - A[1], L2 = dx * dx + dy * dy;
+    const u = L2 ? Math.max(0, Math.min(1, ((P[0] - A[0]) * dx + (P[1] - A[1]) * dy) / L2)) : 0;
+    const d = Math.hypot(A[0] + u * dx - P[0], A[1] + u * dy - P[1]);
+    if (d < best.d) best = { d, s: acc + u * Math.sqrt(L2) };
+    acc += Math.sqrt(L2);
+  }
+  return best;
+}
+const lineM = ln => { let m = 0; for (let i = 1; i < ln.length; i++) m += haversine({ lat: ln[i - 1][0], lng: ln[i - 1][1] }, { lat: ln[i][0], lng: ln[i][1] }); return m; };
+const linesM = lines => (lines || []).reduce((a, ln) => a + lineM(ln), 0);
+const boxOf = pts => [Math.min(...pts.map(q => q[0])), Math.max(...pts.map(q => q[0])), Math.min(...pts.map(q => q[1])), Math.max(...pts.map(q => q[1]))];
+/** A point every ~step m along the line (≤ 200) — for the "already worked" check. */
+function samplePts(ln, step) {
+  const out = [[ln[0][0], ln[0][1]]];
+  for (let i = 1; i < ln.length && out.length < 200; i++) {
+    const a = ln[i - 1], b = ln[i], n = Math.max(1, Math.ceil(haversine({ lat: a[0], lng: a[1] }, { lat: b[0], lng: b[1] }) / step));
+    for (let j = 1; j <= n; j++) out.push([a[0] + (b[0] - a[0]) * j / n, a[1] + (b[1] - a[1]) * j / n]);
+  }
+  return out.slice(0, 200);
+}
+const OVL = new Map();
+/** Streets / lines of OTHER reps that this drawn line runs along (≥ 30 % of it within 40 m) — the rep is warned, not blocked. */
+function lineOverlap(x) {
+  const key = x.ref + '|' + PL.workedAt + '|' + (x.lines || []).map(l => l.length).join(',');
+  if (OVL.has(key)) return OVL.get(key);
+  const pts = (x.lines || []).filter(ln => ln.length > 1).flatMap(ln => samplePts(ln, 40)), out = [];
+  if (pts.length) {
+    const b = boxOf(pts), pad = 0.001;
+    (PL.worked || []).forEach(w => {
+      if (normTxt(w.user) === normTxt(S.user)) return;
+      const ls = (w.lines || []).filter(ln => { if (!Array.isArray(ln) || ln.length < 2) return false; const c = boxOf(ln); return c[1] >= b[0] - pad && c[0] <= b[1] + pad && c[3] >= b[2] - pad && c[2] <= b[3] + pad; });
+      if (!ls.length) return;
+      const hit = pts.filter(q => ls.some(ln => alongLine(ln, { lat: q[0], lng: q[1] }).d < 40)).length;
+      if (hit / pts.length >= 0.3) out.push({ w, p: Math.round(hit / pts.length * 100) });
+    });
+  }
+  if (OVL.size > 200) OVL.clear();
+  OVL.set(key, out); return out;
+}
+const lineWorkedNote = x => lineOverlap(x).map(o => t(o.w.status === 'planned' ? 'plan.overlap_planned' : 'plan.overlap', { p: o.p, u: o.w.user, d: fmtDate(o.w.plan_date) })).join(' · ');
+const streetNote = x => x.drawn ? lineWorkedNote(x) : workedNote(x.name);
+const drawnCount = () => PL.streets.filter(x => x.drawn).length;
+const r5 = v => Math.round(v * 1e5) / 1e5;
+function addDrawPt(lat, lng) {
+  if (!PL.draw) return;
+  if (PL.draw.pts.length >= 150) { toast(t('plan.draw_max'), 'err'); return; }
+  PL.draw.pts.push([r5(lat), r5(lng)]);
+  drawPlanner();
+}
+function finishDraw() {
+  const d = PL.draw; if (!d) return;
+  if (d.pts.length < 2) { toast(t('plan.draw_need2'), 'err'); return; }
+  if (PL.streets.length >= 15) { toast(t('plan.max_streets'), 'err'); return; }
+  const inp = PL.el && $('#pl-line-name', PL.el), nm = String((inp ? inp.value : d.name) || '').trim().slice(0, 60) || t('plan.line_name', { n: drawnCount() + 1 });
+  const lines = simplifyLines([d.pts]);
+  const x = { ref: 'ln:' + uuid().slice(0, 8), name: nm, lines: lines.length ? lines : [d.pts.slice(0, 150)], drawn: true };
+  PL.streets.push(x); PL.draw = null; PL.lineRef = x.ref; PL.found = []; PL.foundOn = ''; PL.msg = t('plan.line_saved', { n: d.pts.length }); PL.seg = 'line';
+  const warn = lineWorkedNote(x); if (warn) toast('⚠ ' + warn, 'warn', 6000);
+  drawPlanner(); fitPlan(x.lines[0].map(q => ({ lat: q[0], lng: q[1] })));
+}
+function drawBarHTML() {
+  const d = PL.draw; if (!d) return '';
+  const km = NF1.format(d.pts.length > 1 ? lineM(d.pts) / 1000 : 0);
+  return `<div class="pl-drawbar" id="pl-drawbar-in"><b id="pl-draw-n" data-n="${d.pts.length}">✏️ ${esc(t('plan.drawing', { n: d.pts.length, km }))}</b>
+    <div class="row wrap" style="gap:4px;justify-content:flex-end"><button class="btn xs" data-act="pl-draw-undo" id="pl-draw-undo" aria-label="${esc(t('plan.draw_undo'))}" ${d.pts.length ? '' : 'disabled'}>↶</button><button class="btn xs" data-act="pl-draw-pos" id="pl-draw-pos">${ic('locate')} ${esc(t('plan.draw_mypos'))}</button><button class="btn xs ghost" data-act="pl-draw-cancel" id="pl-draw-cancel">${esc(t('cancel'))}</button><button class="btn xs primary" data-act="pl-draw-done" id="pl-draw-done" ${d.pts.length > 1 ? '' : 'disabled'}>✓ ${esc(t('plan.draw_done'))}</button></div></div>`;
+}
+/** Shops found along the chosen line, of the kinds still ticked. */
+const foundShown = () => PL.foundOn ? PL.found.filter(f => (PL.cats || []).includes(f.cat)) : [];
+function planLineHTML() {
+  const d = PL.draw, hasMap = !!PL.map;
+  const head = d ? `<div class="pl-hint" id="pl-draw-hint">✏️ ${esc(t(hasMap ? 'plan.draw_tap' : 'plan.draw_nomap'))}</div>
+      <div class="field" style="margin-top:8px"><label class="f" for="pl-line-name">${esc(t('plan.line_name_l'))}</label><input class="input" id="pl-line-name" maxlength="60" placeholder="${esc(t('plan.line_name', { n: drawnCount() + 1 }))}" value="${esc(d.name || '')}"></div>`
+    : `<div class="small muted" id="pl-line-hint">${esc(t('plan.line_hint'))}</div>
+      <button class="btn primary block" data-act="pl-draw" id="pl-draw" style="margin-top:8px" ${PL.streets.length >= 15 ? 'disabled' : ''}>✏️ ${esc(t('plan.draw_start'))}</button>`;
+  const rows = PL.streets.map((x, i) => { const warn = streetNote(x), on = x.ref === PL.lineRef; return `<div class="li pl-stop pl-line ${on ? 'sel' : ''}" data-ref="${esc(x.ref)}" data-drawn="${x.drawn ? 1 : 0}"><span class="start-pin" aria-hidden="true">${x.drawn ? '✏️' : '🛣️'}</span><div class="grow"><div class="t">${esc(x.name)}</div><div class="s">${esc(t('plan.km', { km: NF1.format(linesM(x.lines) / 1000) }))}</div>${warn ? `<div class="small pl-warn" data-worked>⚠ ${esc(warn)}</div>` : ''}</div>
+      <div class="row" style="gap:2px;flex:none"><button class="btn xs ${on ? 'primary' : ''}" data-act="pl-find" data-i="${i}" ${PL.busy || d ? 'disabled' : ''}>🔎 ${esc(t('plan.find_on'))}</button><button class="btn xs ghost danger" data-act="pl-street-del" data-i="${i}" aria-label="${esc(t('plan.remove'))}">✕</button></div></div>`; }).join('');
+  const kinds = FIND.map(k => { const on = PL.cats.includes(k.id); return `<button type="button" class="chip find-chip ${on ? 'on' : ''}" data-act="pl-kind" data-k="${k.id}" aria-pressed="${on}" style="--kc:${k.c}"><span class="kdot" aria-hidden="true"></span>${k.e} ${esc(t('find.' + k.id))}</button>`; }).join('');
+  const target = PL.streets.find(x => x.ref === PL.lineRef) || PL.streets.filter(x => x.drawn).slice(-1)[0] || PL.streets.slice(-1)[0];
+  const found = foundShown(), counts = FIND.map(k => ({ k, n: found.filter(f => f.cat === k.id).length })).filter(c => c.n);
+  const named = found.filter(f => f.named && !PL.stops.some(s => s.ref === f.ref)).length;
+  return head + `<div class="small" style="font-weight:800;margin:12px 0 6px">${esc(t('plan.lines', { n: PL.streets.length }))}</div>
+    <div class="list" id="pl-lines">${rows || `<div class="muted small" id="pl-no-lines">${esc(t('plan.no_lines'))}</div>`}</div>
+    <div class="small" style="font-weight:800;margin:12px 0 6px">${esc(t('plan.find_types'))}</div>
+    <div class="chips wrap" id="pl-kinds">${kinds}</div>
+    <button class="btn primary block" data-act="pl-find" data-ref="${esc(target ? target.ref : '')}" id="pl-find-go" style="margin-top:8px" ${target && !PL.busy && !d ? '' : 'disabled'}>🔎 ${esc(target ? t('plan.find_go', { name: target.name }) : t('plan.find_go0'))}</button>
+    <div class="small muted" id="pl-msg" style="margin-top:6px" role="status">${esc(PL.msg)}</div>
+    ${counts.length ? `<div class="chips wrap" id="pl-found-legend" style="margin-top:6px">${counts.map(c => `<span class="kbadge" data-cat="${c.k.id}" style="--kc:${c.k.c}"><span class="kdot" aria-hidden="true"></span>${c.k.e} ${esc(t('find.' + c.k.id))}: <b>${c.n}</b></span>`).join('')}</div>` : ''}
+    ${named ? `<button class="btn xs primary" data-act="pl-find-all" id="pl-find-all" style="margin-top:6px">+ ${esc(t('plan.add_all', { n: named }))}</button>` : ''}
+    <div class="list" id="pl-found" style="margin-top:6px">${found.map(foundRowHTML).join('')}</div>
+    <div class="small muted" style="margin-top:8px">${esc(t('plan.osm'))}</div>`;
+}
+function foundRowHTML(r) {
+  const k = FIND.find(x => x.id === r.cat) || FIND[0], added = PL.stops.some(s => s.ref === r.ref);
+  const sub = [t('find.' + k.id), r.ours ? t('plan.shop_ours') : (r.type ? KST.typeLabel(r.type, S.lang) : ''), r.address].filter(Boolean).join(' · ');
+  return `<div class="li pl-res" data-ref="${esc(r.ref)}" data-cat="${esc(r.cat)}"><span class="kdot big" style="--kc:${k.c}" aria-hidden="true"></span><div class="grow"><div class="t">${esc(r.name)}${r.ours ? ' ⭐' : ''}</div><div class="s">${esc(sub)}</div></div>
+    <button class="btn xs ${added ? '' : 'primary'}" data-act="pl-find-toggle" data-ref="${esc(r.ref)}" aria-pressed="${added}">${added ? '✓ ' + esc(t('plan.added')) : '+ ' + esc(t('plan.add'))}</button></div>`;
+}
+/** The line for an Overpass "around" filter: lat,lng,lat,lng,… (a point kept every ≥ 25 m, ≤ 150). */
+const qCoords = ln => (simplifyLines([ln])[0] || ln).map(q => Number(q[0]).toFixed(5) + ',' + Number(q[1]).toFixed(5)).join(',');
+function findItems(js, cats, ln) {
+  const out = [], seen = new Set();
+  ((js && js.elements) || []).forEach(x => {
+    const tg = x.tags || {}; if (x.type === 'way' && tg.highway) return;
+    const k = findKind(tg, cats); if (!k) return;
+    const lat = x.lat != null ? x.lat : (x.center && x.center.lat), lng = x.lon != null ? x.lon : (x.center && x.center.lon);
+    if (!isFinite(lat) || !isFinite(lng)) return;
+    const ref = 'osm:' + String(x.type).charAt(0) + x.id; if (seen.has(ref)) return; seen.add(ref);
+    const type = findType(k, tg), nm = tg.name || tg.brand || '';
+    let it = { ref, src: 'osm', kind: 'poi', named: !!nm, lat, lng, type, cat: k.id, address: [tg['addr:street'], tg['addr:housenumber']].filter(Boolean).join(' '),
+      name: String(nm || (KST.typeLabel(type, S.lang) + ' · ' + t('plan.unnamed'))).slice(0, 100) };
+    const ours = S.shops.find(s => validPos(s) && haversine(s, it) < 40);
+    if (ours) { if (seen.has('shop:' + ours.shop_id)) return; seen.add('shop:' + ours.shop_id); it = Object.assign(shopItem(ours), { cat: k.id }); }
+    it.at = ln ? alongLine(ln, it).s : (PL.start && validPos(PL.start) ? haversine(PL.start, it) : 0);
+    out.push(it);
+  });
+  return out.sort((a, b) => a.at - b.at).slice(0, 200); // in the order the rep meets them along the line
+}
+/** Search a work line (drawn or a street) for the kinds of shop the rep ticked. */
+function plFind(x) {
+  if (!x) return;
+  PL.lineRef = x.ref;
+  const cats = (PL.cats || []).filter(id => FIND.some(k => k.id === id)), lines = (x.lines || []).filter(ln => Array.isArray(ln) && ln.length > 1);
+  if (!cats.length || !lines.length) { PL.msg = t(cats.length ? 'plan.no_line' : 'plan.find_pick'); PL.seg = 'line'; drawPlanner(); return; }
+  return planRun(async () => {
+    let ql;
+    if (x.drawn) ql = `[out:json][timeout:40];(${lines.slice(0, 5).map(ln => findQL(cats, `(around:${FIND_R},${qCoords(ln)})`)).join('')});out center 300;`;
+    else {
+      const b = boxOf(lines.flat()), pad = 0.01, nm = String(x.name).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      ql = `[out:json][timeout:40];way["highway"]["name"="${nm}"](${b[0] - pad},${b[2] - pad},${b[1] + pad},${b[3] + pad})->.s;(${findQL(cats, '(around.s:60)')});out center 300;`;
+    }
+    const js = await overpass(ql);
+    PL.found = findItems(js, cats, x.drawn ? lines[0] : null); PL.foundOn = x.ref;
+    PL.msg = PL.found.length ? t('plan.found_line', { n: PL.found.length, name: x.name }) : t('plan.no_results');
+    fitPlan(PL.found.length ? PL.found : lines.flat().map(q => ({ lat: q[0], lng: q[1] })));
+  }, 'line');
+}
+
 /* ---- OpenStreetMap search (free; from the phone; explicit search only, ≤ 1 request/second as the service asks) ---- */
 const OSM_TYPES = { convenience: 'minimarket', supermarket: 'supermarket', department_store: 'hypermarket', mall: 'hypermarket', wholesale: 'grosir_modern', general: 'warung', kiosk: 'warung',
   variety_store: 'toko', frozen_food: 'toko', deli: 'toko', dairy: 'toko', bakery: 'bakery', pastry: 'toko_kue', confectionery: 'toko_kue', greengrocer: 'toko_buah', health_food: 'herbal',
   herbalist: 'herbal', nutrition_supplements: 'herbal', gift: 'oleh_oleh', marketplace: 'pasar', restaurant: 'restoran', fast_food: 'restoran', food_court: 'restoran', cafe: 'kafe',
-  place_of_worship: 'masjid', hotel: 'hotel', travel_agency: 'travel_umrah' };
+  place_of_worship: 'masjid', hotel: 'hotel', travel_agency: 'travel_umrah', travel_agent: 'travel_umrah' };
 function osmType(tg) {
   const nm = String(tg.name || tg.brand || '').toLowerCase();
   let ty = /kurma|dates/.test(nm) ? 'toko_kurma' : /indomaret|alfamart|alfamidi|lawson|circle ?k|family ?mart/.test(nm) ? 'minimarket' : /oleh/.test(nm) ? 'oleh_oleh' : '';
@@ -1356,8 +1597,8 @@ function withOurs(pois, from) {
   const o = from && validPos(from) ? from : null;
   return out.sort((a, b) => (b.named - a.named) || (o ? haversine(o, a) - haversine(o, b) : 0)).slice(0, 150);
 }
-async function planRun(fn) {
-  PL.busy = true; PL.msg = t('plan.searching'); PL.seg = 'search'; drawPlanner();
+async function planRun(fn, seg) {
+  PL.busy = true; PL.msg = t('plan.searching'); PL.seg = seg || 'search'; drawPlanner();
   try { await fn(); }
   catch (e) { console.warn('plan search', e); PL.msg = navigator.onLine ? t('plan.search_err') : t('plan.need_net'); }
   finally { PL.busy = false; drawPlanner(); }
@@ -1419,11 +1660,11 @@ function plOurs() {
   PL.msg = PL.results.length ? t('plan.found', { n: PL.results.length }) : t('plan.no_results');
   PL.seg = 'search'; drawPlanner(); fitPlan(PL.results);
 }
-function myPosition() {
+function myPosition(now) { // now: a point of a work line drawn while walking — must be where he stands now, not a minute ago
   return new Promise(res => {
-    const fresh = S.pos && validPos(S.pos) && (!S.pos.t || Date.now() - Date.parse(S.pos.t) < 120000) ? S.pos : null;
+    const fresh = !now && S.pos && validPos(S.pos) && (!S.pos.t || Date.now() - Date.parse(S.pos.t) < 120000) ? S.pos : null;
     if (!navigator.geolocation) return res(fresh);
-    navigator.geolocation.getCurrentPosition(p => res({ lat: p.coords.latitude, lng: p.coords.longitude }), () => res(fresh), { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+    navigator.geolocation.getCurrentPosition(p => res({ lat: p.coords.latitude, lng: p.coords.longitude }), () => res(fresh), { enableHighAccuracy: true, timeout: 12000, maximumAge: now ? 0 : 60000 });
   });
 }
 /** Visit a stop of today's plan: a system shop → the normal visit; a new place → the new-shop form already filled in. */
@@ -1606,7 +1847,8 @@ RENDER.visit = function () {
           ${CI.photo ? `<span class="small muted" id="ci-photo-kb">${CI.photoKB} KB · <button class="btn xs ghost" data-act="ci-photo-del">${esc(t('delete'))}</button></span>` : ''}</div></div>
       <label class="check" style="margin-top:10px"><input type="checkbox" id="ci-consent" ${CI.consent ? 'checked' : ''}><span><b>${esc(t('visit.consent'))}</b><br><span class="small muted">${esc(t('visit.consent_hint'))}</span></span></label></div>
     <div class="card pad" style="margin-top:12px"><div class="step-h"><span class="n">4</span>${esc(t('visit.result'))}</div>
-      <div class="opt" id="ci-outcome">${OUTCOMES.map(o => `<button type="button" data-act="ci-outcome" data-o="${o}" id="oc-${o}" class="${CI.outcome === o ? 'on' : ''}">${esc(t('oc.' + o))}</button>`).join('')}</div>
+      <div class="opt" id="ci-outcome">${OUTCOMES.map(o => `<button type="button" data-act="ci-outcome" data-o="${o}" id="oc-${o}" class="oc-btn ${CI.outcome === o ? 'on' : ''}" data-oc="${ocKey(o)}" style="--oc:${ocColor(o)}">${esc(t('oc.' + o))}</button>`).join('')}</div>
+      <div class="small pl-warn" id="ci-black" style="margin-top:8px" ${BLACK_OC.includes(CI.outcome) ? '' : 'hidden'}>📷 ${esc(t('visit.black_photo'))}</div>
       <div class="field" style="margin-top:12px"><label class="f">${esc(t('visit.rating'))}</label>
         <div class="stars" id="ci-stars" role="radiogroup" aria-label="${esc(t('visit.rating'))}">${[1, 2, 3, 4, 5].map(n => `<button type="button" class="star ${CI.rating >= n ? 'on' : ''}" data-act="ci-star" data-n="${n}" aria-label="${n}" aria-pressed="${CI.rating >= n}">★</button>`).join('')}</div>
         <div class="small muted" style="margin-top:2px">${esc(t('visit.rating_hint'))}</div></div>
@@ -1729,13 +1971,16 @@ async function saveCheckin() {
     if (shopData) Object.assign(shopData, cat);
   }
   if (!CI.outcome) { err.textContent = t('visit.pick_outcome'); return; }
-  if (CI.photo && !CI.consent) { err.textContent = t('visit.need_consent'); return; }
+  const black = BLACK_OC.includes(CI.outcome); // closed / not there / changed business: a photo of the place is the proof
+  if (black && !CI.photo) { err.textContent = t('visit.need_photo_black'); const ph = $('#ci-photo-back'); if (ph && ph.closest('.card')) ph.closest('.card').scrollIntoView({ block: 'center' }); return; }
+  if (CI.photo && !CI.consent && !black) { err.textContent = t('visit.need_consent'); return; }
   const data = { client_id: CI.client_id, lat: CI.fix.lat, lng: CI.fix.lng, acc: CI.fix.acc, outcome: CI.outcome, notes: (CI.notes || '').trim(), photo_consent: !!(CI.photo && CI.consent), at: new Date().toISOString() };
+  if (black && CI.photo && !CI.consent) data.photo_place = true;
   if (shop && !String(shop.shop_id).startsWith('tmp:')) data.shop_id = shop.shop_id;
   else if (shop) data.shop_id = shop.shop_id; // pending new shop: resolved at sync
   else data.shop = shopData;
   if (shop && cat) data.shop = cat; // re-categorise the existing shop with this check-in (also when queued offline)
-  if (CI.photo && CI.consent) data.photo_base64 = CI.photo;
+  if (CI.photo && (CI.consent || black)) data.photo_base64 = CI.photo;
   if (CI.rating) data.rating = CI.rating;
   if (CI.next) data.next_visit = CI.next;
   CI.busy = true; $('#ci-ok').disabled = true;
@@ -2033,7 +2278,7 @@ const ACT = {
   'tp-change': () => { const st = tpState(); if (!st) return; st.orig = st.orig || st.type; st.type = ''; st.q = ''; drawTP(); },
   'tp-chain': el => { const st = tpState(); if (!st) return; st.chain = st.chain === el.dataset.c ? '' : el.dataset.c; drawTP(); },
   'ci-new': () => { CI.shop_id = ''; CI.isNew = true; CI.form = CI.form || {}; RENDER.visit(); const n = $('#ci-name'); if (n) n.focus(); },
-  'ci-outcome': el => { CI.outcome = el.dataset.o; $$('#ci-outcome button').forEach(b => b.classList.toggle('on', b === el)); },
+  'ci-outcome': el => { CI.outcome = el.dataset.o; $$('#ci-outcome button').forEach(b => b.classList.toggle('on', b === el)); const bw = $('#ci-black'); if (bw) bw.hidden = !BLACK_OC.includes(CI.outcome); },
   'ci-star': el => { const n = +el.dataset.n || 0; CI.rating = (CI.rating === n) ? 0 : n; $$('#ci-stars .star').forEach((b, i) => { b.classList.toggle('on', CI.rating >= i + 1); b.setAttribute('aria-pressed', CI.rating >= i + 1); }); },
   'ci-next': el => { CI.next = el.dataset.n ? addDays(today(), +el.dataset.n) : ''; $('#ci-next').value = CI.next; },
   'ci-photo-del': () => { CI.photo = ''; CI.photoKB = 0; RENDER.visit(); },
@@ -2073,13 +2318,27 @@ const ACT = {
   'pl-sort': () => { sortStops(); drawPlanner(); },
   'pl-work': el => { const r = PL.results[int(el.dataset.i)]; if (r) return plWorkStreet(r); },
   'pl-street-shops': el => { const x = PL.streets[int(el.dataset.i)]; if (!x) return; const pts = (x.lines || []).flat(); const c = pts.length ? pts[Math.floor(pts.length / 2)] : null; const bb = pts.length ? [Math.min(...pts.map(q => q[0])), Math.max(...pts.map(q => q[0])), Math.min(...pts.map(q => q[1])), Math.max(...pts.map(q => q[1]))] : null; return plAlong({ name: x.name, lat: c ? c[0] : (PL.start || S.pos || { lat: -6.2655 }).lat, lng: c ? c[1] : (PL.start || S.pos || { lng: 106.8605 }).lng, bbox: bb }); },
-  'pl-street-del': el => { PL.streets.splice(int(el.dataset.i), 1); drawPlanner(); },
+  'pl-street-del': el => { const x = PL.streets.splice(int(el.dataset.i), 1)[0]; if (x && x.ref === PL.foundOn) { PL.found = []; PL.foundOn = ''; } if (x && x.ref === PL.lineRef) PL.lineRef = ''; drawPlanner(); },
+  // v32 work line drawn point by point + search along it by kind of shop
+  'pl-draw': () => {
+    PL.draw = { pts: [], name: '' }; PL.seg = 'line'; PL.msg = ''; if (PL.map) PL.map.closePopup(); drawPlanner();
+    const bar = PL.el && $('#pl-drawbar', PL.el); if (bar && bar.scrollIntoView) bar.scrollIntoView({ block: 'start' }); // the map is where he draws: bring it into view
+  },
+  'pl-draw-undo': () => { if (PL.draw) { PL.draw.pts.pop(); drawPlanner(); } },
+  'pl-draw-pos': async () => { const p = await myPosition(true); if (!p) { toast(t('gps.denied'), 'err'); return; } addDrawPt(p.lat, p.lng); if (PL.map) PL.map.panTo([p.lat, p.lng]); },
+  'pl-draw-cancel': () => { PL.draw = null; drawPlanner(); },
+  'pl-draw-done': () => finishDraw(),
+  'pl-kind': el => { const id = el.dataset.k, c = PL.cats || []; PL.cats = c.includes(id) ? c.filter(x => x !== id) : c.concat([id]); FS.set('find_cats', PL.cats); drawPlanner(); },
+  'pl-find': el => plFind(el.dataset.ref != null ? PL.streets.find(x => x.ref === el.dataset.ref) : PL.streets[int(el.dataset.i)]),
+  'pl-find-toggle': el => { const r = PL.found.find(f => f.ref === el.dataset.ref); if (r) toggleStop(r); },
+  'pl-find-all': () => { foundShown().filter(r => r.named && !PL.stops.some(s => s.ref === r.ref)).forEach(r => { if (PL.stops.length < 60) PL.stops.push(stopOf(r)); }); drawPlanner(); },
   'pl-end-at': el => { const r = PL.results[int(el.dataset.i)]; if (!r) return; PL.end = { label: r.name, lat: r.lat, lng: r.lng }; drawPlanner(); },
   'pl-end-mypos': async () => { const p = await myPosition(); if (!p) { toast(t('gps.denied'), 'err'); return; } PL.end = { label: t('plan.my_pos_label'), lat: p.lat, lng: p.lng }; drawPlanner(); },
   'pl-end-same': () => { if (PL.start) { PL.end = Object.assign({}, PL.start); drawPlanner(); } },
   'pl-end-clear': () => { PL.end = null; drawPlanner(); },
   'pl-sel-end': () => { if (!PL.sel) return; PL.end = { label: t('plan.picked'), lat: PL.sel.lat, lng: PL.sel.lng }; if (PL.map) PL.map.closePopup(); drawPlanner(); },
   'pl-save': () => {
+    if (PL.draw) { if (PL.draw.pts.length > 1) finishDraw(); else PL.draw = null; } // a line still being drawn is kept, not lost
     const nt = PL.el && $('#pl-note', PL.el); if (nt) PL.note = nt.value;
     putPlanLocal({ plan_date: PL.date, start: PL.start, end: PL.end, stops: PL.stops, streets: PL.streets, note: PL.note, updated_at: new Date().toISOString() }, true);
     closeModal(); toast(t('plan.saved'), 'ok');
@@ -2140,7 +2399,10 @@ const I18N = {
     'visit.consent': 'Pemilik toko setuju difoto', 'visit.consent_hint': 'Wajib dicentang agar foto dikirim. Foto dikecilkan (≤ 400 px).', 'visit.result': 'Hasil kunjungan', 'visit.next': 'Kunjungan berikutnya', 'visit.no_next': 'Tidak perlu',
     'visit.save': 'Simpan kunjungan', 'visit.pick_shop': 'Pilih toko atau isi toko baru', 'visit.pick_outcome': 'Pilih hasil kunjungan', 'visit.need_consent': 'Centang persetujuan pemilik toko, atau hapus fotonya.', 'visit.rating': 'Kesan toko (bintang)', 'visit.rating_hint': 'Seberapa bagus toko ini untuk kerja sama (opsional).',
     'visit.photo_fail': 'Foto tidak bisa diproses', 'visit.saved': 'Kunjungan {name} tersimpan', 'visit.rep_only': 'Kunjungan hanya untuk akun sales.',
-    'oc.order': 'Pesan', 'oc.tertarik': 'Tertarik', 'oc.tidak': 'Tidak tertarik', 'oc.tutup': 'Toko tutup', 'oc.sudah_pelanggan': 'Sudah pelanggan',
+    'oc.tidak_ada': 'Pemilik tidak ada', 'oc.tidak_ditemukan': 'Toko tidak ada', 'oc.ganti_usaha': 'Ganti usaha',
+    'occ.green': 'Pesan', 'occ.orange': 'Ada, tanpa pesanan', 'occ.blue': 'Tidak mau', 'occ.black': 'Tutup / tidak ada',
+    'visit.black_photo': 'Foto tempat/toko wajib untuk hasil ini (tanpa persetujuan pemilik — ini bukti tempatnya).', 'visit.need_photo_black': 'Ambil foto tempat/toko dulu — wajib untuk hasil ini.',
+    'oc.order': 'Pesan', 'oc.tertarik': 'Tertarik, belum pesan', 'oc.tidak': 'Tidak mau kerja sama', 'oc.tutup': 'Toko tutup / berhenti', 'oc.sudah_pelanggan': 'Sudah pelanggan',
     'shop.name': 'Nama toko', 'shop.owner': 'Nama pemilik', 'shop.address': 'Alamat', 'shop.area': 'Daerah', 'shop.prospek': 'Prospek', 'shop.pelanggan': 'Pelanggan', 'shop.last': 'kunjungan terakhir {date}',
     'shop.next': 'jadwal {date}', 'shop.route': 'Rute (Google Maps)', 'shop.route_short': 'Rute', 'shop.search': 'Cari toko / daerah', 'shop.map': 'Peta',
     'tp.title': 'Jenis toko', 'tp.search': 'Cari jenis: kurma, haji, Indomaret…', 'tp.groups': '← Semua kelompok', 'tp.change': 'Ganti', 'tp.n_types': '{n} jenis',
@@ -2214,8 +2476,18 @@ const I18N = {
     'plan.end': 'Titik selesai', 'plan.end_same': 'Sama dengan awal', 'plan.set_end': 'Selesai di sini', 'plan.work_street': 'Kerjakan jalan ini', 'plan.street_in': 'Dalam rencana',
     'plan.streets': 'Jalan kerja ({n})', 'plan.stops': 'Titik kunjungan ({n})', 'plan.no_streets': 'Belum ada jalan. Cari nama jalan lalu ketuk "Kerjakan jalan ini" — seluruh jalan dicari tokonya.',
     'plan.street_shops': 'Toko', 'plan.max_streets': 'Maksimal 15 jalan per rencana', 'plan.worked_by': 'sudah dikerjakan {u} · {d}', 'plan.planned_by': 'direncanakan {u} · {d}',
-    'plan.legend': 'Ungu = jalan & rute rencana Anda · Merah = jalan yang sudah dikerjakan sales lain (60 hari) · Abu-abu = jalan yang pernah Anda kerjakan',
-    'map.empty': 'Belum ada titik lokasi', 'map.label': 'Peta rute', 'map.offline': 'Peta sederhana', 'map.expand': 'Perbesar', 'map.legend': 'Titik oranye bernomor = pesanan hari ini (urutan masuk). Titik ungu bernomor = rencana rute (✓ = sudah dikunjungi). Lingkaran = toko. Garis biru = rute.',
+    'plan.legend': 'Ungu = jalan & rute rencana Anda · Hijau toska = garis kerja yang Anda gambar · Merah = jalan yang sudah dikerjakan sales lain (disimpan selamanya) · Abu-abu = jalan yang pernah Anda kerjakan',
+    'plan.tab_line': 'Garis kerja', 'plan.line_hint': 'Ketuk peta di sepanjang jalan yang mau Anda kerjakan: titik awal, lalu satu titik setiap beberapa ratus meter — titik, titik, titik. Tidak perlu ada toko di titik itu. Aplikasi menyambungkannya menjadi garis kerja Anda, lalu bisa mencari toko yang Anda mau di sepanjang garis itu.',
+    'plan.draw_start': 'Gambar garis kerja', 'plan.drawing': '{n} titik · {km} km', 'plan.draw_undo': 'Hapus titik terakhir', 'plan.draw_mypos': 'Titik di posisi saya', 'plan.draw_done': 'Selesai',
+    'plan.draw_tap': 'Ketuk peta di sepanjang jalan untuk menambah titik, lalu ketuk "Selesai".', 'plan.draw_nomap': 'Peta belum tampil (internet lemah): tambahkan titik dengan "Titik di posisi saya" sambil berjalan.',
+    'plan.draw_need2': 'Minimal 2 titik', 'plan.draw_max': 'Maksimal 150 titik per garis', 'plan.line_name': 'Garis kerja {n}', 'plan.line_name_l': 'Nama garis (boleh kosong)',
+    'plan.line_saved': 'Garis kerja disimpan ({n} titik). Pilih jenis toko lalu ketuk "Cari".', 'plan.lines': 'Garis & jalan kerja ({n})', 'plan.no_lines': 'Belum ada garis. Gambar garis kerja, atau pilih jalan di tab Cari.',
+    'plan.find_types': 'Cari toko jenis (bisa pilih beberapa):', 'plan.find_go': 'Cari di sepanjang {name}', 'plan.find_go0': 'Gambar garis dulu', 'plan.find_on': 'Cari jenis', 'plan.find_pick': 'Pilih minimal satu jenis toko',
+    'plan.no_line': 'Jalan ini belum punya garis di peta. Gambar garis kerja di atasnya.', 'plan.found_line': '{n} tempat di sepanjang {name} (urut dari awal garis)',
+    'plan.overlap': '{p}% garis ini sudah dikerjakan {u} ({d})', 'plan.overlap_planned': '{p}% garis ini sudah direncanakan {u} ({d})',
+    'find.kurma': 'Toko kurma', 'find.haji': 'Perlengkapan haji & umrah', 'find.muslim': 'Toko muslim & Timur Tengah', 'find.oleh': 'Oleh-oleh & buah', 'find.ritel': 'Minimarket & supermarket',
+    'find.sembako': 'Toko kelontong & sembako', 'find.kuliner': 'Roti, kue & kafe', 'find.masjid': 'Masjid & pesantren',
+    'map.empty': 'Belum ada titik lokasi', 'map.label': 'Peta rute', 'map.offline': 'Peta sederhana', 'map.expand': 'Perbesar', 'map.legend': 'Titik oranye bernomor = pesanan hari ini (urutan masuk). Titik ungu bernomor = rencana rute; setelah dikunjungi warnanya = hasilnya: hijau ✓ = pesan, oranye ✓ = ada tanpa pesanan, biru ✕ = tidak mau, hitam ✕ = tutup / tidak ada / ganti usaha. Lingkaran = toko. Garis biru = rute.',
     'outbox.title': 'Data tertunda', 'outbox.badge': '{n} data tertunda', 'outbox.queued': 'Offline — disimpan, dikirim otomatis', 'outbox.empty': 'Semua data sudah terkirim', 'outbox.synced': '{n} data terkirim',
     'outbox.still': 'Masih {n} data tertunda', 'outbox.send_now': 'Kirim sekarang',
     'ob.day_start': 'Mulai kerja', 'ob.day_end': 'Selesai kerja', 'ob.track': 'Titik lokasi', 'ob.check_in': 'Kunjungan', 'ob.field_order': 'Pesanan',
@@ -2252,7 +2524,10 @@ const I18N = {
     'visit.consent': 'صاحب المتجر موافق على التصوير', 'visit.consent_hint': 'مطلوب لإرسال الصورة. تُصغَّر الصورة (≤ 400 بكسل).', 'visit.result': 'نتيجة الزيارة', 'visit.next': 'الزيارة القادمة', 'visit.no_next': 'لا حاجة',
     'visit.save': 'حفظ الزيارة', 'visit.pick_shop': 'اختر متجرًا أو أضف متجرًا جديدًا', 'visit.pick_outcome': 'اختر نتيجة الزيارة', 'visit.need_consent': 'ضع علامة موافقة صاحب المتجر أو احذف الصورة.', 'visit.rating': 'انطباعك عن المحل (نجوم)', 'visit.rating_hint': 'ما مدى جودة هذا المحل للتعامل معه (اختياري).',
     'visit.photo_fail': 'تعذّرت معالجة الصورة', 'visit.saved': 'حُفظت زيارة {name}', 'visit.rep_only': 'الزيارات لحساب المندوب فقط.',
-    'oc.order': 'طلب', 'oc.tertarik': 'مهتم', 'oc.tidak': 'غير مهتم', 'oc.tutup': 'المتجر مغلق', 'oc.sudah_pelanggan': 'عميل حالي',
+    'oc.tidak_ada': 'صاحب المحل غير موجود', 'oc.tidak_ditemukan': 'المحل غير موجود', 'oc.ganti_usaha': 'غيّر نشاطه',
+    'occ.green': 'طلبية', 'occ.orange': 'موجود بلا طلبية', 'occ.blue': 'لا يرغب', 'occ.black': 'مغلق / غير موجود',
+    'visit.black_photo': 'صورة المكان/المحل إجبارية لهذه النتيجة (بلا موافقة صاحبه — هي إثبات للمكان).', 'visit.need_photo_black': 'التقط صورة المكان/المحل أولًا — إجبارية لهذه النتيجة.',
+    'oc.order': 'طلب', 'oc.tertarik': 'مهتم، بلا طلبية', 'oc.tidak': 'لا يرغب بالتعامل', 'oc.tutup': 'المحل مغلق / توقّف', 'oc.sudah_pelanggan': 'عميل حالي',
     'shop.name': 'اسم المتجر', 'shop.owner': 'اسم المالك', 'shop.address': 'العنوان', 'shop.area': 'المنطقة', 'shop.prospek': 'محتمل', 'shop.pelanggan': 'عميل', 'shop.last': 'آخر زيارة {date}',
     'shop.next': 'موعد {date}', 'shop.route': 'المسار (خرائط Google)', 'shop.route_short': 'المسار', 'shop.search': 'ابحث عن متجر / منطقة', 'shop.map': 'الخريطة',
     'tp.title': 'نوع المتجر', 'tp.search': 'ابحث عن النوع: تمور، حج، إندومارت…', 'tp.groups': '→ كل المجموعات', 'tp.change': 'تغيير', 'tp.n_types': '{n} أنواع',
@@ -2326,8 +2601,18 @@ const I18N = {
     'plan.end': 'نقطة النهاية', 'plan.end_same': 'نفس البداية', 'plan.set_end': 'أنهِ هنا', 'plan.work_street': 'اعمل في هذا الشارع', 'plan.street_in': 'في الخطة',
     'plan.streets': 'شوارع العمل ({n})', 'plan.stops': 'نقاط الزيارة ({n})', 'plan.no_streets': 'لا شوارع بعد. ابحث عن اسم شارع ثم اضغط «اعمل في هذا الشارع» — يُبحث عن محلات الشارع كاملًا.',
     'plan.street_shops': 'المحلات', 'plan.max_streets': 'الحد الأقصى 15 شارعًا في الخطة', 'plan.worked_by': 'عمل فيه {u} · {d}', 'plan.planned_by': 'مخطط له {u} · {d}',
-    'plan.legend': 'البنفسجي = شوارع ومسار خطتك · الأحمر = شوارع عمل فيها مندوب آخر (آخر 60 يومًا) · الرمادي = شوارع عملت فيها سابقًا',
-    'map.empty': 'لا توجد نقاط موقع', 'map.label': 'خريطة المسار', 'map.offline': 'خريطة مبسطة', 'map.expand': 'تكبير', 'map.legend': 'النقاط البرتقالية المرقّمة = طلبات اليوم (ترتيب الاستلام). النقاط البنفسجية المرقّمة = خطة المسار (✓ = تمت زيارتها). الدوائر = المحلات. الخط الأزرق = المسار.',
+    'plan.legend': 'البنفسجي = شوارع ومسار خطتك · الأخضر المزرق = خط العمل الذي رسمته · الأحمر = شوارع عمل فيها مندوب آخر (محفوظة دائمًا) · الرمادي = شوارع عملت فيها سابقًا',
+    'plan.tab_line': 'خط العمل', 'plan.line_hint': 'اضغط على الخريطة على طول الطريق الذي تريد العمل فيه: نقطة البداية، ثم نقطة كل بضع مئات من الأمتار — نقطة، نقطة، نقطة. لا يهم إن لم يكن هناك متجر عند النقطة. يصل التطبيق بينها ليصنع خط عملك، ثم يبحث لك عن المتاجر التي تريدها على طول هذا الخط.',
+    'plan.draw_start': 'ارسم خط العمل', 'plan.drawing': '{n} نقطة · {km} كم', 'plan.draw_undo': 'احذف آخر نقطة', 'plan.draw_mypos': 'نقطة في موقعي', 'plan.draw_done': 'تم',
+    'plan.draw_tap': 'اضغط على الخريطة على طول الطريق لإضافة النقاط، ثم اضغط «تم».', 'plan.draw_nomap': 'الخريطة لم تظهر (الإنترنت ضعيف): أضف النقاط بزر «نقطة في موقعي» وأنت تمشي.',
+    'plan.draw_need2': 'نقطتان على الأقل', 'plan.draw_max': 'الحد الأقصى 150 نقطة للخط', 'plan.line_name': 'خط العمل {n}', 'plan.line_name_l': 'اسم الخط (اختياري)',
+    'plan.line_saved': 'حُفظ خط العمل ({n} نقطة). اختر أنواع المتاجر ثم اضغط «ابحث».', 'plan.lines': 'خطوط وشوارع العمل ({n})', 'plan.no_lines': 'لا يوجد خط بعد. ارسم خط العمل، أو اختر شارعًا من تبويب البحث.',
+    'plan.find_types': 'ابحث عن متاجر من نوع (يمكن اختيار أكثر من نوع):', 'plan.find_go': 'ابحث على طول {name}', 'plan.find_go0': 'ارسم الخط أولًا', 'plan.find_on': 'ابحث بالنوع', 'plan.find_pick': 'اختر نوع متجر واحدًا على الأقل',
+    'plan.no_line': 'هذا الشارع ليس له خط على الخريطة. ارسم خط عمل فوقه.', 'plan.found_line': '{n} مكانًا على طول {name} (مرتبة من بداية الخط)',
+    'plan.overlap': '{p}% من هذا الخط عمل فيه {u} ({d})', 'plan.overlap_planned': '{p}% من هذا الخط خطّط له {u} ({d})',
+    'find.kurma': 'متاجر التمور', 'find.haji': 'مستلزمات الحج والعمرة', 'find.muslim': 'متاجر إسلامية وشرق أوسطية', 'find.oleh': 'هدايا وفواكه', 'find.ritel': 'ميني ماركت وسوبرماركت',
+    'find.sembako': 'بقالات ومواد غذائية', 'find.kuliner': 'مخابز وحلويات ومقاهٍ', 'find.masjid': 'مساجد ومعاهد',
+    'map.empty': 'لا توجد نقاط موقع', 'map.label': 'خريطة المسار', 'map.offline': 'خريطة مبسطة', 'map.expand': 'تكبير', 'map.legend': 'النقاط البرتقالية المرقمة = طلبيات اليوم (بترتيب الوصول). النقاط البنفسجية المرقمة = خطة المسار؛ بعد الزيارة يصبح لونها حسب النتيجة: أخضر ✓ = طلبية، برتقالي ✓ = موجود بلا طلبية، أزرق ✕ = لا يرغب، أسود ✕ = مغلق / غير موجود / غيّر نشاطه. الدوائر = المتاجر. الخط الأزرق = المسار.',
     'outbox.title': 'بيانات معلّقة', 'outbox.badge': '{n} بيانات معلّقة', 'outbox.queued': 'بدون اتصال — حُفظ وسيُرسل تلقائيًا', 'outbox.empty': 'تم إرسال كل البيانات', 'outbox.synced': 'أُرسلت {n}',
     'outbox.still': 'ما زال {n} معلّقًا', 'outbox.send_now': 'أرسل الآن',
     'ob.day_start': 'بدء العمل', 'ob.day_end': 'إنهاء العمل', 'ob.track': 'نقاط الموقع', 'ob.check_in': 'زيارة', 'ob.field_order': 'طلب',

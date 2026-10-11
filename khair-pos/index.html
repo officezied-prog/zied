@@ -142,7 +142,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.2.1';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -2043,7 +2043,7 @@ function transferAprHTML(a, pl) {
 }
 function drawApprovals() {
   const box = $('#apr-list'); if (!box) return;
-  const sig = AP.list.map(a => a.request_id).join('|') + '#' + S.lang;
+  const sig = AP.list.map(a => a.request_id + (a.can_decide === false ? '-' : '+')).join('|') + '#' + S.lang + '#' + S.user; // a new login may decide what the last one could only see
   if (box.dataset.sig === sig && box.querySelector('.apr-card, .empty')) return; // unchanged: keep typed notes
   const notes = {}; $$('.apr-card', box).forEach(c => { notes[c.dataset.req] = $('[data-note]', c).value; });
   box.dataset.sig = sig;
@@ -2859,7 +2859,10 @@ async function linkShopToCustomer(sh) {
   return c;
 }
 const ago = iso => { const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? t('ago.now') : m < 60 ? t('ago.min', { n: m }) : m < 1440 ? t('ago.hour', { n: Math.floor(m / 60) }) : t('ago.day', { n: Math.floor(m / 1440) }); };
-const OUTCOME_CLS = { order: 'green', tertarik: 'blue', tidak: 'gray', tutup: 'gray', sudah_pelanggan: 'gold' };
+// v32 (owner 2026-10-11): visit result colours, the same as on the rep's map — green order · orange there, no order ·
+// blue does not want · black closed / owner not there / shop not found / changed business (with a photo of the place)
+const OUTCOME_CLS = { order: 'green', tertarik: 'oc-orange', sudah_pelanggan: 'oc-orange', tidak: 'oc-blue', tutup: 'oc-black', tidak_ada: 'oc-black', tidak_ditemukan: 'oc-black', ganti_usaha: 'oc-black' };
+const ocMarkO = o => o === 'order' || OUTCOME_CLS[o] === 'oc-orange' ? '✓' : '✕';
 const FAR_M = 200;
 
 /* ---- Lapangan screen ---- */
@@ -2890,8 +2893,9 @@ function repDay(d, user, date) {
   const status = !day || !day.started_at ? 'off' : day.ended_at ? 'ended' : 'working';
   // v31: the route the rep planned for this day (Khair Sales), each stop ✓ once visited (same shop, or a visit ≤ 150 m)
   const plan = (d.plans || []).find(x => x.user === user && x.plan_date === date) || null;
-  const pdone = plan ? (plan.stops || []).map(s => vis.some(v => (s.shop_id && v.shop_id === s.shop_id) || (isFinite(num(v.lat)) && num(v.lat) !== 0 && geoM({ lat: num(v.lat), lng: num(v.lng) }, s) < 150))) : [];
-  return { user, day, pts, vis, ords, status, lastT, km: day ? num(day.km) : 0, plan, pdone };
+  const pvis = plan ? (plan.stops || []).map(s => vis.filter(v => (s.shop_id && v.shop_id === s.shop_id) || (isFinite(num(v.lat)) && num(v.lat) !== 0 && geoM({ lat: num(v.lat), lng: num(v.lng) }, s) < 150)).slice(-1)[0] || null) : [];
+  const pdone = pvis.map(Boolean), poc = pvis.map(v => v ? v.outcome || 'tertarik' : '');
+  return { user, day, pts, vis, ords, status, lastT, km: day ? num(day.km) : 0, plan, pdone, poc };
 }
 const geoM = (a, b) => { const r = Math.PI / 180, dLa = (b.lat - a.lat) * r, dLo = (b.lng - a.lng) * r, x = Math.sin(dLa / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLo / 2) ** 2; return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(x))); };
 function planPanelHTML(r) {
@@ -2901,7 +2905,7 @@ function planPanelHTML(r) {
     ${r.plan.start ? `<div class="small muted" style="margin-bottom:4px">🚩 ${esc(t('field.plan_start'))}: ${esc(r.plan.start.label || '')}</div>` : ''}
     ${r.plan.end ? `<div class="small muted" style="margin-bottom:4px">🏁 ${esc(t('field.plan_end'))}: ${esc(r.plan.end.label || '')}</div>` : ''}
     ${(r.plan.streets || []).length ? `<div class="small" style="margin-bottom:6px" data-streets>🛣️ ${esc(t('field.plan_streets'))}: ${esc(r.plan.streets.map(x => x.name).join(' · '))}</div>` : ''}
-    ${(r.plan.stops || []).map((s, i) => `<div class="li plan-row" data-done="${r.pdone[i]}" style="min-height:0;padding:6px 10px"><span class="vnum ${r.pdone[i] ? '' : 'far'}">${r.pdone[i] ? '✓' : i + 1}</span><div class="grow"><div class="t">${esc(s.name)}</div><div class="s">${esc([s.kind === 'shop' ? t('field.plan_ours') : t('field.plan_new'), s.address].filter(Boolean).join(' · '))}</div></div></div>`).join('')}
+    ${(r.plan.stops || []).map((s, i) => `<div class="li plan-row" data-done="${r.pdone[i]}"${r.poc[i] ? ` data-oc="${esc(r.poc[i])}"` : ''} style="min-height:0;padding:6px 10px"><span class="vnum ${r.pdone[i] ? (OUTCOME_CLS[r.poc[i]] || 'green') : 'far'}"${r.poc[i] ? ` title="${esc(t('out.' + r.poc[i]))}"` : ''}>${r.pdone[i] ? ocMarkO(r.poc[i]) : i + 1}</span><div class="grow"><div class="t">${esc(s.name)}</div><div class="s">${esc([s.kind === 'shop' ? t('field.plan_ours') : t('field.plan_new'), s.address].filter(Boolean).join(' · '))}</div></div></div>`).join('')}
     ${r.plan.note ? `<div class="small" style="margin-top:6px">${esc(r.plan.note)}</div>` : ''}</div></div>`;
 }
 function drawFieldView() {
@@ -4449,7 +4453,8 @@ Object.assign(I18N.id, {
   'field.visit_list': 'Kunjungan', 'field.leads': 'Toko baru', 'field.linked': 'Pelanggan: {name}', 'field.make_customer': 'Jadikan pelanggan', 'field.convert_q': 'Jadikan "{name}" pelanggan grosir?', 'field.converted': '{name} sekarang pelanggan grosir',
   'field.far': 'lokasi jauh dari toko', 'field.photo': 'Foto kunjungan', 'field.today': 'Lapangan hari ini', 'field.open': 'Buka Lapangan', 'field.unavailable': 'Data lapangan belum tersedia.',
   'field.report': 'Lapangan (sales)', 'field.new_shops': 'Toko baru', 'field.conversion': 'Konversi',
-  'out.order': 'Pesan', 'out.tertarik': 'Tertarik', 'out.tidak': 'Tidak', 'out.tutup': 'Tutup', 'out.sudah_pelanggan': 'Sudah pelanggan',
+  'out.order': 'Pesan', 'out.tertarik': 'Tertarik, belum pesan', 'out.tidak': 'Tidak mau', 'out.tutup': 'Tutup', 'out.sudah_pelanggan': 'Sudah pelanggan',
+  'out.tidak_ada': 'Pemilik tidak ada', 'out.tidak_ditemukan': 'Toko tidak ada', 'out.ganti_usaha': 'Ganti usaha',
   'stype.warung': 'Warung', 'stype.toko': 'Toko', 'stype.minimarket': 'Minimarket', 'stype.bakery': 'Bakery', 'stype.katering': 'Katering', 'stype.restoran': 'Restoran', 'stype.masjid': 'Masjid', 'stype.lainnya': 'Lainnya',
   'ost.baru': 'Baru', 'ost.diproses': 'Diproses', 'ost.dikirim': 'Dikirim', 'ost.batal': 'Batal', 'ost.all': 'Semua',
   'fo.delivery': 'kirim', 'fo.no_customer': 'Toko belum jadi pelanggan — akan dibuat saat diproses.', 'fo.cancel': 'Batal', 'fo.ship': 'Dikirim', 'fo.process': 'Proses ke kasir',
@@ -4469,7 +4474,8 @@ Object.assign(I18N.ar, {
   'field.visit_list': 'الزيارات', 'field.leads': 'متاجر جديدة', 'field.linked': 'عميل: {name}', 'field.make_customer': 'تحويل إلى عميل', 'field.convert_q': 'تحويل "{name}" إلى عميل جملة؟', 'field.converted': '{name} أصبح عميل جملة',
   'field.far': 'الموقع بعيد عن المتجر', 'field.photo': 'صورة الزيارة', 'field.today': 'الميدان اليوم', 'field.open': 'فتح الميدان', 'field.unavailable': 'بيانات الميدان غير متاحة بعد.',
   'field.report': 'الميدان (المندوبون)', 'field.new_shops': 'متاجر جديدة', 'field.conversion': 'نسبة التحويل',
-  'out.order': 'طلب', 'out.tertarik': 'مهتم', 'out.tidak': 'غير مهتم', 'out.tutup': 'مغلق', 'out.sudah_pelanggan': 'عميل حالي',
+  'out.order': 'طلب', 'out.tertarik': 'مهتم، بلا طلبية', 'out.tidak': 'لا يرغب', 'out.tutup': 'مغلق', 'out.sudah_pelanggan': 'عميل حالي',
+  'out.tidak_ada': 'صاحب المحل غير موجود', 'out.tidak_ditemukan': 'المحل غير موجود', 'out.ganti_usaha': 'غيّر نشاطه',
   'stype.warung': 'كشك', 'stype.toko': 'متجر', 'stype.minimarket': 'ميني ماركت', 'stype.bakery': 'مخبز', 'stype.katering': 'تموين', 'stype.restoran': 'مطعم', 'stype.masjid': 'مسجد', 'stype.lainnya': 'أخرى',
   'ost.baru': 'جديد', 'ost.diproses': 'قيد التنفيذ', 'ost.dikirim': 'أُرسل', 'ost.batal': 'ملغى', 'ost.all': 'الكل',
   'fo.delivery': 'التسليم', 'fo.no_customer': 'المتجر ليس عميلًا بعد — سيُنشأ عند التنفيذ.', 'fo.cancel': 'إلغاء', 'fo.ship': 'أُرسل', 'fo.process': 'تنفيذ في الكاشير',
@@ -6565,7 +6571,8 @@ async function openRecordTransfer(req) {
       await api('record_transfer', data);
       closeModal(true);
       toast(t('tf.recorded_ok', { payee: req.payee, amount: fmtRp(req.amount) }), 'ok', 4000);
-      TF.list = null; loadTransfers(); loadBank(); pollApprovals();
+      TF.list = null; Object.keys(salesCache).forEach(k => delete salesCache[k]); // the bank list reads payments from this cache: drop it so the new money-out shows now
+      loadTransfers(); loadBank(); pollApprovals();
     } catch (e) { $('#tf-rec-ok', el).disabled = false; err.textContent = errMsg(e); }
   };
 }

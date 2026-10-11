@@ -28,6 +28,7 @@ const INDEXES = {
   pos_returns: ['return_date', 'ref'],
   pos_photos: ['photo_id'],
   pos_route_plans: ['plan_date', 'user'],
+  pos_street_log: ['plan_date', 'skey'],
   cold_checks: ['check_date'],
   cold_movements: ['pallet_code', 'warehouse'],
   cold_pallets: ['warehouse', 'pallet_code'],

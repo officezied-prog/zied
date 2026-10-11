@@ -111,3 +111,87 @@ test('route plan: work streets + finish point; a street another rep already work
   expect(mine.streets[0].name).toBe('Jalan Raya Condet');
   expect(mine.streets[0].lines[0].length).toBeGreaterThan(1); // the street's line is kept, so the next rep sees it
 });
+
+// v32 (owner 2026-10-11): the rep draws his WORK LINE point by point (a shop there or not), then picks the kinds of shop he
+// wants (dates, Hajj & Umrah, …) and the app searches along that line — each kind its own colour — and adds them as stops.
+const OVER_LINE = { elements: [
+  { type: 'node', id: 501, lat: -6.2745, lon: 106.8583, tags: { shop: 'convenience', name: 'Toko Kurma Al-Madinah' } },
+  { type: 'node', id: 502, lat: -6.2770, lon: 106.8586, tags: { shop: 'clothes', name: 'Perlengkapan Haji & Umroh Barokah' } },
+  { type: 'node', id: 503, lat: -6.2790, lon: 106.8589, tags: { shop: 'herbalist', name: 'Herbal Habbatussauda' } },
+  { type: 'node', id: 504, lat: -6.2760, lon: 106.8584, tags: { shop: 'convenience', name: 'Indomaret Condet' } }, // a kind not ticked
+  { type: 'node', id: 505, lat: -6.2780, lon: 106.8587, tags: { shop: 'convenience', name: 'Warung Madura' } },     // a kind not ticked
+  { type: 'way', id: 506, tags: { highway: 'residential', name: 'Jalan Haji Ten' }, geometry: [{ lat: -6.2750, lon: 106.8590 }, { lat: -6.2751, lon: 106.8600 }] }] };
+
+test('work line: drawn point by point → kinds of shop searched along it (own colour each) → stops; a line a colleague worked is warned', async ({ page, context }) => {
+  const seen = { over: '' };
+  await page.route(/\/vendor\/leaflet\//, r => r.continue()); // this test needs the map (tiles stay blocked)
+  await context.route(/overpass/, r => { seen.over = decodeURIComponent((r.request().postData() || '').replace(/^data=/, '')); r.fulfill({ json: OVER_LINE, headers: CORS }); });
+  await context.grantPermissions(['geolocation']);
+  await H.setPos(context, -6.2735, 106.8580);
+  const d = new Date(Date.now() + 7 * 3600000); d.setUTCDate(d.getUTCDate() - 3); const ago = d.toISOString().slice(0, 10);
+  await H.openSales(page);
+  // three days ago Budi worked (by a drawn line) the same stretch of road
+  await H.setDb(page, `db.route_plans = db.route_plans || []; db.route_plans.push({ plan_id: 'RPB2', user: 'Budi', plan_date: '${ago}', start: null, end: null, stops: [], note: '',
+    streets: [{ ref: 'ln:budi1', name: 'Garis Budi', drawn: true, lines: [[[-6.2735, 106.8580], [-6.2765, 106.8585], [-6.2795, 106.8590]]] }], updated_at: '' });`);
+  await H.login(page, 'Ahmad', '4444', { noGoto: true });
+  if (await page.locator('#consent').isVisible().catch(() => false)) await page.click('#consent-ok');
+
+  await page.click('#pl-open-today');
+  await expect(page.locator('#pl-map .leaflet-container, #pl-map.leaflet-container')).toHaveCount(1);
+  await page.click('#pl-seg-line');
+  await expect(page.locator('#pl-line-hint')).toBeVisible();
+  await page.click('#pl-draw');
+  await expect(page.locator('#pl-draw-n')).toHaveAttribute('data-n', '0');
+  // a tap on the map = a point (no popup while drawing); undo takes it back
+  const box = await page.locator('#pl-map').boundingBox();
+  await page.locator('#pl-map').click({ position: { x: box.width / 2, y: box.height / 3 } });
+  await expect(page.locator('#pl-draw-n')).toHaveAttribute('data-n', '1');
+  await expect(page.locator('#pl-sel-start')).toHaveCount(0);
+  await page.click('#pl-draw-undo');
+  await expect(page.locator('#pl-draw-n')).toHaveAttribute('data-n', '0');
+  // points along the road from the rep's position (start, then every few hundred metres)
+  for (const [la, ln] of [[-6.2735, 106.8580], [-6.2765, 106.8585], [-6.2795, 106.8590]]) {
+    const n = Number(await page.locator('#pl-draw-n').getAttribute('data-n'));
+    await H.setPos(context, la, ln);
+    await page.click('#pl-draw-pos');
+    await expect(page.locator('#pl-draw-n')).toHaveAttribute('data-n', String(n + 1));
+  }
+  await page.fill('#pl-line-name', 'Condet utara');
+  await page.click('#pl-draw-done');
+  await expect(page.locator('#pl-drawbar-in')).toHaveCount(0);
+  const line = page.locator('#pl-lines .pl-line[data-drawn="1"]');
+  await expect(line).toHaveCount(1);
+  await expect(line).toContainText('Condet utara');
+  await expect(line.locator('[data-worked]')).toContainText('Budi'); // the same road a colleague already worked
+  await expect(page.locator('.toast').filter({ hasText: 'Budi' })).toBeVisible();
+
+  // the kinds the owner asked for are ticked by default: dates, Hajj & Umrah, Muslim goods
+  await expect(page.locator('#pl-kinds .find-chip.on')).toHaveCount(3);
+  await page.click('#pl-find-go');
+  await expect(page.locator('#pl-found .pl-res')).toHaveCount(3);
+  expect(seen.over).toContain('(around:100,-6.27350,106.85800,');
+  expect(seen.over).toContain('"name"~"kurma');
+  await expect(page.locator('#pl-found .pl-res').nth(0)).toHaveAttribute('data-cat', 'kurma'); // in order along the line
+  await expect(page.locator('#pl-found .pl-res').nth(1)).toHaveAttribute('data-cat', 'haji');
+  await expect(page.locator('#pl-found .pl-res').nth(2)).toHaveAttribute('data-cat', 'muslim');
+  await expect(page.locator('#pl-found-legend .kbadge')).toHaveCount(3);
+  // each kind its own colour on the map
+  const fills = await page.locator('#pl-map path.leaflet-interactive').evaluateAll(ps => ps.map(p => p.getAttribute('fill')));
+  expect(fills).toEqual(expect.arrayContaining(['#92400E', '#0F172A', '#7C3AED']));
+  await H.shot(page, 'plan-work-line');
+  // untick a kind → its places leave the list
+  await page.click('#pl-kinds [data-k="muslim"]');
+  await expect(page.locator('#pl-found .pl-res')).toHaveCount(2);
+  await page.click('#pl-find-all');
+  await page.click('#pl-seg-plan');
+  await expect(page.locator('#pl-stops .pl-stop')).toHaveCount(2);
+  await expect(page.locator('#pl-stops .pl-stop').first()).toHaveAttribute('data-cat', 'kurma');
+  await expect(page.locator('#pl-streets .pl-street[data-drawn="1"]')).toHaveCount(1);
+  await page.click('#pl-save');
+
+  await expect.poll(async () => ((await H.getDb(page)).route_plans || []).filter(p => p.user === 'Ahmad').length).toBe(1);
+  const mine = (await H.getDb(page)).route_plans.find(p => p.user === 'Ahmad');
+  expect(mine.streets[0]).toMatchObject({ name: 'Condet utara', drawn: true });
+  expect(mine.streets[0].lines[0].length).toBe(3);
+  expect(mine.stops.map(s => s.cat)).toEqual(['kurma', 'haji']);
+});

@@ -29,7 +29,8 @@
     var K = typeof window !== 'undefined' && window.KhairShopTypes;
     return K && Array.isArray(K.IDS) && K.IDS.length ? K.IDS : SHOP_TYPES_FALLBACK;
   }
-  var OUTCOMES = ['order', 'tertarik', 'tidak', 'tutup', 'sudah_pelanggan'];
+  var OUTCOMES = ['order', 'tertarik', 'tidak', 'tutup', 'sudah_pelanggan', 'tidak_ada', 'tidak_ditemukan', 'ganti_usaha'];
+  var BLACK_OUTCOMES = ['tutup', 'tidak_ada', 'tidak_ditemukan', 'ganti_usaha'];
   var ORDER_STATUS = ['baru', 'diproses', 'dikirim', 'batal'];
   var COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   var MAX_PHOTO_B64 = 45 * 1024, MAX_IMAGE_B64 = 60 * 1024, MAX_POINTS = 200, MAX_ACC = 100;
@@ -194,7 +195,7 @@
         if (OUTCOMES.indexOf(outcome) < 0) throw E('INVALID', 'outcome');
         var photo = String(data.photo_base64 || '').replace(/^data:[^,]*,/, '');
         if (photo) {
-          if (data.photo_consent !== true) throw E('INVALID', 'photo_consent required to store a photo');
+          if (data.photo_consent !== true && !(data.photo_place === true && BLACK_OUTCOMES.indexOf(outcome) >= 0)) throw E('INVALID', 'photo_consent required to store a photo'); // v32: a photo of the place (black result) needs no consent
           if (photo.length > MAX_PHOTO_B64) throw E('INVALID', 'photo too large (max 45 KB base64)');
         }
         if (data.next_visit && !isYmd(data.next_visit)) throw E('INVALID', 'next_visit');
@@ -227,7 +228,7 @@
         var visit = {
           visit_id: 'KV-' + pad(nextId(db, 'visit'), 5), client_id: cid, user: user.name, visit_date: today, visit_time: vt, shop_id: shop.shop_id, shop_name: shop.name,
           lat: Number(data.lat), lng: Number(data.lng), acc: Math.round(num(data.acc)), distance_m: dist, outcome: outcome, notes: String(data.notes || ''),
-          next_visit: data.next_visit || '', photo_thumb: photo, photo_consent: !!(photo && data.photo_consent === true), drive_url: ''
+          next_visit: data.next_visit || '', photo_thumb: photo, photo_consent: !!(photo && data.photo_consent === true), photo_place: !!(photo && data.photo_consent !== true), drive_url: ''
         };
         db.visits.push(visit);
         shop.last_visit_at = vt; shop.visits = int(shop.visits) + 1;
@@ -274,7 +275,7 @@
           return { ref: String(x.ref || '').slice(0, 40) || ('s' + (i + 1)), kind: sh ? 'shop' : 'place', shop_id: sh ? sh.shop_id : '', name: nm,
             lat: Math.round(Number(x.lat) * 1e6) / 1e6, lng: Math.round(Number(x.lng) * 1e6) / 1e6, address: String(x.address || '').slice(0, 200),
             type: TYPES.indexOf(x.type) >= 0 ? x.type : '', src: ['osm', 'map', 'shop'].indexOf(x.src) >= 0 ? x.src : '' };
-        });
+        }).map(function (o, i) { var c = String((raw[i] || {}).cat || ''); if (/^[a-z_]{1,20}$/.test(c)) o.cat = c; return o; });
         var st0 = data.start || {}, hasSt = okPos(st0.lat, st0.lng), en0 = data.end || {}, hasEn = okPos(en0.lat, en0.lng), budget = 3000;
         var streets = (Array.isArray(data.streets) ? data.streets : []).slice(0, 15).map(function (x) {
           x = x || {}; var nm = String(x.name || '').trim().slice(0, 100); if (!nm) return null;
@@ -282,7 +283,9 @@
             return (Array.isArray(ln) ? ln : []).slice(0, 400).filter(function (q) { if (budget <= 0 || !Array.isArray(q) || !okPos(q[0], q[1])) return false; budget--; return true; })
               .map(function (q) { return [Math.round(q[0] * 1e5) / 1e5, Math.round(q[1] * 1e5) / 1e5]; });
           }).filter(function (ln) { return ln.length > 1; });
-          return { ref: String(x.ref || '').slice(0, 60) || ('st:' + nm.toLowerCase()), name: nm, lines: lines };
+          var o = { ref: String(x.ref || '').slice(0, 60) || ('st:' + nm.toLowerCase()), name: nm, lines: lines };
+          if (x.drawn === true) o.drawn = true;
+          return o;
         }).filter(Boolean);
         var ex = db.route_plans.find(function (p) { return sameUser(p.user, user.name) && p.plan_date === pd; });
         var plan = { plan_id: ex ? ex.plan_id : 'RP' + Math.random().toString(36).slice(2, 9).toUpperCase(), user: user.name, plan_date: pd,
@@ -293,17 +296,20 @@
         return { plan: clone(plan) };
       }
       case 'streets_worked': {
-        // v31b: same as backend/field/process-field.js — every rep's streets of the last 60 days (+ planned), latest per street + rep
+        // v31b/v32: same as backend/field/process-field.js — every rep's streets, KEPT FOREVER (+ planned), latest per street + rep
+        // (the server reads them from its permanent street log around the rep; the demo reads its plans)
         needRole(user, ['sales', 'owner', 'manager']);
-        var since = h.jktDate(Date.parse(today + 'T00:00:00Z') - 60 * 86400000), seenS = {}, out = [];
-        db.route_plans.filter(function (p) { return p.plan_date >= since; }).sort(function (a, b) { return String(b.plan_date).localeCompare(String(a.plan_date)); }).forEach(function (p) {
+        var seenS = {}, out = [];
+        db.route_plans.slice().sort(function (a, b) { return String(b.plan_date).localeCompare(String(a.plan_date)); }).forEach(function (p) {
           (p.streets || []).forEach(function (x) {
-            var k = String(x.name).toLowerCase() + '|' + String(p.user).toLowerCase();
-            if (!x.name || seenS[k] || out.length >= 300) return; seenS[k] = true;
-            out.push({ name: x.name, user: p.user, plan_date: p.plan_date, status: p.plan_date <= today ? 'worked' : 'planned', lines: clone(x.lines || []) });
+            var k = (x.drawn === true ? 'ln:' + String(x.ref || '') : String(x.name).toLowerCase()) + '|' + String(p.user).toLowerCase();
+            if (!x.name || seenS[k] || out.length >= 1000) return; seenS[k] = true;
+            var o = { name: x.name, user: p.user, plan_date: p.plan_date, status: p.plan_date <= today ? 'worked' : 'planned', lines: clone(x.lines || []) };
+            if (x.drawn === true) { o.drawn = true; o.ref = String(x.ref || ''); }
+            out.push(o);
           });
         });
-        return { streets: out, since: since };
+        return { streets: out, since: '' };
       }
       case 'list_field': {
         needRole(user, ['owner', 'manager']);
