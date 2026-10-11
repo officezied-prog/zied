@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, login, nav, addBySearch, closeModals, photoFile, loginKasirRedirect, blockMapNetwork } = require('./helpers');
+const { SHOTS, login, nav, addBySearch, closeModals, photoFile, loginKasirRedirect, blockMapNetwork, switchUser } = require('./helpers');
 const shot = (page, name, full = false) => page.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: full });
 
 async function fillCart(page, phone) {
@@ -36,6 +36,7 @@ for (const [label, vp] of [['desktop', { width: 1366, height: 768 }], ['phone', 
       await shot(page, `${label}-receipt`);
       await closeModals(page);
 
+      await switchUser(page, 'Pemilik', '1234'); // v36: the manager sold; the full reports are the owner's
       await nav(page, 'reports');
       await page.click('[data-act="rep-preset"][data-p="month"]');
       await expect(page.locator('[data-kpi="laba"]')).toBeVisible();
@@ -71,7 +72,8 @@ for (const [label, vp] of [['desktop', { width: 1366, height: 768 }], ['phone', 
       await expect(page.locator('#pu-recent')).toBeVisible();
       await page.waitForTimeout(500);
       await shot(page, `${label}-purchases-monitor`);
-      await nav(page, 'kas');
+      await nav(page, 'pos'); // v36: the owner's cashier page = today's sales and invoices (no drawer)
+      await expect(page.locator('#om-table')).toBeVisible();
       await shot(page, `${label}-kas-owner`);
       await nav(page, 'orders');
       await page.waitForTimeout(300);

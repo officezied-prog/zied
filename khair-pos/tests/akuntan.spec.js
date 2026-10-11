@@ -41,7 +41,7 @@ test('accountant: lands on reports, sees only the audit views, cannot change any
   await page.keyboard.press('Escape');
   for (const v of ['suppliers', 'retur', 'bank', 'history']) await nav(page, v);
   // the server refuses every write
-  for (const [a, d] of [['save_sale', { items: [] }], ['receive_payment', { customer_id: 1, amount: 1 }], ['save_purchase', { supplier: 'X' }], ['save_settings', { settings: {} }], ['request_return', {}], ['list_approvals', {}]]) {
+  for (const [a, d] of [['save_sale', { items: [] }], ['receive_payment', { customer_id: 1, amount: 1 }], ['save_purchase', { supplier: 'X' }], ['save_settings', { settings: {} }], ['request_return', {}], ['request_void', { invoice_no: 'X', reason: 'x' }]]) { // v36: list_approvals is allowed (shared mgr_akuntan requests)
     expect((await asUser(page, 'Lestari', '5555', a, d)).error).toBe('FORBIDDEN');
   }
   const r = await asUser(page, 'Lestari', '5555', 'daily_report', { date: await page.evaluate(() => today()) });

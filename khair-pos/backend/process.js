@@ -179,7 +179,8 @@ function addMove(x, type, amount, note) {
   mv.push({ t: new Date().toISOString(), type: type, amount: amount, note: note, by: me.name });
   x.moves = JSON.stringify(mv.slice(-100));
 }
-const OWNER_ONLY = ['void_sale', 'import_products', 'stock_adjust', 'save_settings', 'list_devices', 'list_activity'];
+// v36: profit_loss (the monthly profit & loss statement) needs purchase costs → owner only.
+const OWNER_ONLY = ['void_sale', 'import_products', 'stock_adjust', 'save_settings', 'list_devices', 'list_activity', 'profit_loss'];
 // v18 (owner's decision 07 Oct): save_user is the owner's, or a manager's for staff accounts only (checked in the action)
 const STAFF_ROLES = ['kasir', 'sales', 'akuntan'];
 // v19 (owner's decision): the manager creates/manages only cashier and sales accounts — never an accountant (akuntan) or a manager/owner.
@@ -238,9 +239,27 @@ const approvalRows = rows('Get Approvals');
 function approvalById(id) { return approvalRows.find(function (a) { return a.request_id === id; }) || null; }
 // Who may decide an approval: the owner decides anything; a manager decides everything except
 // owner-only ones; the accountant decides only the shared "manager or accountant" ones (mgr_akuntan).
+// v36 (owner 2026-10-11: "إصلاح فاتورة قديمة لا يتم إلا بموافقتي الشخصية"): voiding a sale from an EARLIER Jakarta day
+// is the owner's alone. A request raised for today's sale that is still pending after midnight becomes the owner's too.
+function voidSaleDate(a) {
+  let pl = {};
+  try { pl = JSON.parse(a.payload || '{}') || {}; } catch (e) { pl = {}; }
+  if (isDate(pl.sale_date)) return pl.sale_date;
+  const m = /\((\d{4}-\d{2}-\d{2}),/.exec(str(a.summary)); // older requests: "Batalkan faktur X (YYYY-MM-DD, kasir …)"
+  return m ? m[1] : '';
+}
+function isOldVoid(a) {
+  if (!a || a.kind !== 'void') return false;
+  const d = voidSaleDate(a);
+  return !d || d < jkDate();
+}
+// v36: a void is never decided by the person who asked for it (the other of manager / accountant, or the owner, decides).
+function isOwnVoid(a) { return !!a && a.kind === 'void' && str(a.cashier).toLowerCase() === str(me.name).toLowerCase(); }
 function canDecide(a) {
   if (role === 'owner') return true;
   if (a.approver_role === 'owner') return false;
+  if (isOldVoid(a)) return false;
+  if (isOwnVoid(a)) return false;
   if (a.approver_role === 'mgr_akuntan') return role === 'manager' || role === 'akuntan';
   return role === 'manager';
 }
@@ -1151,16 +1170,20 @@ switch (req.action) {
     if (!str(data.reason)) return fail('INVALID', 'Alasan wajib diisi');
     const existing = approvalRows.find(function (x) { return x.status === 'pending' && x.kind === 'void' && x.ref === sale.invoice_no; });
     if (existing) return done({ ok: true, request_id: existing.request_id, approval: approvalOut(existing), duplicate: true });
+    // v36 (owner 2026-10-11: "إصلاح فاتورة قديمة لا يتم إلا بموافقتي الشخصية"): today's sale (Jakarta date) → the manager
+    // OR accountant decide (v29); a sale from an EARLIER day → only the owner (his personal approval).
+    const oldSale = !isDate(sale.sale_date) || sale.sale_date < jkDate();
     const a = newApproval({
       customer_id: num(sale.customer_id), customer_name: str(sale.customer_name), total: money(sale.total), debt_amount: money(sale.debt_amount),
-      summary: ('Batalkan faktur ' + sale.invoice_no + ' (' + sale.sale_date + ', kasir ' + str(sale.cashier) + ')').slice(0, 1500),
-      note: str(data.reason), kind: 'void', ref: sale.invoice_no, approver_role: 'mgr_akuntan'
+      summary: ('Batalkan faktur ' + sale.invoice_no + ' (' + sale.sale_date + ', kasir ' + str(sale.cashier) + ')' + (oldSale ? ' — faktur lama, hanya pemilik' : '')).slice(0, 1500),
+      note: str(data.reason), kind: 'void', ref: sale.invoice_no, approver_role: oldSale ? 'owner' : 'mgr_akuntan',
+      payload: JSON.stringify({ invoice_no: sale.invoice_no, sale_date: str(sale.sale_date), reason: str(data.reason), total: money(sale.total), old: oldSale })
     });
     ops.approvals.push(forWrite(a, -1));
     // v29 (owner 2026-10-10): cashier's void request goes to the manager OR accountant; the owner is kept informed.
-    logAct('minta_batal', 'Minta batal faktur ' + sale.invoice_no + ': ' + str(data.reason), sale.invoice_no, money(sale.total), 'warn');
-    notify(['owner', 'manager'], 'Permintaan batal faktur ' + sale.invoice_no + ' Rp ' + money(sale.total) + ' oleh ' + me.name + ': ' + str(data.reason).slice(0, 200), 'warn');
-    return done({ ok: true, request_id: a.request_id, approval: approvalOut(a) });
+    logAct('minta_batal', 'Minta batal faktur ' + sale.invoice_no + (oldSale ? ' (faktur lama ' + sale.sale_date + ', butuh persetujuan pemilik)' : '') + ': ' + str(data.reason), sale.invoice_no, money(sale.total), 'warn');
+    notify(['owner', 'manager'], (oldSale ? 'Faktur LAMA (' + sale.sale_date + ') — hanya pemilik yang menyetujui. ' : '') + 'Permintaan batal faktur ' + sale.invoice_no + ' Rp ' + money(sale.total) + ' oleh ' + me.name + ': ' + str(data.reason).slice(0, 200), 'warn');
+    return done({ ok: true, request_id: a.request_id, approval: approvalOut(a), approver_role: a.approver_role, old_invoice: oldSale });
   }
 
   case 'change_price': {
@@ -1438,10 +1461,13 @@ switch (req.action) {
     const last = rows('Get Range Shifts').filter(function (x) { return x.status === 'closed'; })
       .sort(function (a1, b1) { return String(b1.closed_at).localeCompare(String(a1.closed_at)); })[0] || null;
     const lastTxt = last ? ' — kas terakhir ditutup ' + str(last.closed_at).slice(0, 16).replace('T', ' ') + ' UTC oleh ' + str(last.cashier) + ': dihitung Rp ' + money(last.counted_cash) + ', selisih dengan pembukaan Rp ' + (opening - money(last.counted_cash)) : '';
-    const bk = newApproval({ kind: 'buka_kas', approver_role: role === 'manager' ? 'owner' : 'manager', ref: sh.shift_id, total: opening,
+    // v36 (owner 2026-10-11: "إشعار فتح الصندوق للمدير والمحاسب ليوافق كل صباح"): a cashier's opening goes to the manager
+    // AND the accountant (mgr_akuntan) — either one approves, the first decision wins; the manager's own opening stays with the owner.
+    const bk = newApproval({ kind: 'buka_kas', approver_role: role === 'manager' ? 'owner' : 'mgr_akuntan', ref: sh.shift_id, total: opening,
       summary: ('Buka kas ' + me.name + ': modal awal dihitung Rp ' + opening + lastTxt).slice(0, 1500), note: str(data.note),
       payload: JSON.stringify({ shift_id: sh.shift_id, opening_cash: opening, last_counted: last ? money(last.counted_cash) : null, last_cashier: last ? str(last.cashier) : '' }) });
     ops.approvals.push(forWrite(bk, -1));
+    if (bk.approver_role === 'mgr_akuntan') notify(['manager', 'akuntan'], 'Buka kas ' + me.name + ': modal awal Rp ' + opening + ' — mohon dicek dan disetujui (Persetujuan)', last && money(last.counted_cash) !== opening ? 'warn' : 'info');
     logAct('buka_kas', 'Buka kas ' + me.name + ' Rp ' + opening + lastTxt, sh.shift_id, opening, last && money(last.counted_cash) !== opening ? 'warn' : 'info');
     return done({ ok: true, already: false, shift: shiftOut(sh), request_id: bk.request_id, approval: approvalOut(bk) });
   }
@@ -1720,8 +1746,10 @@ switch (req.action) {
     if (!isApprover && role !== 'akuntan') return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
     const a = approvalById(String(data.request_id || ''));
     if (!a) return fail('NOT_FOUND', 'Permintaan tidak ditemukan');
-    if (a.status !== 'pending') return fail('INVALID', 'Permintaan sudah diputuskan: ' + a.status);
-    if (!canDecide(a)) return fail(a.approver_role === 'owner' ? 'NEEDS_OWNER' : 'FORBIDDEN', a.approver_role === 'owner' ? 'Butuh persetujuan pemilik' : 'Tidak diizinkan memutuskan permintaan ini');
+    // v36: a shared request (manager OR accountant) is decided once — the second one is told who decided it first.
+    if (a.status !== 'pending') return fail('INVALID', 'Permintaan sudah diputuskan' + (str(a.decided_by) ? ' oleh ' + str(a.decided_by) : '') + ': ' + a.status);
+    const needOwner = a.approver_role === 'owner' || isOldVoid(a);
+    if (!canDecide(a)) return fail(needOwner ? 'NEEDS_OWNER' : 'FORBIDDEN', needOwner ? (isOldVoid(a) ? 'Faktur lama — hanya pemilik yang boleh menyetujui' : 'Butuh persetujuan pemilik') : (isOwnVoid(a) ? 'Permintaan sendiri diputuskan orang lain' : 'Tidak diizinkan memutuskan permintaan ini'));
     const decision = data.decision === 'approved' ? 'approved' : 'rejected';
     const out = { ok: true };
     let finalStatus = decision;
@@ -1918,10 +1946,12 @@ switch (req.action) {
     // v29 notifications: the owner always sees the log above. When the ACCOUNTANT decides a shared request,
     // also drop a manager + owner notice; a manager deciding void / price / goods-in mismatch notifies the owner.
     if (a.approver_role === 'mgr_akuntan' || a.kind === 'member') {
-      const whatTxt = { purchase_mismatch: 'selisih penerimaan barang', void: 'pembatalan faktur', price: 'perubahan harga', member: 'pendaftaran member', expense_check: 'cek nota pengeluaran', product_new: 'produk baru dari kasir' }[a.kind] || str(a.kind);
+      const whatTxt = { purchase_mismatch: 'selisih penerimaan barang', void: 'pembatalan faktur', price: 'perubahan harga', member: 'pendaftaran member', expense_check: 'cek nota pengeluaran', product_new: 'produk baru dari kasir', buka_kas: 'buka kas (modal awal)' }[a.kind] || str(a.kind);
       const verb = decision === 'approved' ? 'disetujui' : 'ditolak';
       if (role === 'akuntan') notify(['manager', 'owner'], 'Akuntan ' + me.name + ' ' + verb + ' ' + whatTxt + ': ' + str(a.summary).slice(0, 300), decision === 'approved' ? 'info' : 'warn');
       else if (role === 'manager' && ['void', 'price', 'purchase_mismatch', 'expense_check'].indexOf(a.kind) >= 0) notify(['owner'], 'Manajer ' + me.name + ' ' + verb + ' ' + whatTxt + ': ' + str(a.summary).slice(0, 300), decision === 'approved' ? 'info' : 'warn');
+      // v36: the morning opening is shared by the manager and the accountant — the other one sees it was already decided.
+      else if (role === 'manager' && a.kind === 'buka_kas') notify(['akuntan'], 'Manajer ' + me.name + ' ' + verb + ' ' + whatTxt + ': ' + str(a.summary).slice(0, 300), decision === 'approved' ? 'info' : 'warn');
     }
     out.approval = approvalOut(na);
     return done(out);
@@ -2625,6 +2655,58 @@ switch (req.action) {
     return done({ ok: true, activity: rows('Get Range Activity').map(clean).sort(function (a1, b1) { return String(b1.at).localeCompare(String(a1.at)); }) });
   }
 
+  case 'profit_loss': {
+    // v36 (owner 2026-10-11: "الكشف الشهري يكتب الربح والخسارة"): the profit & loss of a period (the monthly statement) from data the
+    // server already keeps. Owner only (it needs purchase costs). Lines: sales (after discounts, without voids) − cost of goods = gross
+    // profit; − expenses; customer returns (money back − goods back on the shelf at cost); stock count / adjustment differences at cost;
+    // undercharges the owner decided to collect (not in the sale totals). Price corrections are shown on their own: an overcharge was
+    // already taken off the sale totals (so it is already inside sales), an undercharge written off never was.
+    if (!isDate(data.from) || !isDate(data.to) || data.from > data.to) return fail('INVALID', 'Rentang tanggal tidak valid');
+    const pfrom = data.from, pto = data.to;
+    const inP = function (d) { d = str(d); return d >= pfrom && d <= pto; };
+    const sumP = function (arr, f) { return arr.reduce(function (a1, x) { return a1 + f(x); }, 0); };
+    const wibDay = function (iso) { return iso ? new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(0, 10) : ''; };
+    const pSales = rows('Get Range Sales').filter(function (x) { return inP(x.sale_date); });
+    const okS = pSales.filter(function (x) { return x.status !== 'void'; }), voidS = pSales.filter(function (x) { return x.status === 'void'; });
+    const salesTotal = sumP(okS, function (x) { return money(x.total); }), gross = sumP(okS, function (x) { return money(x.profit); });
+    const pExp = rows('Get Range Expenses').filter(function (e) { return inP(e.expense_date); });
+    const byCat = {};
+    pExp.forEach(function (e) { const k = str(e.category) || 'lain'; byCat[k] = (byCat[k] || 0) + money(e.amount); });
+    // stock counted / adjusted by hand: the difference at purchase cost (negative = goods lost)
+    const adj = rows('Get Range Purchases').filter(function (x) { return inP(x.purchase_date) && ['STOK OPNAME', 'PENYESUAIAN STOK'].indexOf(str(x.supplier)) >= 0; });
+    const stockDiff = sumP(adj, function (x) { return Math.round(num(x.qty) * money(x.cost_price)); });
+    // customer returns approved in the period: money back, and goods in good condition back on the shelf (valued at today's cost)
+    const custRet = rows('Get Range Returns').filter(function (x) { return x.status === 'approved' && x.kind !== 'pemasok' && inP(x.return_date); });
+    let restock = 0;
+    custRet.forEach(function (x) {
+      let lines = []; try { lines = typeof x.lines === 'string' ? JSON.parse(x.lines || '[]') : (x.lines || []); } catch (e) { lines = []; }
+      (Array.isArray(lines) ? lines : []).forEach(function (l) { if (l && l.condition !== 'rusak') { const p = productById[String(l.product_id)]; restock += Math.round(num(l.qty) * money(p ? p.cost_price : 0)); } });
+    });
+    const retRefund = sumP(custRet, function (x) { return money(x.refund); });
+    // price corrections decided in the period (kind 'koreksi'), refunds paid, undercharges collected / written off
+    const corr = approvalRows.filter(function (a) { return a.kind === 'koreksi' && inP(wibDay(a.decided_at || a.created_at)); });
+    let over = 0, under = 0;
+    corr.forEach(function (a) { let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; } const u = money(pl.under_total); under += u; over += money(a.total) - u; });
+    const decidedIn = function (kind, status) { return approvalRows.filter(function (a) { return a.kind === kind && a.status === status && inP(wibDay(a.decided_at)); }); };
+    const collected = sumP(decidedIn('konsultasi', 'approved'), function (a) { return money(a.total); });
+    const writeoff = sumP(decidedIn('konsultasi', 'rejected'), function (a) { return money(a.total); });
+    const refundPaid = sumP(decidedIn('refund', 'approved'), function (a) { return money(a.total); });
+    const expTotal = sumP(pExp, function (e) { return money(e.amount); });
+    const retNet = restock - retRefund;
+    const pl = {
+      from: pfrom, to: pto,
+      sales: { count: okS.length, total: salesTotal, discount: sumP(okS, function (x) { return money(x.discount); }) },
+      voids: { count: voidS.length, total: sumP(voidS, function (x) { return money(x.total); }) },
+      cogs: salesTotal - gross, gross_profit: gross,
+      expenses: { count: pExp.length, total: expTotal, by_category: byCat },
+      returns: { count: custRet.length, refund: retRefund, restock: restock, net: retNet },
+      stock_diff: { count: adj.length, value: stockDiff },
+      corrections: { count: corr.length, net: over + under, overcharge: over, undercharge: under, refund_paid: refundPaid, collected: collected, writeoff: writeoff }
+    };
+    pl.net_profit = gross - expTotal + retNet + stockDiff + collected;
+    return done({ ok: true, pl: pl });
+  }
+
   case 'get_sales': {
     if (!isDate(data.from) || !isDate(data.to)) return fail('INVALID', 'Rentang tanggal tidak valid');
     return done({
@@ -2694,7 +2776,11 @@ switch (req.action) {
     if (role !== 'owner') {
       if (role !== 'manager') return fail('FORBIDDEN', 'Hanya untuk pemilik');
       const t0 = users.find(function (u) { return str(u.name).toLowerCase() === str(data.name).trim().toLowerCase(); });
-      if (MGR_ROLES.indexOf(data.role) < 0 || (t0 && MGR_ROLES.indexOf(t0.role) < 0)) return fail('FORBIDDEN', 'Manajer hanya mengatur akun kasir dan sales');
+      // v36 (owner 2026-10-11: "اسم كل حساب يمكن تغييره من الإعدادات … المدير أفضل أن يقوم بذلك"): the manager may also
+      // RENAME the existing accountant account (the person's name, with the temporary PIN a new name needs) — never its role,
+      // its active state, a new accountant account, or a PIN reset without a rename.
+      const akRename = t0 && t0.role === 'akuntan' && data.role === 'akuntan' && str(data.new_name) !== '' && (data.active === undefined || (data.active !== false) === (t0.active !== false));
+      if (!akRename && (MGR_ROLES.indexOf(data.role) < 0 || (t0 && MGR_ROLES.indexOf(t0.role) < 0))) return fail('FORBIDDEN', 'Manajer hanya mengatur akun kasir dan sales (akun akuntan: hanya ganti nama)');
     }
     const name = personName(data.name);
     if (!name) return fail('INVALID', str(data.name) ? 'Nama pengguna hanya boleh huruf, spasi dan . \' -' : 'Nama wajib');

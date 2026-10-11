@@ -1,7 +1,7 @@
 // v4: cash drawer shifts (blind count), SHIFT_REQUIRED, dashboard, channel/promo, notifications.
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { rp, SHOTS, jktToday, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, asUser } = require('./helpers');
+const { rp, SHOTS, jktToday, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, asUser, switchUser } = require('./helpers');
 
 const copyDb = async (from, to) => { const raw = await from.evaluate(() => localStorage.getItem('kmock.db')); await to.evaluate(r => localStorage.setItem('kmock.db', r), raw); };
 const ctxOpts = { viewport: { width: 1366, height: 768 }, serviceWorkers: 'block' };
@@ -17,7 +17,7 @@ test('v15: a kasir opens the drawer (owner FORBIDDEN, no prompt for owner/manage
   await asUser(page, 'Siti', '1111', 'cash_move', { type: 'out', amount: 50000, note: 'Beli galon' });
   // the morning count went to the approvals inbox (buka_kas)
   const ap = (await getDb(page)).approvals.find(a => a.kind === 'buka_kas' && a.cashier === 'Siti');
-  expect(ap).toMatchObject({ approver_role: 'manager', total: 500000, status: 'pending' });
+  expect(ap).toMatchObject({ approver_role: 'mgr_akuntan', total: 500000, status: 'pending' });
 
   await nav(page, 'kas');
   await page.click('[data-act="kas-refresh"]');
@@ -121,6 +121,7 @@ test('channel and promo code are saved and reported', async ({ page }) => {
   const sale = (await getDb(page)).sales.slice(-1)[0];
   expect(sale).toMatchObject({ channel: 'whatsapp', promo_code: 'KHAIR1111' });
   await closeModals(page);
+  await switchUser(page, 'Pemilik', '1234'); // v36: the full reports are the owner's; the manager sold
   await nav(page, 'reports');
   await page.click('[data-act="rep-preset"][data-p="today"]');
   await expect(page.locator('#rp-promos')).toContainText('KHAIR1111');

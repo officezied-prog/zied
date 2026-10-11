@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('@playwright/test');
-const { SHOTS, login, nav, addBySearch, checkoutSkip, closeModals, getDb, editDb } = require('./helpers');
+const { SHOTS, login, nav, addBySearch, checkoutSkip, closeModals, getDb, editDb, switchUser } = require('./helpers');
 
 /** Fake Web Speech API: window.__srEmit(text, final) feeds results to the active recognition. */
 function speechStub(opts = {}) {
@@ -124,7 +124,7 @@ test('Pengaturan: shop WhatsApp number + voice switch (owner only); receipt phon
   const opened = [];
   await context.route(/^https:\/\/wa\.me\//, route => { opened.push(route.request().url()); return route.fulfill({ status: 200, contentType: 'text/plain', body: 'wa' }); });
   await page.addInitScript(speechStub);
-  await login(page);
+  await login(page, 'Pemilik', '1234', '', { stay: true }); // owner-only settings; v36: the manager sells below
   await nav(page, 'settings');
   await expect(page.locator('#st-sv-voice')).toBeChecked();
   await expect(page.locator('#st-sv-auto')).toBeChecked();
@@ -138,14 +138,17 @@ test('Pengaturan: shop WhatsApp number + voice switch (owner only); receipt phon
   let st = (await getDb(page)).settings;
   expect(st).toMatchObject({ wa_shop_number: '6281280002700', survey_voice: false, survey_auto: true });
   // voice survey off → only the manual link in the payment panel
+  await switchUser(page, 'Jihan', '2222');
   await nav(page, 'pos');
   await addBySearch(page, 'ajwa');
   await expect(page.locator('#vs-ask, #vs-ask-link')).toHaveCount(0);
   await expect(page.locator('#vs-manual')).toBeVisible();
+  await switchUser(page, 'Pemilik', '1234');
   await nav(page, 'settings');
   await page.check('#st-sv-voice');
   await page.click('[data-act="set-save-survey"]');
   await expect.poll(async () => (await getDb(page)).settings.survey_voice).toBe(true);
+  await switchUser(page, 'Jihan', '2222');
   await nav(page, 'pos');
   await expect(page.locator('#vs-ask')).toBeVisible();
 
@@ -168,7 +171,7 @@ test('Pengaturan: shop WhatsApp number + voice switch (owner only); receipt phon
   const href = await card.locator('#wa-shop').getAttribute('href');
   const u = new URL(href);
   expect(u.origin + u.pathname).toBe('https://wa.me/6281280002700');
-  expect(u.searchParams.get('text')).toMatch(new RegExp(`^Simpan nomor pelanggan baru: Pak Umar \\+6281399887766 \\(kasir Pemilik, \\d{2}/\\d{2}/\\d{4} \\d{2}:\\d{2}, nota ${inv}\\)$`));
+  expect(u.searchParams.get('text')).toMatch(new RegExp(`^Simpan nomor pelanggan baru: Pak Umar \\+6281399887766 \\(kasir Jihan, \\d{2}/\\d{2}/\\d{4} \\d{2}:\\d{2}, nota ${inv}\\)$`));
   await expect(page.locator('.modal')).toContainText('WhatsApp akan terbuka, tekan Kirim');
   const [popup] = await Promise.all([page.waitForEvent('popup'), card.locator('#wa-shop').click()]);
   await popup.waitForLoadState();

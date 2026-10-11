@@ -1,12 +1,12 @@
 // v3: protected changes (void requests, price changes), expenses, annual report.
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { rp, pct, SHOTS, jktToday, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals } = require('./helpers');
+const { rp, pct, SHOTS, jktToday, login, getDb, productByName, nav, addBySearch, checkoutSkip, closeModals, switchUser } = require('./helpers');
 
 const copyDb = async (from, to) => { const raw = await from.evaluate(() => localStorage.getItem('kmock.db')); await to.evaluate(r => localStorage.setItem('kmock.db', r), raw); };
 const ctxOpts = { viewport: { width: 1366, height: 768 }, serviceWorkers: 'block', permissions: ['clipboard-read', 'clipboard-write'] };
 
-test('manager requests a void → cannot decide it (owner only) → owner approves → sale void, re-make offered', async ({ page, browser }) => {
+test('manager requests a void → cannot decide her own request → owner approves → sale void (v36: no re-make on the owner\'s screen)', async ({ page, browser }) => {
   await login(page, 'Jihan', '2222');
   const p = productByName(await getDb(page), /Kacang Almond/);
   await addBySearch(page, 'almond');
@@ -23,7 +23,7 @@ test('manager requests a void → cannot decide it (owner only) → owner approv
   await expect(page.locator('.toast.ok').filter({ hasText: 'Permintaan pembatalan' })).toContainText('Permintaan pembatalan APR-');
   let db = await getDb(page);
   const ap = db.approvals.slice(-1)[0];
-  expect(ap).toMatchObject({ kind: 'void', ref: inv, approver_role: 'owner', status: 'pending', cashier: 'Jihan' });
+  expect(ap).toMatchObject({ kind: 'void', ref: inv, approver_role: 'mgr_akuntan', status: 'pending', cashier: 'Jihan' }); // v36: today's invoice
   expect(db.sales.find(s => s.invoice_no === inv).status).toBe('ok');
 
   // the manager sees it in the inbox but cannot decide
@@ -31,15 +31,15 @@ test('manager requests a void → cannot decide it (owner only) → owner approv
   await nav(page, 'approvals');
   await page.click('[data-act="apr-refresh"]');
   const mcard = page.locator(`.apr-card[data-req="${ap.request_id}"]`);
-  await expect(mcard.locator('[data-owner-only]')).toHaveText(/Hanya pemilik/);
+  await expect(mcard.locator('[data-owner-only]')).toHaveText(/Permintaan Anda/);
   await expect(mcard.locator('[data-d="approved"]')).toBeDisabled();
   const code = await page.evaluate(async id => { try { await api('decide_approval', { request_id: id, decision: 'approved', invoice_no: 'x' }); return 'ok'; } catch (e) { return e.code; } }, ap.request_id);
-  expect(code).toBe('NEEDS_OWNER');
+  expect(code).toBe('FORBIDDEN');
 
   // owner approves on another device → sale void, stock restored, re-make loads the cart
   const octx = await browser.newContext(ctxOpts);
   const owner = await octx.newPage();
-  await login(owner);
+  await login(owner, 'Pemilik', '1234', '', { stay: true });
   await copyDb(page, owner);
   await nav(owner, 'approvals');
   await owner.click('[data-act="apr-refresh"]');
@@ -47,14 +47,11 @@ test('manager requests a void → cannot decide it (owner only) → owner approv
   await expect(card).toContainText(inv);
   await expect(card).toContainText('Pembeli batal');
   await card.locator('[data-d="approved"]').click();
-  await expect(owner.locator('.modal')).toContainText('Buat ulang transaksi');
+  await expect(card).toHaveCount(0);
+  await expect.poll(async () => (await getDb(owner)).sales.find(s => s.invoice_no === inv).status).toBe('void');
   db = await getDb(owner);
-  expect(db.sales.find(s => s.invoice_no === inv).status).toBe('void');
   expect(productByName(db, /Kacang Almond/).stock).toBe(p.stock);
-  await owner.click('#cf-ok');
-  await expect(owner.locator('#view-pos')).toBeVisible();
-  await expect(owner.locator('.cline')).toHaveCount(1);
-  await expect(owner.locator('.cline')).toContainText('Kacang Almond');
+  await expect(owner.locator('.modal')).toHaveCount(0); // v36: the owner does not sell — no "Buat ulang transaksi" offer on his screen
   await octx.close();
 });
 
@@ -88,7 +85,7 @@ test('manager changes the wholesale price directly; a cost change waits for the 
 
   const octx = await browser.newContext(ctxOpts);
   const owner = await octx.newPage();
-  await login(owner);
+  await login(owner, 'Pemilik', '1234', '', { stay: true });
   await copyDb(page, owner);
   await nav(owner, 'approvals');
   await owner.click('[data-act="apr-refresh"]');
@@ -120,7 +117,7 @@ test('manager saves an expense; it appears in the month list', async ({ page }) 
 });
 
 test('annual report (owner): monthly table, P&L, products by profit, copy text', async ({ page }) => {
-  await login(page);
+  await login(page, 'Pemilik', '1234', '', { stay: true });
   await nav(page, 'reports');
   await page.click('[data-act="rp-mode"][data-m="year"]');
   const Y = jktToday().slice(0, 4), m = +jktToday().slice(5, 7);

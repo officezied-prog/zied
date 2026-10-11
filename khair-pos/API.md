@@ -192,7 +192,7 @@ by someone allowed to).
 
 | action | who | data | response |
 |---|---|---|---|
-| `request_void` | any | `{invoice_no, reason}` | `request_id, approval` (kind `void`, approver_role `owner`) |
+| `request_void` | any | `{invoice_no, reason}` | `request_id, approval` (kind `void`; approver_role `mgr_akuntan` for today's sale, `owner` for an earlier day's — v36) |
 | `change_price` | any | `{product_id, retail_price?, wholesale_price?, cost_price?, reason}` (only the fields that change) | applied directly if the caller may: `applied: true, product`; else `applied: false, request_id, approval` |
 | `decide_approval` | owner/manager (`approver_role` respected) | `{request_id, decision, note, invoice_no?}` — for kind `void` send `invoice_no: approval.ref` | `approval` (+ `sale` when a void was executed, + `product` when a price was applied, + `stock` when an `opname` count was applied) |
 | `list_approvals` | owner/manager | – | `approvals: [pending...]`, each with `can_decide: bool` |
@@ -425,7 +425,7 @@ Matching uses payments of the month ± 3 days; a reference match wins over a dat
 
 - `open_shift` is for **kasir** accounts only (owner / manager → `FORBIDDEN`). Only kasir sales need an open shift (`SHIFT_REQUIRED`);
   owner and manager sell without one.
-- Every `open_shift` creates an approval `kind: "buka_kas"` (`approver_role: "manager"`, `ref: shift_id`, `total: opening_cash`,
+- Every `open_shift` creates an approval `kind: "buka_kas"` (`approver_role: "mgr_akuntan"` since v36 — manager or accountant; the manager's own opening `"owner"`, `ref: shift_id`, `total: opening_cash`,
   `payload: {shift_id, opening_cash, last_counted, last_cashier}`) with a summary comparing the opening count with the last closed drawer
   (counted cash). Manager or owner approves / rejects it like any approval; selling is not blocked. It is also logged (`buka_kas`, warn when
   the opening differs from the last count).
@@ -581,6 +581,28 @@ The apps must use the same rules in their inputs (`maxlength`, `inputmode`, `pat
 - **Change the person in a role (07 Oct):** `save_user` `{name: <current>, new_name, role, pin_hash}` renames the account (another
   person takes the role); the PIN hash must be made with the new name, the new person must change it at first login; refused while
   that user has an open drawer. Logged "Ganti orang: A → B".
+
+## Owner decisions 11 Oct (v36)
+
+- **Old invoice = owner only.** `request_void` on a sale whose `sale_date` is TODAY (Jakarta) → `approver_role: "mgr_akuntan"`
+  (manager or accountant decide, v29). A sale from an EARLIER day → `approver_role: "owner"`; the response carries
+  `approver_role` and `old_invoice`; the approval `payload` holds `{invoice_no, sale_date, reason, total, old}`. A shared request
+  still pending after midnight also becomes owner-only (`can_decide: false`, `decide_approval` → `NEEDS_OWNER`).
+- **Morning opening → manager AND accountant.** A cashier's `open_shift` creates `buka_kas` with `approver_role: "mgr_akuntan"`
+  (+ a `notifikasi` to `manager,akuntan`); the first decision wins, a second `decide_approval` gets `INVALID` "sudah diputuskan oleh
+  <name>". When the manager decides, the accountant gets a notice. The manager's own opening still goes to the owner.
+- **The manager renames the accountant.** `save_user` by a manager on an `akuntan` account is allowed only as a rename
+  (`new_name` + the new temporary `pin_hash`, `role: "akuntan"`, same active state). No role change, PIN reset alone, suspension or
+  new accountant account (still `FORBIDDEN`).
+- **`profit_loss`** (owner only) `{from, to}` → `pl: {from, to, sales{count,total,discount}, voids{count,total}, cogs, gross_profit,
+  expenses{count,total,by_category}, returns{count,refund,restock,net}, stock_diff{count,value}, corrections{count,net,overcharge,
+  undercharge,refund_paid,collected,writeoff}, net_profit}`. `net_profit = gross_profit − expenses + returns.net + stock_diff.value +
+  corrections.collected` (an overcharge correction is already inside the sale totals; a written-off undercharge never was).
+  The Worker now also loads the decided price-correction history (`koreksi` / `refund` / `konsultasi`) for `list_corrections`,
+  `daily_report` and `profit_loss`.
+- **Attendance:** `att_settings` takes `att_ramadan_auto` (boolean, default true) and `att_ramadan_end` (HH:MM, default 23:00);
+  `att_bootstrap.settings.ramadan` lists the next two computed seasons `{hijri, ramadan, eid, from, to}` (from = two months before
+  1 Ramadan, to = Eid al-Fitr). A hand-typed `att_seasons` entry still wins on its days.
 
 ## Attendance by face (v17)
 

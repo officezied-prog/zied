@@ -4051,7 +4051,7 @@ function aprBodyHTML(a) {
   if (kind === 'transfer_confirm') return head(t('tc.title'), 'blue') + `<div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('tc.who'))}</div><div class="v">${esc(a.customer_name || '—')}</div></div><div><div class="k">${esc(t('tc.amount'))}</div><div class="v num"><b>${fmtRp(a.total)}</b></div></div></div>
     <div class="small">${esc(pl.ref_type === 'faktur' ? t('tc.invoice') : t('tc.payment'))}: <b>${esc(pl.ref || a.ref)}</b>${pl.bank ? ' · ' + esc(pl.bank) : ''}${pl.transfer_ref ? ' · ' + esc(t('tc.ref')) + ' ' + esc(pl.transfer_ref) : ''}</div>
     <div class="small muted" style="margin-bottom:8px">${esc(t('tc.hint'))}</div>`;
-  if (kind === 'void') return head(t('apr.kind_void', { inv: a.ref }), 'red') + `<div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('rc.customer'))}</div><div class="v">${esc(a.customer_name || t('sell.walkin'))}</div></div><div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(a.total)}</div></div></div><div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason || a.summary || '')}”</b></div>`;
+  if (kind === 'void') return head(t('apr.kind_void', { inv: a.ref }), 'red') + voidOldHTML(a, pl) + `<div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('rc.customer'))}</div><div class="v">${esc(a.customer_name || t('sell.walkin'))}</div></div><div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(a.total)}</div></div></div><div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason || a.summary || '')}”</b></div>`;
   if (kind === 'expense_check') return head(t(pl.status === 'cek_manual' ? 'apr.kind_exp_manual' : 'apr.kind_exp_mm', { amount: fmtRp(pl.amount != null ? pl.amount : a.total) }), 'warn') + expenseCheckBodyHTML(pl);
   if (kind === 'product_new') return head(t('apr.kind_newprod', { name: pl.product_name || '' }), 'warn') + productNewBodyHTML(a, pl);
   if (kind === 'price') {
@@ -4089,6 +4089,11 @@ function newProdPrices(card) {
   $$('[data-np-price]', card).forEach(i => { const f = i.dataset.npPrice; if (i.value.trim() !== '') o[f] = f === 'wholesale_min_qty' ? qtyVal(i.value) : moneyVal(i.value); });
   return o;
 }
+// v36 (owner 2026-10-11: "إصلاح فاتورة قديمة لا يتم إلا بموافقتي الشخصية"): a void of an earlier day's sale is the owner's alone.
+function voidOldHTML(a, pl) {
+  const d = (pl && /^\d{4}-\d{2}-\d{2}$/.test(pl.sale_date || '')) ? pl.sale_date : ((/(\d{4}-\d{2}-\d{2})/.exec(String(a.summary || '')) || [])[1] || '');
+  return d && d < today() ? `<div class="badge red" style="margin:6px 0" data-old-invoice="${esc(d)}">${ic('lock')} ${esc(t('void.old_badge', { date: fmtDate(d) }))}</div>` : '';
+}
 function openInbox() {
   const el = openModal({ title: t('apr.inbox'), id: 'apr-inbox', body: `<div class="spinner"></div>` });
   drawInbox(el); pollApprovals();
@@ -4098,7 +4103,7 @@ function aprCardHTML(a) {
   const can = a.can_decide !== false && (a.kind !== 'kesepakatan' || a.approver_role === S.role);
   return `<div class="card pad apr-card" data-req="${esc(a.request_id)}" data-kind="${esc(a.kind || 'credit')}">${aprBodyHTML(a)}
       <input class="input" data-note placeholder="${esc(t('apr.note_ph'))}" aria-label="${esc(t('apr.note_ph'))}" ${can ? '' : 'disabled'}>
-      <div class="row" style="margin-top:10px;justify-content:flex-end">${can ? '' : `<span class="badge warn grow" data-owner-only>${ic('lock')} ${esc(t(a.kind === 'kesepakatan' && a.approver_role === 'manager' ? 'agree.manager_only' : 'apr.owner_only'))}</span>`}
+      <div class="row" style="margin-top:10px;justify-content:flex-end">${can ? '' : `<span class="badge warn grow" data-owner-only>${ic('lock')} ${esc(t(a.kind === 'kesepakatan' && a.approver_role === 'manager' ? 'agree.manager_only' : a.kind === 'void' && a.approver_role !== 'owner' && !voidOldHTML(a, aprPayload(a)) && String(a.cashier).toLowerCase() === String(S.user).toLowerCase() ? 'apr.own_req' : 'apr.owner_only'))}</span>`}
         <button class="btn danger" data-act="apr-decide" data-d="rejected" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t('apr.reject'))}</button><button class="btn primary" data-act="apr-decide" data-d="approved" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t(a.kind === 'kesepakatan' ? 'agree.confirm' : 'apr.approve'))}</button></div></div>`;
 }
 function drawInbox(el) {
@@ -4334,6 +4339,7 @@ const I18N = {
     'apr.used': 'Persetujuan sudah dipakai', 'apr.back_to_cart': 'Kembali ke keranjang', 'apr.retrying': 'Koneksi putus, mencoba lagi…', 'apr.need_online': 'Perlu koneksi internet untuk persetujuan',
     'apr.inbox': 'Persetujuan', 'apr.inbox_s': 'Hutang, pembatalan nota, ubah harga', 'apr.new_toast': 'Permintaan baru dari {cashier}', 'apr.kind_void': 'Batalkan nota {inv}',
     'apr.kind_price': 'Ubah harga: {name}', 'apr.kind_credit': 'Penjualan hutang', 'apr.cost_hidden': 'Ada perubahan harga modal (hanya tampil di aplikasi pemilik).',
+    'void.old_badge': 'Nota lama ({date}) — hanya pemilik yang menyetujui', 'apr.own_req': 'Permintaan Anda — diputuskan orang lain',
     'apr.note_ph': 'Catatan (opsional)', 'apr.owner_only': 'Hanya pemilik', 'apr.reject': 'Tolak', 'apr.approve': 'Setujui', 'apr.none': 'Tidak ada permintaan',
     'apr.done_ok': '{id} disetujui', 'apr.done_rej': '{id} ditolak',
     'rc.title': 'Struk', 'rc.title_pending': 'Struk (belum terkirim)', 'rc.saved_ok': 'Transaksi tersimpan', 'rc.new_sale': 'Transaksi baru', 'rc.phone': 'Telp', 'rc.pending': 'BELUM TERKIRIM',
@@ -4443,6 +4449,7 @@ const I18N = {
     'apr.used': 'استُخدمت الموافقة', 'apr.back_to_cart': 'العودة إلى السلة', 'apr.retrying': 'انقطع الاتصال، إعادة المحاولة…', 'apr.need_online': 'الموافقة تحتاج اتصالًا بالإنترنت',
     'apr.inbox': 'الموافقات', 'apr.inbox_s': 'دَين، إلغاء فاتورة، تغيير سعر', 'apr.new_toast': 'طلب جديد من {cashier}', 'apr.kind_void': 'إلغاء الفاتورة {inv}',
     'apr.kind_price': 'تغيير سعر: {name}', 'apr.kind_credit': 'بيع بالدَّين', 'apr.cost_hidden': 'يوجد تغيير في سعر التكلفة (يظهر في تطبيق المالك فقط).',
+    'void.old_badge': 'فاتورة قديمة ({date}) — لا يوافق عليها إلا المالك', 'apr.own_req': 'طلبك — يقرّره شخص آخر',
     'apr.note_ph': 'ملاحظة (اختياري)', 'apr.owner_only': 'المالك فقط', 'apr.reject': 'رفض', 'apr.approve': 'موافقة', 'apr.none': 'لا توجد طلبات',
     'apr.done_ok': 'تمت الموافقة على {id}', 'apr.done_rej': 'رُفض {id}',
     'rc.title': 'الإيصال', 'rc.title_pending': 'الإيصال (لم يُرسل)', 'rc.saved_ok': 'تم حفظ العملية', 'rc.new_sale': 'عملية جديدة', 'rc.phone': 'هاتف', 'rc.pending': 'لم يُرسل بعد',
@@ -4680,7 +4687,7 @@ Object.assign(I18N.id, {
   'apr.need_online_here': 'Butuh internet untuk persetujuan di tempat. Minta persetujuan jarak jauh, atau coba lagi saat online.',
   'kas.owner_none': 'Buka kas hanya dari akun kasir. Pemilik dan manajer bisa berjualan tanpa buka kas.',
   'kas.items': 'Barang terjual', 'kas.by_method': 'Per cara bayar',
-  'kas.apr_pending': 'Modal awal menunggu persetujuan manajer', 'kas.apr_approved': 'Modal awal disetujui {name}', 'kas.apr_rejected': 'Modal awal ditolak {name}: {note}',
+  'kas.apr_pending': 'Modal awal menunggu persetujuan manajer / akuntan', 'kas.apr_approved': 'Modal awal disetujui {name}', 'kas.apr_rejected': 'Modal awal ditolak {name}: {note}',
   'req.buka_kas': 'Buka kas, modal awal {amount}', 'apr.kind_kas': 'Buka kas: {name}', 'apr.kas_open': 'Modal awal dihitung', 'apr.kas_last': 'Kas terakhir ditutup ({name})',
   'apr.kas_hint': 'Cek uang awal di laci. Penjualan tetap berjalan sambil menunggu.', 'apr.inbox_s': 'Buka kas, hutang, batal nota, harga, koreksi barang masuk',
   'rep.head': 'Laporan tutup kas {store}', 'rep.cash': 'Kas', 'rep.send_title': 'Kirim laporan', 'rep.send_hint': 'WhatsApp terbuka dengan laporannya — tekan Kirim di WhatsApp.',
@@ -4692,7 +4699,7 @@ Object.assign(I18N.ar, {
   'apr.need_online_here': 'الموافقة في المكان تحتاج إلى الإنترنت. اطلب موافقة عن بُعد أو حاول عند الاتصال.',
   'kas.owner_none': 'فتح الصندوق من حساب الكاشير فقط. المالك والمدير يبيعان دون فتح صندوق.',
   'kas.items': 'القطع المباعة', 'kas.by_method': 'حسب طريقة الدفع',
-  'kas.apr_pending': 'النقد الابتدائي بانتظار موافقة المدير', 'kas.apr_approved': 'وافق {name} على النقد الابتدائي', 'kas.apr_rejected': 'رفض {name} النقد الابتدائي: {note}',
+  'kas.apr_pending': 'النقد الابتدائي بانتظار موافقة المدير / المحاسب', 'kas.apr_approved': 'وافق {name} على النقد الابتدائي', 'kas.apr_rejected': 'رفض {name} النقد الابتدائي: {note}',
   'req.buka_kas': 'فتح الصندوق، النقد الابتدائي {amount}', 'apr.kind_kas': 'فتح الصندوق: {name}', 'apr.kas_open': 'النقد الابتدائي المعدود', 'apr.kas_last': 'آخر إغلاق ({name})',
   'apr.kas_hint': 'تحقق من النقد الابتدائي في الدرج. البيع مستمر أثناء الانتظار.', 'apr.inbox_s': 'فتح الصندوق، دَين، إلغاء فاتورة، أسعار، تصحيح استلام',
   'rep.head': 'تقرير إغلاق الصندوق {store}', 'rep.cash': 'النقد', 'rep.send_title': 'إرسال التقرير', 'rep.send_hint': 'يفتح واتساب مع التقرير — اضغط إرسال في واتساب.',
