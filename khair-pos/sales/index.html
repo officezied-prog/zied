@@ -80,7 +80,7 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.7.1';
+const APP_VERSION = 'sales-1.8.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1073,7 +1073,7 @@ function leafletMap(el, points, shops, current, orders, zoom, plan) {
   orders.forEach(o => { if (!validPos(o)) return; ll.push([o.lat, o.lng]); window.L.marker([o.lat, o.lng], { icon: window.L.divIcon({ className: 'ord-pin-wrap', html: '<span class="ord-pin">' + esc(String(o.seq)) + '</span>', iconSize: [28, 28], iconAnchor: [14, 14] }), zIndexOffset: 1000 }).bindTooltip(esc(o.label || '')).addTo(m); });
   // v31: the day's plan — dashed purple line from the start through the stops; numbered stops, ✓ once visited
   if (plan && ((plan.stops || []).length || (plan.streets || []).length)) {
-    (plan.streets || []).forEach(x => (x.lines || []).forEach(ln => { window.L.polyline(ln, x.drawn ? { color: '#0D9488', weight: 6, opacity: .6 } : { color: STREET_C, weight: 7, opacity: .8 }).bindTooltip(esc((x.drawn ? '✏️ ' : '🛣️ ') + x.name)).addTo(m); ln.forEach(q => ll.push(q)); }));
+    (plan.streets || []).forEach((x, si) => (x.lines || []).forEach(ln => { window.L.polyline(ln, { color: streetColor(si), weight: 7, opacity: .8 }).bindTooltip(esc((x.drawn ? '✏️ ' : '🛣️ ') + x.name)).addTo(m); ln.forEach(q => ll.push(q)); }));
     const pl = (plan.start ? [plan.start] : []).concat(plan.stops).concat(plan.end ? [plan.end] : []).filter(validPos).map(p => [p.lat, p.lng]);
     if (pl.length > 1) window.L.polyline(pl, { color: '#7C3AED', weight: 3, dashArray: '6 6', opacity: .9 }).addTo(m);
     if (plan.end && validPos(plan.end)) { ll.push([plan.end.lat, plan.end.lng]); window.L.marker([plan.end.lat, plan.end.lng], { icon: window.L.divIcon({ className: 'ord-pin-wrap', html: '<span class="start-pin">🏁</span>', iconSize: [30, 30], iconAnchor: [6, 28] }), zIndexOffset: 950 }).bindTooltip(esc(plan.end.label || t('plan.end'))).addTo(m); }
@@ -1118,7 +1118,7 @@ function svgMap(el, points, shops, current, orders, plan) {
    new-shop form already filled in, so it becomes a shop at the first visit). */
 const PL = { date: '', start: null, end: null, stops: [], streets: [], note: '', results: [], street: null, seg: 'search', q: '', msg: '', busy: false, map: null, lay: null, el: null, sel: null, worked: [], workedAt: 0,
   draw: null, found: [], foundOn: '', lineRef: '', cats: null, gmOpen: false, placing: '', unplaced: [], g: null,
-  rf: { from: '', to: '', user: '', view: true }, hl: -1, tap: 0, tapHit: null, prev: null }; // v35 rf = the worked-routes filter; hl = the route shown; tap/tapHit = the street under the last tap // v34 g = Google search { enabled, n, cap } // v33: Google Maps paste box; a place being put on the map; places still without a position // v32: draw = the work line being drawn ({ pts, name }); found = shops of the chosen kinds along a line
+  rf: { from: '', to: '', user: '', view: true }, hl: -1, tap: 0, tapHit: null, prev: null, part: null }; // v35c part = choosing the start / end of the work on a long street // v35 rf = the worked-routes filter; hl = the route shown; tap/tapHit = the street under the last tap // v34 g = Google search { enabled, n, cap } // v33: Google Maps paste box; a place being put on the map; places still without a position // v32: draw = the work line being drawn ({ pts, name }); found = shops of the chosen kinds along a line
 const OSM = { nomi: 'https://nominatim.openstreetmap.org/search', over: ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter'], last: 0 };
 const plansAll = () => FS.get(uk('plans'), {}) || {};
 const planFor = d => plansAll()[d] || null;
@@ -1201,7 +1201,7 @@ function planCardHTML() {
 function openPlanner(date) {
   const d = date || today(), p = planFor(d);
   Object.assign(PL, { date: d, start: p && p.start ? Object.assign({}, p.start) : null, end: p && p.end ? Object.assign({}, p.end) : null, stops: p ? clone(p.stops || []) : [],
-    streets: p ? clone(p.streets || []) : [], note: p ? p.note || '' : '', results: [], street: null, hl: -1,
+    streets: p ? clone(p.streets || []) : [], note: p ? p.note || '' : '', results: [], street: null, hl: -1, part: null,
     seg: p && ((p.stops || []).length || (p.streets || []).length) ? 'plan' : 'search', q: '', msg: '', busy: false, map: null, lay: null, sel: null, draw: null, found: [], foundOn: '', lineRef: '',
     gmOpen: false, placing: '', unplaced: unplacedFor(d) });
   if (!PL.cats) { const c = FS.get('find_cats', null); PL.cats = Array.isArray(c) ? c.filter(id => FIND.some(k => k.id === id)) : ['kurma', 'sembako', 'haji']; } // the owner's three: dates, Indonesian groceries, Hajj & Umrah
@@ -1234,8 +1234,8 @@ function drawPlanner() {
     + pointBox('pl-end', '🏁', t('plan.end'), PL.end, `<button class="btn xs" data-act="pl-end-mypos" id="pl-end-mypos">${ic('locate')} ${esc(t('plan.my_pos'))}</button><button class="btn xs" data-act="pl-end-same" id="pl-end-same" ${PL.start ? '' : 'disabled'}>${esc(t('plan.end_same'))}</button>${PL.end ? `<button class="btn xs ghost" data-act="pl-end-clear" id="pl-end-clear" aria-label="${esc(t('plan.remove'))}">✕</button>` : ''}`)
     + `<div class="small muted" style="margin-top:4px">${esc(t('plan.tap_hint'))}</div>`;
   $('#pl-seg', w).innerHTML = `<button type="button" data-act="pl-seg" data-v="search" class="${PL.seg === 'search' ? 'on' : ''}" id="pl-seg-search">${esc(t('plan.tab_search'))}</button><button type="button" data-act="pl-seg" data-v="line" class="${PL.seg === 'line' ? 'on' : ''}" id="pl-seg-line">✏️ ${esc(t('plan.tab_line'))}</button><button type="button" data-act="pl-seg" data-v="plan" class="${PL.seg === 'plan' ? 'on' : ''}" id="pl-seg-plan">${esc(t('plan.tab_plan', { n: PL.stops.length + PL.streets.length }))}</button><button type="button" data-act="pl-seg" data-v="routes" class="${PL.seg === 'routes' ? 'on' : ''}" id="pl-seg-routes">${esc(t('plan.tab_routes'))}</button>`;
-  $('#pl-drawbar', w).innerHTML = drawBarHTML() + placeBarHTML();
-  const mp = $('#pl-map', w); if (mp) mp.classList.toggle('drawing', !!PL.draw);
+  $('#pl-drawbar', w).innerHTML = drawBarHTML() + placeBarHTML() + partBarHTML();
+  const mp = $('#pl-map', w); if (mp) mp.classList.toggle('drawing', !!(PL.draw || PL.part));
   $('#pl-body', w).innerHTML = PL.seg === 'plan' ? planListHTML() : PL.seg === 'line' ? planLineHTML() : PL.seg === 'routes' ? routesHTML() : planSearchHTML();
   const ln = $('#pl-line-name', w); if (ln) ln.oninput = e => { if (PL.draw) PL.draw.name = e.target.value; };
   const gt = $('#pl-gm-text', w); if (gt) gt.oninput = e => { PL.gmText = e.target.value; };
@@ -1270,7 +1270,7 @@ function resultRowHTML(r, i) {
 function planKm() { const pts = (PL.start ? [PL.start] : []).concat(PL.stops).concat(PL.end ? [PL.end] : []); let m = 0; for (let i = 1; i < pts.length; i++) m += haversine(pts[i - 1], pts[i]); return m / 1000; }
 function planListHTML() {
   const streets = `<div class="small" style="font-weight:800;margin:2px 0 6px">🛣️ ${esc(t('plan.streets', { n: PL.streets.length }))}</div>
-    <div class="list" id="pl-streets">${PL.streets.length ? PL.streets.map((x, i) => { const warn = streetNote(x); return `<div class="li pl-stop pl-street" data-ref="${esc(x.ref)}" data-drawn="${x.drawn ? 1 : 0}"><span class="start-pin" aria-hidden="true">${x.drawn ? '✏️' : '🛣️'}</span><div class="grow"><div class="t">${esc(x.name)}</div>${warn ? `<div class="small pl-warn" data-worked>⚠ ${esc(warn)}</div>` : ''}</div>
+    <div class="list" id="pl-streets">${PL.streets.length ? PL.streets.map((x, i) => { const warn = streetNote(x); return `<div class="li pl-stop pl-street" data-ref="${esc(x.ref)}" data-drawn="${x.drawn ? 1 : 0}" data-c="${streetColor(i)}"><span class="kdot big" style="--kc:${streetColor(i)}" aria-hidden="true"></span><span class="start-pin" aria-hidden="true">${x.drawn ? '✏️' : '🛣️'}</span><div class="grow"><div class="t">${esc(x.name)}</div>${warn ? `<div class="small pl-warn" data-worked>⚠ ${esc(warn)}</div>` : ''}</div>
       <div class="row" style="gap:2px;flex:none">${x.drawn ? `<button class="btn xs" data-act="pl-find" data-i="${i}">🔎 ${esc(t('plan.find_on'))}</button>` : `<button class="btn xs" data-act="pl-street-shops" data-i="${i}">🔎 ${esc(t('plan.street_shops'))}</button>`}<button class="btn xs ghost danger" data-act="pl-street-del" data-i="${i}" aria-label="${esc(t('plan.remove'))}">✕</button></div></div>`; }).join('') : `<div class="muted small" id="pl-no-streets">${esc(t('plan.no_streets'))}</div>`}</div>
     <div class="small" style="font-weight:800;margin:12px 0 6px">📍 ${esc(t('plan.stops', { n: PL.stops.length }))}</div>`;
   const g = PL.date === today() ? planProgress({ stops: PL.stops }) : null;
@@ -1291,7 +1291,7 @@ function initPlanMap() {
   PL.clu = clusterLayer(m, S.shops.filter(validPos), (s, lay) => L.circleMarker([s.lat, s.lng], { radius: 5, color: '#fff', weight: 1, fillColor: shopColor(s), fillOpacity: .6 }).bindTooltip(esc(s.name)).on('click', () => { if (!PL.draw) toggleStop(shopItem(s)); }).addTo(lay), shopColor);
   PL.prev = L.layerGroup().addTo(m);
   m.on('moveend', () => { drawWorkedLayer(); if (PL.seg === 'routes' && PL.rf.view) routesList(); });
-  m.on('popupclose', () => { PL.tap++; if (PL.prev) PL.prev.clearLayers(); });
+  m.on('popupclose', () => { PL.tap++; if (PL.prev) PL.prev.clearLayers(); partLayer(); });
   const c = (PL.start && validPos(PL.start) ? PL.start : null) || (S.pos && validPos(S.pos) ? S.pos : null) || shopsCenter() || { lat: -6.2655, lng: 106.8605 };
   m.setView([c.lat, c.lng], 15);
   m.on('click', e => planMapClick(e.latlng));
@@ -1299,10 +1299,11 @@ function initPlanMap() {
 }
 function planMapClick(ll) {
   if (PL.draw) { addDrawPt(ll.lat, ll.lng); return; } // drawing the work line: each tap = the next point
+  if (PL.part) { partTap(ll); return; } // choosing where the work starts / ends on a long street
   if (PL.placing) { placeAt(PL.placing, ll.lat, ll.lng); return; } // putting a Google Maps place without a position on the map
   PL.sel = { lat: ll.lat, lng: ll.lng };
-  const html = `<div class="pl-pop"><div class="row wrap" style="gap:6px"><button class="btn xs" data-act="pl-sel-start" id="pl-sel-start">🚩 ${esc(t('plan.set_start'))}</button><button class="btn xs" data-act="pl-sel-end" id="pl-sel-end">🏁 ${esc(t('plan.set_end'))}</button><button class="btn xs primary" data-act="pl-sel-add" id="pl-sel-add">+ ${esc(t('plan.point_here'))}</button></div><button class="btn xs primary block" data-act="pl-sel-street" id="pl-sel-street" data-state="wait" style="margin-top:6px;white-space:normal;height:auto;min-height:32px;line-height:1.3;padding-block:6px" disabled>🛣️ ${esc(t('plan.street_looking'))}</button></div>`;
-  window.L.popup({ closeButton: true, autoPan: true, minWidth: 230, maxWidth: 290 }).setLatLng(ll).setContent(html).openOn(PL.map);
+  const html = `<div class="pl-pop"><div class="row wrap" style="gap:6px"><button class="btn xs" data-act="pl-sel-start" id="pl-sel-start">🚩 ${esc(t('plan.set_start'))}</button><button class="btn xs" data-act="pl-sel-end" id="pl-sel-end">🏁 ${esc(t('plan.set_end'))}</button><button class="btn xs primary" data-act="pl-sel-add" id="pl-sel-add">+ ${esc(t('plan.point_here'))}</button></div><button class="btn xs primary block" data-act="pl-sel-street" id="pl-sel-street" data-state="wait" style="margin-top:6px;white-space:normal;height:auto;min-height:32px;line-height:1.3;padding-block:6px" disabled>🛣️ ${esc(t('plan.street_looking'))}</button><button class="btn xs block" data-act="pl-sel-part" id="pl-sel-part" style="margin-top:6px;white-space:normal;height:auto;min-height:32px;line-height:1.3;padding-block:6px" disabled>📍 ${esc(t('plan.part_btn'))}</button></div>`;
+  PL.pop = window.L.popup({ closeButton: true, autoPan: true, minWidth: 230, maxWidth: 290 }).setLatLng(ll).setContent(html).openOn(PL.map);
   // v35 (owner: "when I put my finger on a street its name comes up — I pick it and the app takes the whole street"):
   // the named street under the tap is looked up at once, its name shown on the button and the piece of it lit on the map
   const seq = ++PL.tap; PL.tapHit = null;
@@ -1311,9 +1312,10 @@ function planMapClick(ll) {
 function tapStreet(seq, hit) {
   if (seq !== PL.tap) return; // another tap since, or the popup was closed
   PL.tapHit = hit === undefined ? null : hit;
-  const b = PL.map && document.getElementById('pl-sel-street'); if (!b) return;
+  const el = PL.pop && PL.pop.getElement(), b = el && el.querySelector('#pl-sel-street'); if (!b) return; // this popup's button (the last one may still be fading out)
   b.dataset.state = hit ? 'found' : hit === null ? 'none' : 'err';
   b.disabled = hit === null;
+  const pb = el.querySelector('#pl-sel-part'); if (pb) pb.disabled = !hit;
   b.innerHTML = '<span>🛣️ ' + (hit ? esc(t('plan.street_named', { name: '\u2063' })).replace('\u2063', '<bdi>' + esc(hit.name) + '</bdi>') : esc(t(hit === null ? 'plan.street_none_here' : 'plan.street_here'))) + '</span>'; // one span: the name flows inside the sentence
   if (hit && hit.geom && PL.prev) window.L.polyline(hit.geom, { color: '#F59E0B', weight: 9, opacity: .85 }).addTo(PL.prev);
   if (hit) wholeStreet(hit).then(lines => { // owner: "when I choose the street I want the WHOLE street coloured" — every piece of it with that name
@@ -1321,6 +1323,88 @@ function tapStreet(seq, hit) {
     hit.lines = lines; PL.prev.clearLayers();
     lines.forEach(ln => window.L.polyline(ln, { color: '#F59E0B', weight: 9, opacity: .85 }).addTo(PL.prev));
   }, () => { });
+}
+/* ---- v35c (owner 2026-10-11: "sometimes the street is very long or has many branches — the rep picks the START and the
+   END of his work on it and the app colours the street between them") ----
+   After a street is tapped: "From … to …" → tap where the work starts, then where it ends; the app follows the street's own
+   pieces (the shortest way along the street, through its branches) and adds that stretch as a work line in its own colour. */
+async function partStart(hit) {
+  if (PL.map) PL.map.closePopup();
+  if (!hit) return;
+  if (PL.streets.length >= 15) { toast(t('plan.max_streets'), 'err'); return; }
+  if (!hit.lines || !hit.lines.length) {
+    PL.busy = true; PL.msg = t('plan.street_finding'); drawPlanner();
+    try { hit.lines = await wholeStreet(hit); } catch (e) { console.warn('street shape', e); }
+    PL.busy = false;
+    if (!hit.lines || !hit.lines.length) { PL.msg = t('plan.street_noline'); drawPlanner(); toast(PL.msg, 'err', 5000); return; }
+  }
+  PL.part = { name: hit.name, lines: joinLines(hit.lines), a: null };
+  PL.seg = 'line'; PL.msg = ''; drawPlanner(); partLayer();
+  fitPlan(PL.part.lines.flat().map(q => ({ lat: q[0], lng: q[1] })));
+}
+function partLayer() {
+  const L = window.L; if (!PL.prev || !L) return;
+  PL.prev.clearLayers(); if (!PL.part) return;
+  PL.part.lines.forEach(ln => L.polyline(ln, { color: '#F59E0B', weight: 9, opacity: .6, bubblingMouseEvents: true, interactive: false }).addTo(PL.prev));
+  if (PL.part.a) L.circleMarker(PL.part.a.q, { radius: 9, color: '#fff', weight: 3, fillColor: '#16A34A', fillOpacity: 1, interactive: false }).addTo(PL.prev);
+}
+function partTap(ll) {
+  const P = PL.part, sn = snapTo(P.lines, [ll.lat, ll.lng]);
+  if (!sn || sn.d > 80) { toast(t('plan.part_on_street', { name: P.name }), 'warn', 4000); return; }
+  if (!P.a) { P.a = sn; drawPlanner(); partLayer(); return; }
+  const path = streetPath(P.lines, P.a, sn);
+  if (!path || path.length < 2 || lineM(path) < 10) { toast(t('plan.part_short'), 'warn', 4000); return; }
+  const lines = simplifyLines([path]);
+  const x = { ref: 'ln:' + uuid().slice(0, 8), name: (P.name + ' · ' + t('plan.part')).slice(0, 60), lines: lines.length ? lines : [path.slice(0, 150)], drawn: true };
+  PL.part = null; PL.streets.push(x); PL.lineRef = x.ref; PL.found = []; PL.foundOn = ''; PL.seg = 'line';
+  PL.msg = t('plan.part_saved', { km: NF1.format(lineM(path) / 1000) });
+  const warn = lineWorkedNote(x); if (warn) toast('⚠ ' + warn, 'warn', 6000);
+  partLayer(); drawPlanner(); fitPlan(x.lines[0].map(q => ({ lat: q[0], lng: q[1] })));
+}
+function partBarHTML() {
+  const P = PL.part; if (!P) return '';
+  return `<div class="pl-drawbar" id="pl-partbar" data-step="${P.a ? 2 : 1}"><b>${P.a ? '🏁' : '🚩'} ${esc(t(P.a ? 'plan.part_tap_end' : 'plan.part_tap_start', { name: P.name }))}</b><div class="row" style="gap:4px">${P.a ? `<button class="btn xs" data-act="pl-part-back" id="pl-part-back">↶</button>` : ''}<button class="btn xs ghost" data-act="pl-part-cancel" id="pl-part-cancel">${esc(t('cancel'))}</button></div></div>`;
+}
+/** The nearest point of the street's lines to q: { li, si, u, q, d (m) } (segment si of line li, u along it). */
+function snapTo(lines, q) {
+  const kx = 111320 * Math.cos(q[0] * Math.PI / 180), ky = 110540; let best = null;
+  lines.forEach((ln, li) => { for (let i = 1; i < ln.length; i++) {
+    const ax = (ln[i - 1][1] - q[1]) * kx, ay = (ln[i - 1][0] - q[0]) * ky, bx = (ln[i][1] - q[1]) * kx, by = (ln[i][0] - q[0]) * ky, dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+    const u = L2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / L2)) : 0, d = Math.hypot(ax + u * dx, ay + u * dy);
+    if (!best || d < best.d) best = { li, si: i - 1, u, d, q: [ln[i - 1][0] + u * (ln[i][0] - ln[i - 1][0]), ln[i - 1][1] + u * (ln[i][1] - ln[i - 1][1])] };
+  } });
+  return best;
+}
+/** The shortest way ALONG the street from a to b (snapped points): its pieces as a graph — shared corners join them, and ends
+ *  ≤ 25 m apart are bridged (pieces that almost meet). Returns the points of the way, or null. */
+function streetPath(lines, a, b) {
+  const id = new Map(), pts = [], adj = [];
+  const node = q => { const k = q[0].toFixed(6) + ',' + q[1].toFixed(6); if (!id.has(k)) { id.set(k, pts.length); pts.push(q); adj.push([]); } return id.get(k); };
+  const dist = (i, j) => haversine({ lat: pts[i][0], lng: pts[i][1] }, { lat: pts[j][0], lng: pts[j][1] });
+  const edge = (i, j) => { if (i === j) return; const w = dist(i, j); adj[i].push([j, w]); adj[j].push([i, w]); };
+  const nid = lines.map(ln => ln.map(node));
+  nid.forEach((ids, li) => { for (let i = 1; i < ids.length; i++) if (!((a.li === li && a.si === i - 1) || (b.li === li && b.si === i - 1))) edge(ids[i - 1], ids[i]); });
+  const ends = []; nid.forEach(ids => { ends.push(ids[0], ids[ids.length - 1]); });
+  for (let i = 0; i < ends.length; i++) for (let j = i + 1; j < ends.length; j++) if (ends[i] !== ends[j] && dist(ends[i], ends[j]) <= 25) edge(ends[i], ends[j]);
+  // the two picked points sit on segments: split those segments (both on one segment → also the direct piece between them)
+  const A = pts.length; pts.push(a.q); adj.push([]); const B = pts.length; pts.push(b.q); adj.push([]);
+  [[a, A], [b, B]].forEach(([s, n]) => { const ids = nid[s.li]; edge(n, ids[s.si]); edge(n, ids[s.si + 1]); });
+  if (a.li === b.li && a.si === b.si) {
+    edge(A, B);
+    const ids = nid[a.li], lo = a.u <= b.u ? A : B, hi = lo === A ? B : A; // keep only the outer halves to the segment's ends
+    adj[lo] = adj[lo].filter(([j]) => j !== ids[a.si + 1]); adj[ids[a.si + 1]] = adj[ids[a.si + 1]].filter(([j]) => j !== lo);
+    adj[hi] = adj[hi].filter(([j]) => j !== ids[a.si]); adj[ids[a.si]] = adj[ids[a.si]].filter(([j]) => j !== hi);
+  }
+  const D = new Array(pts.length).fill(Infinity), prev = new Array(pts.length).fill(-1), done = new Uint8Array(pts.length);
+  D[A] = 0;
+  for (;;) { // Dijkstra (a street is a few thousand points at most)
+    let u = -1; for (let i = 0; i < D.length; i++) if (!done[i] && D[i] < Infinity && (u < 0 || D[i] < D[u])) u = i;
+    if (u < 0 || u === B) break;
+    done[u] = 1; adj[u].forEach(([v, w]) => { if (D[u] + w < D[v]) { D[v] = D[u] + w; prev[v] = u; } });
+  }
+  if (D[B] === Infinity) return null;
+  const out = []; for (let v = B; v >= 0; v = prev[v]) out.unshift([r5(pts[v][0]), r5(pts[v][1])]);
+  return out;
 }
 /** All the pieces of a named street around a point (≈ 3 km either way), as lines — the same search as "Kerjakan jalan ini". */
 async function wholeStreet(r) {
@@ -1331,7 +1415,7 @@ function drawPlanLayers() {
   const m = PL.map, L = window.L; if (!m || !PL.lay) return;
   PL.lay.clearLayers();
   drawWorkedLayer();
-  PL.streets.forEach(x => (x.lines || []).forEach(ln => L.polyline(ln, x.drawn ? { color: '#0D9488', weight: 6, opacity: .75 } : { color: STREET_C, weight: 8, opacity: .85 }).bindTooltip(esc((x.drawn ? '✏️ ' : '🛣️ ') + x.name)).addTo(PL.lay)));
+  PL.streets.forEach((x, si) => (x.lines || []).forEach(ln => L.polyline(ln, { color: streetColor(si), weight: 8, opacity: .85 }).bindTooltip(esc((x.drawn ? '✏️ ' : '🛣️ ') + x.name)).addTo(PL.lay)));
   if (PL.draw) { // the line being drawn: solid blue, a white dot per point (the last one bigger)
     const pts = PL.draw.pts;
     if (pts.length > 1) L.polyline(pts, { color: '#0EA5E9', weight: 5, opacity: .95 }).addTo(PL.lay);
@@ -1526,7 +1610,9 @@ function addDrawPt(lat, lng) {
    and, between two points on the same road, the line follows the road's own bends. A point with no road near it (or no
    internet) stays where it was drawn, so the line is never lost. */
 const SNAP_M = 35;
-const STREET_C = '#2563EB'; // v35b: a street chosen to work in — its own strong colour, the whole street
+// v35c (owner 2026-10-11: "each street chosen gets its own colour"): street / line n of the plan = colour n (the same on the Today card)
+const STREET_PAL = ['#2563EB', '#16A34A', '#C026D3', '#0891B2', '#B45309', '#4338CA', '#65A30D', '#DB2777', '#0F766E', '#1E3A8A', '#A21CAF', '#15803D', '#9A3412', '#0369A1', '#9D174D'];
+const streetColor = i => STREET_PAL[(i < 0 ? 0 : i) % STREET_PAL.length];
 function snapLine(pts, js) {
   const ways = ((js && js.elements) || []).filter(x => x.type === 'way' && x.tags && x.tags.highway && Array.isArray(x.geometry) && x.geometry.length > 1).map(x => x.geometry.map(g => [g.lat, g.lon]));
   if (!ways.length || pts.length < 2) return null;
@@ -1588,7 +1674,7 @@ function planLineHTML() {
       <div class="field" style="margin-top:8px"><label class="f" for="pl-line-name">${esc(t('plan.line_name_l'))}</label><input class="input" id="pl-line-name" maxlength="60" placeholder="${esc(t('plan.line_name', { n: drawnCount() + 1 }))}" value="${esc(d.name || '')}"></div>`
     : `<div class="small muted" id="pl-line-hint">${esc(t('plan.line_hint'))}</div>
       <button class="btn primary block" data-act="pl-draw" id="pl-draw" style="margin-top:8px" ${PL.streets.length >= 15 ? 'disabled' : ''}>✏️ ${esc(t('plan.draw_start'))}</button>`;
-  const rows = PL.streets.map((x, i) => { const warn = streetNote(x), on = x.ref === PL.lineRef; return `<div class="li pl-stop pl-line ${on ? 'sel' : ''}" data-ref="${esc(x.ref)}" data-drawn="${x.drawn ? 1 : 0}"><span class="start-pin" aria-hidden="true">${x.drawn ? '✏️' : '🛣️'}</span><div class="grow"><div class="t">${esc(x.name)}</div><div class="s">${esc(t('plan.km', { km: NF1.format(linesM(x.lines) / 1000) }))}</div>${warn ? `<div class="small pl-warn" data-worked>⚠ ${esc(warn)}</div>` : ''}</div>
+  const rows = PL.streets.map((x, i) => { const warn = streetNote(x), on = x.ref === PL.lineRef; return `<div class="li pl-stop pl-line ${on ? 'sel' : ''}" data-ref="${esc(x.ref)}" data-drawn="${x.drawn ? 1 : 0}" data-c="${streetColor(i)}"><span class="kdot big" style="--kc:${streetColor(i)}" aria-hidden="true"></span><span class="start-pin" aria-hidden="true">${x.drawn ? '✏️' : '🛣️'}</span><div class="grow"><div class="t">${esc(x.name)}</div><div class="s">${esc(t('plan.km', { km: NF1.format(linesM(x.lines) / 1000) }))}</div>${warn ? `<div class="small pl-warn" data-worked>⚠ ${esc(warn)}</div>` : ''}</div>
       <div class="row" style="gap:2px;flex:none"><button class="btn xs ${on ? 'primary' : ''}" data-act="pl-find" data-i="${i}" ${PL.busy || d ? 'disabled' : ''}>🔎 ${esc(t('plan.find_on'))}</button><button class="btn xs ghost danger" data-act="pl-street-del" data-i="${i}" aria-label="${esc(t('plan.remove'))}">✕</button></div></div>`; }).join('');
   const kinds = FIND.map(k => { const on = PL.cats.includes(k.id); return `<button type="button" class="chip find-chip ${on ? 'on' : ''}" data-act="pl-kind" data-k="${k.id}" aria-pressed="${on}" style="--kc:${k.c}"><span class="kdot" aria-hidden="true"></span>${k.e} ${esc(t('find.' + k.id))}</button>`; }).join('');
   const target = PL.streets.find(x => x.ref === PL.lineRef) || PL.streets.filter(x => x.drawn).slice(-1)[0] || PL.streets.slice(-1)[0];
@@ -1927,7 +2013,7 @@ function plNear() {
 }
 function plAlong(r) {
   return planRun(async () => {
-    const bb = r.bbox && r.bbox.length === 4 ? r.bbox : [r.lat, r.lat, r.lng, r.lng], pad = 0.03;
+    const bb = r.bbox && r.bbox.length === 4 ? r.bbox : [r.lat, r.lat, r.lng, r.lng], pad = r.bbox ? 0.005 : 0.03;
     const nm = String(r.name).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     const js = await overpass(`[out:json][timeout:30];way["highway"]["name"="${nm}"](${bb[0] - pad},${bb[2] - pad},${bb[1] + pad},${bb[3] + pad})->.s;.s out geom;(${osmPoiQL('(around.s:60)')});out center 200;`);
     const got = overpassItems(js);
@@ -1942,14 +2028,41 @@ function simplifyLines(lines) {
   return (lines || []).slice(0, 40).map(ln => { const out = []; (ln || []).forEach((q, i) => { const last = out[out.length - 1]; if (!last || i === ln.length - 1 || haversine({ lat: last[0], lng: last[1] }, { lat: q[0], lng: q[1] }) >= 25) out.push([Math.round(q[0] * 1e5) / 1e5, Math.round(q[1] * 1e5) / 1e5]); }); return out.slice(0, 150); }).filter(ln => ln.length > 1);
 }
 /** Work in a street: it goes into the plan (kept on the map for every rep) and its shops along the whole street are listed. */
+// v35c: the street's SHAPE is fetched on its own (a light search) and put on the map first; its shops come after — a slow or
+// failed shop search no longer leaves the street in the plan with nothing drawn ("I tried, nothing was coloured").
 async function plWorkStreet(r) {
-  const ref = 'st:' + normTxt(r.name);
-  await plAlong(r);
-  const lines = PL.street && normTxt(PL.street.name) === normTxt(r.name) ? simplifyLines(PL.street.lines) : [];
-  const ex = PL.streets.find(x => x.ref === ref);
-  if (ex) { if (lines.length) ex.lines = lines; } else if (PL.streets.length < 15) PL.streets.push({ ref, name: r.name, lines }); else toast(t('plan.max_streets'), 'err');
+  const ref = 'st:' + normTxt(r.name), ex = PL.streets.find(x => x.ref === ref);
+  if (!ex && PL.streets.length >= 15) { toast(t('plan.max_streets'), 'err'); return; }
+  let lines = Array.isArray(r.lines) && r.lines.length ? r.lines : null;
+  if (!lines) {
+    PL.busy = true; PL.msg = t('plan.street_finding'); drawPlanner();
+    try { lines = await wholeStreet(r); } catch (e) { console.warn('street shape', e); }
+    PL.busy = false;
+  }
+  lines = simplifyLines(joinLines(lines || []));
+  if (!lines.length) { PL.msg = navigator.onLine ? t('plan.street_noline') : t('plan.need_net'); drawPlanner(); toast(PL.msg, 'err', 5000); return; }
+  if (ex) ex.lines = lines; else PL.streets.push({ ref, name: r.name, lines });
   const warn = workedNote(r.name); if (warn) toast('⚠ ' + warn, 'warn', 5000);
-  drawPlanner();
+  drawPlanner(); fitPlan(lines.flat().map(q => ({ lat: q[0], lng: q[1] })));
+  await plAlong(Object.assign({}, r, { bbox: boxOf(lines.flat()) })); // its shops, listed in the Cari tab
+}
+/** Join the pieces of a street that meet end to end into longer lines (a long street is many OpenStreetMap pieces). */
+function joinLines(lines) {
+  const k = q => q[0].toFixed(6) + ',' + q[1].toFixed(6), left = (lines || []).filter(l => Array.isArray(l) && l.length > 1).map(l => l.slice()), out = [];
+  while (left.length) {
+    let cur = left.shift(), grew = true;
+    while (grew) {
+      grew = false;
+      for (let i = 0; i < left.length; i++) {
+        const l = left[i], a = k(cur[0]), b = k(cur[cur.length - 1]), c = k(l[0]), d = k(l[l.length - 1]);
+        if (b === c) cur = cur.concat(l.slice(1)); else if (b === d) cur = cur.concat(l.slice().reverse().slice(1));
+        else if (a === d) cur = l.concat(cur.slice(1)); else if (a === c) cur = l.slice().reverse().concat(cur.slice(1)); else continue;
+        left.splice(i, 1); grew = true; break;
+      }
+    }
+    out.push(cur);
+  }
+  return out;
 }
 /** v35 (owner 2026-10-11): tap a street on the map → the named street under the finger (≤ 40 m) is worked WHOLE, the same as
  *  searching its name and tapping "Work this street". Free OpenStreetMap (Overpass), nothing through our server. */
@@ -2680,6 +2793,9 @@ const ACT = {
   'pl-end-clear': () => { PL.end = null; drawPlanner(); },
   'pl-rq': el => { const T = today(), k = el.dataset.k; PL.rf.from = k === 'all' ? '' : addDays(T, k === '7' ? -6 : -29); PL.rf.to = k === 'all' ? '' : T; drawPlanner(); },
   'pl-route': el => showRoute(int(el.dataset.i)),
+  'pl-sel-part': () => partStart(PL.tapHit),
+  'pl-part-back': () => { if (PL.part) { PL.part.a = null; drawPlanner(); partLayer(); } },
+  'pl-part-cancel': () => { PL.part = null; partLayer(); drawPlanner(); },
   'pl-sel-street': () => { const sel = PL.sel, hit = PL.tapHit; if (sel) return plStreetAt(sel, hit); },
   'pl-sel-end': () => { if (!PL.sel) return; PL.end = { label: t('plan.picked'), lat: PL.sel.lat, lng: PL.sel.lng }; if (PL.map) PL.map.closePopup(); drawPlanner(); },
   'pl-save': () => {
@@ -2815,7 +2931,11 @@ const I18N = {
     'plan.set_start': 'Mulai dari sini', 'plan.along': 'Toko sepanjang jalan', 'plan.go_there': 'Lihat di peta', 'plan.added': 'Ditambahkan', 'plan.add': 'Tambah',
     'plan.km': '± {km} km garis lurus', 'plan.sort': 'Urutkan otomatis (terdekat dulu)', 'plan.up': 'Naik', 'plan.down': 'Turun', 'plan.remove': 'Hapus',
     'plan.empty': 'Belum ada titik. Cari toko di tab Cari atau ketuk peta.', 'plan.need_net': 'Perencanaan butuh internet (peta & pencarian).',
-    'plan.point_here': 'Tambah titik di sini', 'plan.street_here': 'Kerjakan seluruh jalan ini', 'plan.street_looking': 'Mencari nama jalan…', 'plan.street_named': 'Kerjakan seluruh {name}', 'plan.street_none_here': 'Tidak ada jalan bernama di sini',
+    'plan.point_here': 'Tambah titik di sini', 'plan.street_here': 'Kerjakan seluruh jalan ini', 'plan.street_looking': 'Mencari nama jalan…', 'plan.part_btn': 'Dari … sampai … (pilih awal & akhir kerja di jalan ini)', 'plan.part': 'bagian',
+    'plan.part_tap_start': 'Ketuk di {name} tempat kerja DIMULAI', 'plan.part_tap_end': 'Sekarang ketuk tempat kerja SELESAI di {name}',
+    'plan.part_on_street': 'Ketuk tepat di {name} (garis oranye)', 'plan.part_short': 'Titik akhir terlalu dekat dengan awal — ketuk lebih jauh di jalan ini',
+    'plan.part_saved': 'Bagian jalan ditambahkan ({km} km), dengan warnanya sendiri. Pilih jenis toko lalu ketuk "Cari".',
+    'plan.street_noline': 'Bentuk jalan tidak bisa diambil sekarang (server peta sibuk). Coba lagi sebentar.', 'plan.street_named': 'Kerjakan seluruh {name}', 'plan.street_none_here': 'Tidak ada jalan bernama di sini',
     'plan.snapping': 'Menempelkan garis ke jalan…', 'plan.snapped': '{n} titik ditempelkan ke jalan terdekat.',
     'plan.tab_routes': '🗂️ Riwayat', 'plan.routes_hint': 'Semua jalan & garis kerja yang pernah dikerjakan / direncanakan sales. Pilih tanggal, sales, atau hanya yang ada di peta sekarang — ketuk untuk melihatnya di peta.',
     'plan.rq_7': '7 hari', 'plan.rq_30': '30 hari', 'plan.rq_all': 'Semua', 'plan.rf_from': 'Dari tanggal', 'plan.rf_to': 'Sampai tanggal', 'plan.rf_user': 'Sales', 'plan.rf_all': 'Semua sales', 'plan.rf_me': 'Saya',
@@ -2828,7 +2948,7 @@ const I18N = {
     'plan.end': 'Titik selesai', 'plan.end_same': 'Sama dengan awal', 'plan.set_end': 'Selesai di sini', 'plan.work_street': 'Kerjakan jalan ini', 'plan.street_in': 'Dalam rencana',
     'plan.streets': 'Jalan kerja ({n})', 'plan.stops': 'Titik kunjungan ({n})', 'plan.no_streets': 'Belum ada jalan. Ketuk jalan di peta → "Kerjakan seluruh jalan ini", atau cari nama jalan lalu ketuk "Kerjakan jalan ini" — seluruh jalan dicari tokonya.',
     'plan.street_shops': 'Toko', 'plan.max_streets': 'Maksimal 15 jalan per rencana', 'plan.worked_by': 'sudah dikerjakan {u} · {d}', 'plan.planned_by': 'direncanakan {u} · {d}',
-    'plan.legend': 'Biru = jalan kerja yang Anda pilih (seluruh jalan) · Oranye = jalan yang baru diketuk · Ungu = rute rencana Anda · Hijau toska = garis kerja yang Anda gambar · Merah = jalan yang sudah dikerjakan sales lain (disimpan selamanya) · Abu-abu = jalan yang pernah Anda kerjakan',
+    'plan.legend': 'Setiap jalan / garis kerja Anda punya warnanya sendiri (lihat titik warna di daftar) · Oranye = jalan yang baru diketuk · Ungu putus-putus = rute rencana Anda · Merah = jalan yang sudah dikerjakan sales lain (disimpan selamanya) · Abu-abu = jalan yang pernah Anda kerjakan',
     'plan.tab_line': 'Garis kerja', 'plan.line_hint': 'Ketuk peta di sepanjang jalan yang mau Anda kerjakan: titik awal, lalu satu titik setiap beberapa ratus meter — titik, titik, titik. Tidak perlu ada toko di titik itu. Aplikasi menyambungkannya menjadi garis kerja Anda, lalu bisa mencari toko yang Anda mau di sepanjang garis itu.',
     'plan.draw_start': 'Gambar garis kerja', 'plan.drawing': '{n} titik · {km} km', 'plan.draw_undo': 'Hapus titik terakhir', 'plan.draw_mypos': 'Titik di posisi saya', 'plan.draw_done': 'Selesai',
     'plan.draw_tap': 'Ketuk peta di sepanjang jalan untuk menambah titik, lalu ketuk "Selesai".', 'plan.draw_nomap': 'Peta belum tampil (internet lemah): tambahkan titik dengan "Titik di posisi saya" sambil berjalan.',
@@ -2953,7 +3073,11 @@ const I18N = {
     'plan.set_start': 'ابدأ من هنا', 'plan.along': 'المحلات على طول الشارع', 'plan.go_there': 'اعرض على الخريطة', 'plan.added': 'مُضاف', 'plan.add': 'أضف',
     'plan.km': '± {km} كم بخط مستقيم', 'plan.sort': 'رتّب تلقائيًا (الأقرب أولًا)', 'plan.up': 'لأعلى', 'plan.down': 'لأسفل', 'plan.remove': 'حذف',
     'plan.empty': 'لا توجد نقاط بعد. ابحث في تبويب «بحث» أو اضغط على الخريطة.', 'plan.need_net': 'التخطيط يحتاج إنترنت (الخريطة والبحث).',
-    'plan.point_here': 'أضف نقطة هنا', 'plan.street_here': 'اعمل في هذا الشارع كاملًا', 'plan.street_looking': 'جارٍ معرفة اسم الشارع…', 'plan.street_named': 'اعمل في {name} كاملًا', 'plan.street_none_here': 'لا يوجد شارع له اسم هنا',
+    'plan.point_here': 'أضف نقطة هنا', 'plan.street_here': 'اعمل في هذا الشارع كاملًا', 'plan.street_looking': 'جارٍ معرفة اسم الشارع…', 'plan.part_btn': 'من … إلى … (حدد بداية ونهاية العمل في هذا الشارع)', 'plan.part': 'جزء',
+    'plan.part_tap_start': 'اضغط على {name} حيث يبدأ العمل', 'plan.part_tap_end': 'الآن اضغط على المكان الذي ينتهي فيه العمل في {name}',
+    'plan.part_on_street': 'اضغط فوق {name} نفسه (الخط البرتقالي)', 'plan.part_short': 'نقطة النهاية قريبة جدًا من البداية — اضغط أبعد على الشارع',
+    'plan.part_saved': 'أُضيف جزء الشارع ({km} كم) بلونه الخاص. اختر أنواع المتاجر ثم اضغط «ابحث».',
+    'plan.street_noline': 'تعذّر جلب شكل الشارع الآن (خادم الخرائط مشغول). حاول بعد قليل.', 'plan.street_named': 'اعمل في {name} كاملًا', 'plan.street_none_here': 'لا يوجد شارع له اسم هنا',
     'plan.snapping': 'جارٍ إرجاع الخط إلى الطريق…', 'plan.snapped': 'أُرجعت {n} نقطة إلى أقرب طريق.',
     'plan.tab_routes': '🗂️ المسارات', 'plan.routes_hint': 'كل الشوارع وخطوط العمل التي عمل فيها المندوبون أو خططوا لها. اختر التاريخ أو المندوب أو ما يظهر على الخريطة الآن فقط — اضغط على مسار لتراه على الخريطة.',
     'plan.rq_7': '7 أيام', 'plan.rq_30': '30 يومًا', 'plan.rq_all': 'الكل', 'plan.rf_from': 'من تاريخ', 'plan.rf_to': 'إلى تاريخ', 'plan.rf_user': 'المندوب', 'plan.rf_all': 'كل المندوبين', 'plan.rf_me': 'أنا',
@@ -2966,7 +3090,7 @@ const I18N = {
     'plan.end': 'نقطة النهاية', 'plan.end_same': 'نفس البداية', 'plan.set_end': 'أنهِ هنا', 'plan.work_street': 'اعمل في هذا الشارع', 'plan.street_in': 'في الخطة',
     'plan.streets': 'شوارع العمل ({n})', 'plan.stops': 'نقاط الزيارة ({n})', 'plan.no_streets': 'لا شوارع بعد. اضغط على الشارع في الخريطة ← «اعمل في هذا الشارع كاملًا»، أو ابحث عن اسمه ثم اضغط «اعمل في هذا الشارع» — يُبحث عن محلات الشارع كاملًا.',
     'plan.street_shops': 'المحلات', 'plan.max_streets': 'الحد الأقصى 15 شارعًا في الخطة', 'plan.worked_by': 'عمل فيه {u} · {d}', 'plan.planned_by': 'مخطط له {u} · {d}',
-    'plan.legend': 'الأزرق = الشوارع التي اخترتها للعمل (الشارع كله) · البرتقالي = الشارع الذي ضغطت عليه الآن · البنفسجي = مسار خطتك · الأخضر المزرق = خط العمل الذي رسمته · الأحمر = شوارع عمل فيها مندوب آخر (محفوظة دائمًا) · الرمادي = شوارع عملت فيها سابقًا',
+    'plan.legend': 'لكل شارع أو خط عمل اخترته لونه الخاص (انظر النقطة الملونة في القائمة) · البرتقالي = الشارع الذي ضغطت عليه الآن · البنفسجي المتقطع = مسار خطتك · الأحمر = شوارع عمل فيها مندوب آخر (محفوظة دائمًا) · الرمادي = شوارع عملت فيها سابقًا',
     'plan.tab_line': 'خط العمل', 'plan.line_hint': 'اضغط على الخريطة على طول الطريق الذي تريد العمل فيه: نقطة البداية، ثم نقطة كل بضع مئات من الأمتار — نقطة، نقطة، نقطة. لا يهم إن لم يكن هناك متجر عند النقطة. يصل التطبيق بينها ليصنع خط عملك، ثم يبحث لك عن المتاجر التي تريدها على طول هذا الخط.',
     'plan.draw_start': 'ارسم خط العمل', 'plan.drawing': '{n} نقطة · {km} كم', 'plan.draw_undo': 'احذف آخر نقطة', 'plan.draw_mypos': 'نقطة في موقعي', 'plan.draw_done': 'تم',
     'plan.draw_tap': 'اضغط على الخريطة على طول الطريق لإضافة النقاط، ثم اضغط «تم».', 'plan.draw_nomap': 'الخريطة لم تظهر (الإنترنت ضعيف): أضف النقاط بزر «نقطة في موقعي» وأنت تمشي.',

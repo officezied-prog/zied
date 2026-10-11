@@ -325,3 +325,71 @@ test('routes history: every worked route, filtered by dates and rep; a tap light
   await expect(page.locator('#pl-routes .pl-route')).toHaveCount(1);
   await H.shot(page, 'plan-routes');
 });
+
+// v35c (owner 2026-10-11): "I tried colouring the street and nothing was coloured" + "each street its own colour" + "a long street
+// with many branches: the rep picks where the work starts and ends, and the app colours the street between them".
+// a tap at an exact place on the map (shop circles and lines there would otherwise catch a real click; test 4 taps for real)
+const tapAt = async (page, lat, lng, popup) => {
+  await page.evaluate(([a, b]) => planMapClick(window.L.latLng(a, b)), [lat, lng]);
+  if (popup) await expect(page.locator('.leaflet-popup')).toHaveCount(1); // the last popup has faded out
+};
+test('streets: each its own colour; drawn even when the shop search fails; start → end along a branching street', async ({ page, context }) => {
+  await page.route(/\/vendor\/leaflet\//, r => r.continue());
+  // Jalan Panjang: A(-6.2600) → B(-6.2620) → C(-6.2640) → D(-6.2660) along lng 106.8600, in two pieces that almost meet (≈ 11 m gap at C),
+  // with a branch B → E going east. Jalan Kedua: another street.
+  const PANJANG = [
+    { type: 'way', id: 1, tags: { highway: 'residential', name: 'Jalan Panjang' }, geometry: [{ lat: -6.2600, lon: 106.8600 }, { lat: -6.2620, lon: 106.8600 }, { lat: -6.2640, lon: 106.8600 }] },
+    { type: 'way', id: 2, tags: { highway: 'residential', name: 'Jalan Panjang' }, geometry: [{ lat: -6.2641, lon: 106.8600 }, { lat: -6.2660, lon: 106.8600 }] },
+    { type: 'way', id: 3, tags: { highway: 'residential', name: 'Jalan Panjang' }, geometry: [{ lat: -6.2620, lon: 106.8600 }, { lat: -6.2620, lon: 106.8630 }] }];
+  const KEDUA = [{ type: 'way', id: 9, tags: { highway: 'residential', name: 'Jalan Kedua' }, geometry: [{ lat: -6.2610, lon: 106.8580 }, { lat: -6.2610, lon: 106.8560 }] }];
+  let shopsFail = true;
+  await context.route(/overpass/, r => {
+    const q = decodeURIComponent((r.request().postData() || '').replace(/^data=/, ''));
+    if (/out center/.test(q) && shopsFail) return r.fulfill({ status: 504, body: 'timeout', headers: CORS }); // the heavy shops search times out
+    const m = /around:40,(-?[\d.]+),(-?[\d.]+)\)/.exec(q), near = m && +m[2] < 106.859 ? KEDUA : PANJANG; // the tap: west → Jalan Kedua
+    r.fulfill({ json: { elements: /name"="Jalan Kedua"/.test(q) ? KEDUA : /around:40,/.test(q) ? [near[0]] : /out center/.test(q) ? [] : PANJANG }, headers: CORS });
+  });
+  await H.openSales(page);
+  await H.login(page, 'Ahmad', '4444', { noGoto: true });
+  if (await page.locator('#consent').isVisible().catch(() => false)) await page.click('#consent-ok');
+  await page.click('#pl-open-today');
+  await page.evaluate(() => PL.map.setView([-6.2630, 106.8595], 16, { animate: false }));
+
+  // 1) the whole street, even though its shops search fails
+  await tapAt(page, -6.2610, 106.8600, true);
+  await expect(page.locator('#pl-sel-street')).toContainText('Jalan Panjang');
+  await page.click('#pl-sel-street');
+  await page.click('#pl-seg-plan');
+  await expect(page.locator('#pl-streets .pl-street')).toHaveCount(1);
+  const stroke = c => page.locator('#pl-map path.leaflet-interactive').evaluateAll((ps, c) => ps.filter(p => p.getAttribute('stroke') === c).length, c);
+  await expect.poll(() => stroke('#2563EB')).toBeGreaterThan(0); // street 1 = blue, drawn
+  // 2) a second street gets its own colour
+  shopsFail = false;
+  await page.evaluate(() => PL.map.setView([-6.2610, 106.8570], 17, { animate: false }));
+  await tapAt(page, -6.2610, 106.8570, true);
+  await expect(page.locator('#pl-sel-street')).toContainText('Jalan Kedua');
+  await page.click('#pl-sel-street');
+  await page.click('#pl-seg-plan');
+  await expect(page.locator('#pl-streets .pl-street')).toHaveCount(2);
+  await expect(page.locator('#pl-streets .pl-street').nth(1)).toHaveAttribute('data-c', '#16A34A');
+  await expect.poll(() => stroke('#16A34A')).toBeGreaterThan(0);
+
+  // 3) a long, branching street: from just after A to just before D — along the street, NOT into the branch, across the gap
+  await page.evaluate(() => PL.map.setView([-6.2630, 106.8605], 16, { animate: false }));
+  await tapAt(page, -6.2650, 106.8600, true);
+  await expect(page.locator('#pl-sel-part')).toBeEnabled();
+  await page.click('#pl-sel-part');
+  await expect(page.locator('#pl-partbar')).toHaveAttribute('data-step', '1');
+  await tapAt(page, -6.2605, 106.8601);
+  await expect(page.locator('#pl-partbar')).toHaveAttribute('data-step', '2');
+  await tapAt(page, -6.2655, 106.8599);
+  await expect(page.locator('#pl-partbar')).toHaveCount(0);
+  const part = page.locator('#pl-lines .pl-line[data-drawn="1"]');
+  await expect(part).toContainText('Jalan Panjang · bagian');
+  await expect(part).toHaveAttribute('data-c', '#C026D3'); // the 3rd colour
+  const ln = await page.evaluate(() => PL.streets[2].lines[0]);
+  expect(ln[0][0]).toBeCloseTo(-6.2605, 4);
+  expect(ln[ln.length - 1][0]).toBeCloseTo(-6.2655, 4);
+  expect(ln.every(q => Math.abs(q[1] - 106.86) < 0.00005)).toBe(true); // stayed on the street, not into the branch to the east
+  await H.shot(page, 'plan-street-part');
+});
