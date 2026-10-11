@@ -4,6 +4,12 @@ Self-contained HTML PWAs under `khair-pos/` (owner `index.html`, cashier `kasir/
 field-sales `sales/`, cold-storage `gudang/`), served via GitHub Pages from `main`.
 Tests: Playwright under `khair-pos/tests*`.
 
+**Live app links (GitHub Pages):**
+- Owner / manager / accountant (المالك/المدير/المحاسب): https://officezied-prog.github.io/zied/khair-pos/
+- Cashier (الكاشير): https://officezied-prog.github.io/zied/khair-pos/kasir/
+- Field sales rep (المندوب): https://officezied-prog.github.io/zied/khair-pos/sales/
+- Cold storage (البرادات): https://officezied-prog.github.io/zied/khair-pos/gudang/
+
 **Backend = "Khair Mart Jumla" (الخير مارت جملة) — LIVE since 2026-10-10.** The owner, cashier
 and field-sales apps point at the Cloudflare Worker `https://khair-mart-jumla.officezied.workers.dev`
 (D1 database `khair_mart_jumla`, account `c82e2561b81c97de7c59166d7a915924`). Source under
