@@ -294,3 +294,27 @@ main{overflow:hidden;position:relative;min-width:0}
 .tg-t .s{font-size:13.5px;color:var(--muted);margin-top:2px}
 .tg-t .chn{font-size:12.5px;color:var(--pd);font-weight:700;margin-top:3px}
 .tg-t .note{font-size:12.5px;color:var(--warn);font-weight:700;margin-top:3px}
+
+/* v32 work line drawn point by point + kinds of shop (each its own colour) */
+.pl-drawbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 10px;margin-bottom:6px;padding:8px 10px;border-radius:12px;background:#E0F2FE;border:1px solid #7DD3FC;color:#075985}
+#pl-map.drawing,#pl-map.drawing .leaflet-interactive{cursor:crosshair}
+.pl-hint{padding:8px 10px;border-radius:10px;background:#E0F2FE;color:#075985;font-weight:700;font-size:14px}
+.chips.wrap{flex-wrap:wrap;overflow:visible}
+.find-chip{display:inline-flex;align-items:center;gap:6px;min-height:38px;font-size:14px}
+.find-chip.on{background:var(--kc);border-color:var(--kc);color:#fff}
+.kdot{display:inline-block;width:12px;height:12px;border-radius:50%;background:var(--kc,#94A3B8);border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.2);flex:none}
+.kdot.big{width:18px;height:18px;margin-inline-end:10px}
+.find-chip.on .kdot{box-shadow:none}
+.kbadge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:#fff;border:1px solid var(--kc);font-size:13px}
+.pl-line.sel{outline:2px solid #0D9488;outline-offset:-2px;border-radius:10px}
+
+/* v32 visit result = colour (green order · orange no order · blue does not want · black closed/not there) */
+.opt button.oc-btn{border-inline-start:8px solid var(--oc)}
+.opt button.oc-btn.on{background:var(--oc);border-color:var(--oc);color:#fff}
+.occs{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:6px;font-size:13px}
+.occ{display:inline-flex;align-items:center;gap:5px}
+.ocdot{display:inline-block;width:12px;height:12px;border-radius:50%}
+.ocdot.green{background:#16A34A}.ocdot.orange{background:#EA580C}.ocdot.blue{background:#2563EB}.ocdot.black{background:#111827}
+
+/* v32 crowded areas grouped into one bubble with the count (tap = zoom in) */
+.clu{display:flex;align-items:center;justify-content:center;border-radius:50%;background:rgba(255,255,255,.92);border:4px solid #1E40AF;color:#0F172A;font-weight:900;font-size:13px;box-shadow:0 1px 6px rgba(0,0,0,.35)}

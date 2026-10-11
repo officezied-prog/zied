@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import crypto from 'node:crypto';
 import { newDb, sqliteAdapter, insert } from './shim.js';
-import { handleField, parseField, loadFieldNodes } from '../src/field.js';
+import { handleField, parseField, loadFieldNodes, FIELD_MIGRATIONS } from '../src/field.js';
 import { makeAccessor } from '../src/db.js';
 import { runProcessField } from '../src/generated/process-field.gen.js';
 
@@ -210,4 +210,93 @@ test('field v31b: streets_worked shows every rep the streets other reps worked (
   assert.equal(w.streets[0].lines[0].length, 3);
   const o = await handleField(a, base('streets_worked', 'Pemilik', '1234'), {}, KEY);
   assert.equal(o.ok, true);
+});
+
+// ---- v32: a work line drawn point by point + the kind of shop searched for along it (owner 2026-10-11) ----
+test('field v32: a drawn work line keeps its flag and is its own entry on the shared map; a stop keeps its search kind', async () => {
+  const db = seed();
+  insert(db, 'pos_users', { id: 6, name: 'Budi', role: 'sales', pin_hash: h('Budi', '6666'), active: true });
+  const a = sqliteAdapter(db);
+  const line = n => ({ ref: 'ln:' + n, name: 'Garis kerja 1', drawn: true, lines: [[[-6.2800, 106.8500 + n / 100], [-6.2790, 106.8520 + n / 100]]] });
+  const p = PLAN(TODAY()); p.streets = [line(1), STREET]; p.stops[1].cat = 'kurma'; p.stops[0].cat = 'Bad Kind!';
+  const r = await handleField(a, base('plan_save', 'Rani', '3333', p), {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.plan.streets[0].drawn, true);
+  assert.equal(r.plan.streets[1].drawn, undefined, 'a named street stays a street');
+  assert.equal(r.plan.stops[1].cat, 'kurma');
+  assert.equal(r.plan.stops[0].cat, undefined, 'junk kind dropped');
+  // two drawn lines with the same default name on different days are NOT merged into one (unlike a named street)
+  const p2 = PLAN(plus(TODAY(), 1)); p2.streets = [line(2)];
+  assert.equal((await handleField(a, base('plan_save', 'Rani', '3333', p2), {}, KEY)).ok, true);
+  const w = await handleField(a, base('streets_worked', 'Budi', '6666'), {}, KEY);
+  assert.equal(w.ok, true, JSON.stringify(w));
+  const drawn = w.streets.filter(x => x.drawn);
+  assert.equal(drawn.length, 2);
+  assert.deepEqual(drawn.map(x => x.ref).sort(), ['ln:1', 'ln:2']);
+  assert.equal(w.streets.filter(x => !x.drawn).length, 1);
+});
+
+// ---- v32: the shared streets map is KEPT FOREVER (owner 2026-10-11: "always, not only 60 days") ----
+test('field v32: a street worked long ago still shows; a street taken out of a plan disappears; only the area around the rep is sent', async () => {
+  const db = seed();
+  insert(db, 'pos_users', { id: 6, name: 'Budi', role: 'sales', pin_hash: h('Budi', '6666'), active: true });
+  const a = sqliteAdapter(db);
+  // Rani worked Jalan Lama 200 days ago (far older than the old 60-day window)
+  insert(db, 'pos_street_log', { id: 1, skey: 'st:jalan lama', user: 'Rani', name: 'Jalan Lama', plan_date: plus(TODAY(), -200), plan_id: 'RPOLD', drawn: 0, ref: 'st:jalan lama',
+    lines: JSON.stringify([[[-6.2900, 106.8500], [-6.2910, 106.8510]]]), min_lat: -6.2910, max_lat: -6.2900, min_lng: 106.8500, max_lng: 106.8510, removed: 0, updated_at: '' });
+  // ... and a street in Bandung (far away from Jakarta)
+  insert(db, 'pos_street_log', { id: 2, skey: 'st:jalan braga', user: 'Rani', name: 'Jalan Braga', plan_date: plus(TODAY(), -10), plan_id: 'RPBDG', drawn: 0, ref: 'st:jalan braga',
+    lines: JSON.stringify([[[-6.9170, 107.6090], [-6.9150, 107.6095]]]), min_lat: -6.9170, max_lat: -6.9150, min_lng: 107.6090, max_lng: 107.6095, removed: 0, updated_at: '' });
+  const p = PLAN(plus(TODAY(), 1)); p.streets = [STREET, { ref: 'st:jalan b', name: 'Jalan B', lines: [[[-6.2600, 106.8600], [-6.2610, 106.8610]]] }];
+  assert.equal((await handleField(a, base('plan_save', 'Rani', '3333', p), {}, KEY)).ok, true);
+  const all = await handleField(a, base('streets_worked', 'Budi', '6666'), {}, KEY);
+  assert.equal(all.ok, true, JSON.stringify(all));
+  assert.deepEqual(all.streets.map(x => x.name).sort(), ['Jalan B', 'Jalan Braga', 'Jalan Lama', 'Jalan Raya Condet']);
+  assert.equal(all.streets.find(x => x.name === 'Jalan Lama').status, 'worked');
+  // around the rep in Jakarta: Bandung is left out
+  const near = await handleField(a, base('streets_worked', 'Budi', '6666', { lat: -6.2735, lng: 106.8580 }), {}, KEY);
+  assert.deepEqual(near.streets.map(x => x.name).sort(), ['Jalan B', 'Jalan Lama', 'Jalan Raya Condet']);
+  // Rani changes tomorrow's plan: Jalan B is no longer planned → gone from the map; the plan keeps one log row per street
+  const p2 = PLAN(plus(TODAY(), 1)); p2.streets = [STREET];
+  assert.equal((await handleField(a, base('plan_save', 'Rani', '3333', p2), {}, KEY)).ok, true);
+  const after = await handleField(a, base('streets_worked', 'Budi', '6666', { lat: -6.2735, lng: 106.8580 }), {}, KEY);
+  assert.deepEqual(after.streets.map(x => x.name).sort(), ['Jalan Lama', 'Jalan Raya Condet']);
+  assert.equal(a.all("SELECT COUNT(*) AS n FROM pos_street_log WHERE skey = 'st:jalan raya condet'", [])[0].n, 1, 'saving again updates, not duplicates');
+});
+
+test('field v32: the streets of plans made before the log are copied into it once', async () => {
+  const db = seed();
+  insert(db, 'pos_users', { id: 6, name: 'Budi', role: 'sales', pin_hash: h('Budi', '6666'), active: true });
+  const a = sqliteAdapter(db);
+  insert(db, 'pos_route_plans', { id: 1, plan_id: 'RPV31', user: 'Rani', plan_date: plus(TODAY(), -90), start_label: '', start_lat: 0, start_lng: 0, stops: '[]', note: '',
+    created_at: '', updated_at: '', end_label: '', end_lat: 0, end_lng: 0, streets: JSON.stringify([STREET, { name: '' }]) });
+  for (const sql of FIELD_MIGRATIONS) { try { await a.run(sql, []); } catch (e) { /* already there */ } }
+  for (const sql of FIELD_MIGRATIONS) { try { await a.run(sql, []); } catch (e) { /* second run: nothing copied twice */ } }
+  assert.equal(a.all('SELECT COUNT(*) AS n FROM pos_street_log', [])[0].n, 1);
+  const w = await handleField(a, base('streets_worked', 'Budi', '6666', { lat: -6.2735, lng: 106.8580 }), {}, KEY);
+  assert.equal(w.ok, true, JSON.stringify(w));
+  assert.equal(w.streets.length, 1);
+  assert.equal(w.streets[0].name, 'Jalan Raya Condet');
+  assert.equal(w.streets[0].lines[0].length, 3);
+  assert.equal(w.streets[0].status, 'worked');
+});
+
+// ---- v32: visit result colours — black results (closed / not there / changed business) carry a photo of the place ----
+test('field v32: the new black results are accepted; a photo of the place needs no owner consent for them (only for them)', async () => {
+  const a = sqliteAdapter(seed());
+  const PH = 'A'.repeat(400);
+  const r = await handleField(a, base('check_in', 'Rani', '3333', { client_id: 'b1', shop_id: 'S1', lat: -6.26, lng: 106.86, acc: 10, outcome: 'ganti_usaha', photo_base64: PH, photo_place: true }), {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.visit.outcome, 'ganti_usaha');
+  const v = a.all("SELECT * FROM pos_visits WHERE client_id = 'b1'", [])[0];
+  assert.equal(v.photo_thumb, PH, 'place photo kept without consent');
+  // the same flag on a non-black result does not bypass the consent rule
+  const r2 = await handleField(a, base('check_in', 'Rani', '3333', { client_id: 'b2', shop_id: 'S1', lat: -6.26, lng: 106.86, acc: 10, outcome: 'tertarik', photo_base64: PH, photo_place: true }), {}, KEY);
+  assert.equal(r2.ok, true);
+  assert.equal(a.all("SELECT * FROM pos_visits WHERE client_id = 'b2'", [])[0].photo_thumb, '');
+  // a black result without a photo (an old app copy) is still recorded, with a warning
+  const r3 = await handleField(a, base('check_in', 'Rani', '3333', { client_id: 'b3', shop_id: 'S1', lat: -6.26, lng: 106.86, acc: 10, outcome: 'tidak_ada' }), {}, KEY);
+  assert.equal(r3.ok, true);
+  assert.equal(r3.visit.outcome, 'tidak_ada');
+  assert.ok(r3.warnings.length >= 1);
 });

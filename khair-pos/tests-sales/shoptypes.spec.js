@@ -169,7 +169,7 @@ test('re-categorise an existing shop with the check-in ("Ubah jenis toko")', asy
   await H.tab(page, 'visit');
   await page.click(`#ci-near [data-act="ci-pick"][data-id="${shop.shop_id}"]`);
   await expect(page.locator('#ci-type-now')).toHaveText('Minimarket · Alfamart');
-  await page.click('#oc-tutup');
+  await page.click('#oc-tidak'); // (v32: "tutup" now needs a photo of the place — not what this test is about)
   await page.click('#ci-ok');
   await expect(page.locator('#v-today')).toBeVisible(); // saved → back to Hari ini
   db = await H.getDb(page);
