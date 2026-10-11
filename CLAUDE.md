@@ -15,9 +15,13 @@ and field-sales apps point at the Cloudflare Worker `https://khair-mart-jumla.of
 (D1 database `khair_mart_jumla`, account `c82e2561b81c97de7c59166d7a915924`). Source under
 `khair-pos/worker/`: all five workflows (POS, Field, Chat, Attendance, Photo) built from
 `khair-pos/backend/*` (the single source of truth, wrapped at build time) — so edit backend
-logic in `backend/*`, then `cd khair-pos/worker && npm run build && npx wrangler deploy`
-(needs a fresh Cloudflare API token with Workers Scripts:Edit + D1:Edit, and api.cloudflare.com
-allowed in the env network settings). This removed n8n's monthly execution wall (the outage cause).
+logic in `backend/*`. **Deploy is automatic (v36):** `.github/workflows/worker-deploy.yml` tests and deploys the
+Worker on every push to `main` that touches `khair-pos/backend/**` or `khair-pos/worker/**`, once the owner has added
+the repo secret `CLOUDFLARE_API_TOKEN` (Workers Scripts:Edit + D1:Edit + Workers R2 Storage:Edit); it creates/binds
+the R2 photo bucket `khair-mart-photos` when it can, smoke-tests and rolls back on failure. Without the secret it
+skips with a notice (manual fallback: `cd khair-pos/worker && npm run build && npx wrangler deploy`). New D1
+columns/tables are added by the Worker itself at runtime (no migration step). `.github/workflows/tests.yml` runs
+the worker tests + the three Playwright suites on every PR. This removed n8n's monthly execution wall (the outage cause).
 
 - **n8n (ziedapp.app.n8n.cloud) is KEPT PERMANENTLY as a reference — NEVER delete or modify it**
   (owner's standing instruction). It also stands as instant rollback: revert the apps' host
