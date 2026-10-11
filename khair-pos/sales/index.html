@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- security M8: CSP (GitHub Pages cannot send headers). connect-src = the n8n webhooks only; images incl. OSM tiles. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' https://khair-mart-jumla.officezied.workers.dev https://nominatim.openstreetmap.org https://overpass-api.de https://overpass.private.coffee; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' https://khair-mart-jumla.officezied.workers.dev https://nominatim.openstreetmap.org https://overpass-api.de https://overpass.private.coffee https://maps.mail.ru https://overpass.kumi.systems; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="theme-color" content="#1E40AF">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -80,7 +80,7 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.8.0';
+const APP_VERSION = 'sales-1.8.1';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1119,7 +1119,7 @@ function svgMap(el, points, shops, current, orders, plan) {
 const PL = { date: '', start: null, end: null, stops: [], streets: [], note: '', results: [], street: null, seg: 'search', q: '', msg: '', busy: false, map: null, lay: null, el: null, sel: null, worked: [], workedAt: 0,
   draw: null, found: [], foundOn: '', lineRef: '', cats: null, gmOpen: false, placing: '', unplaced: [], g: null,
   rf: { from: '', to: '', user: '', view: true }, hl: -1, tap: 0, tapHit: null, prev: null, part: null }; // v35c part = choosing the start / end of the work on a long street // v35 rf = the worked-routes filter; hl = the route shown; tap/tapHit = the street under the last tap // v34 g = Google search { enabled, n, cap } // v33: Google Maps paste box; a place being put on the map; places still without a position // v32: draw = the work line being drawn ({ pts, name }); found = shops of the chosen kinds along a line
-const OSM = { nomi: 'https://nominatim.openstreetmap.org/search', over: ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter'], last: 0 };
+const OSM = { nomi: 'https://nominatim.openstreetmap.org/search', over: ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'], ovi: 0, last: 0 };
 const plansAll = () => FS.get(uk('plans'), {}) || {};
 const planFor = d => plansAll()[d] || null;
 function putPlanLocal(p, dirty) {
@@ -1409,7 +1409,18 @@ function streetPath(lines, a, b) {
 /** All the pieces of a named street around a point (≈ 3 km either way), as lines — the same search as "Kerjakan jalan ini". */
 async function wholeStreet(r) {
   const bb = r.bbox && r.bbox.length === 4 ? r.bbox : [r.lat, r.lat, r.lng, r.lng], pad = 0.03, nm = String(r.name).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  return overpassItems(await overpass(`[out:json][timeout:25];way["highway"]["name"="${nm}"](${bb[0] - pad},${bb[2] - pad},${bb[1] + pad},${bb[3] + pad});out geom;`)).lines;
+  const key = normTxt(r.name) + '|' + (Math.round((bb[0] + bb[1]) / 2 * 50) / 50) + '|' + (Math.round((bb[2] + bb[3]) / 2 * 50) / 50), cache = FS.get('street_shapes', {}) || {};
+  if (cache[key] && Array.isArray(cache[key].l) && cache[key].l.length) return cache[key].l; // v35d: a street fetched once is kept on the phone — no new request
+  let lines;
+  try { lines = overpassItems(await overpass(`[out:json][timeout:25];way["highway"]["name"="${nm}"](${bb[0] - pad},${bb[2] - pad},${bb[1] + pad},${bb[3] + pad});out geom;`)).lines; }
+  catch (e) { if (r.geom && r.geom.length > 1) return [r.geom]; throw e; } // servers busy: at least the piece under the finger
+  lines = simplifyLines(joinLines(lines));
+  if (lines.length) {
+    cache[key] = { l: lines, t: Date.now() };
+    const keys = Object.keys(cache).sort((a, b) => cache[b].t - cache[a].t); keys.slice(60).forEach(k => delete cache[k]); // the 60 latest
+    FS.set('street_shapes', cache);
+  }
+  return lines;
 }
 function drawPlanLayers() {
   const m = PL.map, L = window.L; if (!m || !PL.lay) return;
@@ -1920,8 +1931,8 @@ function osmType(tg) {
   if (!ty) { const v = tg.shop || tg.amenity || tg.tourism || tg.office || ''; ty = OSM_TYPES[v] || (tg.shop ? 'toko' : ''); }
   return ty && KST.IDS.indexOf(ty) >= 0 ? ty : '';
 }
-async function osmJSON(url, opts) {
-  const ctrl = new AbortController(), tm = setTimeout(() => ctrl.abort(), 25000);
+async function osmJSON(url, opts, ms) {
+  const ctrl = new AbortController(), tm = setTimeout(() => ctrl.abort(), ms || 25000);
   try {
     const r = await fetch(url, Object.assign({ signal: ctrl.signal, cache: 'no-store', referrerPolicy: 'strict-origin-when-cross-origin' }, opts || {}));
     if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -1944,11 +1955,19 @@ async function nominatim(q, b) {
       type: kind === 'poi' ? osmType({ [cat]: r.type, name }) : '', bbox: Array.isArray(r.boundingbox) ? r.boundingbox.map(Number) : null };
   }).filter(Boolean);
 }
-async function overpass(ql) {
-  let err = null;
-  for (const u of OSM.over) {
-    try { return await osmJSON(u, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' }, body: 'data=' + encodeURIComponent(ql) }); }
-    catch (e) { err = e; } // next public server
+/** v35d (owner: "the street colouring worked once, then stopped"): a public Overpass server refuses a phone that asks too
+ *  often (HTTP 429) or answers "timed out" inside a 200. So: 4 free servers, starting with the last one that answered; a
+ *  refusal / time-out / runtime error moves to the next; when all are busy, one more round after a short pause. */
+async function overpass(ql, ms) {
+  let err = null; const n = OSM.over.length, s0 = OSM.ovi || 0;
+  for (let k = 0; k < 2 * n; k++) {
+    if (k === n) await new Promise(r => setTimeout(r, 2000));
+    const i = (s0 + k) % n;
+    try {
+      const js = await osmJSON(OSM.over[i], { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' }, body: 'data=' + encodeURIComponent(ql) }, ms);
+      if (js && js.remark && /runtime error|timed out|out of memory|rate_limited/i.test(js.remark)) throw new Error('overpass: ' + js.remark);
+      OSM.ovi = i; return js;
+    } catch (e) { err = e; } // next public server
   }
   throw err || new Error('overpass');
 }
@@ -2043,8 +2062,11 @@ async function plWorkStreet(r) {
   if (!lines.length) { PL.msg = navigator.onLine ? t('plan.street_noline') : t('plan.need_net'); drawPlanner(); toast(PL.msg, 'err', 5000); return; }
   if (ex) ex.lines = lines; else PL.streets.push({ ref, name: r.name, lines });
   const warn = workedNote(r.name); if (warn) toast('⚠ ' + warn, 'warn', 5000);
+  // v35d (owner: "at the bottom of the work-line window: which kinds of shop the app looks for in that street"): the street
+  // opens in the work-line tab — the kinds are chosen there — and only those kinds are searched along it
+  PL.street = null; PL.seg = 'line'; PL.lineRef = ref; PL.found = []; PL.foundOn = '';
   drawPlanner(); fitPlan(lines.flat().map(q => ({ lat: q[0], lng: q[1] })));
-  await plAlong(Object.assign({}, r, { bbox: boxOf(lines.flat()) })); // its shops, listed in the Cari tab
+  await plFind(PL.streets.find(x => x.ref === ref));
 }
 /** Join the pieces of a street that meet end to end into longer lines (a long street is many OpenStreetMap pieces). */
 function joinLines(lines) {
@@ -2086,11 +2108,21 @@ function nearestStreet(js, ll) {
   return { ref: 'osm:st', src: 'osm', kind: 'street', named: true, name: best.name, lat: ll.lat, lng: ll.lng,
     bbox: [Math.min(...la), Math.max(...la), Math.min(...lo), Math.max(...lo)], geom: best.g.map(q => [q.lat, q.lon]) };
 }
-const streetAt = async ll => nearestStreet(await overpass(`[out:json][timeout:20];way(around:40,${(+ll.lat).toFixed(6)},${(+ll.lng).toFixed(6)})["highway"]["name"]["highway"!~"^(platform|proposed|construction|corridor|elevator)$"];out tags geom;`), ll);
+async function streetAt(ll) {
+  try { return nearestStreet(await overpass(`[out:json][timeout:15];way(around:40,${(+ll.lat).toFixed(6)},${(+ll.lng).toFixed(6)})["highway"]["name"]["highway"!~"^(platform|proposed|construction|corridor|elevator)$"];out tags geom;`, 15000), ll); }
+  catch (e) { // every Overpass server busy → the street under the finger from the address service (Nominatim, free) instead
+    const wait = OSM.last + 1100 - Date.now(); if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    OSM.last = Date.now();
+    const r = await osmJSON(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${(+ll.lat).toFixed(6)}&lon=${(+ll.lng).toFixed(6)}&zoom=17&polygon_geojson=1&accept-language=id`, null, 12000);
+    const g = r && r.geojson, nm = r && (r.name || (r.address || {}).road);
+    if (!r || (r.category || r.class) !== 'highway' || !nm || !g || g.type !== 'LineString') return null;
+    return nearestStreet({ elements: [{ type: 'way', tags: { highway: r.type || 'road', name: nm }, geometry: g.coordinates.map(c => ({ lat: c[1], lon: c[0] })) }] }, ll);
+  }
+}
 async function plStreetAt(ll, known) {
   if (PL.map) PL.map.closePopup();
-  if (PL.busy) return;
-  if (known) return plWorkStreet(Object.assign({}, known, { geom: undefined })); // already found when the map was tapped
+  if (known) return plWorkStreet(Object.assign({}, known, { geom: undefined })); // already found when the map was tapped (even while a shop search runs)
+  if (PL.busy) { toast(t('plan.searching'), '', 2000); return; }
   PL.busy = true; PL.msg = t('plan.street_finding'); PL.seg = 'search'; drawPlanner();
   let hit = null;
   try { hit = await streetAt(ll); }
@@ -2764,7 +2796,7 @@ const ACT = {
   'pl-del': el => { PL.stops.splice(int(el.dataset.i), 1); drawPlanner(); },
   'pl-sort': () => { sortStops(); drawPlanner(); },
   'pl-work': el => { const r = PL.results[int(el.dataset.i)]; if (r) return plWorkStreet(r); },
-  'pl-street-shops': el => { const x = PL.streets[int(el.dataset.i)]; if (!x) return; const pts = (x.lines || []).flat(); const c = pts.length ? pts[Math.floor(pts.length / 2)] : null; const bb = pts.length ? [Math.min(...pts.map(q => q[0])), Math.max(...pts.map(q => q[0])), Math.min(...pts.map(q => q[1])), Math.max(...pts.map(q => q[1]))] : null; return plAlong({ name: x.name, lat: c ? c[0] : (PL.start || S.pos || { lat: -6.2655 }).lat, lng: c ? c[1] : (PL.start || S.pos || { lng: 106.8605 }).lng, bbox: bb }); },
+  'pl-street-shops': el => { const x0 = PL.streets[int(el.dataset.i)]; if (x0) { PL.seg = 'line'; return plFind(x0); } },
   'pl-street-del': el => { const x = PL.streets.splice(int(el.dataset.i), 1)[0]; if (x && x.ref === PL.foundOn) { PL.found = []; PL.foundOn = ''; } if (x && x.ref === PL.lineRef) PL.lineRef = ''; drawPlanner(); },
   // v33 Google Maps places (paste / share / sent by the office)
   'pl-gm': () => { PL.gmOpen = !PL.gmOpen; drawPlanner(); const ta = PL.gmOpen && PL.el && $('#pl-gm-text', PL.el); if (ta) ta.focus(); },
