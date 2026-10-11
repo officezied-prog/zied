@@ -80,7 +80,7 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.5.0';
+const APP_VERSION = 'sales-1.5.1';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1673,7 +1673,7 @@ async function loadGoogle() {
 }
 function googleNoteHTML() {
   const g = PL.g; if (!g || !g.enabled) return '';
-  return `<div class="small muted" id="pl-google" data-n="${g.n}">${esc(g.n >= g.cap ? t('plan.g_full') : t('plan.g_on', { n: g.n, cap: g.cap }))}</div>`;
+  return `<div class="small ${g.err ? 'pl-warn' : 'muted'}" id="pl-google" data-n="${g.n}"${g.err ? ' data-err="1"' : ''}>${esc(g.err ? t('plan.g_err') : g.n >= g.cap ? t('plan.g_full') : t('plan.g_on', { n: g.n, cap: g.cap }))}</div>`;
 }
 /** One Google search (counted on the server). [] when Google is off / over the cap / not answering. */
 async function googleSearch(q, where) {
@@ -1684,6 +1684,7 @@ async function googleSearch(q, where) {
     return Array.isArray(r.places) ? r.places : [];
   } catch (e) {
     if (e && e.code === 'QUOTA') g.n = g.cap; else if (e && e.code === 'NO_KEY') g.enabled = false;
+    else if (e && e.code === 'GOOGLE') g.err = true; // shown under the results; the free search carries on
     return [];
   }
 }
@@ -2685,7 +2686,7 @@ const I18N = {
     'plan.gm_shared': '{n} tempat dari Google Maps disimpan. Buka Rencana rute → Cari → "Dari Google Maps".', 'plan.gm_unplaced': 'Belum ada titik ({n})', 'plan.gm_find_again': 'Cari lagi',
     'plan.gm_on_map': 'Di peta', 'plan.gm_tap': 'Ketuk peta di tempat "{name}"', 'plan.gm_placed': '{name} ditaruh di peta', 'plan.gm_located': '{k} dari {n} tempat ditemukan titiknya', 'plan.gm_from': 'dari {u}',
     'plan.list_in': '{u} mengirim {n} toko untuk {s} → rencana {d}',
-    'plan.g_on': 'Termasuk hasil Google (G) · {n} dari {cap} pencarian gratis bulan ini', 'plan.g_full': 'Pencarian Google bulan ini sudah dipakai semua — tetap pakai pencarian gratis',
+    'plan.g_on': 'Termasuk hasil Google (G) · {n} dari {cap} pencarian gratis bulan ini', 'plan.g_err': 'Google tidak menjawab — hasil dari pencarian gratis saja. Beri tahu pemilik (Lapangan → Tes Google).', 'plan.g_full': 'Pencarian Google bulan ini sudah dipakai semua — tetap pakai pencarian gratis',
     'map.empty': 'Belum ada titik lokasi', 'map.label': 'Peta rute', 'map.offline': 'Peta sederhana', 'map.expand': 'Perbesar', 'map.legend': 'Titik oranye bernomor = pesanan hari ini (urutan masuk). Titik ungu bernomor = rencana rute; setelah dikunjungi warnanya = hasilnya: hijau ✓ = pesan, oranye ✓ = ada tanpa pesanan, biru ✕ = tidak mau, hitam ✕ = tutup / tidak ada / ganti usaha. Lingkaran = toko. Garis biru = rute.',
     'outbox.title': 'Data tertunda', 'outbox.badge': '{n} data tertunda', 'outbox.queued': 'Offline — disimpan, dikirim otomatis', 'outbox.empty': 'Semua data sudah terkirim', 'outbox.synced': '{n} data terkirim',
     'outbox.still': 'Masih {n} data tertunda', 'outbox.send_now': 'Kirim sekarang',
@@ -2817,7 +2818,7 @@ const I18N = {
     'plan.gm_shared': 'حُفظ {n} مكانًا من خرائط جوجل. افتح خطة المسار ← البحث ← «من خرائط جوجل».', 'plan.gm_unplaced': 'بلا نقطة بعد ({n})', 'plan.gm_find_again': 'ابحث مرة أخرى',
     'plan.gm_on_map': 'على الخريطة', 'plan.gm_tap': 'اضغط على الخريطة في مكان «{name}»', 'plan.gm_placed': 'وُضع {name} على الخريطة', 'plan.gm_located': 'وُجدت نقطة {k} من {n} مكانًا', 'plan.gm_from': 'من {u}',
     'plan.list_in': '{u} أرسل {n} محلًا لـ {s} ← خطة {d}',
-    'plan.g_on': 'تشمل نتائج جوجل (G) · {n} من {cap} بحثًا مجانيًا هذا الشهر', 'plan.g_full': 'انتهت عمليات بحث جوجل لهذا الشهر — يستمر البحث المجاني',
+    'plan.g_on': 'تشمل نتائج جوجل (G) · {n} من {cap} بحثًا مجانيًا هذا الشهر', 'plan.g_err': 'جوجل لم يُجب — النتائج من البحث المجاني فقط. أخبر المالك (الميدان ← اختبار جوجل).', 'plan.g_full': 'انتهت عمليات بحث جوجل لهذا الشهر — يستمر البحث المجاني',
     'map.empty': 'لا توجد نقاط موقع', 'map.label': 'خريطة المسار', 'map.offline': 'خريطة مبسطة', 'map.expand': 'تكبير', 'map.legend': 'النقاط البرتقالية المرقمة = طلبيات اليوم (بترتيب الوصول). النقاط البنفسجية المرقمة = خطة المسار؛ بعد الزيارة يصبح لونها حسب النتيجة: أخضر ✓ = طلبية، برتقالي ✓ = موجود بلا طلبية، أزرق ✕ = لا يرغب، أسود ✕ = مغلق / غير موجود / غيّر نشاطه. الدوائر = المتاجر. الخط الأزرق = المسار.',
     'outbox.title': 'بيانات معلّقة', 'outbox.badge': '{n} بيانات معلّقة', 'outbox.queued': 'بدون اتصال — حُفظ وسيُرسل تلقائيًا', 'outbox.empty': 'تم إرسال كل البيانات', 'outbox.synced': 'أُرسلت {n}',
     'outbox.still': 'ما زال {n} معلّقًا', 'outbox.send_now': 'أرسل الآن',
