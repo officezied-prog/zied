@@ -49,6 +49,11 @@ allowed in the env network settings). This removed n8n's monthly execution wall 
   consider their recurring-cost impact — but prefer architectures with no hard monthly
   cap that can halt everything.
 
+- **Merge it yourself — never ask.** Once a change is built, tested (the app's Playwright suites
+  green) and pushed, open the PR and squash-merge it into `main` yourself; do not ask the owner
+  "shall I merge?" (owner's standing instruction, 2026-10-11: "لا تسألني عن الدمج بعد الآن يجب أن
+  تدمج أنت كل شيء"). Then tell him the new app version to check on the login screen.
+
 - **Mixed Arabic/English text:** when writing Arabic and a word/term is English, put each
   English token on its own line, then continue the Arabic on a new line (keeps the
   right-to-left reading order clean).
