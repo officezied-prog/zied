@@ -211,6 +211,7 @@ test('tap a street on the map → the whole street goes into the plan with its s
   const seen = [];
   await page.route(/\/vendor\/leaflet\//, r => r.continue()); // this test needs the map (tiles stay blocked)
   let empty = false;
+  await context.route(/nominatim\.openstreetmap\.org\/reverse/, r => r.fulfill({ status: 503, body: 'busy', headers: CORS })); // the address service is busy here → Overpass
   await context.route(/overpass/, r => {
     const q = decodeURIComponent((r.request().postData() || '').replace(/^data=/, '')); seen.push(q);
     const near = { elements: empty ? [] : [ // the streets within 40 m of the tap: the nearest one wins
@@ -349,6 +350,7 @@ test('streets: each its own colour; drawn even when the shop search fails; start
     { type: 'way', id: 3, tags: { highway: 'residential', name: 'Jalan Panjang' }, geometry: [{ lat: -6.2620, lon: 106.8600 }, { lat: -6.2620, lon: 106.8630 }] }];
   const KEDUA = [{ type: 'way', id: 9, tags: { highway: 'residential', name: 'Jalan Kedua' }, geometry: [{ lat: -6.2610, lon: 106.8580 }, { lat: -6.2610, lon: 106.8560 }] }];
   let shopsFail = true;
+  await context.route(/nominatim\.openstreetmap\.org\/reverse/, r => r.fulfill({ status: 503, body: 'busy', headers: CORS })); // the address service is busy here → Overpass
   await context.route(/overpass|maps\.mail\.ru/, r => {
     const q = decodeURIComponent((r.request().postData() || '').replace(/^data=/, ''));
     if (/out center/.test(q) && shopsFail) return r.fulfill({ status: 504, body: 'timeout', headers: CORS }); // the heavy shops search times out
@@ -405,6 +407,7 @@ test('streets: each its own colour; drawn even when the shop search fails; start
 test('streets: a busy map server → the next one answers; a street fetched once needs no new request', async ({ page, context }) => {
   await page.route(/\/vendor\/leaflet\//, r => r.continue());
   const hits = [];
+  await context.route(/nominatim\.openstreetmap\.org\/reverse/, r => r.fulfill({ status: 503, body: 'busy', headers: CORS })); // the address service is busy here → Overpass
   await context.route(/overpass|maps\.mail\.ru/, r => {
     const u = r.request().url(), q = decodeURIComponent((r.request().postData() || '').replace(/^data=/, '')); hits.push([u, q]);
     if (/overpass-api\.de/.test(u)) return r.fulfill({ status: 429, body: 'rate limited', headers: CORS });
@@ -432,4 +435,46 @@ test('streets: a busy map server → the next one answers; a street fetched once
   expect(/maps\.mail\.ru/.test(hits[n][0])).toBe(true);
   await page.waitForTimeout(800);
   expect(shapeQ()).toBe(before);
+});
+
+// v35e (owner: "it worked once, then 'the map server is busy'"): the street under the finger comes from the address service
+// (Nominatim) first; the whole street from Overpass, else Nominatim; with both busy the piece under the finger is coloured.
+test('streets: Overpass busy → Nominatim gives the street and the whole street; both busy → the piece is coloured', async ({ page, context }) => {
+  await page.route(/\/vendor\/leaflet\//, r => r.continue());
+  await context.route(/overpass|maps\.mail\.ru/, r => r.fulfill({ status: 429, body: 'Too Many Requests', headers: CORS })); // every Overpass server refuses
+  const geo = pts => ({ type: 'LineString', coordinates: pts.map(([a, b]) => [b, a]) });
+  let nomiBusy = false; const nq = [];
+  await context.route(/nominatim\.openstreetmap\.org/, r => {
+    const u = r.request().url(); nq.push(u);
+    if (/\/reverse/.test(u)) return r.fulfill({ json: { category: 'highway', type: 'residential', name: 'Jalan Raya Condet', address: { road: 'Jalan Raya Condet' },
+      geojson: geo([[-6.2720, 106.8581], [-6.2740, 106.8583]]) }, headers: CORS });
+    if (nomiBusy) return r.fulfill({ status: 503, body: 'busy', headers: CORS });
+    r.fulfill({ json: [ // the same street in two pieces + another street with a similar name
+      { category: 'highway', type: 'residential', name: 'Jalan Raya Condet', geojson: geo([[-6.2700, 106.8579], [-6.2720, 106.8581]]) },
+      { category: 'highway', type: 'residential', name: 'Jalan Raya Condet', geojson: geo([[-6.2720, 106.8581], [-6.2740, 106.8583], [-6.2760, 106.8585]]) },
+      { category: 'highway', type: 'residential', name: 'Gang Condet', geojson: geo([[-6.2710, 106.8590], [-6.2710, 106.8600]]) }], headers: CORS });
+  });
+  await H.openSales(page);
+  await H.login(page, 'Ahmad', '4444', { noGoto: true });
+  if (await page.locator('#consent').isVisible().catch(() => false)) await page.click('#consent-ok');
+  await page.click('#pl-open-today');
+  await page.evaluate(() => planMapClick(window.L.latLng(-6.2730, 106.8582)));
+  await expect(page.locator('#pl-sel-street')).toContainText('Jalan Raya Condet');
+  await page.click('#pl-sel-street');
+  await expect(page.locator('#pl-lines .pl-line')).toHaveCount(1); // chosen → the work-line tab (its shop search fails here: Overpass refuses)
+  expect(nq.filter(u => /\/search\?/.test(u)).length).toBe(1); // the whole street was asked once (the tap's look-up is reused)
+  const ln = await page.evaluate(() => PL.streets[0].lines);
+  expect(ln.length).toBe(1); // the two pieces joined into one line, the other street left out
+  expect(ln[0][0][0]).toBeCloseTo(-6.27, 3); expect(ln[0][ln[0].length - 1][0]).toBeCloseTo(-6.276, 3);
+  expect(nq.some(u => /search\?.*q=Jalan%20Raya%20Condet.*bounded=1.*dedupe=0.*polygon_geojson=1/.test(u))).toBe(true);
+  // both services busy for the whole street → the piece under the finger is coloured, and the rep is told
+  nomiBusy = true;
+  await page.click('#pl-lines [data-act="pl-street-del"]');
+  await page.evaluate(() => { localStorage.clear(); planMapClick(window.L.latLng(-6.2730, 106.8582)); });
+  await expect(page.locator('.leaflet-popup')).toHaveCount(1);
+  await expect(page.locator('#pl-sel-street')).toContainText('Jalan Raya Condet');
+  await page.click('#pl-sel-street');
+  await expect(page.locator('.toast').filter({ hasText: 'baru bagian jalan' })).toBeVisible();
+  await expect(page.locator('#pl-lines .pl-line')).toHaveCount(1);
+  expect((await page.evaluate(() => PL.streets[0].lines))[0].length).toBeGreaterThan(1);
 });
