@@ -36,13 +36,19 @@ test('route plan: street → shops along it → saved for tomorrow; a searched s
   await page.click('#pl-go');
   await expect(page.locator('#pl-results .pl-res[data-kind="street"]')).toHaveCount(1);
   expect(seen.nomi).toMatch(/countrycodes=id/);
-  await page.click('#pl-results .pl-res[data-kind="street"] [data-act="pl-work"]'); // the street goes into the plan + its shops are listed
-  await expect(page.locator('#pl-street')).toContainText('Jalan Raya Condet');
-  await expect(page.locator('#pl-results .pl-res')).toHaveCount(4);
+  await page.click('#pl-results .pl-res[data-kind="street"] [data-act="pl-work"]'); // the street goes into the plan …
+  // v35d: … and opens in the work-line tab, where the kinds of shop are chosen (bottom); only those kinds are searched along it
+  await expect(page.locator('#pl-seg-line')).toHaveClass(/on/);
+  await expect(page.locator('#pl-lines .pl-line.sel')).toContainText('Jalan Raya Condet');
+  await expect(page.locator('#pl-found .pl-res')).toHaveCount(2); // default kinds: the two groceries (sembako)
   expect(seen.over).toContain('"name"="Jalan Raya Condet"');
   expect(seen.over).toContain('around.s:60');
+  await page.click('#pl-kinds [data-k="ritel"]');
+  await page.click('#pl-kinds [data-k="masjid"]');
+  await page.click('#pl-find-go');
+  await expect(page.locator('#pl-found .pl-res')).toHaveCount(4); // + the minimarket and the mosque
   await H.shot(page, 'plan-along-street');
-  await page.click('#pl-add-all');
+  await page.click('#pl-find-all');
   await page.click('#pl-seg-plan');
   await expect(page.locator('#pl-stops .pl-stop')).toHaveCount(3); // "add all" takes the named places only
   await expect(page.locator('#pl-stops .pl-stop').first()).toContainText('Warung Bu Sri'); // nearest first from the start
@@ -94,8 +100,8 @@ test('route plan: work streets + finish point; a street another rep already work
   await expect(street.locator('[data-worked]')).toContainText('Budi'); // shown before the rep picks it
   await street.locator('[data-act="pl-work"]').click();
   await expect(page.locator('.toast').filter({ hasText: 'Budi' })).toBeVisible();
-  await expect(page.locator('#pl-results .pl-res')).toHaveCount(4); // the shops along the whole street
-  await page.click('#pl-results .pl-res >> nth=0 >> [data-act="pl-toggle"]');
+  await expect(page.locator('#pl-found .pl-res')).toHaveCount(2); // the chosen kinds along the whole street
+  await page.click('#pl-found .pl-res >> nth=0 >> [data-act="pl-find-toggle"]');
   await page.click('#pl-seg-plan');
   await expect(page.locator('#pl-streets .pl-street')).toHaveCount(1);
   await expect(page.locator('#pl-streets [data-worked]')).toContainText('Budi');
@@ -230,10 +236,10 @@ test('tap a street on the map → the whole street goes into the plan with its s
   await expect.poll(() => seen.some(q => /way\["highway"\]\["name"="Jalan Raya Condet"\]\([^)]*\);out geom;/.test(q))).toBe(true);
   await expect.poll(() => page.locator('#pl-map path.leaflet-interactive').evaluateAll(ps => ps.filter(p => p.getAttribute('stroke') === '#F59E0B').map(p => p.getAttribute('d')).join('|'))).toContain('L');
   await page.click('#pl-sel-street');
-  await expect(page.locator('#pl-results .pl-res')).toHaveCount(4); // the shops along the WHOLE street
+  await expect(page.locator('#pl-found .pl-res')).toHaveCount(2); // the chosen kinds along the WHOLE street
   expect(seen[0]).toMatch(/way\(around:40,-6\.\d{6},106\.\d{6}\)\["highway"\]\["name"\]/); // only the streets under the finger
   expect(seen.filter(q => /"name"="Jalan Raya Condet"/.test(q) && /out center/.test(q)).length).toBe(1); // then the whole street + its shops, as "Kerjakan jalan ini"
-  await expect(page.locator('#pl-street')).toContainText('Jalan Raya Condet');
+  await expect(page.locator('#pl-lines .pl-line.sel')).toContainText('Jalan Raya Condet');
   await page.click('#pl-seg-plan');
   await expect(page.locator('#pl-streets .pl-street')).toHaveCount(1);
   await expect(page.locator('#pl-streets .pl-street')).toContainText('Jalan Raya Condet');
@@ -343,7 +349,7 @@ test('streets: each its own colour; drawn even when the shop search fails; start
     { type: 'way', id: 3, tags: { highway: 'residential', name: 'Jalan Panjang' }, geometry: [{ lat: -6.2620, lon: 106.8600 }, { lat: -6.2620, lon: 106.8630 }] }];
   const KEDUA = [{ type: 'way', id: 9, tags: { highway: 'residential', name: 'Jalan Kedua' }, geometry: [{ lat: -6.2610, lon: 106.8580 }, { lat: -6.2610, lon: 106.8560 }] }];
   let shopsFail = true;
-  await context.route(/overpass/, r => {
+  await context.route(/overpass|maps\.mail\.ru/, r => {
     const q = decodeURIComponent((r.request().postData() || '').replace(/^data=/, ''));
     if (/out center/.test(q) && shopsFail) return r.fulfill({ status: 504, body: 'timeout', headers: CORS }); // the heavy shops search times out
     const m = /around:40,(-?[\d.]+),(-?[\d.]+)\)/.exec(q), near = m && +m[2] < 106.859 ? KEDUA : PANJANG; // the tap: west → Jalan Kedua
@@ -392,4 +398,38 @@ test('streets: each its own colour; drawn even when the shop search fails; start
   expect(ln[ln.length - 1][0]).toBeCloseTo(-6.2655, 4);
   expect(ln.every(q => Math.abs(q[1] - 106.86) < 0.00005)).toBe(true); // stayed on the street, not into the branch to the east
   await H.shot(page, 'plan-street-part');
+});
+
+// v35d (owner: "the street colouring worked once, then stopped"): a public Overpass server that refuses (429) or answers "timed
+// out" no longer blanks the street — the next free server answers, and a street once fetched is kept on the phone.
+test('streets: a busy map server → the next one answers; a street fetched once needs no new request', async ({ page, context }) => {
+  await page.route(/\/vendor\/leaflet\//, r => r.continue());
+  const hits = [];
+  await context.route(/overpass|maps\.mail\.ru/, r => {
+    const u = r.request().url(), q = decodeURIComponent((r.request().postData() || '').replace(/^data=/, '')); hits.push([u, q]);
+    if (/overpass-api\.de/.test(u)) return r.fulfill({ status: 429, body: 'rate limited', headers: CORS });
+    if (/private\.coffee/.test(u)) return r.fulfill({ json: { elements: [], remark: 'runtime error: Query timed out in "query" at line 1 after 26 seconds.' }, headers: CORS });
+    r.fulfill({ json: /around:40,/.test(q) ? { elements: [OVER.elements[0]] } : OVER, headers: CORS });
+  });
+  await H.openSales(page);
+  await H.login(page, 'Ahmad', '4444', { noGoto: true });
+  if (await page.locator('#consent').isVisible().catch(() => false)) await page.click('#consent-ok');
+  await page.click('#pl-open-today');
+  await page.evaluate(() => planMapClick(window.L.latLng(-6.2731, 106.8582)));
+  await expect(page.locator('#pl-sel-street')).toContainText('Jalan Raya Condet');
+  await page.click('#pl-sel-street');
+  await page.click('#pl-seg-plan');
+  await expect(page.locator('#pl-streets .pl-street')).toHaveCount(1);
+  expect(hits.some(([u]) => /maps\.mail\.ru/.test(u))).toBe(true); // the third server answered
+  // the whole street is kept on the phone now
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).filter(k => /street_shapes$/.test(k)).map(k => Object.keys(JSON.parse(localStorage.getItem(k))).length)[0] || 0)).toBeGreaterThan(0);
+  const shapeQ = () => hits.filter(([, q]) => /out geom;$/.test(q) && /"name"="Jalan Raya Condet"\]\(/.test(q)).length;
+  const before = shapeQ(), n = hits.length;
+  // another tap on the same street: the next request starts with the server that answered, and the shape is not asked again
+  await page.evaluate(() => planMapClick(window.L.latLng(-6.2760, 106.8585)));
+  await expect(page.locator('.leaflet-popup')).toHaveCount(1);
+  await expect(page.locator('#pl-sel-street')).toContainText('Jalan Raya Condet');
+  expect(/maps\.mail\.ru/.test(hits[n][0])).toBe(true);
+  await page.waitForTimeout(800);
+  expect(shapeQ()).toBe(before);
 });
