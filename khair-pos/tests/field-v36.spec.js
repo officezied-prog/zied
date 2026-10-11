@@ -143,7 +143,7 @@ test('orders map: every rep\'s orders of the period, numbered in acceptance orde
   await expect(page.locator('.leaflet-popup .om-pop')).toContainText('#1');
   await page.locator('.leaflet-popup [data-act="fd-om-open"]').click();
   await expect(page.locator('#fo-modal')).toContainText('OM-1');
-  await expect(page.locator('#fo-process')).toBeVisible(); // the owner can act on it
+  await expect(page.locator('#fo-process')).toHaveCount(0); // v36: the owner no longer sells — the manager turns it into a sale
   await closeModals(page);
   // one rep only
   await page.selectOption('#fd-om-user', 'Budi');

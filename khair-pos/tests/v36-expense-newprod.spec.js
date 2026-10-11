@@ -45,7 +45,7 @@ test('manager: expense item lines must add up to the amount; the list shows the 
 });
 
 test('cashier expense with invoice differences → owner inbox line by line → approve; the no-AI one → reject; expenses list + daily report', async ({ page }) => {
-  await login(page);
+  await login(page, 'Pemilik', '1234', '', { stay: true }); // the owner's inbox (v36: the owner no longer sells, so ask for him explicitly)
   const ph = await sitiExpenseWithDiff(page);
   expect((await asUser(page, 'Siti', '1111', 'save_expense', { category: 'kemasan', amount: 85000, paid_from: 'kas', photo_id: ph.photo_id, lines: LINES })).error).toBe('MISMATCH');
   const r1 = await asUser(page, 'Siti', '1111', 'save_expense', { category: 'kemasan', amount: 85000, paid_from: 'kas', photo_id: ph.photo_id, lines: LINES, mismatch_reason: 'bonus 2 kantong' });
@@ -93,7 +93,7 @@ test('cashier expense with invoice differences → owner inbox line by line → 
 });
 
 test('a cashier\'s new product at goods-in: "Baru — dicek" in Products; the manager confirms with a corrected price (no cost shown to her)', async ({ page }) => {
-  await login(page);
+  await login(page, 'Pemilik', '1234', '', { stay: true }); // the owner's inbox (v36: the owner no longer sells, so ask for him explicitly)
   const r = await asUser(page, 'Siti', '1111', 'save_product', { name: 'Siwak Arak Premium', category: 'Perlengkapan Ibadah', size: 'isi 12', unit: 'pak', retail_price: 120000, cost_price: 95000, from_goods_in: true });
   expect(r.review_request_id).toBeTruthy();
   expect((await asUser(page, 'Siti', '1111', 'save_product', { name: 'Siwak Lain', category: 'X', unit: 'pak', retail_price: 1000, from_goods_in: true })).message).toMatch(/Ukuran atau berat/);
