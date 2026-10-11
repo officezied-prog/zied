@@ -309,6 +309,7 @@
         var gq = String(data.q || '').trim().slice(0, 120);
         if (gq.length < 2) throw E('INVALID', 'Kata pencarian terlalu pendek');
         if (!db.google_enabled) throw E('NO_KEY', 'Pencarian Google belum diaktifkan');
+        if (db.google_error) throw E('GOOGLE', String(db.google_error)); // the demo can play a Google refusal (e.g. "Google: 400 INVALID_ARGUMENT — API key not valid…")
         db.api_usage = db.api_usage || [];
         var gm = today.slice(0, 7), gu = db.api_usage.find(function (r) { return r.api === 'places' && r.month === gm; });
         if (gu && gu.n >= 4500) throw E('QUOTA', 'Batas pencarian Google bulan ini sudah habis — dipakai pencarian gratis');
