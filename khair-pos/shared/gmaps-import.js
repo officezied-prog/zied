@@ -114,7 +114,7 @@
       + '<div class="grid2"><div class="field"><label class="f" for="gl-rep">' + H(tx('rep')) + '</label><select class="input" id="gl-rep"></select></div>'
       + '<div class="field"><label class="f" for="gl-date">' + H(tx('date')) + '</label><input class="input" type="date" id="gl-date" min="' + T + '" max="' + MAX + '" value="' + T1 + '"></div></div>'
       + '<div class="field"><label class="f" for="gl-street">' + H(tx('street')) + '</label><input class="input" id="gl-street" maxlength="100" placeholder="' + H(tx('street_ph')) + '"></div>'
-      + '<div class="field"><label class="f" for="gl-text">' + H(tx('paste')) + '</label><textarea class="input" id="gl-text" rows="7" placeholder="' + H(tx('paste_ph')) + '"></textarea></div>'
+      + '<div class="field"><label class="f" for="gl-text">' + H(tx('paste')) + '</label><textarea class="input" id="gl-text" data-digits-ok rows="7" placeholder="' + H(tx('paste_ph')) + '"></textarea></div>'
       + '<button class="btn" type="button" id="gl-read">' + H(tx('read')) + '</button><div class="small muted" id="gl-msg" role="status" style="margin-top:6px"></div>'
       + '<div class="list" id="gl-places" style="margin-top:8px"></div>'
       + '<div class="field" style="margin-top:8px"><label class="f" for="gl-note">' + H(tx('note')) + '</label><input class="input" id="gl-note" maxlength="300"></div>'

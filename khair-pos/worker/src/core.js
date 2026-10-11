@@ -6,9 +6,9 @@ import { loadNodes, makeAccessor, applyOps } from './db.js';
 import { finalize } from './finalize.js';
 import { runProcess } from './generated/process.gen.js';
 
-// v36 self-migration (same pattern as field.js): the live D1 predates the expense-check and new-product-review
-// columns. The Worker adds them itself on the first POS request per isolate — ADD COLUMN / CREATE INDEX only,
-// idempotent (a duplicate-column error is swallowed), so there is no separate migration step to forget.
+// v36 self-migration (same pattern as field.js): the live D1 predates the expense-check / new-product-review columns and
+// pos_tamper_shots. The Worker adds them itself on the first POS request per isolate — ADD COLUMN / CREATE … IF NOT EXISTS
+// only, idempotent (a duplicate-column error is swallowed), so there is no separate migration step to forget.
 let posSchemaEnsured = false;
 export const POS_MIGRATIONS = [
   'ALTER TABLE pos_expenses ADD COLUMN lines TEXT',
@@ -17,6 +17,8 @@ export const POS_MIGRATIONS = [
   'ALTER TABLE pos_expenses ADD COLUMN checked_by TEXT',
   'CREATE INDEX IF NOT EXISTS idx_pos_expenses_request_id ON pos_expenses (request_id)',
   'ALTER TABLE pos_products ADD COLUMN review TEXT',
+  'CREATE TABLE IF NOT EXISTS pos_tamper_shots (id INTEGER PRIMARY KEY AUTOINCREMENT, shot_id TEXT, at TEXT, shot_date TEXT, user TEXT, role TEXT, place TEXT, kind TEXT, sample TEXT, photo TEXT, photo_status TEXT, device TEXT)',
+  'CREATE INDEX IF NOT EXISTS idx_pos_tamper_shots_shot_id ON pos_tamper_shots (shot_id)',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;

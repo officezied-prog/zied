@@ -27,6 +27,7 @@ const INDEXES = {
   pos_bank_lines: ['account_id', 'period'],
   pos_returns: ['return_date', 'ref'],
   pos_photos: ['photo_id'],
+  pos_tamper_shots: ['shot_id'],
   pos_route_plans: ['plan_date', 'user'],
   pos_street_log: ['plan_date', 'skey'],
   pos_shop_lists: ['status', 'created_at'],

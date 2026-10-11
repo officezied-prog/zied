@@ -111,6 +111,13 @@ export const TABLES = {
     reason_code: 'string', reason_note: 'string', photo_id: 'string', out_doc_no: 'string',
     carrier_type: 'string', carrier_name: 'string', carrier_vehicle: 'string', carrier_phone: 'string',
   },
+  // v36 (owner 2026-10-11: «صور من يحاول كتابة الكود»): one row per code / sequential-digit attempt that locked an account,
+  // with the small front-camera JPEG (data URL) or why there is none (photo_status ok|pending|denied|none|error).
+  // Created at runtime on the live D1 (src/core.js POS_MIGRATIONS) — no separate migration step.
+  pos_tamper_shots: {
+    shot_id: 'string', at: 'string', shot_date: 'string', user: 'string', role: 'string', place: 'string',
+    kind: 'string', sample: 'string', photo: 'string', photo_status: 'string', device: 'string',
+  },
   pos_photos: {
     photo_id: 'string', kind: 'string', ref: 'string', created_at: 'string',
     photo_date: 'string', user: 'string', drive_file_id: 'string', drive_url: 'string',
@@ -243,7 +250,7 @@ export const OPS_TABLE = {
   users: 'pos_users', settings: 'pos_settings', approvals: 'pos_approvals',
   expenses: 'pos_expenses', shifts: 'pos_shifts', devices: 'pos_devices',
   repacks: 'pos_repacks', activity: 'pos_activity', bank_lines: 'pos_bank_lines',
-  returns: 'pos_returns',
+  returns: 'pos_returns', tamper_shots: 'pos_tamper_shots',
 };
 
 // Field (sales-lapangan) workflow ops key → table. `product_flags` is a partial UPDATE of

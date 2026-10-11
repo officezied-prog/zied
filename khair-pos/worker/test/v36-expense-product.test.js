@@ -154,5 +154,5 @@ test('v36 self-migration adds the new columns to an older D1 (before loading)', 
   const cols = a.all('PRAGMA table_info(pos_expenses)', []).map((x) => x.name);
   for (const c of ['lines', 'check_status', 'request_id', 'checked_by']) assert.ok(cols.includes(c), c);
   assert.ok(a.all('PRAGMA table_info(pos_products)', []).some((x) => x.name === 'review'));
-  assert.equal(POS_MIGRATIONS.length, 6);
+  assert.equal(POS_MIGRATIONS.length, 8); // + pos_tamper_shots and its index (v36 code-attempt photos)
 });

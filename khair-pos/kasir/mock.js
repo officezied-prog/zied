@@ -513,7 +513,7 @@ const MockServer = (() => {
     if ((num(u.fail_count) > 0 || str(u.locked_until)) && !['change_pin', 'set_master', 'save_user'].includes(action)) { u.fail_count = 0; u.locked_until = ''; dirty = true; }
     if (u.must_change === true && !viaMaster && !['login', 'change_pin', 'users', 'device_ping'].includes(action)) throw E('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
     lastRole = u.role;
-    if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
+    if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
     if (action !== 'device_ping') deviceTouch(db, u, data.device, false);
     const owner = u.role === 'owner';
     const needOwner = () => { if (!owner) throw E('FORBIDDEN', 'Owner only'); };
@@ -534,11 +534,13 @@ const MockServer = (() => {
       case 'login':
         if (viaMaster) logAct(db, u, 'masuk_master', 'Masuk ke akun ' + u.name + ' (' + u.role + ') dengan kode pemilik', u.name, 0, 'warn');
         return { user: { name: u.name, role: u.role }, must_change: u.must_change === true && !viaMaster, via_master: viaMaster, tamper_locked: u.role !== 'owner' && isLockedAcct(u.name) };
-      case 'report_tamper':
-        if (owner) { logAct(db, u, 'tamper', 'Pemilik: percobaan kode terdeteksi (' + String(data.where || '').slice(0, 60) + ')', u.name, 0, 'warn'); dirty = true; return { locked: false }; }
-        if (!isLockedAcct(u.name)) db.settings.locked_accounts = lockedSet().concat([u.name.toLowerCase()]);
-        logAct(db, u, 'tamper', 'Percobaan menulis kode — akun dikunci (' + String(data.where || '').slice(0, 60) + ')', u.name, 0, 'danger'); dirty = true;
-        return { locked: true };
+      case 'report_tamper': {
+        // v36: with the front-camera photo (two calls, same shot_id) — shared/tamper-guard.js keeps the demo servers identical
+        if (!window.KGuard) throw E('SERVER', 'tamper-guard not loaded');
+        const r = KGuard.mock.report(db, u, data, body.__shotPhoto || '', { owner, now: new Date().toISOString(), date: jktDate(), lock: () => { if (!isLockedAcct(u.name)) db.settings.locked_accounts = lockedSet().concat([u.name.toLowerCase()]); }, logAct: (k, sm, lv) => logAct(db, u, k, sm, u.name, 0, lv) });
+        dirty = true;
+        return r;
+      }
       case 'move_stock': {
         // warehouse → shelf (to "toko") or back (to "gudang"); the shelf only gets what is in the warehouse
         const toShop = data.to !== 'gudang';
@@ -1549,8 +1551,9 @@ const MockServer = (() => {
       shopSet.clear();
       const snap = new Map(db.products.map(p => [p.id, { json: JSON.stringify(p), shop: shopOf(p) }]));
       let __codeHit = '';
+      const __tp = window.KGuard ? KGuard.mock.takePhoto(body) : { body, photo: '' }; body = __tp.body; // v36: the tamper photo is not text
       if (body.data && typeof body.data === 'object' && !/^(scan_|att_mark|worker_enroll)/.test(body.action)) { __codeHit = scanCodeAttempt(body.data, 0); body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); } // (a copy: the server gets it over the network)
-      body.__codeHit = __codeHit;
+      body.__codeHit = __codeHit; body.__shotPhoto = __tp.photo;
       res = handle(db, body);
       const keepImgs = db._keepImgs; delete db._keepImgs; // v36: scanned images → IndexedDB (demo twin of the Worker's R2)
       if (keepImgs) await flushPhotoImgs(keepImgs);

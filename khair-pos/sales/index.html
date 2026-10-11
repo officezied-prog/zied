@@ -74,6 +74,7 @@
 <script src="../shared/gmaps-import.js"></script>
 <script src="../shared/field-mock.js"></script>
 <script src="../shared/chat-ui.js"></script>
+<script src="../shared/tamper-guard.js"></script>
 <script src="mock.js"></script>
 <script>
 'use strict';
@@ -303,7 +304,9 @@ async function api(action, data, opts) {
   } catch (e) {
     if (e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_USERS' || e.code === 'LOCKED') forceRelogin(e);
     if (e.code === 'PIN_CHANGE_REQUIRED' && S.inApp && S.pin_hash) askNewPin(S.user, S.role, S.pin_hash);
-    if ((e.code === 'TAMPER' || e.code === 'TAMPER_LOCKED') && typeof tamperLockUI === 'function') tamperLockUI();
+    // v36: a code attempt the SERVER caught (it has just locked the account) gets the front-camera photo too
+    if (e.code === 'TAMPER' && typeof tamperTrip === 'function' && !TAMPERED && !TAMPER_BUSY) tamperTrip('server:' + action);
+    else if ((e.code === 'TAMPER' || e.code === 'TAMPER_LOCKED') && typeof tamperLockUI === 'function') tamperLockUI();
     throw e;
   }
 }
@@ -441,23 +444,48 @@ function enforceRule(el) {
 /* v19 anti-tamper (client): a clear code attempt in a field instantly stops the account; only the owner opens it. */
 const CODE_RUN = /[<>{}\[\];`$\\|=]{3,}/, CODE_TOK = /<\s*\/?\s*script\b|<\/[a-z]|javascript:|\$\{|=>|\beval\s*\(|\bfunction\s*\(|\b(?:document|window|globalThis|self)\s*\.\s*[a-z_$]|\brequire\s*\(|\bimport\s*\(/i;
 const codeAttempt = v => { v = String(v || ''); return CODE_RUN.test(v) || CODE_TOK.test(v); };
-let TAMPERED = false;
-function tamperLockUI(msg) {
+let TAMPERED = false, TAMPER_BUSY = false;
+function tamperLockUI(msg, force) {
+  if (TAMPER_BUSY && !force) return; // v36: a trip in progress locks the screen itself once the photo has been sent
   TAMPERED = true;
   try { closeModal && closeModal(true); } catch (e) { }
   S.pin_hash = ''; S.inApp = false; try { FS.set('session', { user: S.user, role: S.role }); SESS.del(); } catch (e) { }
   L.sel = S.user || '';
   showLogin('pin', msg || t('tamper.locked'));
 }
-async function tamperTrip(where) {
-  if (TAMPERED || !S.inApp || !S.user) return;
-  try { await api('report_tamper', { where: String(where || '').slice(0, 60) }); } catch (e) { }
-  tamperLockUI();
+/* v36 (owner 2026-10-11: «صور من يحاول كتابة الكود هذا ضروري جدا»): the account is locked on the server at once (photo
+   'pending'), then the FRONT-camera photo of whoever typed it — or why there is none (camera refused / no camera) — follows
+   for the same shot (../shared/tamper-guard.js). The screen is covered meanwhile; the lock never waits for the camera. */
+async function tamperTrip(where, kind, sample) {
+  if (TAMPERED || TAMPER_BUSY || !S.inApp || !S.user) return;
+  TAMPER_BUSY = true;
+  const G = window.KGuard, base = { where: String(where || '').slice(0, 60), kind: kind === 'digits' ? 'digits' : 'code', sample: kind === 'digits' ? String(sample || '').slice(0, 24) : '' };
+  try {
+    if (!G) { await api('report_tamper', Object.assign({ photo_status: 'none' }, base)).catch(() => null); }
+    else {
+      G.veil(t('tamper.locked')); base.shot_id = G.shotId();
+      const shotP = G.snap(), first = api('report_tamper', Object.assign({ photo_status: 'pending' }, base)).catch(() => null);
+      const shot = await shotP; await first;
+      await Promise.race([api('report_tamper', Object.assign({}, base, { photo_status: shot.status }, shot.photo ? { photo: shot.photo } : {})).catch(() => null), new Promise(r => setTimeout(r, 15000))]);
+    }
+  } catch (e) { }
+  TAMPER_BUSY = false;
+  if (G) G.unveil();
+  tamperLockUI(undefined, true);
 }
 document.addEventListener('input', e => {
   if (!e.isComposing) enforceRule(e.target);
   const el = e.target;
-  if (el && S.inApp && el.value && codeAttempt(el.value)) { try { el.value = ''; } catch (_) { } tamperTrip((el.id || (el.dataset && el.dataset.rule) || 'input')); }
+  if (window.KGuard) KGuard.track(e);
+  if (el && S.inApp && el.value) {
+    const where = el.id || el.getAttribute('name') || (el.dataset && el.dataset.rule) || 'input';
+    if (codeAttempt(el.value)) { try { el.value = ''; } catch (_) { } tamperTrip(where); }
+    else if (S.role !== 'owner' && el.matches && el.matches('input, textarea')) {
+      // v36 (owner: «أرقام متتالية … يغلق التطبيق»): a run of 8+ sequential / repeated digits in a FREE-TEXT field only
+      const run = window.KGuard ? KGuard.digitAttempt(el, ruleName(el)) : '';
+      if (run) { try { el.value = ''; } catch (_) { } tamperTrip(where, 'digits', run); }
+    }
+  }
 }, true);
 document.addEventListener('compositionend', e => enforceRule(e.target), true);
 document.addEventListener('focusin', e => { if (e.target && e.target.matches && e.target.matches('input, textarea')) applyInputRules(e.target); }, true);
@@ -802,7 +830,9 @@ function renderLogin() {
       <h2 class="muted" style="font-size:15px">${esc(t('login.enter_pin'))}</h2><div class="dots">${dots}</div><div class="err" role="alert" id="login-err">${esc(locked ? t('login.locked_until', { time: jktTime(until) }) : L.err)}</div>
       ${pinpadHTML(locked)}`;
   }
-  $('#login').innerHTML = `<div class="screen-card">${brand}${inner}${foot}</div>`;
+  // v36 (owner 2026-10-11): permanent notice on the login / lock screen of the reps' phones
+  const camNote = `<div class="cam-note small muted center" id="cam-note" style="margin-top:10px">📷 ${esc(t('cam.notice'))}</div>`;
+  $('#login').innerHTML = `<div class="screen-card">${brand}${inner}${camNote}${foot}</div>`;
   const k = $('#lg-key'); if (k) k.addEventListener('keydown', e => { if (e.key === 'Enter') ACT['login-key'](); });
 }
 // Demo only: log in with the PIN stored in the local demo data (this browser only, never the real shop)
@@ -886,6 +916,7 @@ function startSession(user, role, hash, offline) {
 }
 async function enterApp(offline) {
   $('#login').hidden = true; $('#app').hidden = false; S.inApp = true; S.lastActivity = Date.now();
+  try { TAMPERED = false; } catch (e) { } // v36: a new login (e.g. after the owner unlocked) watches the fields again
   applyData(FS.get('cache'));
   const cd = FS.get(uk('day')); if (cd && cd.day_date === today()) S.day = cd; else S.day = { status: 'off', day_date: today() };
   S.cart = FS.get(uk('order_cart'), null) || newOrderCart();
@@ -895,6 +926,7 @@ async function enterApp(offline) {
   if (S.day.status === 'working' && FS.get(uk('consent'))) startTracking();
   syncOutbox();
   devBoot();
+  if (S.role !== 'owner') { try { if (window.KGuard) KGuard.prime(); } catch (e) { } } // v36: ask for the camera once at a staff login (silent shot later)
   try { if (window.KChatUI) KChatUI.start({ api: apiChat, lang: S.lang, user: S.user }); } catch (e) { } // v36: user → this device's read marks for the team rooms
 }
 /** auto = idle auto-lock: during a working day the GPS keeps collecting points on the phone (sent after the PIN). */
@@ -1250,7 +1282,7 @@ function planSearchHTML() {
     <div class="row wrap" style="gap:6px;margin-top:8px"><button class="btn xs" data-act="pl-near" id="pl-near" ${PL.busy ? 'disabled' : ''}>🏪 ${esc(t('plan.near'))}</button><button class="btn xs" data-act="pl-ours" id="pl-ours">⭐ ${esc(t('plan.ours'))}</button>
       <button class="btn xs ${PL.gmOpen ? 'primary' : ''}" data-act="pl-gm" id="pl-gm" aria-expanded="${PL.gmOpen}">📋 ${esc(t('plan.gm'))}</button>${gmInbox().length ? `<button class="btn xs primary" data-act="pl-gm-inbox" id="pl-gm-inbox" ${PL.busy ? 'disabled' : ''}>📥 ${esc(t('plan.gm_inbox', { n: gmInbox().length }))}</button>` : ''}
       ${named ? `<button class="btn xs primary" data-act="pl-add-all" id="pl-add-all">+ ${esc(t('plan.add_all', { n: named }))}</button>` : ''}</div>
-    ${PL.gmOpen ? `<div class="pl-gm" id="pl-gm-box"><div class="small muted">${esc(t('plan.gm_hint'))}</div><textarea class="input" id="pl-gm-text" rows="4" placeholder="${esc(t('plan.gm_ph'))}">${esc(PL.gmText || '')}</textarea>
+    ${PL.gmOpen ? `<div class="pl-gm" id="pl-gm-box"><div class="small muted">${esc(t('plan.gm_hint'))}</div><textarea class="input" id="pl-gm-text" data-digits-ok rows="4" placeholder="${esc(t('plan.gm_ph'))}">${esc(PL.gmText || '')}</textarea>
       <button class="btn primary sm" data-act="pl-gm-read" id="pl-gm-read" style="margin-top:6px" ${PL.busy ? 'disabled' : ''}>${esc(t('plan.gm_read'))}</button></div>` : ''}
     ${PL.street ? `<div class="small" style="margin-top:6px" id="pl-street">🛣️ <b>${esc(PL.street.name)}</b></div>` : ''}
     <div class="small muted" id="pl-msg" style="margin-top:6px" role="status">${esc(PL.msg)}</div>
@@ -2892,6 +2924,7 @@ const I18N = {
     'login.key_title': 'Masukkan kode toko', 'login.key': 'Kode toko', 'login.who': 'Siapa yang bertugas?', 'login.change_key': 'Ganti kode toko', 'login.switch': 'Ganti pengguna',
     'login.enter_pin': 'Masukkan PIN', 'login.enter': 'Masuk', 'login.pin_len': 'PIN 4–6 angka', 'login.owner_app': 'Aplikasi pemilik →', 'login.no_sales': 'Belum ada akun sales. Pemilik bisa menambahkannya.',
     'tamper.locked': 'Akun ini dikunci setelah percobaan menulis kode. Hanya pemilik yang membukanya.',
+    'cam.notice': 'Perangkat ini diawasi kamera untuk keamanan',
     'login.not_sales': 'Akun {role} tidak bisa memakai Khair Sales. Gunakan aplikasi kasir.',
     'err.BAD_PIN': 'PIN salah', 'err.BAD_KEY': 'Kode toko tidak dikenal', 'err.NO_USERS': 'Belum ada pengguna', 'err.BAD_PIN_SESSION': 'Sesi berakhir, masukkan PIN lagi', 'err.SERVER': 'Server bermasalah, coba lagi',
     'err.NETWORK': 'Tidak ada koneksi', 'err.FORBIDDEN': 'Tidak diizinkan untuk peran Anda', 'err.INVALID': 'Data tidak valid', 'err.NOT_FOUND': 'Data tidak ditemukan',
@@ -3034,6 +3067,7 @@ const I18N = {
     'login.key_title': 'أدخل رمز المتجر', 'login.key': 'رمز المتجر', 'login.who': 'من المناوب؟', 'login.change_key': 'تغيير رمز المتجر', 'login.switch': 'تغيير المستخدم',
     'login.enter_pin': 'أدخل الرمز السري', 'login.enter': 'دخول', 'login.pin_len': 'الرمز من 4 إلى 6 أرقام', 'login.owner_app': '← تطبيق المالك', 'login.no_sales': 'لا يوجد حساب مندوب. يمكن للمالك إضافته.',
     'tamper.locked': 'أُوقف هذا الحساب بعد محاولة كتابة كود. لا يفتحه إلا المالك.',
+    'cam.notice': 'هذا الجهاز مراقَب بالكاميرا للأمان',
     'login.not_sales': 'حساب {role} لا يمكنه استخدام Khair Sales. استخدم تطبيق الكاشير.',
     'err.BAD_PIN': 'الرمز السري خطأ', 'err.BAD_KEY': 'رمز المتجر غير معروف', 'err.NO_USERS': 'لا يوجد مستخدمون', 'err.BAD_PIN_SESSION': 'انتهت الجلسة، أدخل الرمز مرة أخرى', 'err.SERVER': 'مشكلة في الخادم',
     'err.NETWORK': 'لا يوجد اتصال', 'err.FORBIDDEN': 'غير مسموح لدورك', 'err.INVALID': 'بيانات غير صالحة', 'err.NOT_FOUND': 'غير موجود',

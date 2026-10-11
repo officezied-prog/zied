@@ -1,6 +1,6 @@
-// Customer survey never stops the selling: Bayar opens the payment window at once. Inside it, a voice survey
-// starts only after the consent tap (UU PDP), records speech-to-text while paying, and stops when the payment is
-// finished. After payment the receipt asks for the customer's WhatsApp number (promo consent) and can hand it to
+// Customer survey never stops the selling: Bayar opens the payment window at once. Inside it, the voice survey
+// starts BY ITSELF (v36, owner's decision: no question to the customer; a visible notice instead), records
+// speech-to-text while paying, and stops when the payment is finished. After payment the receipt asks for the customer's WhatsApp number (promo consent) and can hand it to
 // the shop's WhatsApp. SpeechRecognition / speechSynthesis are stubbed: window.__srEmit(text, final) feeds results.
 const { test, expect } = require('@playwright/test');
 const H = require('./helpers');
@@ -48,25 +48,20 @@ async function setSettings(page, patch) {
   await expect.poll(() => page.evaluate(p => Object.keys(p).every(k => JSON.stringify(KASIR.S.settings[k]) === JSON.stringify(p[k])), patch)).toBe(true);
 }
 
-test('Bayar opens the payment at once; consent tap starts recording; paying stops it and saves the transcript', async ({ page }) => {
+test('Bayar opens the payment at once; recording starts BY ITSELF (no question, notice shown); paying stops it and saves the transcript', async ({ page }) => {
+  // v36 (owner 2026-10-11: «في التسجيل التلقائي عند الضغط ابدأ بدون سؤال الزبون»)
   await page.addInitScript(speechStub);
   await H.login(page);
   await H.addItem(page, 'ajwa'); // no survey modal while selling (checked in addItem)
   await H.addItem(page, 'tunisia');
+  expect((await sr(page)).started).toBe(0); // nothing is captured while selling
+  const cancels0 = (await sr(page)).cancels;
   await H.pay(page);
   await expect(page.locator('#survey')).toHaveCount(0);
-  const ask = page.locator('#vs-ask');
-  await expect(ask).toContainText('Survei suara — tanyakan izin pelanggan');
-  await expect(page.locator('#vs-start')).toHaveText('Pelanggan setuju — mulai rekam');
-  await expect(page.locator('#vs-skip')).toHaveText('Lewati');
-  await expect(page.locator('#vs-manual')).toContainText('Isi survei manual');
-  expect((await sr(page)).started).toBe(0); // nothing is captured before the consent tap
-  await H.shot(page, 'phone-30-pay-voice-consent', false, { noToasts: true });
-
-  const cancels0 = (await sr(page)).cancels;
-  await page.click('#vs-start');
+  await expect(page.locator('#vs-ask, #vs-start, #vs-skip')).toHaveCount(0); // no consent question any more
   const rec = page.locator('#vs-rec');
-  await expect(rec).toContainText('Merekam');
+  await expect(rec).toContainText('🎙️ Rekaman aktif');
+  await expect(page.locator('#vs-notice')).toHaveText('Transaksi direkam untuk layanan & keamanan');
   await expect(page.locator('#vs-stop')).toBeVisible();
   await expect(page.locator('#vs-qs li')).toHaveCount(5);
   await expect(page.locator('#vs-qs li').first()).toContainText('Apakah ini pertama kali belanja');
@@ -96,19 +91,25 @@ test('Bayar opens the payment at once; consent tap starts recording; paying stop
   await expect(rec).toBeVisible();
   await expect(page.locator('#vs-qs input').nth(1)).toBeChecked();
   await page.evaluate(() => window.__srEmit('ada yang lagi bicara', false));
+  await H.shot(page, 'phone-30-pay-voice-consent', false, { noToasts: true });
 
   await page.click('#pay-ok'); // finishing the payment stops the recording; interim words are kept
   await expect(page.locator('#rc-modal #receipt')).toBeVisible();
   expect((await sr(page)).running).toBe(false);
+  // the printed notice on the receipt (and in the shared text)
+  await expect(page.locator('#rc-modal #rc-recorded')).toHaveText('Transaksi direkam untuk layanan & keamanan');
   const sale = await lastSale(page);
   expect(sale.survey_transcript).toBe('iya pertama kali tahu dari TikTok kurmanya segar ada yang lagi bicara');
   expect(JSON.parse(sale.survey)).toEqual([]);
-  // nothing is recorded after the sale, and the next sale starts with the consent banner again
+  // nothing is recorded after the sale; the next Bayar starts a new recording by itself
   await page.click('#rc-new');
-  await H.addItem(page, 'pistachio');
-  await H.pay(page);
-  await expect(page.locator('#vs-ask')).toBeVisible();
   expect((await sr(page)).started).toBe(3);
+  await H.addItem(page, 'pistachio');
+  expect((await sr(page)).started).toBe(3);
+  await H.pay(page);
+  await expect(page.locator('#vs-rec')).toBeVisible();
+  expect(await sr(page)).toMatchObject({ started: 4, running: true });
+  await expect(page.locator('#vs-tx')).toHaveText(''); // a fresh transcript for the new sale
 });
 
 test('the request carries survey_consent + survey_transcript (offline queue) and syncs into the sale', async ({ page }) => {
@@ -116,7 +117,7 @@ test('the request carries survey_consent + survey_transcript (offline queue) and
   await H.login(page);
   await H.addItem(page, 'kismis hitam');
   await H.pay(page);
-  await page.click('#vs-start');
+  await expect(page.locator('#vs-rec')).toBeVisible(); // started by itself
   await page.evaluate(() => window.__srEmit('lewat depan toko', true));
   await page.click('#vs-stop'); // stopped by hand: the text stays, recording can be resumed
   await expect(page.locator('#vs-done')).toContainText('Survei suara tercatat');
@@ -136,17 +137,18 @@ test('the request carries survey_consent + survey_transcript (offline queue) and
   expect((await lastSale(page)).survey_transcript).toBe('lewat depan toko mau beli madu');
 });
 
-test('"Lewati": nothing is recorded or sent; the banner can be brought back; survey_auto off shows only the link', async ({ page }) => {
+test('survey_auto off: no recording by itself (nothing sent); the link → "Mulai rekam"; "Lewati"; voice off shows only the manual link', async ({ page }) => {
   await page.addInitScript(speechStub);
   await H.login(page);
+  await setSettings(page, { survey_auto: false });
   await H.addItem(page, 'gula pasir');
   await H.pay(page);
-  await page.click('#vs-skip');
-  await expect(page.locator('#vs-ask')).toHaveCount(0);
+  await expect(page.locator('#vs-rec, #vs-ask')).toHaveCount(0);
   await expect(page.locator('#vs-ask-link')).toBeVisible();
   await page.evaluate(() => localStorage.setItem('kmock.offline', '1'));
   await page.click('#pay-ok');
   await expect(page.locator('#rc-modal')).toBeVisible();
+  await expect(page.locator('#rc-modal #rc-recorded')).toHaveCount(0); // no recording → no receipt notice
   const q = (await outbox(page)).find(e => e.kind === 'sale');
   expect(q.data).toMatchObject({ survey_consent: false, survey_transcript: '' });
   expect((await sr(page)).started).toBe(0);
@@ -156,20 +158,22 @@ test('"Lewati": nothing is recorded or sent; the banner can be brought back; sur
   expect((await lastSale(page)).survey_transcript).toBe('');
   await page.click('#rc-new');
 
-  // the (mock) server never keeps a transcript sent without consent
+  // the (mock) server never keeps a transcript sent without a recording
   const kept = await page.evaluate(async () => {
     const u = JSON.parse(localStorage.getItem('kmock.db')).users.find(x => x.name === 'Siti');
     const r = await apiRaw('save_sale', { client_id: 'no-consent-1', items: [{ product_id: 1, qty: 1, unit_price: 175000, price_type: 'eceran' }], payment_method: 'tunai', paid_amount: 175000, survey_transcript: 'rahasia', survey_consent: false }, { key: 'demo', user: 'Siti', pin_hash: u.pin_hash });
     return r.sale.survey_transcript;
   });
   expect(kept).toBe('');
-  // survey_auto off: no banner by itself, the small link opens it
-  await setSettings(page, { survey_auto: false });
+  // the small link brings the banner: one tap "Mulai rekam" (no question to the customer), or "Lewati"
   await H.addItem(page, 'beras');
   await H.pay(page);
+  await page.click('#vs-ask-link');
+  await expect(page.locator('#vs-start')).toHaveText('Mulai rekam');
+  await expect(page.locator('#vs-ask #vs-notice')).toHaveText('Transaksi direkam untuk layanan & keamanan');
+  await page.click('#vs-skip');
   await expect(page.locator('#vs-ask')).toHaveCount(0);
   await page.click('#vs-ask-link');
-  await expect(page.locator('#vs-start')).toBeVisible();
   await page.click('#vs-start');
   await expect(page.locator('#vs-rec')).toBeVisible();
   // owner turned the voice survey off: no banner and no link, only the manual survey
@@ -180,20 +184,21 @@ test('"Lewati": nothing is recorded or sent; the banner can be brought back; sur
   await expect(page.locator('#vs-manual')).toBeVisible();
 });
 
-test('microphone refused → "Izin mikrofon ditolak", recording stops and the consent banner is back', async ({ page }) => {
+test('microphone refused at the automatic start → said quietly in the window, "Mulai rekam" retries; a refused manual start is a toast', async ({ page }) => {
   await page.addInitScript(speechStub);
   await H.login(page);
   await H.addItem(page, 'ajwa');
   await H.pay(page);
-  await page.click('#vs-start');
   await expect(page.locator('#vs-rec')).toBeVisible();
   await page.evaluate(() => window.__srError('not-allowed'));
-  await expect(page.locator('.toast.err')).toContainText('Izin mikrofon ditolak');
   await expect(page.locator('#vs-rec')).toHaveCount(0);
+  await expect(page.locator('#vs-fail')).toHaveText('Izin mikrofon ditolak');
+  await expect(page.locator('.toast.err')).toHaveCount(0);
   await expect(page.locator('#vs-start')).toBeVisible();
   await page.waitForTimeout(500);
   expect((await sr(page)).started).toBe(1); // no restart after a refusal
   await page.click('#vs-start');
+  await expect(page.locator('#vs-fail')).toHaveCount(0);
   await page.evaluate(() => window.__srError('network'));
   await expect(page.locator('.toast.err').last()).toContainText('butuh internet');
   await expect(page.locator('#vs-rec')).toHaveCount(0);
@@ -219,6 +224,7 @@ test('no SpeechRecognition (iOS Safari, Firefox): no voice banner, the manual su
   await expect(page.locator('#vs-manual .badge')).toHaveText('terisi');
   await page.click('#pay-ok');
   await expect(page.locator('#rc-modal #receipt')).toBeVisible();
+  await expect(page.locator('#rc-modal #rc-recorded')).toHaveCount(0); // nothing was recorded on this device
   const sale = await lastSale(page);
   expect(JSON.parse(sale.survey)).toEqual([{ q: 'Tahu Khair Mart dari mana?', a: 'Dari pengajian' }]);
   expect(sale.survey_transcript).toBe('');
@@ -230,9 +236,8 @@ test('Arabic UI: the recording panel is right-to-left, the customer is still hea
   await H.login(page);
   await H.addItem(page, 'ajwa');
   await H.pay(page);
-  await expect(page.locator('#vs-start')).toHaveText('العميل موافق — ابدأ التسجيل');
-  await page.click('#vs-start');
-  await expect(page.locator('#vs-rec')).toContainText('جارٍ التسجيل');
+  await expect(page.locator('#vs-rec')).toContainText('التسجيل يعمل'); // started by itself
+  await expect(page.locator('#vs-notice')).toHaveText('تُسجَّل المعاملة للخدمة والأمان');
   expect(await page.evaluate(() => [document.documentElement.dir, window.__sr.active.lang])).toEqual(['rtl', 'id-ID']);
   await page.evaluate(() => window.__srEmit('iya sudah sering ke sini', true));
   await page.locator('#vs-qs input').nth(0).check();

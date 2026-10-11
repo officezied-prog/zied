@@ -15,6 +15,14 @@ function scanCodeAttempt(o) {
   })(o, 0);
   return hit;
 }
+// v36 (owner 2026-10-11: «صور من يحاول كتابة الكود هذا ضروري جدا»): report_tamper may carry ONE small front-camera JPEG of
+// whoever typed the code. It is taken out before the code scan and the cleaning (a picture is not text, and it is longer
+// than the 4000-character cut); only a plain JPEG data URL of at most 400,000 characters is kept.
+var __shotPhoto = '';
+if (req.action === 'report_tamper' && typeof data.photo === 'string') {
+  if (data.photo.length <= 400000 && /^data:image\/jpeg;base64,[A-Za-z0-9+\/]+={0,2}$/.test(data.photo)) __shotPhoto = data.photo;
+  delete data.photo;
+}
 var __codeHit = scanCodeAttempt(data);
 (function cleanInput(o, depth) {
   if (!o || typeof o !== 'object' || depth > 6) return;
@@ -25,7 +33,7 @@ var __codeHit = scanCodeAttempt(data);
     else if (v && typeof v === 'object') cleanInput(v, depth + 1);
   });
 })(data, 0);
-const ops = { sales: [], sale_items: [], payments: [], purchases: [], products: [], customers: [], users: [], settings: [], approvals: [], expenses: [], shifts: [], devices: [], repacks: [], activity: [], bank_lines: [], returns: [] };
+const ops = { sales: [], sale_items: [], payments: [], purchases: [], products: [], customers: [], users: [], settings: [], approvals: [], expenses: [], shifts: [], devices: [], repacks: [], activity: [], bank_lines: [], returns: [], tamper_shots: [] };
 
 function rows(name) {
   try {
@@ -131,9 +139,10 @@ const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' 
 // v29 (owner 2026-10-10): the accountant also shares the "manager or accountant" approvals (goods-in mismatch,
 // void today's invoice, price change) — list_approvals + decide_approval, limited to approver_role 'mgr_akuntan'
 // by canDecide — and may register a member (save_customer); the cashier may no longer create members.
-const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product'];
+const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product'];
 if (role === 'akuntan' && AKUNTAN_READ.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
-if (role === 'sales' && ['login', 'bootstrap', 'device_ping', 'change_pin'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
+// v36: report_tamper too — the field app reports a code attempt here (it was refused before, so the rep's account was never locked).
+if (role === 'sales' && ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
 const isApprover = role === 'owner' || role === 'manager';
 const canAudit = isApprover || role === 'akuntan';
 // v19 anti-tamper: a clear code attempt locks a non-owner account (only the owner opens it); the owner is warned, not locked.
@@ -892,12 +901,44 @@ switch (req.action) {
   }
 
   case 'report_tamper': {
-    // The app saw a clear code attempt in a field and locks the account here; only the owner opens it.
+    // The app saw a clear code attempt (or a run of sequential digits in a text field) and locks the account here; only
+    // the owner opens it. v36: with a front-camera photo of whoever typed it. The app calls twice with the same shot_id:
+    // first at once (locks, photo_status 'pending'), then with the photo — or why there is none (camera refused / no
+    // camera) — so the lock never waits for the camera. A shot row is written per attempt (pos_tamper_shots).
     var where = str(data.where).slice(0, 80);
+    var tkind = data.kind === 'digits' ? 'digits' : 'code';
+    var tsample = tkind === 'digits' ? str(data.sample).replace(/[^0-9]/g, '').slice(0, 24) : '';
+    var sid = /^TS[A-Z0-9]{8,20}$/.test(str(data.shot_id)) ? str(data.shot_id) : '';
+    var pst = ['ok', 'denied', 'none', 'error', 'pending'].indexOf(str(data.photo_status)) >= 0 ? str(data.photo_status) : 'none';
+    if (__shotPhoto) pst = 'ok'; else if (pst === 'ok') pst = 'error';
+    var NO_PHOTO = { pending: 'foto menyusul', denied: 'tanpa foto (kamera ditolak)', none: 'tanpa foto (tidak ada kamera)', error: 'tanpa foto (kamera gagal)' };
     if (role === 'owner') { logAct('tamper', 'Pemilik: percobaan kode terdeteksi (' + where + ')', me.name, 0, 'warn'); return done({ ok: true, locked: false }); }
+    var prevShot = sid ? rows('Get Tamper Shot').find(function (r) { return r.shot_id === sid; }) : null;
+    if (prevShot) { // the second call only brings the photo; it never locks again (the owner may have unlocked meanwhile)
+      if (str(prevShot.user).toLowerCase() !== str(me.name).toLowerCase()) return fail('FORBIDDEN', 'Bukan milik Anda');
+      if (prevShot.photo_status === 'pending') {
+        ops.tamper_shots.push(forWrite(Object.assign({}, clean(prevShot), { photo: __shotPhoto, photo_status: pst }), prevShot.id));
+        logAct('tamper', pst === 'ok' ? 'Foto percobaan kode tersimpan (' + str(prevShot.place) + ')' : 'Percobaan kode: ' + NO_PHOTO[pst] + ' (' + str(prevShot.place) + ')', me.name, 0, 'warn');
+      }
+      return done({ ok: true, locked: isLocked(me.name), shot_id: sid, photo_status: prevShot.photo_status === 'pending' ? pst : str(prevShot.photo_status) });
+    }
     if (!isLocked(me.name)) writeLocked(LOCKED.concat([me.name]));
-    logAct('tamper', 'Percobaan menulis kode — akun dikunci (' + where + ')', me.name, 0, 'danger');
-    return done({ ok: true, locked: true });
+    var newSid = sid || 'TS' + rand(12);
+    ops.tamper_shots.push(forWrite({
+      shot_id: newSid, at: new Date().toISOString(), shot_date: jkDate(), user: me.name, role: role, place: where, kind: tkind,
+      sample: tsample, photo: __shotPhoto, photo_status: pst, device: str(data.device && data.device.id).slice(0, 60)
+    }, -1));
+    logAct('tamper', (tkind === 'digits' ? 'Angka berurutan "' + tsample + '"' : 'Percobaan menulis kode') + ' — akun dikunci (' + where + ')' + (pst === 'ok' ? ' · foto tersimpan' : ' · ' + NO_PHOTO[pst]), me.name, 0, 'danger');
+    return done({ ok: true, locked: true, shot_id: newSid, photo_status: pst });
+  }
+
+  case 'list_tamper_shots': {
+    // v36: the photos of code attempts for the owner (Perlu perhatian, Pengaturan → Pengguna, Aktivitas): newest first, at most 30.
+    if (role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik');
+    var tsn = str(data.name).toLowerCase();
+    var shots = rows('Get Tamper Shots').filter(function (r) { return !tsn || str(r.user).toLowerCase() === tsn; })
+      .sort(function (a1, b1) { return String(b1.at).localeCompare(String(a1.at)); }).slice(0, 30).map(clean);
+    return done({ ok: true, shots: shots });
   }
 
   case 'clear_tamper': {

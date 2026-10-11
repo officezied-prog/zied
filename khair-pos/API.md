@@ -161,10 +161,20 @@ The owner is warned (`INVALID`) but never locked. `login` returns `tamper_locked
 
 | action | who | data | response |
 |---|---|---|---|
-| `report_tamper` | any (the app caught a code attempt) | `{where}` | `{ok, locked}` — locks a non-owner; the owner is only logged |
+| `report_tamper` | any role, sales and akuntan included (the app caught a code attempt) | `{where, kind?, sample?, shot_id?, photo_status?, photo?}` | `{ok, locked, shot_id, photo_status}` — locks a non-owner; the owner is only logged |
+| `list_tamper_shots` | owner | `{name?}` | `{ok, shots:[{shot_id, at, shot_date, user, role, place, kind, sample, photo, photo_status, device}]}` — newest first, at most 30 |
 | `clear_tamper` | owner | `{name}` | `{ok, user}` — removes the name from `locked_accounts` |
 
 The three apps also detect code attempts in inputs client-side and log the user straight out to the lock screen.
+
+**v36 (owner 2026-10-11): photo of whoever types code + sequential digits.** The apps call `report_tamper` twice with the same
+`shot_id` (`TS` + 8–20 of A–Z/0–9): first at once with `photo_status:"pending"` (locks the account, writes one `pos_tamper_shots`
+row and a `danger` activity entry), then with `photo` (a front-camera `data:image/jpeg;base64,…` ≤ 400,000 chars, ≤ 640 px) or the
+reason there is none (`photo_status` `denied` = camera refused, `none` = no camera, `error`). The second call only fills a row
+that is still `pending` and belongs to the same user (otherwise `FORBIDDEN`). `kind:"digits"` = a run of 8+ sequential / repeated
+digits typed in a free-text field (detected client-side only — the server cannot tell a note from a barcode); `sample` keeps only
+its digits. The photo is taken out of the request before the code scan and the 4000-character cut. The Worker creates
+`pos_tamper_shots` itself on first use (no migration step).
 
 ## Protected changes: old invoices and prices (v3)
 
