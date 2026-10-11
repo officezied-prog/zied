@@ -19,4 +19,20 @@ test('Tes Google: no key on the server → says where to add it; with the key �
   await expect(page.locator('#fd-gtest-msg')).toHaveAttribute('data-ok', '1');
   await expect(page.locator('#fd-gtest-msg')).toContainText('1 tempat');
   await expect(page.locator('#fd-google')).toHaveAttribute('data-n', '1');
+  // Google refuses the key: the owner reads our advice AND Google's own words
+  await editDb(page, `db.google_error = 'Google: 400 INVALID_ARGUMENT — API key not valid. Please pass a valid API key.';`);
+  await page.reload();
+  await expect(page.locator('#app')).toBeVisible();
+  await nav(page, 'field');
+  await page.click('#fd-gtest');
+  await expect(page.locator('#fd-gtest-msg')).toHaveAttribute('data-ok', '0');
+  await expect(page.locator('#fd-gtest-msg')).toContainText('GOOGLE_PLACES_KEY');
+  await expect(page.locator('#fd-gtest-msg')).toContainText('API key not valid');
+  // a 400 that is NOT about the key shows Google's words as the reason
+  await editDb(page, `db.google_error = 'Google: 400 INVALID_ARGUMENT — Invalid JSON payload received.';`);
+  await page.reload();
+  await expect(page.locator('#app')).toBeVisible();
+  await nav(page, 'field');
+  await page.click('#fd-gtest');
+  await expect(page.locator('#fd-gtest-msg')).toContainText('Invalid JSON payload');
 });

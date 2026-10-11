@@ -419,3 +419,23 @@ test('field v34: Google Places — no key = nothing counted or called; along a d
   const kas = await handleField(a, base('places_search', 'Pemilik', '1234', { q: 'x' }), {}, KEY, { env, fetch: gfetch });
   assert.equal(kas.error, 'INVALID');
 });
+
+test('field v34b: a key pasted with spaces / quotes is cleaned; Google\'s own error words reach the owner (never the key)', async () => {
+  const a = sqliteAdapter(seed());
+  const seen = [];
+  const gfetch = async (url, opts) => {
+    seen.push(opts.headers['X-Goog-Api-Key']);
+    const body = JSON.parse(opts.body);
+    if (body.textQuery === 'salah') return { status: 400, json: async () => ({ error: { code: 400, status: 'INVALID_ARGUMENT', message: 'API key not valid. Please pass a valid API key. (AIzaSyDUMMYDUMMYDUMMY)' } }) };
+    assert.equal(body.pageSize, 20);
+    return { status: 200, json: async () => ({ places: [] }) };
+  };
+  const env = { GOOGLE_PLACES_KEY: '  "AIza-clean-me"\n' };
+  const ok = await handleField(a, base('places_search', 'Pemilik', '1234', { q: 'toko kurma', lat: -6.27, lng: 106.86 }), {}, KEY, { env, fetch: gfetch });
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+  assert.equal(seen[0], 'AIza-clean-me');
+  const bad = await handleField(a, base('places_search', 'Pemilik', '1234', { q: 'salah', lat: -6.27, lng: 106.86 }), {}, KEY, { env, fetch: gfetch });
+  assert.equal(bad.error, 'GOOGLE');
+  assert.match(bad.message, /^Google: 400 INVALID_ARGUMENT — API key not valid/);
+  assert.ok(!/AIzaSyDUMMY/.test(bad.message), 'a key in Google\'s message is hidden');
+});

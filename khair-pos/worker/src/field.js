@@ -133,13 +133,14 @@ export async function handleField(adapter, body, headers, STORE_KEY, deps = {}) 
   const out = runProcessField($, STORE_KEY)[0].json; // { response, ops, action }
   const ops = out.ops || {};
   // v34 Google Places: without a key nothing is counted or called — the app keeps the free search
-  const gkey = deps.env && deps.env.GOOGLE_PLACES_KEY;
+  // a key pasted with a space, a line break or quotes around it would be refused by Google: clean it
+  const gkey = deps.env && String(deps.env.GOOGLE_PLACES_KEY || '').trim().replace(/^["']+|["']+$/g, '').trim();
   if (req.action === 'places_search' && out.response && out.response.ok && !gkey) return { ok: false, error: 'NO_KEY', message: 'Pencarian Google belum diaktifkan' };
   await applyOps(adapter, ops, OPS_TABLE_FIELD);
   if (req.action === 'places_status' && out.response && out.response.ok) out.response.enabled = !!gkey;
   if (req.action === 'places_search' && out.response && out.response.ok && out.response.places_req) {
     try { const g = await placesSearch(out.response.places_req, gkey, deps.fetch || fetch); out.response.places = g.places; out.response.mode = g.mode; }
-    catch (e) { return { ok: false, error: 'GOOGLE', message: 'Google: ' + (e.status || '') + ' ' + (e.detail || ''), usage: out.response.usage }; }
+    catch (e) { return { ok: false, error: 'GOOGLE', message: 'Google: ' + (e.status || '') + ' ' + (e.detail || '') + (e.msg ? ' — ' + e.msg : ''), usage: out.response.usage }; }
     delete out.response.places_req;
   }
   // v33: Google Maps short links — the process checked who asks and which links; the Worker follows the redirects
