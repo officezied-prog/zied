@@ -144,7 +144,7 @@ test('work line: drawn point by point → kinds of shop searched along it (own c
   await expect(page.locator('#pl-draw-n')).toHaveAttribute('data-n', '0');
   // a tap on the map = a point (no popup while drawing); undo takes it back
   const box = await page.locator('#pl-map').boundingBox();
-  await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+  await page.locator('#pl-map').click({ position: { x: box.width / 2, y: box.height / 3 } });
   await expect(page.locator('#pl-draw-n')).toHaveAttribute('data-n', '1');
   await expect(page.locator('#pl-sel-start')).toHaveCount(0);
   await page.click('#pl-draw-undo');
