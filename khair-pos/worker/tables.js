@@ -160,6 +160,8 @@ export const TABLES = {
     list_id: 'string', from_user: 'string', from_role: 'string', to_user: 'string', plan_date: 'string', street: 'string',
     places: 'string', note: 'string', status: 'string', created_at: 'string', received_at: 'string',
   },
+  // v34: monthly counter of paid-API calls (Google Places) — the hard cap
+  pos_api_usage: { api: 'string', month: 'string', n: 'number', updated_at: 'string' },
   // ---- chat / attendance (separate workflows; included for a complete database) ----
   pos_chat: {
     channel: 'string', cid: 'string', from_user: 'string', from_name: 'string',
@@ -245,7 +247,7 @@ export const OPS_TABLE = {
 export const OPS_TABLE_FIELD = {
   shops: 'pos_shops', visits: 'pos_visits', tracks: 'pos_tracks',
   days: 'pos_field_days', orders: 'pos_field_orders', images: 'pos_product_images',
-  product_flags: 'pos_products', plans: 'pos_route_plans', street_log: 'pos_street_log', shop_lists: 'pos_shop_lists',
+  product_flags: 'pos_products', plans: 'pos_route_plans', street_log: 'pos_street_log', shop_lists: 'pos_shop_lists', api_usage: 'pos_api_usage',
 };
 
 // Chat workflow ops key → table.

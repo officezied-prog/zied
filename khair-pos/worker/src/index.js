@@ -66,7 +66,7 @@ export default {
             : path.endsWith('khair-att') ? handleAtt
               : path.endsWith('khair-cold') ? handleCold
                 : handleRequest;
-        response = await handler(adapter, text, headers, env.STORE_KEY);
+        response = await handler(adapter, text, headers, env.STORE_KEY, { env }); // env: the Google Places key (field search), when set
       }
       return json(response, 200); // business errors (ok:false) are 200, as n8n returned them
     } catch (e) {

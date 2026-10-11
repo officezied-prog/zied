@@ -27,3 +27,12 @@ test('cashier: Google Maps text → a shop list for a street → sent to the rep
   expect(db.shop_lists.slice(-1)[0]).toMatchObject({ from_user: 'Siti', from_role: 'kasir', to_user: 'Ahmad', street: 'Jalan Raya Condet' });
   expect(db.shop_lists.slice(-1)[0].places[0]).toMatchObject({ name: 'Toko Kurma Barokah', lat: -6.27405, lng: 106.85834 });
 });
+
+test('manager in Khair Kasir: "Lapangan" opens the field page (reps map + coloured visit results) directly', async ({ page }) => {
+  await H.login(page, 'Jihan', '2222');
+  await page.click('#tab-more');
+  await page.click('#m-to-field');
+  await expect(page).toHaveURL(/\/index\.html\?mock=1$/);
+  await expect(page.locator('#view-field')).toBeVisible();
+  await expect(page.locator('#fd-oc-legend')).toBeVisible();
+});

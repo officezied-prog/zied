@@ -30,6 +30,7 @@ const INDEXES = {
   pos_route_plans: ['plan_date', 'user'],
   pos_street_log: ['plan_date', 'skey'],
   pos_shop_lists: ['status', 'created_at'],
+  pos_api_usage: ['month'],
   cold_checks: ['check_date'],
   cold_movements: ['pallet_code', 'warehouse'],
   cold_pallets: ['warehouse', 'pallet_code'],

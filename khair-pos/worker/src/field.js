@@ -5,6 +5,7 @@ import { execSpecs, makeAccessor, applyOps, Q } from './db.js';
 import { OPS_TABLE_FIELD } from '../tables.js';
 import { runProcessField } from './generated/process-field.gen.js';
 import { resolveMapsLinks } from './gmaps.js';
+import { placesSearch } from './places.js';
 
 // ±0.2° (≈ 22 km) around the rep's position / plan start; without one, everywhere.
 function streetBox(data) {
@@ -41,6 +42,7 @@ export function parseField(body, headers) {
     // v33 shop lists from the office: the open ones for the rep's phone; the last 30 days for the office's "sent" list
     open_lists: action === 'field_bootstrap' || action === 'list_ack' ? 'sent' : '__none__',
     sent_from: action === 'lists_sent' ? since30 : '9999-12-31',
+    usage_month: action === 'places_search' || action === 'places_status' ? today.slice(0, 7) : '__none__', // v34 Google cap
     img_lo: action === 'product_images' ? 0 : (action === 'set_product_image' && pid > 0 ? pid : 1),
     img_hi: action === 'product_images' ? 1000000000 : (action === 'set_product_image' && pid > 0 ? pid : 0),
   };
@@ -71,6 +73,7 @@ function fieldSpecs(req) {
     'Get Plan Street Log': Q.eq('pos_street_log', 'plan_date', req.log_date),
     'Get Open Lists': Q.eq('pos_shop_lists', 'status', req.open_lists),
     'Get Sent Lists': Q.gte('pos_shop_lists', 'created_at', req.sent_from),
+    'Get Places Usage': Q.eq('pos_api_usage', 'month', req.usage_month),
     // latest row per street and rep (SQLite keeps the bare columns of the MAX row), only streets crossing the area box
     'Get Street Log': req.street_box
       ? { table: 'pos_street_log', sql: 'SELECT *, MAX(plan_date) AS last_date FROM pos_street_log WHERE removed = 0 AND max_lat >= ? AND min_lat <= ? AND max_lng >= ? AND min_lng <= ? GROUP BY skey, user ORDER BY last_date DESC LIMIT 1000', params: [req.street_box[0], req.street_box[1], req.street_box[2], req.street_box[3]] }
@@ -106,6 +109,8 @@ export const FIELD_MIGRATIONS = [
   // v33: shop lists the office sends to a rep (Google Maps places of a street)
   "CREATE TABLE IF NOT EXISTS pos_shop_lists (id INTEGER PRIMARY KEY AUTOINCREMENT, list_id TEXT, from_user TEXT, from_role TEXT, to_user TEXT, plan_date TEXT, street TEXT, places TEXT, note TEXT, status TEXT, created_at TEXT, received_at TEXT)",
   "CREATE INDEX IF NOT EXISTS idx_pos_shop_lists_status ON pos_shop_lists (status)",
+  // v34: monthly counter of paid-API calls (Google Places) — the hard cap that keeps the bill at 0
+  "CREATE TABLE IF NOT EXISTS pos_api_usage (id INTEGER PRIMARY KEY AUTOINCREMENT, api TEXT, month TEXT, n INTEGER NOT NULL DEFAULT 0, updated_at TEXT)",
   "INSERT INTO pos_street_log (skey, user, name, plan_date, plan_id, drawn, ref, lines, min_lat, max_lat, min_lng, max_lng, removed, updated_at) "
     + "SELECT 'st:' || lower(trim(json_extract(s.value, '$.name'))), p.user, trim(json_extract(s.value, '$.name')), p.plan_date, p.plan_id, 0, json_extract(s.value, '$.ref'), "
     + "COALESCE(json_extract(s.value, '$.lines'), '[]'), -90, 90, -180, 180, 0, p.updated_at "
@@ -127,7 +132,16 @@ export async function handleField(adapter, body, headers, STORE_KEY, deps = {}) 
   const $ = makeAccessor(nodes);
   const out = runProcessField($, STORE_KEY)[0].json; // { response, ops, action }
   const ops = out.ops || {};
+  // v34 Google Places: without a key nothing is counted or called — the app keeps the free search
+  const gkey = deps.env && deps.env.GOOGLE_PLACES_KEY;
+  if (req.action === 'places_search' && out.response && out.response.ok && !gkey) return { ok: false, error: 'NO_KEY', message: 'Pencarian Google belum diaktifkan' };
   await applyOps(adapter, ops, OPS_TABLE_FIELD);
+  if (req.action === 'places_status' && out.response && out.response.ok) out.response.enabled = !!gkey;
+  if (req.action === 'places_search' && out.response && out.response.ok && out.response.places_req) {
+    try { const g = await placesSearch(out.response.places_req, gkey, deps.fetch || fetch); out.response.places = g.places; out.response.mode = g.mode; }
+    catch (e) { return { ok: false, error: 'GOOGLE', message: 'Google: ' + (e.status || '') + ' ' + (e.detail || ''), usage: out.response.usage }; }
+    delete out.response.places_req;
+  }
   // v33: Google Maps short links — the process checked who asks and which links; the Worker follows the redirects
   if (req.action === 'resolve_links' && out.response && out.response.ok && Array.isArray(out.response.resolve)) {
     out.response.links = await resolveMapsLinks(out.response.resolve, deps.fetch || fetch);

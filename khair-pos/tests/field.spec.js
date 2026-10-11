@@ -65,7 +65,12 @@ test('Lapangan: SVG fallback map with route and numbered visits, far-visit warni
   await expect(page.locator('#fd-map polyline[data-route]')).toHaveCount(1);
   await expect(page.locator('#fd-map .c-visit')).toHaveCount(2);
   await expect(page.locator('#fd-map .c-visit.far')).toHaveCount(1);
+  // v33: each visit point has the colour of its result (both visits: "tertarik" = orange); legend under the map
+  await expect(page.locator('#fd-map .c-visit[data-oc="orange"]')).toHaveCount(2);
+  await expect(page.locator('#fd-oc-legend .occ')).toHaveCount(5);
+  await expect(page.locator('#fd-visits .vnum[data-oc="orange"]')).toHaveCount(2);
   const card = page.locator('.rep-card[data-rep="Ahmad"]');
+  await expect(card.locator('[data-occ] [data-oc="orange"]')).toHaveText('2');
   await expect(card.locator('[data-status]')).toHaveText('bekerja');
   await expect(card.locator('[data-visits]')).toHaveText('2');
   await page.locator('#fd-map .c-visit.far').click();

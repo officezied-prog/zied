@@ -80,14 +80,14 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.4.0';
+const APP_VERSION = 'sales-1.5.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
 /* Same prefix as the owner and cashier apps (same origin): store key, language and the user list are
    shared on this device. Everything that belongs to Khair Sales lives under the extra "sales." prefix. */
 const PREFIX = MOCK ? 'kpos.mock.' : 'kpos.';
-const FIELD_ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'plan_save', 'streets_worked', 'list_ack', 'resolve_links'];
+const FIELD_ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'plan_save', 'streets_worked', 'list_ack', 'resolve_links', 'places_status', 'places_search'];
 
 /* ========== Small utilities ========== */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -1117,7 +1117,7 @@ function svgMap(el, points, shops, current, orders, plan) {
    During the day the Today card shows the next stop, Google Maps directions, and "visit" (a new place opens the
    new-shop form already filled in, so it becomes a shop at the first visit). */
 const PL = { date: '', start: null, end: null, stops: [], streets: [], note: '', results: [], street: null, seg: 'search', q: '', msg: '', busy: false, map: null, lay: null, el: null, sel: null, worked: [], workedAt: 0,
-  draw: null, found: [], foundOn: '', lineRef: '', cats: null, gmOpen: false, placing: '', unplaced: [] }; // v33: Google Maps paste box; a place being put on the map; places still without a position // v32: draw = the work line being drawn ({ pts, name }); found = shops of the chosen kinds along a line
+  draw: null, found: [], foundOn: '', lineRef: '', cats: null, gmOpen: false, placing: '', unplaced: [], g: null }; // v34 g = Google search { enabled, n, cap } // v33: Google Maps paste box; a place being put on the map; places still without a position // v32: draw = the work line being drawn ({ pts, name }); found = shops of the chosen kinds along a line
 const OSM = { nomi: 'https://nominatim.openstreetmap.org/search', over: ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter'], last: 0 };
 const plansAll = () => FS.get(uk('plans'), {}) || {};
 const planFor = d => plansAll()[d] || null;
@@ -1203,7 +1203,7 @@ function openPlanner(date) {
     streets: p ? clone(p.streets || []) : [], note: p ? p.note || '' : '', results: [], street: null,
     seg: p && ((p.stops || []).length || (p.streets || []).length) ? 'plan' : 'search', q: '', msg: '', busy: false, map: null, lay: null, sel: null, draw: null, found: [], foundOn: '', lineRef: '',
     gmOpen: false, placing: '', unplaced: unplacedFor(d) });
-  if (!PL.cats) { const c = FS.get('find_cats', null); PL.cats = Array.isArray(c) ? c.filter(id => FIND.some(k => k.id === id)) : ['kurma', 'haji', 'muslim']; }
+  if (!PL.cats) { const c = FS.get('find_cats', null); PL.cats = Array.isArray(c) ? c.filter(id => FIND.some(k => k.id === id)) : ['kurma', 'sembako', 'haji']; } // the owner's three: dates, Indonesian groceries, Hajj & Umrah
   PL.el = openModal({ title: t('plan.title') + ' · ' + t(d === today() ? 'plan.today' : 'plan.tomorrow') + ' ' + fmtDate(d), id: 'plan', cls: 'map-modal plan-modal',
     body: `<div id="pl-wrap"><div id="pl-drawbar"></div><div class="map full plan-map" id="pl-map"></div><div class="small muted" id="pl-legend" style="margin-top:4px">${esc(t('plan.legend'))}</div><div id="pl-startbox"></div><div class="seg sm" id="pl-seg" style="margin-top:10px"></div><div id="pl-body" style="margin-top:10px"></div></div>`,
     foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary grow" data-act="pl-save" id="pl-save">${ic('check')} ${esc(t('plan.save'))}</button>`,
@@ -1212,6 +1212,7 @@ function openPlanner(date) {
   drawPlanner();
   loadWorked().then(() => { if (PL.el) drawPlanner(); });
   if (PL.unplaced.length && navigator.onLine) locateUnplaced(); // places sent without a position: try to find them now
+  loadGoogle().then(() => { if (PL.el) drawPlanner(); });
 }
 /** Streets worked / planned by every rep (kept forever; the ones around this rep), so nobody repeats a street; cached on the phone for offline. */
 async function loadWorked(force) {
@@ -1252,7 +1253,7 @@ function planSearchHTML() {
     ${PL.street ? `<div class="small" style="margin-top:6px" id="pl-street">🛣️ <b>${esc(PL.street.name)}</b></div>` : ''}
     <div class="small muted" id="pl-msg" style="margin-top:6px" role="status">${esc(PL.msg)}</div>
     <div class="list" id="pl-results" style="margin-top:6px">${PL.results.map(resultRowHTML).join('')}</div>
-    <div class="small muted" style="margin-top:8px">${esc(t('plan.osm'))}</div>`;
+    <div class="small muted" style="margin-top:8px">${esc(t('plan.osm'))}</div>${googleNoteHTML()}`;
 }
 function resultRowHTML(r, i) {
   const added = PL.stops.some(s => s.ref === r.ref), d = PL.start ? haversine(PL.start, r) : null;
@@ -1262,7 +1263,7 @@ function resultRowHTML(r, i) {
   const btns = r.kind === 'street' ? `<button class="btn xs ${inPlan ? '' : 'primary'}" data-act="pl-work" data-i="${i}">${inPlan ? '✓ ' + esc(t('plan.street_in')) : '🛣️ ' + esc(t('plan.work_street'))}</button><button class="btn xs" data-act="pl-start-at" data-i="${i}">🚩</button><button class="btn xs" data-act="pl-end-at" data-i="${i}">🏁</button>`
     : r.kind === 'area' ? `<button class="btn xs" data-act="pl-start-at" data-i="${i}">🚩 ${esc(t('plan.set_start'))}</button><button class="btn xs" data-act="pl-end-at" data-i="${i}">🏁</button><button class="btn xs" data-act="pl-goto" data-i="${i}">${esc(t('plan.go_there'))}</button>`
     : `<button class="btn xs ${added ? '' : 'primary'}" data-act="pl-toggle" data-i="${i}" aria-pressed="${added}">${added ? '✓ ' + esc(t('plan.added')) : '+ ' + esc(t('plan.add'))}</button>`;
-  return `<div class="li pl-res" data-ref="${esc(r.ref)}" data-kind="${esc(r.kind)}"${r.src === 'gm' ? ' data-src="gm"' : ''}><div class="grow"><div class="t">${esc(r.name)}${r.ours ? ' ⭐' : ''}${r.src === 'gm' ? ' <span class="gm-badge" title="Google Maps">G</span>' : ''}${r.approx ? ' <span class="small muted">≈</span>' : ''}</div><div class="s">${esc(sub)}</div>${warn ? `<div class="small pl-warn" data-worked>⚠ ${esc(warn)}</div>` : ''}</div><div class="row wrap" style="gap:4px;flex:none;justify-content:flex-end">${btns}</div></div>`;
+  return `<div class="li pl-res" data-ref="${esc(r.ref)}" data-kind="${esc(r.kind)}"${r.src === 'gm' || r.src === 'gp' ? ` data-src="${r.src}"` : ''}><div class="grow"><div class="t">${esc(r.name)}${r.ours ? ' ⭐' : ''}${r.src === 'gm' || r.src === 'gp' ? ' <span class="gm-badge" title="Google">G</span>' : ''}${r.approx ? ' <span class="small muted">≈</span>' : ''}</div><div class="s">${esc(sub)}</div>${warn ? `<div class="small pl-warn" data-worked>⚠ ${esc(warn)}</div>` : ''}</div><div class="row wrap" style="gap:4px;flex:none;justify-content:flex-end">${btns}</div></div>`;
 }
 function planKm() { const pts = (PL.start ? [PL.start] : []).concat(PL.stops).concat(PL.end ? [PL.end] : []); let m = 0; for (let i = 1; i < pts.length; i++) m += haversine(pts[i - 1], pts[i]); return m / 1000; }
 function planListHTML() {
@@ -1488,12 +1489,12 @@ function planLineHTML() {
     ${counts.length ? `<div class="chips wrap" id="pl-found-legend" style="margin-top:6px">${counts.map(c => `<span class="kbadge" data-cat="${c.k.id}" style="--kc:${c.k.c}"><span class="kdot" aria-hidden="true"></span>${c.k.e} ${esc(t('find.' + c.k.id))}: <b>${c.n}</b></span>`).join('')}</div>` : ''}
     ${named ? `<button class="btn xs primary" data-act="pl-find-all" id="pl-find-all" style="margin-top:6px">+ ${esc(t('plan.add_all', { n: named }))}</button>` : ''}
     <div class="list" id="pl-found" style="margin-top:6px">${found.map(foundRowHTML).join('')}</div>
-    <div class="small muted" style="margin-top:8px">${esc(t('plan.osm'))}</div>`;
+    <div class="small muted" style="margin-top:8px">${esc(t('plan.osm'))}</div>${googleNoteHTML()}`;
 }
 function foundRowHTML(r) {
   const k = FIND.find(x => x.id === r.cat) || FIND[0], added = PL.stops.some(s => s.ref === r.ref);
   const sub = [t('find.' + k.id), r.ours ? t('plan.shop_ours') : (r.type ? KST.typeLabel(r.type, S.lang) : ''), r.address].filter(Boolean).join(' · ');
-  return `<div class="li pl-res" data-ref="${esc(r.ref)}" data-cat="${esc(r.cat)}"><span class="kdot big" style="--kc:${k.c}" aria-hidden="true"></span><div class="grow"><div class="t">${esc(r.name)}${r.ours ? ' ⭐' : ''}</div><div class="s">${esc(sub)}</div></div>
+  return `<div class="li pl-res" data-ref="${esc(r.ref)}" data-cat="${esc(r.cat)}"${r.src === 'gp' ? ' data-src="gp"' : ''}><span class="kdot big" style="--kc:${k.c}" aria-hidden="true"></span><div class="grow"><div class="t">${esc(r.name)}${r.ours ? ' ⭐' : ''}${r.src === 'gp' ? ' <span class="gm-badge" title="Google">G</span>' : ''}</div><div class="s">${esc(sub)}</div></div>
     <button class="btn xs ${added ? '' : 'primary'}" data-act="pl-find-toggle" data-ref="${esc(r.ref)}" aria-pressed="${added}">${added ? '✓ ' + esc(t('plan.added')) : '+ ' + esc(t('plan.add'))}</button></div>`;
 }
 /** The line for an Overpass "around" filter: lat,lng,lat,lng,… (a point kept every ≥ 25 m, ≤ 150). */
@@ -1529,8 +1530,10 @@ function plFind(x) {
       const b = boxOf(lines.flat()), pad = 0.01, nm = String(x.name).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       ql = `[out:json][timeout:40];way["highway"]["name"="${nm}"](${b[0] - pad},${b[2] - pad},${b[1] + pad},${b[3] + pad})->.s;(${findQL(cats, '(around.s:60)')});out center 300;`;
     }
-    const js = await overpass(ql);
-    PL.found = findItems(js, cats, x.drawn ? lines[0] : null); PL.foundOn = x.ref;
+    const [js, gp] = await Promise.all([overpass(ql).catch(e => { if (!PL.g || !PL.g.enabled) throw e; return { elements: [] }; }), googleAlong(cats, lines)]);
+    const free = findItems(js, cats, x.drawn ? lines[0] : null), ln0 = lines[0];
+    const gFound = gp.map(g => Object.assign(g, { at: ln0 && ln0.length > 1 ? alongLine(ln0, g).s : 0 })); // Google first; a free result for the same shop is dropped
+    PL.found = gFound.concat(free.filter(f => !gFound.some(g => sameShop(g, f)))).sort((a, b) => a.at - b.at).slice(0, 200); PL.foundOn = x.ref;
     PL.msg = PL.found.length ? t('plan.found_line', { n: PL.found.length, name: x.name }) : t('plan.no_results');
     fitPlan(PL.found.length ? PL.found : lines.flat().map(q => ({ lat: q[0], lng: q[1] })));
   }, 'line');
@@ -1654,6 +1657,57 @@ function captureShare() {
   return items.length;
 }
 
+/* ---- v34 (owner 2026-10-11: "do the upgrade — we will not reach 5,000 searches a month"): GOOGLE search, through our server
+   (the key stays there) with a hard monthly cap under Google's free 5,000 — the bill stays 0. It runs NEXT TO the free
+   OpenStreetMap search (results merged, Google ones marked G); when Google is not set up, is over the month's cap or does
+   not answer, the free search simply carries on. */
+const KIND_Q = { kurma: 'toko kurma', haji: 'perlengkapan haji dan umroh', muslim: 'toko perlengkapan muslim', oleh: 'toko oleh-oleh',
+  ritel: 'minimarket', sembako: 'toko sembako kelontong', kuliner: 'toko roti dan kue', masjid: 'masjid' };
+const GTYPES = { supermarket: 'supermarket', convenience_store: 'minimarket', grocery_store: 'toko', food_store: 'toko', market: 'pasar', bakery: 'bakery', cafe: 'kafe', coffee_shop: 'kafe',
+  restaurant: 'restoran', mosque: 'masjid', travel_agency: 'travel_umrah', clothing_store: 'busana_muslim', gift_shop: 'oleh_oleh', department_store: 'hypermarket', shopping_mall: 'hypermarket',
+  wholesaler: 'grosir_modern', hotel: 'hotel', book_store: 'toko_buku_islam', fruit_store: 'toko_buah', confectionery: 'toko_kue', dessert_shop: 'toko_kue' };
+async function loadGoogle() {
+  if (PL.g && Date.now() - PL.g.at < 600000) return;
+  try { const r = await api('places_status'); PL.g = { enabled: !!r.enabled, n: int(r.n), cap: int(r.cap) || 4500, at: Date.now() }; }
+  catch (e) { PL.g = { enabled: false, n: 0, cap: 4500, at: Date.now() }; } // an older server: free search only
+}
+function googleNoteHTML() {
+  const g = PL.g; if (!g || !g.enabled) return '';
+  return `<div class="small muted" id="pl-google" data-n="${g.n}">${esc(g.n >= g.cap ? t('plan.g_full') : t('plan.g_on', { n: g.n, cap: g.cap }))}</div>`;
+}
+/** One Google search (counted on the server). [] when Google is off / over the cap / not answering. */
+async function googleSearch(q, where) {
+  const g = PL.g; if (!g || !g.enabled || g.n >= g.cap) return [];
+  try {
+    const r = await api('places_search', Object.assign({ q }, where || {}));
+    if (r.usage) { g.n = int(r.usage.n); g.cap = int(r.usage.cap) || g.cap; }
+    return Array.isArray(r.places) ? r.places : [];
+  } catch (e) {
+    if (e && e.code === 'QUOTA') g.n = g.cap; else if (e && e.code === 'NO_KEY') g.enabled = false;
+    return [];
+  }
+}
+const sameShop = (a, b) => haversine(a, b) < 40 && (normTxt(a.name).slice(0, 6) === normTxt(b.name).slice(0, 6) || haversine(a, b) < 12);
+function gpItem(p, k) {
+  const gt = (p.types || []).concat([p.primary]).map(x => GTYPES[x]).find(Boolean) || '';
+  const type = k ? (gt && KST.groupOf(gt) === KST.groupOf(k.type) ? gt : k.type) : gt;
+  const it = { ref: 'gp:' + String(p.id || (p.lat + ',' + p.lng)).slice(-40), src: 'gp', kind: 'poi', named: true, name: p.name, lat: p.lat, lng: p.lng, address: p.address || '', type };
+  if (k) it.cat = k.id;
+  const ours = S.shops.find(s2 => validPos(s2) && haversine(s2, it) < 40);
+  return ours ? Object.assign(shopItem(ours), k ? { cat: k.id } : {}) : it;
+}
+/** Google along a work line, one search per ticked kind; only places close to the line are kept. */
+async function googleAlong(cats, lines) {
+  const g = PL.g; if (!g || !g.enabled || g.n >= g.cap) return [];
+  const ln = lines[0], pts = simplifyLines([ln])[0] || ln, out = [];
+  for (const id of cats) {
+    const k = FIND.find(x => x.id === id); if (!k || !KIND_Q[id]) continue;
+    const got = await googleSearch(KIND_Q[id], { line: pts });
+    got.forEach(p => { if (Math.min(...lines.map(l => alongLine(l, p).d)) <= FIND_R + 60 && !out.some(o => sameShop(o, p))) out.push(gpItem(p, k)); });
+  }
+  return out;
+}
+
 /* ---- OpenStreetMap search (free; from the phone; explicit search only, ≤ 1 request/second as the service asks) ---- */
 const OSM_TYPES = { convenience: 'minimarket', supermarket: 'supermarket', department_store: 'hypermarket', mall: 'hypermarket', wholesale: 'grosir_modern', general: 'warung', kiosk: 'warung',
   variety_store: 'toko', frozen_food: 'toko', deli: 'toko', dairy: 'toko', bakery: 'bakery', pastry: 'toko_kue', confectionery: 'toko_kue', greengrocer: 'toko_buah', health_food: 'herbal',
@@ -1737,8 +1791,10 @@ function plSearch() {
   return planRun(async () => {
     PL.street = null;
     const ours = S.shops.filter(s => validPos(s) && normTxt(s.name).indexOf(normTxt(q)) >= 0).slice(0, 10).map(shopItem);
-    const osm = await nominatim(q, PL.map ? PL.map.getBounds() : null);
-    PL.results = ours.concat(osm.filter(r => !ours.some(o => haversine(o, r) < 40)));
+    const c = PL.map ? PL.map.getCenter() : (PL.start || S.pos);
+    const [osm, gp] = await Promise.all([nominatim(q, PL.map ? PL.map.getBounds() : null), googleSearch(q, { lat: c && c.lat, lng: c && c.lng, radius: 5000 })]);
+    const gItems = gp.map(p => gpItem(p, null)).filter(it => !ours.some(o => haversine(o, it) < 40));
+    PL.results = ours.concat(gItems, osm.filter(r => !ours.some(o => haversine(o, r) < 40) && !(r.kind === 'poi' && gItems.some(g => sameShop(g, r)))));
     PL.msg = PL.results.length ? t('plan.found', { n: PL.results.length }) : t('plan.no_results');
     fitPlan(PL.results);
   });
@@ -2622,13 +2678,14 @@ const I18N = {
     'plan.no_line': 'Jalan ini belum punya garis di peta. Gambar garis kerja di atasnya.', 'plan.found_line': '{n} tempat di sepanjang {name} (urut dari awal garis)',
     'plan.overlap': '{p}% garis ini sudah dikerjakan {u} ({d})', 'plan.overlap_planned': '{p}% garis ini sudah direncanakan {u} ({d})',
     'find.kurma': 'Toko kurma', 'find.haji': 'Perlengkapan haji & umrah', 'find.muslim': 'Toko muslim & Timur Tengah', 'find.oleh': 'Oleh-oleh & buah', 'find.ritel': 'Minimarket & supermarket',
-    'find.sembako': 'Toko kelontong & sembako', 'find.kuliner': 'Roti, kue & kafe', 'find.masjid': 'Masjid & pesantren',
+    'find.sembako': 'Sembako (barang Indonesia)', 'find.kuliner': 'Roti, kue & kafe', 'find.masjid': 'Masjid & pesantren',
     'plan.gm': 'Google Maps', 'plan.gm_hint': 'Di Google Maps buka tokonya → Bagikan → Salin, lalu tempel di sini (bisa banyak toko sekaligus, juga link atau alamat). Gratis, tanpa akun Google. Di HP Android yang memasang aplikasi ini: Bagikan → Khair Sales.',
     'plan.gm_ph': 'Tempel nama, alamat dan link Google Maps…', 'plan.gm_read': 'Baca daftar', 'plan.gm_none': 'Tidak ada tempat yang terbaca. Tempel teks atau link dari Google Maps.',
     'plan.gm_found': '{n} tempat dari Google Maps di peta', 'plan.gm_missing': '{n} belum ada titiknya (lihat tab Rencana)', 'plan.gm_inbox': 'Dari Google Maps ({n})',
     'plan.gm_shared': '{n} tempat dari Google Maps disimpan. Buka Rencana rute → Cari → "Dari Google Maps".', 'plan.gm_unplaced': 'Belum ada titik ({n})', 'plan.gm_find_again': 'Cari lagi',
     'plan.gm_on_map': 'Di peta', 'plan.gm_tap': 'Ketuk peta di tempat "{name}"', 'plan.gm_placed': '{name} ditaruh di peta', 'plan.gm_located': '{k} dari {n} tempat ditemukan titiknya', 'plan.gm_from': 'dari {u}',
     'plan.list_in': '{u} mengirim {n} toko untuk {s} → rencana {d}',
+    'plan.g_on': 'Termasuk hasil Google (G) · {n} dari {cap} pencarian gratis bulan ini', 'plan.g_full': 'Pencarian Google bulan ini sudah dipakai semua — tetap pakai pencarian gratis',
     'map.empty': 'Belum ada titik lokasi', 'map.label': 'Peta rute', 'map.offline': 'Peta sederhana', 'map.expand': 'Perbesar', 'map.legend': 'Titik oranye bernomor = pesanan hari ini (urutan masuk). Titik ungu bernomor = rencana rute; setelah dikunjungi warnanya = hasilnya: hijau ✓ = pesan, oranye ✓ = ada tanpa pesanan, biru ✕ = tidak mau, hitam ✕ = tutup / tidak ada / ganti usaha. Lingkaran = toko. Garis biru = rute.',
     'outbox.title': 'Data tertunda', 'outbox.badge': '{n} data tertunda', 'outbox.queued': 'Offline — disimpan, dikirim otomatis', 'outbox.empty': 'Semua data sudah terkirim', 'outbox.synced': '{n} data terkirim',
     'outbox.still': 'Masih {n} data tertunda', 'outbox.send_now': 'Kirim sekarang',
@@ -2753,13 +2810,14 @@ const I18N = {
     'plan.no_line': 'هذا الشارع ليس له خط على الخريطة. ارسم خط عمل فوقه.', 'plan.found_line': '{n} مكانًا على طول {name} (مرتبة من بداية الخط)',
     'plan.overlap': '{p}% من هذا الخط عمل فيه {u} ({d})', 'plan.overlap_planned': '{p}% من هذا الخط خطّط له {u} ({d})',
     'find.kurma': 'متاجر التمور', 'find.haji': 'مستلزمات الحج والعمرة', 'find.muslim': 'متاجر إسلامية وشرق أوسطية', 'find.oleh': 'هدايا وفواكه', 'find.ritel': 'ميني ماركت وسوبرماركت',
-    'find.sembako': 'بقالات ومواد غذائية', 'find.kuliner': 'مخابز وحلويات ومقاهٍ', 'find.masjid': 'مساجد ومعاهد',
+    'find.sembako': 'البقالات الإندونيسية (سمباكو)', 'find.kuliner': 'مخابز وحلويات ومقاهٍ', 'find.masjid': 'مساجد ومعاهد',
     'plan.gm': 'خرائط جوجل', 'plan.gm_hint': 'في خرائط جوجل افتح المحل ← مشاركة ← نسخ، ثم الصقه هنا (يمكن عدة محلات مرة واحدة، أو روابط أو عناوين). مجاني بلا حساب جوجل. في هاتف أندرويد المثبَّت عليه التطبيق: مشاركة ← Khair Sales.',
     'plan.gm_ph': 'الصق الاسم والعنوان ورابط خرائط جوجل…', 'plan.gm_read': 'اقرأ القائمة', 'plan.gm_none': 'لم يُقرأ أي مكان. الصق نصًا أو رابطًا من خرائط جوجل.',
     'plan.gm_found': '{n} مكانًا من خرائط جوجل على الخريطة', 'plan.gm_missing': '{n} بلا نقطة بعد (انظر تبويب الخطة)', 'plan.gm_inbox': 'من خرائط جوجل ({n})',
     'plan.gm_shared': 'حُفظ {n} مكانًا من خرائط جوجل. افتح خطة المسار ← البحث ← «من خرائط جوجل».', 'plan.gm_unplaced': 'بلا نقطة بعد ({n})', 'plan.gm_find_again': 'ابحث مرة أخرى',
     'plan.gm_on_map': 'على الخريطة', 'plan.gm_tap': 'اضغط على الخريطة في مكان «{name}»', 'plan.gm_placed': 'وُضع {name} على الخريطة', 'plan.gm_located': 'وُجدت نقطة {k} من {n} مكانًا', 'plan.gm_from': 'من {u}',
     'plan.list_in': '{u} أرسل {n} محلًا لـ {s} ← خطة {d}',
+    'plan.g_on': 'تشمل نتائج جوجل (G) · {n} من {cap} بحثًا مجانيًا هذا الشهر', 'plan.g_full': 'انتهت عمليات بحث جوجل لهذا الشهر — يستمر البحث المجاني',
     'map.empty': 'لا توجد نقاط موقع', 'map.label': 'خريطة المسار', 'map.offline': 'خريطة مبسطة', 'map.expand': 'تكبير', 'map.legend': 'النقاط البرتقالية المرقمة = طلبيات اليوم (بترتيب الوصول). النقاط البنفسجية المرقمة = خطة المسار؛ بعد الزيارة يصبح لونها حسب النتيجة: أخضر ✓ = طلبية، برتقالي ✓ = موجود بلا طلبية، أزرق ✕ = لا يرغب، أسود ✕ = مغلق / غير موجود / غيّر نشاطه. الدوائر = المتاجر. الخط الأزرق = المسار.',
     'outbox.title': 'بيانات معلّقة', 'outbox.badge': '{n} بيانات معلّقة', 'outbox.queued': 'بدون اتصال — حُفظ وسيُرسل تلقائيًا', 'outbox.empty': 'تم إرسال كل البيانات', 'outbox.synced': 'أُرسلت {n}',
     'outbox.still': 'ما زال {n} معلّقًا', 'outbox.send_now': 'أرسل الآن',
