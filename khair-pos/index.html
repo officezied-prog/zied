@@ -1498,7 +1498,7 @@ function voiceHTML() {
     const qi = Math.min(VS.qi, Math.max(0, qs.length - 1));
     return `<div class="vs rec" id="vs-rec">
       <div class="vs-h"><span class="rec-dot" aria-hidden="true"></span><span class="grow" role="status">🎙️ ${esc(t('vs.recording'))} <span class="num" id="vs-time">0:00</span></span><button type="button" class="btn xs danger" data-act="vs-stop" id="vs-stop">■ ${esc(t('vs.stop'))}</button></div>
-      <div class="small muted" id="vs-notice">${esc(t('vs.notice'))}</div>
+      <div class="small muted" id="vs-notice">${esc(t('vs.notice'))} · ${manual}</div>
       ${qs.length ? `<div class="vs-q" id="vs-q" title="${esc(t('vs.ask_hint'))}"><span class="n num">${qi + 1}/${qs.length}</span><span class="grow" dir="auto" id="vs-q-text">${esc(qs[qi])}</span>
         <button type="button" data-act="vs-q" data-d="-1" id="vs-prev" aria-label="‹" ${qi ? '' : 'disabled'}>‹</button><button type="button" data-act="vs-q" data-d="1" id="vs-next" aria-label="›" ${qi < qs.length - 1 ? '' : 'disabled'}>›</button></div>` : ''}
       <div class="vs-tx" dir="auto" id="vs-tx" aria-live="polite"></div></div>`;

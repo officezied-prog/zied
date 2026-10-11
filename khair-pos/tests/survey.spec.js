@@ -54,7 +54,8 @@ test('voice survey in the payment panel: starts by itself when paying (no questi
   // v36 (owner: «عند الضغط ابدأ بدون سؤال الزبون»): starting to pay (the amount paid) starts the recording at once
   await page.click('#cart-paid');
   await expect(page.locator('#vs-rec')).toContainText('🎙️ Rekaman aktif');
-  await expect(page.locator('#vs-rec #vs-notice')).toHaveText('Transaksi direkam untuk layanan & keamanan');
+  await expect(page.locator('#vs-rec #vs-notice')).toContainText('Transaksi direkam untuk layanan & keamanan');
+  await expect(page.locator('#vs-rec #vs-manual')).toBeVisible(); // the manual survey stays reachable while recording
   // the questions come one at a time, in order (compact: the desktop cart keeps "Bayar & Simpan" on screen)
   await expect(page.locator('#vs-q')).toContainText('1/5');
   await expect(page.locator('#vs-q-text')).toHaveText('Apakah ini pertama kali belanja di Khair Mart?');
