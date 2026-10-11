@@ -4,7 +4,7 @@ const MockServer = (() => {
   const DBKEY = 'kmock.db';
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
-  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_transfers', 'list_photos', 'field_bootstrap', 'list_field', 'product_images', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon'];
+  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_transfers', 'list_photos', 'field_bootstrap', 'list_field', 'product_images', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon', 'profit_loss'];
   class MockErr extends Error { constructor(code, message, extra) { super(message || code); this.code = code; this.extra = extra || null; } }
   const E = (code, msg, extra) => new MockErr(code, msg, extra);
   let ready = null;
@@ -188,6 +188,12 @@ const MockServer = (() => {
   const internalSup = s => ['PENYESUAIAN STOK', 'STOK OPNAME', REPACK_SUP].includes(strv(s).toUpperCase());
   const roleOf = u => u.role === 'owner' ? 'owner' : u.role === 'manager' ? 'manager' : u.role === 'sales' ? 'sales' : 'kasir';
   const isAppr = u => u.role === 'owner' || u.role === 'manager';
+  // v36 — mirror of the server's canDecide: the owner decides anything; the manager all but owner-only requests; the accountant the
+  // shared manager-or-accountant ones (mgr_akuntan); a void of an EARLIER day's sale only the owner ("إصلاح فاتورة قديمة لا يتم إلا بموافقتي الشخصية").
+  const voidSaleDate = a => { try { const pl = JSON.parse(a.payload || '{}'); if (pl && isYmd(pl.sale_date)) return pl.sale_date; } catch (e) { } const m = /(\d{4}-\d{2}-\d{2})/.exec(strv(a.summary)); return m ? m[1] : ''; };
+  const isOldVoid = a => !!a && a.kind === 'void' && (!voidSaleDate(a) || voidSaleDate(a) < jktDate());
+  const isOwnVoid = (u, a) => !!a && a.kind === 'void' && strv(a.cashier).toLowerCase() === strv(u.name).toLowerCase(); // never decide your own void
+  const canDecideAp = (u, a) => u.role === 'owner' || (a.approver_role !== 'owner' && !isOldVoid(a) && !isOwnVoid(u, a) && (a.approver_role === 'mgr_akuntan' ? ['manager', 'akuntan'].includes(u.role) : u.role === 'manager'));
   function logAct(db, u, kind, summary, ref, amount, level) {
     db.activity = db.activity || [];
     db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + randId(8), at: new Date().toISOString(), act_date: jktDate(), user: u.name, role: roleOf(u), kind,
@@ -784,7 +790,7 @@ const MockServer = (() => {
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
-    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'list_corrections', 'save_product'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
+    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
     if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'list_photos'].includes(action)) deviceTouch(db, u, data.device, false);
 
@@ -1081,16 +1087,17 @@ const MockServer = (() => {
         return { approval: ap };
       }
       case 'list_approvals': {
-        if (!['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Owner/manager only');
-        return { approvals: db.approvals.filter(x => x.status === 'pending').map(x => Object.assign({}, x, { can_decide: x.approver_role !== 'owner' || u.role === 'owner' })) };
+        if (!['owner', 'manager', 'akuntan'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+        // the accountant only sees the shared manager-or-accountant requests (v29/v36, as on the server)
+        return { approvals: db.approvals.filter(x => x.status === 'pending' && (isAppr(u) || x.approver_role === 'mgr_akuntan')).map(x => Object.assign({}, x, { can_decide: canDecideAp(u, x) })) };
       }
       case 'decide_approval': {
-        if (!['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Owner/manager only');
+        if (!['owner', 'manager', 'akuntan'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
         const ap = db.approvals.find(x => x.request_id === data.request_id);
         if (!ap) throw E('NOT_FOUND', 'approval');
         if (!['approved', 'rejected'].includes(data.decision)) throw E('INVALID', 'decision');
-        if (ap.status !== 'pending') throw E('INVALID', 'Already decided: ' + ap.status);
-        if (ap.approver_role === 'owner' && u.role !== 'owner') throw E('NEEDS_OWNER', 'Only the owner can decide this request');
+        if (ap.status !== 'pending') throw E('INVALID', 'Permintaan sudah diputuskan' + (strv(ap.decided_by) ? ' oleh ' + strv(ap.decided_by) : '') + ': ' + ap.status);
+        if (!canDecideAp(u, ap)) { if (ap.approver_role === 'owner' || isOldVoid(ap)) throw E('NEEDS_OWNER', isOldVoid(ap) ? 'Faktur lama — hanya pemilik yang boleh menyetujui' : 'Only the owner can decide this request'); throw E('FORBIDDEN', isOwnVoid(u, ap) ? 'Permintaan sendiri diputuskan orang lain' : 'Tidak diizinkan memutuskan permintaan ini'); }
         const out = {};
         let planFinal = '';
         if (data.decision === 'approved' && ap.kind === 'void') {
@@ -1255,10 +1262,12 @@ const MockServer = (() => {
         if (!reason) throw E('INVALID', 'reason required');
         const open = db.approvals.find(x => x.kind === 'void' && x.ref === sale.invoice_no && x.status === 'pending');
         if (open) return { request_id: open.request_id, approval: open };
-        const approval = newApproval(db, u, { kind: 'void', ref: sale.invoice_no, approver_role: 'owner', customer_id: sale.customer_id, customer_name: sale.customer_name, total: sale.total, debt_amount: sale.debt_amount,
-          summary: `${sale.invoice_no} · ${sale.sale_date}`, payload: JSON.stringify({ reason, invoice_no: sale.invoice_no, sale_date: sale.sale_date, total: sale.total }) });
-        logAct(db, u, 'minta_batal', 'Minta batal faktur ' + sale.invoice_no + ': ' + reason, sale.invoice_no, sale.total, 'warn');
-        return { request_id: approval.request_id, approval };
+        // v36: today's sale → manager OR accountant (mgr_akuntan); an EARLIER day's sale → only the owner
+        const oldSale = !isYmd(sale.sale_date) || sale.sale_date < jktDate();
+        const approval = newApproval(db, u, { kind: 'void', ref: sale.invoice_no, approver_role: oldSale ? 'owner' : 'mgr_akuntan', customer_id: sale.customer_id, customer_name: sale.customer_name, total: sale.total, debt_amount: sale.debt_amount,
+          summary: `${sale.invoice_no} · ${sale.sale_date}`, payload: JSON.stringify({ reason, invoice_no: sale.invoice_no, sale_date: sale.sale_date, total: sale.total, old: oldSale }) });
+        logAct(db, u, 'minta_batal', 'Minta batal faktur ' + sale.invoice_no + (oldSale ? ' (faktur lama ' + sale.sale_date + ', butuh persetujuan pemilik)' : '') + ': ' + reason, sale.invoice_no, sale.total, 'warn');
+        return { request_id: approval.request_id, approval, approver_role: approval.approver_role, old_invoice: oldSale };
       }
       case 'change_price': {
         const p = prodById(data.product_id); if (!p) throw E('NOT_FOUND', 'product');
@@ -1290,7 +1299,8 @@ const MockServer = (() => {
         const opening = sh.opening_cash;
         const last = db.shifts.filter(x => x.status === 'closed').sort((a, b) => String(b.closed_at).localeCompare(String(a.closed_at)))[0] || null;
         const lastTxt = last ? ' — kas terakhir ditutup ' + String(last.closed_at).slice(0, 16).replace('T', ' ') + ' oleh ' + strv(last.cashier) + ': dihitung Rp ' + int(last.counted_cash) + ', selisih dengan pembukaan Rp ' + (opening - int(last.counted_cash)) : '';
-        const bk = newApproval(db, u, { kind: 'buka_kas', approver_role: roleOf(u) === 'manager' ? 'owner' : 'manager', ref: sh.shift_id, total: opening, summary: ('Buka kas ' + u.name + ': modal awal dihitung Rp ' + opening + lastTxt).slice(0, 1500), note: String(data.note || ''),
+        // v36: a cashier's opening goes to the manager AND the accountant (either approves, first decision wins)
+        const bk = newApproval(db, u, { kind: 'buka_kas', approver_role: roleOf(u) === 'manager' ? 'owner' : 'mgr_akuntan', ref: sh.shift_id, total: opening, summary: ('Buka kas ' + u.name + ': modal awal dihitung Rp ' + opening + lastTxt).slice(0, 1500), note: String(data.note || ''),
           payload: JSON.stringify({ shift_id: sh.shift_id, opening_cash: opening, last_counted: last ? int(last.counted_cash) : null, last_cashier: last ? strv(last.cashier) : '' }) });
         logAct(db, u, 'buka_kas', 'Buka kas ' + u.name + ' Rp ' + opening + lastTxt, sh.shift_id, opening, last && int(last.counted_cash) !== opening ? 'warn' : 'info');
         return { shift: blind(shiftSummary(db, sh), u.role), request_id: bk.request_id, approval: bk };
@@ -1943,6 +1953,34 @@ const MockServer = (() => {
         return { repack: outR, stock: [{ product_id: from.id, stock: from.stock }, Object.assign({ product_id: to.id, stock: to.stock }, owner ? { cost_price: toCost } : {})] };
       }
       case 'stock_count': return stockCount(db, u, data);
+      case 'profit_loss': {
+        // v36 (owner 2026-10-11: "الكشف الشهري يكتب الربح والخسارة") — same lines as the server's profit_loss
+        needOwner();
+        if (!isYmd(data.from) || !isYmd(data.to) || data.from > data.to) throw E('INVALID', 'Rentang tanggal tidak valid');
+        const inP = d => strv(d) >= data.from && strv(d) <= data.to;
+        const wibDay = iso => iso ? new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(0, 10) : '';
+        const pS = db.sales.filter(x => inP(x.sale_date)), okS = pS.filter(x => x.status !== 'void'), voidS = pS.filter(x => x.status === 'void');
+        const salesTotal = sum(okS, x => int(x.total)), gross = sum(okS, x => int(x.profit));
+        const pExp = db.expenses.filter(e => inP(e.expense_date)), byCat = {};
+        pExp.forEach(e => { const k = strv(e.category) || 'lain'; byCat[k] = (byCat[k] || 0) + int(e.amount); });
+        const adj = db.purchases.filter(x => inP(x.purchase_date) && ['STOK OPNAME', 'PENYESUAIAN STOK'].includes(strv(x.supplier).toUpperCase()));
+        const stockDiff = sum(adj, x => Math.round(num(x.qty) * int(x.cost_price)));
+        const custRet = (db.returns || []).filter(x => x.status === 'approved' && x.kind !== 'pemasok' && inP(x.return_date));
+        let restock = 0;
+        custRet.forEach(x => { let lines = []; try { lines = typeof x.lines === 'string' ? JSON.parse(x.lines || '[]') : (x.lines || []); } catch (e) { lines = []; } (Array.isArray(lines) ? lines : []).forEach(l => { if (l && l.condition !== 'rusak') { const p = prodById(l.product_id); restock += Math.round(num(l.qty) * int(p ? p.cost_price : 0)); } }); });
+        const retRefund = sum(custRet, x => int(x.refund));
+        const corr = db.approvals.filter(a => a.kind === 'koreksi' && inP(wibDay(a.decided_at || a.created_at)));
+        let over = 0, under = 0;
+        corr.forEach(a => { let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; } const un = int(pl.under_total); under += un; over += int(a.total) - un; });
+        const decidedIn = (kind, status) => db.approvals.filter(a => a.kind === kind && a.status === status && inP(wibDay(a.decided_at)));
+        const collected = sum(decidedIn('konsultasi', 'approved'), a => int(a.total)), writeoff = sum(decidedIn('konsultasi', 'rejected'), a => int(a.total)), refundPaid = sum(decidedIn('refund', 'approved'), a => int(a.total));
+        const expTotal = sum(pExp, e => int(e.amount)), retNet = restock - retRefund;
+        const pl = { from: data.from, to: data.to, sales: { count: okS.length, total: salesTotal, discount: sum(okS, x => int(x.discount)) }, voids: { count: voidS.length, total: sum(voidS, x => int(x.total)) },
+          cogs: salesTotal - gross, gross_profit: gross, expenses: { count: pExp.length, total: expTotal, by_category: byCat }, returns: { count: custRet.length, refund: retRefund, restock, net: retNet },
+          stock_diff: { count: adj.length, value: stockDiff }, corrections: { count: corr.length, net: over + under, overcharge: over, undercharge: under, refund_paid: refundPaid, collected, writeoff } };
+        pl.net_profit = gross - expTotal + retNet + stockDiff + collected;
+        return { pl };
+      }
       case 'get_sales': {
         if (!isYmd(data.from) || !isYmd(data.to)) throw E('INVALID', 'from/to');
         const inR = d => d >= data.from && d <= data.to;
@@ -2012,7 +2050,9 @@ const MockServer = (() => {
         if (u.role !== 'owner') {
           if (u.role !== 'manager') throw E('FORBIDDEN', 'Owner only');
           const t0 = db.users.find(v => v.name.toLowerCase() === String(data.name || '').trim().toLowerCase());
-          if (!['kasir', 'sales'].includes(data.role) || (t0 && !['kasir', 'sales'].includes(t0.role))) throw E('FORBIDDEN', 'Manajer hanya mengatur akun kasir dan sales');
+          // v36: the manager may also RENAME the existing accountant account (name only — not its role, active state or a new account)
+          const akRename = t0 && t0.role === 'akuntan' && data.role === 'akuntan' && strv(data.new_name) !== '' && (data.active === undefined || (data.active !== false) === (t0.active !== false));
+          if (!akRename && (!['kasir', 'sales'].includes(data.role) || (t0 && !['kasir', 'sales'].includes(t0.role)))) throw E('FORBIDDEN', 'Manajer hanya mengatur akun kasir dan sales (akun akuntan: hanya ganti nama)');
         }
         const name = personName(data.name);
         if (!name) throw E('INVALID', strv(data.name) ? 'Nama pengguna hanya boleh huruf, spasi dan . \' -' : 'Nama wajib');

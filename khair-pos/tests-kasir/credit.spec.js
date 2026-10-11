@@ -127,8 +127,10 @@ test('rejected request shows the manager note; void and price requests respect c
   await p2.click('#tb-appr');
   const v = p2.locator('.apr-card[data-kind="void"]');
   await expect(v).toContainText(inv);
-  await expect(v.locator('[data-owner-only]')).toBeVisible();
-  await expect(v.locator('[data-d="approved"]')).toBeDisabled();
+  // v36: a void of TODAY's invoice is the manager's (or accountant's) to decide; only an earlier day's is owner-only
+  await expect(v.locator('[data-old-invoice]')).toHaveCount(0);
+  await expect(v.locator('[data-owner-only]')).toHaveCount(0);
+  await expect(v.locator('[data-d="approved"]')).toBeEnabled();
   const pr = p2.locator('.apr-card[data-kind="price"]');
   await pr.locator('[data-d="approved"]').click();
   await expect(pr).toHaveCount(0);

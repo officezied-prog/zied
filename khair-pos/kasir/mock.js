@@ -348,6 +348,7 @@ const MockServer = (() => {
   const discountOf = P => { const amount = Math.max(0, P.listTotal - (P.total - (P.sendFee || 0))); return { amount, pct: P.listTotal > 0 ? Math.round(amount / P.listTotal * 1000) / 10 : 0 }; };
   const marginPct = (total, cost) => total > 0 ? Math.round((total - cost) / total * 1000) / 10 : 0;
   /** What a non-owner may see of an approval: no profit (discount), quantities only (purchase fix). */
+  let viewer = ''; // v36: the current caller's name (set per request)
   function approvalOut(a, role) {
     if (!a) return a;
     const o = Object.assign({}, a);
@@ -370,9 +371,14 @@ const MockServer = (() => {
         }
       }
     }
-    o.can_decide = role === 'owner' || (role === 'manager' && a.approver_role !== 'owner');
+    o.can_decide = canDecideAp(role, a) && !(role !== 'owner' && a.kind === 'void' && str(a.cashier).toLowerCase() === str(viewer).toLowerCase());
     return o;
   }
+  // v36 — mirror of the server's canDecide: owner anything; manager all but owner-only; accountant the shared mgr_akuntan ones;
+  // a void of an EARLIER day's sale only the owner (owner 2026-10-11: "إصلاح فاتورة قديمة لا يتم إلا بموافقتي الشخصية").
+  function voidSaleDate(a) { const pl = parseObj(a.payload); if (isYmd(pl.sale_date)) return pl.sale_date; const m = /(\d{4}-\d{2}-\d{2})/.exec(str(a.summary)); return m ? m[1] : ''; }
+  function isOldVoid(a) { return !!a && a.kind === 'void' && (!voidSaleDate(a) || voidSaleDate(a) < jktDate()); }
+  function canDecideAp(role, a) { return role === 'owner' || (a.approver_role !== 'owner' && !isOldVoid(a) && (a.approver_role === 'mgr_akuntan' ? (role === 'manager' || role === 'akuntan') : role === 'manager')); }
   const qtyOnly = c => { const x = Object.assign({}, c); ['cost_price', 'from_total', 'to_total', 'd_total'].forEach(f => { delete x[f]; }); return x; };
   /* v16 warehouse (gudang) and shelf (toko): stock = total, shop_stock = on the shelf; a product without shop_stock counts all
      its stock as on the shelf. Only sales, voids and move_stock set the shelf (shopSet); every other change of a product row
@@ -473,6 +479,7 @@ const MockServer = (() => {
     if (!db.users.length) throw E('NO_USERS', 'Run setup first');
     // v16 (as on the server): lock after 5 wrong PINs in a row (15 min), owner master code opens every account, own PIN at first login
     const u = db.users.find(x => x.active !== false && x.name.toLowerCase() === String(user || '').trim().toLowerCase());
+    viewer = u ? u.name : ''; // v36: who asks (a void is never decided by the one who requested it)
     if (!u) throw E('BAD_PIN', 'Nama atau PIN salah');
     if (Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', lockMsg(u.locked_until), { locked_until: str(u.locked_until) });
     const masterOwner = isHex64(pin_hash) && u.pin_hash !== pin_hash ? db.users.find(x => x.active !== false && x.role === 'owner' && isHex64(x.master_hash) && x.master_hash === pin_hash) || null : null;
@@ -840,8 +847,9 @@ const MockServer = (() => {
         const ap = db.approvals.find(x => x.request_id === data.request_id);
         if (!ap) throw E('NOT_FOUND', 'approval');
         if (!['approved', 'rejected'].includes(data.decision)) throw E('INVALID', 'decision');
-        if (ap.status !== 'pending') throw E('INVALID', 'Already decided: ' + ap.status);
-        if (ap.approver_role === 'owner' && u.role !== 'owner') throw E('NEEDS_OWNER', 'Only the owner can decide this request');
+        if (ap.status !== 'pending') throw E('INVALID', 'Permintaan sudah diputuskan' + (str(ap.decided_by) ? ' oleh ' + str(ap.decided_by) : '') + ': ' + ap.status);
+        if (!canDecideAp(u.role, ap)) { if (ap.approver_role === 'owner' || isOldVoid(ap)) throw E('NEEDS_OWNER', isOldVoid(ap) ? 'Faktur lama — hanya pemilik yang boleh menyetujui' : 'Only the owner can decide this request'); throw E('FORBIDDEN', 'Tidak diizinkan memutuskan permintaan ini'); }
+        if (u.role !== 'owner' && ap.kind === 'void' && str(ap.cashier).toLowerCase() === str(u.name).toLowerCase()) throw E('FORBIDDEN', 'Permintaan sendiri diputuskan orang lain'); // v36: never your own void
         const out = {};
         if (data.decision === 'approved' && ap.kind === 'void') {
           if (data.invoice_no !== ap.ref) throw E('INVALID', 'invoice_no must equal approval.ref');
@@ -996,10 +1004,12 @@ const MockServer = (() => {
         if (!reason) throw E('INVALID', 'reason required');
         const open = db.approvals.find(x => x.kind === 'void' && x.ref === sale.invoice_no && x.status === 'pending');
         if (open) return { request_id: open.request_id, approval: open };
-        const approval = newApproval(db, u, { kind: 'void', ref: sale.invoice_no, approver_role: 'owner', customer_id: sale.customer_id, customer_name: sale.customer_name, total: sale.total, debt_amount: sale.debt_amount,
-          summary: `${sale.invoice_no} · ${sale.sale_date}`, payload: JSON.stringify({ reason, invoice_no: sale.invoice_no, sale_date: sale.sale_date, total: sale.total }) });
-        logAct(db, u, 'minta_batal', 'Minta batal faktur ' + sale.invoice_no + ': ' + reason, sale.invoice_no, money(sale.total), 'warn');
-        return { request_id: approval.request_id, approval: approvalOut(approval, u.role) };
+        // v36: today's sale → manager OR accountant (mgr_akuntan); an EARLIER day's sale → only the owner
+        const oldSale = !isYmd(sale.sale_date) || sale.sale_date < jktDate();
+        const approval = newApproval(db, u, { kind: 'void', ref: sale.invoice_no, approver_role: oldSale ? 'owner' : 'mgr_akuntan', customer_id: sale.customer_id, customer_name: sale.customer_name, total: sale.total, debt_amount: sale.debt_amount,
+          summary: `${sale.invoice_no} · ${sale.sale_date}`, payload: JSON.stringify({ reason, invoice_no: sale.invoice_no, sale_date: sale.sale_date, total: sale.total, old: oldSale }) });
+        logAct(db, u, 'minta_batal', 'Minta batal faktur ' + sale.invoice_no + (oldSale ? ' (faktur lama ' + sale.sale_date + ', butuh persetujuan pemilik)' : '') + ': ' + reason, sale.invoice_no, money(sale.total), 'warn');
+        return { request_id: approval.request_id, approval: approvalOut(approval, u.role), approver_role: approval.approver_role, old_invoice: oldSale };
       }
       case 'change_price': {
         const p = prodById(data.product_id); if (!p) throw E('NOT_FOUND', 'product');
@@ -1032,7 +1042,8 @@ const MockServer = (() => {
         const last = db.shifts.filter(x => x.status === 'closed').sort((a, b) => String(b.closed_at).localeCompare(String(a.closed_at)))[0] || null;
         db.shifts.push(sh);
         const lastTxt = last ? ' — kas terakhir ditutup ' + str(last.closed_at).slice(0, 16).replace('T', ' ') + ' oleh ' + str(last.cashier) + ': dihitung Rp ' + money(last.counted_cash) + ', selisih dengan pembukaan Rp ' + (opening - money(last.counted_cash)) : '';
-        const approval = newApproval(db, u, { kind: 'buka_kas', approver_role: u.role === 'manager' ? 'owner' : 'manager', ref: sh.shift_id, total: opening,
+        // v36: a cashier's opening goes to the manager AND the accountant (either approves, first decision wins)
+        const approval = newApproval(db, u, { kind: 'buka_kas', approver_role: u.role === 'manager' ? 'owner' : 'mgr_akuntan', ref: sh.shift_id, total: opening,
           summary: ('Buka kas ' + u.name + ': modal awal dihitung Rp ' + opening + lastTxt).slice(0, 1500), note: str(data.note),
           payload: JSON.stringify({ shift_id: sh.shift_id, opening_cash: opening, last_counted: last ? money(last.counted_cash) : null, last_cashier: last ? str(last.cashier) : '' }) });
         logAct(db, u, 'buka_kas', 'Buka kas ' + u.name + ' Rp ' + opening + lastTxt, sh.shift_id, opening, last && money(last.counted_cash) !== opening ? 'warn' : 'info');

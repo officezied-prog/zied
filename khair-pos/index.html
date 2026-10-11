@@ -433,7 +433,7 @@ const isApprover = () => S.role === 'owner' || S.role === 'manager';
 const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
 const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'approvals', 'shoplist', 'settings'];
-const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|prod-new)$/;
+const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
@@ -522,7 +522,7 @@ const VIEWS = [
   { id: 'gudang', icon: 'warehouse', label: 'nav.gudang', approver: true },
   { id: 'retur', icon: 'return', label: 'nav.retur', approver: true },
   { id: 'expenses', icon: 'wallet', label: 'nav.expenses' },
-  { id: 'kas', icon: 'cash', label: 'nav.kas', tab: 'pos' }, // merged into the cashier page as a sub-tab (not its own nav button)
+  { id: 'kas', icon: 'cash', label: 'nav.kas', tab: 'pos', notOwner: true }, // merged into the cashier page as a sub-tab (not its own nav button); v36: no cash drawer for the owner
   { id: 'customers', icon: 'users', label: 'nav.customers' },
   { id: 'members', icon: 'member', label: 'nav.members', approver: true },
   { id: 'absensi', icon: 'camera', label: 'nav.absensi', approver: true },
@@ -541,7 +541,7 @@ const VIEWS = [
   { id: 'settings', icon: 'gear', label: 'nav.settings' }
 ];
 /** Bottom tab bar on phones: 4 main views + "Lainnya". */
-const viewAllowed = v => isAudit() ? AUDIT_VIEWS.includes(v.id) : (!v.approver || isApprover()) && (!v.owner || isOwner());
+const viewAllowed = v => isAudit() ? AUDIT_VIEWS.includes(v.id) : (!v.approver || isApprover()) && (!v.owner || isOwner()) && !(v.notOwner && isOwner());
 const phoneViews = () => isAudit() ? ['reports', 'history', 'purchases', 'customers'] : isApprover() ? ['home', 'pos', 'history', 'customers'] : ['pos', 'products', 'customers', 'history'];
 const RENDER = {};
 function renderShell() {
@@ -1005,7 +1005,45 @@ function cashierTabs(active) {
     <button class="${active === 'kas' ? 'on' : ''}" data-act="cashier-tab" data-tab="kas" role="tab" aria-selected="${active === 'kas'}">${ic('cash')} ${esc(t('navs.kas'))}</button>
   </div>`;
 }
+/* v36 (owner 2026-10-11: "تطبيق المالك — الكاشير: عرض المبيعات والفواتير اليومية فقط، لا بيع ولا شراء ولا تحويل"):
+   for the OWNER the cashier page is a read-only, live list of today's sales and invoices — no cart, no selling, no cash
+   drawer. The manager keeps the full selling screen and the drawer (she still works as cashier). Refreshes every 60 s
+   while the page is open and the tab visible (one get_sales of today). */
+const OM = { data: null, err: '', at: 0, busy: false };
+RENDER.pos = function () { if (isOwner()) renderOwnerSales(); };
+function renderOwnerSales() {
+  $('#view-pos').innerHTML = `<div class="view-head"><h1>${esc(t('om.title'))}</h1><span class="badge green" id="om-live" style="margin-inline-end:auto" title="${esc(t('om.live_hint'))}">● ${esc(t('home.live'))} <span class="muted" id="om-updated"></span></span><button class="btn sm" data-act="om-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
+    <p class="small muted" style="margin-top:0" id="om-hint">${esc(t('om.hint'))}</p>
+    <div id="om-body"><div class="empty">${esc(t('loading'))}</div></div>`;
+  if (OM.data) drawOwnerSales();
+  loadOwnerSales(true); // opening the page always shows the latest sales
+}
+async function loadOwnerSales(fresh) {
+  if (!isOwner() || OM.busy) return;
+  OM.busy = true;
+  const T = today();
+  if (fresh) delete salesCache[T + '|' + T];
+  try { OM.data = await loadSales(T, T, !fresh); OM.err = ''; OM.at = Date.now(); }
+  catch (e) { OM.err = errMsg(e); }
+  OM.busy = false;
+  drawOwnerSales();
+}
+function drawOwnerSales() {
+  const b = $('#om-body'); if (!b || !isOwner()) return;
+  const up = $('#om-updated'); if (up && OM.at) up.textContent = t('home.updated', { time: DTF_TIME.format(new Date(OM.at)) });
+  if (!OM.data) { b.innerHTML = `<div class="empty ${OM.err ? 'red' : ''}">${esc(OM.err || t('loading'))}</div>`; return; }
+  const sales = OM.data.sales.slice().sort((a, b2) => String(b2.sale_time).localeCompare(String(a.sale_time)));
+  const ok = sales.filter(s => s.status !== 'void');
+  const by = m => sum(ok.filter(s => s.payment_method === m), s => int(s.total));
+  b.innerHTML = `${OM.err ? `<div class="notice red small">${esc(OM.err)}</div>` : ''}<div class="kpis">${kpi('om-omzet', t('rep.omzet'), fmtRp(sum(ok, s => int(s.total))), '', 'hl')}${kpi('om-count', t('rep.tx_count'), fmtNum(ok.length))}
+      ${['tunai', 'transfer', 'qris', 'hutang'].map(m => kpi('om-' + m, t('pm.' + m), fmtRp(by(m)))).join('')}${sales.length - ok.length ? kpi('om-void', t('void'), fmtNum(sales.length - ok.length)) : ''}</div>
+    <div class="tbl-wrap"><table class="tbl" id="om-table"><thead><tr><th>${esc(t('rc.no'))}</th><th>${esc(t('time'))}</th><th class="hide-phone">${esc(t('rc.cashier'))}</th><th>${esc(t('rc.customer'))}</th><th class="hide-phone">${esc(t('pos.method'))}</th><th class="r">${esc(t('total'))}</th><th>${esc(t('status'))}</th></tr></thead><tbody>
+    ${sales.map(s => `<tr class="click ${s.status === 'void' ? 'void' : ''}" data-act="om-open" data-inv="${esc(s.invoice_no)}"><td>${esc(s.invoice_no)}</td><td class="num">${esc(jktTime(s.sale_time))}</td><td class="hide-phone">${esc(s.cashier || '')}</td><td>${esc(s.customer_name || t('pos.walkin'))}</td><td class="hide-phone">${esc(t('pm.' + s.payment_method))}</td><td class="r num">${fmtRp(s.total)}</td><td>${s.status === 'void' ? `<span class="badge red">${esc(t('void'))}</span>` : s.debt_amount ? `<span class="badge amber">${esc(t('debt'))}</span>` : `<span class="badge">${esc(t('ok_status'))}</span>`}</td></tr>`).join('')
+      || `<tr><td colspan="7" class="empty">${esc(t('om.none'))}</td></tr>`}</tbody></table></div>`;
+}
+setInterval(() => { if (!document.hidden && S.inApp && S.view === 'pos' && isOwner()) loadOwnerSales(true); }, 60000);
 function renderPosSkeleton() {
+  if (isOwner()) { if (S.view === 'pos') renderOwnerSales(); return; } // v36: the owner does not sell (the list loads only when shown)
   $('#view-pos').innerHTML = `<div class="pos">
     <div class="pos-left">
       ${cashierTabs('sell')}
@@ -1997,7 +2035,7 @@ function aprBodyHTML(a) {
     <div class="small">${esc(pl.ref_type === 'faktur' ? t('tc.invoice') : t('tc.payment'))}: <b>${esc(pl.ref || a.ref)}</b>${pl.bank ? ' · ' + esc(pl.bank) : ''}${pl.transfer_ref ? ' · ' + esc(t('tc.ref')) + ' ' + esc(pl.transfer_ref) : ''}</div>
     <div class="small muted" style="margin-top:4px">${esc(t('tc.hint'))}</div>`;
   if (kind === 'void') return `<div class="row wrap"><b class="grow" style="font-size:17px">${esc(t('apr.kind_void', { inv: a.ref }))}</b><span class="badge red">${esc(a.request_id)}</span></div>
-    <div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))}</div>
+    <div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))}</div>${voidOldHTML(a, pl)}
     <div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('rc.customer'))}</div><div class="v">${esc(a.customer_name || t('pos.walkin'))}</div></div><div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(a.total)}</div></div></div>
     <div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason || a.summary || '')}”</b></div>`;
   if (kind === 'price') {
@@ -2026,6 +2064,9 @@ function aprBodyHTML(a) {
     ${aprSummaryHTML(null, int(a.customer_debt_before), int(a.debt_amount), int(a.total))}
     ${a.summary ? `<div class="small" style="margin-bottom:8px">${esc(a.summary)}</div>` : ''}`;
 }
+// v36 (owner 2026-10-11: "إصلاح فاتورة قديمة لا يتم إلا بموافقتي الشخصية"): a void of an earlier day's sale is the owner's alone.
+function voidOldDate(a, pl) { const d = (pl && /^\d{4}-\d{2}-\d{2}$/.test(pl.sale_date || '')) ? pl.sale_date : ((/(\d{4}-\d{2}-\d{2})/.exec(String(a.summary || '')) || [])[1] || ''); return d && d < today() ? d : ''; }
+function voidOldHTML(a, pl) { const d = voidOldDate(a, pl); return d ? `<div class="badge red" style="margin:6px 0" data-old-invoice="${esc(d)}">${ic('lock')} ${esc(t('void.old_badge', { date: fmtDate(d) }))}</div>` : ''; }
 function payPlanAprHTML(a, pl) {
   // Supplier pay plan: the owner ticks which items to pay now (default all), then approves (or rejects the whole plan).
   const items = Array.isArray(pl.items) ? pl.items : [];
@@ -2057,7 +2098,7 @@ function drawApprovals() {
     return `<div class="card pad apr-card ${AP.fresh && AP.fresh.has(a.request_id) ? 'new' : ''}" data-req="${esc(a.request_id)}" data-kind="${esc(a.kind || 'credit')}">
       ${aprBodyHTML(a)}
       <input class="input" data-note placeholder="${esc(t('apr.note_ph'))}" aria-label="${esc(t('apr.note_ph'))}" ${can ? '' : 'disabled'}>
-      <div class="row" style="margin-top:10px;justify-content:flex-end">${can ? '' : `<span class="badge gold grow" style="justify-content:center" data-owner-only>${ic('lock')} ${esc(t(a.kind === 'opname' ? 'gd.needs_owner' : 'apr.owner_only'))}</span>`}
+      <div class="row" style="margin-top:10px;justify-content:flex-end">${can ? '' : `<span class="badge gold grow" style="justify-content:center" data-owner-only>${ic('lock')} ${esc(t(a.kind === 'opname' ? 'gd.needs_owner' : a.kind === 'void' && a.approver_role !== 'owner' && !voidOldDate(a, aprPayload(a)) && String(a.cashier).toLowerCase() === String(S.user).toLowerCase() ? 'apr.own_req' : 'apr.owner_only'))}</span>`}
         <button class="btn danger" data-act="apr-decide" data-d="rejected" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t('apr.reject'))}</button><button class="btn primary" data-act="apr-decide" data-d="approved" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t('apr.approve'))}</button></div>
     </div>`; }).join('') : `<div class="empty">${ic('check')}<div>${esc(t('apr.none'))}</div></div>`;
   $$('.apr-card', box).forEach(c => { if (notes[c.dataset.req]) $('[data-note]', c).value = notes[c.dataset.req]; });
@@ -2272,11 +2313,12 @@ async function requestVoid(inv) {
   if (!r.ok) return;
   try {
     const res = await api('request_void', { invoice_no: inv, reason: r.value });
-    toast(t('void.requested', { id: res.request_id }), 'ok', 5000);
+    toast(res.old_invoice ? t('void.requested_owner', { id: res.request_id }) : t('void.requested', { id: res.request_id }), 'ok', 6000); // v36
     trackMyRequest(res.request_id, 'void', t('notif.void', { inv }));
   } catch (e) { toast(errMsg(e), 'err', 5000); }
 }
 async function offerRemake(inv, saleDate) {
+  if (isOwner()) return; // v36: the owner does not sell — the re-made invoice is done at the cashier
   const r = await confirmBox(t('void.remake_q', { inv }), { ok: t('void.remake'), title: t('void.done_title') });
   if (r.ok) remakeSale(inv, saleDate);
 }
@@ -2581,11 +2623,11 @@ function computeAttention(d) {
     if (miss.length) items.push({ key: 'exit', level: 'err', icon: 'camera', text: t('att.exit', { n: miss.length }), go: 'history' });
     if (isApprover()) {
       const diff = (d.shifts || []).filter(x => x.status === 'closed' && int(x.difference) !== 0 && daysBetween(x.shift_date, T) <= 7);
-      if (diff.length) items.push({ key: 'diff', level: 'err', icon: 'cash', text: t('att.diff', { n: diff.length, amount: fmtRp(sum(diff, x => int(x.difference))) }), go: 'kas' });
+      if (diff.length) items.push({ key: 'diff', level: 'err', icon: 'cash', text: t('att.diff', { n: diff.length, amount: fmtRp(sum(diff, x => int(x.difference))) }), go: isOwner() ? 'reports' : 'kas', kasRep: isOwner() });
     }
   }
   const stale = isApprover() ? (S.openShifts || []).filter(x => x.shift_date < T) : (S.shift && S.shift.shift_date < T ? [S.shift] : []);
-  stale.forEach(x => items.push({ key: 'stale-' + x.shift_id, level: 'err', icon: 'cash', text: t('att.stale', { name: x.cashier, date: fmtDate(x.shift_date) }), go: 'kas' }));
+  stale.forEach(x => items.push({ key: 'stale-' + x.shift_id, level: 'err', icon: 'cash', text: t('att.stale', { name: x.cashier, date: fmtDate(x.shift_date) }), go: isOwner() ? 'reports' : 'kas', kasRep: isOwner() }));
   const neg = S.products.filter(p => p.active !== false && num(p.stock) < 0), low = S.products.filter(p => p.active !== false && num(p.stock) >= 0 && isLow(p));
   if (neg.length) items.push({ key: 'neg', level: 'err', icon: 'box', text: t('att.neg', { n: neg.length }), go: 'products', low: true });
   if (low.length) items.push({ key: 'low', level: 'warn', icon: 'box', text: t('att.low', { n: low.length }), go: 'products', low: true });
@@ -2610,7 +2652,7 @@ function laterAttention() {
 }
 function attentionHTML(items, limit) {
   if (!items.length) return `<div class="muted" style="padding:6px 2px">${ic('check')} ${esc(t('att.none'))}</div>`;
-  return `<div class="list">${items.slice(0, limit || items.length).map(x => `<button class="li att ${x.level}" data-act="att-go" data-go="${x.go}" data-key="${esc(x.key)}" ${x.low ? 'data-low="1"' : ''} ${x.daily ? 'data-daily="1"' : ''} ${x.tab ? `data-tab="${x.tab}"` : ''} style="min-height:48px;padding:8px 12px">${ic(x.icon)}<div class="grow t" style="font-weight:600">${esc(x.text)}</div><span class="muted">›</span></button>`).join('')}</div>`;
+  return `<div class="list">${items.slice(0, limit || items.length).map(x => `<button class="li att ${x.level}" data-act="att-go" data-go="${x.go}" data-key="${esc(x.key)}" ${x.low ? 'data-low="1"' : ''} ${x.daily ? 'data-daily="1"' : ''} ${x.tab ? `data-tab="${x.tab}"` : ''} ${x.kasRep ? 'data-kasrep="1"' : ''} style="min-height:48px;padding:8px 12px">${ic(x.icon)}<div class="grow t" style="font-weight:600">${esc(x.text)}</div><span class="muted">›</span></button>`).join('')}</div>`;
 }
 function renderNavDots() {
   const b = $('#nav [data-view="orders"]'); if (!b) return;
@@ -3193,7 +3235,7 @@ function openFieldOrder(o) {
       <div class="field" style="margin-top:10px"><label class="f" for="fo-note">${esc(t('notes'))}</label><input class="input" id="fo-note"></div><div class="red" id="fo-err" role="alert"></div>`,
     foot: `${o.status !== 'batal' && o.status !== 'dikirim' ? `<button class="btn danger" id="fo-cancel">${esc(t('fo.cancel'))}</button>` : ''}
       ${['baru', 'diproses'].includes(o.status) ? `<button class="btn" id="fo-ship">${ic('truck')} ${esc(t('fo.ship'))}</button>` : ''}
-      ${o.status === 'baru' ? `<button class="btn primary" id="fo-process">${ic('cart')} ${esc(t('fo.process'))}</button>` : ''}`
+      ${o.status === 'baru' && !isOwner() ? `<button class="btn primary" id="fo-process">${ic('cart')} ${esc(t('fo.process'))}</button>` : ''}`
   });
   const upd = async (status, confirmText) => {
     const note = $('#fo-note', el).value.trim();
@@ -4069,6 +4111,43 @@ async function loadReport() {
     RP.data = d; RP.err = '';
   } catch (e) { if (seq !== reportSeq) return; RP.data = null; RP.err = errMsg(e); }
   drawReport();
+  if (isOwner() && RP.mode === 'period') loadPL(seq);
+}
+/* v36 (owner 2026-10-11: "الكشف الشهري يكتب الربح والخسارة"): profit & loss of the shown period, computed by the server
+   (action profit_loss: sales, cost of goods, expenses, customer returns, stock-count differences, price corrections). */
+async function loadPL(seq) {
+  const from = RP.from, to = RP.to;
+  RP.pl = null; RP.plErr = '';
+  try { const r = await api('profit_loss', { from, to }); if (seq !== reportSeq) return; RP.pl = r.pl || null; }
+  catch (e) { if (seq !== reportSeq) return; RP.plErr = errMsg(e); }
+  const box = $('#rp-pl'); if (box) box.outerHTML = plPanelHTML();
+}
+function monthPLRows(P) {
+  const c = P.corrections || {}, r = P.returns || {}, sd = P.stock_diff || {};
+  return [
+    ['sales', t('pl.sales'), P.sales.total, ''],
+    ['cogs', t('pl.cogs'), -P.cogs, ''],
+    ['gross', t('pl.gross'), P.gross_profit, 'sub'],
+    ['expenses', t('pl.expenses'), -P.expenses.total, ''],
+    ['returns', t('pl.returns'), r.net, ''],
+    ['stock', t('pl.stock_diff'), sd.value, ''],
+    ['collected', t('pl.collected'), c.collected, ''],
+    ['net', P.net_profit < 0 ? t('pl.net_loss') : t('pl.net'), P.net_profit, 'total']
+  ];
+}
+function plPanelHTML() {
+  const head = `<h3>${ic('report')} ${esc(t('pl.title'))}</h3>`;
+  if (!RP.pl || RP.pl.from !== RP.from || RP.pl.to !== RP.to) return `<div class="panel" style="margin-bottom:14px" id="rp-pl">${head}<div class="pb ${RP.plErr ? 'red' : 'muted'}">${esc(RP.plErr || t('loading'))}</div></div>`;
+  const P = RP.pl, c = P.corrections || {};
+  const cls = v => v < 0 ? 'red' : (v > 0 ? 'green' : '');
+  const line = ([k, label, v, kind]) => `<tr data-pl="${k}" class="${kind === 'total' ? 'b' : ''}"><td>${kind === 'sub' || kind === 'total' ? `<b>${esc(label)}</b>` : esc(label)}</td><td class="r num ${kind ? cls(v) : ''}">${kind ? `<b>${fmtRp(v)}</b>` : fmtRp(v)}</td></tr>`;
+  const cline = (k, label, v) => `<tr data-plc="${k}"><td class="small">${esc(label)}</td><td class="r num small">${fmtRp(v)}</td></tr>`;
+  return `<div class="panel" style="margin-bottom:14px" id="rp-pl">${head}<div class="pb">
+    <div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl" id="pl-table"><tbody>${monthPLRows(P).map(line).join('')}</tbody></table></div>
+    <div class="small muted" style="margin:6px 0">${esc(t('pl.counts', { n: P.sales.count, d: fmtRp(P.sales.discount), v: P.voids.count, vt: fmtRp(P.voids.total) }))}</div>
+    ${c.count || c.refund_paid || c.collected || c.writeoff ? `<h4 style="margin:10px 0 4px">${esc(t('pl.corr_title', { n: c.count }))}</h4><div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl" id="pl-corr"><tbody>
+      ${cline('over', t('pl.corr_over'), c.overcharge)}${cline('under', t('pl.corr_under'), c.undercharge)}${cline('refund', t('pl.corr_refund'), c.refund_paid)}${cline('collected', t('pl.collected'), c.collected)}${cline('writeoff', t('pl.corr_writeoff'), c.writeoff)}</tbody></table></div>` : ''}
+    <div class="small muted" style="margin-top:6px">${esc(t('pl.hint'))}</div></div></div>`;
 }
 function kpi(id, label, value, sub = '', cls = '') { return `<div class="kpi ${cls}" data-kpi="${id}"><div class="k">${esc(label)}</div><div class="v num">${value}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`; }
 function barRows(entries, total, gold) {
@@ -4167,6 +4246,7 @@ function drawReport() {
       ${kpi('payments', t('rep.payments_in'), fmtRp(R.paymentsIn))}
       ${kpi('purchases', t('rep.purchases'), fmtRp(R.purchasesTotal), esc(t('rep.purchase_lines', { n: R.purchasesCount })) + (R.adjustCount ? ' · ' + esc(t('rep.adjust_lines', { n: R.adjustCount })) : ''))}
     </div>
+    ${RP.mode === 'period' ? plPanelHTML() : ''}
     <div class="panel chart" style="margin-bottom:14px"><h3>${ic('chart')} ${esc(R.single ? t('rep.chart_hour') : t('rep.chart_day'))}</h3><div class="pb">${chartSVG(R.buckets, L)}</div>
       <div class="legend"><span><i class="lg-omzet"></i>${esc(t('rep.omzet'))}</span>${L ? `<span><i class="lg-laba"></i>${esc(t('rep.profit'))}</span>` : ''}</div></div>
     <div class="rgrid">
@@ -4209,6 +4289,7 @@ function reportText(R, kind) {
   out.push('', `${tid('rep.receivable')}: ${fmtRp(R.receivable)}`, `${tid('rep.new_debt')}: ${fmtRp(R.newDebt)} · ${tid('rep.payments_in')}: ${fmtRp(R.paymentsIn)}`,
     `${tid('rep.purchases')}: ${fmtRp(R.purchasesTotal)}`);
   if (R.lowStock.length) out.push(`${tid('rep.low_stock')}: ${R.lowStock.slice(0, 8).map(p => p.name).join(', ')}${R.lowStock.length > 8 ? '…' : ''}`);
+  if (R.pl) { const save = S.lang; S.lang = 'id'; try { out.push('', `*${t('pl.title')}:*`); monthPLRows(R.pl).forEach(([, label, v, kind]) => out.push(kind ? `*${label}: ${fmtRp(v)}*` : `${label}: ${fmtRp(v)}`)); } finally { S.lang = save; } } // v36
   return out.join('\n');
 }
 async function copyReport(kind) {
@@ -4216,7 +4297,9 @@ async function copyReport(kind) {
   const [from, to] = kind === 'month' ? [monthStart(T), T] : [T, T];
   try {
     const d = await loadSales(from, to);
-    const ok = await copyText(reportText(computeReport(d, from, to), kind));
+    const R = computeReport(d, from, to);
+    if (kind === 'month' && isOwner()) { try { R.pl = (await api('profit_loss', { from, to })).pl || null; } catch (e) { } } // v36: the month's profit & loss
+    const ok = await copyText(reportText(R, kind));
     toast(ok ? t('copied') : t('copy_failed'), ok ? 'ok' : 'err');
   } catch (e) { toast(errMsg(e), 'err'); }
 }
@@ -4230,6 +4313,7 @@ function printReport() {
     <tr><td>${esc(t('eceran'))}</td><td class="r">${fmtRp(R.split.eceran)}</td><td>${esc(t('grosir'))}</td><td class="r">${fmtRp(R.split.grosir)}</td></tr>
     <tr><td>${esc(t('rep.receivable'))}</td><td class="r">${fmtRp(R.receivable)}</td><td>${esc(t('rep.purchases'))}</td><td class="r">${fmtRp(R.purchasesTotal)}</td></tr>
     <tr><td>${esc(t('rep.new_debt'))}</td><td class="r">${fmtRp(R.newDebt)}</td><td>${esc(t('rep.payments_in'))}</td><td class="r">${fmtRp(R.paymentsIn)}</td></tr></table>
+    ${RP.pl && RP.pl.from === R.from && RP.pl.to === R.to ? `<h3>${esc(t('pl.title'))}</h3><table id="pl-print">${monthPLRows(RP.pl).map(([k, label, v, kind]) => `<tr><td>${kind ? `<b>${esc(label)}</b>` : esc(label)}</td><td class="r">${kind ? `<b>${fmtRp(v)}</b>` : fmtRp(v)}</td></tr>`).join('')}</table>` : ''}
     ${tbl(t('rep.top_omzet'), R.topOmzet, [[t('qty'), r => fmtQty(r.qty)], [t('rep.omzet'), r => fmtRp(r.omzet)]].concat(R.hasProfit ? [[t('rep.profit'), r => fmtRp(r.laba)], [t('margin'), r => fmtPct(r.margin)]] : []))}
     ${tbl(t('rep.low_stock'), R.lowStock, [[t('stock'), r => fmtQty(r.stock)], [t('min_stock'), r => fmtQty(r.min_stock)]])}</div>`;
   printHTML(html, 'size:A4;margin:12mm');
@@ -4456,7 +4540,7 @@ Object.assign(I18N.id, {
   'price.reason_ph': 'mis. harga supplier naik', 'price.hint_kasir': 'Perubahan harga dari kasir dikirim sebagai permintaan ke pemilik/manajer.',
   'price.hint_manager': 'Harga eceran & grosir langsung berlaku. Harga modal perlu persetujuan pemilik.', 'price.hint_owner': 'Semua perubahan langsung berlaku dan tercatat.',
   'price.send': 'Kirim permintaan', 'price.nothing': 'Tidak ada harga yang berubah.', 'price.applied': 'Harga diubah', 'price.pending': 'Menunggu persetujuan',
-  'void.request': 'Minta pembatalan', 'void.req_confirm': 'Minta pemilik membatalkan nota {inv}? Tulis alasannya.', 'void.requested': 'Permintaan pembatalan {id} terkirim ke pemilik',
+  'void.request': 'Minta pembatalan', 'void.req_confirm': 'Minta pembatalan nota {inv}? Tulis alasannya. Nota hari ini: manajer atau akuntan menyetujui; nota hari sebelumnya: hanya pemilik.', 'void.requested': 'Permintaan pembatalan {id} terkirim ke manajer / akuntan', 'void.requested_owner': 'Nota lama: permintaan pembatalan {id} terkirim ke pemilik — hanya pemilik yang menyetujui', 'void.old_badge': 'Nota lama ({date}) — hanya pemilik yang menyetujui', 'apr.own_req': 'Permintaan Anda — diputuskan orang lain',
   'void.done_title': 'Transaksi dibatalkan', 'void.remake_q': 'Nota {inv} sudah dibatalkan. Buat ulang transaksi dengan barang yang sama (nota baru)?', 'void.remake': 'Buat ulang transaksi',
   'void.remake_fail': 'Data barang nota lama tidak ditemukan.', 'void.replace_cart': 'Keranjang sekarang akan diganti. Lanjut?', 'void.remake_note': 'Pengganti nota {inv}',
   'void.remade': 'Barang dari {inv} dimuat ke keranjang — periksa lalu simpan (nota baru, harga saat ini).',
@@ -4475,7 +4559,7 @@ Object.assign(I18N.ar, {
   'price.reason_ph': 'مثلًا: ارتفع سعر المورّد', 'price.hint_kasir': 'تغيير السعر من الكاشير يُرسل طلبًا إلى المالك أو المديرة.',
   'price.hint_manager': 'سعر التجزئة والجملة يُطبَّق مباشرة. سعر التكلفة يحتاج موافقة المالك.', 'price.hint_owner': 'كل التغييرات تُطبَّق مباشرة وتُسجَّل.',
   'price.send': 'إرسال الطلب', 'price.nothing': 'لم يتغير أي سعر.', 'price.applied': 'تم تغيير السعر', 'price.pending': 'بانتظار الموافقة',
-  'void.request': 'طلب إلغاء', 'void.req_confirm': 'طلب إلغاء الفاتورة {inv} من المالك؟ اكتب السبب.', 'void.requested': 'أُرسل طلب الإلغاء {id} إلى المالك',
+  'void.request': 'طلب إلغاء', 'void.req_confirm': 'طلب إلغاء الفاتورة {inv}؟ اكتب السبب. فاتورة اليوم: يوافق المدير أو المحاسب؛ فاتورة يوم سابق: المالك فقط.', 'void.requested': 'أُرسل طلب الإلغاء {id} إلى المدير / المحاسب', 'void.requested_owner': 'فاتورة قديمة: أُرسل طلب الإلغاء {id} إلى المالك — لا يوافق عليه إلا المالك', 'void.old_badge': 'فاتورة قديمة ({date}) — لا يوافق عليها إلا المالك', 'apr.own_req': 'طلبك — يقرّره شخص آخر',
   'void.done_title': 'أُلغيت العملية', 'void.remake_q': 'أُلغيت الفاتورة {inv}. هل تريد إعادة إنشاء العملية بنفس الأصناف (فاتورة جديدة)؟', 'void.remake': 'إعادة إنشاء العملية',
   'void.remake_fail': 'لم يتم العثور على أصناف الفاتورة القديمة.', 'void.replace_cart': 'سيتم استبدال السلة الحالية. متابعة؟', 'void.remake_note': 'بديل الفاتورة {inv}',
   'void.remade': 'حُمّلت أصناف {inv} في السلة — راجعها ثم احفظ (فاتورة جديدة بالأسعار الحالية).',
@@ -4748,6 +4832,8 @@ const ACT = {
   'go': el => { if (el.closest('.modal-bg')) closeModal(); go(el.dataset.view); },
   'nav-more': () => openMoreMenu(),
   'cashier-tab': el => go(el.dataset.tab === 'kas' ? 'kas' : 'pos'),
+  'om-refresh': () => loadOwnerSales(true), // v36: the owner's live sales list
+  'om-open': el => { const d = OM.data, s = d && d.sales.find(x => x.invoice_no === el.dataset.inv); if (s) showReceipt(rcFromSale(s, d.items), { sale: s }); },
   'field-refresh': () => { clearFieldCache(); loadFieldView(); },
   'field-rep': el => { FD.user = el.dataset.u === FD.user ? '' : el.dataset.u; const s2 = $('#fd-user'); if (s2) s2.value = FD.user; drawFieldView(); },
   'lead-convert': async el => {
@@ -4761,7 +4847,7 @@ const ACT = {
   'order-open': el => openFieldOrder(FO.list.find(o => o.order_id === el.dataset.id)),
   'prod-photo': el => openProductPhoto(prodById(el.dataset.id)),
   'bell': () => openBell(),
-  'att-go': el => { if (el.closest('.modal-bg')) closeModal(true); if (el.dataset.low) PR.low = true; if (el.dataset.tab) GD.tab = el.dataset.tab; if (el.dataset.daily) { RP.mode = 'daily'; DR.date = today(); } go(el.dataset.go); },
+  'att-go': el => { if (el.closest('.modal-bg')) closeModal(true); if (el.dataset.low) PR.low = true; if (el.dataset.tab) GD.tab = el.dataset.tab; if (el.dataset.daily) { RP.mode = 'daily'; DR.date = today(); } if (el.dataset.kasrep) RP.mode = 'kas'; /* v36: the owner has no drawer page — drawer reports instead */ go(el.dataset.go); },
   'shift-open': () => promptOpenShift(),
   'cash-move': el => openCashMove(el.dataset.type),
   'shift-close': el => openCloseShift(el.dataset.cashier),
@@ -5011,7 +5097,7 @@ document.addEventListener('keydown', e => {
   }
   if (e.key === 'Escape' && modalOpen()) { e.preventDefault(); closeModal(); return; }
   if (!S.inApp || $('#app').hidden || modalOpen()) return;
-  if (S.view === 'pos') {
+  if (S.view === 'pos' && !isOwner()) { // v36: the owner's cashier page is read-only
     if (e.key === 'F9') { e.preventDefault(); checkout(); return; }
     if (e.key === 'F2') { e.preventDefault(); const s = $('#pos-search'); if (s) s.focus(); return; }
     const a = document.activeElement;
@@ -7518,12 +7604,24 @@ function drawAttSettings() {
     <div class="field"><label class="f" for="att-s-end">${esc(t('att.end'))}</label><input class="input" type="time" id="att-s-end" value="${esc(s.att_work_end || '21:00')}"></div>
     <div class="field"><label class="f" for="att-s-grace">${esc(t('att.grace'))}</label><input class="input num" id="att-s-grace" inputmode="numeric" value="${esc(String(s.att_grace_min ?? 10))}"></div>
     <div class="field"><label class="f" for="att-s-radius">${esc(t('att.radius'))}</label><input class="input num" id="att-s-radius" inputmode="numeric" value="${esc(String(s.att_radius_m ?? 200))}"></div></div>
+    ${attRamadanHTML(s)}
     <h4 style="margin:10px 0 4px">${esc(t('att.season'))}</h4><p class="small muted" style="margin:0 0 6px">${esc(t('att.season_hint'))}</p>
     <div class="grid2"><div class="field"><label class="f" for="att-se-name">${esc(t('att.season_name'))}</label><input class="input" id="att-se-name" maxlength="30" value="${esc(sea.name || '')}" placeholder="Menjelang Ramadan"></div>
     <div class="field"><label class="f" for="att-se-end">${esc(t('att.season_end'))}</label><input class="input" type="time" id="att-se-end" value="${esc(sea.work_end || '')}"></div>
     <div class="field"><label class="f" for="att-se-from">${esc(t('att.season_from'))}</label><input class="input" type="date" id="att-se-from" value="${esc(sea.from || '')}"></div>
     <div class="field"><label class="f" for="att-se-to">${esc(t('att.season_to'))}</label><input class="input" type="date" id="att-se-to" value="${esc(sea.to || '')}"></div></div>
     <div class="row"><button class="btn primary" data-act="att-save-set" id="att-save-set">${esc(t('save'))}</button><span class="red small" id="att-set-err" role="alert"></span></div>`;
+}
+// v36 (owner 2026-10-11: "العمل من 8 الصبح الى 9 ليل و يتغير قبل رمضان بشهرين من 8 الصبح الى 11 ليل"): the Ramadan season is
+// computed by the server every year (two months before 1 Ramadan → Eid al-Fitr); shown here with an on/off switch and its closing time.
+function attRamadanHTML(s) {
+  const list = Array.isArray(s.ramadan) ? s.ramadan : [], on = s.att_ramadan_auto !== false, end = s.att_ramadan_end || '23:00';
+  return `<div id="att-ramadan" style="margin:10px 0 4px"><h4 style="margin:0 0 4px">${esc(t('att.rm_title'))}</h4>
+    <p class="small muted" style="margin:0 0 6px">${esc(t('att.rm_hint'))}</p>
+    <label class="check"><input type="checkbox" id="att-rm-auto" ${on ? 'checked' : ''}> ${esc(t('att.rm_auto'))}</label>
+    <div class="field" style="max-width:220px"><label class="f" for="att-rm-end">${esc(t('att.season_end'))}</label><input class="input" type="time" id="att-rm-end" value="${esc(end)}"></div>
+    <div class="list" id="att-rm-list">${list.map(x => `<div class="li" style="min-height:0;padding:8px 12px" data-hijri="${esc(x.hijri)}" data-from="${esc(x.from)}" data-to="${esc(x.to)}"><div class="grow"><div class="t">${esc(t('att.rm_season', { y: x.hijri }))}${on ? '' : ` <span class="badge gray">${esc(t('att.rm_off'))}</span>`}</div>
+      <div class="s">${esc(t('att.rm_range', { from: fmtDate(x.from), to: fmtDate(x.to), end }))}</div><div class="s">${esc(t('att.rm_dates', { r: fmtDate(x.ramadan), e: fmtDate(x.eid) }))}</div></div></div>`).join('')}</div></div>`;
 }
 function openWorkerEditor(w) {
   const own = isOwner();
@@ -7594,6 +7692,7 @@ Object.assign(ACT, {
     const err = $('#att-set-err'), s = { att_work_start: $('#att-s-start').value, att_work_end: $('#att-s-end').value, att_grace_min: num($('#att-s-grace').value), att_radius_m: num($('#att-s-radius').value) };
     const sn = $('#att-se-name').value.trim(), sf = $('#att-se-from').value, stt = $('#att-se-to').value, se = $('#att-se-end').value;
     s.att_seasons = sf || stt || se ? [{ name: sn, from: sf, to: stt, work_end: se }] : [];
+    if ($('#att-rm-auto')) { s.att_ramadan_auto = $('#att-rm-auto').checked; s.att_ramadan_end = $('#att-rm-end').value || '23:00'; } // v36
     try { await attApi('att_settings', { settings: s }); err.textContent = ''; toast(t('att.saved'), 'ok'); loadAtt(); } catch (e) { err.textContent = errMsg(e); }
   }
 });
@@ -7814,7 +7913,9 @@ Object.assign(ACT, {
 function logoutUser() { S.pin_hash = ''; S.viaMaster = false; sessSet(S.user, S.role, ''); L.sel = S.user; S.inApp = false; const cf = $('#view-cold'); if (cf) cf.innerHTML = ''; try { if (window.KChatUI) KChatUI.stop(); } catch (e) { } showLogin('pin'); }
 Object.assign(I18N.id, {
   'role.akuntan': 'Akuntan', 'role.pekerja': 'Pekerja harian (absen wajah, tanpa PIN)', 'ro.denied': 'Akun akuntan hanya untuk melihat data', 'ro.hint': 'Akun akuntan: lihat saja, tidak bisa mengubah.', 'set.inv_title': 'Faktur & akuntan', 'set.due_days': 'Jatuh tempo faktur hutang (hari)', 'set.due_bad': 'Isi 0–120 hari', 'set.ak_cost': 'Akuntan & manajer boleh melihat harga beli (modal)', 'set.ak_cost_hint': 'Laba tetap hanya untuk pemilik. Tanpa centang, akuntan dan manajer melihat jumlah barang dan pembayaran tanpa harga beli.',
-  'nav.cold': "Gudang Dingin", 'navs.cold': "Gd. Dingin", 'nav.absensi': "Absensi", 'navs.absensi': "Absensi", 'att.kiosk': "Buka layar absen", 'att.add': "Tambah pekerja", 'att.hint': "Pekerja absen dengan wajah di perangkat toko. Catatan tidak bisa diubah atau dihapus siapa pun; perubahan apa pun pada data terlihat di laporan.", 'att.today': "Hari ini", 'att.workers': "Pekerja", 'att.report': "Laporan", 'att.p_month': "Bulan ini", 'att.p_lastmonth': "Bulan lalu", 'att.p_7d': "7 hari", 'att.show': "Tampilkan", 'att.settings': "Jam kerja", 'att.st_hadir': "Hadir", 'att.st_terlambat': "Terlambat", 'att.st_tidak_hadir': "Tidak hadir", 'att.st_libur': "Libur", 'att.st_belum': "Belum datang", 'att.in': "Masuk", 'att.out': "Pulang", 'att.still_in': "masih di toko", 'att.hours': "Jam kerja", 'att.late': "Terlambat", 'att.present': "Hadir", 'att.absent': "Tidak hadir", 'att.fails': "Gagal wajah", 'att.wage': "Upah/hari", 'att.set_wage': "Atur upah", 'att.wage_due': "Upah dibayar", 'att.wage_total': "Total upah", 'att.ok': "Data utuh: {n} catatan, {d} hari disegel — tidak ada yang diubah atau dihapus.", 'att.bad': "PERINGATAN: data absensi berubah", 'att.print': "Cetak laporan (A4)", 'att.csv': "Unduh CSV", 'att.events': "Kejadian ({n})", 'att.ev_fail': "Gagal absen", 'att.ev_enroll': "Daftar wajah", 'att.ev_forget': "Hapus wajah", 'att.ev_worker': "Data pekerja", 'att.ev_setting': "Jam kerja diubah", 'att.face': "Wajah", 'att.enrolled': "Terdaftar", 'att.not_enrolled': "Belum", 'att.enroll': "Daftar wajah", 'att.reenroll': "Ulang", 'att.forget': "Hapus wajah", 'att.forget_q': "Hapus data wajah {name}? Absen lama tetap ada; untuk absen lagi wajahnya harus didaftarkan ulang.", 'att.none': "Belum ada pekerja. Tambahkan pekerja lalu daftarkan wajahnya.", 'att.inactive': "nonaktif", 'att.editor_new': "Pekerja baru", 'att.editor_edit': "Ubah pekerja", 'att.job': "Pekerjaan", 'att.active': "Aktif", 'att.wage_hint': "Hanya pemilik yang melihat upah.", 'att.name_req': "Nama wajib", 'att.start': "Jam masuk", 'att.end': "Jam pulang", 'att.grace': "Toleransi terlambat (menit)", 'att.radius': "Jarak dari toko (m)", 'att.season': "Musim jam panjang", 'att.season_name': "Nama", 'att.season_from': "Dari", 'att.season_to': "Sampai", 'att.season_end': "Jam tutup", 'att.season_hint': "Contoh: dua bulan sebelum Ramadan toko tutup 23:00.", 'att.saved': "Tersimpan", 'att.no_store_loc': "Lokasi toko belum diatur, jadi jarak absen belum dicek. Atur di Pengaturan → Lokasi toko.", 'att.thumb': "Foto wajah",
+  'nav.cold': "Gudang Dingin", 'navs.cold': "Gd. Dingin", 'nav.absensi': "Absensi", 'navs.absensi': "Absensi", 'att.kiosk': "Buka layar absen", 'att.add': "Tambah pekerja", 'att.hint': "Pekerja absen dengan wajah di perangkat toko. Catatan tidak bisa diubah atau dihapus siapa pun; perubahan apa pun pada data terlihat di laporan.", 'att.today': "Hari ini", 'att.workers': "Pekerja", 'att.report': "Laporan", 'att.p_month': "Bulan ini", 'att.p_lastmonth': "Bulan lalu", 'att.p_7d': "7 hari", 'att.show': "Tampilkan", 'att.settings': "Jam kerja", 'att.st_hadir': "Hadir", 'att.st_terlambat': "Terlambat", 'att.st_tidak_hadir': "Tidak hadir", 'att.st_libur': "Libur", 'att.st_belum': "Belum datang", 'att.in': "Masuk", 'att.out': "Pulang", 'att.still_in': "masih di toko", 'att.hours': "Jam kerja", 'att.late': "Terlambat", 'att.present': "Hadir", 'att.absent': "Tidak hadir", 'att.fails': "Gagal wajah", 'att.wage': "Upah/hari", 'att.set_wage': "Atur upah", 'att.wage_due': "Upah dibayar", 'att.wage_total': "Total upah", 'att.ok': "Data utuh: {n} catatan, {d} hari disegel — tidak ada yang diubah atau dihapus.", 'att.bad': "PERINGATAN: data absensi berubah", 'att.print': "Cetak laporan (A4)", 'att.csv': "Unduh CSV", 'att.events': "Kejadian ({n})", 'att.ev_fail': "Gagal absen", 'att.ev_enroll': "Daftar wajah", 'att.ev_forget': "Hapus wajah", 'att.ev_worker': "Data pekerja", 'att.ev_setting': "Jam kerja diubah", 'att.face': "Wajah", 'att.enrolled': "Terdaftar", 'att.not_enrolled': "Belum", 'att.enroll': "Daftar wajah", 'att.reenroll': "Ulang", 'att.forget': "Hapus wajah", 'att.forget_q': "Hapus data wajah {name}? Absen lama tetap ada; untuk absen lagi wajahnya harus didaftarkan ulang.", 'att.none': "Belum ada pekerja. Tambahkan pekerja lalu daftarkan wajahnya.", 'att.inactive': "nonaktif", 'att.editor_new': "Pekerja baru", 'att.editor_edit': "Ubah pekerja", 'att.job': "Pekerjaan", 'att.active': "Aktif", 'att.wage_hint': "Hanya pemilik yang melihat upah.", 'att.name_req': "Nama wajib", 'att.start': "Jam masuk", 'att.end': "Jam pulang", 'att.grace': "Toleransi terlambat (menit)", 'att.radius': "Jarak dari toko (m)", 'att.season': "Musim jam panjang", 'att.season_name': "Nama", 'att.season_from': "Dari", 'att.season_to': "Sampai", 'att.season_end': "Jam tutup", 'att.season_hint': "Isi hanya jika tanggalnya lain dari hitungan otomatis — musim yang diketik menang pada hari-harinya.", "om.title": "Penjualan & faktur hari ini", "om.live_hint": "Diperbarui otomatis setiap menit selama halaman ini terbuka.", "om.hint": "Hanya melihat: penjualan dan faktur hari ini dari semua kasir. Penjualan dilakukan di Khair Kasir.", "om.none": "Belum ada penjualan hari ini.",
+  'pl.title': "Laba & Rugi", 'pl.sales': "Penjualan (setelah diskon, tanpa faktur batal)", 'pl.cogs': "Harga pokok (modal barang terjual)", 'pl.gross': "Laba kotor", 'pl.expenses': "Pengeluaran", 'pl.returns': "Retur pelanggan (uang kembali − barang kembali ke stok)", 'pl.stock_diff': "Selisih stok opname / penyesuaian", 'pl.collected': "Kurang bayar yang ditagih (koreksi harga)", 'pl.net': "Laba bersih", 'pl.net_loss': "Rugi bersih", 'pl.counts': "{n} transaksi · diskon {d} · {v} faktur batal ({vt}) tidak dihitung", 'pl.corr_title': "Koreksi harga di periode ini ({n})", 'pl.corr_over': "Kelebihan tagih dikembalikan (sudah dikurangi dari penjualan)", 'pl.corr_under': "Kurang bayar ditemukan", 'pl.corr_refund': "Refund dibayar ke pelanggan", 'pl.corr_writeoff': "Kurang bayar direlakan (rugi, tidak pernah masuk penjualan)", 'pl.hint': "Dihitung server dari penjualan, modal, pengeluaran, retur, stok opname dan koreksi harga di periode ini.",
+  'att.rm_title': "Musim Ramadan (otomatis)", 'att.rm_hint': "Dihitung sendiri setiap tahun: dari dua bulan sebelum 1 Ramadan sampai Idulfitri, toko buka 08:00 sampai jam tutup di bawah. Tidak perlu mengetik tanggal.", 'att.rm_auto': "Hitung musim Ramadan otomatis", 'att.rm_season': "Musim Ramadan {y} H", 'att.rm_range': "{from} – {to} · tutup {end}", 'att.rm_dates': "1 Ramadan {r} · Idulfitri {e}", 'att.rm_off': "mati", 'att.saved': "Tersimpan", 'att.no_store_loc': "Lokasi toko belum diatur, jadi jarak absen belum dicek. Atur di Pengaturan → Lokasi toko.", 'att.thumb': "Foto wajah",
   'nav.members': 'Member', 'navs.members': 'Member',
   'mc.title': 'Kode pemilik', 'mc.hint': 'Kode 8 angka yang hanya diketahui pemilik. Dengan kode ini pemilik bisa masuk ke akun siapa pun (misalnya saat kasir lupa PIN atau akun terkunci). Setiap masuk dengan kode ini dicatat di Aktivitas. Kode tidak disimpan di perangkat ini.',
   'mc.code': 'Kode pemilik (8 angka)', 'mc.code2': 'Ulangi kode', 'mc.set': 'Simpan kode pemilik', 'mc.change': 'Ganti kode pemilik', 'mc.has': 'Kode pemilik aktif', 'mc.none': 'Belum ada',
@@ -7852,7 +7953,9 @@ Object.assign(I18N.id, {
 });
 Object.assign(I18N.ar, {
   'role.akuntan': 'محاسب', 'role.pekerja': 'عامل يومي (حضور بالوجه، بدون رقم سري)', 'ro.denied': 'حساب المحاسب للاطلاع فقط', 'ro.hint': 'حساب المحاسب: اطلاع فقط دون تعديل.', 'set.inv_title': 'الفواتير والمحاسب', 'set.due_days': 'مهلة سداد فاتورة الدين (أيام)', 'set.due_bad': 'أدخل من 0 إلى 120 يومًا', 'set.ak_cost': 'يسمح للمحاسب والمديرة برؤية سعر الشراء (التكلفة)', 'set.ak_cost_hint': 'الربح يبقى للمالك فقط. بدون التحديد يرى المحاسب والمديرة الكميات والمدفوعات دون أسعار الشراء.',
-  'nav.cold': "المخازن المبرّدة", 'navs.cold': "المبرّدة", 'nav.absensi': "الحضور", 'navs.absensi': "الحضور", 'att.kiosk': "فتح شاشة الحضور", 'att.add': "إضافة عامل", 'att.hint': "يسجّل العمال حضورهم بالوجه على جهاز المحل. لا يستطيع أحد تعديل السجلات أو حذفها، وأي تغيير في البيانات يظهر في التقرير.", 'att.today': "اليوم", 'att.workers': "العمال", 'att.report': "التقرير", 'att.p_month': "هذا الشهر", 'att.p_lastmonth': "الشهر الماضي", 'att.p_7d': "7 أيام", 'att.show': "عرض", 'att.settings': "ساعات العمل", 'att.st_hadir': "حاضر", 'att.st_terlambat': "متأخر", 'att.st_tidak_hadir': "غائب", 'att.st_libur': "عطلة", 'att.st_belum': "لم يصل بعد", 'att.in': "دخول", 'att.out': "خروج", 'att.still_in': "ما زال في المحل", 'att.hours': "ساعات العمل", 'att.late': "التأخير", 'att.present': "أيام الحضور", 'att.absent': "أيام الغياب", 'att.fails': "محاولات فاشلة", 'att.wage': "الأجر اليومي", 'att.set_wage': "تعيين الأجر", 'att.wage_due': "الأجر المستحق", 'att.wage_total': "مجموع الأجور", 'att.ok': "البيانات سليمة: {n} سجل و{d} يوم مختوم — لم يُعدَّل أو يُحذف شيء.", 'att.bad': "تحذير: تغيّرت بيانات الحضور", 'att.print': "طباعة التقرير (A4)", 'att.csv': "تنزيل CSV", 'att.events': "الأحداث ({n})", 'att.ev_fail': "محاولة فاشلة", 'att.ev_enroll': "تسجيل وجه", 'att.ev_forget': "حذف وجه", 'att.ev_worker': "بيانات عامل", 'att.ev_setting': "تغيير ساعات العمل", 'att.face': "الوجه", 'att.enrolled': "مسجّل", 'att.not_enrolled': "غير مسجّل", 'att.enroll': "تسجيل الوجه", 'att.reenroll': "إعادة", 'att.forget': "حذف الوجه", 'att.forget_q': "حذف بيانات وجه {name}؟ يبقى الحضور القديم، وللتسجيل مجددًا يجب تسجيل الوجه من جديد.", 'att.none': "لا يوجد عمال بعد. أضف عاملًا ثم سجّل وجهه.", 'att.inactive': "غير نشط", 'att.editor_new': "عامل جديد", 'att.editor_edit': "تعديل عامل", 'att.job': "العمل", 'att.active': "نشط", 'att.wage_hint': "الأجر يراه المالك فقط.", 'att.name_req': "الاسم مطلوب", 'att.start': "وقت الدخول", 'att.end': "وقت الخروج", 'att.grace': "سماحية التأخير (دقائق)", 'att.radius': "المسافة من المحل (م)", 'att.season': "موسم ساعات أطول", 'att.season_name': "الاسم", 'att.season_from': "من", 'att.season_to': "إلى", 'att.season_end': "وقت الإغلاق", 'att.season_hint': "مثال: قبل رمضان بشهرين يغلق المحل الساعة 23:00.", 'att.saved': "تم الحفظ", 'att.no_store_loc': "موقع المحل غير مضبوط، لذلك لا تُفحص المسافة عند التسجيل. اضبطه من الإعدادات ← موقع المحل.", 'att.thumb': "صورة الوجه",
+  'nav.cold': "المخازن المبرّدة", 'navs.cold': "المبرّدة", 'nav.absensi': "الحضور", 'navs.absensi': "الحضور", 'att.kiosk': "فتح شاشة الحضور", 'att.add': "إضافة عامل", 'att.hint': "يسجّل العمال حضورهم بالوجه على جهاز المحل. لا يستطيع أحد تعديل السجلات أو حذفها، وأي تغيير في البيانات يظهر في التقرير.", 'att.today': "اليوم", 'att.workers': "العمال", 'att.report': "التقرير", 'att.p_month': "هذا الشهر", 'att.p_lastmonth': "الشهر الماضي", 'att.p_7d': "7 أيام", 'att.show': "عرض", 'att.settings': "ساعات العمل", 'att.st_hadir': "حاضر", 'att.st_terlambat': "متأخر", 'att.st_tidak_hadir': "غائب", 'att.st_libur': "عطلة", 'att.st_belum': "لم يصل بعد", 'att.in': "دخول", 'att.out': "خروج", 'att.still_in': "ما زال في المحل", 'att.hours': "ساعات العمل", 'att.late': "التأخير", 'att.present': "أيام الحضور", 'att.absent': "أيام الغياب", 'att.fails': "محاولات فاشلة", 'att.wage': "الأجر اليومي", 'att.set_wage': "تعيين الأجر", 'att.wage_due': "الأجر المستحق", 'att.wage_total': "مجموع الأجور", 'att.ok': "البيانات سليمة: {n} سجل و{d} يوم مختوم — لم يُعدَّل أو يُحذف شيء.", 'att.bad': "تحذير: تغيّرت بيانات الحضور", 'att.print': "طباعة التقرير (A4)", 'att.csv': "تنزيل CSV", 'att.events': "الأحداث ({n})", 'att.ev_fail': "محاولة فاشلة", 'att.ev_enroll': "تسجيل وجه", 'att.ev_forget': "حذف وجه", 'att.ev_worker': "بيانات عامل", 'att.ev_setting': "تغيير ساعات العمل", 'att.face': "الوجه", 'att.enrolled': "مسجّل", 'att.not_enrolled': "غير مسجّل", 'att.enroll': "تسجيل الوجه", 'att.reenroll': "إعادة", 'att.forget': "حذف الوجه", 'att.forget_q': "حذف بيانات وجه {name}؟ يبقى الحضور القديم، وللتسجيل مجددًا يجب تسجيل الوجه من جديد.", 'att.none': "لا يوجد عمال بعد. أضف عاملًا ثم سجّل وجهه.", 'att.inactive': "غير نشط", 'att.editor_new': "عامل جديد", 'att.editor_edit': "تعديل عامل", 'att.job': "العمل", 'att.active': "نشط", 'att.wage_hint': "الأجر يراه المالك فقط.", 'att.name_req': "الاسم مطلوب", 'att.start': "وقت الدخول", 'att.end': "وقت الخروج", 'att.grace': "سماحية التأخير (دقائق)", 'att.radius': "المسافة من المحل (م)", 'att.season': "موسم ساعات أطول", 'att.season_name': "الاسم", 'att.season_from': "من", 'att.season_to': "إلى", 'att.season_end': "وقت الإغلاق", 'att.season_hint': "املأه فقط إذا اختلفت التواريخ عن الحساب التلقائي — الموسم المكتوب يغلب في أيامه.", "om.title": "مبيعات وفواتير اليوم", "om.live_hint": "يتحدّث تلقائيًا كل دقيقة ما دامت الصفحة مفتوحة.", "om.hint": "للعرض فقط: مبيعات وفواتير اليوم من كل الكاشيرات. البيع يتم في تطبيق الكاشير.", "om.none": "لا توجد مبيعات اليوم بعد.",
+  'pl.title': "الأرباح والخسائر", 'pl.sales': "المبيعات (بعد الخصم، بدون الفواتير الملغاة)", 'pl.cogs': "تكلفة البضاعة المباعة", 'pl.gross': "الربح الإجمالي", 'pl.expenses': "المصاريف", 'pl.returns': "مرتجعات الزبائن (المبلغ المُعاد − البضاعة العائدة للمخزون)", 'pl.stock_diff': "فرق الجرد / تسوية المخزون", 'pl.collected': "نقص السعر الذي تم تحصيله (تصحيح الأسعار)", 'pl.net': "صافي الربح", 'pl.net_loss': "صافي الخسارة", 'pl.counts': "{n} عملية · الخصم {d} · {v} فاتورة ملغاة ({vt}) غير محسوبة", 'pl.corr_title': "تصحيح الأسعار في هذه الفترة ({n})", 'pl.corr_over': "زيادة السعر المُعادة (مخصومة من المبيعات)", 'pl.corr_under': "نقص السعر المكتشف", 'pl.corr_refund': "مبالغ أُعيدت للزبائن", 'pl.corr_writeoff': "نقص متنازل عنه (خسارة، لم يدخل المبيعات)", 'pl.hint': "يحسبه الخادم من المبيعات والتكلفة والمصاريف والمرتجعات والجرد وتصحيح الأسعار في هذه الفترة.",
+  'att.rm_title': "موسم رمضان (تلقائي)", 'att.rm_hint': "يُحسب وحده كل سنة: من قبل 1 رمضان بشهرين حتى عيد الفطر، يفتح المحل 08:00 حتى وقت الإغلاق أدناه. لا حاجة لكتابة التواريخ.", 'att.rm_auto': "حساب موسم رمضان تلقائيًا", 'att.rm_season': "موسم رمضان {y} هـ", 'att.rm_range': "{from} – {to} · الإغلاق {end}", 'att.rm_dates': "1 رمضان {r} · عيد الفطر {e}", 'att.rm_off': "متوقف", 'att.saved': "تم الحفظ", 'att.no_store_loc': "موقع المحل غير مضبوط، لذلك لا تُفحص المسافة عند التسجيل. اضبطه من الإعدادات ← موقع المحل.", 'att.thumb': "صورة الوجه",
   'nav.members': 'الأعضاء', 'navs.members': 'الأعضاء',
   'mc.title': 'رمز المالك', 'mc.hint': 'رمز من 8 أرقام يعرفه المالك وحده. به يستطيع المالك الدخول إلى أي حساب (مثلاً إذا نسي الكاشير رقمه أو قُفل الحساب). كل دخول بهذا الرمز يُسجَّل في سجل النشاط. لا يُحفظ الرمز على هذا الجهاز.',
   'mc.code': 'رمز المالك (8 أرقام)', 'mc.code2': 'أعد الرمز', 'mc.set': 'حفظ رمز المالك', 'mc.change': 'تغيير رمز المالك', 'mc.has': 'رمز المالك مفعّل', 'mc.none': 'غير موجود',
@@ -8377,6 +8480,9 @@ const MGR_ROLES = ['kasir', 'sales'];
 const assignableRoles = () => isOwner() ? ['kasir', 'sales', 'manager', 'akuntan', 'owner'] : MGR_ROLES;
 // Create/edit (role, swap, reset PIN) stays kasir/sales for the manager; the owner edits anyone.
 const canManageUser = u => isOwner() || (S.role === 'manager' && MGR_ROLES.includes(u.role || 'kasir'));
+// v36 (owner 2026-10-11: "اسم كل حساب يمكن تغييره من الإعدادات … المدير أفضل أن يقوم بذلك"): the manager may also rename the accountant
+// account ("Ganti orang": new name + temporary PIN) — but not change its role, reset its PIN alone, or create one (server: save_user).
+const canRenameUser = u => canManageUser(u) || (S.role === 'manager' && u.role === 'akuntan' && u.active !== false);
 // v28 (owner's decision): the owner AND the manager may SUSPEND any account — owner any but their own, manager any NON-owner
 // but their own. Only the owner RE-ENABLES. These mirror the server rule in set_account_active.
 const isSelfUser = u => !!(S.user && u.name && u.name.toLowerCase() === S.user.toLowerCase());
@@ -8402,7 +8508,7 @@ function usersByRoleHTML() {
     return `<div class="usr-group" data-role-group="${r}"><h4 style="margin:10px 0 6px">${esc(t('usr.group_' + r))} <span class="muted small">(${list.length})</span></h4>
       ${list.length ? `<div class="tbl-wrap"><table class="tbl"><tbody>${list.map(u => `<tr data-user="${esc(u.name)}"><td><b>${esc(u.name)}</b> ${u.active === false ? `<span class="badge red" data-suspended="1">${esc(t('usr.suspended'))}</span>` : ''}${u.must_change ? ` <span class="badge amber" data-must="1">${esc(t('usr.must_change'))}</span>` : ''}${u.locked ? ` <span class="badge red" data-locked="1">${esc(t('usr.locked'))}</span>` : ''}${u.tamper ? ` <span class="badge red" data-tamper="1">${ic('lock')} ${esc(t('tamper.badge'))}</span>` : ''}${u.has_master ? ` <span class="badge gold" data-has-master="1">${ic('lock')} ${esc(t('mc.has'))}</span>` : ''}${canManageUser(u) ? `<br>
         <select class="input" style="width:auto;min-height:32px;padding:2px 6px;margin-top:4px" data-user-role="${esc(u.name)}" aria-label="${esc(t('set.role'))}">${assignableRoles().map(x => `<option value="${x}" ${u.role === x ? 'selected' : ''}>${esc(t('role.' + x))}</option>`).join('')}</select>` : ''}</td>
-        <td class="r" style="white-space:nowrap">${u.tamper && isOwner() ? `<button class="btn xs danger" data-act="user-unlock" data-name="${esc(u.name)}">${ic('lock')} ${esc(t('tamper.unlock'))}</button> ` : ''}${canManageUser(u) ? `<button class="btn xs" data-act="user-swap" data-name="${esc(u.name)}">${ic('users')} ${esc(t('usr.swap'))}</button> <button class="btn xs" data-act="user-pin" data-name="${esc(u.name)}">${esc(t('set.reset_pin'))}</button> ` : ''}${u.active === false
+        <td class="r" style="white-space:nowrap">${u.tamper && isOwner() ? `<button class="btn xs danger" data-act="user-unlock" data-name="${esc(u.name)}">${ic('lock')} ${esc(t('tamper.unlock'))}</button> ` : ''}${canRenameUser(u) ? `<button class="btn xs" data-act="user-swap" data-name="${esc(u.name)}">${ic('users')} ${esc(t('usr.swap'))}</button> ` : ''}${canManageUser(u) ? `<button class="btn xs" data-act="user-pin" data-name="${esc(u.name)}">${esc(t('set.reset_pin'))}</button> ` : ''}${u.active === false
           ? (isOwner() ? `<button class="btn xs" data-act="user-reenable" data-name="${esc(u.name)}">${ic('check')} ${esc(t('set.reenable'))}</button>` : '')
           : (canSuspend(u) ? `<button class="btn xs danger" data-act="user-suspend" data-name="${esc(u.name)}">${esc(t('set.suspend'))}</button>` : '')}</td></tr>`).join('')}</tbody></table></div>`
       : `<div class="small muted" data-empty-group>${esc(t(r === 'akuntan' ? 'usr.akuntan_note' : 'usr.group_empty'))}</div>`}</div>`;

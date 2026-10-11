@@ -19,6 +19,7 @@ test('owner voids a sale from history: status void, stock restored, debt reverse
   expect(productByName(db, /Sukkari/).stock).toBe(p.stock - 3);
   expect(db.customers.find(c => c.id === cust.id).debt_balance).toBe(cust.debt_balance + 3 * p.wholesale_price);
 
+  await switchUser(page, 'Pemilik', '1234'); // v36: the manager sold it; the owner voids it directly
   await nav(page, 'history');
   await page.locator(`[data-act="hist-open"][data-inv="${inv}"]`).click();
   await expect(page.locator('.modal #receipt')).toContainText(inv);
@@ -143,7 +144,7 @@ async function expectReportMatches(page, from, to) {
 }
 
 test('reports: omzet, laba, margin and other KPIs equal the sums of the mock data', async ({ page }) => {
-  await login(page);
+  await login(page, 'Pemilik', '1234', '', { stay: true });
   await nav(page, 'reports');
   await page.click('[data-act="rep-preset"][data-p="7d"]');
   await expectReportMatches(page, jktToday(-6), jktToday());
@@ -168,7 +169,7 @@ test('reports: omzet, laba, margin and other KPIs equal the sums of the mock dat
 });
 
 test('CSV import (majoo style): BOM, semicolons, quotes, Rupiah formats, upsert by SKU', async ({ page }) => {
-  await login(page);
+  await login(page, 'Pemilik', '1234', '', { stay: true });
   const db0 = await getDb(page);
   const ajwa = productByName(db0, /Ajwa/);
   const csv = '﻿' + [

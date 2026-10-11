@@ -122,7 +122,7 @@ test('large sale requires an exit photo; match result cocok / tidak cocok; missi
 });
 
 test('reports: Kontrol foto card numbers match the data', async ({ page }) => {
-  await login(page);
+  await login(page, 'Pemilik', '1234', '', { stay: true });
   await nav(page, 'reports');
   await page.click('[data-act="rep-preset"][data-p="month"]');
   const from = jktToday().slice(0, 8) + '01', to = jktToday();
