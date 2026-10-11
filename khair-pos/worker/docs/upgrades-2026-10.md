@@ -140,6 +140,24 @@ Batch C. gudang/ is still on n8n today — moves to the Worker as part of this.
   also paste in the planner ("📋 Google Maps") or share from Google Maps to the installed app (Web Share Target, Android;
   iPhone: paste).
 
+## STATUS — 2026-10-11 (v34 — Google Places search, free tier with a hard cap)
+
+- Owner: "do the upgrade — we will not reach 5,000 searches a month". The field app now also searches Google (next to the
+  free OpenStreetMap search; results merged, marked G): by name in the planner, and along a work line one search per ticked
+  kind (dates · Indonesian groceries/sembako · Hajj & Umrah by default — the owner's three).
+- Through the Worker only (`worker/src/places.js`, Places API (New) Text Search; along a line = searchAlongRouteParameters
+  with the encoded polyline, retry as a circle if refused). Field mask = "Pro" fields only (name, address, position, types,
+  Maps link, business status — NO phone / rating / hours = the dearer Enterprise SKU). Google gives 5,000 Pro calls free a
+  month; `places_search` counts every call in `pos_api_usage` BEFORE making it and refuses at **4,500** (QUOTA) → the
+  apps keep the free search, the bill stays 0. `places_status` (enabled + month count) for the planner and the owner's
+  field page. Without the key (`NO_KEY`) nothing is counted or called.
+- **Owner setup (one time):** Google Cloud project → billing account (Google asks for a card even for the free tier) →
+  enable "Places API (New)" → API key restricted to Places API (New) → (extra guard) quota "SearchText requests per day" ≈ 150
+  → Cloudflare dashboard → Workers & Pages → khair-mart-jumla → Settings → Variables and Secrets → add **Secret**
+  `GOOGLE_PLACES_KEY` (secrets survive `wrangler deploy`). The key never goes into the repo or the apps.
+- Also v33b: visit-result colours on the owner/manager field page (map points, visit list, rep cards, reports table,
+  legend; far from the shop = red ring) and a "Lapangan" shortcut for the manager in Khair Kasir.
+
 ## STATUS — Batch C (2026-10-10)
 
 **CODE DONE (on the dev branch, not yet cut over):**

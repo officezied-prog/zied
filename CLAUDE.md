@@ -16,8 +16,11 @@ allowed in the env network settings). This removed n8n's monthly execution wall 
 - **n8n (ziedapp.app.n8n.cloud) is KEPT PERMANENTLY as a reference — NEVER delete or modify it**
   (owner's standing instruction). It also stands as instant rollback: revert the apps' host
   swap (`ziedapp.app.n8n.cloud` ↔ the Worker host) in `index.html`/`kasir/`/`sales/` + CSP.
-- `gudang/` (cold storage, `/webhook/khair-cold`) is still on n8n — migrates in Phase 2
-  (cold inline + WhatsApp + Lalamove; plan in `khair-pos/worker/docs/phase2-plan.md`).
+- Google Places search (field app, v34) runs ONLY in the Worker with the secret `GOOGLE_PLACES_KEY` (set by the owner in the
+  Cloudflare dashboard — never in the repo/apps); hard cap 4,500 calls/month (`pos_api_usage`) < Google's free 5,000 →
+  bill 0; over the cap / no key → the apps keep the free OpenStreetMap search. Only "Pro" fields (no phone/rating/hours).
+- `gudang/` (cold storage, `/webhook/khair-cold`) moved to the Worker in Batch C (PR #22) and is shown inside the owner
+  app; Phase 2 proper (WhatsApp + Lalamove) is still to do (plan in `khair-pos/worker/docs/phase2-plan.md`).
 
 ## Owner standing rules — ALWAYS honor
 

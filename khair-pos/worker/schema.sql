@@ -518,6 +518,15 @@ CREATE TABLE IF NOT EXISTS pos_shop_lists (
 CREATE INDEX IF NOT EXISTS idx_pos_shop_lists_status ON pos_shop_lists (status);
 CREATE INDEX IF NOT EXISTS idx_pos_shop_lists_created_at ON pos_shop_lists (created_at);
 
+CREATE TABLE IF NOT EXISTS pos_api_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  api TEXT,
+  month TEXT,
+  n REAL,
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pos_api_usage_month ON pos_api_usage (month);
+
 CREATE TABLE IF NOT EXISTS pos_chat (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   channel TEXT,

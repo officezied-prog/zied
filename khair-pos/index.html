@@ -144,7 +144,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.3.1';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -713,7 +713,9 @@ async function enterApp(offline, keepView) {
   document.body.classList.toggle('ro', isAudit());
   document.body.classList.toggle('omon', isOwner()); // owner = monitoring: hide money-out actions (keep expenses + approvals)
   renderShell(); renderPosSkeleton();
-  go(keepView ? S.view : (isApprover() ? 'home' : isAudit() ? 'reports' : 'pos'), true);
+  const asked = store.get('next_view', ''); store.del('next_view'); // v33: Khair Kasir → "Lapangan" opens the field page directly
+  const want = asked && VIEWS.some(v => v.id === asked && viewAllowed(v)) ? asked : '';
+  go(keepView ? S.view : want || (isApprover() ? 'home' : isAudit() ? 'reports' : 'pos'), true);
   if (offline) toast(t('offline_mode'), 'warn', 4000);
   await refreshData(true);
   syncOutbox();
@@ -2866,6 +2868,14 @@ const ago = iso => { const m = Math.round((Date.now() - new Date(iso).getTime())
 // blue does not want · black closed / owner not there / shop not found / changed business (with a photo of the place)
 const OUTCOME_CLS = { order: 'green', tertarik: 'oc-orange', sudah_pelanggan: 'oc-orange', tidak: 'oc-blue', tutup: 'oc-black', tidak_ada: 'oc-black', tidak_ditemukan: 'oc-black', ganti_usaha: 'oc-black' };
 const ocMarkO = o => o === 'order' || OUTCOME_CLS[o] === 'oc-orange' ? '✓' : '✕';
+const ocKeyO = o => o === 'order' ? 'green' : String(OUTCOME_CLS[o] || 'oc-orange').replace('oc-', ''); // green / orange / blue / black
+/** Visit results of a list of visits as coloured counts (only the colours that occur). */
+function ocCountsO(vis) {
+  const by = { green: 0, orange: 0, blue: 0, black: 0 };
+  vis.forEach(v => { by[ocKeyO(v.outcome)]++; });
+  return ['green', 'orange', 'blue', 'black'].filter(k => by[k]).map(k => `<span class="occ" data-oc="${k}" title="${esc(t('occ.' + k))}"><span class="ocdot ${k}" aria-hidden="true"></span>${by[k]}</span>`).join('');
+}
+const ocLegendO = () => `<div class="small muted oc-legend" id="fd-oc-legend">${['green', 'orange', 'blue', 'black'].map(k => `<span class="occ"><span class="ocdot ${k}" aria-hidden="true"></span>${esc(t('occ.' + k))}</span>`).join('')}<span class="occ"><span class="ocdot ring" aria-hidden="true"></span>${esc(t('field.far_ring'))}</span></div>`;
 const FAR_M = 200;
 
 /* ---- Lapangan screen ---- */
@@ -2881,11 +2891,14 @@ RENDER.field = function () {
   const rs = reps();
   $('#view-field').innerHTML = `<div class="view-head"><h1>${esc(t('nav.field'))}</h1><div class="row" style="gap:6px"><button class="btn sm" data-act="go" data-view="shoplist" id="fd-shoplist">📋 ${esc(t('nav.shoplist'))}</button><button class="btn sm" data-act="field-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div></div>
     <div class="toolbar"><label class="f" style="margin:0">${esc(t('date'))} <input class="input" type="date" id="fd-date" value="${esc(FD.date)}" style="width:auto"></label>
-      <select class="input" id="fd-user" aria-label="${esc(t('field.rep'))}"><option value="">${esc(t('field.all_reps'))}</option>${rs.map(u => `<option ${FD.user === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></div>
+      <select class="input" id="fd-user" aria-label="${esc(t('field.rep'))}"><option value="">${esc(t('field.all_reps'))}</option>${rs.map(u => `<option ${FD.user === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
+      <span class="small muted" id="fd-google"></span></div>
     <div id="fd-body"><div class="empty">${esc(t('loading'))}</div></div>`;
   $('#fd-date').onchange = e => { FD.date = e.target.value || today(); loadFieldView(); };
   $('#fd-user').onchange = e => { FD.user = e.target.value; loadFieldView(); };
   loadFieldView();
+  // v34: Google searches used this month by the reps (hard cap below Google's free 5,000 → no bill)
+  apiField('places_status').then(r => { const el = $('#fd-google'); if (el && r && r.enabled) { el.textContent = t('field.google', { n: fmtNum(r.n), cap: fmtNum(r.cap) }); el.dataset.n = r.n; } }).catch(() => { });
 };
 let fieldViewSeq = 0;
 async function loadFieldView() {
@@ -2935,8 +2948,9 @@ function drawFieldView() {
         <div class="row"><b class="grow" style="font-size:16px">${esc(r.user)}</b><span class="badge ${statusCls[r.status]}" data-status="${r.status}">${esc(t('field.st_' + r.status))}</span></div>
         <div class="s">${r.day && r.day.started_at ? esc(jktTime(r.day.started_at)) + '–' + (r.day.ended_at ? esc(jktTime(r.day.ended_at)) : '…') : '—'} · <b data-km>${esc(NF1.format(r.km))}</b> km</div>
         <div class="s"><b data-visits>${r.vis.length}</b> ${esc(t('field.visits'))} · <b data-orders>${r.ords.length}</b> ${esc(t('field.orders'))}</div>
+        ${r.vis.length ? `<div class="s occs" data-occ>${ocCountsO(r.vis)}</div>` : ''}
         <div class="s" data-last>${r.lastT ? esc(t('field.last_loc')) + ' ' + esc(ago(r.lastT)) : esc(t('field.no_loc'))}</div>${r.plan && (r.plan.stops || []).length ? `<div class="s" data-plan>${esc(t('field.plan_card', { k: r.pdone.filter(Boolean).length, n: r.plan.stops.length }))}</div>` : ''}${r.plan && (r.plan.streets || []).length ? `<div class="s" data-plan-streets>🛣️ ${(r.plan.streets || []).length}</div>` : ''}</button>`).join('') || `<div class="muted">${esc(t('field.no_reps'))}</div>`}</div>
-    <div class="panel" style="margin-bottom:14px"><h3>${ic('pin')} ${esc(t('field.map'))} ${cur ? `· ${esc(cur.user)} · ${esc(fmtDate(FD.date))}` : ''}</h3><div class="pb"><div id="fd-map" class="fd-map"></div><div id="map-detail" class="small" style="margin-top:8px"></div></div></div>
+    <div class="panel" style="margin-bottom:14px"><h3>${ic('pin')} ${esc(t('field.map'))} ${cur ? `· ${esc(cur.user)} · ${esc(fmtDate(FD.date))}` : ''}</h3><div class="pb"><div id="fd-map" class="fd-map"></div>${ocLegendO()}<div id="map-detail" class="small" style="margin-top:8px"></div></div></div>
     ${planPanelHTML(cur)}
     <div class="rgrid">
       <div class="panel"><h3>${esc(t('field.visit_list'))} <span class="badge gray">${cur ? cur.vis.length : 0}</span></h3><div class="pb list" id="fd-visits">${cur && cur.vis.length ? cur.vis.slice().sort((a, b) => String(a.visit_time).localeCompare(String(b.visit_time))).map((v, i) => visitRowHTML(v, i + 1)).join('') : `<div class="muted">${esc(t('no_data'))}</div>`}</div></div>
@@ -2947,7 +2961,7 @@ function drawFieldView() {
 function visitRowHTML(v, n) {
   const far = v.distance_m != null && v.distance_m > FAR_M;
   return `<div class="li visit-row" data-visit="${esc(v.visit_id)}" style="min-height:0;padding:8px 10px">
-    <span class="vnum ${far ? 'far' : ''}">${n}</span>
+    <span class="vnum oc-${ocKeyO(v.outcome)} ${far ? 'vfar' : ''}" data-oc="${ocKeyO(v.outcome)}">${n}</span>
     ${v.photo_thumb ? `<img class="vthumb" data-act="photo-zoom" data-src="${esc(b64Img(v.photo_thumb))}" src="${esc(b64Img(v.photo_thumb))}" alt="${esc(v.shop_name)}">` : `<div class="vthumb">${ic('camera')}</div>`}
     <div class="grow"><div class="t">${esc(v.shop_name)}</div><div class="s">${esc(jktTime(v.visit_time))} · ${esc(v.user)}${v.notes ? ' · ' + esc(v.notes) : ''}</div></div>
     <div class="right"><span class="badge ${OUTCOME_CLS[v.outcome] || 'gray'}">${esc(t('out.' + v.outcome))}</span>${v.distance_m != null ? `<div class="small ${far ? 'red' : 'muted'}" style="margin-top:3px">${far ? '⚠ ' : ''}${fmtNum(v.distance_m)} m</div>` : ''}</div></div>`;
@@ -3005,7 +3019,7 @@ async function drawFieldMap(r, shops) {
       sh.forEach(s => { L.circleMarker([num(s.lat), num(s.lng)], { radius: 5, color: '#526075', weight: 2, fillOpacity: .3 }).addTo(m).bindTooltip(esc(s.name)); bounds.push([num(s.lat), num(s.lng)]); });
       vis.forEach((v, i) => {
         const far = v.distance_m > FAR_M;
-        L.marker([num(v.lat), num(v.lng)], { icon: L.divIcon({ className: '', html: `<span class="vnum map ${far ? 'far' : ''}">${i + 1}</span>`, iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(m).bindPopup(visitPopupHTML(v, i + 1));
+        L.marker([num(v.lat), num(v.lng)], { icon: L.divIcon({ className: '', html: `<span class="vnum map oc-${ocKeyO(v.outcome)} ${far ? 'vfar' : ''}" data-oc="${ocKeyO(v.outcome)}">${i + 1}</span>`, iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(m).bindPopup(visitPopupHTML(v, i + 1));
         bounds.push([num(v.lat), num(v.lng)]);
       });
       if (bounds.length) m.fitBounds(bounds, { padding: [24, 24] });
@@ -3029,7 +3043,7 @@ function fieldSVG(pts, vis, shops, Wpx) {
   shops.forEach(p => { s += `<rect x="${X(num(p.lng)) - 5}" y="${Y(num(p.lat)) - 5}" width="10" height="10" rx="2" class="c-shop" data-shop="${esc(p.shop_id)}"><title>${esc(p.name)}</title></rect>`; });
   if (pts.length) s += `<polyline class="c-route" data-route points="${pts.map(p => `${X(num(p.lng)).toFixed(1)},${Y(num(p.lat)).toFixed(1)}`).join(' ')}"/>`;
   if (pts.length) { const a = pts[0], b = pts[pts.length - 1]; s += `<circle cx="${X(num(a.lng))}" cy="${Y(num(a.lat))}" r="6" class="c-start"><title>${esc(t('field.start'))} ${esc(jktTime(a.t))}</title></circle><circle cx="${X(num(b.lng))}" cy="${Y(num(b.lat))}" r="7" class="c-last"><title>${esc(t('field.last_loc'))} ${esc(jktTime(b.t))}</title></circle>`; }
-  vis.forEach((v, i) => { const far = v.distance_m > FAR_M, x = X(num(v.lng)), y = Y(num(v.lat)); s += `<g data-vi="${i}" class="c-visit ${far ? 'far' : ''}" style="cursor:pointer"><circle cx="${x}" cy="${y}" r="13"/><text x="${x}" y="${y + 4.5}" text-anchor="middle" font-size="13" font-weight="700">${i + 1}</text><title>${esc(`${i + 1}. ${v.shop_name} · ${t('out.' + v.outcome)} · ${jktTime(v.visit_time)}${v.distance_m != null ? ' · ' + v.distance_m + ' m' : ''}`)}</title></g>`; });
+  vis.forEach((v, i) => { const far = v.distance_m > FAR_M, x = X(num(v.lng)), y = Y(num(v.lat)); s += `<g data-vi="${i}" class="c-visit oc-${ocKeyO(v.outcome)} ${far ? 'far' : ''}" data-oc="${ocKeyO(v.outcome)}" style="cursor:pointer"><circle cx="${x}" cy="${y}" r="13"/><text x="${x}" y="${y + 4.5}" text-anchor="middle" font-size="13" font-weight="700">${i + 1}</text><title>${esc(`${i + 1}. ${v.shop_name} · ${t('out.' + v.outcome)} · ${jktTime(v.visit_time)}${v.distance_m != null ? ' · ' + v.distance_m + ' m' : ''}`)}</title></g>`; });
   return s + `</svg><div class="small muted">${esc(t('field.svg_note'))}</div>`;
 }
 
@@ -3166,10 +3180,10 @@ function fieldPanelHTML(d, from, to) {
   const rows = users.map(u => {
     const v = d.visits.filter(x => x.user === u), o = d.orders.filter(x => x.user === u && x.status !== 'batal');
     const shops = d.shops.filter(s => s.created_by === u && String(s.created_at).slice(0, 10) >= from && String(s.created_at).slice(0, 10) <= to);
-    return { u, v: v.length, shops: shops.length, o: o.length, total: sum(o, x => x.total), conv: v.length ? o.length / v.length * 100 : 0 };
+    return { u, v: v.length, vis: v, shops: shops.length, o: o.length, total: sum(o, x => x.total), conv: v.length ? o.length / v.length * 100 : 0 };
   }).filter(r => r.v || r.o || r.shops);
-  return `<div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl" id="rp-field-table"><thead><tr><th>${esc(t('field.rep'))}</th><th class="r">${esc(t('field.visits'))}</th><th class="r">${esc(t('field.new_shops'))}</th><th class="r">${esc(t('field.orders'))}</th><th class="r">${esc(t('total'))}</th><th class="r">${esc(t('field.conversion'))}</th></tr></thead><tbody>
-    ${rows.map(r => `<tr data-rep="${esc(r.u)}"><td>${esc(r.u)}</td><td class="r num" data-c="visits">${fmtNum(r.v)}</td><td class="r num" data-c="shops">${fmtNum(r.shops)}</td><td class="r num" data-c="orders">${fmtNum(r.o)}</td><td class="r num">${fmtRp(r.total)}</td><td class="r num" data-c="conv">${fmtPct(r.conv)}</td></tr>`).join('') || `<tr><td colspan="6" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div>`;
+  return `<div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl" id="rp-field-table"><thead><tr><th>${esc(t('field.rep'))}</th><th class="r">${esc(t('field.visits'))}</th><th class="r">${esc(t('field.new_shops'))}</th><th class="r">${esc(t('field.orders'))}</th><th class="r">${esc(t('total'))}</th><th class="r">${esc(t('field.conversion'))}</th><th>${esc(t('field.results'))}</th></tr></thead><tbody>
+    ${rows.map(r => `<tr data-rep="${esc(r.u)}"><td>${esc(r.u)}</td><td class="r num" data-c="visits">${fmtNum(r.v)}</td><td class="r num" data-c="shops">${fmtNum(r.shops)}</td><td class="r num" data-c="orders">${fmtNum(r.o)}</td><td class="r num">${fmtRp(r.total)}</td><td class="r num" data-c="conv">${fmtPct(r.conv)}</td><td class="occs" data-c="results">${ocCountsO(r.vis)}</td></tr>`).join('') || `<tr><td colspan="7" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div>`;
 }
 async function loadFieldPanel(from, to) {
   const box = $('#rp-field'); if (!box || !isApprover()) return;
@@ -4453,7 +4467,8 @@ Object.assign(I18N.ar, { 'kasirapp.title': 'هذا التطبيق للمالك',
 /* i18n v8: field sales */
 Object.assign(I18N.id, {
   'role.sales': 'Sales (lapangan)', 'salesapp.hint': 'Sales lapangan memakai aplikasi Khair Sales. {name}, silakan masuk di sana.', 'salesapp.open': 'Buka Khair Sales',
-  'nav.field': 'Lapangan', 'navs.field': 'Lapangan', 'nav.shoplist': 'Daftar toko untuk sales', 'navs.shoplist': 'Daftar toko', 'nav.orders': 'Pesanan sales', 'navs.orders': 'Pesanan',
+  'nav.field': 'Lapangan', 'navs.field': 'Lapangan', 'nav.shoplist': 'Daftar toko untuk sales', 'navs.shoplist': 'Daftar toko',
+  'occ.green': 'Pesan', 'occ.orange': 'Ada, tanpa pesanan', 'occ.blue': 'Tidak mau', 'occ.black': 'Tutup / tidak ada / ganti usaha', 'field.far_ring': 'cincin merah = jauh dari toko', 'field.results': 'Hasil kunjungan', 'field.google': 'Pencarian Google bulan ini: {n} dari {cap} gratis', 'nav.orders': 'Pesanan sales', 'navs.orders': 'Pesanan',
   'img.title': 'Foto produk', 'img.hint': 'Foto diperkecil otomatis (maks. 400 px) sebelum dikirim.', 'img.take': 'Ambil / pilih foto', 'img.replace': 'Ganti foto', 'img.saved': 'Foto produk tersimpan', 'img.too_big': 'Foto terlalu besar setelah diperkecil. Coba foto lain.',
   'ago.now': 'baru saja', 'ago.min': '{n} mnt lalu', 'ago.hour': '{n} jam lalu', 'ago.day': '{n} hari lalu',
   'field.rep': 'Sales', 'field.all_reps': 'Semua sales', 'field.st_working': 'bekerja', 'field.st_ended': 'selesai', 'field.st_off': 'belum mulai', 'field.visits': 'kunjungan', 'field.orders': 'pesanan',
@@ -4474,7 +4489,8 @@ Object.assign(I18N.id, {
 });
 Object.assign(I18N.ar, {
   'role.sales': 'مندوب مبيعات', 'salesapp.hint': 'المندوبون يستخدمون تطبيق Khair Sales. {name}، تفضّل بالدخول هناك.', 'salesapp.open': 'فتح Khair Sales',
-  'nav.field': 'الميدان', 'navs.field': 'الميدان', 'nav.shoplist': 'قائمة محلات للمندوب', 'navs.shoplist': 'قائمة المحلات', 'nav.orders': 'طلبات المندوبين', 'navs.orders': 'الطلبات',
+  'nav.field': 'الميدان', 'navs.field': 'الميدان', 'nav.shoplist': 'قائمة محلات للمندوب', 'navs.shoplist': 'قائمة المحلات',
+  'occ.green': 'طلبية', 'occ.orange': 'موجود بلا طلبية', 'occ.blue': 'لا يرغب', 'occ.black': 'مغلق / غير موجود / غيّر نشاطه', 'field.far_ring': 'الحلقة الحمراء = بعيد عن المحل', 'field.results': 'نتائج الزيارات', 'field.google': 'بحث جوجل هذا الشهر: {n} من {cap} مجانًا', 'nav.orders': 'طلبات المندوبين', 'navs.orders': 'الطلبات',
   'img.title': 'صورة المنتج', 'img.hint': 'تُصغَّر الصورة تلقائيًا (حتى 400 بكسل) قبل الإرسال.', 'img.take': 'التقاط / اختيار صورة', 'img.replace': 'تغيير الصورة', 'img.saved': 'حُفظت صورة المنتج', 'img.too_big': 'الصورة كبيرة جدًا بعد التصغير. جرّب صورة أخرى.',
   'ago.now': 'الآن', 'ago.min': 'قبل {n} دقيقة', 'ago.hour': 'قبل {n} ساعة', 'ago.day': 'قبل {n} يوم',
   'field.rep': 'المندوب', 'field.all_reps': 'كل المندوبين', 'field.st_working': 'يعمل', 'field.st_ended': 'أنهى', 'field.st_off': 'لم يبدأ', 'field.visits': 'زيارات', 'field.orders': 'طلبات',

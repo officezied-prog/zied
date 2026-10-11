@@ -165,8 +165,11 @@ test('work line: drawn point by point → kinds of shop searched along it (own c
   await expect(line.locator('[data-worked]')).toContainText('Budi'); // the same road a colleague already worked
   await expect(page.locator('.toast').filter({ hasText: 'Budi' })).toBeVisible();
 
-  // the kinds the owner asked for are ticked by default: dates, Hajj & Umrah, Muslim goods
+  // the kinds the owner asked for are ticked by default: dates, Indonesian groceries, Hajj & Umrah
   await expect(page.locator('#pl-kinds .find-chip.on')).toHaveCount(3);
+  await expect(page.locator('#pl-kinds .find-chip.on[data-k="sembako"]')).toHaveCount(1);
+  await page.click('#pl-kinds [data-k="sembako"]'); // this test looks for the Muslim shops instead of the groceries
+  await page.click('#pl-kinds [data-k="muslim"]');
   await page.click('#pl-find-go');
   await expect(page.locator('#pl-found .pl-res')).toHaveCount(3);
   expect(seen.over).toContain('(around:100,-6.27350,106.85800,');

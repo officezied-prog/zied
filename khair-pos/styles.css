@@ -402,6 +402,9 @@ tr.diff td{background:var(--danger-l)}
 .c-mapbg{fill:var(--surface)} .c-route{fill:none;stroke:var(--brand);stroke-width:3.5;stroke-linejoin:round;stroke-linecap:round;opacity:.85}
 .c-shop{fill:var(--card);stroke:var(--muted);stroke-width:2} .c-start{fill:var(--ok)} .c-last{fill:var(--brand);stroke:#fff;stroke-width:3}
 .c-visit circle{fill:var(--brand);stroke:#fff;stroke-width:2} .c-visit text{fill:#fff} .c-visit.far circle{fill:var(--accent)}
+/* v33 visit result colours on the field map / list (the manager and the owner); far from the shop = red ring */
+.c-visit.oc-green circle{fill:#16A34A} .c-visit.oc-orange circle{fill:#EA580C} .c-visit.oc-blue circle{fill:#2563EB} .c-visit.oc-black circle{fill:#111827}
+.c-visit.far circle{stroke:#DC2626;stroke-width:4}
 .rep-card{border:1px solid var(--border);font:inherit;color:inherit} .rep-card.sel{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-l)}
 .fo-banner{margin:8px 14px 0;padding:6px 10px;border-radius:8px;background:var(--brand-l);color:var(--brand-text);font-weight:700;font-size:13px;display:flex;gap:6px;align-items:center}
 .vpop{font:13px/1.4 var(--font)}
@@ -581,3 +584,15 @@ body.omon [data-act="cust-pay"],body.omon [data-act="sp-pay"],body.omon [data-ac
 .badge.oc-blue,.vnum.oc-blue{background:#2563EB;color:#fff}
 .badge.oc-black,.vnum.oc-black{background:#111827;color:#fff}
 .vnum.green{background:#16A34A;color:#fff}
+
+/* v33 colour counts + legend (green order · orange no order · blue does not want · black closed / not there) */
+.vnum.oc-green{background:#16A34A;color:#fff}
+.vnum.vfar{box-shadow:0 0 0 3px #DC2626}
+.vnum.map.vfar{box-shadow:0 0 0 2px #fff,0 0 0 5px #DC2626}
+.occs{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
+.occ{display:inline-flex;align-items:center;gap:4px;font-weight:700}
+.ocdot{display:inline-block;width:11px;height:11px;border-radius:50%;flex:none}
+.ocdot.green{background:#16A34A}.ocdot.orange{background:#EA580C}.ocdot.blue{background:#2563EB}.ocdot.black{background:#111827}
+.ocdot.ring{background:transparent;box-shadow:inset 0 0 0 3px #DC2626}
+.oc-legend{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:6px}
+.oc-legend .occ{font-weight:500}

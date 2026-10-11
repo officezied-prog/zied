@@ -377,3 +377,45 @@ test('field v33: resolve_links follows a Google Maps short link (redirects only)
   const none = await handleField(a, base('resolve_links', 'Kasir1', '7777', { urls: ['https://evil.example/x'] }), {}, KEY, { fetch: fakeFetch });
   assert.equal(none.error, 'INVALID');
 });
+
+// ---- v34: Google Places search from the Worker, hard monthly cap (4,500 < Google's free 5,000) ----
+test('field v34: Google Places — no key = nothing counted or called; along a drawn line; capped at 4,500 a month', async () => {
+  const db = seed(); const a = sqliteAdapter(db);
+  const calls = [];
+  const gfetch = async (url, opts) => {
+    const body = JSON.parse(opts.body); calls.push({ url, body, mask: opts.headers['X-Goog-FieldMask'], key: opts.headers['X-Goog-Api-Key'] });
+    if (body.searchAlongRouteParameters && body.textQuery === 'tolak rute') return { status: 400, json: async () => ({ error: { status: 'INVALID_ARGUMENT' } }) };
+    return { status: 200, json: async () => ({ places: [
+      { id: 'g1', displayName: { text: 'Toko Kurma Al-Madinah' }, formattedAddress: 'Jl. Raya Condet No.5', location: { latitude: -6.2745, longitude: 106.8583 }, types: ['store'], primaryType: 'store', googleMapsUri: 'https://maps.google.com/?cid=1', businessStatus: 'OPERATIONAL' },
+      { id: 'g2', displayName: { text: 'Toko Tutup Selamanya' }, location: { latitude: -6.275, longitude: 106.859 }, businessStatus: 'CLOSED_PERMANENTLY' }] }) };
+  };
+  const LINE = [[-6.2735, 106.8580], [-6.2765, 106.8585], [-6.2795, 106.8590]];
+  const s0 = await handleField(a, base('places_status', 'Rani', '3333'), {}, KEY, { env: {} });
+  assert.equal(s0.ok, true); assert.equal(s0.enabled, false); assert.equal(s0.cap, 4500);
+  const nk = await handleField(a, base('places_search', 'Rani', '3333', { q: 'toko kurma', line: LINE }), {}, KEY, { env: {}, fetch: gfetch });
+  assert.equal(nk.error, 'NO_KEY');
+  assert.equal(calls.length, 0);
+  assert.equal(a.all('SELECT COUNT(*) AS n FROM pos_api_usage', [])[0].n, 0, 'nothing counted without a key');
+  const env = { GOOGLE_PLACES_KEY: 'AIza-test' };
+  const r = await handleField(a, base('places_search', 'Rani', '3333', { q: 'toko kurma', line: LINE }), {}, KEY, { env, fetch: gfetch });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.mode, 'route');
+  assert.deepEqual(r.places.map(p => p.name), ['Toko Kurma Al-Madinah'], 'permanently closed places dropped');
+  assert.equal(calls[0].key, 'AIza-test');
+  assert.ok(calls[0].body.searchAlongRouteParameters.polyline.encodedPolyline.length > 5);
+  assert.ok(!/Phone|rating|Hours|website/i.test(calls[0].mask), 'only the "Pro" fields (no phone / rating / hours) — the 5,000-free SKU');
+  assert.equal(r.usage.n, 1);
+  // Google refuses the line → one retry around it (a circle)
+  const r2 = await handleField(a, base('places_search', 'Rani', '3333', { q: 'tolak rute', line: LINE }), {}, KEY, { env, fetch: gfetch });
+  assert.equal(r2.mode, 'circle'); assert.ok(calls[2].body.locationBias.circle.radius >= 300);
+  // the owner sees the month's count; at the cap nothing is called any more
+  const st = await handleField(a, base('places_status', 'Pemilik', '1234'), {}, KEY, { env });
+  assert.equal(st.enabled, true); assert.equal(st.n, 2);
+  a.run("UPDATE pos_api_usage SET n = 4500", []);
+  const before = calls.length;
+  const capped = await handleField(a, base('places_search', 'Rani', '3333', { q: 'toko kurma', lat: -6.27, lng: 106.86 }), {}, KEY, { env, fetch: gfetch });
+  assert.equal(capped.error, 'QUOTA');
+  assert.equal(calls.length, before, 'no Google call over the cap');
+  const kas = await handleField(a, base('places_search', 'Pemilik', '1234', { q: 'x' }), {}, KEY, { env, fetch: gfetch });
+  assert.equal(kas.error, 'INVALID');
+});
