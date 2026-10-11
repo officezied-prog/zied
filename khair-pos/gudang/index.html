@@ -66,6 +66,8 @@
   .lines td input, .lines td select { min-height: 36px; padding: 5px 6px; }
   pre.copy { white-space: pre-wrap; background: var(--soft); border: 1px solid var(--bd); border-radius: 6px; padding: 8px; font-size: 13px; }
   #print-area { display: none; }
+  /* shown inside the owner app (البرادات page): the owner app's own header and menu frame this page */
+  .embed header { display: none; } .embed nav { top: 0; }
   [dir="rtl"] td.n, [dir="rtl"] th.n { text-align: left; }
   @media (max-width: 640px) { th.hp, td.hp { display: none; } main { padding: 10px 12px 80px; } }
   @media print { body > *:not(#print-area) { display: none !important; } #print-area { display: block; } body { background: #fff; } }
@@ -81,7 +83,7 @@
 </script>
 </head>
 <body>
-<header><h1 id="title">Khair Gudang Dingin</h1><small id="who"></small><button id="lang" type="button">AR</button><button id="logout" type="button" hidden></button></header>
+<header><button id="home" type="button" hidden></button><h1 id="title">Khair Gudang Dingin</h1><small id="who"></small><button id="lang" type="button">AR</button><button id="logout" type="button" hidden></button></header>
 <nav id="nav" hidden></nav>
 <main id="app"></main>
 <div id="toast" role="status" aria-live="polite"></div>
@@ -93,7 +95,9 @@
 <script src="../shared/docs-cold.js"></script>
 <script>
 'use strict';
-if (window.top !== window.self) { try { window.top.location = window.location.href; } catch (e) { document.documentElement.innerHTML = ''; } }
+// Same-site framing is allowed: the owner app shows البرادات as one of its own pages. Any other framer is refused.
+const EMBED = (() => { if (window.top === window.self) return false; try { return window.top.location.origin === location.origin; } catch (e) { return false; } })();
+if (window.top !== window.self && !EMBED) { try { window.top.location = window.location.href; } catch (e) { document.documentElement.innerHTML = ''; } }
 // Backend = Khair Mart Jumla Worker (code, no monthly execution cap). Rollback: swap COLD_URL back to
 // the n8n host (both hosts are allowed in the CSP connect-src, so no other change is needed). n8n is kept.
 const CONFIG = { COLD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-cold', LALAMOVE_URL: 'https://web.lalamove.com/' };
@@ -115,7 +119,7 @@ const I18N = {
     demo: 'Mode demo — data contoh. Kunci: demo · Pemilik 1234 · Jihan 2222 · Akuntan 3333', demo_reset: 'Ulang data demo',
     t_dash: 'Brad (ruang dingin)', t_stok: 'Stok', t_cont: 'Kontainer', t_mut: 'Mutasi', t_cek: 'Cek stok harian', t_ord: 'Order ambil', t_cust: 'Pelanggan', t_set: 'Pengaturan',
     role_owner: 'Pemilik', role_manager: 'Manajer', role_akuntan: 'Akuntan', ro: 'Hanya lihat',
-    cu_add: 'Pelanggan baru', cu_search: 'Cari nama / telepon…', phone: 'Telepon / WA', cu_pick: 'Pilih dari daftar pelanggan', varieties: 'Jenis kurma', empty_wh: 'Masih kosong',
+    to_admin: 'Khair Mart', cu_add: 'Pelanggan baru', cu_search: 'Cari nama / telepon…', phone: 'Telepon / WA', cu_pick: 'Pilih dari daftar pelanggan', varieties: 'Jenis kurma', empty_wh: 'Masih kosong',
     mode: 'Mode', mode_tabrid: 'Pendinginan (chiller)', mode_takhzin: 'Penyimpanan', mode_tajmid: 'Pembekuan (frozen)', mode_biasa: 'Biasa', mode_none: 'Mode belum diatur',
     wh: 'Gudang', all: 'Semua', product: 'Produk', pallet: 'Palet (PID)', lot: 'Lot', exp: 'Kedaluwarsa', cartons: 'Karton', kg: 'Kg', zone: 'Zona', position: 'Posisi', container: 'Kontainer', date_in: 'Masuk', date: 'Tanggal', search: 'Cari palet, lot, produk…',
     pallets: 'palet', ctn: 'ctn', days_left: '{n} hari lagi', expired: 'sudah lewat {n} hari',
@@ -153,7 +157,7 @@ const I18N = {
     demo: 'وضع تجريبي — بيانات مثال. المفتاح: demo · Pemilik 1234 · Jihan 2222 · Akuntan 3333', demo_reset: 'إعادة البيانات التجريبية',
     t_dash: 'البرّادات', t_stok: 'المخزون', t_cont: 'الحاويات', t_mut: 'الحركات', t_cek: 'الجرد اليومي', t_ord: 'أوامر السحب', t_cust: 'الزبائن', t_set: 'الإعدادات',
     role_owner: 'المالك', role_manager: 'المدير', role_akuntan: 'المحاسب', ro: 'عرض فقط',
-    cu_add: 'زبون جديد', cu_search: 'ابحث بالاسم أو الهاتف…', phone: 'هاتف / واتساب', cu_pick: 'اختر من قائمة الزبائن', varieties: 'نوع التمر', empty_wh: 'فارغ حاليًا',
+    to_admin: 'الإدارة', cu_add: 'زبون جديد', cu_search: 'ابحث بالاسم أو الهاتف…', phone: 'هاتف / واتساب', cu_pick: 'اختر من قائمة الزبائن', varieties: 'نوع التمر', empty_wh: 'فارغ حاليًا',
     mode: 'الوضع', mode_tabrid: 'تبريد', mode_takhzin: 'تخزين', mode_tajmid: 'تجميد', mode_biasa: 'براد عادي', mode_none: 'لم يُحدَّد الوضع',
     wh: 'المخزن', all: 'الكل', product: 'المنتج', pallet: 'البالِت (PID)', lot: 'الدفعة', exp: 'الانتهاء', cartons: 'كراتين', kg: 'كغ', zone: 'المنطقة', position: 'الموقع', container: 'الحاوية', date_in: 'الدخول', date: 'التاريخ', search: 'ابحث عن بالِت أو دفعة أو منتج…',
     pallets: 'بالِت', ctn: 'كرتون', days_left: 'بعد {n} يوم', expired: 'انتهى منذ {n} يوم',
@@ -189,6 +193,7 @@ const I18N = {
 };
 const MON = { id: ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'], ar: ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'] };
 const S = { key: '', user: '', role: '', pin_hash: '', lang: LS.get('kcold.lang', 'id') === 'ar' ? 'ar' : 'id', tab: 'dash', D: null, f: { wh: '', pr: '', q: '', mtype: '', mfrom: '', mto: '', ost: 'active' }, ck: null };
+if (EMBED) { S.lang = LS.get(KP + 'lang', 'id') === 'ar' ? 'ar' : 'id'; document.documentElement.classList.add('embed'); }
 function t(k, v) { let s = (I18N[S.lang] && I18N[S.lang][k]) || I18N.id[k] || k; Object.keys(v || {}).forEach(x => { s = s.split('{' + x + '}').join(String(v[x])); }); return s; }
 
 /* ---------- small helpers (user data only ever goes through textContent) ---------- */
@@ -289,6 +294,7 @@ const TABS = ['dash', 'stok', 'cont', 'mut', 'cek', 'ord', 'cust', 'set'];
 function render() {
   document.documentElement.lang = S.lang; document.documentElement.dir = S.lang === 'ar' ? 'rtl' : 'ltr';
   $('#title').textContent = t('title'); $('#lang').textContent = S.lang === 'ar' ? 'ID' : 'AR';
+  const hb = $('#home'); hb.hidden = EMBED; hb.textContent = (S.lang === 'ar' ? '→ ' : '← ') + t('to_admin');
   if (!S.D) return;
   $('#who').textContent = S.user + (S.role === 'akuntan' ? ' (' + t('ro') + ')' : '') + (MOCK ? ' · demo' : '');
   $('#logout').hidden = false; $('#logout').textContent = t('logout');
@@ -756,16 +762,24 @@ function custForm(c) {
 /* ---------- start ---------- */
 $('#lang').addEventListener('click', () => { S.lang = S.lang === 'ar' ? 'id' : 'ar'; LS.set('kcold.lang', S.lang); if (S.D) render(); else { render(); renderLogin(); } });
 $('#logout').addEventListener('click', logout);
+// back to the owner app (same tab, so its login is kept); only shown when this page is opened on its own
+$('#home').addEventListener('click', () => { location.href = '../' + location.search; });
+// inside the owner app: follow its language / light-dark choice live
+if (EMBED) window.addEventListener('storage', e => {
+  if (e.key === KP + 'lang') { S.lang = LS.get(KP + 'lang', 'id') === 'ar' ? 'ar' : 'id'; render(); if (!S.D) renderLogin(); }
+  else if (e.key === KP + 'theme') { const th = LS.get(KP + 'theme', 'auto'); if (th === 'light' || th === 'dark') document.documentElement.dataset.theme = th; else delete document.documentElement.dataset.theme; }
+});
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 (async function start() {
   render();
   S.key = LS.get('kcold.key', '') || LS.get(KP + 'key', '') || (MOCK ? 'demo' : '');
   // this tab's session: our own, or the owner app's (same site, same tab) — the PIN hash is never kept in localStorage
-  const own = SS.get('kcold.session'), pos = SS.get(KP + 'session');
+  // inside the owner app its login always wins (whoever is logged in there is who uses this page)
+  const own = EMBED ? null : SS.get('kcold.session'), pos = SS.get(KP + 'session');
   const sess = own && own.pin_hash ? own : pos && pos.pin_hash && ['owner', 'manager', 'akuntan'].includes(pos.role) ? pos : null;
   if (S.key && sess) {
     S.user = sess.user; S.pin_hash = sess.pin_hash;
-    try { const r = await api('login', {}); S.user = r.me.name; S.role = r.me.role; SS.set('kcold.session', { user: S.user, pin_hash: S.pin_hash, role: S.role }); await load(); return; }
+    try { const r = await api('login', {}); S.user = r.me.name; S.role = r.me.role; if (!EMBED) SS.set('kcold.session', { user: S.user, pin_hash: S.pin_hash, role: S.role }); await load(); return; }
     catch (e) { S.pin_hash = ''; }
   }
   renderLogin();

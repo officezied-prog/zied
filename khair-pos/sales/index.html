@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- security M8: CSP (GitHub Pages cannot send headers). connect-src = the n8n webhooks only; images incl. OSM tiles. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' https://khair-mart-jumla.officezied.workers.dev; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' https://khair-mart-jumla.officezied.workers.dev https://nominatim.openstreetmap.org https://overpass-api.de https://overpass.private.coffee; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="theme-color" content="#1E40AF">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -79,14 +79,14 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.1.1';
+const APP_VERSION = 'sales-1.2.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
 /* Same prefix as the owner and cashier apps (same origin): store key, language and the user list are
    shared on this device. Everything that belongs to Khair Sales lives under the extra "sales." prefix. */
 const PREFIX = MOCK ? 'kpos.mock.' : 'kpos.';
-const FIELD_ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images'];
+const FIELD_ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'plan_save', 'streets_worked'];
 
 /* ========== Small utilities ========== */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -927,6 +927,7 @@ function applyData(d) {
   if (d.day) setDay(d.day, true);
   if (d.images_version != null) S.imagesVersion = d.images_version;
   if (Array.isArray(d.orders)) S.orders = d.orders;
+  if (Array.isArray(d.plans)) mergeServerPlans(d.plans); // v31 route plans (phone copy wins while it has unsent changes)
 }
 function setDay(day, quiet) { S.day = Object.assign({ status: 'off' }, day); FS.set(uk('day'), S.day); if (!quiet && S.inApp) updateGpsIndicator(); }
 function saveCache() { FS.set('cache', { products: S.products, shops: S.shops.filter(s => !s.pending), customers: S.customers, settings: S.settings, images_version: S.imagesVersion }); }
@@ -934,6 +935,7 @@ async function refreshData(quiet) {
   try {
     const r = await api('field_bootstrap');
     applyData(r);
+    syncPlans().then(() => { const c = S.inApp && S.view === 'today' && $('#plan-card'); if (c) c.outerHTML = planCardHTML(); }).catch(() => { });
     // pending (outbox) visits/orders still count today
     const pendingShops = S.outbox.filter(e => e.action === 'check_in' && e.tmp_shop).map(e => e.local_shop).filter(Boolean);
     pendingShops.forEach(s => { if (!shopById(s.shop_id)) S.shops.push(s); });
@@ -1009,35 +1011,45 @@ const stockChip = p => { const l = stockLevel(p); return `<span class="stock ${l
 
 /* ========== Map: Leaflet (vendor/leaflet + OSM tiles) when available, SVG plot otherwise ========== */
 const MAPS = { failed: false };
-function renderMap(el, { points = [], shops = [], current = null, orders = [], tall = false, full = false, zoom = false }) {
+function renderMap(el, { points = [], shops = [], current = null, orders = [], plan = null, tall = false, full = false, zoom = false }) {
   if (!el) return;
   el.className = 'map' + (tall ? ' tall' : '') + (full ? ' full' : '');
   const useLeaflet = window.L && navigator.onLine && !MAPS.failed;
-  if (useLeaflet) { try { return leafletMap(el, points, shops, current, orders, zoom); } catch (e) { MAPS.failed = true; } }
-  svgMap(el, points, shops, current, orders);
+  if (useLeaflet) { try { return leafletMap(el, points, shops, current, orders, zoom, plan); } catch (e) { MAPS.failed = true; } }
+  svgMap(el, points, shops, current, orders, plan);
 }
-function leafletMap(el, points, shops, current, orders, zoom) {
+function leafletMap(el, points, shops, current, orders, zoom, plan) {
   orders = orders || [];
   el.dataset.mode = 'leaflet'; el.innerHTML = '';
   const m = window.L.map(el, { zoomControl: !!zoom, attributionControl: true });
   let errs = 0, loaded = 0;
   const tiles = window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(m);
   tiles.on('tileload', () => { loaded++; });
-  tiles.on('tileerror', () => { if (++errs >= 3 && !loaded) { MAPS.failed = true; try { m.remove(); } catch (e) { } svgMap(el, points, shops, current, orders); } });
+  tiles.on('tileerror', () => { if (++errs >= 3 && !loaded) { MAPS.failed = true; try { m.remove(); } catch (e) { } svgMap(el, points, shops, current, orders, plan); } });
   const ll = [];
   if (points.length > 1) { const line = points.map(p => [p.lat, p.lng]); window.L.polyline(line, { color: '#1E40AF', weight: 4 }).addTo(m); ll.push(...line); }
   shops.forEach(s => { if (!validPos(s)) return; ll.push([s.lat, s.lng]); window.L.circleMarker([s.lat, s.lng], { radius: 7, color: '#fff', weight: 2, fillColor: shopColor(s), fillOpacity: 1 }).bindTooltip(esc(s.name + ' · ' + shopLabel(s))).addTo(m); }); // Leaflet tooltips are HTML: escape (security C1) // colour = shop group
   // v30 (owner 2026-10-10): each accepted order is a numbered pin at its shop (acceptance order), so areas with
   // the most orders stand out and "who ordered first" is visible.
   orders.forEach(o => { if (!validPos(o)) return; ll.push([o.lat, o.lng]); window.L.marker([o.lat, o.lng], { icon: window.L.divIcon({ className: 'ord-pin-wrap', html: '<span class="ord-pin">' + esc(String(o.seq)) + '</span>', iconSize: [28, 28], iconAnchor: [14, 14] }), zIndexOffset: 1000 }).bindTooltip(esc(o.label || '')).addTo(m); });
+  // v31: the day's plan — dashed purple line from the start through the stops; numbered stops, ✓ once visited
+  if (plan && ((plan.stops || []).length || (plan.streets || []).length)) {
+    (plan.streets || []).forEach(x => (x.lines || []).forEach(ln => { window.L.polyline(ln, { color: '#7C3AED', weight: 7, opacity: .3 }).bindTooltip(esc('🛣️ ' + x.name)).addTo(m); ln.forEach(q => ll.push(q)); }));
+    const pl = (plan.start ? [plan.start] : []).concat(plan.stops).concat(plan.end ? [plan.end] : []).filter(validPos).map(p => [p.lat, p.lng]);
+    if (pl.length > 1) window.L.polyline(pl, { color: '#7C3AED', weight: 3, dashArray: '6 6', opacity: .9 }).addTo(m);
+    if (plan.end && validPos(plan.end)) { ll.push([plan.end.lat, plan.end.lng]); window.L.marker([plan.end.lat, plan.end.lng], { icon: window.L.divIcon({ className: 'ord-pin-wrap', html: '<span class="start-pin">🏁</span>', iconSize: [30, 30], iconAnchor: [6, 28] }), zIndexOffset: 950 }).bindTooltip(esc(plan.end.label || t('plan.end'))).addTo(m); }
+    plan.stops.forEach(s => { if (!validPos(s)) return; ll.push([s.lat, s.lng]); window.L.marker([s.lat, s.lng], { icon: window.L.divIcon({ className: 'ord-pin-wrap', html: '<span class="plan-pin' + (s.done ? ' done' : '') + '">' + (s.done ? '✓' : esc(String(s.seq))) + '</span>', iconSize: [28, 28], iconAnchor: [14, 14] }), zIndexOffset: 900 }).bindTooltip(esc(s.seq + '. ' + s.name)).addTo(m); });
+  }
   if (validPos(current)) { ll.push([current.lat, current.lng]); window.L.circleMarker([current.lat, current.lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#1E40AF', fillOpacity: 1 }).addTo(m); }
   if (ll.length) m.fitBounds(ll, { padding: [24, 24], maxZoom: 17 }); else m.setView([-6.2655, 106.8605], 14);
   return m;
 }
-function svgMap(el, points, shops, current, orders) {
+function svgMap(el, points, shops, current, orders, plan) {
   orders = orders || [];
+  const pstops = plan && (plan.stops || []).length ? plan.stops.filter(validPos) : [];
+  const pend = plan && validPos(plan.end) ? [plan.end] : [];
   el.dataset.mode = 'svg';
-  const all = points.concat(shops.filter(validPos)).concat(orders.filter(validPos)).concat(validPos(current) ? [current] : []);
+  const all = points.concat(shops.filter(validPos)).concat(orders.filter(validPos)).concat(pstops).concat(pend).concat(validPos(current) ? [current] : []);
   if (!all.length) { el.innerHTML = `<div class="empty" style="padding-top:80px">${esc(t('map.empty'))}</div>`; return; }
   let minLat = Math.min(...all.map(p => p.lat)), maxLat = Math.max(...all.map(p => p.lat)), minLng = Math.min(...all.map(p => p.lng)), maxLng = Math.max(...all.map(p => p.lng));
   const k = Math.cos((minLat + maxLat) / 2 * Math.PI / 180);
@@ -1051,9 +1063,377 @@ function svgMap(el, points, shops, current, orders) {
   const start = points.length ? `<circle cx="${X(points[0])}" cy="${Y(points[0])}" r="5" fill="#fff" stroke="#1E40AF" stroke-width="3"/>` : '';
   const sh = shops.filter(validPos).map(s => `<g data-shop="${esc(s.shop_id)}" data-group="${esc(shopGroup(s))}"><circle cx="${X(s)}" cy="${Y(s)}" r="7" fill="${shopColor(s)}" stroke="#fff" stroke-width="2"><title>${esc(s.name + ' · ' + shopLabel(s))}</title></circle></g>`).join('');
   const cur = validPos(current) ? `<circle cx="${X(current)}" cy="${Y(current)}" r="12" fill="#1E40AF" opacity=".18"/><circle cx="${X(current)}" cy="${Y(current)}" r="6" fill="#1E40AF" stroke="#fff" stroke-width="2.5"/>` : '';
+  const ppts = (plan && validPos(plan.start) ? [plan.start] : []).concat(pstops).concat(plan && validPos(plan.end) ? [plan.end] : []);
+  const pln = ppts.length > 1 ? `<polyline points="${ppts.map(p => X(p) + ',' + Y(p)).join(' ')}" fill="none" stroke="#7C3AED" stroke-width="2.5" stroke-dasharray="6 6"/>` : '';
+  const pst = pstops.map(s => `<g><circle cx="${X(s)}" cy="${Y(s)}" r="9" fill="${s.done ? '#16A34A' : '#fff'}" stroke="${s.done ? '#16A34A' : '#7C3AED'}" stroke-width="2.5"><title>${esc(s.seq + '. ' + (s.name || ''))}</title></circle><text x="${X(s)}" y="${Y(s)}" dy="3.5" text-anchor="middle" font-size="10" font-weight="900" fill="${s.done ? '#fff' : '#6D28D9'}">${s.done ? '✓' : esc(String(s.seq))}</text></g>`).join('');
   const ord = orders.filter(validPos).map(o => `<g><circle cx="${X(o)}" cy="${Y(o)}" r="10" fill="#EA580C" stroke="#fff" stroke-width="2"><title>${esc(o.label || '')}</title></circle><text x="${X(o)}" y="${Y(o)}" dy="3.5" text-anchor="middle" font-size="11" font-weight="800" fill="#fff">${esc(String(o.seq))}</text></g>`).join('');
   const kmw = (W - 2 * pad) / sc * 111.32 / k * k; // width of the box in km (approx.)
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${esc(t('map.label'))}"><rect width="${W}" height="${Hh}" fill="#EEF3FA"/>${grid}${line}${start}${sh}${ord}${cur}</svg><div class="note">${esc(t('map.offline'))} · ≈ ${NF1.format(kmw)} km</div>`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${esc(t('map.label'))}"><rect width="${W}" height="${Hh}" fill="#EEF3FA"/>${grid}${line}${pln}${start}${sh}${pst}${ord}${cur}</svg><div class="note">${esc(t('map.offline'))} · ≈ ${NF1.format(kmw)} km</div>`;
+}
+
+/* ========== Route plan (v31, owner 2026-10-11): plan the day BEFORE setting off ==========
+   Start point (my GPS, a searched street/place, or a tap on the map) → shops along a street, near a point or by name
+   (OpenStreetMap search, free, straight from this phone) or our own shops → ordered stops → saved for today or tomorrow.
+   Kept on the phone first (works with a weak signal) and sent to the server, where the manager and the owner see it.
+   During the day the Today card shows the next stop, Google Maps directions, and "visit" (a new place opens the
+   new-shop form already filled in, so it becomes a shop at the first visit). */
+const PL = { date: '', start: null, end: null, stops: [], streets: [], note: '', results: [], street: null, seg: 'search', q: '', msg: '', busy: false, map: null, lay: null, el: null, sel: null, worked: [], workedAt: 0 };
+const OSM = { nomi: 'https://nominatim.openstreetmap.org/search', over: ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter'], last: 0 };
+const plansAll = () => FS.get(uk('plans'), {}) || {};
+const planFor = d => plansAll()[d] || null;
+function putPlanLocal(p, dirty) {
+  const all = plansAll(), keep = {}, from = addDays(today(), -1);
+  Object.keys(all).forEach(k => { if (k >= from) keep[k] = all[k]; });
+  keep[p.plan_date] = Object.assign({}, p, { dirty: !!dirty });
+  FS.set(uk('plans'), keep);
+}
+/** Server plans replace the phone's copy unless the phone holds unsent changes for that day. */
+function mergeServerPlans(list) {
+  if (!Array.isArray(list)) return;
+  const all = plansAll();
+  list.forEach(p => { const loc = all[p.plan_date]; if (!loc || !loc.dirty) all[p.plan_date] = Object.assign({}, p, { dirty: false }); });
+  FS.set(uk('plans'), all);
+}
+let planSyncing = false;
+async function syncPlans() {
+  if (planSyncing || !isRep()) return; planSyncing = true;
+  try {
+    const all = plansAll();
+    for (const d of Object.keys(all)) {
+      const p = all[d]; if (!p || !p.dirty) continue;
+      if (d < today()) { const a = plansAll(); delete a[d]; FS.set(uk('plans'), a); continue; }
+      try { const r = await api('plan_save', { plan_date: d, start: p.start || null, end: p.end || null, stops: p.stops || [], streets: p.streets || [], note: p.note || '' }); putPlanLocal(r.plan, false); }
+      catch (e) {
+        // never dropped: no signal, or a refusal (e.g. the server not updated yet) — it stays "pending" on the phone and is
+        // sent again at the next refresh. A plan whose day has passed is removed above.
+        const a = plansAll(); if (a[d]) { a[d].err = (e && (e.message || e.code)) || 'NET'; FS.set(uk('plans'), a); }
+        if (e instanceof NetError || !e.code) break;
+      }
+    }
+  } finally { planSyncing = false; }
+}
+const stopDone = (s, vs) => vs.some(v => (s.shop_id && v.shop_id === s.shop_id) || (validPos(v) && validPos(s) && haversine(v, s) < NEAR_M));
+function planProgress(p) {
+  const vs = todayVisits(), stops = (p && p.stops) || [], done = stops.map(s => stopDone(s, vs));
+  return { stops, done, n: stops.length, k: done.filter(Boolean).length, next: stops.find((s, i) => !done[i]) || null };
+}
+/** Today's plan for the route map: dashed purple line + numbered stops (✓ once visited). */
+function todayPlanMarkers() {
+  const p = planFor(today()); if (!p || !((p.stops || []).length || (p.streets || []).length)) return null;
+  const g = planProgress(p);
+  return { start: p.start && validPos(p.start) ? p.start : null, end: p.end && validPos(p.end) ? p.end : null, streets: p.streets || [], stops: g.stops.map((s, i) => ({ lat: s.lat, lng: s.lng, seq: i + 1, name: s.name, done: g.done[i] })) };
+}
+/** Google Maps with the remaining stops as waypoints (Maps takes up to 9); the end point (if set) is the destination. */
+function planNavAll(p, g) {
+  const end = p.end && validPos(p.end) ? p.end : null;
+  const rest = g.stops.filter((s, i) => !g.done[i]).slice(0, end ? 9 : 10);
+  if (!rest.length && !end) return '#';
+  const dest = end || rest[rest.length - 1], way = (end ? rest : rest.slice(0, -1)).map(s => s.lat + ',' + s.lng).join('|');
+  const o = S.pos && validPos(S.pos) ? S.pos : (p.start && validPos(p.start) ? p.start : null);
+  return 'https://www.google.com/maps/dir/?api=1' + (o ? '&origin=' + encodeURIComponent(o.lat + ',' + o.lng) : '') + '&destination=' + encodeURIComponent(dest.lat + ',' + dest.lng) + (way ? '&waypoints=' + encodeURIComponent(way) : '') + '&travelmode=driving';
+}
+function planCardHTML() {
+  if (!isRep()) return '';
+  const T = today(), T1 = addDays(T, 1), pt = planFor(T), pm = planFor(T1), has = pt && ((pt.stops || []).length || (pt.streets || []).length), hasM = pm && ((pm.stops || []).length || (pm.streets || []).length);
+  let body;
+  if (has) {
+    const g = planProgress(pt), nx = g.next, d = nx && S.pos && validPos(S.pos) ? haversine(S.pos, nx) : null;
+    body = `<div class="pl-prog" id="pl-prog" data-k="${g.k}" data-n="${g.n}"><b>${esc(t('plan.progress', { k: g.k, n: g.n }))}</b>${pt.dirty ? ` <span class="ostatus pending">${esc(t('pending'))}</span>` : ''}</div>
+      ${(pt.streets || []).length ? `<div class="small" style="margin-top:4px" id="pl-card-streets">🛣️ ${esc((pt.streets || []).map(x => x.name).join(' · '))}</div>` : ''}
+      ${pt.end ? `<div class="small muted" style="margin-top:2px" id="pl-card-end">🏁 ${esc(t('plan.end'))}: ${esc(pt.end.label || '')}</div>` : ''}
+      ${nx ? `<div class="li pl-next" id="pl-next" data-ref="${esc(nx.ref)}" style="margin-top:8px"><span class="plan-pin sm">${g.stops.indexOf(nx) + 1}</span><div class="grow"><div class="t">${esc(nx.name)}</div><div class="s">${esc([nx.kind === 'shop' ? t('plan.shop_ours') : t('plan.place'), nx.address].filter(Boolean).join(' · '))}${d != null ? ' · ' + fmtDist(d) : ''}</div></div></div>
+        <div class="row wrap" style="gap:8px;margin-top:8px"><a class="btn sm" href="${esc(mapsDir(nx))}" target="_blank" rel="noopener" data-dir id="pl-nav">${ic('route')} ${esc(t('plan.nav_next'))}</a><a class="btn sm" href="${esc(planNavAll(pt, g))}" target="_blank" rel="noopener" data-dir id="pl-nav-all">${ic('route')} ${esc(t('plan.nav_all'))}</a><button class="btn sm primary" data-act="pl-visit" data-ref="${esc(nx.ref)}" id="pl-visit">${ic('pin')} ${esc(t('plan.visit'))}</button></div>`
+      : g.n ? `<div class="muted" style="margin-top:6px" id="pl-all-done">${esc(t('plan.all_done'))}</div>` : ''}`;
+  } else body = `<div class="muted small" id="pl-hint">${esc(t('plan.hint'))}</div>`;
+  const tom = hasM ? `<div class="small" style="margin-top:10px" id="pl-tomorrow">${esc(t('plan.tomorrow_ready', { n: (pm.stops || []).length }))}${(pm.streets || []).length ? ' · 🛣️ ' + (pm.streets || []).length : ''} · <button class="linkbtn" data-act="plan-open" data-d="${esc(T1)}">${esc(t('plan.edit'))}</button></div>` : '';
+  return `<div class="card pad" style="margin-top:12px" id="plan-card"><div class="row" style="justify-content:space-between;align-items:center;gap:8px"><h3 style="margin:0">${ic('route')} ${esc(t('plan.title'))}</h3>
+    <div class="row wrap" style="gap:6px"><button class="btn xs" data-act="plan-open" data-d="${esc(T)}" id="pl-open-today">${esc(has ? t('plan.edit') : t('plan.make_today'))}</button>${hasM ? '' : `<button class="btn xs" data-act="plan-open" data-d="${esc(T1)}" id="pl-open-tomorrow">${esc(t('plan.make_tomorrow'))}</button>`}</div></div>
+    <div style="margin-top:8px">${body}</div>${tom}</div>`;
+}
+
+/* ---- planner screen ---- */
+function openPlanner(date) {
+  const d = date || today(), p = planFor(d);
+  Object.assign(PL, { date: d, start: p && p.start ? Object.assign({}, p.start) : null, end: p && p.end ? Object.assign({}, p.end) : null, stops: p ? clone(p.stops || []) : [],
+    streets: p ? clone(p.streets || []) : [], note: p ? p.note || '' : '', results: [], street: null,
+    seg: p && ((p.stops || []).length || (p.streets || []).length) ? 'plan' : 'search', q: '', msg: '', busy: false, map: null, lay: null, sel: null });
+  PL.el = openModal({ title: t('plan.title') + ' · ' + t(d === today() ? 'plan.today' : 'plan.tomorrow') + ' ' + fmtDate(d), id: 'plan', cls: 'map-modal plan-modal',
+    body: `<div id="pl-wrap"><div class="map full plan-map" id="pl-map"></div><div class="small muted" id="pl-legend" style="margin-top:4px">${esc(t('plan.legend'))}</div><div id="pl-startbox"></div><div class="seg sm" id="pl-seg" style="margin-top:10px"></div><div id="pl-body" style="margin-top:10px"></div></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary grow" data-act="pl-save" id="pl-save">${ic('check')} ${esc(t('plan.save'))}</button>`,
+    onClose: () => { try { if (PL.map) PL.map.remove(); } catch (e) { } PL.map = null; PL.lay = null; PL.el = null; } });
+  initPlanMap();
+  drawPlanner();
+  loadWorked().then(() => { if (PL.el) drawPlanner(); });
+}
+/** Streets worked / planned by every rep (last 60 days), so nobody repeats a street; cached on the phone for offline. */
+async function loadWorked(force) {
+  if (!force && PL.workedAt && Date.now() - PL.workedAt < 300000) return;
+  try { const r = await api('streets_worked'); PL.worked = r.streets || []; PL.workedAt = Date.now(); FS.set('worked_streets', { at: Date.now(), list: PL.worked }); }
+  catch (e) { const c = FS.get('worked_streets', null); if (c && Array.isArray(c.list)) PL.worked = c.list; }
+}
+/** Other reps who worked (or plan) this street — the rep is warned, not blocked. */
+const workedBy = name => (PL.worked || []).filter(w => normTxt(w.name) === normTxt(name) && normTxt(w.user) !== normTxt(S.user));
+const workedNote = name => workedBy(name).map(w => t(w.status === 'planned' ? 'plan.planned_by' : 'plan.worked_by', { u: w.user, d: fmtDate(w.plan_date) })).join(' · ');
+function pointBox(id, icon, label, pt, acts) {
+  return `<div class="pl-start" id="${id}" data-set="${pt ? 1 : 0}"><span class="start-pin" aria-hidden="true">${icon}</span><div class="grow"><div class="small muted">${esc(label)}</div><b>${esc(pt ? (pt.label || (Number(pt.lat).toFixed(5) + ', ' + Number(pt.lng).toFixed(5))) : t('plan.start_none'))}</b></div><div class="row wrap" style="gap:4px;flex:none;justify-content:flex-end">${acts}</div></div>`;
+}
+function drawPlanner() {
+  const w = PL.el && $('#pl-wrap', PL.el); if (!w) return;
+  $('#pl-startbox', w).innerHTML = pointBox('pl-start', '🚩', t('plan.start'), PL.start, `<button class="btn xs" data-act="pl-mypos" id="pl-mypos">${ic('locate')} ${esc(t('plan.my_pos'))}</button>`)
+    + pointBox('pl-end', '🏁', t('plan.end'), PL.end, `<button class="btn xs" data-act="pl-end-mypos" id="pl-end-mypos">${ic('locate')} ${esc(t('plan.my_pos'))}</button><button class="btn xs" data-act="pl-end-same" id="pl-end-same" ${PL.start ? '' : 'disabled'}>${esc(t('plan.end_same'))}</button>${PL.end ? `<button class="btn xs ghost" data-act="pl-end-clear" id="pl-end-clear" aria-label="${esc(t('plan.remove'))}">✕</button>` : ''}`)
+    + `<div class="small muted" style="margin-top:4px">${esc(t('plan.tap_hint'))}</div>`;
+  $('#pl-seg', w).innerHTML = `<button type="button" data-act="pl-seg" data-v="search" class="${PL.seg === 'search' ? 'on' : ''}" id="pl-seg-search">${esc(t('plan.tab_search'))}</button><button type="button" data-act="pl-seg" data-v="plan" class="${PL.seg === 'plan' ? 'on' : ''}" id="pl-seg-plan">${esc(t('plan.tab_plan', { n: PL.stops.length + PL.streets.length }))}</button>`;
+  $('#pl-body', w).innerHTML = PL.seg === 'plan' ? planListHTML() : planSearchHTML();
+  const q = $('#pl-q', w); if (q) { q.oninput = e => { PL.q = e.target.value; }; q.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); plSearch(); } }; }
+  const nt = $('#pl-note', w); if (nt) nt.oninput = e => { PL.note = e.target.value; };
+  drawPlanLayers();
+}
+function planSearchHTML() {
+  const named = PL.street ? PL.results.filter(r => r.kind === 'poi' && r.named && !PL.stops.some(s => s.ref === r.ref)).length : 0;
+  return `<div class="row" style="gap:8px"><input class="input grow" id="pl-q" type="search" placeholder="${esc(t('plan.search_ph'))}" value="${esc(PL.q)}" enterkeyhint="search" autocomplete="off"><button class="btn primary" data-act="pl-search" id="pl-go" ${PL.busy ? 'disabled' : ''}>${ic('search')} ${esc(t('plan.search'))}</button></div>
+    <div class="row wrap" style="gap:6px;margin-top:8px"><button class="btn xs" data-act="pl-near" id="pl-near" ${PL.busy ? 'disabled' : ''}>🏪 ${esc(t('plan.near'))}</button><button class="btn xs" data-act="pl-ours" id="pl-ours">⭐ ${esc(t('plan.ours'))}</button>
+      ${named ? `<button class="btn xs primary" data-act="pl-add-all" id="pl-add-all">+ ${esc(t('plan.add_all', { n: named }))}</button>` : ''}</div>
+    ${PL.street ? `<div class="small" style="margin-top:6px" id="pl-street">🛣️ <b>${esc(PL.street.name)}</b></div>` : ''}
+    <div class="small muted" id="pl-msg" style="margin-top:6px" role="status">${esc(PL.msg)}</div>
+    <div class="list" id="pl-results" style="margin-top:6px">${PL.results.map(resultRowHTML).join('')}</div>
+    <div class="small muted" style="margin-top:8px">${esc(t('plan.osm'))}</div>`;
+}
+function resultRowHTML(r, i) {
+  const added = PL.stops.some(s => s.ref === r.ref), d = PL.start ? haversine(PL.start, r) : null;
+  const what = r.kind === 'street' ? t('plan.street') : r.kind === 'area' ? t('plan.area') : r.ours ? t('plan.shop_ours') : (r.type ? KST.typeLabel(r.type, S.lang) : t('plan.place'));
+  const sub = [what, r.address, d != null ? fmtDist(d) : ''].filter(Boolean).join(' · ');
+  const inPlan = r.kind === 'street' && PL.streets.some(x => normTxt(x.name) === normTxt(r.name)), warn = r.kind === 'street' ? workedNote(r.name) : '';
+  const btns = r.kind === 'street' ? `<button class="btn xs ${inPlan ? '' : 'primary'}" data-act="pl-work" data-i="${i}">${inPlan ? '✓ ' + esc(t('plan.street_in')) : '🛣️ ' + esc(t('plan.work_street'))}</button><button class="btn xs" data-act="pl-start-at" data-i="${i}">🚩</button><button class="btn xs" data-act="pl-end-at" data-i="${i}">🏁</button>`
+    : r.kind === 'area' ? `<button class="btn xs" data-act="pl-start-at" data-i="${i}">🚩 ${esc(t('plan.set_start'))}</button><button class="btn xs" data-act="pl-end-at" data-i="${i}">🏁</button><button class="btn xs" data-act="pl-goto" data-i="${i}">${esc(t('plan.go_there'))}</button>`
+    : `<button class="btn xs ${added ? '' : 'primary'}" data-act="pl-toggle" data-i="${i}" aria-pressed="${added}">${added ? '✓ ' + esc(t('plan.added')) : '+ ' + esc(t('plan.add'))}</button>`;
+  return `<div class="li pl-res" data-ref="${esc(r.ref)}" data-kind="${esc(r.kind)}"><div class="grow"><div class="t">${esc(r.name)}${r.ours ? ' ⭐' : ''}</div><div class="s">${esc(sub)}</div>${warn ? `<div class="small pl-warn" data-worked>⚠ ${esc(warn)}</div>` : ''}</div><div class="row wrap" style="gap:4px;flex:none;justify-content:flex-end">${btns}</div></div>`;
+}
+function planKm() { const pts = (PL.start ? [PL.start] : []).concat(PL.stops).concat(PL.end ? [PL.end] : []); let m = 0; for (let i = 1; i < pts.length; i++) m += haversine(pts[i - 1], pts[i]); return m / 1000; }
+function planListHTML() {
+  const streets = `<div class="small" style="font-weight:800;margin:2px 0 6px">🛣️ ${esc(t('plan.streets', { n: PL.streets.length }))}</div>
+    <div class="list" id="pl-streets">${PL.streets.length ? PL.streets.map((x, i) => { const warn = workedNote(x.name); return `<div class="li pl-stop pl-street" data-ref="${esc(x.ref)}"><span class="start-pin" aria-hidden="true">🛣️</span><div class="grow"><div class="t">${esc(x.name)}</div>${warn ? `<div class="small pl-warn" data-worked>⚠ ${esc(warn)}</div>` : ''}</div>
+      <div class="row" style="gap:2px;flex:none"><button class="btn xs" data-act="pl-street-shops" data-i="${i}">🔎 ${esc(t('plan.street_shops'))}</button><button class="btn xs ghost danger" data-act="pl-street-del" data-i="${i}" aria-label="${esc(t('plan.remove'))}">✕</button></div></div>`; }).join('') : `<div class="muted small" id="pl-no-streets">${esc(t('plan.no_streets'))}</div>`}</div>
+    <div class="small" style="font-weight:800;margin:12px 0 6px">📍 ${esc(t('plan.stops', { n: PL.stops.length }))}</div>`;
+  return streets + `<div class="row" style="justify-content:space-between;align-items:center;gap:8px"><button class="btn xs" data-act="pl-sort" id="pl-sort" ${PL.stops.length > 1 ? '' : 'disabled'}>↕ ${esc(t('plan.sort'))}</button><span class="small muted" id="pl-km">${PL.stops.length ? esc(t('plan.km', { km: NF1.format(planKm()) })) : ''}</span></div>
+    <div class="list" id="pl-stops" style="margin-top:8px">${PL.stops.length ? PL.stops.map((s, i) => `<div class="li pl-stop" data-ref="${esc(s.ref)}"><span class="plan-pin sm">${i + 1}</span><div class="grow"><div class="t">${esc(s.name)}</div><div class="s">${esc([s.kind === 'shop' ? t('plan.shop_ours') : t('plan.place'), s.address].filter(Boolean).join(' · '))}</div></div>
+      <div class="row" style="gap:2px;flex:none"><button class="btn xs ghost" data-act="pl-up" data-i="${i}" aria-label="${esc(t('plan.up'))}" ${i ? '' : 'disabled'}>▲</button><button class="btn xs ghost" data-act="pl-down" data-i="${i}" aria-label="${esc(t('plan.down'))}" ${i < PL.stops.length - 1 ? '' : 'disabled'}>▼</button><button class="btn xs ghost danger" data-act="pl-del" data-i="${i}" aria-label="${esc(t('plan.remove'))}">✕</button></div></div>`).join('') : `<div class="muted" id="pl-empty">${esc(t('plan.empty'))}</div>`}</div>
+    <div class="field" style="margin-top:10px"><label class="f" for="pl-note">${esc(t('notes'))}</label><textarea class="input" id="pl-note" rows="2">${esc(PL.note)}</textarea></div>`;
+}
+function shopsCenter() { const v = S.shops.filter(validPos); return v.length ? { lat: sum(v, s => s.lat) / v.length, lng: sum(v, s => s.lng) / v.length } : null; }
+function initPlanMap() {
+  const el = PL.el && $('#pl-map', PL.el); if (!el) return;
+  if (!(window.L && navigator.onLine)) { el.dataset.mode = 'none'; el.innerHTML = `<div class="empty" style="padding-top:60px" id="pl-nomap">${esc(t('plan.need_net'))}</div>`; return; }
+  el.dataset.mode = 'leaflet';
+  const L = window.L, m = L.map(el, { zoomControl: true, attributionControl: true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(m);
+  PL.map = m; PL.lay = L.layerGroup().addTo(m);
+  const c = (PL.start && validPos(PL.start) ? PL.start : null) || (S.pos && validPos(S.pos) ? S.pos : null) || shopsCenter() || { lat: -6.2655, lng: 106.8605 };
+  m.setView([c.lat, c.lng], 15);
+  m.on('click', e => planMapClick(e.latlng));
+  setTimeout(() => { try { m.invalidateSize(); } catch (e) { } }, 150);
+}
+function planMapClick(ll) {
+  PL.sel = { lat: ll.lat, lng: ll.lng };
+  const html = `<div class="pl-pop"><div class="row" style="gap:6px"><button class="btn xs" data-act="pl-sel-start" id="pl-sel-start">🚩 ${esc(t('plan.set_start'))}</button><button class="btn xs" data-act="pl-sel-end" id="pl-sel-end">🏁 ${esc(t('plan.set_end'))}</button><button class="btn xs primary" data-act="pl-sel-add" id="pl-sel-add">+ ${esc(t('plan.point_here'))}</button></div></div>`;
+  window.L.popup({ closeButton: true, autoPan: true }).setLatLng(ll).setContent(html).openOn(PL.map);
+}
+function drawPlanLayers() {
+  const m = PL.map, L = window.L; if (!m || !PL.lay) return;
+  PL.lay.clearLayers();
+  const b = m.getBounds().pad(0.5);
+  S.shops.filter(s => validPos(s) && b.contains([s.lat, s.lng])).forEach(s => {
+    L.circleMarker([s.lat, s.lng], { radius: 5, color: '#fff', weight: 1, fillColor: shopColor(s), fillOpacity: .6 }).bindTooltip(esc(s.name)).on('click', () => toggleStop(shopItem(s))).addTo(PL.lay);
+  });
+  // streets other reps worked (red) / I worked before (grey) — last 60 days
+  (PL.worked || []).forEach(wk => {
+    const mine = normTxt(wk.user) === normTxt(S.user); if (mine && wk.plan_date === PL.date) return;
+    (wk.lines || []).forEach(ln => L.polyline(ln, { color: mine ? '#64748B' : '#E11D48', weight: 6, opacity: .45 }).bindTooltip(esc(wk.name + ' · ' + t(wk.status === 'planned' ? 'plan.planned_by' : 'plan.worked_by', { u: wk.user, d: fmtDate(wk.plan_date) }))).addTo(PL.lay));
+  });
+  PL.streets.forEach(x => (x.lines || []).forEach(ln => L.polyline(ln, { color: '#7C3AED', weight: 8, opacity: .4 }).bindTooltip(esc('🛣️ ' + x.name)).addTo(PL.lay)));
+  if (PL.street && PL.street.lines && !PL.streets.some(x => normTxt(x.name) === normTxt(PL.street.name))) PL.street.lines.forEach(ln => L.polyline(ln, { color: '#7C3AED', weight: 7, opacity: .25, dashArray: '2 8' }).addTo(PL.lay));
+  PL.results.filter(r => r.kind === 'poi' && !r.ours).forEach(r => {
+    const on = PL.stops.some(s => s.ref === r.ref);
+    L.circleMarker([r.lat, r.lng], { radius: on ? 8 : 6, color: '#fff', weight: 2, fillColor: on ? '#16A34A' : '#EA580C', fillOpacity: 1 }).bindTooltip(esc(r.name)).on('click', () => toggleStop(r)).addTo(PL.lay);
+  });
+  const route = (PL.start && validPos(PL.start) ? [PL.start] : []).concat(PL.stops).concat(PL.end && validPos(PL.end) ? [PL.end] : []).map(p => [p.lat, p.lng]);
+  if (route.length > 1) L.polyline(route, { color: '#7C3AED', weight: 3, dashArray: '6 6', opacity: .9 }).addTo(PL.lay);
+  PL.stops.forEach((s, i) => L.marker([s.lat, s.lng], { icon: L.divIcon({ className: 'ord-pin-wrap', html: '<span class="plan-pin">' + (i + 1) + '</span>', iconSize: [28, 28], iconAnchor: [14, 14] }), zIndexOffset: 1000 }).bindTooltip(esc((i + 1) + '. ' + s.name)).addTo(PL.lay));
+  if (PL.start && validPos(PL.start)) L.marker([PL.start.lat, PL.start.lng], { icon: L.divIcon({ className: 'ord-pin-wrap', html: '<span class="start-pin">🚩</span>', iconSize: [30, 30], iconAnchor: [6, 28] }), zIndexOffset: 1100 }).bindTooltip(esc(PL.start.label || t('plan.start'))).addTo(PL.lay);
+  if (PL.end && validPos(PL.end)) L.marker([PL.end.lat, PL.end.lng], { icon: L.divIcon({ className: 'ord-pin-wrap', html: '<span class="start-pin">🏁</span>', iconSize: [30, 30], iconAnchor: [6, 28] }), zIndexOffset: 1100 }).bindTooltip(esc(PL.end.label || t('plan.end'))).addTo(PL.lay);
+}
+function fitPlan(items) {
+  const m = PL.map; if (!m) return;
+  const ll = items.filter(validPos).map(p => [p.lat, p.lng]);
+  if (PL.street && PL.street.lines) PL.street.lines.forEach(l => l.forEach(p => ll.push(p)));
+  if (ll.length === 1) m.setView(ll[0], 16); else if (ll.length) m.fitBounds(ll, { padding: [24, 24], maxZoom: 17 });
+}
+const shopItem = s => ({ ref: 'shop:' + s.shop_id, shop_id: s.shop_id, kind: 'poi', ours: true, named: true, src: 'shop', name: s.name, lat: s.lat, lng: s.lng, address: [s.area, s.address].filter(Boolean).join(' · '), type: s.type || '' });
+function toggleStop(it) {
+  const i = PL.stops.findIndex(s => s.ref === it.ref);
+  if (i >= 0) PL.stops.splice(i, 1);
+  else {
+    if (PL.stops.length >= 60) { toast(t('plan.max'), 'err'); return; }
+    PL.stops.push({ ref: it.ref, kind: it.shop_id ? 'shop' : 'place', shop_id: it.shop_id || '', name: it.name, lat: it.lat, lng: it.lng, address: it.address || '', type: it.type || '', src: it.src || 'map' });
+  }
+  drawPlanner();
+}
+/** Nearest stop first, starting from the start point (or the first stop). */
+function sortStops() {
+  const left = PL.stops.slice(), out = [];
+  let cur = PL.start && validPos(PL.start) ? PL.start : left.shift();
+  if (!(PL.start && validPos(PL.start)) && cur) out.push(cur);
+  while (left.length) { let bi = 0, bd = Infinity; left.forEach((s, i) => { const d = haversine(cur, s); if (d < bd) { bd = d; bi = i; } }); cur = left.splice(bi, 1)[0]; out.push(cur); }
+  PL.stops = out;
+}
+
+/* ---- OpenStreetMap search (free; from the phone; explicit search only, ≤ 1 request/second as the service asks) ---- */
+const OSM_TYPES = { convenience: 'minimarket', supermarket: 'supermarket', department_store: 'hypermarket', mall: 'hypermarket', wholesale: 'grosir_modern', general: 'warung', kiosk: 'warung',
+  variety_store: 'toko', frozen_food: 'toko', deli: 'toko', dairy: 'toko', bakery: 'bakery', pastry: 'toko_kue', confectionery: 'toko_kue', greengrocer: 'toko_buah', health_food: 'herbal',
+  herbalist: 'herbal', nutrition_supplements: 'herbal', gift: 'oleh_oleh', marketplace: 'pasar', restaurant: 'restoran', fast_food: 'restoran', food_court: 'restoran', cafe: 'kafe',
+  place_of_worship: 'masjid', hotel: 'hotel', travel_agency: 'travel_umrah' };
+function osmType(tg) {
+  const nm = String(tg.name || tg.brand || '').toLowerCase();
+  let ty = /kurma|dates/.test(nm) ? 'toko_kurma' : /indomaret|alfamart|alfamidi|lawson|circle ?k|family ?mart/.test(nm) ? 'minimarket' : /oleh/.test(nm) ? 'oleh_oleh' : '';
+  if (!ty) { const v = tg.shop || tg.amenity || tg.tourism || tg.office || ''; ty = OSM_TYPES[v] || (tg.shop ? 'toko' : ''); }
+  return ty && KST.IDS.indexOf(ty) >= 0 ? ty : '';
+}
+async function osmJSON(url, opts) {
+  const ctrl = new AbortController(), tm = setTimeout(() => ctrl.abort(), 25000);
+  try {
+    const r = await fetch(url, Object.assign({ signal: ctrl.signal, cache: 'no-store', referrerPolicy: 'strict-origin-when-cross-origin' }, opts || {}));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } finally { clearTimeout(tm); }
+}
+async function nominatim(q, b) {
+  const wait = OSM.last + 1100 - Date.now(); if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  OSM.last = Date.now();
+  const vb = b ? `&viewbox=${b.getWest()},${b.getNorth()},${b.getEast()},${b.getSouth()}` : '';
+  const list = await osmJSON(`${OSM.nomi}?format=jsonv2&q=${encodeURIComponent(q)}&countrycodes=id&limit=15&addressdetails=1&accept-language=id${vb}`);
+  return (Array.isArray(list) ? list : []).map(r => {
+    const lat = Number(r.lat), lng = Number(r.lon); if (!isFinite(lat) || !isFinite(lng)) return null;
+    const cat = r.category || r.class || '', a = r.address || {};
+    const kind = cat === 'highway' ? 'street' : ['shop', 'amenity', 'tourism', 'craft', 'office'].indexOf(cat) >= 0 ? 'poi' : 'area';
+    const name = String(r.name || String(r.display_name || '').split(',')[0] || '').slice(0, 100);
+    const where = [a.suburb || a.village || a.neighbourhood, a.city_district || a.city || a.town].filter(Boolean).join(', ');
+    return { ref: 'osm:' + String(r.osm_type || 'x').charAt(0) + r.osm_id, src: 'osm', kind, named: !!r.name, name, lat, lng,
+      address: kind === 'poi' ? [[a.road, a.house_number].filter(Boolean).join(' '), where].filter(Boolean).join(', ') : where,
+      type: kind === 'poi' ? osmType({ [cat]: r.type, name }) : '', bbox: Array.isArray(r.boundingbox) ? r.boundingbox.map(Number) : null };
+  }).filter(Boolean);
+}
+async function overpass(ql) {
+  let err = null;
+  for (const u of OSM.over) {
+    try { return await osmJSON(u, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' }, body: 'data=' + encodeURIComponent(ql) }); }
+    catch (e) { err = e; } // next public server
+  }
+  throw err || new Error('overpass');
+}
+/** Shops + the places that buy dates (markets, cafés/restaurants, mosques, hotels); F = the area filter. */
+const osmPoiQL = F => `nwr["shop"]${F};nwr["amenity"~"^(marketplace|restaurant|cafe|fast_food|food_court)$"]${F};nwr["amenity"="place_of_worship"]["religion"="muslim"]${F};nwr["tourism"="hotel"]${F};`;
+function overpassItems(js) {
+  const lines = [], pois = [];
+  ((js && js.elements) || []).forEach(x => {
+    const tg = x.tags || {};
+    if (x.type === 'way' && tg.highway && Array.isArray(x.geometry)) { lines.push(x.geometry.map(g => [g.lat, g.lon])); return; }
+    const lat = x.lat != null ? x.lat : (x.center && x.center.lat), lng = x.lon != null ? x.lon : (x.center && x.center.lon);
+    if (!isFinite(lat) || !isFinite(lng)) return;
+    const type = osmType(tg), nm = tg.name || tg.brand || '';
+    pois.push({ ref: 'osm:' + String(x.type).charAt(0) + x.id, src: 'osm', kind: 'poi', named: !!nm, lat, lng, type,
+      name: String(nm || ((type ? KST.typeLabel(type, S.lang) : t('plan.place')) + ' · ' + t('plan.unnamed'))).slice(0, 100),
+      address: [tg['addr:street'], tg['addr:housenumber']].filter(Boolean).join(' ') });
+  });
+  return { lines, pois };
+}
+/** Mark places that are already our shops (≤ 40 m), drop duplicates, named first, nearest first. */
+function withOurs(pois, from) {
+  const out = [], seen = new Set();
+  pois.forEach(p => {
+    const ours = S.shops.find(s => validPos(s) && haversine(s, p) < 40);
+    const it = ours ? shopItem(ours) : p;
+    if (seen.has(it.ref)) return; seen.add(it.ref); out.push(it);
+  });
+  const o = from && validPos(from) ? from : null;
+  return out.sort((a, b) => (b.named - a.named) || (o ? haversine(o, a) - haversine(o, b) : 0)).slice(0, 150);
+}
+async function planRun(fn) {
+  PL.busy = true; PL.msg = t('plan.searching'); PL.seg = 'search'; drawPlanner();
+  try { await fn(); }
+  catch (e) { console.warn('plan search', e); PL.msg = navigator.onLine ? t('plan.search_err') : t('plan.need_net'); }
+  finally { PL.busy = false; drawPlanner(); }
+}
+const normTxt = s => String(s || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '');
+function plSearch() {
+  const q = String(PL.q || '').trim();
+  if (q.length < 3) { PL.msg = t('plan.q_short'); drawPlanner(); return; }
+  return planRun(async () => {
+    PL.street = null;
+    const ours = S.shops.filter(s => validPos(s) && normTxt(s.name).indexOf(normTxt(q)) >= 0).slice(0, 10).map(shopItem);
+    const osm = await nominatim(q, PL.map ? PL.map.getBounds() : null);
+    PL.results = ours.concat(osm.filter(r => !ours.some(o => haversine(o, r) < 40)));
+    PL.msg = PL.results.length ? t('plan.found', { n: PL.results.length }) : t('plan.no_results');
+    fitPlan(PL.results);
+  });
+}
+function plNear() {
+  const c = PL.map ? PL.map.getCenter() : (PL.start || S.pos);
+  if (!c) { PL.msg = t('plan.need_net'); drawPlanner(); return; }
+  return planRun(async () => {
+    PL.street = null;
+    const js = await overpass(`[out:json][timeout:25];(${osmPoiQL(`(around:700,${c.lat},${c.lng})`)});out center 150;`);
+    PL.results = withOurs(overpassItems(js).pois, PL.start || c);
+    PL.msg = PL.results.length ? t('plan.found', { n: PL.results.length }) : t('plan.no_results');
+    fitPlan(PL.results);
+  });
+}
+function plAlong(r) {
+  return planRun(async () => {
+    const bb = r.bbox && r.bbox.length === 4 ? r.bbox : [r.lat, r.lat, r.lng, r.lng], pad = 0.03;
+    const nm = String(r.name).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const js = await overpass(`[out:json][timeout:30];way["highway"]["name"="${nm}"](${bb[0] - pad},${bb[2] - pad},${bb[1] + pad},${bb[3] + pad})->.s;.s out geom;(${osmPoiQL('(around.s:60)')});out center 200;`);
+    const got = overpassItems(js);
+    PL.street = { name: r.name, lines: got.lines };
+    PL.results = withOurs(got.pois, PL.start || r);
+    PL.msg = PL.results.length ? t('plan.found_along', { n: PL.results.length }) : t('plan.no_results');
+    fitPlan(PL.results);
+  });
+}
+/** Lighter street lines for storage (≥ 25 m between kept points, ≤ 150 per line, ≤ 40 lines). */
+function simplifyLines(lines) {
+  return (lines || []).slice(0, 40).map(ln => { const out = []; (ln || []).forEach((q, i) => { const last = out[out.length - 1]; if (!last || i === ln.length - 1 || haversine({ lat: last[0], lng: last[1] }, { lat: q[0], lng: q[1] }) >= 25) out.push([Math.round(q[0] * 1e5) / 1e5, Math.round(q[1] * 1e5) / 1e5]); }); return out.slice(0, 150); }).filter(ln => ln.length > 1);
+}
+/** Work in a street: it goes into the plan (kept on the map for every rep) and its shops along the whole street are listed. */
+async function plWorkStreet(r) {
+  const ref = 'st:' + normTxt(r.name);
+  await plAlong(r);
+  const lines = PL.street && normTxt(PL.street.name) === normTxt(r.name) ? simplifyLines(PL.street.lines) : [];
+  const ex = PL.streets.find(x => x.ref === ref);
+  if (ex) { if (lines.length) ex.lines = lines; } else if (PL.streets.length < 15) PL.streets.push({ ref, name: r.name, lines }); else toast(t('plan.max_streets'), 'err');
+  const warn = workedNote(r.name); if (warn) toast('⚠ ' + warn, 'warn', 5000);
+  drawPlanner();
+}
+function plOurs() {
+  const c = PL.map ? PL.map.getCenter() : (PL.start || S.pos || shopsCenter());
+  PL.street = null;
+  PL.results = S.shops.filter(validPos).map(shopItem).filter(s => !c || haversine(c, s) < 3000).sort((a, b) => c ? haversine(c, a) - haversine(c, b) : 0).slice(0, 80);
+  PL.msg = PL.results.length ? t('plan.found', { n: PL.results.length }) : t('plan.no_results');
+  PL.seg = 'search'; drawPlanner(); fitPlan(PL.results);
+}
+function myPosition() {
+  return new Promise(res => {
+    const fresh = S.pos && validPos(S.pos) && (!S.pos.t || Date.now() - Date.parse(S.pos.t) < 120000) ? S.pos : null;
+    if (!navigator.geolocation) return res(fresh);
+    navigator.geolocation.getCurrentPosition(p => res({ lat: p.coords.latitude, lng: p.coords.longitude }), () => res(fresh), { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+  });
+}
+/** Visit a stop of today's plan: a system shop → the normal visit; a new place → the new-shop form already filled in. */
+function visitPlanStop(ref) {
+  const p = planFor(today()), s = p && (p.stops || []).find(x => x.ref === ref); if (!s) return;
+  if (s.shop_id && shopById(s.shop_id)) { resetCheckin(s.shop_id); go('visit', true); return; }
+  resetCheckin();
+  CI.isNew = true; CI.form = { name: s.name, owner_name: '', phone: '', address: s.address || '', area: '' };
+  if (s.type) { CI.tp.type = s.type; CI.tp.group = KST.groupOf(s.type); }
+  go('visit', true);
 }
 
 /* ========== Hari ini ========== */
@@ -1083,7 +1463,7 @@ RENDER.today = function () {
   const nextBody = !due.length ? `<div class="muted">${esc(t('today.next_none'))}</div>`
     : dueAreaKeys.length <= 1 ? due.slice(0, 20).map(s => shopRow(s, s._d)).join('')
     : dueAreaKeys.map(a => `<div class="og-head"><b>${esc(a)}</b> <span class="badge gray">${dueAreas[a].length}</span></div>` + dueAreas[a].slice(0, 12).map(s => shopRow(s, s._d)).join('')).join('');
-  $('#v-today').innerHTML = `<div class="wrapc">${hero}
+  $('#v-today').innerHTML = `<div class="wrapc">${hero}${planCardHTML()}
     <div class="card pad" style="margin-top:12px"><div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">${ic('route')} ${esc(t('today.route'))}</h3><button class="btn xs" data-act="map-full" id="map-expand">${ic('locate')} ${esc(t('map.expand'))}</button></div><div class="map tall" id="today-map" style="margin-top:8px"></div></div>
     <div class="card pad" style="margin-top:12px" id="next-card"><h3>${ic('store')} ${esc(t('today.next'))} <span class="badge ${due.length ? 'red' : 'gray'}">${due.length}</span></h3>
       <div class="list" id="next-list">${nextBody}</div></div></div>`;
@@ -1099,7 +1479,7 @@ function drawTodayStats() {
     box.innerHTML = `<div class="stat"><b id="st-visits">${visits}</b><span>${esc(t('today.visits'))}</span></div><div class="stat"><b id="st-km">${NF1.format(km)}</b><span>km</span></div><div class="stat"><b id="st-orders">${orders}</b><span>${esc(t('today.orders'))}</span></div>`;
   }
   const visitedIds = new Set(vs.map(v => v.shop_id));
-  renderMap($('#today-map'), { points: pts, shops: S.shops.filter(s => visitedIds.has(s.shop_id)), current: S.day.status === 'working' ? S.pos : null, orders: todayOrderMarkers(), tall: true });
+  renderMap($('#today-map'), { points: pts, shops: S.shops.filter(s => visitedIds.has(s.shop_id)), current: S.day.status === 'working' ? S.pos : null, orders: todayOrderMarkers(), plan: todayPlanMarkers(), tall: true });
 }
 // v30 (owner 2026-10-10): today's accepted orders as numbered pins (acceptance order) at their shop's location.
 function todayOrderMarkers() {
@@ -1117,7 +1497,7 @@ function openMapFull() {
     foot: `<button class="btn primary grow" data-act="modal-close">${esc(t('done'))}</button>`
   });
   setTimeout(() => {
-    const mm = renderMap($('#full-map', el), { points: pts, shops: S.shops.length ? S.shops : S.shops.filter(s => visitedIds.has(s.shop_id)), current: S.day.status === 'working' ? S.pos : null, orders: om, full: true, zoom: true });
+    const mm = renderMap($('#full-map', el), { points: pts, shops: S.shops.length ? S.shops : S.shops.filter(s => visitedIds.has(s.shop_id)), current: S.day.status === 'working' ? S.pos : null, orders: om, plan: todayPlanMarkers(), full: true, zoom: true });
     if (mm && mm.invalidateSize) setTimeout(() => { try { mm.invalidateSize(); } catch (e) { } }, 150);
   }, 60);
 }
@@ -1672,6 +2052,40 @@ const ACT = {
   'po-save': () => saveOrder(),
   'og-by': el => { OG.by = el.dataset.g || ''; if (S.view === 'order') { const l = $('#po-list'); if (l) l.outerHTML = ordersListHTML(); } },
   'map-full': () => openMapFull(),
+  // v31 route plan
+  'plan-open': el => openPlanner(el.dataset.d),
+  'pl-visit': el => visitPlanStop(el.dataset.ref),
+  'pl-seg': el => { PL.seg = el.dataset.v; drawPlanner(); },
+  'pl-search': () => plSearch(),
+  'pl-near': () => plNear(),
+  'pl-ours': () => plOurs(),
+  'pl-along': el => { const r = PL.results[int(el.dataset.i)]; if (r) return plAlong(r); },
+  'pl-toggle': el => { const r = PL.results[int(el.dataset.i)]; if (r) toggleStop(r); },
+  'pl-add-all': () => { PL.results.filter(r => r.kind === 'poi' && r.named && !PL.stops.some(s => s.ref === r.ref)).forEach(r => { if (PL.stops.length < 60) PL.stops.push({ ref: r.ref, kind: r.shop_id ? 'shop' : 'place', shop_id: r.shop_id || '', name: r.name, lat: r.lat, lng: r.lng, address: r.address || '', type: r.type || '', src: r.src || 'osm' }); }); if (PL.start) sortStops(); drawPlanner(); toast(t('plan.added_n', { n: PL.stops.length }), 'ok'); },
+  'pl-start-at': el => { const r = PL.results[int(el.dataset.i)]; if (!r) return; PL.start = { label: r.name, lat: r.lat, lng: r.lng }; if (PL.map) PL.map.setView([r.lat, r.lng], 16); drawPlanner(); },
+  'pl-goto': el => { const r = PL.results[int(el.dataset.i)]; if (r && PL.map) PL.map.setView([r.lat, r.lng], 16); },
+  'pl-mypos': async () => { const p = await myPosition(); if (!p) { toast(t('gps.denied'), 'err'); return; } PL.start = { label: t('plan.my_pos_label'), lat: p.lat, lng: p.lng }; if (PL.map) PL.map.setView([p.lat, p.lng], 16); drawPlanner(); },
+  'pl-sel-start': () => { if (!PL.sel) return; PL.start = { label: t('plan.picked'), lat: PL.sel.lat, lng: PL.sel.lng }; if (PL.map) PL.map.closePopup(); drawPlanner(); },
+  'pl-sel-add': async () => { const sel = PL.sel; if (!sel) return; if (PL.map) PL.map.closePopup(); const r = await confirmBox(t('plan.point_name'), { ok: t('plan.add'), input: { label: t('shop.name') }, title: t('plan.point_here') }); if (!r.ok || !r.value) return; toggleStop({ ref: 'pt:' + uuid().slice(0, 8), name: r.value.slice(0, 100), lat: sel.lat, lng: sel.lng, src: 'map' }); },
+  'pl-up': el => { const i = int(el.dataset.i); if (i > 0) { const a = PL.stops; [a[i - 1], a[i]] = [a[i], a[i - 1]]; drawPlanner(); } },
+  'pl-down': el => { const i = int(el.dataset.i), a = PL.stops; if (i < a.length - 1) { [a[i + 1], a[i]] = [a[i], a[i + 1]]; drawPlanner(); } },
+  'pl-del': el => { PL.stops.splice(int(el.dataset.i), 1); drawPlanner(); },
+  'pl-sort': () => { sortStops(); drawPlanner(); },
+  'pl-work': el => { const r = PL.results[int(el.dataset.i)]; if (r) return plWorkStreet(r); },
+  'pl-street-shops': el => { const x = PL.streets[int(el.dataset.i)]; if (!x) return; const pts = (x.lines || []).flat(); const c = pts.length ? pts[Math.floor(pts.length / 2)] : null; const bb = pts.length ? [Math.min(...pts.map(q => q[0])), Math.max(...pts.map(q => q[0])), Math.min(...pts.map(q => q[1])), Math.max(...pts.map(q => q[1]))] : null; return plAlong({ name: x.name, lat: c ? c[0] : (PL.start || S.pos || { lat: -6.2655 }).lat, lng: c ? c[1] : (PL.start || S.pos || { lng: 106.8605 }).lng, bbox: bb }); },
+  'pl-street-del': el => { PL.streets.splice(int(el.dataset.i), 1); drawPlanner(); },
+  'pl-end-at': el => { const r = PL.results[int(el.dataset.i)]; if (!r) return; PL.end = { label: r.name, lat: r.lat, lng: r.lng }; drawPlanner(); },
+  'pl-end-mypos': async () => { const p = await myPosition(); if (!p) { toast(t('gps.denied'), 'err'); return; } PL.end = { label: t('plan.my_pos_label'), lat: p.lat, lng: p.lng }; drawPlanner(); },
+  'pl-end-same': () => { if (PL.start) { PL.end = Object.assign({}, PL.start); drawPlanner(); } },
+  'pl-end-clear': () => { PL.end = null; drawPlanner(); },
+  'pl-sel-end': () => { if (!PL.sel) return; PL.end = { label: t('plan.picked'), lat: PL.sel.lat, lng: PL.sel.lng }; if (PL.map) PL.map.closePopup(); drawPlanner(); },
+  'pl-save': () => {
+    const nt = PL.el && $('#pl-note', PL.el); if (nt) PL.note = nt.value;
+    putPlanLocal({ plan_date: PL.date, start: PL.start, end: PL.end, stops: PL.stops, streets: PL.streets, note: PL.note, updated_at: new Date().toISOString() }, true);
+    closeModal(); toast(t('plan.saved'), 'ok');
+    if (S.view === 'today') RENDER.today();
+    syncPlans().then(() => { const c = S.view === 'today' && $('#plan-card'); if (c) c.outerHTML = planCardHTML(); });
+  },
   'sh-map': () => { SH.map = !SH.map; RENDER.shops(); },
   'sh-group': el => { SH.group = el.dataset.g || ''; RENDER.shops(); },
   'sh-mode': el => { SH.mode = el.dataset.m === 'target' ? 'target' : 'mine'; RENDER.shops(); $('#v-shops').scrollTop = 0; }
@@ -1779,7 +2193,29 @@ const I18N = {
     'order.deliver_on': 'kirim {date}', 'order.saved_title': 'Pesanan {id} terkirim', 'order.queued_title': 'Pesanan disimpan (offline)', 'order.saved_hint': 'Harga dihitung ulang oleh server. Toko memproses pesanan ini.',
     'order.queued_hint': 'Akan dikirim otomatis saat online.',
     'ost.baru': 'Baru', 'ost.diproses': 'Diproses', 'ost.dikirim': 'Dikirim', 'ost.batal': 'Batal', 'ost.pending': 'Belum terkirim',
-    'map.empty': 'Belum ada titik lokasi', 'map.label': 'Peta rute', 'map.offline': 'Peta sederhana', 'map.expand': 'Perbesar', 'map.legend': 'Titik oranye bernomor = pesanan hari ini (urutan masuk). Lingkaran = toko. Garis biru = rute.',
+    // v31 route plan (owner 2026-10-11)
+    'plan.title': 'Rencana rute', 'plan.today': 'Hari ini', 'plan.tomorrow': 'Besok', 'plan.make_today': 'Rencanakan hari ini', 'plan.make_tomorrow': 'Rencanakan besok', 'plan.edit': 'Ubah rencana',
+    'plan.hint': 'Sebelum berangkat: pilih titik awal / jalan, cari toko di peta (sepanjang jalan, di sekitar, atau berdasarkan nama), lalu susun urutan kunjungan.',
+    'plan.progress': '{k} dari {n} titik sudah dikunjungi', 'plan.all_done': 'Semua titik rencana hari ini sudah dikunjungi ✓', 'plan.tomorrow_ready': 'Rencana besok siap: {n} titik',
+    'plan.shop_ours': 'Toko kita', 'plan.place': 'Tempat baru', 'plan.street': 'Jalan', 'plan.area': 'Wilayah', 'plan.unnamed': 'tanpa nama',
+    'plan.nav_next': 'Ke titik berikutnya', 'plan.nav_all': 'Seluruh rute (Google Maps)', 'plan.visit': 'Kunjungi',
+    'plan.start': 'Titik awal', 'plan.start_none': 'Belum dipilih', 'plan.my_pos': 'Lokasi saya', 'plan.my_pos_label': 'Lokasi saya', 'plan.picked': 'Titik di peta',
+    'plan.tap_hint': 'Ketuk peta untuk memilih titik awal atau menambah titik. Ketuk lingkaran toko untuk menambah/menghapus.',
+    'plan.tab_search': '🔎 Cari', 'plan.tab_plan': '📋 Rencana ({n})', 'plan.search_ph': 'Nama jalan atau toko, mis. Jl. Raya Condet, Indomaret, toko kurma',
+    'plan.search': 'Cari', 'plan.near': 'Toko di sekitar tengah peta', 'plan.ours': 'Toko kita di area ini', 'plan.add_all': 'Tambah semua yang bernama ({n})', 'plan.added_n': '{n} titik dalam rencana',
+    'plan.osm': 'Data pencarian © kontributor OpenStreetMap (gratis). Toko kecil mungkin belum ada — ketuk peta untuk menambahkannya.',
+    'plan.set_start': 'Mulai dari sini', 'plan.along': 'Toko sepanjang jalan', 'plan.go_there': 'Lihat di peta', 'plan.added': 'Ditambahkan', 'plan.add': 'Tambah',
+    'plan.km': '± {km} km garis lurus', 'plan.sort': 'Urutkan otomatis (terdekat dulu)', 'plan.up': 'Naik', 'plan.down': 'Turun', 'plan.remove': 'Hapus',
+    'plan.empty': 'Belum ada titik. Cari toko di tab Cari atau ketuk peta.', 'plan.need_net': 'Perencanaan butuh internet (peta & pencarian).',
+    'plan.point_here': 'Tambah titik di sini', 'plan.point_name': 'Nama tempat ini (toko / warung / masjid…)', 'plan.max': 'Maksimal 60 titik',
+    'plan.searching': 'Mencari…', 'plan.search_err': 'Pencarian sedang tidak tersedia. Coba lagi sebentar, atau ketuk peta untuk menambah titik.', 'plan.q_short': 'Ketik minimal 3 huruf',
+    'plan.found': '{n} hasil', 'plan.found_along': '{n} tempat di sepanjang jalan ini', 'plan.no_results': 'Tidak ditemukan. Coba nama lain atau geser peta ke area itu.',
+    'plan.save': 'Simpan rencana', 'plan.saved': 'Rencana disimpan',
+    'plan.end': 'Titik selesai', 'plan.end_same': 'Sama dengan awal', 'plan.set_end': 'Selesai di sini', 'plan.work_street': 'Kerjakan jalan ini', 'plan.street_in': 'Dalam rencana',
+    'plan.streets': 'Jalan kerja ({n})', 'plan.stops': 'Titik kunjungan ({n})', 'plan.no_streets': 'Belum ada jalan. Cari nama jalan lalu ketuk "Kerjakan jalan ini" — seluruh jalan dicari tokonya.',
+    'plan.street_shops': 'Toko', 'plan.max_streets': 'Maksimal 15 jalan per rencana', 'plan.worked_by': 'sudah dikerjakan {u} · {d}', 'plan.planned_by': 'direncanakan {u} · {d}',
+    'plan.legend': 'Ungu = jalan & rute rencana Anda · Merah = jalan yang sudah dikerjakan sales lain (60 hari) · Abu-abu = jalan yang pernah Anda kerjakan',
+    'map.empty': 'Belum ada titik lokasi', 'map.label': 'Peta rute', 'map.offline': 'Peta sederhana', 'map.expand': 'Perbesar', 'map.legend': 'Titik oranye bernomor = pesanan hari ini (urutan masuk). Titik ungu bernomor = rencana rute (✓ = sudah dikunjungi). Lingkaran = toko. Garis biru = rute.',
     'outbox.title': 'Data tertunda', 'outbox.badge': '{n} data tertunda', 'outbox.queued': 'Offline — disimpan, dikirim otomatis', 'outbox.empty': 'Semua data sudah terkirim', 'outbox.synced': '{n} data terkirim',
     'outbox.still': 'Masih {n} data tertunda', 'outbox.send_now': 'Kirim sekarang',
     'ob.day_start': 'Mulai kerja', 'ob.day_end': 'Selesai kerja', 'ob.track': 'Titik lokasi', 'ob.check_in': 'Kunjungan', 'ob.field_order': 'Pesanan',
@@ -1869,7 +2305,29 @@ const I18N = {
     'order.deliver_on': 'تسليم {date}', 'order.saved_title': 'أُرسل الطلب {id}', 'order.queued_title': 'حُفظ الطلب (بدون اتصال)', 'order.saved_hint': 'يعيد الخادم حساب الأسعار. المتجر يعالج الطلب.',
     'order.queued_hint': 'سيُرسل تلقائيًا عند الاتصال.',
     'ost.baru': 'جديد', 'ost.diproses': 'قيد المعالجة', 'ost.dikirim': 'أُرسل', 'ost.batal': 'ملغى', 'ost.pending': 'لم يُرسل',
-    'map.empty': 'لا توجد نقاط موقع', 'map.label': 'خريطة المسار', 'map.offline': 'خريطة مبسطة', 'map.expand': 'تكبير', 'map.legend': 'النقاط البرتقالية المرقّمة = طلبات اليوم (ترتيب الاستلام). الدوائر = المحلات. الخط الأزرق = المسار.',
+    // v31 خطة المسار (المالك 2026-10-11)
+    'plan.title': 'خطة المسار', 'plan.today': 'اليوم', 'plan.tomorrow': 'الغد', 'plan.make_today': 'خطّط اليوم', 'plan.make_tomorrow': 'خطّط للغد', 'plan.edit': 'تعديل الخطة',
+    'plan.hint': 'قبل الانطلاق: حدّد نقطة البداية أو الشارع، وابحث عن المحلات في الخريطة (على طول الشارع، أو القريبة، أو بالاسم)، ثم رتّب ترتيب الزيارات.',
+    'plan.progress': 'تمت زيارة {k} من {n} نقطة', 'plan.all_done': 'زرت كل نقاط خطة اليوم ✓', 'plan.tomorrow_ready': 'خطة الغد جاهزة: {n} نقطة',
+    'plan.shop_ours': 'محل عندنا', 'plan.place': 'مكان جديد', 'plan.street': 'شارع', 'plan.area': 'منطقة', 'plan.unnamed': 'بلا اسم',
+    'plan.nav_next': 'إلى النقطة التالية', 'plan.nav_all': 'المسار كاملًا (خرائط Google)', 'plan.visit': 'زيارة',
+    'plan.start': 'نقطة البداية', 'plan.start_none': 'لم تُحدَّد', 'plan.my_pos': 'موقعي', 'plan.my_pos_label': 'موقعي', 'plan.picked': 'نقطة على الخريطة',
+    'plan.tap_hint': 'اضغط على الخريطة لاختيار نقطة البداية أو إضافة نقطة. اضغط على دائرة محل لإضافته أو حذفه.',
+    'plan.tab_search': '🔎 بحث', 'plan.tab_plan': '📋 الخطة ({n})', 'plan.search_ph': 'اسم شارع أو محل، مثل: Jl. Raya Condet أو Indomaret أو toko kurma',
+    'plan.search': 'بحث', 'plan.near': 'محلات حول وسط الخريطة', 'plan.ours': 'محلاتنا في هذه المنطقة', 'plan.add_all': 'أضف كل المحلات المسمّاة ({n})', 'plan.added_n': '{n} نقطة في الخطة',
+    'plan.osm': 'بيانات البحث © مساهمو OpenStreetMap (مجانية). قد لا تظهر بعض المحلات الصغيرة — اضغط على الخريطة لإضافتها.',
+    'plan.set_start': 'ابدأ من هنا', 'plan.along': 'المحلات على طول الشارع', 'plan.go_there': 'اعرض على الخريطة', 'plan.added': 'مُضاف', 'plan.add': 'أضف',
+    'plan.km': '± {km} كم بخط مستقيم', 'plan.sort': 'رتّب تلقائيًا (الأقرب أولًا)', 'plan.up': 'لأعلى', 'plan.down': 'لأسفل', 'plan.remove': 'حذف',
+    'plan.empty': 'لا توجد نقاط بعد. ابحث في تبويب «بحث» أو اضغط على الخريطة.', 'plan.need_net': 'التخطيط يحتاج إنترنت (الخريطة والبحث).',
+    'plan.point_here': 'أضف نقطة هنا', 'plan.point_name': 'اسم هذا المكان (محل / وارونغ / مسجد…)', 'plan.max': 'الحد الأقصى 60 نقطة',
+    'plan.searching': 'جارٍ البحث…', 'plan.search_err': 'البحث غير متاح الآن. حاول بعد قليل، أو اضغط على الخريطة لإضافة نقطة.', 'plan.q_short': 'اكتب 3 أحرف على الأقل',
+    'plan.found': '{n} نتيجة', 'plan.found_along': '{n} مكانًا على طول هذا الشارع', 'plan.no_results': 'لا نتائج. جرّب اسمًا آخر أو حرّك الخريطة إلى المنطقة.',
+    'plan.save': 'حفظ الخطة', 'plan.saved': 'تم حفظ الخطة',
+    'plan.end': 'نقطة النهاية', 'plan.end_same': 'نفس البداية', 'plan.set_end': 'أنهِ هنا', 'plan.work_street': 'اعمل في هذا الشارع', 'plan.street_in': 'في الخطة',
+    'plan.streets': 'شوارع العمل ({n})', 'plan.stops': 'نقاط الزيارة ({n})', 'plan.no_streets': 'لا شوارع بعد. ابحث عن اسم شارع ثم اضغط «اعمل في هذا الشارع» — يُبحث عن محلات الشارع كاملًا.',
+    'plan.street_shops': 'المحلات', 'plan.max_streets': 'الحد الأقصى 15 شارعًا في الخطة', 'plan.worked_by': 'عمل فيه {u} · {d}', 'plan.planned_by': 'مخطط له {u} · {d}',
+    'plan.legend': 'البنفسجي = شوارع ومسار خطتك · الأحمر = شوارع عمل فيها مندوب آخر (آخر 60 يومًا) · الرمادي = شوارع عملت فيها سابقًا',
+    'map.empty': 'لا توجد نقاط موقع', 'map.label': 'خريطة المسار', 'map.offline': 'خريطة مبسطة', 'map.expand': 'تكبير', 'map.legend': 'النقاط البرتقالية المرقّمة = طلبات اليوم (ترتيب الاستلام). النقاط البنفسجية المرقّمة = خطة المسار (✓ = تمت زيارتها). الدوائر = المحلات. الخط الأزرق = المسار.',
     'outbox.title': 'بيانات معلّقة', 'outbox.badge': '{n} بيانات معلّقة', 'outbox.queued': 'بدون اتصال — حُفظ وسيُرسل تلقائيًا', 'outbox.empty': 'تم إرسال كل البيانات', 'outbox.synced': 'أُرسلت {n}',
     'outbox.still': 'ما زال {n} معلّقًا', 'outbox.send_now': 'أرسل الآن',
     'ob.day_start': 'بدء العمل', 'ob.day_end': 'إنهاء العمل', 'ob.track': 'نقاط الموقع', 'ob.check_in': 'زيارة', 'ob.field_order': 'طلب',

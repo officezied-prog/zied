@@ -241,12 +241,21 @@ test('owner settings: add a warehouse; Arabic layout; the owner app menu opens G
   await page.screenshot({ path: path.join(SHOTS, 'cold-settings-ar.png'), fullPage: true });
   await page.click('#lang');
 
-  // owner app → menu → Gudang Dingin: no second login (same tab session)
+  // owner app → menu → البرادات: a page INSIDE the owner app (owner 2026-10-11) — no jump out, no second login
+  // (the frame shares this tab's session), no second header; leaving is a normal page switch and coming back
+  // keeps the page as it was.
   await login(page, 'Pemilik', '1234', '', { stay: true });
   await page.click('#nav [data-view="cold"]');
-  await expect(page).toHaveURL(/gudang\/\?mock=1/);
-  await expect(page.locator('#who')).toContainText('Pemilik');
-  await expect(page.locator('.kpi').first()).toBeVisible();
+  await expect(page).not.toHaveURL(/gudang\//);
+  const cold = page.frameLocator('#cold-frame');
+  await expect(cold.locator('.kpi').first()).toBeVisible();
+  await expect(cold.locator('#lg-user')).toHaveCount(0);
+  await expect(cold.locator('header')).toBeHidden();
+  await cold.locator('[data-tab="cust"]').click();
+  await page.click('#nav [data-view="home"]');
+  await expect(page.locator('#view-home')).toBeVisible();
+  await page.click('#nav [data-view="cold"]');
+  await expect(cold.locator('#v-cust')).toBeVisible(); // same frame, same tab — not reloaded
 });
 
 test('inbound: a container asks to enter, the warehouse accepts, pallets in → stored; dashboard shows what needs action', async ({ page }) => {

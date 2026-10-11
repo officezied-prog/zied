@@ -58,6 +58,7 @@
     <section class="view" id="view-bank" hidden></section>
     <section class="view" id="view-members" hidden></section>
     <section class="view" id="view-absensi" hidden></section>
+    <section class="view embed-view" id="view-cold" hidden></section>
     <section class="view" id="view-retur" hidden></section>
     <section class="view" id="view-activity" hidden></section>
     <section class="view" id="view-koreksi" hidden></section>
@@ -141,7 +142,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.1.1';
+const APP_VERSION = '2.2.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -240,7 +241,7 @@ const roleNames = role => { const n = (S.users || []).filter(u => u.role === rol
 const SESS_KEY = PREFIX + 'session';
 function sessSet(user, role, hash, viaMaster) {
   store.set('session', { user, role });
-  try { if (hash) sessionStorage.setItem(SESS_KEY, JSON.stringify(Object.assign({ user, role, pin_hash: hash }, viaMaster ? { via_master: true } : {}))); else sessionStorage.removeItem(SESS_KEY); } catch (e) { }
+  try { if (hash) sessionStorage.setItem(SESS_KEY, JSON.stringify(Object.assign({ user, role, pin_hash: hash }, viaMaster ? { via_master: true } : {}))); else { sessionStorage.removeItem(SESS_KEY); sessionStorage.removeItem('kcold.session'); } } catch (e) { }
 }
 function sessGet() {
   const loc = store.get('session') || null;
@@ -255,7 +256,7 @@ function sessGet() {
   const mine = ss && ss.user && ss.user.toLowerCase() === user.toLowerCase();
   return user ? { user, role: (loc && loc.role) || (ss && ss.role) || '', pin_hash: mine ? ss.pin_hash || '' : '', via_master: !!(mine && ss.via_master) } : null;
 }
-function sessDel() { store.del('session'); try { sessionStorage.removeItem(SESS_KEY); } catch (e) { } }
+function sessDel() { store.del('session'); try { sessionStorage.removeItem(SESS_KEY); sessionStorage.removeItem('kcold.session'); } catch (e) { } }
 const offlineVerifier = hash => sha256Hex('offline:' + hash);
 async function rememberPin(user, hash, role) {
   const pins = store.get('pins', {}) || {};
@@ -523,7 +524,7 @@ const VIEWS = [
   { id: 'customers', icon: 'users', label: 'nav.customers' },
   { id: 'members', icon: 'member', label: 'nav.members', approver: true },
   { id: 'absensi', icon: 'camera', label: 'nav.absensi', approver: true },
-  { id: 'cold', icon: 'warehouse', label: 'nav.cold', approver: true, href: 'gudang/' }, // separate page: Khair Gudang Dingin
+  { id: 'cold', icon: 'warehouse', label: 'nav.cold', approver: true }, // البرادات: Khair Gudang Dingin, shown inside this app (RENDER.cold)
   { id: 'suppliers', icon: 'supplier', label: 'nav.suppliers', approver: true },
   { id: 'bank', icon: 'bank', label: 'nav.bank', approver: true },
   { id: 'history', icon: 'clock', label: 'nav.history' },
@@ -738,6 +739,7 @@ function forceRelogin(e) {
 }
 function logoutStore() {
   S.pin_hash = ''; S.user = ''; S.role = ''; S.inApp = false; sessDel();
+  const cf = $('#view-cold'); if (cf) cf.innerHTML = '';
   L.users = []; L.sel = '';
   try { if (window.KChatUI) KChatUI.stop(); } catch (e) { }
   showLogin('key');
@@ -2821,7 +2823,7 @@ async function loadField(from, to, user, useCache, noTracks) {
   const k = `${from}|${to}|${user || ''}|${noTracks ? 'nt' : ''}`;
   if (useCache && FD.cache[k] && Date.now() - FD.cache[k].at < 60000) return FD.cache[k].data;
   const r = await apiField('list_field', Object.assign({ from, to }, user ? { user } : {}, noTracks ? { include_tracks: false } : {}));
-  const d = { tracks: r.tracks || [], visits: r.visits || [], shops: r.shops || [], orders: r.orders || [], days: r.days || [] };
+  const d = { tracks: r.tracks || [], visits: r.visits || [], shops: r.shops || [], orders: r.orders || [], days: r.days || [], plans: r.plans || [] }; // plans: v31 route plans
   d.orders.forEach(o => { o.total = int(o.total); o.itemsList = parseItems(o.items); });
   d.visits.forEach(v => { v.distance_m = v.distance_m == null || v.distance_m === '' ? null : num(v.distance_m); });
   d.tracks.sort((a, b) => String(a.t).localeCompare(String(b.t)));
@@ -2886,7 +2888,21 @@ function repDay(d, user, date) {
   const ords = d.orders.filter(x => x.user === user && x.order_date === date);
   const lastT = [pts.length ? pts[pts.length - 1].t : '', vis.length ? vis.map(v => v.visit_time).sort().slice(-1)[0] : ''].filter(Boolean).sort().slice(-1)[0] || '';
   const status = !day || !day.started_at ? 'off' : day.ended_at ? 'ended' : 'working';
-  return { user, day, pts, vis, ords, status, lastT, km: day ? num(day.km) : 0 };
+  // v31: the route the rep planned for this day (Khair Sales), each stop ✓ once visited (same shop, or a visit ≤ 150 m)
+  const plan = (d.plans || []).find(x => x.user === user && x.plan_date === date) || null;
+  const pdone = plan ? (plan.stops || []).map(s => vis.some(v => (s.shop_id && v.shop_id === s.shop_id) || (isFinite(num(v.lat)) && num(v.lat) !== 0 && geoM({ lat: num(v.lat), lng: num(v.lng) }, s) < 150))) : [];
+  return { user, day, pts, vis, ords, status, lastT, km: day ? num(day.km) : 0, plan, pdone };
+}
+const geoM = (a, b) => { const r = Math.PI / 180, dLa = (b.lat - a.lat) * r, dLo = (b.lng - a.lng) * r, x = Math.sin(dLa / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLo / 2) ** 2; return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(x))); };
+function planPanelHTML(r) {
+  if (!r || !r.plan || !((r.plan.stops || []).length || (r.plan.streets || []).length)) return '';
+  const k = r.pdone.filter(Boolean).length, n = (r.plan.stops || []).length;
+  return `<div class="panel" style="margin-bottom:14px" id="fd-plan" data-k="${k}" data-n="${n}"><h3>${ic('clip')} ${esc(t('field.plan'))} <span class="badge ${k === n ? 'green' : 'gray'}">${k}/${n}</span></h3><div class="pb list">
+    ${r.plan.start ? `<div class="small muted" style="margin-bottom:4px">🚩 ${esc(t('field.plan_start'))}: ${esc(r.plan.start.label || '')}</div>` : ''}
+    ${r.plan.end ? `<div class="small muted" style="margin-bottom:4px">🏁 ${esc(t('field.plan_end'))}: ${esc(r.plan.end.label || '')}</div>` : ''}
+    ${(r.plan.streets || []).length ? `<div class="small" style="margin-bottom:6px" data-streets>🛣️ ${esc(t('field.plan_streets'))}: ${esc(r.plan.streets.map(x => x.name).join(' · '))}</div>` : ''}
+    ${(r.plan.stops || []).map((s, i) => `<div class="li plan-row" data-done="${r.pdone[i]}" style="min-height:0;padding:6px 10px"><span class="vnum ${r.pdone[i] ? '' : 'far'}">${r.pdone[i] ? '✓' : i + 1}</span><div class="grow"><div class="t">${esc(s.name)}</div><div class="s">${esc([s.kind === 'shop' ? t('field.plan_ours') : t('field.plan_new'), s.address].filter(Boolean).join(' · '))}</div></div></div>`).join('')}
+    ${r.plan.note ? `<div class="small" style="margin-top:6px">${esc(r.plan.note)}</div>` : ''}</div></div>`;
 }
 function drawFieldView() {
   const body = $('#fd-body'); if (!body) return;
@@ -2905,8 +2921,9 @@ function drawFieldView() {
         <div class="row"><b class="grow" style="font-size:16px">${esc(r.user)}</b><span class="badge ${statusCls[r.status]}" data-status="${r.status}">${esc(t('field.st_' + r.status))}</span></div>
         <div class="s">${r.day && r.day.started_at ? esc(jktTime(r.day.started_at)) + '–' + (r.day.ended_at ? esc(jktTime(r.day.ended_at)) : '…') : '—'} · <b data-km>${esc(NF1.format(r.km))}</b> km</div>
         <div class="s"><b data-visits>${r.vis.length}</b> ${esc(t('field.visits'))} · <b data-orders>${r.ords.length}</b> ${esc(t('field.orders'))}</div>
-        <div class="s" data-last>${r.lastT ? esc(t('field.last_loc')) + ' ' + esc(ago(r.lastT)) : esc(t('field.no_loc'))}</div></button>`).join('') || `<div class="muted">${esc(t('field.no_reps'))}</div>`}</div>
+        <div class="s" data-last>${r.lastT ? esc(t('field.last_loc')) + ' ' + esc(ago(r.lastT)) : esc(t('field.no_loc'))}</div>${r.plan && (r.plan.stops || []).length ? `<div class="s" data-plan>${esc(t('field.plan_card', { k: r.pdone.filter(Boolean).length, n: r.plan.stops.length }))}</div>` : ''}${r.plan && (r.plan.streets || []).length ? `<div class="s" data-plan-streets>🛣️ ${(r.plan.streets || []).length}</div>` : ''}</button>`).join('') || `<div class="muted">${esc(t('field.no_reps'))}</div>`}</div>
     <div class="panel" style="margin-bottom:14px"><h3>${ic('pin')} ${esc(t('field.map'))} ${cur ? `· ${esc(cur.user)} · ${esc(fmtDate(FD.date))}` : ''}</h3><div class="pb"><div id="fd-map" class="fd-map"></div><div id="map-detail" class="small" style="margin-top:8px"></div></div></div>
+    ${planPanelHTML(cur)}
     <div class="rgrid">
       <div class="panel"><h3>${esc(t('field.visit_list'))} <span class="badge gray">${cur ? cur.vis.length : 0}</span></h3><div class="pb list" id="fd-visits">${cur && cur.vis.length ? cur.vis.slice().sort((a, b) => String(a.visit_time).localeCompare(String(b.visit_time))).map((v, i) => visitRowHTML(v, i + 1)).join('') : `<div class="muted">${esc(t('no_data'))}</div>`}</div></div>
       <div class="panel"><h3>${esc(t('field.leads'))} <span class="small muted">(${esc(t('last_n_days', { n: 14 }))})</span> <span class="badge gray">${leads.length}</span></h3><div class="pb list" id="fd-leads">${leads.map(s => leadRowHTML(s)).join('') || `<div class="muted">${esc(t('no_data'))}</div>`}</div></div>
@@ -4428,6 +4445,7 @@ Object.assign(I18N.id, {
   'field.rep': 'Sales', 'field.all_reps': 'Semua sales', 'field.st_working': 'bekerja', 'field.st_ended': 'selesai', 'field.st_off': 'belum mulai', 'field.visits': 'kunjungan', 'field.orders': 'pesanan',
   'field.last_loc': 'Lokasi terakhir', 'field.no_loc': 'Belum ada lokasi', 'field.no_reps': 'Belum ada sales lapangan. Tambahkan di Pengaturan → Pengguna (peran Sales).',
   'field.map': 'Rute & kunjungan', 'field.no_route': 'Tidak ada rute di tanggal ini.', 'field.start': 'Mulai', 'field.svg_note': 'Peta sederhana (offline). Ketuk nomor kunjungan untuk detail.',
+  'field.plan': 'Rencana rute', 'field.plan_card': 'Rencana: {k}/{n} dikunjungi', 'field.plan_start': 'Mulai dari', 'field.plan_ours': 'toko kita', 'field.plan_new': 'tempat baru', 'field.plan_end': 'Selesai di', 'field.plan_streets': 'Jalan kerja',
   'field.visit_list': 'Kunjungan', 'field.leads': 'Toko baru', 'field.linked': 'Pelanggan: {name}', 'field.make_customer': 'Jadikan pelanggan', 'field.convert_q': 'Jadikan "{name}" pelanggan grosir?', 'field.converted': '{name} sekarang pelanggan grosir',
   'field.far': 'lokasi jauh dari toko', 'field.photo': 'Foto kunjungan', 'field.today': 'Lapangan hari ini', 'field.open': 'Buka Lapangan', 'field.unavailable': 'Data lapangan belum tersedia.',
   'field.report': 'Lapangan (sales)', 'field.new_shops': 'Toko baru', 'field.conversion': 'Konversi',
@@ -4447,6 +4465,7 @@ Object.assign(I18N.ar, {
   'field.rep': 'المندوب', 'field.all_reps': 'كل المندوبين', 'field.st_working': 'يعمل', 'field.st_ended': 'أنهى', 'field.st_off': 'لم يبدأ', 'field.visits': 'زيارات', 'field.orders': 'طلبات',
   'field.last_loc': 'آخر موقع', 'field.no_loc': 'لا موقع بعد', 'field.no_reps': 'لا يوجد مندوبون. أضفهم من الإعدادات ← المستخدمون (دور مندوب).',
   'field.map': 'المسار والزيارات', 'field.no_route': 'لا يوجد مسار في هذا التاريخ.', 'field.start': 'البداية', 'field.svg_note': 'خريطة مبسطة (بدون إنترنت). اضغط رقم الزيارة للتفاصيل.',
+  'field.plan': 'خطة المسار', 'field.plan_card': 'الخطة: زار {k} من {n}', 'field.plan_start': 'نقطة البداية', 'field.plan_ours': 'محل عندنا', 'field.plan_new': 'مكان جديد', 'field.plan_end': 'نقطة النهاية', 'field.plan_streets': 'شوارع العمل',
   'field.visit_list': 'الزيارات', 'field.leads': 'متاجر جديدة', 'field.linked': 'عميل: {name}', 'field.make_customer': 'تحويل إلى عميل', 'field.convert_q': 'تحويل "{name}" إلى عميل جملة؟', 'field.converted': '{name} أصبح عميل جملة',
   'field.far': 'الموقع بعيد عن المتجر', 'field.photo': 'صورة الزيارة', 'field.today': 'الميدان اليوم', 'field.open': 'فتح الميدان', 'field.unavailable': 'بيانات الميدان غير متاحة بعد.',
   'field.report': 'الميدان (المندوبون)', 'field.new_shops': 'متاجر جديدة', 'field.conversion': 'نسبة التحويل',
@@ -4923,6 +4942,17 @@ function gdExpBadge(days) {
   return `<span class="badge ${cls}" data-exp-days="${days}">${esc(txt)}</span>`;
 }
 
+// البرادات (Khair Gudang Dingin) as a page of this app: the cold-storage screen runs in a same-site frame and
+// reuses this tab's login (sessionStorage), so moving to any other page is a normal click — no logout, no
+// second login (owner 2026-10-11). The frame is kept between visits (its tab/filters stay) and rebuilt only
+// when another person logs in.
+RENDER.cold = function () {
+  const host = $('#view-cold'), cur = host.querySelector('iframe');
+  if (cur && cur.dataset.user === S.user) return;
+  const qs = new URLSearchParams(location.search); qs.set('embed', '1');
+  host.innerHTML = `<iframe class="embed-frame" id="cold-frame" title="${esc(t('nav.cold'))}" src="gudang/?${esc(qs.toString())}"></iframe>`;
+  host.querySelector('iframe').dataset.user = S.user;
+};
 RENDER.gudang = function () {
   if (!isApprover()) { go('pos'); return; }
   if (!GD_TABS.includes(GD.tab)) GD.tab = 'overview';
@@ -7627,7 +7657,7 @@ Object.assign(ACT, {
     } catch (e) { err.textContent = errMsg(e); }
   }
 });
-function logoutUser() { S.pin_hash = ''; S.viaMaster = false; sessSet(S.user, S.role, ''); L.sel = S.user; S.inApp = false; try { if (window.KChatUI) KChatUI.stop(); } catch (e) { } showLogin('pin'); }
+function logoutUser() { S.pin_hash = ''; S.viaMaster = false; sessSet(S.user, S.role, ''); L.sel = S.user; S.inApp = false; const cf = $('#view-cold'); if (cf) cf.innerHTML = ''; try { if (window.KChatUI) KChatUI.stop(); } catch (e) { } showLogin('pin'); }
 Object.assign(I18N.id, {
   'role.akuntan': 'Akuntan', 'role.pekerja': 'Pekerja harian (absen wajah, tanpa PIN)', 'ro.denied': 'Akun akuntan hanya untuk melihat data', 'ro.hint': 'Akun akuntan: lihat saja, tidak bisa mengubah.', 'set.inv_title': 'Faktur & akuntan', 'set.due_days': 'Jatuh tempo faktur hutang (hari)', 'set.due_bad': 'Isi 0–120 hari', 'set.ak_cost': 'Akuntan & manajer boleh melihat harga beli (modal)', 'set.ak_cost_hint': 'Laba tetap hanya untuk pemilik. Tanpa centang, akuntan dan manajer melihat jumlah barang dan pembayaran tanpa harga beli.',
   'nav.cold': "Gudang Dingin", 'navs.cold': "Gd. Dingin", 'nav.absensi': "Absensi", 'navs.absensi': "Absensi", 'att.kiosk': "Buka layar absen", 'att.add': "Tambah pekerja", 'att.hint': "Pekerja absen dengan wajah di perangkat toko. Catatan tidak bisa diubah atau dihapus siapa pun; perubahan apa pun pada data terlihat di laporan.", 'att.today': "Hari ini", 'att.workers': "Pekerja", 'att.report': "Laporan", 'att.p_month': "Bulan ini", 'att.p_lastmonth': "Bulan lalu", 'att.p_7d': "7 hari", 'att.show': "Tampilkan", 'att.settings': "Jam kerja", 'att.st_hadir': "Hadir", 'att.st_terlambat': "Terlambat", 'att.st_tidak_hadir': "Tidak hadir", 'att.st_libur': "Libur", 'att.st_belum': "Belum datang", 'att.in': "Masuk", 'att.out': "Pulang", 'att.still_in': "masih di toko", 'att.hours': "Jam kerja", 'att.late': "Terlambat", 'att.present': "Hadir", 'att.absent': "Tidak hadir", 'att.fails': "Gagal wajah", 'att.wage': "Upah/hari", 'att.set_wage': "Atur upah", 'att.wage_due': "Upah dibayar", 'att.wage_total': "Total upah", 'att.ok': "Data utuh: {n} catatan, {d} hari disegel — tidak ada yang diubah atau dihapus.", 'att.bad': "PERINGATAN: data absensi berubah", 'att.print': "Cetak laporan (A4)", 'att.csv': "Unduh CSV", 'att.events': "Kejadian ({n})", 'att.ev_fail': "Gagal absen", 'att.ev_enroll': "Daftar wajah", 'att.ev_forget': "Hapus wajah", 'att.ev_worker': "Data pekerja", 'att.ev_setting': "Jam kerja diubah", 'att.face': "Wajah", 'att.enrolled': "Terdaftar", 'att.not_enrolled': "Belum", 'att.enroll': "Daftar wajah", 'att.reenroll': "Ulang", 'att.forget': "Hapus wajah", 'att.forget_q': "Hapus data wajah {name}? Absen lama tetap ada; untuk absen lagi wajahnya harus didaftarkan ulang.", 'att.none': "Belum ada pekerja. Tambahkan pekerja lalu daftarkan wajahnya.", 'att.inactive': "nonaktif", 'att.editor_new': "Pekerja baru", 'att.editor_edit': "Ubah pekerja", 'att.job': "Pekerjaan", 'att.active': "Aktif", 'att.wage_hint': "Hanya pemilik yang melihat upah.", 'att.name_req': "Nama wajib", 'att.start': "Jam masuk", 'att.end': "Jam pulang", 'att.grace': "Toleransi terlambat (menit)", 'att.radius': "Jarak dari toko (m)", 'att.season': "Musim jam panjang", 'att.season_name': "Nama", 'att.season_from': "Dari", 'att.season_to': "Sampai", 'att.season_end': "Jam tutup", 'att.season_hint': "Contoh: dua bulan sebelum Ramadan toko tutup 23:00.", 'att.saved': "Tersimpan", 'att.no_store_loc': "Lokasi toko belum diatur, jadi jarak absen belum dicek. Atur di Pengaturan → Lokasi toko.", 'att.thumb': "Foto wajah",

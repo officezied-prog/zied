@@ -85,6 +85,6 @@ test('LOW: CSV cells cannot start a formula; links from data must be https; CSP 
   expect(await page.evaluate(() => [safeUrl('javascript:alert(1)'), safeUrl('data:text/html,x'), safeUrl('https://drive.google.com/x'), safeUrl('http://x')]))
     .toEqual(['#', '#', 'https://drive.google.com/x', '#']);
   const csp = await page.locator('meta[http-equiv="Content-Security-Policy"]').getAttribute('content');
-  expect(csp).toContain("connect-src 'self' https://ziedapp.app.n8n.cloud");
+  expect(csp).toContain("connect-src 'self' https://khair-mart-jumla.officezied.workers.dev"); // backend = the Khair Mart Jumla Worker since the 2026-10-10 cut-over
   expect(csp).toContain("object-src 'none'");
 });

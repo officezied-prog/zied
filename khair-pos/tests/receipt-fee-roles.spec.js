@@ -104,9 +104,10 @@ test('users grouped by role (Akuntan: belum ditentukan); "Ganti orang" → new n
   await page.click('#tb-lock');
   await page.evaluate(() => { localStorage.removeItem('kpos.mock.users_demo'); });
   await page.reload();
-  // the owner app lists only the owner; the new manager logs in through Khair Kasir and must make her own PIN there
+  // the owner app lists the owner, the managers and the accountant (one admin link, v29); the new manager also logs in
+  // through Khair Kasir and must make her own PIN there
   await expect(page.locator('[data-act="login-user"][data-name="Pemilik"]')).toHaveText('Pemilik');
-  await expect(page.locator('[data-act="login-user"][data-name="Nuraini"]')).toHaveCount(0);
+  await expect(page.locator('[data-act="login-user"][data-name="Nuraini"]')).toHaveCount(1);
   await page.screenshot({ path: path.join(SHOTS, 'desktop-login-owner-only.png') });
   await page.evaluate(() => localStorage.setItem('kpos.device_consent', JSON.stringify({ ok: false, at: new Date().toISOString() })));
   await page.goto('kasir/index.html?mock=1');

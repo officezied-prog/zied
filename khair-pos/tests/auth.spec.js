@@ -85,13 +85,16 @@ test('auto-lock after idle time', async ({ page }) => {
   await expect(page.locator('.pinpad')).toBeVisible();
 });
 
-test('owner app lists only the owner; staff log in once in Khair Kasir and go on to their own screens', async ({ page }) => {
+test('owner app lists the owner, manager and accountant (one admin link, v29); cashiers log in once in Khair Kasir and go on to their own screens', async ({ page }) => {
   await openApp(page);
   const hash = await page.evaluate(() => KPOS.pinHash('demo', 'Lestari', '5555'));
   await editDb(page, `db.users.push({ name: 'Lestari', role: 'akuntan', pin_hash: arg, active: true });`, hash);
   await enterKey(page);
-  await expect(page.locator('[data-act="login-user"]')).toHaveCount(1);
+  await expect(page.locator('[data-act="login-user"]')).toHaveCount(3); // Pemilik (owner), Jihan (manager), Lestari (accountant)
   await expect(page.locator('[data-act="login-user"][data-name="Pemilik"]')).toHaveText('Pemilik');
+  await expect(page.locator('[data-act="login-user"][data-name="Jihan"]')).toHaveCount(1);
+  await expect(page.locator('[data-act="login-user"][data-name="Lestari"]')).toHaveCount(1);
+  await expect(page.locator('[data-act="login-user"][data-name="Siti"]')).toHaveCount(0); // a cashier uses Khair Kasir
   await expect(page.locator('#lg-staff')).toHaveAttribute('href', /kasir\/\?mock=1/);
   // Khair Kasir: everyone except the owner, names only
   await page.evaluate(() => localStorage.setItem('kpos.device_consent', JSON.stringify({ ok: false, at: new Date().toISOString() })));

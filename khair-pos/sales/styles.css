@@ -192,6 +192,23 @@ main{overflow:hidden;position:relative;min-width:0}
 .ord-pin-wrap{background:none;border:0}
 .ord-pin{display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:#EA580C;color:#fff;font-weight:800;font-size:13px;line-height:1;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.4)}
 .modal.map-modal{max-width:760px;width:96vw}
+/* v31 route plan: numbered purple stops (✓ green once visited), start flag, planner map */
+.plan-pin{display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:#fff;color:#6D28D9;border:3px solid #7C3AED;font-weight:900;font-size:13px;line-height:1;box-shadow:0 1px 5px rgba(0,0,0,.35)}
+.plan-pin.done{background:#16A34A;border-color:#16A34A;color:#fff}
+.plan-pin.sm{width:26px;height:26px;font-size:12px;flex:none;box-shadow:none;border-width:2px}
+.start-pin{font-size:24px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.4))}
+.map.plan-map{height:44vh;max-height:420px;min-height:240px}
+.modal.plan-modal{max-width:760px;width:96vw}
+.pl-start{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-top:10px;padding:10px 12px;border-radius:12px;background:var(--pll)}
+.pl-start .grow{min-width:150px}
+.pl-start > .row{margin-inline-start:auto}
+.pl-res,.pl-stop{min-height:56px;padding:10px 12px}
+.pl-res .t,.pl-stop .t{font-weight:800}
+.pl-res .s,.pl-stop .s{font-size:13px;color:var(--muted)}
+.pl-pop .btn{white-space:nowrap}
+.pl-warn{color:var(--warn);font-weight:800;margin-top:2px}
+.pl-street .start-pin{font-size:20px}
+#pl-end{margin-top:6px}
 /* v30: star rating for shop impression */
 .stars{display:flex;gap:2px;align-items:center}
 .star{font-size:30px;line-height:1;background:none;border:0;color:#CBD5E1;cursor:pointer;padding:2px 3px}

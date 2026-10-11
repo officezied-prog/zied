@@ -94,6 +94,21 @@ Batch C. gudang/ is still on n8n today — moves to the Worker as part of this.
 - Downloadable Android **APK** (PWABuilder/Bubblewrap) — Android-only; iPhone installs via
   Add-to-Home-Screen regardless. The free PWA install already covers all platforms.
 
+## STATUS — 2026-10-11 (v31)
+
+- **البرادات inside the owner app** (owner: "it feels like a separate app; leaving asks me to log out"): the البرادات menu item
+  now shows the cold-storage page INSIDE the owner app (same-site frame, same login, no second header); leaving is a normal
+  page switch. Standalone gudang gets a "back to Khair Mart" button. Owner SW no longer serves the owner page for gudang/ offline.
+- **Field route planner** (Batch B #2, owner 2026-10-11): before setting off the rep sets a start point AND an end point,
+  picks one or more work streets (each searched for shops along the whole street) and/or shops near a point / by name
+  (free OpenStreetMap search from the phone: Nominatim + Overpass) and our own shops, orders the stops (auto nearest-first),
+  and saves the plan for today or tomorrow. Today card: progress, next stop, Google Maps (next / whole route), "Kunjungi"
+  (a new place opens the new-shop form filled in). Every planned street is kept on a shared map (`streets_worked`, last
+  60 days) so a second rep sees — and is warned about — streets a colleague already worked. Owner/manager see each rep's
+  plan (streets, stops ✓ visited, end point) on the field page. Backend: `plan_save`, `streets_worked`, `pos_route_plans`
+  (self-created by the Worker). Search provider: OSM now (free, no account); Google Places is the optional upgrade if
+  small shops are missing.
+
 ## STATUS — Batch C (2026-10-10)
 
 **CODE DONE (on the dev branch, not yet cut over):**

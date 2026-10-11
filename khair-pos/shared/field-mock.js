@@ -21,7 +21,7 @@
  */
 (function () {
   'use strict';
-  var ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop', 'cashier_orders'];
+  var ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop', 'cashier_orders', 'plan_save', 'streets_worked'];
   // Shop type ids: taken from window.KhairShopTypes (shared/shop-types.js) when the page loaded it; this copy is the
   // fallback for pages that load only this file (e.g. the owner app). Same list as backend/field/process-field.js.
   var SHOP_TYPES_FALLBACK = ['perlengkapan_haji', 'travel_umrah', 'oleh_oleh_haji', 'toko_kurma', 'herbal', 'busana_muslim', 'toko_buku_islam', 'warung', 'toko', 'grosir_sembako', 'pasar', 'minimarket', 'supermarket', 'hypermarket', 'grosir_modern', 'bakery', 'toko_kue', 'katering', 'restoran', 'kafe', 'hotel', 'oleh_oleh', 'parsel', 'toko_buah', 'masjid', 'pesantren', 'sekolah', 'majelis_taklim', 'kantor', 'koperasi', 'reseller', 'toko_online', 'lainnya'];
@@ -72,7 +72,7 @@
   }
   function nextId(db, k) { db.seq = db.seq || {}; db.seq[k] = (db.seq[k] || 0) + 1; return db.seq[k]; }
   function ensureTables(db) {
-    ['shops', 'visits', 'tracks', 'field_days', 'field_orders', 'product_images'].forEach(function (k) { if (!Array.isArray(db[k])) db[k] = []; });
+    ['shops', 'visits', 'tracks', 'field_days', 'field_orders', 'product_images', 'route_plans'].forEach(function (k) { if (!Array.isArray(db[k])) db[k] = []; });
   }
   function noCost(p) { var o = {}; for (var k in p) if (COST_KEYS.indexOf(k) < 0) o[k] = p[k]; return o; }
   function needRole(user, roles) { if (roles.indexOf(user.role) < 0) throw E('FORBIDDEN', 'Role ' + user.role + ' not allowed'); }
@@ -139,6 +139,7 @@
           day: user.role === 'sales' ? dayOut(db, user.name, today) : { status: 'off', started_at: '', ended_at: '', visits_today: 0, km_today: 0, orders_today: 0 },
           // mock extension (not in API.md yet): the rep's own orders of the last 30 days, so the app can show their status
           orders: user.role === 'sales' ? clone(db.field_orders.filter(function (o) { return sameUser(o.user, user.name) && o.order_date >= h.jktDate(h.now().getTime() - 30 * 86400000); })) : [],
+          plans: user.role === 'sales' ? clone(db.route_plans.filter(function (p) { return sameUser(p.user, user.name) && p.plan_date >= today; })) : [],
           settings: { store_name: st.store_name, address: st.address, phone: st.phone, field_min_move_m: st.field_min_move_m || 30, field_interval_s: st.field_interval_s || 180, field_batch_min: st.field_batch_min || 10, field_max_acc_m: st.field_max_acc_m || MAX_ACC }
         };
       }
@@ -256,6 +257,54 @@
         if (oshop.status !== 'pelanggan') oshop.status = 'pelanggan';
         return { order: clone(order), duplicate: false };
       }
+      case 'plan_save': {
+        // v31: same rules as backend/field/process-field.js — one plan per rep per day, today … +14 days, ≤ 60 stops.
+        needRole(user, ['sales']);
+        var pd = String(data.plan_date || ''), lim = h.jktDate(Date.parse(today + 'T00:00:00Z') + 14 * 86400000);
+        if (!isYmd(pd) || pd < today || pd > lim) throw E('INVALID', 'Tanggal rencana: hari ini sampai 14 hari lagi');
+        var raw = Array.isArray(data.stops) ? data.stops : [];
+        if (raw.length > 60) throw E('INVALID', 'Maksimal 60 titik');
+        var okPos = function (a, b) { return isFinite(Number(a)) && isFinite(Number(b)) && Math.abs(a) <= 90 && Math.abs(b) <= 180 && !(Number(a) === 0 && Number(b) === 0); };
+        var TYPES = shopTypes(), stops = raw.map(function (x, i) {
+          x = x || {};
+          if (!okPos(x.lat, x.lng)) throw E('INVALID', 'Lokasi titik ' + (i + 1) + ' tidak valid');
+          var sh = x.shop_id ? db.shops.find(function (s) { return s.shop_id === String(x.shop_id); }) : null;
+          var nm = String(x.name || '').trim().slice(0, 100) || (sh ? sh.name : '');
+          if (!nm) throw E('INVALID', 'Nama titik ' + (i + 1) + ' wajib');
+          return { ref: String(x.ref || '').slice(0, 40) || ('s' + (i + 1)), kind: sh ? 'shop' : 'place', shop_id: sh ? sh.shop_id : '', name: nm,
+            lat: Math.round(Number(x.lat) * 1e6) / 1e6, lng: Math.round(Number(x.lng) * 1e6) / 1e6, address: String(x.address || '').slice(0, 200),
+            type: TYPES.indexOf(x.type) >= 0 ? x.type : '', src: ['osm', 'map', 'shop'].indexOf(x.src) >= 0 ? x.src : '' };
+        });
+        var st0 = data.start || {}, hasSt = okPos(st0.lat, st0.lng), en0 = data.end || {}, hasEn = okPos(en0.lat, en0.lng), budget = 3000;
+        var streets = (Array.isArray(data.streets) ? data.streets : []).slice(0, 15).map(function (x) {
+          x = x || {}; var nm = String(x.name || '').trim().slice(0, 100); if (!nm) return null;
+          var lines = (Array.isArray(x.lines) ? x.lines : []).slice(0, 40).map(function (ln) {
+            return (Array.isArray(ln) ? ln : []).slice(0, 400).filter(function (q) { if (budget <= 0 || !Array.isArray(q) || !okPos(q[0], q[1])) return false; budget--; return true; })
+              .map(function (q) { return [Math.round(q[0] * 1e5) / 1e5, Math.round(q[1] * 1e5) / 1e5]; });
+          }).filter(function (ln) { return ln.length > 1; });
+          return { ref: String(x.ref || '').slice(0, 60) || ('st:' + nm.toLowerCase()), name: nm, lines: lines };
+        }).filter(Boolean);
+        var ex = db.route_plans.find(function (p) { return sameUser(p.user, user.name) && p.plan_date === pd; });
+        var plan = { plan_id: ex ? ex.plan_id : 'RP' + Math.random().toString(36).slice(2, 9).toUpperCase(), user: user.name, plan_date: pd,
+          start: hasSt ? { label: String(st0.label || '').slice(0, 120), lat: Number(st0.lat), lng: Number(st0.lng) } : null,
+          end: hasEn ? { label: String(en0.label || '').slice(0, 120), lat: Number(en0.lat), lng: Number(en0.lng) } : null,
+          stops: stops, streets: streets, note: String(data.note || '').slice(0, 300), updated_at: h.now().toISOString() };
+        if (ex) Object.assign(ex, plan); else db.route_plans.push(plan);
+        return { plan: clone(plan) };
+      }
+      case 'streets_worked': {
+        // v31b: same as backend/field/process-field.js — every rep's streets of the last 60 days (+ planned), latest per street + rep
+        needRole(user, ['sales', 'owner', 'manager']);
+        var since = h.jktDate(Date.parse(today + 'T00:00:00Z') - 60 * 86400000), seenS = {}, out = [];
+        db.route_plans.filter(function (p) { return p.plan_date >= since; }).sort(function (a, b) { return String(b.plan_date).localeCompare(String(a.plan_date)); }).forEach(function (p) {
+          (p.streets || []).forEach(function (x) {
+            var k = String(x.name).toLowerCase() + '|' + String(p.user).toLowerCase();
+            if (!x.name || seenS[k] || out.length >= 300) return; seenS[k] = true;
+            out.push({ name: x.name, user: p.user, plan_date: p.plan_date, status: p.plan_date <= today ? 'worked' : 'planned', lines: clone(x.lines || []) });
+          });
+        });
+        return { streets: out, since: since };
+      }
       case 'list_field': {
         needRole(user, ['owner', 'manager']);
         if (!isYmd(data.from) || !isYmd(data.to) || data.to < data.from) throw E('INVALID', 'from/to');
@@ -272,6 +321,7 @@
           shops: db.shops,
           orders: db.field_orders.filter(function (x) { return inR(x.order_date) && who(x.user); }),
           days: db.field_days.filter(function (x) { return inR(x.day_date) && who(x.user); }).map(function (x) { if (x.ended_at) return x; var o = dayOut(db, x.user, x.day_date); return Object.assign({}, x, { km: o.km_today, visits: o.visits_today, orders: o.orders_today }); }),
+          plans: clone(db.route_plans.filter(function (x) { return inR(x.plan_date) && who(x.user); })),
           include_tracks: withTracks, include_photos: withPhotos
         };
       }

@@ -119,3 +119,95 @@ test('field v30: the accountant may read the field report; a sales rep may not',
   assert.equal(rs.ok, false);
   assert.equal(rs.error, 'FORBIDDEN');
 });
+
+// ---- v31: route plan made before setting off (owner 2026-10-11) ----
+const TODAY = () => new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
+const plus = (ymd, n) => { const d = new Date(ymd + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const PLAN = (date) => ({ plan_date: date, start: { label: 'Jl. Raya Condet', lat: -6.2731, lng: 106.8582 }, note: 'pagi',
+  stops: [{ ref: 'shop:S1', shop_id: 'S1', name: 'Toko A', lat: -6.2700, lng: 106.8600, src: 'shop' },
+    { ref: 'osm:n42', name: 'Minimarket Baru', lat: -6.2750, lng: 106.8590, address: 'Jl. Raya Condet 12', type: 'minimarket', src: 'osm' }] });
+
+test('field v31: generated == original for plan_save', async () => {
+  const body = base('plan_save', 'Rani', '3333', PLAN(TODAY()));
+  const nodes = await loadFieldNodes(sqliteAdapter(seed()), parseField(body, {}));
+  const $ = makeAccessor(nodes);
+  assert.deepEqual(frozen(() => runProcessField($, KEY)[0].json), frozen(() => origFieldFn($)[0].json));
+});
+
+test('field v31: plan_save stores the day plan; saving again replaces it; bootstrap returns it', async () => {
+  const db = seed(); const a = sqliteAdapter(db);
+  const r = await handleField(a, base('plan_save', 'Rani', '3333', PLAN(plus(TODAY(), 1))), {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.plan.stops.length, 2);
+  assert.equal(r.plan.stops[0].kind, 'shop');
+  assert.equal(r.plan.stops[1].kind, 'place');
+  assert.equal(r.plan.stops[1].type, 'minimarket');
+  assert.equal(r.plan.start.label, 'Jl. Raya Condet');
+  const p2 = PLAN(plus(TODAY(), 1)); p2.stops = p2.stops.slice(1);
+  const r2 = await handleField(a, base('plan_save', 'Rani', '3333', p2), {}, KEY);
+  assert.equal(r2.plan.plan_id, r.plan.plan_id, 'same plan id (replaced, not duplicated)');
+  assert.equal(a.all('SELECT COUNT(*) AS n FROM pos_route_plans', [])[0].n, 1);
+  const b = await handleField(a, base('field_bootstrap', 'Rani', '3333'), {}, KEY);
+  assert.equal(b.plans.length, 1);
+  assert.equal(b.plans[0].stops.length, 1);
+});
+
+test('field v31: an unknown shop_id becomes a place; bad date / position are refused', async () => {
+  const a = sqliteAdapter(seed());
+  const p = PLAN(TODAY()); p.stops[0].shop_id = 'NOPE';
+  const r = await handleField(a, base('plan_save', 'Rani', '3333', p), {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.plan.stops[0].kind, 'place');
+  const old = await handleField(a, base('plan_save', 'Rani', '3333', PLAN(plus(TODAY(), -1))), {}, KEY);
+  assert.equal(old.ok, false); assert.equal(old.error, 'INVALID');
+  const far = await handleField(a, base('plan_save', 'Rani', '3333', PLAN(plus(TODAY(), 30))), {}, KEY);
+  assert.equal(far.ok, false);
+  const bad = PLAN(TODAY()); bad.stops[1].lat = 999;
+  const rb = await handleField(a, base('plan_save', 'Rani', '3333', bad), {}, KEY);
+  assert.equal(rb.ok, false); assert.equal(rb.error, 'INVALID');
+});
+
+test('field v31: the owner sees the rep plans in list_field; only a sales rep may save one', async () => {
+  const a = sqliteAdapter(seed());
+  await handleField(a, base('plan_save', 'Rani', '3333', PLAN(TODAY())), {}, KEY);
+  const l = await handleField(a, base('list_field', 'Pemilik', '1234', { from: TODAY(), to: TODAY() }), {}, KEY);
+  assert.equal(l.ok, true, JSON.stringify(l));
+  assert.equal(l.plans.length, 1);
+  assert.equal(l.plans[0].user, 'Rani');
+  const o = await handleField(a, base('plan_save', 'Pemilik', '1234', PLAN(TODAY())), {}, KEY);
+  assert.equal(o.ok, false); assert.equal(o.error, 'FORBIDDEN');
+});
+
+// ---- v31b: start + END point, work streets, shared "worked streets" map (owner 2026-10-11) ----
+const STREET = { ref: 'st:jalan raya condet', name: 'Jalan Raya Condet', lines: [[[-6.2850, 106.8570], [-6.2731, 106.8582], [-6.2650, 106.8595]]] };
+
+test('field v31b: the plan keeps the end point and the work streets (lines rounded, junk dropped)', async () => {
+  const a = sqliteAdapter(seed());
+  const p = PLAN(TODAY()); p.end = { label: 'Pasar Kramat Jati', lat: -6.2700, lng: 106.8650 };
+  p.streets = [STREET, { name: '' }, { name: 'Jl. Bad', lines: [[[999, 1], [1, 2]]] }];
+  const r = await handleField(a, base('plan_save', 'Rani', '3333', p), {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.plan.end.label, 'Pasar Kramat Jati');
+  assert.equal(r.plan.streets.length, 2, 'nameless street dropped');
+  assert.equal(r.plan.streets[0].lines[0].length, 3);
+  assert.equal(r.plan.streets[1].lines.length, 0, 'invalid points dropped');
+});
+
+test('field v31b: streets_worked shows every rep the streets other reps worked (latest per street + rep)', async () => {
+  const db = seed();
+  insert(db, 'pos_users', { id: 6, name: 'Budi', role: 'sales', pin_hash: h('Budi', '6666'), active: true });
+  const a = sqliteAdapter(db);
+  const p = PLAN(TODAY()); p.streets = [STREET];
+  assert.equal((await handleField(a, base('plan_save', 'Rani', '3333', p), {}, KEY)).ok, true);
+  const p2 = PLAN(plus(TODAY(), 1)); p2.streets = [STREET];
+  assert.equal((await handleField(a, base('plan_save', 'Rani', '3333', p2), {}, KEY)).ok, true);
+  const w = await handleField(a, base('streets_worked', 'Budi', '6666'), {}, KEY);
+  assert.equal(w.ok, true, JSON.stringify(w));
+  assert.equal(w.streets.length, 1, 'one entry per street and rep');
+  assert.equal(w.streets[0].user, 'Rani');
+  assert.equal(w.streets[0].plan_date, plus(TODAY(), 1), 'latest date wins');
+  assert.equal(w.streets[0].status, 'planned');
+  assert.equal(w.streets[0].lines[0].length, 3);
+  const o = await handleField(a, base('streets_worked', 'Pemilik', '1234'), {}, KEY);
+  assert.equal(o.ok, true);
+});
