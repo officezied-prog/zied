@@ -1,9 +1,9 @@
-// Real (non-mock) mode against an intercepted n8n webhook: checks the request envelope of API.md
+// Real (non-mock) mode against the intercepted backend (the Khair Mart Jumla Worker since 2026-10-10; same envelope as the n8n webhook it replaced): checks the request envelope of API.md
 // and that only network failures (not {ok:false}) put a sale in the outbox.
 const { test, expect } = require('@playwright/test');
 const { sha, confirmQty } = require('./helpers');
 
-const API = 'https://ziedapp.app.n8n.cloud/webhook/khair-pos';
+const API = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos';
 const KEY = 'test-store-key';
 
 function fakeBackend() {

@@ -27,6 +27,8 @@ export function parseField(body, headers) {
     from: action === 'list_field' && isDate(data.from) ? data.from : '9999-12-31',
     to: action === 'list_field' && isDate(data.to) ? data.to : '0000-01-01',
     recent_from: action === 'field_bootstrap' ? since30 : '9999-12-31',
+    plans_from: action === 'field_bootstrap' || action === 'plan_save' ? today : '9999-12-31',
+    area_from: action === 'streets_worked' ? new Date(Date.now() + 7 * 3600000 - 60 * 86400000).toISOString().slice(0, 10) : '9999-12-31',
     img_lo: action === 'product_images' ? 0 : (action === 'set_product_image' && pid > 0 ? pid : 1),
     img_hi: action === 'product_images' ? 1000000000 : (action === 'set_product_image' && pid > 0 ? pid : 0),
   };
@@ -52,6 +54,9 @@ function fieldSpecs(req) {
     'Get Range Days': Q.range('pos_field_days', 'day_date', req.from, req.to),
     'Get Images': Q.range('pos_product_images', 'product_id', req.img_lo, req.img_hi),
     'Get Recent Orders': Q.gte('pos_field_orders', 'order_date', req.recent_from),
+    'Get Plans': Q.gte('pos_route_plans', 'plan_date', req.plans_from),
+    'Get Range Plans': Q.range('pos_route_plans', 'plan_date', req.from, req.to),
+    'Get Area Plans': Q.gte('pos_route_plans', 'plan_date', req.area_from), // every rep's plans, last 60 days (streets map)
   };
 }
 
@@ -66,10 +71,17 @@ export async function loadFieldNodes(adapter, req) {
 // first field request after this version ships — idempotent (a duplicate-column error is swallowed) and run
 // at most once per isolate via the module flag, so the ongoing cost is nil. These are ADD COLUMN only, never
 // destructive. Remove once the columns are known-present everywhere.
+// v31: the route-plan table is new to D1, and the loaders read it on every request (bootstrap) — so the schema is
+// now ensured BEFORE loading (once per isolate), not only before a write.
 let fieldSchemaEnsured = false;
 const FIELD_MIGRATIONS = [
   "ALTER TABLE pos_visits ADD COLUMN rating INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE pos_field_orders ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'tunai'",
+  "CREATE TABLE IF NOT EXISTS pos_route_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id TEXT, user TEXT, plan_date TEXT, start_label TEXT, start_lat REAL, start_lng REAL, stops TEXT, note TEXT, created_at TEXT, updated_at TEXT, end_label TEXT, end_lat REAL, end_lng REAL, streets TEXT)",
+  // no-ops on a table created by the line above; they only matter if an older copy of the table exists
+  "ALTER TABLE pos_route_plans ADD COLUMN end_label TEXT", "ALTER TABLE pos_route_plans ADD COLUMN end_lat REAL",
+  "ALTER TABLE pos_route_plans ADD COLUMN end_lng REAL", "ALTER TABLE pos_route_plans ADD COLUMN streets TEXT",
+  "CREATE INDEX IF NOT EXISTS idx_pos_route_plans_plan_date ON pos_route_plans (plan_date)",
 ];
 async function ensureFieldSchema(adapter) {
   if (fieldSchemaEnsured) return;
@@ -81,12 +93,11 @@ async function ensureFieldSchema(adapter) {
 
 export async function handleField(adapter, body, headers, STORE_KEY) {
   const req = parseField(body, headers);
+  await ensureFieldSchema(adapter); // before loading: 'Get Plans' reads pos_route_plans
   const nodes = await loadFieldNodes(adapter, req);
   const $ = makeAccessor(nodes);
   const out = runProcessField($, STORE_KEY)[0].json; // { response, ops, action }
   const ops = out.ops || {};
-  // Only touch schema when there is something to write (reads skip the DDL entirely).
-  if (Object.keys(ops).some((k) => (ops[k] || []).length)) await ensureFieldSchema(adapter);
   await applyOps(adapter, ops, OPS_TABLE_FIELD);
   return out.response; // field workflow has no Finalize node
 }

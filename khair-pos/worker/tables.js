@@ -144,6 +144,12 @@ export const TABLES = {
   pos_product_images: {
     product_id: 'number', image_base64: 'string', updated_at: 'string',
   },
+  // v31 (owner 2026-10-11): the rep's route plan for a day, made before setting off. stops = JSON text.
+  pos_route_plans: {
+    plan_id: 'string', user: 'string', plan_date: 'string', start_label: 'string', start_lat: 'number',
+    start_lng: 'number', stops: 'string', note: 'string', created_at: 'string', updated_at: 'string',
+    end_label: 'string', end_lat: 'number', end_lng: 'number', streets: 'string',
+  },
   // ---- chat / attendance (separate workflows; included for a complete database) ----
   pos_chat: {
     channel: 'string', cid: 'string', from_user: 'string', from_name: 'string',
@@ -229,7 +235,7 @@ export const OPS_TABLE = {
 export const OPS_TABLE_FIELD = {
   shops: 'pos_shops', visits: 'pos_visits', tracks: 'pos_tracks',
   days: 'pos_field_days', orders: 'pos_field_orders', images: 'pos_product_images',
-  product_flags: 'pos_products',
+  product_flags: 'pos_products', plans: 'pos_route_plans',
 };
 
 // Chat workflow ops key → table.

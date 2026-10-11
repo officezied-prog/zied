@@ -12,7 +12,7 @@ const data = req.data && typeof req.data === 'object' ? req.data : {};
     else if (v && typeof v === 'object') cleanInput(v, depth + 1);
   });
 })(data, 0);
-const ops = { shops: [], visits: [], tracks: [], days: [], orders: [], images: [], product_flags: [] };
+const ops = { shops: [], visits: [], tracks: [], days: [], orders: [], images: [], product_flags: [], plans: [] };
 
 function rows(name) {
   try {
@@ -25,6 +25,7 @@ function num(v) { const x = Number(v); return isFinite(x) ? x : 0; }
 function money(v) { return Math.round(num(v)); }
 function str(v) { return v === undefined || v === null ? '' : String(v).trim(); }
 function isDate(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s); }
+function addDaysYmd(ymd, n) { const d = new Date(ymd + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 function clean(r) {
   const o = {};
   Object.keys(r).forEach(function (k) { if (k !== 'createdAt' && k !== 'updatedAt') o[k] = r[k]; });
@@ -87,7 +88,7 @@ if (me.must_change === true && !viaMaster) return fail('PIN_CHANGE_REQUIRED', 'B
 const role = ['owner', 'manager', 'sales', 'kasir', 'akuntan'].indexOf(me.role) >= 0 ? me.role : 'other';
 if (role === 'other') return fail('FORBIDDEN', 'Aplikasi ini untuk sales lapangan');
 const isBoss = role === 'owner' || role === 'manager';
-const SALES_ONLY = ['day_start', 'day_end', 'track', 'check_in', 'field_order'];
+const SALES_ONLY = ['day_start', 'day_end', 'track', 'check_in', 'field_order', 'plan_save'];
 const BOSS_ONLY = ['update_order', 'set_product_image', 'link_shop'];
 // The kasir may reach ONLY cashier_orders. v30 (owner 2026-10-10): the accountant may READ the field report
 // (visits + orders table) for monitoring — field_bootstrap / list_field / product_images only, nothing that writes.
@@ -122,6 +123,35 @@ function dayOut(d) {
   if (!d) return { status: 'off', started_at: '', ended_at: '', visits_today: todayVisits.length, km_today: kmOf(todayTracks), orders_today: todayOrders.length };
   return Object.assign(clean(d), { status: d.ended_at ? 'ended' : 'working', visits_today: todayVisits.length, km_today: kmOf(todayTracks), orders_today: todayOrders.length });
 }
+// v31 (owner 2026-10-11): the rep's route plan for a day — start point + ordered stops (system shops or new places
+// found on the map), made before setting off. Stored as JSON text; parsed back for the apps.
+function jsonList(v) { try { const x = typeof v === 'string' ? JSON.parse(v || '[]') : v; return Array.isArray(x) ? x : []; } catch (e) { return []; } }
+function planOut(p) {
+  return { plan_id: p.plan_id, user: p.user, plan_date: p.plan_date,
+    start: isCoord(p.start_lat, p.start_lng) ? { label: str(p.start_label), lat: num(p.start_lat), lng: num(p.start_lng) } : null,
+    end: isCoord(p.end_lat, p.end_lng) ? { label: str(p.end_label), lat: num(p.end_lat), lng: num(p.end_lng) } : null,
+    stops: jsonList(p.stops), streets: jsonList(p.streets), note: str(p.note), updated_at: str(p.updated_at) };
+}
+// v31b: a work street = name + its line(s) on the map (rounded, capped), so other reps see where work was already done.
+function cleanStreets(raw) {
+  const out = [];
+  let budget = 3000; // points over all streets of one plan
+  (Array.isArray(raw) ? raw : []).slice(0, 15).forEach(function (x) {
+    x = x && typeof x === 'object' ? x : {};
+    const name = str(x.name).slice(0, 100); if (!name) return;
+    const lines = [];
+    (Array.isArray(x.lines) ? x.lines : []).slice(0, 40).forEach(function (ln) {
+      const pts = [];
+      (Array.isArray(ln) ? ln : []).slice(0, 400).forEach(function (q) {
+        if (budget <= 0 || !Array.isArray(q) || !isCoord(q[0], q[1])) return;
+        pts.push([Math.round(num(q[0]) * 1e5) / 1e5, Math.round(num(q[1]) * 1e5) / 1e5]); budget--;
+      });
+      if (pts.length > 1) lines.push(pts);
+    });
+    out.push({ ref: str(x.ref).slice(0, 60) || ('st:' + name.toLowerCase()), name: name, lines: lines });
+  });
+  return out;
+}
 function visitOut(v, full) {
   const o = clean(v);
   if (!full) delete o.photo_thumb;
@@ -141,6 +171,7 @@ switch (req.action) {
       shops: shops.map(clean), customers: customers,
       day: role === 'sales' ? dayOut(myDay) : null,
       orders: role === 'sales' ? rows('Get Recent Orders').filter(mine).map(clean) : [],
+      plans: role === 'sales' ? rows('Get Plans').filter(mine).map(planOut) : [],
       settings: {}, server_time: new Date().toISOString()
     });
   }
@@ -291,6 +322,54 @@ switch (req.action) {
     return done({ ok: true, duplicate: false, order: order });
   }
 
+  case 'plan_save': {
+    // One plan per rep per day (today … +14 days); saving again replaces it. Stops: system shops (shop_id) or new
+    // places picked on the map (name + position, optional address / type) — a place becomes a shop at its first visit.
+    const pd = str(data.plan_date);
+    if (!isDate(pd) || pd < req.today || pd > addDaysYmd(req.today, 14)) return fail('INVALID', 'Tanggal rencana: hari ini sampai 14 hari lagi');
+    const raw = Array.isArray(data.stops) ? data.stops : [];
+    if (raw.length > 60) return fail('INVALID', 'Maksimal 60 titik');
+    const stops = [];
+    for (let i = 0; i < raw.length; i++) {
+      const x = raw[i] && typeof raw[i] === 'object' ? raw[i] : {};
+      if (!isCoord(x.lat, x.lng)) return fail('INVALID', 'Lokasi titik ' + (i + 1) + ' tidak valid');
+      const sh = x.shop_id ? shopById[str(x.shop_id)] : null;
+      const name = str(x.name).slice(0, 100) || (sh ? str(sh.name) : '');
+      if (!name) return fail('INVALID', 'Nama titik ' + (i + 1) + ' wajib');
+      stops.push({ ref: str(x.ref).slice(0, 40) || ('s' + (i + 1)), kind: sh ? 'shop' : 'place', shop_id: sh ? sh.shop_id : '', name: name,
+        lat: Math.round(num(x.lat) * 1e6) / 1e6, lng: Math.round(num(x.lng) * 1e6) / 1e6, address: str(x.address).slice(0, 200),
+        type: SHOP_TYPES.indexOf(x.type) >= 0 ? x.type : '', src: ['osm', 'map', 'shop'].indexOf(x.src) >= 0 ? x.src : '' });
+    }
+    const st = data.start && typeof data.start === 'object' ? data.start : {};
+    const en = data.end && typeof data.end === 'object' ? data.end : {};
+    const ex = rows('Get Plans').find(function (p) { return mine(p) && p.plan_date === pd; });
+    const now = new Date().toISOString();
+    const plan = { plan_id: ex ? ex.plan_id : 'RP' + rand(7), user: me.name, plan_date: pd,
+      start_label: isCoord(st.lat, st.lng) ? str(st.label).slice(0, 120) : '', start_lat: isCoord(st.lat, st.lng) ? Math.round(num(st.lat) * 1e6) / 1e6 : 0,
+      start_lng: isCoord(st.lat, st.lng) ? Math.round(num(st.lng) * 1e6) / 1e6 : 0,
+      end_label: isCoord(en.lat, en.lng) ? str(en.label).slice(0, 120) : '', end_lat: isCoord(en.lat, en.lng) ? Math.round(num(en.lat) * 1e6) / 1e6 : 0,
+      end_lng: isCoord(en.lat, en.lng) ? Math.round(num(en.lng) * 1e6) / 1e6 : 0,
+      stops: JSON.stringify(stops), streets: JSON.stringify(cleanStreets(data.streets)), note: str(data.note).slice(0, 300),
+      created_at: ex ? str(ex.created_at) : now, updated_at: now };
+    ops.plans.push(forWrite(plan, ex ? ex.id : -1));
+    return done({ ok: true, plan: planOut(plan) });
+  }
+
+  case 'streets_worked': {
+    // v31b (owner 2026-10-11): every street a rep plans to work is kept on the map for ALL reps, so a second rep does not
+    // repeat the same street. Last 60 days + planned ones (up to 14 days ahead); one entry per street and rep (latest).
+    if (role !== 'sales' && !isBoss) return fail('FORBIDDEN', 'Hanya sales, pemilik atau manajer');
+    const seen = {}, list = [];
+    rows('Get Area Plans').slice().sort(function (a, b) { return str(b.plan_date).localeCompare(str(a.plan_date)); }).forEach(function (p) {
+      jsonList(p.streets).forEach(function (x) {
+        const k = str(x.name).toLowerCase() + '|' + str(p.user).toLowerCase();
+        if (!x.name || seen[k] || list.length >= 300) return; seen[k] = true;
+        list.push({ name: str(x.name), user: str(p.user), plan_date: str(p.plan_date), status: str(p.plan_date) <= req.today ? 'worked' : 'planned', lines: Array.isArray(x.lines) ? x.lines : [] });
+      });
+    });
+    return done({ ok: true, streets: list, since: addDaysYmd(req.today, -60) });
+  }
+
   case 'list_field': {
     if (!isDate(data.from) || !isDate(data.to) || data.from > data.to) return fail('INVALID', 'Rentang tanggal tidak valid');
     const span = (Date.parse(data.to) - Date.parse(data.from)) / 86400000;
@@ -305,7 +384,8 @@ switch (req.action) {
       visits: rows('Get Range Visits').filter(byUser).map(function (v) { return visitOut(v, span <= 31); }),
       shops: shops.map(clean),
       orders: Object.keys(orderMap).map(function (k) { return orderMap[k]; }).filter(byUser),
-      days: rows('Get Range Days').filter(byUser).map(clean)
+      days: rows('Get Range Days').filter(byUser).map(clean),
+      plans: rows('Get Range Plans').filter(byUser).map(planOut)
     });
   }
 
