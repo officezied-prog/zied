@@ -144,7 +144,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.3.2';
+const APP_VERSION = '2.3.3';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -2914,10 +2914,11 @@ async function googleSelfTest() {
     box.textContent = t('field.g_ok', { n: (r.places || []).length, k: fmtNum((r.usage || {}).n || 0), cap: fmtNum((r.usage || {}).cap || 4500) });
     const el = $('#fd-google'); if (el && r.usage) { el.textContent = t('field.google', { n: fmtNum(r.usage.n), cap: fmtNum(r.usage.cap) }); el.dataset.n = r.usage.n; }
   } catch (e) {
-    const m = String((e && e.message) || ''), code = (m.match(/Google:\s*(\d{3})/) || [])[1] || '';
+    const m = String((e && e.message) || ''), code = (m.match(/Google:\s*(\d{3})/) || [])[1] || '', said = (m.split(' — ')[1] || '').trim(); // Google's own words
     box.className = 'small red'; box.dataset.ok = '0';
-    box.textContent = e && e.code === 'NO_KEY' ? t('field.g_nokey') : e && e.code === 'QUOTA' ? t('field.g_quota')
-      : code === '400' ? t('field.g_400') : code === '403' ? t('field.g_403') : code === '429' ? t('field.g_429') : t('field.g_other', { m: m || errMsg(e) });
+    const why = e && e.code === 'NO_KEY' ? t('field.g_nokey') : e && e.code === 'QUOTA' ? t('field.g_quota')
+      : code === '400' && (!said || /api key/i.test(said)) ? t('field.g_400') : code === '403' ? t('field.g_403') : code === '429' ? t('field.g_429') : t('field.g_other', { m: m || errMsg(e) });
+    box.textContent = why + (said && why.indexOf(said) < 0 ? ' — Google: "' + said + '"' : '');
   } finally { if (btn) btn.disabled = false; }
 }
 let fieldViewSeq = 0;

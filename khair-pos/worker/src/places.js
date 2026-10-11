@@ -33,7 +33,7 @@ async function call(body, key, fetchImpl) {
 }
 /** req: { q, lat?, lng?, radius?, line? } → { places: [...], mode } ; throws { code: 'GOOGLE', status } when Google refuses. */
 export async function placesSearch(req, key, fetchImpl = fetch) {
-  const base = { textQuery: String(req.q || '').slice(0, 120), languageCode: 'id', regionCode: 'ID', maxResultCount: 20 };
+  const base = { textQuery: String(req.q || '').slice(0, 120), languageCode: 'id', regionCode: 'ID', pageSize: 20 }; // pageSize = the current name of maxResultCount
   const line = Array.isArray(req.line) ? req.line.filter((q) => Array.isArray(q) && okCoord(+q[0], +q[1])).slice(0, 100) : [];
   let res, mode = 'text';
   if (line.length > 1) {
@@ -50,7 +50,13 @@ export async function placesSearch(req, key, fetchImpl = fetch) {
     if (okCoord(lat, lng)) base.locationBias = { circle: { center: { latitude: lat, longitude: lng }, radius: Math.min(50000, Math.max(100, Number(req.radius) || 3000)) } };
     res = await call(base, key, fetchImpl);
   }
-  if (res.status !== 200) { const e = new Error('google ' + res.status); e.code = 'GOOGLE'; e.status = res.status; e.detail = String((res.js && res.js.error && res.js.error.status) || ''); throw e; }
+  if (res.status !== 200) {
+    const ge = (res.js && res.js.error) || {}, e = new Error('google ' + res.status);
+    e.code = 'GOOGLE'; e.status = res.status; e.detail = String(ge.status || '');
+    // Google's own words (e.g. "API key not valid…") so the owner's "Tes Google" names the real cause; never the key itself
+    e.msg = String(ge.message || '').replace(/AIza[0-9A-Za-z_-]{10,}/g, 'AIza…').replace(/[<>\u0000-\u001F]/g, ' ').slice(0, 200);
+    throw e;
+  }
   const places = ((res.js && res.js.places) || []).map((p) => {
     const lat = p.location && Number(p.location.latitude), lng = p.location && Number(p.location.longitude);
     if (!okCoord(lat, lng)) return null;
