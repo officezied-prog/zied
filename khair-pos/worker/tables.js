@@ -21,6 +21,8 @@ export const TABLES = {
     stock: 'number', min_stock: 'number', active: 'boolean', notes: 'string',
     image_updated: 'string', supplier: 'string', repack_from: 'number', repack_qty: 'number',
     shop_stock: 'number', size: 'string', weight: 'string', exp_date: 'string', exp_none: 'boolean',
+    // v36: a product the cashier added at goods-in waits for the manager / accountant: review = that approval's id
+    review: 'string',
   },
   pos_customers: {
     name: 'string', phone: 'string', type: 'string', address: 'string', notes: 'string',
@@ -66,6 +68,8 @@ export const TABLES = {
   pos_expenses: {
     expense_date: 'string', category: 'string', amount: 'number', note: 'string',
     user: 'string', photo_id: 'string', paid_from: 'string',
+    // v36 expense invoice check: item lines (JSON), the check result, its approval and who checked it
+    lines: 'string', check_status: 'string', request_id: 'string', checked_by: 'string',
   },
   pos_shifts: {
     shift_id: 'string', cashier: 'string', shift_date: 'string', opened_at: 'string',

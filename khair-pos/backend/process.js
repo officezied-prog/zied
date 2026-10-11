@@ -269,6 +269,10 @@ function approvalOut(a) {
       }
     } catch (e) { o.payload = ''; }
   }
+  if (a.kind === 'product_new' && !costOk()) {
+    // v36: the cost from the supplier invoice stays with the owner (and whoever the owner lets see costs).
+    try { const pl = JSON.parse(a.payload || '{}'); delete pl.cost_price; o.payload = JSON.stringify(pl); } catch (e) { o.payload = ''; }
+  }
   if (!isApprover && a.kind === 'discount') {
     try {
       const pl = JSON.parse(a.payload || '{}');
@@ -555,6 +559,80 @@ function matchNote(lines, photoRow) {
 }
 function diffText(diffs) {
   return diffs.map(function (d) { return d.name + ': input ' + (d.recorded_qty === null ? '-' : fmtN(d.recorded_qty)) + ' / nota ' + (d.photo_qty === null ? '-' : fmtN(d.photo_qty)); }).join('; ');
+}
+// v36 (owner 2026-10-11: "في فاتورة المصاريف التطبيق يقارن ما كتب وما جاءته من فواتير لضبط عملية الصرف"):
+// an expense may carry item lines (item, qty, unit price → line total; their sum = the amount). With an invoice photo
+// read by AI the lines are compared one by one: number of items, each qty and unit price, and the total.
+// Same rules in kasir/index.html (ExpenseMatch) and both demo backends — keep them identical.
+function expenseLinesIn(raw) {
+  const list = Array.isArray(raw) ? raw.slice(0, 50) : [];
+  const out = [];
+  for (let i = 0; i < list.length; i++) {
+    const l = list[i] || {};
+    const name = str(l.name).replace(/\s+/g, ' ').slice(0, 80);
+    const qty = Math.round(num(l.qty) * 1000) / 1000;
+    const price = money(l.unit_price);
+    if (!name && !qty && !price) continue;
+    if (!name) return { error: 'Nama barang wajib di baris ' + (i + 1) };
+    if (!(qty > 0)) return { error: 'Jumlah tidak valid: ' + name };
+    if (price < 0) return { error: 'Harga tidak valid: ' + name };
+    out.push({ name: name, qty: qty, unit_price: price, total: Math.round(qty * price) });
+  }
+  return { lines: out };
+}
+function expenseDiffText(diffs) {
+  const v = function (f, x) { return x === null || x === undefined ? '-' : (f === 'qty' || f === 'count' ? fmtN(x) : 'Rp ' + money(x)); };
+  return diffs.map(function (d) {
+    const what = { total: 'Total', count: 'Jumlah jenis barang', qty: 'Qty ' + str(d.name), price: 'Harga ' + str(d.name), extra: 'Tidak ada di nota: ' + str(d.name), missing: 'Tidak diketik: ' + str(d.name) }[d.field] || d.field;
+    return d.field === 'extra' || d.field === 'missing' ? what : what + ' input ' + v(d.field, d.typed) + ' / nota ' + v(d.field, d.invoice);
+  }).join('; ');
+}
+// → {status: cocok | selisih | cek_manual, diffs: [{field, name, typed, invoice}], rows: line-by-line table, invoice: {count, total, vendor}}
+function expenseCompare(lines, amount, ex) {
+  ex = ex && typeof ex === 'object' ? ex : {};
+  const items = (Array.isArray(ex.items) ? ex.items : []).filter(function (it) { return it && str(it.name); });
+  const nOrNull = function (x) { return x === null || x === undefined || x === '' || !isFinite(Number(x)) ? null : Number(x); };
+  let pamt = nOrNull(ex.amount);
+  if (pamt === null) pamt = nOrNull(ex.total);
+  if (pamt !== null) pamt = money(pamt);
+  const invoice = { count: items.length, total: pamt, vendor: ex.vendor ? str(ex.vendor).slice(0, 120) : '' };
+  // No AI key / unreadable photo: never block — a person checks the paper invoice by hand.
+  if (ex.readable === false || (pamt === null && !items.length)) return { status: 'cek_manual', diffs: [], rows: [], invoice: invoice };
+  const diffs = [], rowsOut = [];
+  let unsure = false;
+  if (pamt !== null && Math.abs(pamt - money(amount)) > 0.5) diffs.push({ field: 'total', name: '', typed: money(amount), invoice: pamt });
+  if (lines.length && !items.length) unsure = true;
+  else if (lines.length) {
+    if (lines.length !== items.length) diffs.push({ field: 'count', name: '', typed: lines.length, invoice: items.length });
+    const used = {}, pair = [];
+    lines.forEach(function (l, i) {
+      let best = -1, bs = 0;
+      items.forEach(function (it, k) { if (used[k]) return; const sc = nameScore(it.name, l.name); if (sc > bs) { bs = sc; best = k; } });
+      if (bs >= 0.5) { used[best] = true; pair[i] = best; }
+    });
+    // Same number of lines: a line whose name was not recognised is compared with the invoice line in the same place.
+    if (lines.length === items.length) lines.forEach(function (l, i) { if (pair[i] === undefined && !used[i]) { used[i] = true; pair[i] = i; } });
+    lines.forEach(function (l, i) {
+      const row = { name: l.name, qty: l.qty, unit_price: money(l.unit_price), inv_name: '', inv_qty: null, inv_price: null, bad: [] };
+      rowsOut.push(row);
+      if (pair[i] === undefined) { row.bad.push('extra'); diffs.push({ field: 'extra', name: l.name, typed: l.total, invoice: null }); return; }
+      const it = items[pair[i]];
+      const iq = nOrNull(it.qty);
+      let ip = nOrNull(it.unit_price);
+      if (ip === null && nOrNull(it.total) !== null && iq) ip = Math.round(Number(it.total) / iq);
+      row.inv_name = str(it.name).slice(0, 80); row.inv_qty = iq; row.inv_price = ip === null ? null : money(ip);
+      if (iq === null || ip === null) unsure = true;
+      if (iq !== null && Math.abs(iq - num(l.qty)) > 0.001) { row.bad.push('qty'); diffs.push({ field: 'qty', name: l.name, typed: l.qty, invoice: iq }); }
+      if (ip !== null && Math.abs(money(ip) - money(l.unit_price)) > 0.5) { row.bad.push('price'); diffs.push({ field: 'price', name: l.name, typed: money(l.unit_price), invoice: money(ip) }); }
+    });
+    items.forEach(function (it, k) {
+      if (used[k]) return;
+      const iq = nOrNull(it.qty), ip = nOrNull(it.unit_price);
+      rowsOut.push({ name: '', qty: null, unit_price: null, inv_name: str(it.name).slice(0, 80), inv_qty: iq, inv_price: ip === null ? null : money(ip), bad: ['missing'] });
+      diffs.push({ field: 'missing', name: str(it.name).slice(0, 80), typed: null, invoice: nOrNull(it.total) });
+    });
+  }
+  return { status: diffs.length ? 'selisih' : (unsure ? 'cek_manual' : 'cocok'), diffs: diffs.slice(0, 60), rows: rowsOut.slice(0, 60), invoice: invoice };
 }
 // Purchase correction (after saving, only with manager / owner approval): target lines vs what the rows say now.
 function purchaseRowsOf(no) { return rows('Get Purchase By No').filter(function (r) { return str(r.purchase_no) === no; }); }
@@ -1240,36 +1318,65 @@ switch (req.action) {
     const CATS = ['sewa', 'gaji', 'listrik_air', 'transport', 'iklan', 'kemasan', 'perawatan', 'lain'];
     const amount = money(data.amount);
     if (!(amount > 0)) return fail('INVALID', 'Jumlah tidak valid');
+    // v36 (owner 2026-10-11: "صورة فاتورة المصاريف والتطبيق يتحقق من العدد والكمية والسعر المكتوب"): optional item lines
+    // (item, qty, unit price → line total); when given, their sum must equal the amount.
+    const xl = expenseLinesIn(data.lines);
+    if (xl.error) return fail('INVALID', xl.error);
+    const expLines = xl.lines;
+    const linesSum = expLines.reduce(function (a1, l) { return a1 + l.total; }, 0);
+    if (expLines.length && Math.abs(linesSum - amount) > 0.5) return fail('INVALID', 'Total rincian Rp ' + linesSum + ' tidak sama dengan jumlah Rp ' + amount);
     // v29 (owner 2026-10-10): an expense may carry a photo of the invoice; the AI reads its total (photo kind
     // 'biaya') and we check it against the typed amount. A clear difference needs a reason (as goods-in / payments do).
+    // v36: the AI-read lines are compared line by line too (count, qty, unit price, total). Without the AI (no key /
+    // unreadable photo) the expense is saved and marked "cek manual" for the manager / accountant — never blocked.
     const expPhotoId = str(data.photo_id);
     let photoNote = '';
+    let cmp = null;
+    const reason = str(data.mismatch_reason).slice(0, 300);
     if (expPhotoId) {
       const ph = rows('Get Photo').find(function (x) { return x.photo_id === expPhotoId; });
       if (!ph || ph.kind !== 'biaya') return fail('INVALID', 'Foto nota pengeluaran tidak ditemukan');
       let pex = {};
       try { pex = JSON.parse(ph.extracted || '{}'); } catch (e2) { pex = {}; }
-      const pamt = pex.amount === null || pex.amount === undefined ? null : money(pex.amount);
-      const reason = str(data.mismatch_reason).slice(0, 300);
-      if (pamt !== null && Math.abs(pamt - amount) > 0.5) {
-        if (!reason) { Object.keys(ops).forEach(function (k) { ops[k] = []; }); return done({ ok: false, error: 'MISMATCH', message: 'Jumlah tidak sama dengan nota: input Rp ' + amount + ' / nota Rp ' + pamt, photo_amount: pamt }); }
-        photoNote = ' [nota: selisih input Rp ' + amount + ' / nota Rp ' + pamt + ' — alasan: ' + reason + ']';
-      } else photoNote = pamt !== null ? ' [nota: cocok Rp ' + pamt + ']' : ' [nota: perlu cek]';
+      cmp = expenseCompare(expLines, amount, pex);
+      const pamt = cmp.invoice.total;
+      if (cmp.status === 'selisih') {
+        if (!reason) { Object.keys(ops).forEach(function (k) { ops[k] = []; }); return done({ ok: false, error: 'MISMATCH', message: 'Tidak sama dengan nota: ' + expenseDiffText(cmp.diffs), photo_amount: pamt, check: cmp }); }
+        photoNote = ' [nota: selisih ' + (pamt !== null && pamt !== amount ? 'input Rp ' + amount + ' / nota Rp ' + pamt : expenseDiffText(cmp.diffs).slice(0, 120)) + ' — alasan: ' + reason + ']';
+      } else photoNote = cmp.status === 'cocok' ? ' [nota: cocok Rp ' + pamt + ']' : ' [nota: perlu cek]';
     }
     const e = {
       expense_date: isDate(data.expense_date) ? data.expense_date : new Date().toISOString().slice(0, 10),
       category: CATS.indexOf(data.category) >= 0 ? data.category : 'lain', amount: amount,
       note: (str(data.note) + photoNote).slice(0, 500), user: me.name, photo_id: expPhotoId,
-      paid_from: data.paid_from === 'lain' ? 'lain' : (data.paid_from === 'kas' || myShift ? 'kas' : 'lain')
+      paid_from: data.paid_from === 'lain' ? 'lain' : (data.paid_from === 'kas' || myShift ? 'kas' : 'lain'),
+      lines: expLines.length ? JSON.stringify(expLines) : '', check_status: cmp ? cmp.status : '', request_id: '', checked_by: ''
     };
+    // A difference (or a photo the AI could not read) goes to the manager / accountant like a goods-in mismatch;
+    // the money is already out, so the expense is recorded now and the approval marks it checked / rejected.
+    let ap = null;
+    if (cmp && cmp.status !== 'cocok' && role !== 'owner') {
+      const need = role === 'kasir' ? 'mgr_akuntan' : 'owner';
+      const what = cmp.status === 'selisih' ? 'Selisih nota pengeluaran' : 'Cek manual nota pengeluaran';
+      ap = newApproval({ kind: 'expense_check', approver_role: need, ref: 'EX' + rand(6), total: amount, note: reason,
+        summary: (what + ' ' + e.category + ' Rp ' + amount + (cmp.invoice.vendor ? ' (' + cmp.invoice.vendor + ')' : '') + (cmp.diffs.length ? ': ' + expenseDiffText(cmp.diffs) : '') + (reason ? ' | alasan: ' + reason : '')).slice(0, 1500),
+        payload: JSON.stringify({ status: cmp.status, category: e.category, amount: amount, note: str(data.note).slice(0, 300), paid_from: e.paid_from, expense_date: e.expense_date,
+          lines: expLines, rows: cmp.rows, diffs: cmp.diffs, invoice: cmp.invoice, reason: reason, photo_id: expPhotoId, by: me.name }) });
+      ops.approvals.push(forWrite(ap, -1));
+      e.request_id = ap.request_id;
+      if (cmp.status === 'selisih') notify(['owner', 'manager'], 'Selisih nota pengeluaran oleh ' + me.name + ' Rp ' + amount + ': ' + expenseDiffText(cmp.diffs).slice(0, 250), 'warn');
+    }
     ops.expenses.push(forWrite(e, -1));
     if (myShift && e.paid_from === 'kas') {
       const sh = Object.assign({}, myShift, { cash_out: money(myShift.cash_out) + amount });
       addMove(sh, 'out', amount, 'Pengeluaran ' + e.category + ': ' + e.note);
       ops.shifts.push(forWrite(sh, myShift.id));
     }
-    logAct('biaya', 'Pengeluaran ' + e.category + ' Rp ' + amount + (e.note ? ': ' + e.note : '') + ' (' + e.paid_from + ')', '', amount, 'info');
-    return done({ ok: true, expense: Object.assign({ id: null }, e) });
+    logAct('biaya', 'Pengeluaran ' + e.category + ' Rp ' + amount + (e.note ? ': ' + e.note : '') + ' (' + e.paid_from + ')' + (expLines.length ? ' — ' + expLines.length + ' baris' : ''), e.request_id, amount, cmp && cmp.status === 'selisih' ? 'warn' : 'info');
+    const exOut = { ok: true, expense: Object.assign({ id: null }, e) };
+    if (cmp) exOut.check = cmp;
+    if (ap) { exOut.check_request_id = ap.request_id; exOut.approval = approvalOut(ap); }
+    return done(exOut);
   }
 
   case 'open_shift': {
@@ -1734,16 +1841,46 @@ switch (req.action) {
       // approving confirms the discrepancy was reviewed, rejecting flags it for a correction (request_purchase_fix).
       finalStatus = decision === 'approved' ? 'used' : 'rejected';
     }
+    if (a.kind === 'expense_check') {
+      // v36: the manager / accountant checked the expense against its invoice (approve = accepted, reject = flagged
+      // for the owner). The money already went out; the expense row only carries the result for the reports.
+      const ex = rows('Get Expense By Request').find(function (x) { return str(x.request_id) === a.request_id; });
+      if (ex) ops.expenses.push(forWrite(Object.assign({}, ex, { check_status: decision === 'approved' ? 'disetujui' : 'ditolak', checked_by: me.name }), ex.id));
+      finalStatus = decision === 'approved' ? 'used' : 'rejected';
+      // the owner is told by the generic manager / accountant notice below (both decisions)
+    }
+    if (a.kind === 'product_new') {
+      // v36 (owner 2026-10-11): a product the cashier added while receiving goods is usable at once; the manager /
+      // accountant confirms it (optionally correcting the selling prices) or rejects it (the product is switched off
+      // for sale until the owner fixes it — the received stock stays recorded).
+      const p = products.find(function (x) { return str(x.review) === a.request_id; });
+      if (!p) return fail('NOT_FOUND', 'Produk baru tidak ditemukan');
+      const np = Object.assign({}, p, { review: '' });
+      const pr = data.prices && typeof data.prices === 'object' ? data.prices : {};
+      const changes = {};
+      if (decision === 'approved') {
+        ['retail_price', 'wholesale_price'].forEach(function (f) { if (pr[f] !== undefined && pr[f] !== null && pr[f] !== '' && money(pr[f]) >= 0 && money(pr[f]) !== money(p[f])) changes[f] = { from: money(p[f]), to: money(pr[f]) }; });
+        if (changes.retail_price && !(changes.retail_price.to > 0)) return fail('INVALID', 'Harga jual eceran wajib');
+        if (pr.wholesale_min_qty !== undefined && pr.wholesale_min_qty !== null && pr.wholesale_min_qty !== '' && num(pr.wholesale_min_qty) >= 0 && num(pr.wholesale_min_qty) !== num(p.wholesale_min_qty)) changes.wholesale_min_qty = { from: num(p.wholesale_min_qty), to: num(pr.wholesale_min_qty) };
+        Object.keys(changes).forEach(function (f) { np[f] = changes[f].to; });
+      } else np.active = false;
+      ops.products.push(forWrite(np, p.id));
+      out.product = productOut(np);
+      finalStatus = decision === 'approved' ? 'used' : 'rejected';
+      logAct(decision === 'approved' ? 'produk_ok' : 'produk_tolak', (decision === 'approved' ? 'Produk baru DIKONFIRMASI ' : 'Produk baru DITOLAK (dinonaktifkan) ') + str(p.name) + ' oleh ' + me.name + ' (dibuat ' + str(a.cashier) + ')' +
+        (Object.keys(changes).length ? ': ' + Object.keys(changes).map(function (f) { return f + ' ' + changes[f].from + '→' + changes[f].to; }).join(', ') : ''), String(p.id), 0, decision === 'approved' && !Object.keys(changes).length ? 'info' : 'warn');
+      if (decision !== 'approved' || Object.keys(changes).length) notify(['owner'], (decision === 'approved' ? 'Harga produk baru dikoreksi ' : 'Produk baru ditolak ') + str(p.name) + ' oleh ' + me.name, 'warn');
+    }
     const na = Object.assign({}, a, { status: finalStatus === 'used' ? 'approved' : finalStatus, decided_by: me.name, decided_at: new Date().toISOString(), note: str(data.note) || str(a.note) });
     ops.approvals.push(forWrite(na, a.id));
     logAct('keputusan', (decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + str(a.kind || 'credit') + ', diminta ' + str(a.cashier) + '): ' + str(a.summary).slice(0, 600) + (str(data.note) ? ' | ' + str(data.note) : ''), a.request_id, money(a.total), decision === 'approved' ? 'info' : 'warn');
     // v29 notifications: the owner always sees the log above. When the ACCOUNTANT decides a shared request,
     // also drop a manager + owner notice; a manager deciding void / price / goods-in mismatch notifies the owner.
     if (a.approver_role === 'mgr_akuntan' || a.kind === 'member') {
-      const whatTxt = { purchase_mismatch: 'selisih penerimaan barang', void: 'pembatalan faktur', price: 'perubahan harga', member: 'pendaftaran member' }[a.kind] || str(a.kind);
+      const whatTxt = { purchase_mismatch: 'selisih penerimaan barang', void: 'pembatalan faktur', price: 'perubahan harga', member: 'pendaftaran member', expense_check: 'cek nota pengeluaran', product_new: 'produk baru dari kasir' }[a.kind] || str(a.kind);
       const verb = decision === 'approved' ? 'disetujui' : 'ditolak';
       if (role === 'akuntan') notify(['manager', 'owner'], 'Akuntan ' + me.name + ' ' + verb + ' ' + whatTxt + ': ' + str(a.summary).slice(0, 300), decision === 'approved' ? 'info' : 'warn');
-      else if (role === 'manager' && ['void', 'price', 'purchase_mismatch'].indexOf(a.kind) >= 0) notify(['owner'], 'Manajer ' + me.name + ' ' + verb + ' ' + whatTxt + ': ' + str(a.summary).slice(0, 300), decision === 'approved' ? 'info' : 'warn');
+      else if (role === 'manager' && ['void', 'price', 'purchase_mismatch', 'expense_check'].indexOf(a.kind) >= 0) notify(['owner'], 'Manajer ' + me.name + ' ' + verb + ' ' + whatTxt + ': ' + str(a.summary).slice(0, 300), decision === 'approved' ? 'info' : 'warn');
     }
     out.approval = approvalOut(na);
     return done(out);
@@ -1759,8 +1896,11 @@ switch (req.action) {
 
   case 'save_product': {
     // v22: owner may add + edit; manager / accountant may ADD a new product only (editing an existing product's prices stays the owner's).
+    // v36 (owner 2026-10-11: "الكاشير يمكنه إضافة بضاعة جديدة إن لم تكن متوفرة في التطبيق أو الصنف الجديد عند استلام البضاعة"):
+    // the cashier may ADD a product while receiving goods (from_goods_in) — never edit one.
+    const fromGoodsIn = data.from_goods_in === true && !data.id;
     if (role !== 'owner') {
-      if (role !== 'manager' && role !== 'akuntan') return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+      if (role !== 'manager' && role !== 'akuntan' && !(role === 'kasir' && fromGoodsIn)) return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
       if (data.id) return fail('FORBIDDEN', 'Hanya pemilik yang boleh mengubah produk yang sudah ada');
     }
     const name = safeName(data.name, 80);
@@ -1775,6 +1915,14 @@ switch (req.action) {
     if (str(data.exp_date) && !isDate(data.exp_date)) return fail('INVALID', 'Tanggal kedaluwarsa tidak valid (YYYY-MM-DD)');
     const existing = data.id ? productById[String(data.id)] : null;
     if (data.id && !existing) return fail('NOT_FOUND', 'Produk tidak ditemukan');
+    // v36 (owner: "بضاعة جديدة في فاتورة المزود ← يسأل الحجم والوزن والفئة"): a new product from a supplier invoice needs
+    // its category and its size or weight; a cashier's also needs its selling price, and must not duplicate a name.
+    if (fromGoodsIn) {
+      if (!str(data.category)) return fail('INVALID', 'Kategori wajib untuk produk baru');
+      if (!str(data.size) && !str(data.weight)) return fail('INVALID', 'Ukuran atau berat wajib untuk produk baru');
+      if (role === 'kasir' && !(money(data.retail_price) > 0)) return fail('INVALID', 'Harga jual wajib untuk produk baru');
+      if (products.some(function (x) { return str(x.name).toLowerCase() === name.toLowerCase(); })) return fail('INVALID', 'Produk dengan nama ini sudah ada — pilih dari daftar');
+    }
     if (sku && products.some(function (p) { return str(p.sku) === sku && (!existing || p.id !== existing.id); })) return fail('INVALID', 'SKU/barcode sudah dipakai');
     const p = {
       sku: sku, name: name, category: str(data.category), unit: str(data.unit) || 'pcs',
@@ -1797,6 +1945,17 @@ switch (req.action) {
       p.repack_from = bulk.id;
       p.repack_qty = Math.round(num(data.repack_qty) * 1000) / 1000;
     }
+    // A cashier's new product is flagged "new — check" (review = the approval id) for the manager / accountant.
+    let reviewAp = null;
+    if (!existing && role === 'kasir') {
+      p.stock = 0; // stock only through the goods-in that follows
+      reviewAp = newApproval({ kind: 'product_new', approver_role: 'mgr_akuntan', ref: sku || name.slice(0, 40), total: p.retail_price,
+        summary: ('Produk baru dari kasir ' + me.name + ': ' + name + ' (' + p.category + (p.size ? ', ' + p.size : '') + (p.weight ? ', ' + p.weight : '') + ', ' + p.unit + ') eceran Rp ' + p.retail_price + (p.wholesale_price ? ', grosir Rp ' + p.wholesale_price : '')).slice(0, 1500),
+        payload: JSON.stringify({ product_name: name, category: p.category, size: p.size, weight: p.weight, unit: p.unit, sku: sku, supplier: p.supplier,
+          retail_price: p.retail_price, wholesale_price: p.wholesale_price, wholesale_min_qty: p.wholesale_min_qty, cost_price: p.cost_price, by: me.name }) });
+      p.review = reviewAp.request_id;
+      ops.approvals.push(forWrite(reviewAp, -1));
+    }
     ops.products.push(forWrite(p, existing ? existing.id : -1));
     if (existing) {
       const changes = {};
@@ -1809,12 +1968,14 @@ switch (req.action) {
         }), -1));
       }
     }
-    if (!existing) logAct('produk_baru', 'Produk baru: ' + name + ' (stok ' + fmtN(p.stock) + ' ' + p.unit + ')', sku, 0, 'info');
+    if (!existing) logAct('produk_baru', 'Produk baru: ' + name + ' (stok ' + fmtN(p.stock) + ' ' + p.unit + ')' + (reviewAp ? ' — dibuat kasir saat barang masuk, menunggu cek' : ''), sku, 0, reviewAp ? 'warn' : 'info');
     else {
       const ch = PRICE_FIELDS.filter(function (f) { return money(existing[f]) !== p[f]; });
       logAct(ch.length ? 'harga' : 'produk', 'Ubah produk ' + name + (ch.length ? ': ' + ch.map(function (f) { return f + ' ' + money(existing[f]) + '→' + p[f]; }).join(', ') : ''), String(existing.id), 0, ch.length ? 'warn' : 'info');
     }
-    return done({ ok: true, product: Object.assign({ id: existing ? existing.id : null }, p) });
+    const prodResp = { ok: true, product: Object.assign({ id: existing ? existing.id : null }, role === 'kasir' ? strip(p, role) : p) };
+    if (reviewAp) prodResp.review_request_id = reviewAp.request_id;
+    return done(prodResp);
   }
 
   case 'import_products': {
@@ -2241,7 +2402,12 @@ switch (req.action) {
       top_items: Object.keys(prod).map(function (k) { return prod[k]; }).sort(function (a1, b1) { return b1.total - a1.total; }).slice(0, 10),
       payments_in: { count: pin.length, total: sumOf(pin, function (p) { return money(p.amount); }), tunai: mSum(pin, 'tunai'), transfer: mSum(pin, 'transfer'), qris: mSum(pin, 'qris') },
       payments_out: { count: pout.length, total: sumOf(pout, function (p) { return money(p.amount); }), tunai: mSum(pout, 'tunai'), transfer: mSum(pout, 'transfer'), qris: mSum(pout, 'qris') },
-      expenses: { count: exps.length, total: sumOf(exps, function (e) { return money(e.amount); }), from_kas: sumOf(exps.filter(function (e) { return e.paid_from === 'kas'; }), function (e) { return money(e.amount); }) },
+      expenses: { count: exps.length, total: sumOf(exps, function (e) { return money(e.amount); }), from_kas: sumOf(exps.filter(function (e) { return e.paid_from === 'kas'; }), function (e) { return money(e.amount); }),
+        // v36: invoice checks — open (difference / check by hand), approved and rejected
+        flagged: exps.filter(function (e) { return e.check_status === 'selisih' || e.check_status === 'cek_manual'; }).length,
+        approved: exps.filter(function (e) { return e.check_status === 'disetujui'; }).length,
+        rejected: exps.filter(function (e) { return e.check_status === 'ditolak'; }).length,
+        flagged_total: sumOf(exps.filter(function (e) { return ['selisih', 'cek_manual', 'ditolak'].indexOf(e.check_status) >= 0; }), function (e) { return money(e.amount); }) },
       shifts: shifts
     };
     rep.bank = { sales_transfer: byMethod.transfer, sales_qris: byMethod.qris, payments_transfer: rep.payments_in.transfer, payments_qris: rep.payments_in.qris,

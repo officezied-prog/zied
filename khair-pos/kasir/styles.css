@@ -362,6 +362,10 @@ tr.bad td{background:var(--redt);color:var(--redd);font-weight:800}
 .mm .two div{background:#fff;border-radius:8px;padding:6px 10px}
 .mm .k{font-size:12px;color:var(--muted);font-weight:700}
 .mm .v{font-weight:900;font-size:18px}
+/* v36 expense item lines + invoice comparison; new product at goods-in */
+.exl{display:grid;grid-template-columns:minmax(0,1fr) 64px 92px auto;gap:6px;align-items:center;margin-bottom:8px}
+.exl .exl-tot{grid-column:1 / -1;text-align:end;margin-top:-2px}
+td.bad{background:var(--redt);color:var(--redd);font-weight:800}
 
 /* v15: closing reminder */
 .rep-banner{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;border-radius:12px;background:var(--warnt);color:#78350F;font-weight:800;font-size:14.5px;margin-bottom:8px;border:1px solid #FCD34D}

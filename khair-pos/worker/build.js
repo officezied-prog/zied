@@ -20,7 +20,7 @@ const INDEXES = {
   pos_payments: ['pay_date', 'customer_id', 'supplier'],
   pos_purchases: ['purchase_date', 'purchase_no', 'supplier'],
   pos_approvals: ['status', 'request_id'],
-  pos_expenses: ['expense_date'],
+  pos_expenses: ['expense_date', 'request_id'],
   pos_shifts: ['status', 'shift_date'],
   pos_repacks: ['repack_date'],
   pos_activity: ['act_date'],

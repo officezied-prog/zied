@@ -356,6 +356,7 @@ const MockServer = (() => {
         const pl = parseObj(a.payload); ['profit_before', 'profit_after', 'margin_before', 'margin_after', 'cost'].forEach(f => { delete pl[f]; });
         o.payload = JSON.stringify(pl); o.summary = str(o.summary).replace(/ \| laba[^|]*/g, '');
       }
+      if (a.kind === 'product_new') { const pl = parseObj(a.payload); delete pl.cost_price; o.payload = JSON.stringify(pl); } // v36: the invoice cost stays with the owner
       if (a.kind === 'purchase_fix') {
         const pl = parseObj(a.payload);
         if (Array.isArray(pl.changes)) pl.changes = pl.changes.map(qtyOnly);
@@ -923,6 +924,25 @@ const MockServer = (() => {
           logAct(db, u, 'retur', (data.decision === 'approved' ? 'Retur disetujui ' : 'Retur ditolak ') + u.name + ': ' + str(ap.summary).slice(0, 600), str(rec.return_id), money(ap.total), 'warn');
           out.return_id = str(rec.return_id);
         }
+        if (ap.kind === 'expense_check') {
+          // v36: the manager / accountant checked the expense against its invoice; the expense carries the result
+          const ex = db.expenses.find(x => str(x.request_id) === ap.request_id);
+          if (ex) Object.assign(ex, { check_status: data.decision === 'approved' ? 'disetujui' : 'ditolak', checked_by: u.name });
+        }
+        if (ap.kind === 'product_new') {
+          // v36: a cashier's new product — confirm (optionally correcting its selling prices) or switch it off for sale
+          const p = db.products.find(x => str(x.review) === ap.request_id);
+          if (!p) throw E('NOT_FOUND', 'Produk baru tidak ditemukan');
+          const pr = data.prices && typeof data.prices === 'object' ? data.prices : {};
+          if (data.decision === 'approved') {
+            ['retail_price', 'wholesale_price'].forEach(f => { if (pr[f] !== undefined && pr[f] !== null && pr[f] !== '' && money(pr[f]) >= 0) p[f] = money(pr[f]); });
+            if (!(money(p.retail_price) > 0)) throw E('INVALID', 'Harga jual eceran wajib');
+            if (pr.wholesale_min_qty !== undefined && pr.wholesale_min_qty !== null && pr.wholesale_min_qty !== '' && num(pr.wholesale_min_qty) >= 0) p.wholesale_min_qty = num(pr.wholesale_min_qty);
+          } else p.active = false;
+          p.review = '';
+          out.product = p;
+          logAct(db, u, data.decision === 'approved' ? 'produk_ok' : 'produk_tolak', (data.decision === 'approved' ? 'Produk baru DIKONFIRMASI ' : 'Produk baru DITOLAK (dinonaktifkan) ') + p.name + ' oleh ' + u.name, String(p.id), 0, data.decision === 'approved' ? 'info' : 'warn');
+        }
         if (ap.kind === 'transfer_confirm') logAct(db, u, data.decision === 'approved' ? 'transfer_ok' : 'transfer_gagal', (data.decision === 'approved' ? 'Transfer masuk DIKONFIRMASI oleh ' + u.name : 'Transfer TIDAK diterima — ' + u.name) + ' | ' + str(ap.summary), str(ap.ref), money(ap.total), data.decision === 'approved' ? 'info' : 'warn');
         Object.assign(ap, { status: data.decision, decided_by: u.name, decided_at: jktISO(), note: str(data.note) || str(ap.note) });
         logAct(db, u, 'keputusan', (data.decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + str(ap.kind || 'credit') + ', diminta ' + str(ap.cashier) + '): ' + str(ap.summary).slice(0, 600) + (str(data.note) ? ' | ' + str(data.note) : ''), ap.request_id, money(ap.total), data.decision === 'approved' ? 'info' : 'warn');
@@ -949,6 +969,20 @@ const MockServer = (() => {
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'masuk', ref: '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted, match_status: '', match_notes: '' };
         db.photos.push(photo);
         return { photo_id: photo.photo_id, extracted, suggestions, drive_url: '' };
+      }
+      case 'scan_expense': {
+        // v29/v36 photo workflow, kind 'biaya': an expense invoice. Demo: localStorage kmock.expscan = the extracted JSON,
+        // or "off" = the Worker has no AI key (the photo is kept, unreadable → "cek manual").
+        if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
+        let raw = null; try { raw = localStorage.getItem('kmock.expscan'); } catch (e) { }
+        let ex = null;
+        if (raw === 'off') ex = { items: [], readable: false, notes: 'AI gagal membaca: AI_DISABLED' };
+        else { try { ex = JSON.parse(raw || 'null'); } catch (e) { } }
+        if (!ex) ex = { vendor: 'Toko Plastik Jaya', date: jktDate(), items: [{ name: 'Kantong plastik besar', qty: 10, unit_price: 5000, total: 50000 }, { name: 'Lakban coklat', qty: 5, unit_price: 7000, total: 35000 }], total: 85000, amount: 85000, readable: true, notes: '' };
+        const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'biaya', ref: '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted: ex,
+          match_status: ex.readable === false || (ex.amount == null && ex.total == null) ? 'perlu_cek' : '', match_notes: String(ex.notes || '') };
+        db.photos.push(photo);
+        return { photo_id: photo.photo_id, extracted: ex, drive_url: '' };
       }
       case 'scan_exit': {
         if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
@@ -1066,20 +1100,67 @@ const MockServer = (() => {
         if (!cats.includes(data.category)) throw E('INVALID', 'category');
         const amount = int(data.amount);
         if (amount <= 0) throw E('INVALID', 'amount must be > 0');
+        // v36 (as the server): optional item lines whose sum = the amount; compared line by line with the read invoice
+        const xl = ExpenseMatch.linesIn(data.lines);
+        if (xl.error) throw E('INVALID', xl.error);
+        const lines = xl.lines, lsum = lines.reduce((a1, l) => a1 + l.total, 0);
+        if (lines.length && Math.abs(lsum - amount) > 0.5) throw E('INVALID', 'Total rincian Rp ' + lsum + ' tidak sama dengan jumlah Rp ' + amount);
         const esh = openShiftOf(db, u.name);
         const paid_from = data.paid_from === 'lain' || data.paid_from === 'kas' ? data.paid_from : (esh ? 'kas' : 'lain');
         if (paid_from === 'kas' && !esh) throw E('SHIFT_REQUIRED', 'paid_from kas needs an open shift');
-        const expense = { id: nextId(db, 'expense'), expense_date: isYmd(data.expense_date) ? data.expense_date : jktDate(), category: data.category, amount, note: String(data.note || ''), user: u.name, photo_id: String(data.photo_id || ''), paid_from, shift_id: paid_from === 'kas' ? esh.shift_id : '' };
+        const photoId = str(data.photo_id), reason = str(data.mismatch_reason).slice(0, 300);
+        let cmp = null, photoNote = '';
+        if (photoId) {
+          const ph = db.photos.find(x => x.photo_id === photoId);
+          if (!ph || ph.kind !== 'biaya') throw E('INVALID', 'Foto nota pengeluaran tidak ditemukan');
+          cmp = ExpenseMatch.compare(lines, amount, ph.extracted);
+          const pamt = cmp.invoice.total;
+          if (cmp.status === 'selisih') {
+            if (!reason) throw E('MISMATCH', 'Tidak sama dengan nota: ' + ExpenseMatch.diffText(cmp.diffs), { photo_amount: pamt, check: cmp });
+            photoNote = ' [nota: selisih ' + (pamt !== null && pamt !== amount ? 'input Rp ' + amount + ' / nota Rp ' + pamt : ExpenseMatch.diffText(cmp.diffs).slice(0, 120)) + ' — alasan: ' + reason + ']';
+          } else photoNote = cmp.status === 'cocok' ? ' [nota: cocok Rp ' + pamt + ']' : ' [nota: perlu cek]';
+        }
+        const expense = { id: nextId(db, 'expense'), expense_date: isYmd(data.expense_date) ? data.expense_date : jktDate(), category: data.category, amount, note: (String(data.note || '') + photoNote).slice(0, 500), user: u.name, photo_id: photoId, paid_from, shift_id: paid_from === 'kas' ? esh.shift_id : '',
+          lines: lines.length ? JSON.stringify(lines) : '', check_status: cmp ? cmp.status : '', request_id: '', checked_by: '' };
+        let ap = null;
+        if (cmp && cmp.status !== 'cocok' && u.role !== 'owner') {
+          ap = newApproval(db, u, { kind: 'expense_check', approver_role: u.role === 'kasir' ? 'mgr_akuntan' : 'owner', ref: 'EX' + rand(6), total: amount, note: reason,
+            summary: ((cmp.status === 'selisih' ? 'Selisih nota pengeluaran ' : 'Cek manual nota pengeluaran ') + expense.category + ' Rp ' + amount + (cmp.diffs.length ? ': ' + ExpenseMatch.diffText(cmp.diffs) : '') + (reason ? ' | alasan: ' + reason : '')).slice(0, 1500),
+            payload: JSON.stringify({ status: cmp.status, category: expense.category, amount, note: str(data.note).slice(0, 300), paid_from, expense_date: expense.expense_date, lines, rows: cmp.rows, diffs: cmp.diffs, invoice: cmp.invoice, reason, photo_id: photoId, by: u.name }) });
+          expense.request_id = ap.request_id;
+        }
         db.expenses.push(expense);
-        logAct(db, u, 'biaya', 'Pengeluaran ' + expense.category + ' Rp ' + amount + (expense.note ? ': ' + expense.note : '') + ' (' + paid_from + ')', '', amount, 'info');
-        return { expense };
+        logAct(db, u, 'biaya', 'Pengeluaran ' + expense.category + ' Rp ' + amount + (expense.note ? ': ' + expense.note : '') + ' (' + paid_from + ')' + (lines.length ? ' — ' + lines.length + ' baris' : ''), expense.request_id, amount, cmp && cmp.status === 'selisih' ? 'warn' : 'info');
+        const res = { expense };
+        if (cmp) res.check = cmp;
+        if (ap) { res.check_request_id = ap.request_id; res.approval = approvalOut(ap, u.role); }
+        return res;
       }
       case 'save_product': {
-        needOwner();
-        const name = String(data.name || '').trim();
+        // v36 (owner 2026-10-11): the cashier may ADD a product while receiving goods (from_goods_in), never edit one
+        const fromGoodsIn = data.from_goods_in === true && !data.id;
+        if (!(owner || (fromGoodsIn && ['kasir', 'manager'].includes(u.role)))) needOwner();
+        const name = String(data.name || '').trim().replace(/\s+/g, ' ');
         if (!name) throw E('INVALID', 'name required');
         const sku = String(data.sku || '').trim();
         if (sku && db.products.some(p => p.sku === sku && p.id !== Number(data.id))) throw E('INVALID', 'SKU already used');
+        if (fromGoodsIn) {
+          if (!str(data.category)) throw E('INVALID', 'Kategori wajib untuk produk baru');
+          if (!str(data.size) && !str(data.weight)) throw E('INVALID', 'Ukuran atau berat wajib untuk produk baru');
+          if (u.role === 'kasir' && !(money(data.retail_price) > 0)) throw E('INVALID', 'Harga jual wajib untuk produk baru');
+          if (db.products.some(p => str(p.name).toLowerCase() === name.toLowerCase())) throw E('INVALID', 'Produk dengan nama ini sudah ada — pilih dari daftar');
+          const p = Object.assign(productFields(data, blankProduct()), { id: nextId(db, 'product'), name, stock: u.role === 'kasir' ? 0 : roundQty(data.stock || 0), size: str(data.size).slice(0, 40), weight: str(data.weight).slice(0, 40), supplier: str(data.supplier).slice(0, 80), review: '' });
+          let ap = null;
+          if (u.role === 'kasir') {
+            ap = newApproval(db, u, { kind: 'product_new', approver_role: 'mgr_akuntan', ref: sku || name.slice(0, 40), total: p.retail_price,
+              summary: ('Produk baru dari kasir ' + u.name + ': ' + name + ' (' + p.category + (p.size ? ', ' + p.size : '') + (p.weight ? ', ' + p.weight : '') + ', ' + p.unit + ') eceran Rp ' + p.retail_price).slice(0, 1500),
+              payload: JSON.stringify({ product_name: name, category: p.category, size: p.size, weight: p.weight, unit: p.unit, sku, supplier: p.supplier, retail_price: p.retail_price, wholesale_price: p.wholesale_price, wholesale_min_qty: p.wholesale_min_qty, cost_price: p.cost_price, by: u.name }) });
+            p.review = ap.request_id;
+          }
+          db.products.push(p);
+          logAct(db, u, 'produk_baru', 'Produk baru: ' + name + ' (stok ' + fmtN(p.stock) + ' ' + p.unit + ')' + (ap ? ' — dibuat kasir saat barang masuk, menunggu cek' : ''), sku, 0, ap ? 'warn' : 'info');
+          return Object.assign({ product: p }, ap ? { review_request_id: ap.request_id } : {});
+        }
         if (data.id) {
           const p = prodById(data.id); if (!p) throw E('NOT_FOUND', 'product');
           const { stock, ...rest } = data;
