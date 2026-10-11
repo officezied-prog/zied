@@ -138,7 +138,18 @@ Photo kinds in `pos_photos.kind`: `masuk` (scan_purchase), `keluar` (scan_exit),
 `kind: "pemasok"` takes the `photo_id` of a `retur` photo; the return form fills `out_doc_no` from `extracted.doc_no`
 when it is still empty.
 
-`drive_url` may be empty while Google Drive storage is not connected yet.
+**Stored photos (v36, Cloudflare R2 instead of Google Drive).** When the Worker has the R2 binding `PHOTOS`
+(bucket `khair-mart-photos`, bound automatically by `.github/workflows/worker-deploy.yml` when the bucket exists), every
+scan keeps the image exactly as uploaded under `photos/YYYY-MM/<photo_id>.<jpg|png|webp>`; the row gets
+`drive_file_id = "r2:<key>"` and `drive_url = https://<worker>/webhook/khair-pos-photo/file/<photo_id>` (also in the scan
+response and in `list_photos`). Without the binding `drive_url` stays empty and nothing else changes.
+
+`GET /webhook/khair-pos-photo/file/<photo_id>` returns the image (`Content-Type` as uploaded,
+`Cache-Control: private, max-age=31536000, immutable`). Credentials go in headers, never in the URL:
+`X-Khair-Key` (store key), `X-Khair-User` (URI-encoded name), `X-Khair-Pin` (PIN hash or the owner's master code).
+Only **owner / manager / akuntan**: `401 BAD_KEY|BAD_PIN|LOCKED`, `403 FORBIDDEN|PIN_CHANGE_REQUIRED`,
+`404 NOT_FOUND` (not stored / storage off), `400 INVALID` (bad id) — JSON `{ok:false, error, message}`.
+The owner app shows it with "📷 Lihat foto" (fetch → in-app viewer); any other `drive_url` opens as a plain link.
 
 ## Anti-tamper and account lock (v19)
 

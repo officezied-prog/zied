@@ -58,3 +58,22 @@ export function insert(db, table, row) {
   });
   db.prepare(`INSERT INTO ${table} (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...vals);
 }
+
+// v36: an R2-bucket-shaped binding (put/get) kept in memory, for the stored-photo tests (env.PHOTOS).
+export function r2Mock({ failPut = false } = {}) {
+  const objects = new Map();
+  return {
+    objects,
+    async put(key, value, opts = {}) {
+      if (failPut) throw new Error('R2 unavailable');
+      const bytes = value instanceof Uint8Array ? value : new Uint8Array(await new Response(value).arrayBuffer());
+      objects.set(key, { bytes, httpMetadata: opts.httpMetadata || {}, customMetadata: opts.customMetadata || {} });
+      return { key, size: bytes.length };
+    },
+    async get(key) {
+      const o = objects.get(key);
+      if (!o) return null;
+      return { key, body: o.bytes, size: o.bytes.length, httpMetadata: o.httpMetadata, customMetadata: o.customMetadata, httpEtag: '"etag-' + o.bytes.length + '"' };
+    },
+  };
+}

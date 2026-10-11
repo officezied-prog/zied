@@ -433,7 +433,7 @@ const isApprover = () => S.role === 'owner' || S.role === 'manager';
 const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
 const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'approvals', 'shoplist', 'settings'];
-const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|prod-new)$/;
+const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|prod-new)$/;
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
@@ -2113,6 +2113,44 @@ async function imageToJpeg(file, max = 1600, quality = 0.8) {
   } finally { URL.revokeObjectURL(url); }
 }
 const apiPhoto = (action, data) => api(action, data, { photo: true, timeout: 60000 });
+// v36 (owner 2026-10-08: "فعّل حفظ الصور عبر Google Drive") — a photo kept by the Worker (Cloudflare R2) has
+// drive_url = <worker>/webhook/khair-pos-photo/file/<photo_id>. It is not a public link: the app fetches it with the session's
+// credentials as headers (owner / manager / accountant only) and shows it in an in-app viewer. Any other drive_url stays a link.
+const STORED_PHOTO_RE = /\/khair-pos-photo\/file\/([A-Za-z0-9-]{3,40})(?:[?#].*)?$/;
+const PHV = {}; // photo_id -> image src (object URL / data URL), for this session
+function storedPhotoId(url) { const m = STORED_PHOTO_RE.exec(String(url || '')); return m ? m[1] : ''; }
+function hasPhotoLink(url) { return !!url && (!!storedPhotoId(url) || safeUrl(url) !== '#'); }
+function photoLinkHtml(url, o = {}) {
+  if (!hasPhotoLink(url)) return o.empty || '';
+  const id = storedPhotoId(url);
+  if (id) return `<button type="button" class="linkbtn ${o.cls || ''}" data-act="photo-view" data-photo="${esc(id)}">📷 ${esc(t('photo.open'))}</button>`;
+  return `<a href="${esc(safeUrl(url))}" target="_blank" rel="noopener" class="${o.cls || ''}">${o.icon || ''}${esc(t('photo.open'))}</a>`;
+}
+async function storedPhotoSrc(id) {
+  if (PHV[id]) return PHV[id];
+  let src;
+  if (MOCK) {
+    src = (await api('photo_file', { photo_id: id }, { photo: true, noDevice: true })).data_url;
+  } else {
+    if (!S.pin_hash) throw new NetError('NO_SESSION');
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = setTimeout(() => ctrl && ctrl.abort(), 30000);
+    let r;
+    setBusy(1);
+    try {
+      r = await fetch(CONFIG.PHOTO_URL + '/file/' + encodeURIComponent(id), { method: 'GET', headers: { 'X-Khair-Key': S.key, 'X-Khair-User': encodeURIComponent(S.user), 'X-Khair-Pin': S.pin_hash }, signal: ctrl ? ctrl.signal : undefined });
+      if (!r.ok) { let j = {}; try { j = await r.json(); } catch (e) { } throw new ApiError(j.error || (r.status >= 500 ? 'SERVER' : 'NOT_FOUND'), j.message, j); }
+      src = URL.createObjectURL(await r.blob());
+    } catch (e) { if (e instanceof ApiError) throw e; throw new NetError(e && e.message); } finally { clearTimeout(timer); setBusy(-1); }
+  }
+  if (!src) throw new ApiError('NOT_FOUND');
+  PHV[id] = src;
+  return src;
+}
+async function viewStoredPhoto(id) {
+  const src = await storedPhotoSrc(id);
+  openModal({ title: t('photo.title'), cls: 'narrow', id: 'photo-viewer', body: `<img id="photo-view-img" data-photo="${esc(id)}" src="${esc(src)}" alt="${esc(id)}" style="width:100%;border-radius:10px"><div class="small muted" style="margin-top:6px">${esc(id)}</div>` });
+}
 // Phase 3 in-app chat (separate workflow khair-chat). Uses apiRawInner so background polling shows no global spinner;
 // a missing session rejects quietly (the panel hides itself) instead of forcing an app-wide relogin.
 const apiChat = (action, data) => S.pin_hash ? apiRawInner(action, data, sessCred(), { chat: true, timeout: 30000 }) : Promise.reject(new NetError('NO_SESSION'));
@@ -2128,7 +2166,7 @@ function drawExitBox(el, rc) {
     w.innerHTML = `<div class="exit-box ${esc(m)}" id="exit-box" data-match="${esc(m)}"><div class="st">${esc(t('exit.' + m))}</div>
       ${r.notes ? `<div class="small">${esc(r.notes)}</div>` : ''}
       ${r.diffs && r.diffs.length ? `<table class="tbl" id="exit-diffs" style="margin-top:8px;background:var(--card)"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('exit.recorded'))}</th><th class="r">${esc(t('exit.in_photo'))}</th></tr></thead><tbody>${r.diffs.map(d => `<tr><td>${esc(d.name)}</td><td class="r num">${fmtQty(d.recorded_qty)}</td><td class="r num"><b>${fmtQty(d.photo_qty)}</b></td></tr>`).join('')}</tbody></table>` : ''}
-      ${r.drive_url ? `<a href="${esc(safeUrl(r.drive_url))}" target="_blank" rel="noopener" class="small">${esc(t('photo.open'))}</a>` : ''}
+      ${photoLinkHtml(r.drive_url, { cls: 'small' })}
       ${m !== 'cocok' ? `<label class="btn sm" style="margin-top:8px" for="exit-photo">${ic('camera')} ${esc(t('exit.retake'))}</label>${PHOTO_INPUT('exit-photo')}` : ''}</div>`;
   } else {
     w.innerHTML = `<div class="exit-box" id="exit-box"><div class="st" style="color:var(--warn)">${ic('camera')} ${esc(t('exit.required'))}</div>
@@ -3605,7 +3643,7 @@ function photoStepHTML() {
   let status;
   if (PU.scanning) status = `<div class="row"><div class="spinner" style="width:22px;height:22px;border-width:3px;margin:0"></div><b>${esc(t('pu.ai_reading'))}</b></div>`;
   else if (PU.scanErr) status = `<span class="red">${esc(PU.scanErr)}</span>`;
-  else if (PU.photo_id) status = `<span class="green"><b>${esc(t('pu.photo_ok', { n: sc ? sc.n : 0 }))}</b></span>${sc && (sc.supplier || sc.invoice_no) ? `<div class="small muted">${esc([sc.supplier, sc.invoice_no, sc.total ? fmtRp(sc.total) : ''].filter(Boolean).join(' · '))}</div>` : ''}${sc && sc.drive_url ? `<a class="small" href="${esc(safeUrl(sc.drive_url))}" target="_blank" rel="noopener">${esc(t('photo.open'))}</a>` : ''}`;
+  else if (PU.photo_id) status = `<span class="green"><b>${esc(t('pu.photo_ok', { n: sc ? sc.n : 0 }))}</b></span>${sc && (sc.supplier || sc.invoice_no) ? `<div class="small muted">${esc([sc.supplier, sc.invoice_no, sc.total ? fmtRp(sc.total) : ''].filter(Boolean).join(' · '))}</div>` : ''}${sc ? photoLinkHtml(sc.drive_url, { cls: 'small' }) : ''}`;
   else status = `<span class="muted">${esc(req ? t('pu.photo_hint_req') : t('pu.photo_hint_opt'))}</span>`;
   return `<div class="card pad photo-step ${PU.photo_id ? 'done' : ''}" id="pu-photo-card" style="margin-bottom:12px">
     ${PU.thumb ? `<img class="thumb" id="pu-thumb" src="${esc(PU.thumb)}" alt="${esc(t('pu.photo_title'))}">` : `<div class="thumb">${ic('camera')}</div>`}
@@ -4133,7 +4171,7 @@ async function loadPhotoList() {
     $('#rp-photos').innerHTML = list.length ? `<div class="tbl-wrap"><table class="tbl" id="photo-table"><thead><tr><th>${esc(t('time'))}</th><th>${esc(t('pc.kind'))}</th><th>${esc(t('pc.ref'))}</th><th class="hide-phone">${esc(t('pc.user'))}</th><th>${esc(t('status'))}</th><th></th></tr></thead><tbody>
       ${list.slice(0, 60).map(ph => `<tr><td class="num">${esc(fmtDateTime(ph.created_at, ph.photo_date))}</td><td><span class="badge ${PHOTO_KIND_BADGE[ph.kind] || 'blue'}" data-kind="${esc(PHOTO_KIND_BADGE[ph.kind] ? ph.kind : 'masuk')}">${esc(t('pc.kind_' + (PHOTO_KIND_BADGE[ph.kind] ? ph.kind : 'masuk')))}</span></td><td>${esc(ph.ref || '')}</td><td class="hide-phone">${esc(ph.user || '')}</td>
         <td>${ph.match_status ? `<span class="badge ${ph.match_status === 'cocok' ? 'green' : ph.match_status === 'tidak_cocok' ? 'red' : 'amber'}">${esc(t('exit.' + ph.match_status))}</span>` : ''}</td>
-        <td>${ph.drive_url ? `<a href="${esc(safeUrl(ph.drive_url))}" target="_blank" rel="noopener">${esc(t('photo.open'))}</a>` : '<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table></div>` : `<span class="muted">${esc(t('pc.no_photos'))}</span>`;
+        <td>${photoLinkHtml(ph.drive_url, { empty: '<span class="muted">—</span>' })}</td></tr>`).join('')}</tbody></table></div>` : `<span class="muted">${esc(t('pc.no_photos'))}</span>`;
   } catch (e) { if (seq === photoSeq && $('#rp-photos')) $('#rp-photos').innerHTML = `<span class="red">${esc(errMsg(e))}</span>`; }
 }
 function drawReport() {
@@ -4411,7 +4449,7 @@ Object.assign(I18N.id, {
   'exit.warn': 'Wajib foto barang keluar', 'exit.required': 'Foto barang keluar (wajib)', 'exit.hint': 'Penjualan besar: foto struk dan barang sebelum keluar toko. AI mencocokkan dengan nota.',
   'exit.take': 'Foto barang keluar', 'exit.take_short': 'Ambil foto', 'exit.retake': 'Foto ulang', 'exit.after_sync': 'Bisa difoto setelah transaksi terkirim (perlu no. nota).',
   'exit.checking': 'AI sedang memeriksa foto…', 'exit.cocok': 'Cocok', 'exit.tidak_cocok': 'Tidak cocok', 'exit.perlu_cek': 'Perlu dicek',
-  'exit.recorded': 'Di nota', 'exit.in_photo': 'Di foto', 'exit.missing_title': 'Foto keluar belum ada', 'photo.open': 'Lihat foto',
+  'exit.recorded': 'Di nota', 'exit.in_photo': 'Di foto', 'exit.missing_title': 'Foto keluar belum ada', 'photo.open': 'Lihat foto', 'photo.title': 'Foto tersimpan',
   'pu.photo_title': 'Foto nota / barang masuk', 'pu.photo_take': 'Ambil foto', 'pu.photo_retake': 'Ganti foto', 'pu.ai_reading': 'AI sedang membaca nota…',
   'pu.photo_ok': 'Nota terbaca: {n} baris', 'pu.photo_hint_req': 'Wajib: foto nota supplier / barang datang dulu. AI mengisi barangnya.', 'pu.photo_hint_opt': 'Disarankan: foto nota supplier, AI mengisi barangnya.',
   'pu.need_photo': 'Ambil foto nota dulu', 'pu.need_match': 'Cocokkan semua baris dengan produk', 'pu.pick_product': 'pilih produk', 'pu.on_note': 'Di nota',
@@ -4437,7 +4475,7 @@ Object.assign(I18N.ar, {
   'exit.warn': 'يجب تصوير البضاعة الخارجة', 'exit.required': 'صورة البضاعة الخارجة (إلزامي)', 'exit.hint': 'بيع كبير: صوّر الإيصال والبضاعة قبل خروجها. الذكاء الاصطناعي يطابقها مع الفاتورة.',
   'exit.take': 'تصوير البضاعة الخارجة', 'exit.take_short': 'التقاط صورة', 'exit.retake': 'إعادة التصوير', 'exit.after_sync': 'يمكن التصوير بعد إرسال العملية (يلزم رقم الفاتورة).',
   'exit.checking': 'الذكاء الاصطناعي يفحص الصورة…', 'exit.cocok': 'مطابق', 'exit.tidak_cocok': 'غير مطابق', 'exit.perlu_cek': 'يحتاج مراجعة',
-  'exit.recorded': 'في الفاتورة', 'exit.in_photo': 'في الصورة', 'exit.missing_title': 'صور خروج ناقصة', 'photo.open': 'عرض الصورة',
+  'exit.recorded': 'في الفاتورة', 'exit.in_photo': 'في الصورة', 'exit.missing_title': 'صور خروج ناقصة', 'photo.open': 'عرض الصورة', 'photo.title': 'الصورة المحفوظة',
   'pu.photo_title': 'صورة فاتورة المورّد / البضاعة', 'pu.photo_take': 'التقاط صورة', 'pu.photo_retake': 'تغيير الصورة', 'pu.ai_reading': 'الذكاء الاصطناعي يقرأ الفاتورة…',
   'pu.photo_ok': 'تمت قراءة الفاتورة: {n} سطر', 'pu.photo_hint_req': 'إلزامي: صوّر فاتورة المورّد أولًا، ويملأ الذكاء الاصطناعي الأصناف.', 'pu.photo_hint_opt': 'يُنصح بتصوير فاتورة المورّد.',
   'pu.need_photo': 'صوّر الفاتورة أولًا', 'pu.need_match': 'طابِق كل الأسطر مع المنتجات', 'pu.pick_product': 'اختر منتجًا', 'pu.on_note': 'في الفاتورة',
@@ -4756,6 +4794,7 @@ const ACT = {
     try { const c = await linkShopToCustomer(sh); toast(t('field.converted', { name: c.name }), 'ok'); drawFieldView(); } catch (e) { toast(errMsg(e), 'err'); }
   },
   'photo-zoom': el => photoZoom(el.dataset.src),
+  'photo-view': el => viewStoredPhoto(el.dataset.photo), // v36: a photo kept in R2 (owner / manager / accountant)
   'orders-refresh': () => { clearFieldCache(); loadOrders(false); },
   'orders-status': el => { FO.status = el.dataset.s; $$('[data-act="orders-status"]').forEach(c => c.classList.toggle('on', c === el)); drawOrders(); },
   'order-open': el => openFieldOrder(FO.list.find(o => o.order_id === el.dataset.id)),
@@ -6790,7 +6829,7 @@ function drawBank() {
         <td class="r num green">${p.direction !== 'out' ? fmtRp(p.amount) : ''}</td><td class="r num red">${p.direction === 'out' ? fmtRp(p.amount) : ''}</td>
         <td data-amt-ok="${I.amtOk}">${chk(I.amtOk)}${I.amtOk === false && I.slipAmt != null ? ` <span class="small">${fmtRp(I.slipAmt)}</span>` : ''}</td>
         <td data-date-ok="${I.dateOk}">${I.dateOk === false ? `<span class="badge amber">${esc(t('br.beda_tanggal'))}</span> <span class="small">${esc(fmtDate(p.slip_date))}</span>` : chk(I.dateOk)}</td>
-        <td class="hide-phone">${p.proof_photo_id ? (I.url && safeUrl(I.url) !== '#' ? `<a href="${esc(safeUrl(I.url))}" target="_blank" rel="noopener">${ic('camera')} ${esc(t('photo.open'))}</a>` : `<span class="badge blue">${ic('camera')} ${esc(p.proof_photo_id)}</span>`) : `<span class="badge gray">${esc(t('bk.no_slip'))}</span>`}</td></tr>`; }).join('') || `<tr><td colspan="8" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div></div>
+        <td class="hide-phone">${p.proof_photo_id ? (hasPhotoLink(I.url) ? photoLinkHtml(I.url, { icon: ic('camera') + ' ' }) : `<span class="badge blue">${ic('camera')} ${esc(p.proof_photo_id)}</span>`) : `<span class="badge gray">${esc(t('bk.no_slip'))}</span>`}</td></tr>`; }).join('') || `<tr><td colspan="8" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div></div>
     <div class="panel" id="bk-recon"><h3>${ic('bank')} ${esc(t('bk.recon_title', { m: BK.period }))}</h3><div class="pb">${recon}</div></div>`;
 }
 function bkGroupHTML(s, R) {
@@ -8050,7 +8089,7 @@ function returnCardHTML(r, own) {
       ${kv(t('rt.reason'), esc(t('rt.r_' + r.reason_code)) + (r.reason_note ? ` — “${esc(r.reason_note)}”` : ''), 'data-reason')}
       ${!sup ? kv(t('rt.refund'), `<b class="num" data-refund>${fmtRp(r.refund)}</b> · ${esc(t('rt.m_' + r.refund_method))}${int(r.fee) ? ` <span class="small muted">(${esc(t('rt.fee'))} ${fmtRp(r.fee)})</span>` : ''}`) : own && r.value != null ? kv(t('rt.value_cost'), `<b class="num" data-value>${fmtRp(r.value)}</b>`) : ''}
       ${kv(t('rt.requested_by'), esc(r.user || ''))}${r.approved_by ? kv(t(r.status === 'rejected' ? 'rt.rejected_by' : 'rt.approved_by'), esc(r.approved_by), 'data-approved-by') : ''}
-      ${r.photo_id ? kv(t('rt.photo'), ph && ph.drive_url ? `<a href="${esc(safeUrl(ph.drive_url))}" target="_blank" rel="noopener" data-photo="${esc(r.photo_id)}">${esc(t('photo.open'))}</a>` : ph && ph.thumb ? `<button class="btn xs" data-act="rt-photo" data-photo="${esc(r.photo_id)}">${ic('camera')} ${esc(t('photo.open'))}</button>` : `<span class="small muted" data-photo="${esc(r.photo_id)}">${esc(r.photo_id)}</span>`) : ''}
+      ${r.photo_id ? kv(t('rt.photo'), ph && hasPhotoLink(ph.drive_url) ? photoLinkHtml(ph.drive_url) : ph && ph.thumb ? `<button class="btn xs" data-act="rt-photo" data-photo="${esc(r.photo_id)}">${ic('camera')} ${esc(t('photo.open'))}</button>` : `<span class="small muted" data-photo="${esc(r.photo_id)}">${esc(r.photo_id)}</span>`) : ''}
     </div>
     <table class="tbl" style="margin-top:6px" data-rt-lines><tbody>${lines.map(l => `<tr><td>${esc(l.name)}</td><td class="r num">${fmtQty(num(l.qty))} ${esc(l.unit || '')}</td>${sup ? '' : `<td><span class="badge ${l.condition === 'rusak' ? 'red' : 'green'}" data-cond="${esc(l.condition)}">${esc(t('rt.c_' + (l.condition || 'baik')))}</span></td>`}${(!sup || own) && l.value != null ? `<td class="r num">${fmtRp(l.value)}</td>` : ''}</tr>`).join('')}</tbody></table>
     ${r.status === 'pending' && r.request_id ? `<div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn sm" data-act="go" data-view="approvals">${esc(t('rt.to_inbox'))} →</button></div>` : ''}</div>`;
