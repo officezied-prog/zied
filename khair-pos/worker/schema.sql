@@ -501,6 +501,23 @@ CREATE TABLE IF NOT EXISTS pos_street_log (
 CREATE INDEX IF NOT EXISTS idx_pos_street_log_plan_date ON pos_street_log (plan_date);
 CREATE INDEX IF NOT EXISTS idx_pos_street_log_skey ON pos_street_log (skey);
 
+CREATE TABLE IF NOT EXISTS pos_shop_lists (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  list_id TEXT,
+  from_user TEXT,
+  from_role TEXT,
+  to_user TEXT,
+  plan_date TEXT,
+  street TEXT,
+  places TEXT,
+  note TEXT,
+  status TEXT,
+  created_at TEXT,
+  received_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pos_shop_lists_status ON pos_shop_lists (status);
+CREATE INDEX IF NOT EXISTS idx_pos_shop_lists_created_at ON pos_shop_lists (created_at);
+
 CREATE TABLE IF NOT EXISTS pos_chat (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   channel TEXT,

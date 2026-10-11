@@ -109,6 +109,37 @@ Batch C. gudang/ is still on n8n today — moves to the Worker as part of this.
   (self-created by the Worker). Search provider: OSM now (free, no account); Google Places is the optional upgrade if
   small shops are missing.
 
+## STATUS — 2026-10-11 (v32, PR #24 — live; Worker 0bb9f04e)
+
+- **Bank page** (owner app): the owner's approval card stayed locked after switching login (render signature ignored the
+  user); a recorded transfer did not show as money-out (bank list read a 2-minute sales cache). Fixed; transfer.spec green.
+- **Work line drawn point by point** (field planner "Garis kerja"): map taps or "point at my position" (fresh GPS); then
+  the kinds of shop to look for (dates, Hajj & Umrah, Muslim/Middle-East, oleh-oleh, minimarket, grocery, bakery/café,
+  mosque) — free Overpass `around:100` the line, one colour per kind, in order along the line → stops (pins keep the colour).
+  A line another rep already worked (≥ 30 % within 40 m) is warned.
+- **Worked streets kept forever** (owner: "always, not 60 days"): `pos_street_log` (one row per street per plan + its map
+  box), read around the rep (±0.2°), latest per street + rep; plans made before it were copied in by a one-time migration.
+- **Visit result = colour**: green order · orange there, no order · blue does not want · black closed / owner not there /
+  shop not found / changed business (new `tidak_ada`, `tidak_ditemukan`, `ganti_usaha`) — black needs a photo of the place
+  (`photo_place`, no person's consent needed). Plan points, Today card counts, owner field page.
+- **Map split by density**: crowded areas = one count bubble (tap = zoom in); only what is in view is drawn, redrawn on move.
+
+## STATUS — 2026-10-11 (v33 — shops of a street from Google Maps, free)
+
+- Owner's idea: the office (manager / accountant / cashier) sends the rep the shops of a street taken from Google Maps;
+  or the rep does it himself. No Google key / no Places API cost: the text Google Maps gives when you SHARE or COPY a place.
+- `shared/gmaps-import.js`: parser (name / address / phone / link; position from `!3d…!4d…`, `?q=lat,lng`, `@lat,lng` or a
+  "lat, lng" line) + the office page (owner app view `shoplist` for owner/manager/accountant, cashier app Lainnya →
+  "Daftar toko untuk sales").
+- Server (`backend/field/process-field.js` + Worker): `list_reps`, `list_send` (office → a sales rep, date today … +14,
+  ≤ 60 places), `lists_sent`, `list_ack`; `field_bootstrap` gives the rep his open lists; `resolve_links` — short links
+  (maps.app.goo.gl) are followed by the Worker (`worker/src/gmaps.js`: redirects only, no page read, Google hosts only,
+  ≤ 8 links × 3 hops). Table `pos_shop_lists` (self-created). The kasir / akuntan may call ONLY these list actions here.
+- Field app: an office list goes straight into the plan of its day (street + stops, phone kept); a place without a
+  position waits in "Belum ada titik" — looked up on OpenStreetMap, or the rep taps "Di peta" then the map. The rep can
+  also paste in the planner ("📋 Google Maps") or share from Google Maps to the installed app (Web Share Target, Android;
+  iPhone: paste).
+
 ## STATUS — Batch C (2026-10-10)
 
 **CODE DONE (on the dev branch, not yet cut over):**

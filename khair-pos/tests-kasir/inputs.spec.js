@@ -25,9 +25,11 @@ test('names, phone, e-mail and quantities refuse what the server refuses; maxlen
   await H.closeModals(page);
   await page.fill('#q', '');
 
-  // a new customer at the counter
-  await H.tab(page, 'more');
-  await page.click('#m-member');
+  // a new customer at the counter (Batch A: the cashier adds customers from the payment window; members only by the manager)
+  await H.addItem(page, 'ajwa');
+  await H.pay(page);
+  await page.click('#pay-cust');
+  await page.click('#cp-new summary');
   await page.fill('#cn-name', 'Toko Baru; <b>');
   await expect(page.locator('#cn-name')).toHaveValue('Toko Baru b');
   await page.fill('#cn-phone', 'abc 0812-33x44 55');
@@ -88,7 +90,7 @@ test('field checks (INVALID), a clean note is saved, and a code attempt now LOCK
 });
 
 test('Arabic: the hint for a refused character', async ({ page }) => {
-  await H.login(page);
+  await H.login(page, 'Jihan', '2222'); // member registration is the manager's (Batch A)
   await H.tab(page, 'more');
   await page.click('#lang-ar');
   await page.click('#m-member');

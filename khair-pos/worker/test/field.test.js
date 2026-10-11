@@ -300,3 +300,80 @@ test('field v32: the new black results are accepted; a photo of the place needs 
   assert.equal(r3.visit.outcome, 'tidak_ada');
   assert.ok(r3.warnings.length >= 1);
 });
+
+// ---- v33: shop lists from Google Maps, sent by the office (manager / accountant / cashier) to a rep ----
+const GPLACES = [
+  { name: 'Toko Kurma Barokah', address: 'Jl. Raya Condet No.12', url: 'https://maps.app.goo.gl/AbC123', lat: null, lng: null },
+  { name: 'Perlengkapan Haji Al-Amin', address: 'Jl. Raya Condet No.40', phone: '0812-3456-7890', url: 'https://www.google.com/maps/place/X/@-6.276,106.858,17z/data=!3d-6.27612!4d106.85871', lat: -6.27612, lng: 106.85871 },
+  { name: '', address: 'no name: dropped' }, { name: 'Bad link', url: 'https://evil.example/x', lat: 999, lng: 1 }];
+function officeDb() {
+  const db = seed();
+  insert(db, 'pos_users', { id: 7, name: 'Kasir1', role: 'kasir', pin_hash: h('Kasir1', '7777'), active: true });
+  insert(db, 'pos_users', { id: 8, name: 'Aqil', role: 'akuntan', pin_hash: h('Aqil', '8888'), active: true });
+  return db;
+}
+test('field v33: the cashier / accountant send a rep a shop list; it reaches the rep at bootstrap; the ack marks it received', async () => {
+  const a = sqliteAdapter(officeDb());
+  const reps = await handleField(a, base('list_reps', 'Kasir1', '7777'), {}, KEY);
+  assert.deepEqual(reps.reps, ['Rani']);
+  const r = await handleField(a, base('list_send', 'Kasir1', '7777', { to_user: 'rani', plan_date: plus(TODAY(), 1), street: 'Jalan Raya Condet', places: GPLACES, note: 'pagi' }), {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.list.to_user, 'Rani');
+  assert.equal(r.list.places.length, 3, 'nameless place dropped');
+  assert.equal(r.list.places[2].url, '', 'only Google Maps links kept');
+  assert.equal(r.list.places[2].lat, null, 'invalid position dropped');
+  assert.equal(r.list.places[1].phone, '081234567890');
+  const r2 = await handleField(a, base('list_send', 'Aqil', '8888', { to_user: 'Rani', plan_date: TODAY(), street: 'Jalan B', places: GPLACES.slice(1, 2) }), {}, KEY);
+  assert.equal(r2.ok, true, JSON.stringify(r2));
+  // the rep's phone gets both at bootstrap
+  const b = await handleField(a, base('field_bootstrap', 'Rani', '3333'), {}, KEY);
+  assert.equal(b.lists.length, 2);
+  assert.equal(b.lists.find(l => l.street === 'Jalan Raya Condet').from_user, 'Kasir1');
+  const ack = await handleField(a, base('list_ack', 'Rani', '3333', { list_ids: [r.list.list_id] }), {}, KEY);
+  assert.equal(ack.acked, 1);
+  const b2 = await handleField(a, base('field_bootstrap', 'Rani', '3333'), {}, KEY);
+  assert.deepEqual(b2.lists.map(l => l.street), ['Jalan B']);
+  // the office sees what it sent and that it was received
+  const sent = await handleField(a, base('lists_sent', 'Kasir1', '7777'), {}, KEY);
+  assert.equal(sent.lists.length, 1);
+  assert.equal(sent.lists[0].status, 'received');
+  assert.equal(sent.lists[0].n, 3);
+  const all = await handleField(a, base('lists_sent', 'Pemilik', '1234'), {}, KEY);
+  assert.equal(all.lists.length, 2, 'the owner sees every list');
+});
+test('field v33: shop-list rules — only to a sales rep, a date today … +14, not by a rep; the kasir still cannot read the field report', async () => {
+  const a = sqliteAdapter(officeDb());
+  const toKasir = await handleField(a, base('list_send', 'Pemilik', '1234', { to_user: 'Kasir1', plan_date: TODAY(), places: GPLACES }), {}, KEY);
+  assert.equal(toKasir.error, 'INVALID');
+  const late = await handleField(a, base('list_send', 'Pemilik', '1234', { to_user: 'Rani', plan_date: plus(TODAY(), 30), places: GPLACES }), {}, KEY);
+  assert.equal(late.error, 'INVALID');
+  const empty = await handleField(a, base('list_send', 'Pemilik', '1234', { to_user: 'Rani', plan_date: TODAY(), places: [{ name: '' }] }), {}, KEY);
+  assert.equal(empty.error, 'INVALID');
+  const byRep = await handleField(a, base('list_send', 'Rani', '3333', { to_user: 'Rani', plan_date: TODAY(), places: GPLACES }), {}, KEY);
+  assert.equal(byRep.error, 'FORBIDDEN');
+  const kRead = await handleField(a, base('list_field', 'Kasir1', '7777', { from: TODAY(), to: TODAY() }), {}, KEY);
+  assert.equal(kRead.error, 'FORBIDDEN');
+  const kAck = await handleField(a, base('list_ack', 'Kasir1', '7777', { list_ids: ['x'] }), {}, KEY);
+  assert.equal(kAck.error, 'FORBIDDEN');
+});
+test('field v33: resolve_links follows a Google Maps short link (redirects only) to the place position; other hosts are refused', async () => {
+  const a = sqliteAdapter(officeDb());
+  const calls = [];
+  const fakeFetch = async (url, opts) => {
+    calls.push([url, opts.redirect]);
+    const hop = { 'https://maps.app.goo.gl/AbC123': 'https://www.google.com/maps/place/Toko+Kurma+Barokah/@-6.2741,106.8583,17z/data=!4m6!3m5!8m2!3d-6.27405!4d106.85834!16s',
+      'https://maps.app.goo.gl/NoPos': 'https://maps.google.com/?q=Toko+Tanpa+Titik,+Jl.+Raya+Condet&ftid=0x1:0x2',
+      'https://maps.app.goo.gl/Away': 'https://consent.example.com/?continue=x' }[url];
+    return { status: hop ? 302 : 200, headers: { get: k => (k === 'location' ? hop || null : null) }, body: { cancel: async () => { } } };
+  };
+  const r = await handleField(a, base('resolve_links', 'Rani', '3333', { urls: ['https://maps.app.goo.gl/AbC123', 'https://maps.app.goo.gl/NoPos', 'https://maps.app.goo.gl/Away', 'https://evil.example/x'] }), {}, KEY, { fetch: fakeFetch });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.links.length, 3, 'the non-Google link is not followed');
+  assert.deepEqual([r.links[0].lat, r.links[0].lng, r.links[0].exact, r.links[0].name], [-6.27405, 106.85834, true, 'Toko Kurma Barokah']);
+  assert.equal(r.links[1].ok, false); assert.equal(r.links[1].name, 'Toko Tanpa Titik, Jl. Raya Condet'); // no position: the app looks the name up
+  assert.equal(r.links[2].ok, false);
+  assert.ok(calls.every(c => c[1] === 'manual'), 'redirects are followed by hand, no page is read');
+  assert.ok(!calls.some(c => /evil|consent/.test(c[0])), 'never leaves Google Maps');
+  const none = await handleField(a, base('resolve_links', 'Kasir1', '7777', { urls: ['https://evil.example/x'] }), {}, KEY, { fetch: fakeFetch });
+  assert.equal(none.error, 'INVALID');
+});
