@@ -22,14 +22,16 @@ test('plan points take the colour of the visit result; a black result needs a ph
     await page.click('#ci-new');
     await page.fill('#ci-name', 'Toko Titik ' + (i + 1));
     await H.pickType(page, 'toko');
+    await page.fill('#ci-phone', '0812-000' + i); await page.fill('#ci-address', 'Jl. Titik ' + (i + 1));
     await page.click('#oc-' + outcome);
     if (opts.black) {
       await expect(page.locator('#ci-black')).toBeVisible();
       await page.click('#ci-ok');
       await expect(page.locator('#ci-err')).toContainText('foto'); // the photo of the place is required
-      await page.setInputFiles('#ci-photo-back', await H.photoFile(page));
-      await expect(page.locator('#ci-thumb')).toBeVisible(); // no owner consent ticked: still accepted (it is the place)
-    } else await expect(page.locator('#ci-black')).toBeHidden();
+      // v36: for a NEW shop the photo of the place is the shop-front photo; nobody is there, so no owner photo is asked for
+      await page.setInputFiles('#ci-shop-photo', await H.photoFile(page));
+      await expect(page.locator('#ci-shop-thumb')).toBeVisible();
+    } else { await expect(page.locator('#ci-black')).toBeHidden(); await H.newShopExtras(page); }
     await page.click('#ci-ok');
     await expect(page.locator('.toast.ok', { hasText: 'Toko Titik ' + (i + 1) })).toBeVisible();
     if (outcome === 'order') await expect(page.locator('#v-order')).toBeVisible();
@@ -48,6 +50,6 @@ test('plan points take the colour of the visit result; a black result needs a ph
 
   const db = await H.getDb(page);
   const black = db.visits.find(v => v.outcome === 'ganti_usaha');
-  expect(black.photo_thumb.length).toBeGreaterThan(100);
-  expect(black).toMatchObject({ photo_consent: false, photo_place: true });
+  expect(black.shop_photo.length).toBeGreaterThan(100); // v36: the shop-front photo of a new shop is the photo of the place
+  expect(black).toMatchObject({ photo_consent: false, photo_thumb: '' });
 });

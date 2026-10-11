@@ -119,12 +119,14 @@ export const TABLES = {
     area: 'string', type: 'string', lat: 'number', lng: 'number', created_by: 'string',
     created_at: 'string', last_visit_at: 'string', visits: 'number', status: 'string',
     customer_id: 'number', next_visit: 'string', type_other: 'string', chain: 'string',
+    photo_visit: 'string', // v36: the visit holding the shop's photos (owner + shop front)
   },
   pos_visits: {
     visit_id: 'string', client_id: 'string', user: 'string', visit_date: 'string',
     visit_time: 'string', shop_id: 'string', shop_name: 'string', lat: 'number', lng: 'number',
     acc: 'number', distance_m: 'number', outcome: 'string', notes: 'string', next_visit: 'string',
     photo_thumb: 'string', drive_url: 'string', rating: 'number',
+    shop_photo: 'string', // v36: photo of the shop front (new shop)
   },
   pos_tracks: {
     user: 'string', track_date: 'string', t: 'string', lat: 'number', lng: 'number',
@@ -248,6 +250,7 @@ export const OPS_TABLE_FIELD = {
   shops: 'pos_shops', visits: 'pos_visits', tracks: 'pos_tracks',
   days: 'pos_field_days', orders: 'pos_field_orders', images: 'pos_product_images',
   product_flags: 'pos_products', plans: 'pos_route_plans', street_log: 'pos_street_log', shop_lists: 'pos_shop_lists', api_usage: 'pos_api_usage',
+  settings: 'pos_settings', // v36: street_return_days (the return time to a good street)
 };
 
 // Chat workflow ops key → table.

@@ -4,7 +4,7 @@ const MockServer = (() => {
   const DBKEY = 'kmock.db';
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
-  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_transfers', 'list_photos', 'field_bootstrap', 'list_field', 'product_images', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon'];
+  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_transfers', 'list_photos', 'field_bootstrap', 'list_field', 'product_images', 'orders_map', 'shop_photos', 'street_returns', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon'];
   class MockErr extends Error { constructor(code, message, extra) { super(message || code); this.code = code; this.extra = extra || null; } }
   const E = (code, msg, extra) => new MockErr(code, msg, extra);
   let ready = null;
@@ -2057,7 +2057,7 @@ const MockServer = (() => {
   }
 
   /* ---- Field sales (v8): handled by shared/field-mock.js (loaded in mock mode only) ---- */
-  const FIELD_ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop'];
+  const FIELD_ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop', 'orders_map', 'shop_photos', 'street_returns', 'street_return_set']; // v36
   const ext = () => (window.KhairFieldMock && typeof window.KhairFieldMock.handle === 'function') ? window.KhairFieldMock : null;
   /** Seeds the field tables (and demo rep Ahmad) — synchronous and idempotent; skipped until the store has users. */
   function ensureField(db) {

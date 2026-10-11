@@ -10,6 +10,7 @@ async function newShopForm(page, context, name, pos = [-6.2601, 106.8622]) {
   await expect(page.locator('#ci-fix')).toHaveAttribute('data-acc', '10');
   await page.click('#ci-new');
   if (name) await page.fill('#ci-name', name);
+  await H.newShopExtras(page); // v36: phone, address, shop + owner photos
 }
 const shopsOf = async page => (await H.getDb(page)).shops;
 const outbox = page => page.evaluate(() => JSON.parse(localStorage.getItem('kpos.mock.sales.outbox') || '[]'));

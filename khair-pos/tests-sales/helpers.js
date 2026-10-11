@@ -73,6 +73,19 @@ async function pickType(page, type) {
   if (type !== 'lainnya') await page.click(`#tp-types [data-act="tp-type"][data-t="${type}"]`);
   await expect(page.locator('#tp-sel')).toHaveAttribute('data-type', type);
 }
+/** v36 (owner 2026-10-11): what a new shop needs besides its name and type — phone, address, a photo of the shop front and a
+ *  photo of the owner with the rep (with consent). opts: { owner: false } = no owner photo, { refused: true } = he refuses. */
+async function newShopExtras(page, opts = {}) {
+  if (!(await page.locator('#ci-phone').inputValue())) await page.fill('#ci-phone', opts.phone || '0812-1111-2222');
+  if (!(await page.locator('#ci-address').inputValue())) await page.fill('#ci-address', opts.address || 'Jl. Raya Condet No. 1');
+  await page.setInputFiles('#ci-shop-photo', await photoFile(page, 'toko.png'));
+  await expect(page.locator('#ci-shop-thumb')).toBeVisible();
+  if (opts.refused) { await page.check('#ci-refused'); return; }
+  if (opts.owner === false) return;
+  await page.setInputFiles('#ci-photo-back', await photoFile(page));
+  await expect(page.locator('#ci-thumb')).toBeVisible();
+  await page.check('#ci-consent');
+}
 async function closeModals(page) { while (await page.locator('.modal-bg').count()) await page.locator('.modal-bg').last().locator('[data-act="modal-close"]').first().click(); }
 
-module.exports = { presetDeviceConsent, test, expect, rp, SHOTS, shot, STORE, setPos, openSales, typePin, login, getDb, setDb, startDay, tab, photoFile, closeModals, pickType };
+module.exports = { presetDeviceConsent, test, expect, rp, SHOTS, shot, STORE, setPos, openSales, typePin, login, getDb, setDb, startDay, tab, photoFile, closeModals, pickType, newShopExtras };

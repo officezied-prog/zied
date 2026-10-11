@@ -382,7 +382,8 @@ CREATE TABLE IF NOT EXISTS pos_shops (
   customer_id REAL,
   next_visit TEXT,
   type_other TEXT,
-  chain TEXT
+  chain TEXT,
+  photo_visit TEXT
 );
 
 CREATE TABLE IF NOT EXISTS pos_visits (
@@ -403,8 +404,10 @@ CREATE TABLE IF NOT EXISTS pos_visits (
   next_visit TEXT,
   photo_thumb TEXT,
   drive_url TEXT,
-  rating REAL
+  rating REAL,
+  shop_photo TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_pos_visits_shop_id ON pos_visits (shop_id);
 
 CREATE TABLE IF NOT EXISTS pos_tracks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

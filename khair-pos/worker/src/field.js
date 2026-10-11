@@ -32,8 +32,8 @@ export function parseField(body, headers) {
     today,
     client_id: (action === 'check_in' || action === 'field_order') && data.client_id ? String(data.client_id) : '__none__',
     order_id: action === 'update_order' && data.order_id ? String(data.order_id) : '__none__',
-    from: action === 'list_field' && isDate(data.from) ? data.from : '9999-12-31',
-    to: action === 'list_field' && isDate(data.to) ? data.to : '0000-01-01',
+    from: (action === 'list_field' || action === 'orders_map') && isDate(data.from) ? data.from : '9999-12-31',
+    to: (action === 'list_field' || action === 'orders_map') && isDate(data.to) ? data.to : '0000-01-01',
     recent_from: action === 'field_bootstrap' ? since30 : '9999-12-31',
     plans_from: action === 'field_bootstrap' || action === 'plan_save' ? today : '9999-12-31',
     // v32: the shared streets map reads the permanent street log around the rep (no date limit); plan_save reads that day's rows
@@ -43,6 +43,11 @@ export function parseField(body, headers) {
     open_lists: action === 'field_bootstrap' || action === 'list_ack' ? 'sent' : '__none__',
     sent_from: action === 'lists_sent' ? since30 : '9999-12-31',
     usage_month: action === 'places_search' || action === 'places_status' ? today.slice(0, 7) : '__none__', // v34 Google cap
+    // v36: a shop's photos (read when opened); the good streets to go back to (scored on the last 90 days) + their setting
+    photo_shop: action === 'shop_photos' && data.shop_id ? String(data.shop_id) : '__none__',
+    score_from: action === 'street_returns' ? new Date(Date.now() + 7 * 3600000 - 90 * 86400000).toISOString().slice(0, 10) : '9999-12-31',
+    street_since: action === 'street_returns' ? new Date(Date.now() + 7 * 3600000 - 365 * 86400000).toISOString().slice(0, 10) : '9999-12-31',
+    settings_key: action === 'street_returns' || action === 'street_return_set' ? 'street_return_days' : '__none__',
     img_lo: action === 'product_images' ? 0 : (action === 'set_product_image' && pid > 0 ? pid : 1),
     img_hi: action === 'product_images' ? 1000000000 : (action === 'set_product_image' && pid > 0 ? pid : 0),
   };
@@ -74,6 +79,14 @@ function fieldSpecs(req) {
     'Get Open Lists': Q.eq('pos_shop_lists', 'status', req.open_lists),
     'Get Sent Lists': Q.gte('pos_shop_lists', 'created_at', req.sent_from),
     'Get Places Usage': Q.eq('pos_api_usage', 'month', req.usage_month),
+    // v36: only the visits of one shop that carry a photo (newest first)
+    'Get Shop Visits': { table: 'pos_visits', sql: "SELECT * FROM pos_visits WHERE shop_id = ? AND (COALESCE(shop_photo, '') <> '' OR COALESCE(photo_thumb, '') <> '') ORDER BY id DESC LIMIT 10", params: [req.photo_shop] },
+    // v36: one row per worked street (the latest work on it, up to a year back) + whether it is already planned again;
+    // the visits / orders of the last 90 days WITHOUT photos or items (small) to score the shops along each street
+    'Get Street Summary': { table: 'pos_street_log', sql: 'SELECT l.*, MAX(l.plan_date) AS last_date, (SELECT MAX(p.plan_date) FROM pos_street_log p WHERE p.skey = l.skey AND p.removed = 0 AND p.plan_date > ?) AS next_date FROM pos_street_log l WHERE l.removed = 0 AND l.plan_date <= ? AND l.plan_date >= ? GROUP BY l.skey ORDER BY last_date DESC LIMIT 500', params: [req.today, req.today, req.street_since] },
+    'Get Score Visits': { table: 'pos_visits', sql: 'SELECT id, user, visit_date, shop_id, outcome, rating FROM pos_visits WHERE visit_date >= ? ORDER BY id', params: [req.score_from] },
+    'Get Score Orders': { table: 'pos_field_orders', sql: 'SELECT id, user, order_date, shop_id, total, status FROM pos_field_orders WHERE order_date >= ? ORDER BY id', params: [req.score_from] },
+    'Get Field Settings': Q.eq('pos_settings', 'skey', req.settings_key),
     // latest row per street and rep (SQLite keeps the bare columns of the MAX row), only streets crossing the area box
     'Get Street Log': req.street_box
       ? { table: 'pos_street_log', sql: 'SELECT *, MAX(plan_date) AS last_date FROM pos_street_log WHERE removed = 0 AND max_lat >= ? AND min_lat <= ? AND max_lng >= ? AND min_lng <= ? GROUP BY skey, user ORDER BY last_date DESC LIMIT 1000', params: [req.street_box[0], req.street_box[1], req.street_box[2], req.street_box[3]] }
@@ -111,6 +124,11 @@ export const FIELD_MIGRATIONS = [
   "CREATE INDEX IF NOT EXISTS idx_pos_shop_lists_status ON pos_shop_lists (status)",
   // v34: monthly counter of paid-API calls (Google Places) — the hard cap that keeps the bill at 0
   "CREATE TABLE IF NOT EXISTS pos_api_usage (id INTEGER PRIMARY KEY AUTOINCREMENT, api TEXT, month TEXT, n INTEGER NOT NULL DEFAULT 0, updated_at TEXT)",
+  // v36 (owner 2026-10-11): a new shop's front photo on its visit; the shop names the visit that holds its photos
+  "ALTER TABLE pos_visits ADD COLUMN shop_photo TEXT",
+  "ALTER TABLE pos_shops ADD COLUMN photo_visit TEXT",
+  "CREATE INDEX IF NOT EXISTS idx_pos_visits_shop_id ON pos_visits (shop_id)",
+  "CREATE INDEX IF NOT EXISTS idx_pos_street_log_skey ON pos_street_log (skey)",
   "INSERT INTO pos_street_log (skey, user, name, plan_date, plan_id, drawn, ref, lines, min_lat, max_lat, min_lng, max_lng, removed, updated_at) "
     + "SELECT 'st:' || lower(trim(json_extract(s.value, '$.name'))), p.user, trim(json_extract(s.value, '$.name')), p.plan_date, p.plan_id, 0, json_extract(s.value, '$.ref'), "
     + "COALESCE(json_extract(s.value, '$.lines'), '[]'), -90, 90, -180, 180, 0, p.updated_at "
