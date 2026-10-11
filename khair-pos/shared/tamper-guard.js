@@ -209,8 +209,7 @@
         prev.photo = photo; prev.photo_status = st;
         h.logAct('tamper', st === 'ok' ? 'Foto percobaan kode tersimpan (' + prev.place + ')' : 'Percobaan kode: ' + NO_PHOTO[st] + ' (' + prev.place + ')', 'warn');
       }
-      h.lock();
-      return { locked: true, shot_id: sid, photo_status: prev.photo_status };
+      return { locked: true, shot_id: sid, photo_status: prev.photo_status }; // the second call never locks again (the owner may have unlocked meanwhile)
     }
     h.lock();
     var row = { shot_id: sid || shotId(), at: h.now, shot_date: h.date, user: u.name, role: u.role, place: where, kind: kind, sample: sample, photo: photo, photo_status: st, device: String((data.device && data.device.id) || '').slice(0, 60) };

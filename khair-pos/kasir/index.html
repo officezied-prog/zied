@@ -335,7 +335,9 @@ async function api(action, data, opts) {
   } catch (e) {
     if (e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_USERS' || e.code === 'LOCKED') forceRelogin(e);
     if (e.code === 'PIN_CHANGE_REQUIRED' && S.inApp && S.pin_hash) askNewPin(S.user, S.role, S.pin_hash, S.viaMaster);
-    if ((e.code === 'TAMPER' || e.code === 'TAMPER_LOCKED') && !isOwner() && typeof tamperLockUI === 'function') tamperLockUI();
+    // v36: a code attempt the SERVER caught (it has just locked the account) gets the front-camera photo too
+    if (e.code === 'TAMPER' && !isOwner() && typeof tamperTrip === 'function' && !TAMPERED && !TAMPER_BUSY) tamperTrip('server:' + action);
+    else if ((e.code === 'TAMPER' || e.code === 'TAMPER_LOCKED') && !isOwner() && typeof tamperLockUI === 'function') tamperLockUI();
     throw e;
   }
 }

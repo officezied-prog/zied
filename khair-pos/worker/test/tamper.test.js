@@ -95,3 +95,15 @@ test('tamper: the field rep (sales) and the accountant can report (was FORBIDDEN
   assert.equal(steal.error, 'FORBIDDEN');
   assert.equal(shots(db).find(x => x.shot_id === 'TSCCCCCCCCCCCC').photo, '');
 });
+
+test('tamper: a photo arriving after the owner already unlocked does not lock the account again', async () => {
+  const db = seed();
+  await call(db, 'report_tamper', 'Siti', '1111', { where: 'n', shot_id: 'TSEEEEEEEEEEEE', photo_status: 'pending' });
+  assert.deepEqual(locked(db), ['siti']);
+  await call(db, 'clear_tamper', 'Pemilik', '1234', { name: 'Siti' });
+  assert.deepEqual(locked(db), []);
+  const late = await call(db, 'report_tamper', 'Siti', '1111', { where: 'n', shot_id: 'TSEEEEEEEEEEEE', photo_status: 'ok', photo: PHOTO });
+  assert.equal(late.ok, true); assert.equal(late.locked, false);
+  assert.deepEqual(locked(db), []);
+  assert.equal(shots(db)[0].photo, PHOTO);
+});

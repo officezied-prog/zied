@@ -88,6 +88,19 @@ test('camera refused → "no photo (camera refused)" is recorded; the digit run 
   expect(acts).toEqual(['Angka berurutan "12345678" — akun dikunci (cm-note) · foto menyusul', 'Percobaan kode: tanpa foto (kamera ditolak) (cm-note)']);
 });
 
+test('a code attempt the SERVER catches (sent past the field check) gets the front-camera photo too', async ({ page }) => {
+  await page.addInitScript(gumSpy);
+  await H.login(page);
+  const code = await page.evaluate(async () => { try { await api('check_approval', { request_id: '${document.cookie}' }); return 'ok'; } catch (e) { return e.code; } });
+  expect(code).toBe('TAMPER');
+  await expect(page.locator('#app')).toBeHidden({ timeout: 15000 });
+  await expect.poll(async () => ((await shots(page))[0] || {}).photo_status, { timeout: 15000 }).toBe('ok');
+  const s = (await shots(page))[0];
+  expect(s).toMatchObject({ user: 'Siti', place: 'server:check_approval', kind: 'code' });
+  expect(s.photo).toMatch(/^data:image\/jpeg;base64,/);
+  expect((await H.getDb(page)).settings.locked_accounts).toContain('siti');
+});
+
 test('digit rule whitelist: barcode scans into the search, money, quantities, phones, short / real numbers in a note never lock', async ({ page }) => {
   await page.addInitScript(gumSpy);
   await H.login(page);

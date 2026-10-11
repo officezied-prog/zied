@@ -836,15 +836,15 @@ switch (req.action) {
     var NO_PHOTO = { pending: 'foto menyusul', denied: 'tanpa foto (kamera ditolak)', none: 'tanpa foto (tidak ada kamera)', error: 'tanpa foto (kamera gagal)' };
     if (role === 'owner') { logAct('tamper', 'Pemilik: percobaan kode terdeteksi (' + where + ')', me.name, 0, 'warn'); return done({ ok: true, locked: false }); }
     var prevShot = sid ? rows('Get Tamper Shot').find(function (r) { return r.shot_id === sid; }) : null;
-    if (!isLocked(me.name)) writeLocked(LOCKED.concat([me.name]));
-    if (prevShot) {
+    if (prevShot) { // the second call only brings the photo; it never locks again (the owner may have unlocked meanwhile)
       if (str(prevShot.user).toLowerCase() !== str(me.name).toLowerCase()) return fail('FORBIDDEN', 'Bukan milik Anda');
       if (prevShot.photo_status === 'pending') {
         ops.tamper_shots.push(forWrite(Object.assign({}, clean(prevShot), { photo: __shotPhoto, photo_status: pst }), prevShot.id));
         logAct('tamper', pst === 'ok' ? 'Foto percobaan kode tersimpan (' + str(prevShot.place) + ')' : 'Percobaan kode: ' + NO_PHOTO[pst] + ' (' + str(prevShot.place) + ')', me.name, 0, 'warn');
       }
-      return done({ ok: true, locked: true, shot_id: sid, photo_status: prevShot.photo_status === 'pending' ? pst : str(prevShot.photo_status) });
+      return done({ ok: true, locked: isLocked(me.name), shot_id: sid, photo_status: prevShot.photo_status === 'pending' ? pst : str(prevShot.photo_status) });
     }
+    if (!isLocked(me.name)) writeLocked(LOCKED.concat([me.name]));
     var newSid = sid || 'TS' + rand(12);
     ops.tamper_shots.push(forWrite({
       shot_id: newSid, at: new Date().toISOString(), shot_date: jkDate(), user: me.name, role: role, place: where, kind: tkind,
