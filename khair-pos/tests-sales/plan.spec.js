@@ -198,3 +198,45 @@ test('work line: drawn point by point → kinds of shop searched along it (own c
   expect(mine.streets[0].lines[0].length).toBe(3);
   expect(mine.stops.map(s => s.cat)).toEqual(['kurma', 'haji']);
 });
+
+// v35 (owner 2026-10-11): tap a street on the map → "work this whole street" — the named street under the finger is
+// found (free OpenStreetMap), drawn whole and put in the plan with its shops, exactly like searching its name.
+test('tap a street on the map → the whole street goes into the plan with its shops; a tap off any named street says so', async ({ page, context }) => {
+  const seen = [];
+  await page.route(/\/vendor\/leaflet\//, r => r.continue()); // this test needs the map (tiles stay blocked)
+  let empty = false;
+  await context.route(/overpass/, r => {
+    const q = decodeURIComponent((r.request().postData() || '').replace(/^data=/, '')); seen.push(q);
+    const near = { elements: empty ? [] : [ // the streets within 40 m of the tap: the nearest one wins
+      { type: 'way', id: 900, tags: { highway: 'residential', name: 'Gang Mawar' }, geometry: [{ lat: -6.2738, lon: 106.8576 }, { lat: -6.2738, lon: 106.8570 }] },
+      { type: 'way', id: 111, tags: { highway: 'primary', name: 'Jalan Raya Condet' }, geometry: [{ lat: -6.2740, lon: 106.8580 }, { lat: -6.2731, lon: 106.8582 }] }] };
+    r.fulfill({ json: /around:40,/.test(q) ? near : OVER, headers: CORS });
+  });
+  await context.grantPermissions(['geolocation']);
+  await H.setPos(context, -6.2735, 106.8580);
+  await H.openSales(page);
+  await H.login(page, 'Ahmad', '4444', { noGoto: true });
+  if (await page.locator('#consent').isVisible().catch(() => false)) await page.click('#consent-ok');
+
+  await page.click('#pl-open-today');
+  await expect(page.locator('#pl-map .leaflet-container, #pl-map.leaflet-container')).toHaveCount(1);
+  const box = await page.locator('#pl-map').boundingBox();
+  await page.locator('#pl-map').click({ position: { x: box.width / 2, y: box.height / 2 } });
+  await page.click('#pl-sel-street');
+  await expect(page.locator('#pl-results .pl-res')).toHaveCount(4); // the shops along the WHOLE street
+  expect(seen[0]).toMatch(/way\(around:40,-6\.\d{6},106\.\d{6}\)\["highway"\]\["name"\]/); // only the streets under the finger
+  expect(seen[1]).toContain('"name"="Jalan Raya Condet"'); // then the whole street by its name, as "Kerjakan jalan ini"
+  await expect(page.locator('#pl-street')).toContainText('Jalan Raya Condet');
+  await page.click('#pl-seg-plan');
+  await expect(page.locator('#pl-streets .pl-street')).toHaveCount(1);
+  await expect(page.locator('#pl-streets .pl-street')).toContainText('Jalan Raya Condet');
+  await H.shot(page, 'plan-street-tap');
+
+  // a tap where no named street is → a clear message, nothing added
+  empty = true;
+  await page.locator('#pl-map').click({ position: { x: box.width / 3, y: box.height / 3 } });
+  await page.click('#pl-sel-street');
+  await expect(page.locator('.toast').filter({ hasText: 'Tidak ada jalan bernama' })).toBeVisible();
+  await page.click('#pl-seg-plan');
+  await expect(page.locator('#pl-streets .pl-street')).toHaveCount(1);
+});
