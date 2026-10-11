@@ -323,3 +323,6 @@ main{overflow:hidden;position:relative;min-width:0}
 .pl-gm{margin-top:8px;padding:10px;border-radius:12px;background:#F8FAFC;border:1px dashed #94A3B8}
 .pl-gm textarea{margin-top:6px}
 .gm-badge{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:5px;background:#1A73E8;color:#fff;font-size:11px;font-weight:900;vertical-align:1px}
+
+.find-chip,.kbadge{max-width:100%;white-space:normal;text-align:start;line-height:1.25}
+.find-chip{padding-block:6px}

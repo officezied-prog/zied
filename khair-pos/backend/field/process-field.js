@@ -12,7 +12,7 @@ const data = req.data && typeof req.data === 'object' ? req.data : {};
     else if (v && typeof v === 'object') cleanInput(v, depth + 1);
   });
 })(data, 0);
-const ops = { shops: [], visits: [], tracks: [], days: [], orders: [], images: [], product_flags: [], plans: [], street_log: [], shop_lists: [] };
+const ops = { shops: [], visits: [], tracks: [], days: [], orders: [], images: [], product_flags: [], plans: [], street_log: [], shop_lists: [], api_usage: [] };
 
 function rows(name) {
   try {
@@ -167,6 +167,7 @@ function streetBox(lines) {
   return b.min_lat > b.max_lat ? { min_lat: -90, max_lat: 90, min_lng: -180, max_lng: 180 } : b; // no line: shown everywhere (name only)
 }
 // v33: a shop list from the office (Google Maps places of a street) → the rep's plan for that day
+const PLACES_CAP = 4500; // Google gives 5,000 Text Search (Pro) calls free a month: stop well before
 const GMAPS_URL = /^https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl|(?:www\.)?google\.[a-z.]+|maps\.google\.[a-z.]+)\//i;
 function cleanPlaces(raw) {
   const out = [];
@@ -376,7 +377,7 @@ switch (req.action) {
       if (!name) return fail('INVALID', 'Nama titik ' + (i + 1) + ' wajib');
       stops.push({ ref: str(x.ref).slice(0, 40) || ('s' + (i + 1)), kind: sh ? 'shop' : 'place', shop_id: sh ? sh.shop_id : '', name: name,
         lat: Math.round(num(x.lat) * 1e6) / 1e6, lng: Math.round(num(x.lng) * 1e6) / 1e6, address: str(x.address).slice(0, 200),
-        type: SHOP_TYPES.indexOf(x.type) >= 0 ? x.type : '', src: ['osm', 'map', 'shop', 'gm'].indexOf(x.src) >= 0 ? x.src : '' });
+        type: SHOP_TYPES.indexOf(x.type) >= 0 ? x.type : '', src: ['osm', 'map', 'shop', 'gm', 'gp'].indexOf(x.src) >= 0 ? x.src : '' });
       if (str(x.phone)) stops[stops.length - 1].phone = str(x.phone).replace(/[^\d+]/g, '').slice(0, 20); // v33: a Google Maps place keeps its phone
       if (/^[a-z_]{1,20}$/.test(str(x.cat))) stops[stops.length - 1].cat = str(x.cat); // v32: the kind searched for (its colour on the map)
     }
@@ -418,6 +419,29 @@ switch (req.action) {
       list.push(o);
     });
     return done({ ok: true, streets: list, since: '' });
+  }
+
+  // v34 (owner 2026-10-11: "do the upgrade — we will not reach 5,000 searches a month"): Google Places search, made by the
+  // Worker (the key stays there). HARD monthly cap under Google's free 5,000 Text Search (Pro) calls → the bill stays 0;
+  // at the cap the app keeps the free OpenStreetMap search. Every call is counted before it is made (pos_api_usage).
+  case 'places_status': {
+    if (role !== 'sales' && !isBoss) return fail('FORBIDDEN', 'Hanya sales, pemilik atau manajer');
+    const u = rows('Get Places Usage').find(function (r) { return str(r.api) === 'places' && str(r.month) === req.today.slice(0, 7); });
+    return done({ ok: true, month: req.today.slice(0, 7), n: u ? num(u.n) : 0, cap: PLACES_CAP });
+  }
+  case 'places_search': {
+    if (role !== 'sales' && !isBoss) return fail('FORBIDDEN', 'Hanya sales, pemilik atau manajer');
+    const q = str(data.q).slice(0, 120);
+    if (q.length < 2) return fail('INVALID', 'Kata pencarian terlalu pendek');
+    const line = (Array.isArray(data.line) ? data.line : []).filter(function (x) { return Array.isArray(x) && isCoord(x[0], x[1]); }).slice(0, 100)
+      .map(function (x) { return [Math.round(num(x[0]) * 1e5) / 1e5, Math.round(num(x[1]) * 1e5) / 1e5]; });
+    const month = req.today.slice(0, 7);
+    const u = rows('Get Places Usage').find(function (r) { return str(r.api) === 'places' && str(r.month) === month; });
+    const n = u ? num(u.n) : 0;
+    if (n >= PLACES_CAP) return fail('QUOTA', 'Batas pencarian Google bulan ini sudah habis — dipakai pencarian gratis');
+    ops.api_usage.push(forWrite({ api: 'places', month: month, n: n + 1, updated_at: new Date().toISOString() }, u ? u.id : -1));
+    return done({ ok: true, places_req: { q: q, lat: isCoord(data.lat, data.lng) ? num(data.lat) : null, lng: isCoord(data.lat, data.lng) ? num(data.lng) : null,
+      radius: Math.max(100, Math.min(50000, Math.round(num(data.radius) || 3000))), line: line.length > 1 ? line : [] }, usage: { n: n + 1, cap: PLACES_CAP } });
   }
 
   case 'list_reps': {

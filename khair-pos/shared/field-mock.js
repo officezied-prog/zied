@@ -21,7 +21,7 @@
  */
 (function () {
   'use strict';
-  var ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop', 'cashier_orders', 'plan_save', 'streets_worked', 'list_send', 'list_reps', 'lists_sent', 'list_ack', 'resolve_links'];
+  var ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop', 'cashier_orders', 'plan_save', 'streets_worked', 'list_send', 'list_reps', 'lists_sent', 'list_ack', 'resolve_links', 'places_status', 'places_search'];
   // Shop type ids: taken from window.KhairShopTypes (shared/shop-types.js) when the page loaded it; this copy is the
   // fallback for pages that load only this file (e.g. the owner app). Same list as backend/field/process-field.js.
   var SHOP_TYPES_FALLBACK = ['perlengkapan_haji', 'travel_umrah', 'oleh_oleh_haji', 'toko_kurma', 'herbal', 'busana_muslim', 'toko_buku_islam', 'warung', 'toko', 'grosir_sembako', 'pasar', 'minimarket', 'supermarket', 'hypermarket', 'grosir_modern', 'bakery', 'toko_kue', 'katering', 'restoran', 'kafe', 'hotel', 'oleh_oleh', 'parsel', 'toko_buah', 'masjid', 'pesantren', 'sekolah', 'majelis_taklim', 'kantor', 'koperasi', 'reseller', 'toko_online', 'lainnya'];
@@ -275,7 +275,7 @@
           if (!nm) throw E('INVALID', 'Nama titik ' + (i + 1) + ' wajib');
           return { ref: String(x.ref || '').slice(0, 40) || ('s' + (i + 1)), kind: sh ? 'shop' : 'place', shop_id: sh ? sh.shop_id : '', name: nm,
             lat: Math.round(Number(x.lat) * 1e6) / 1e6, lng: Math.round(Number(x.lng) * 1e6) / 1e6, address: String(x.address || '').slice(0, 200),
-            type: TYPES.indexOf(x.type) >= 0 ? x.type : '', src: ['osm', 'map', 'shop', 'gm'].indexOf(x.src) >= 0 ? x.src : '' };
+            type: TYPES.indexOf(x.type) >= 0 ? x.type : '', src: ['osm', 'map', 'shop', 'gm', 'gp'].indexOf(x.src) >= 0 ? x.src : '' };
         }).map(function (o, i) { var c = String((raw[i] || {}).cat || ''), ph = String((raw[i] || {}).phone || '').replace(/[^\d+]/g, '').slice(0, 20); if (/^[a-z_]{1,20}$/.test(c)) o.cat = c; if (ph) o.phone = ph; return o; });
         var st0 = data.start || {}, hasSt = okPos(st0.lat, st0.lng), en0 = data.end || {}, hasEn = okPos(en0.lat, en0.lng), budget = 3000;
         var streets = (Array.isArray(data.streets) ? data.streets : []).slice(0, 15).map(function (x) {
@@ -297,6 +297,26 @@
         return { plan: clone(plan) };
       }
       // v33: shop lists (Google Maps places of a street) from the office to a rep — same rules as backend/field/process-field.js
+      // v34: Google Places search — the server calls Google with its key and stops at 4,500 a month. The demo answers from
+      // db.google_results ({ query: [places] }) when db.google_enabled is true (no key = NO_KEY, the app keeps the free search).
+      case 'places_status': {
+        needRole(user, ['sales', 'owner', 'manager']);
+        var um = today.slice(0, 7), ur = (db.api_usage || []).find(function (r) { return r.api === 'places' && r.month === um; });
+        return { enabled: !!db.google_enabled, month: um, n: ur ? ur.n : 0, cap: 4500 };
+      }
+      case 'places_search': {
+        needRole(user, ['sales', 'owner', 'manager']);
+        var gq = String(data.q || '').trim().slice(0, 120);
+        if (gq.length < 2) throw E('INVALID', 'Kata pencarian terlalu pendek');
+        if (!db.google_enabled) throw E('NO_KEY', 'Pencarian Google belum diaktifkan');
+        db.api_usage = db.api_usage || [];
+        var gm = today.slice(0, 7), gu = db.api_usage.find(function (r) { return r.api === 'places' && r.month === gm; });
+        if (gu && gu.n >= 4500) throw E('QUOTA', 'Batas pencarian Google bulan ini sudah habis — dipakai pencarian gratis');
+        if (!gu) { gu = { api: 'places', month: gm, n: 0 }; db.api_usage.push(gu); }
+        gu.n++;
+        db.google_log = (db.google_log || []).concat([{ q: gq, line: Array.isArray(data.line) && data.line.length > 1 }]).slice(-50);
+        return { places: clone((db.google_results || {})[gq] || []), mode: Array.isArray(data.line) && data.line.length > 1 ? 'route' : 'text', usage: { n: gu.n, cap: 4500 } };
+      }
       case 'list_reps': {
         needRole(user, ['owner', 'manager', 'akuntan', 'kasir', 'sales']);
         return { reps: (db.users || []).filter(function (u) { return u.role === 'sales' && u.active !== false; }).map(function (u) { return u.name; }) };
