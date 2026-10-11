@@ -326,3 +326,6 @@ main{overflow:hidden;position:relative;min-width:0}
 
 .find-chip,.kbadge{max-width:100%;white-space:normal;text-align:start;line-height:1.25}
 .find-chip{padding-block:6px}
+/* v35 routes history */
+.pl-route{border:1px solid var(--line2);background:#fff;font:inherit;color:inherit}
+.pl-route.sel{outline:2px solid #F59E0B;outline-offset:-2px;border-radius:10px}

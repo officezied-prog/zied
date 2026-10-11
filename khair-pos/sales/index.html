@@ -80,7 +80,7 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.6.0';
+const APP_VERSION = 'sales-1.7.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1117,7 +1117,8 @@ function svgMap(el, points, shops, current, orders, plan) {
    During the day the Today card shows the next stop, Google Maps directions, and "visit" (a new place opens the
    new-shop form already filled in, so it becomes a shop at the first visit). */
 const PL = { date: '', start: null, end: null, stops: [], streets: [], note: '', results: [], street: null, seg: 'search', q: '', msg: '', busy: false, map: null, lay: null, el: null, sel: null, worked: [], workedAt: 0,
-  draw: null, found: [], foundOn: '', lineRef: '', cats: null, gmOpen: false, placing: '', unplaced: [], g: null }; // v34 g = Google search { enabled, n, cap } // v33: Google Maps paste box; a place being put on the map; places still without a position // v32: draw = the work line being drawn ({ pts, name }); found = shops of the chosen kinds along a line
+  draw: null, found: [], foundOn: '', lineRef: '', cats: null, gmOpen: false, placing: '', unplaced: [], g: null,
+  rf: { from: '', to: '', user: '', view: true }, hl: -1, tap: 0, tapHit: null, prev: null }; // v35 rf = the worked-routes filter; hl = the route shown; tap/tapHit = the street under the last tap // v34 g = Google search { enabled, n, cap } // v33: Google Maps paste box; a place being put on the map; places still without a position // v32: draw = the work line being drawn ({ pts, name }); found = shops of the chosen kinds along a line
 const OSM = { nomi: 'https://nominatim.openstreetmap.org/search', over: ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter'], last: 0 };
 const plansAll = () => FS.get(uk('plans'), {}) || {};
 const planFor = d => plansAll()[d] || null;
@@ -1200,7 +1201,7 @@ function planCardHTML() {
 function openPlanner(date) {
   const d = date || today(), p = planFor(d);
   Object.assign(PL, { date: d, start: p && p.start ? Object.assign({}, p.start) : null, end: p && p.end ? Object.assign({}, p.end) : null, stops: p ? clone(p.stops || []) : [],
-    streets: p ? clone(p.streets || []) : [], note: p ? p.note || '' : '', results: [], street: null,
+    streets: p ? clone(p.streets || []) : [], note: p ? p.note || '' : '', results: [], street: null, hl: -1,
     seg: p && ((p.stops || []).length || (p.streets || []).length) ? 'plan' : 'search', q: '', msg: '', busy: false, map: null, lay: null, sel: null, draw: null, found: [], foundOn: '', lineRef: '',
     gmOpen: false, placing: '', unplaced: unplacedFor(d) });
   if (!PL.cats) { const c = FS.get('find_cats', null); PL.cats = Array.isArray(c) ? c.filter(id => FIND.some(k => k.id === id)) : ['kurma', 'sembako', 'haji']; } // the owner's three: dates, Indonesian groceries, Hajj & Umrah
@@ -1218,7 +1219,7 @@ function openPlanner(date) {
 async function loadWorked(force) {
   if (!force && PL.workedAt && Date.now() - PL.workedAt < 300000) return;
   const c = (PL.start && validPos(PL.start) ? PL.start : null) || (S.pos && validPos(S.pos) ? S.pos : null) || shopsCenter();
-  try { const r = await api('streets_worked', c ? { lat: c.lat, lng: c.lng } : {}); PL.worked = r.streets || []; PL.workedAt = Date.now(); FS.set('worked_streets', { at: Date.now(), list: PL.worked }); }
+  try { const r = await api('streets_worked', c ? { lat: c.lat, lng: c.lng } : {}); PL.worked = r.streets || []; PL.workedAt = Date.now(); PL.hl = -1; FS.set('worked_streets', { at: Date.now(), list: PL.worked }); }
   catch (e) { const c = FS.get('worked_streets', null); if (c && Array.isArray(c.list)) PL.worked = c.list; }
 }
 /** Other reps who worked (or plan) this street — the rep is warned, not blocked. */
@@ -1232,14 +1233,15 @@ function drawPlanner() {
   $('#pl-startbox', w).innerHTML = pointBox('pl-start', '🚩', t('plan.start'), PL.start, `<button class="btn xs" data-act="pl-mypos" id="pl-mypos">${ic('locate')} ${esc(t('plan.my_pos'))}</button>`)
     + pointBox('pl-end', '🏁', t('plan.end'), PL.end, `<button class="btn xs" data-act="pl-end-mypos" id="pl-end-mypos">${ic('locate')} ${esc(t('plan.my_pos'))}</button><button class="btn xs" data-act="pl-end-same" id="pl-end-same" ${PL.start ? '' : 'disabled'}>${esc(t('plan.end_same'))}</button>${PL.end ? `<button class="btn xs ghost" data-act="pl-end-clear" id="pl-end-clear" aria-label="${esc(t('plan.remove'))}">✕</button>` : ''}`)
     + `<div class="small muted" style="margin-top:4px">${esc(t('plan.tap_hint'))}</div>`;
-  $('#pl-seg', w).innerHTML = `<button type="button" data-act="pl-seg" data-v="search" class="${PL.seg === 'search' ? 'on' : ''}" id="pl-seg-search">${esc(t('plan.tab_search'))}</button><button type="button" data-act="pl-seg" data-v="line" class="${PL.seg === 'line' ? 'on' : ''}" id="pl-seg-line">✏️ ${esc(t('plan.tab_line'))}</button><button type="button" data-act="pl-seg" data-v="plan" class="${PL.seg === 'plan' ? 'on' : ''}" id="pl-seg-plan">${esc(t('plan.tab_plan', { n: PL.stops.length + PL.streets.length }))}</button>`;
+  $('#pl-seg', w).innerHTML = `<button type="button" data-act="pl-seg" data-v="search" class="${PL.seg === 'search' ? 'on' : ''}" id="pl-seg-search">${esc(t('plan.tab_search'))}</button><button type="button" data-act="pl-seg" data-v="line" class="${PL.seg === 'line' ? 'on' : ''}" id="pl-seg-line">✏️ ${esc(t('plan.tab_line'))}</button><button type="button" data-act="pl-seg" data-v="plan" class="${PL.seg === 'plan' ? 'on' : ''}" id="pl-seg-plan">${esc(t('plan.tab_plan', { n: PL.stops.length + PL.streets.length }))}</button><button type="button" data-act="pl-seg" data-v="routes" class="${PL.seg === 'routes' ? 'on' : ''}" id="pl-seg-routes">${esc(t('plan.tab_routes'))}</button>`;
   $('#pl-drawbar', w).innerHTML = drawBarHTML() + placeBarHTML();
   const mp = $('#pl-map', w); if (mp) mp.classList.toggle('drawing', !!PL.draw);
-  $('#pl-body', w).innerHTML = PL.seg === 'plan' ? planListHTML() : PL.seg === 'line' ? planLineHTML() : planSearchHTML();
+  $('#pl-body', w).innerHTML = PL.seg === 'plan' ? planListHTML() : PL.seg === 'line' ? planLineHTML() : PL.seg === 'routes' ? routesHTML() : planSearchHTML();
   const ln = $('#pl-line-name', w); if (ln) ln.oninput = e => { if (PL.draw) PL.draw.name = e.target.value; };
   const gt = $('#pl-gm-text', w); if (gt) gt.oninput = e => { PL.gmText = e.target.value; };
   const q = $('#pl-q', w); if (q) { q.oninput = e => { PL.q = e.target.value; }; q.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); plSearch(); } }; }
   const nt = $('#pl-note', w); if (nt) nt.oninput = e => { PL.note = e.target.value; };
+  if (PL.seg === 'routes') routesBind(w);
   drawPlanLayers();
 }
 function planSearchHTML() {
@@ -1287,7 +1289,9 @@ function initPlanMap() {
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(m);
   PL.map = m; PL.wlay = L.layerGroup().addTo(m); PL.lay = L.layerGroup().addTo(m);
   PL.clu = clusterLayer(m, S.shops.filter(validPos), (s, lay) => L.circleMarker([s.lat, s.lng], { radius: 5, color: '#fff', weight: 1, fillColor: shopColor(s), fillOpacity: .6 }).bindTooltip(esc(s.name)).on('click', () => { if (!PL.draw) toggleStop(shopItem(s)); }).addTo(lay), shopColor);
-  m.on('moveend', () => drawWorkedLayer());
+  PL.prev = L.layerGroup().addTo(m);
+  m.on('moveend', () => { drawWorkedLayer(); if (PL.seg === 'routes' && PL.rf.view) routesList(); });
+  m.on('popupclose', () => { PL.tap++; if (PL.prev) PL.prev.clearLayers(); });
   const c = (PL.start && validPos(PL.start) ? PL.start : null) || (S.pos && validPos(S.pos) ? S.pos : null) || shopsCenter() || { lat: -6.2655, lng: 106.8605 };
   m.setView([c.lat, c.lng], 15);
   m.on('click', e => planMapClick(e.latlng));
@@ -1297,8 +1301,21 @@ function planMapClick(ll) {
   if (PL.draw) { addDrawPt(ll.lat, ll.lng); return; } // drawing the work line: each tap = the next point
   if (PL.placing) { placeAt(PL.placing, ll.lat, ll.lng); return; } // putting a Google Maps place without a position on the map
   PL.sel = { lat: ll.lat, lng: ll.lng };
-  const html = `<div class="pl-pop"><div class="row wrap" style="gap:6px"><button class="btn xs" data-act="pl-sel-start" id="pl-sel-start">🚩 ${esc(t('plan.set_start'))}</button><button class="btn xs" data-act="pl-sel-end" id="pl-sel-end">🏁 ${esc(t('plan.set_end'))}</button><button class="btn xs primary" data-act="pl-sel-add" id="pl-sel-add">+ ${esc(t('plan.point_here'))}</button></div><button class="btn xs primary block" data-act="pl-sel-street" id="pl-sel-street" style="margin-top:6px" ${PL.busy ? 'disabled' : ''}>🛣️ ${esc(t('plan.street_here'))}</button></div>`;
-  window.L.popup({ closeButton: true, autoPan: true }).setLatLng(ll).setContent(html).openOn(PL.map);
+  const html = `<div class="pl-pop"><div class="row wrap" style="gap:6px"><button class="btn xs" data-act="pl-sel-start" id="pl-sel-start">🚩 ${esc(t('plan.set_start'))}</button><button class="btn xs" data-act="pl-sel-end" id="pl-sel-end">🏁 ${esc(t('plan.set_end'))}</button><button class="btn xs primary" data-act="pl-sel-add" id="pl-sel-add">+ ${esc(t('plan.point_here'))}</button></div><button class="btn xs primary block" data-act="pl-sel-street" id="pl-sel-street" data-state="wait" style="margin-top:6px;white-space:normal;height:auto;min-height:32px;line-height:1.3;padding-block:6px" disabled>🛣️ ${esc(t('plan.street_looking'))}</button></div>`;
+  window.L.popup({ closeButton: true, autoPan: true, minWidth: 230, maxWidth: 290 }).setLatLng(ll).setContent(html).openOn(PL.map);
+  // v35 (owner: "when I put my finger on a street its name comes up — I pick it and the app takes the whole street"):
+  // the named street under the tap is looked up at once, its name shown on the button and the piece of it lit on the map
+  const seq = ++PL.tap; PL.tapHit = null;
+  streetAt(ll).then(hit => tapStreet(seq, hit), () => tapStreet(seq, undefined));
+}
+function tapStreet(seq, hit) {
+  if (seq !== PL.tap) return; // another tap since, or the popup was closed
+  PL.tapHit = hit === undefined ? null : hit;
+  const b = PL.map && document.getElementById('pl-sel-street'); if (!b) return;
+  b.dataset.state = hit ? 'found' : hit === null ? 'none' : 'err';
+  b.disabled = hit === null;
+  b.innerHTML = '<span>🛣️ ' + (hit ? esc(t('plan.street_named', { name: '\u2063' })).replace('\u2063', '<bdi>' + esc(hit.name) + '</bdi>') : esc(t(hit === null ? 'plan.street_none_here' : 'plan.street_here'))) + '</span>'; // one span: the name flows inside the sentence
+  if (hit && hit.geom && PL.prev) window.L.polyline(hit.geom, { color: '#F59E0B', weight: 9, opacity: .85 }).addTo(PL.prev);
 }
 function drawPlanLayers() {
   const m = PL.map, L = window.L; if (!m || !PL.lay) return;
@@ -1330,14 +1347,59 @@ function drawWorkedLayer() {
   const m = PL.map, L = window.L; if (!m || !PL.wlay || !m._loaded) return;
   PL.wlay.clearLayers();
   const b = m.getBounds().pad(0.3), bw = [b.getSouth(), b.getNorth(), b.getWest(), b.getEast()];
+  const hl = (PL.worked || [])[PL.hl];
   (PL.worked || []).forEach(wk => {
     const mine = normTxt(wk.user) === normTxt(S.user); if (mine && wk.plan_date === PL.date) return;
+    if (!routeOk(wk) && wk !== hl) return; // v35: only the routes of the dates / rep chosen in "Riwayat rute"
     (wk.lines || []).forEach(ln => {
       if (!Array.isArray(ln) || ln.length < 2) return;
       const c = ln._b || (ln._b = boxOf(ln)); if (c[1] < bw[0] || c[0] > bw[1] || c[3] < bw[2] || c[2] > bw[3]) return; // outside the view
-      L.polyline(ln, { color: mine ? '#64748B' : '#E11D48', weight: 6, opacity: .45 }).bindTooltip(esc(wk.name + ' · ' + t(wk.status === 'planned' ? 'plan.planned_by' : 'plan.worked_by', { u: wk.user, d: fmtDate(wk.plan_date) }))).addTo(PL.wlay);
+      L.polyline(ln, wk === hl ? { color: '#F59E0B', weight: 9, opacity: .9 } : { color: mine ? '#64748B' : '#E11D48', weight: 6, opacity: .45 }).bindTooltip(esc(wk.name + ' · ' + t(wk.status === 'planned' ? 'plan.planned_by' : 'plan.worked_by', { u: wk.user, d: fmtDate(wk.plan_date) }))).addTo(PL.wlay);
     });
   });
+}
+/* ---- v35 (owner 2026-10-11: "a button to choose the routes walked by DATE … all the routes in one place — all of them, by
+   area, or the ones of the area the map is on"): every street / work line any rep worked or planned (kept forever), filtered
+   by dates, rep and "only on the map now"; a tap shows the route lit on the map. Same data as the red/grey lines — no new call. */
+const routeOk = w => { const f = PL.rf; return (!f.from || w.plan_date >= f.from) && (!f.to || w.plan_date <= f.to) && (!f.user || (f.user === '__me' ? normTxt(w.user) === normTxt(S.user) : normTxt(w.user) === normTxt(f.user))); };
+function routeInView(w) {
+  const m = PL.map; if (!m || !m._loaded) return true;
+  const b = m.getBounds(), bw = [b.getSouth(), b.getNorth(), b.getWest(), b.getEast()];
+  return (w.lines || []).some(ln => { if (!Array.isArray(ln) || ln.length < 2) return false; const c = ln._b || (ln._b = boxOf(ln)); return !(c[1] < bw[0] || c[0] > bw[1] || c[3] < bw[2] || c[2] > bw[3]); });
+}
+const routesShown = () => (PL.worked || []).map((w, i) => ({ w, i })).filter(o => routeOk(o.w) && (!PL.rf.view || routeInView(o.w))).sort((a, b) => String(b.w.plan_date).localeCompare(String(a.w.plan_date)) || String(a.w.name).localeCompare(String(b.w.name)));
+function routesHTML() {
+  const f = PL.rf, T = today(), users = [...new Set((PL.worked || []).map(w => w.user).filter(u => normTxt(u) !== normTxt(S.user)))].sort();
+  const quick = [['7', addDays(T, -6)], ['30', addDays(T, -29)], ['all', '']].map(([k, from]) => { const on = f.from === from && (k === 'all' ? !f.to : f.to === T); return `<button type="button" class="chip ${on ? 'on' : ''}" data-act="pl-rq" data-k="${k}" aria-pressed="${on}" id="pl-rq-${k}">${esc(t('plan.rq_' + k))}</button>`; }).join('');
+  return `<div class="small muted">${esc(t('plan.routes_hint'))}</div>
+    <div class="chips wrap" style="margin-top:8px">${quick}</div>
+    <div class="row wrap" style="gap:8px;margin-top:8px"><label class="small grow">${esc(t('plan.rf_from'))}<input class="input" type="date" id="pl-rf-from" value="${esc(f.from)}"></label><label class="small grow">${esc(t('plan.rf_to'))}<input class="input" type="date" id="pl-rf-to" value="${esc(f.to)}"></label></div>
+    <div class="row wrap" style="gap:8px;margin-top:8px;align-items:center"><select class="input grow" id="pl-rf-user" aria-label="${esc(t('plan.rf_user'))}"><option value="">${esc(t('plan.rf_all'))}</option><option value="__me" ${f.user === '__me' ? 'selected' : ''}>${esc(t('plan.rf_me'))}</option>${users.map(u => `<option ${f.user === u ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select>
+      <label class="small row" style="gap:6px;align-items:center"><input type="checkbox" id="pl-rf-view" ${f.view ? 'checked' : ''}> ${esc(t('plan.rf_view'))}</label></div>
+    <div class="small" style="font-weight:800;margin:12px 0 6px" id="pl-routes-n"></div>
+    <div class="list" id="pl-routes"></div>`;
+}
+function routesList() {
+  const box = PL.el && $('#pl-routes', PL.el); if (!box) return;
+  const all = routesShown(), list = all.slice(0, 200);
+  $('#pl-routes-n', PL.el).textContent = '🗂️ ' + t('plan.routes_n', { n: all.length });
+  box.innerHTML = list.length ? list.map(({ w, i }) => { const mine = normTxt(w.user) === normTxt(S.user); return `<button type="button" class="li pl-route ${i === PL.hl ? 'sel' : ''}" data-act="pl-route" data-i="${i}" data-date="${esc(w.plan_date)}" data-user="${esc(w.user)}" style="text-align:start;width:100%"><span class="start-pin" aria-hidden="true">${w.drawn ? '✏️' : '🛣️'}</span><div class="grow"><div class="t">${esc(w.name)}</div><div class="s">${esc([mine ? t('plan.rf_me') : w.user, fmtDate(w.plan_date), t(w.status === 'planned' ? 'plan.r_planned' : 'plan.r_worked'), NF1.format(linesM(w.lines) / 1000) + ' km'].join(' · '))}</div></div><span class="kdot" style="--kc:${mine ? '#64748B' : '#E11D48'}" aria-hidden="true"></span></button>`; }).join('')
+    : `<div class="muted small" id="pl-no-routes">${esc(t(PL.worked && PL.worked.length ? 'plan.no_routes' : 'plan.no_routes0'))}</div>`;
+}
+function routesBind(w) {
+  const f = PL.rf, upd = () => { drawWorkedLayer(); routesList(); };
+  const a = $('#pl-rf-from', w), b = $('#pl-rf-to', w), u = $('#pl-rf-user', w), v = $('#pl-rf-view', w);
+  if (a) a.onchange = e => { f.from = e.target.value; drawPlanner(); };
+  if (b) b.onchange = e => { f.to = e.target.value; drawPlanner(); };
+  if (u) u.onchange = e => { f.user = e.target.value; upd(); };
+  if (v) v.onchange = e => { f.view = e.target.checked; upd(); };
+  routesList();
+}
+function showRoute(i) {
+  const w = (PL.worked || [])[i]; if (!w) return;
+  PL.hl = i; drawWorkedLayer(); routesList();
+  const pts = (w.lines || []).flat().filter(q => Array.isArray(q));
+  if (PL.map && pts.length) PL.map.fitBounds(pts, { padding: [30, 30], maxZoom: 17, animate: false });
 }
 function fitPlan(items) {
   const m = PL.map; if (!m) return;
@@ -1449,14 +1511,55 @@ function addDrawPt(lat, lng) {
   PL.draw.pts.push([r5(lat), r5(lng)]);
   drawPlanner();
 }
-function finishDraw() {
-  const d = PL.draw; if (!d) return;
+/* ---- v35 (owner 2026-10-11: "the green line we draw is sometimes away from the road — bring it back onto the road") ----
+   On "Selesai" every drawn point is moved onto the nearest road (≤ SNAP_M, OpenStreetMap, free — not through our server)
+   and, between two points on the same road, the line follows the road's own bends. A point with no road near it (or no
+   internet) stays where it was drawn, so the line is never lost. */
+const SNAP_M = 35;
+function snapLine(pts, js) {
+  const ways = ((js && js.elements) || []).filter(x => x.type === 'way' && x.tags && x.tags.highway && Array.isArray(x.geometry) && x.geometry.length > 1).map(x => x.geometry.map(g => [g.lat, g.lon]));
+  if (!ways.length || pts.length < 2) return null;
+  const kx = 111320 * Math.cos(pts[0][0] * Math.PI / 180), ky = 110540, P = q => [q[1] * kx, q[0] * ky]; // degrees → metres
+  const snaps = pts.map(p => {
+    const [px, py] = P(p); let best = null;
+    ways.forEach((w, wi) => { for (let i = 1; i < w.length; i++) {
+      const [ax, ay] = P(w[i - 1]), [bx, by] = P(w[i]), dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+      const u = L2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L2)) : 0, d = Math.hypot(ax + u * dx - px, ay + u * dy - py);
+      if (!best || d < best.d) best = { d, wi, pos: i - 1 + u, q: [w[i - 1][0] + u * (w[i][0] - w[i - 1][0]), w[i - 1][1] + u * (w[i][1] - w[i - 1][1])] };
+    } });
+    return best && best.d <= SNAP_M ? best : { wi: -1, q: p };
+  });
+  const out = []; let moved = 0;
+  const add = q => { const l = out[out.length - 1], r = [r5(q[0]), r5(q[1])]; if (!l || l[0] !== r[0] || l[1] !== r[1]) out.push(r); };
+  snaps.forEach((s, k) => {
+    if (s.wi >= 0) moved++;
+    const a = snaps[k - 1];
+    if (a && a.wi >= 0 && a.wi === s.wi) { // both on the same road: follow its bends between the two points
+      const w = ways[s.wi], mid = [];
+      if (a.pos < s.pos) for (let i = Math.floor(a.pos) + 1; i <= Math.ceil(s.pos) - 1; i++) mid.push(w[i]);
+      else for (let i = Math.ceil(a.pos) - 1; i >= Math.floor(s.pos) + 1; i--) mid.push(w[i]);
+      if (lineM([a.q].concat(mid, [s.q])) <= 3 * lineM([a.q, s.q]) + 60) mid.forEach(add); // not round a loop road
+    }
+    add(s.q);
+  });
+  return out.length > 1 && moved ? { pts: out, moved } : null;
+}
+async function finishDraw() {
+  const d = PL.draw; if (!d || PL.busy) return;
   if (d.pts.length < 2) { toast(t('plan.draw_need2'), 'err'); return; }
   if (PL.streets.length >= 15) { toast(t('plan.max_streets'), 'err'); return; }
   const inp = PL.el && $('#pl-line-name', PL.el), nm = String((inp ? inp.value : d.name) || '').trim().slice(0, 60) || t('plan.line_name', { n: drawnCount() + 1 });
-  const lines = simplifyLines([d.pts]);
+  let snap = null;
+  if (navigator.onLine) {
+    d.name = nm; PL.busy = true; PL.msg = t('plan.snapping'); drawPlanner();
+    try { snap = snapLine(d.pts, await overpass(`[out:json][timeout:25];way(around:${SNAP_M},${qCoords(d.pts)})["highway"]["highway"!~"^(platform|proposed|construction|corridor|elevator|steps)$"];out geom;`)); }
+    catch (e) { console.warn('snap', e); }
+    PL.busy = false;
+    if (PL.draw !== d) return; // cancelled meanwhile
+  }
+  const lines = simplifyLines([snap ? snap.pts : d.pts]);
   const x = { ref: 'ln:' + uuid().slice(0, 8), name: nm, lines: lines.length ? lines : [d.pts.slice(0, 150)], drawn: true };
-  PL.streets.push(x); PL.draw = null; PL.lineRef = x.ref; PL.found = []; PL.foundOn = ''; PL.msg = t('plan.line_saved', { n: d.pts.length }); PL.seg = 'line';
+  PL.streets.push(x); PL.draw = null; PL.lineRef = x.ref; PL.found = []; PL.foundOn = ''; PL.msg = t('plan.line_saved', { n: d.pts.length }) + (snap ? ' ' + t('plan.snapped', { n: snap.moved }) : ''); PL.seg = 'line';
   const warn = lineWorkedNote(x); if (warn) toast('⚠ ' + warn, 'warn', 6000);
   drawPlanner(); fitPlan(x.lines[0].map(q => ({ lat: q[0], lng: q[1] })));
 }
@@ -1857,14 +1960,16 @@ function nearestStreet(js, ll) {
   if (!best) return null;
   const la = best.g.map(q => q.lat), lo = best.g.map(q => q.lon);
   return { ref: 'osm:st', src: 'osm', kind: 'street', named: true, name: best.name, lat: ll.lat, lng: ll.lng,
-    bbox: [Math.min(...la), Math.max(...la), Math.min(...lo), Math.max(...lo)] };
+    bbox: [Math.min(...la), Math.max(...la), Math.min(...lo), Math.max(...lo)], geom: best.g.map(q => [q.lat, q.lon]) };
 }
-async function plStreetAt(ll) {
+const streetAt = async ll => nearestStreet(await overpass(`[out:json][timeout:20];way(around:40,${(+ll.lat).toFixed(6)},${(+ll.lng).toFixed(6)})["highway"]["name"]["highway"!~"^(platform|proposed|construction|corridor|elevator)$"];out tags geom;`), ll);
+async function plStreetAt(ll, known) {
   if (PL.map) PL.map.closePopup();
   if (PL.busy) return;
+  if (known) return plWorkStreet(Object.assign({}, known, { geom: undefined })); // already found when the map was tapped
   PL.busy = true; PL.msg = t('plan.street_finding'); PL.seg = 'search'; drawPlanner();
   let hit = null;
-  try { hit = nearestStreet(await overpass(`[out:json][timeout:20];way(around:40,${(+ll.lat).toFixed(6)},${(+ll.lng).toFixed(6)})["highway"]["name"]["highway"!~"^(platform|proposed|construction|corridor|elevator)$"];out tags geom;`), ll); }
+  try { hit = await streetAt(ll); }
   catch (e) { console.warn('street at', e); PL.busy = false; PL.msg = navigator.onLine ? t('plan.search_err') : t('plan.need_net'); drawPlanner(); return; }
   PL.busy = false;
   if (!hit) { PL.msg = t('plan.street_none'); drawPlanner(); toast(t('plan.street_none'), 'warn', 5000); return; }
@@ -2562,7 +2667,9 @@ const ACT = {
   'pl-end-mypos': async () => { const p = await myPosition(); if (!p) { toast(t('gps.denied'), 'err'); return; } PL.end = { label: t('plan.my_pos_label'), lat: p.lat, lng: p.lng }; drawPlanner(); },
   'pl-end-same': () => { if (PL.start) { PL.end = Object.assign({}, PL.start); drawPlanner(); } },
   'pl-end-clear': () => { PL.end = null; drawPlanner(); },
-  'pl-sel-street': () => { const sel = PL.sel; if (sel) return plStreetAt(sel); },
+  'pl-rq': el => { const T = today(), k = el.dataset.k; PL.rf.from = k === 'all' ? '' : addDays(T, k === '7' ? -6 : -29); PL.rf.to = k === 'all' ? '' : T; drawPlanner(); },
+  'pl-route': el => showRoute(int(el.dataset.i)),
+  'pl-sel-street': () => { const sel = PL.sel, hit = PL.tapHit; if (sel) return plStreetAt(sel, hit); },
   'pl-sel-end': () => { if (!PL.sel) return; PL.end = { label: t('plan.picked'), lat: PL.sel.lat, lng: PL.sel.lng }; if (PL.map) PL.map.closePopup(); drawPlanner(); },
   'pl-save': () => {
     if (PL.draw) { if (PL.draw.pts.length > 1) finishDraw(); else PL.draw = null; } // a line still being drawn is kept, not lost
@@ -2697,7 +2804,12 @@ const I18N = {
     'plan.set_start': 'Mulai dari sini', 'plan.along': 'Toko sepanjang jalan', 'plan.go_there': 'Lihat di peta', 'plan.added': 'Ditambahkan', 'plan.add': 'Tambah',
     'plan.km': '± {km} km garis lurus', 'plan.sort': 'Urutkan otomatis (terdekat dulu)', 'plan.up': 'Naik', 'plan.down': 'Turun', 'plan.remove': 'Hapus',
     'plan.empty': 'Belum ada titik. Cari toko di tab Cari atau ketuk peta.', 'plan.need_net': 'Perencanaan butuh internet (peta & pencarian).',
-    'plan.point_here': 'Tambah titik di sini', 'plan.street_here': 'Kerjakan seluruh jalan ini', 'plan.street_finding': 'Mencari jalan di titik ini…',
+    'plan.point_here': 'Tambah titik di sini', 'plan.street_here': 'Kerjakan seluruh jalan ini', 'plan.street_looking': 'Mencari nama jalan…', 'plan.street_named': 'Kerjakan seluruh {name}', 'plan.street_none_here': 'Tidak ada jalan bernama di sini',
+    'plan.snapping': 'Menempelkan garis ke jalan…', 'plan.snapped': '{n} titik ditempelkan ke jalan terdekat.',
+    'plan.tab_routes': '🗂️ Riwayat', 'plan.routes_hint': 'Semua jalan & garis kerja yang pernah dikerjakan / direncanakan sales. Pilih tanggal, sales, atau hanya yang ada di peta sekarang — ketuk untuk melihatnya di peta.',
+    'plan.rq_7': '7 hari', 'plan.rq_30': '30 hari', 'plan.rq_all': 'Semua', 'plan.rf_from': 'Dari tanggal', 'plan.rf_to': 'Sampai tanggal', 'plan.rf_user': 'Sales', 'plan.rf_all': 'Semua sales', 'plan.rf_me': 'Saya',
+    'plan.rf_view': 'Hanya di peta sekarang', 'plan.routes_n': '{n} rute', 'plan.r_planned': 'direncanakan', 'plan.r_worked': 'dikerjakan',
+    'plan.no_routes': 'Tidak ada rute untuk pilihan ini. Geser / perkecil peta, atau ubah tanggal.', 'plan.no_routes0': 'Belum ada rute yang dikerjakan.', 'plan.street_finding': 'Mencari jalan di titik ini…',
     'plan.street_none': 'Tidak ada jalan bernama di titik ini. Ketuk tepat di atas jalan, atau gambar garis kerja.', 'plan.point_name': 'Nama tempat ini (toko / warung / masjid…)', 'plan.max': 'Maksimal 60 titik',
     'plan.searching': 'Mencari…', 'plan.search_err': 'Pencarian sedang tidak tersedia. Coba lagi sebentar, atau ketuk peta untuk menambah titik.', 'plan.q_short': 'Ketik minimal 3 huruf',
     'plan.found': '{n} hasil', 'plan.found_along': '{n} tempat di sepanjang jalan ini', 'plan.no_results': 'Tidak ditemukan. Coba nama lain atau geser peta ke area itu.',
@@ -2830,7 +2942,12 @@ const I18N = {
     'plan.set_start': 'ابدأ من هنا', 'plan.along': 'المحلات على طول الشارع', 'plan.go_there': 'اعرض على الخريطة', 'plan.added': 'مُضاف', 'plan.add': 'أضف',
     'plan.km': '± {km} كم بخط مستقيم', 'plan.sort': 'رتّب تلقائيًا (الأقرب أولًا)', 'plan.up': 'لأعلى', 'plan.down': 'لأسفل', 'plan.remove': 'حذف',
     'plan.empty': 'لا توجد نقاط بعد. ابحث في تبويب «بحث» أو اضغط على الخريطة.', 'plan.need_net': 'التخطيط يحتاج إنترنت (الخريطة والبحث).',
-    'plan.point_here': 'أضف نقطة هنا', 'plan.street_here': 'اعمل في هذا الشارع كاملًا', 'plan.street_finding': 'جارٍ تحديد الشارع في هذه النقطة…',
+    'plan.point_here': 'أضف نقطة هنا', 'plan.street_here': 'اعمل في هذا الشارع كاملًا', 'plan.street_looking': 'جارٍ معرفة اسم الشارع…', 'plan.street_named': 'اعمل في {name} كاملًا', 'plan.street_none_here': 'لا يوجد شارع له اسم هنا',
+    'plan.snapping': 'جارٍ إرجاع الخط إلى الطريق…', 'plan.snapped': 'أُرجعت {n} نقطة إلى أقرب طريق.',
+    'plan.tab_routes': '🗂️ المسارات', 'plan.routes_hint': 'كل الشوارع وخطوط العمل التي عمل فيها المندوبون أو خططوا لها. اختر التاريخ أو المندوب أو ما يظهر على الخريطة الآن فقط — اضغط على مسار لتراه على الخريطة.',
+    'plan.rq_7': '7 أيام', 'plan.rq_30': '30 يومًا', 'plan.rq_all': 'الكل', 'plan.rf_from': 'من تاريخ', 'plan.rf_to': 'إلى تاريخ', 'plan.rf_user': 'المندوب', 'plan.rf_all': 'كل المندوبين', 'plan.rf_me': 'أنا',
+    'plan.rf_view': 'فقط ما على الخريطة الآن', 'plan.routes_n': '{n} مسار', 'plan.r_planned': 'مخطط له', 'plan.r_worked': 'تم العمل فيه',
+    'plan.no_routes': 'لا مسارات لهذا الاختيار. حرّك الخريطة أو صغّرها، أو غيّر التاريخ.', 'plan.no_routes0': 'لا توجد مسارات عُمل فيها بعد.', 'plan.street_finding': 'جارٍ تحديد الشارع في هذه النقطة…',
     'plan.street_none': 'لا يوجد شارع له اسم في هذه النقطة. اضغط فوق الشارع تمامًا، أو ارسم خط العمل.', 'plan.point_name': 'اسم هذا المكان (محل / وارونغ / مسجد…)', 'plan.max': 'الحد الأقصى 60 نقطة',
     'plan.searching': 'جارٍ البحث…', 'plan.search_err': 'البحث غير متاح الآن. حاول بعد قليل، أو اضغط على الخريطة لإضافة نقطة.', 'plan.q_short': 'اكتب 3 أحرف على الأقل',
     'plan.found': '{n} نتيجة', 'plan.found_along': '{n} مكانًا على طول هذا الشارع', 'plan.no_results': 'لا نتائج. جرّب اسمًا آخر أو حرّك الخريطة إلى المنطقة.',
