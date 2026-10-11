@@ -91,6 +91,7 @@
 <script src="../shared/face.js"></script>
 <script src="../shared/att-kiosk.js"></script>
 <script src="../shared/chat-ui.js"></script>
+<script src="../shared/tamper-guard.js"></script>
 <script src="../shared/field-mock.js"></script>
 <script src="../shared/gmaps-import.js"></script>
 <script src="mock.js"></script>
@@ -531,23 +532,48 @@ function enforceRule(el) {
 /* v19 anti-tamper (client): a clear code attempt in a field instantly stops the account; only the owner opens it. */
 const CODE_RUN = /[<>{}\[\];`$\\|=]{3,}/, CODE_TOK = /<\s*\/?\s*script\b|<\/[a-z]|javascript:|\$\{|=>|\beval\s*\(|\bfunction\s*\(|\b(?:document|window|globalThis|self)\s*\.\s*[a-z_$]|\brequire\s*\(|\bimport\s*\(/i;
 const codeAttempt = v => { v = String(v || ''); return CODE_RUN.test(v) || CODE_TOK.test(v); };
-let TAMPERED = false;
-function tamperLockUI(msg) {
+let TAMPERED = false, TAMPER_BUSY = false;
+function tamperLockUI(msg, force) {
+  if (TAMPER_BUSY && !force) return; // v36: a trip in progress locks the screen itself once the photo has been sent
   TAMPERED = true;
   try { closeModal(true); } catch (e) { }
   S.pin_hash = ''; S.inApp = false; try { KS.del('session'); SESS.del(); } catch (e) { }
   L.sel = ''; L.users = [];
   showLogin('users', msg || t('tamper.locked'));
 }
-async function tamperTrip(where) {
-  if (TAMPERED || isOwner() || !S.inApp || !S.user) return;
-  try { await api('report_tamper', { where: String(where || '').slice(0, 60) }); } catch (e) { }
-  tamperLockUI();
+/* v36 (owner 2026-10-11: «صور من يحاول كتابة الكود هذا ضروري جدا»): the account is locked on the server at once (photo
+   'pending'), then the FRONT-camera photo of whoever typed it — or why there is none (camera refused / no camera) — follows
+   for the same shot (../shared/tamper-guard.js). The screen is covered meanwhile; the lock never waits for the camera. */
+async function tamperTrip(where, kind, sample) {
+  if (TAMPERED || TAMPER_BUSY || isOwner() || !S.inApp || !S.user) return;
+  TAMPER_BUSY = true;
+  const G = window.KGuard, base = { where: String(where || '').slice(0, 60), kind: kind === 'digits' ? 'digits' : 'code', sample: kind === 'digits' ? String(sample || '').slice(0, 24) : '' };
+  try {
+    if (!G) { await api('report_tamper', Object.assign({ photo_status: 'none' }, base)).catch(() => null); }
+    else {
+      G.veil(t('tamper.locked')); base.shot_id = G.shotId();
+      const shotP = G.snap(), first = api('report_tamper', Object.assign({ photo_status: 'pending' }, base)).catch(() => null);
+      const shot = await shotP; await first;
+      await Promise.race([api('report_tamper', Object.assign({}, base, { photo_status: shot.status }, shot.photo ? { photo: shot.photo } : {})).catch(() => null), new Promise(r => setTimeout(r, 15000))]);
+    }
+  } catch (e) { }
+  TAMPER_BUSY = false;
+  if (G) G.unveil();
+  tamperLockUI(undefined, true);
 }
 function onInputAll(e) {
   if (!e.isComposing) enforceRule(e.target);
   const el = e.target;
-  if (el && S.inApp && !isOwner() && el.value && codeAttempt(el.value)) { try { el.value = ''; } catch (_) { } tamperTrip((el.id || (el.dataset && el.dataset.rule) || 'input')); }
+  if (window.KGuard) KGuard.track(e);
+  if (el && S.inApp && !isOwner() && el.value) {
+    const where = el.id || el.getAttribute('name') || (el.dataset && el.dataset.rule) || 'input';
+    if (codeAttempt(el.value)) { try { el.value = ''; } catch (_) { } tamperTrip(where); }
+    else if (el.matches && el.matches('input, textarea')) {
+      // v36 (owner: «أرقام متتالية … يغلق التطبيق»): a run of 8+ sequential / repeated digits in a FREE-TEXT field only
+      const run = window.KGuard ? KGuard.digitAttempt(el, ruleName(el)) : '';
+      if (run) { try { el.value = ''; } catch (_) { } tamperTrip(where, 'digits', run); }
+    }
+  }
 }
 document.addEventListener('input', onInputAll, true);
 document.addEventListener('compositionend', e => enforceRule(e.target), true);
@@ -695,7 +721,9 @@ function renderLogin() {
       <div class="center" style="margin-top:8px"><button class="btn ghost sm" data-act="login-back">${esc(t('login.switch'))}</button></div>
       <div class="center"><button class="linkbtn" data-act="login-master" id="login-master">${esc(t(master ? 'login.use_pin' : 'login.use_master'))}</button></div>`;
   }
-  box.innerHTML = `<div class="screen-card">${brand}${inner}${foot}</div>`;
+  // v36 (owner 2026-10-11): permanent notice on the login / lock screen of the store devices
+  const camNote = `<div class="cam-note small muted center" id="cam-note" style="margin-top:10px">📷 ${esc(t('cam.notice'))}</div>`;
+  box.innerHTML = `<div class="screen-card">${brand}${inner}${camNote}${foot}</div>`;
   const k = $('#lg-key'); if (k) { k.addEventListener('keydown', e => { if (e.key === 'Enter') ACT['login-key'](); }); setTimeout(() => k.focus(), 30); }
 }
 function pinpadHTML(locked) {
@@ -816,6 +844,7 @@ async function enterApp(offline) {
   $('#login').hidden = true; $('#app').hidden = false;
   S.inApp = true;
   if (!S.products.length) applyData(KS.get('cache'));
+  try { TAMPERED = false; } catch (e) { } // v36: a new login (e.g. after the owner unlocked) watches the fields again
   if (!S.cart) S.cart = loadCart();
   renderShell(); SELL.built = false;
   go(S.view || 'sell', true);
@@ -825,6 +854,7 @@ async function enterApp(offline) {
   checkShiftGate();
   pollApprovals(); checkMyRequests();
   devBoot();
+  if (!isOwner()) { try { if (window.KGuard) KGuard.prime(); } catch (e) { } } // v36: ask for the camera once at a staff login (silent shot later)
   try { if (window.KChatUI) KChatUI.start({ api: apiChat, lang: S.lang }); } catch (e) { }
 }
 function lock() {
@@ -1621,12 +1651,14 @@ function openSurvey() {
 }
 
 /* ========== Voice survey: the cashier talks with the customer while paying, the phone writes it down ==========
-   UU PDP: nothing is captured before the consent tap ("Pelanggan setuju — mulai rekam") in the payment window.
-   Speech-to-text only: no audio is stored or uploaded; the text goes with the sale (survey_transcript) only
-   when the consent tap happened. Finishing the payment stops the recording; paying never waits for it.
+   v36 (owner 2026-10-11: «في التسجيل التلقائي عند الضغط ابدأ بدون سؤال الزبون»): recording starts BY ITSELF when Bayar
+   opens the payment window — no consent question; a visible notice instead ("🎙️ Rekaman aktif" while recording, the
+   line "Transaksi direkam untuk layanan & keamanan" in the window and on the receipt). The owner's setting
+   survey_auto off = no auto start (the "Mulai rekam" button). Speech-to-text only: no audio is stored or uploaded; the text
+   goes with the sale (survey_transcript; survey_consent = a recording ran). Finishing the payment stops it; paying never waits.
    Cart state: cart.voice = null (not asked) | { consent: true, text } | { skipped: true }. */
 const VS_MAX_MS = 10 * 60000, VS_MAX_CHARS = 4000;
-const VS = { on: false, rec: null, cart: null, started: 0, interim: '', tick: null, restart: null, ask: '', asked: [], cid: '' };
+const VS = { on: false, rec: null, cart: null, started: 0, interim: '', tick: null, restart: null, ask: '', asked: [], cid: '', auto: false, fail: '' };
 /** Web Speech API present (Chrome/Android; not iOS Safari or Firefox) and the owner did not turn it off. */
 const voiceSurveyOn = () => !!SpeechRec && settings().survey_voice !== false;
 const vsClean = s => String(s || '').replace(/\s+/g, ' ').trim().slice(0, VS_MAX_CHARS).trim();
@@ -1641,7 +1673,7 @@ function startVoice() {
   clearTimeout(VOICE.timer); try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) { } // item names are not spoken while recording
   const cart = S.cart;
   cart.voice = { consent: true, text: cart.voice && cart.voice.consent ? cart.voice.text || '' : '' }; saveCart();
-  Object.assign(VS, { on: true, cart, started: Date.now(), interim: '', ask: '' });
+  Object.assign(VS, { on: true, cart, started: Date.now(), interim: '', ask: '', fail: '' });
   VS.tick = setInterval(vsTick, 1000);
   vsListen();
   drawVoice();
@@ -1674,9 +1706,13 @@ function vsListen() {
 }
 /** Recording impossible (microphone refused, no internet): stop; with no text yet the consent banner comes back. */
 function vsFail(msgKey) {
-  const cart = VS.cart;
+  const cart = VS.cart, auto = VS.auto;
+  VS.auto = false;
   stopVoice();
-  if (cart && cart.voice && cart.voice.consent && !cart.voice.text) { cart.voice = null; if (cart === S.cart) saveCart(); drawVoice(); }
+  if (cart && cart.voice && cart.voice.consent && !cart.voice.text) { cart.voice = null; if (cart === S.cart) saveCart(); }
+  // v36: an automatic start that fails (no microphone permission / no internet) says so quietly in the window, not as an error toast
+  if (auto) { VS.fail = msgKey; drawVoice(); return; }
+  drawVoice();
   toast(t(msgKey), 'err', 4000);
 }
 /** Stops listening; words still being recognised (interim) are kept as they are. */
@@ -1709,7 +1745,8 @@ function voiceHTML() {
   const manual = `<button type="button" class="linkbtn" id="vs-manual" data-act="survey-open">${ic('list')}${esc(t('vs.manual'))}${sv && !sv.skipped ? ` <span class="badge ok">${esc(t('survey.done'))}</span>` : ''}</button>`;
   if (!voiceSurveyOn()) return `<div class="vs-links">${manual}</div>`;
   if (VS.on && VS.cart === c) return `<div class="vs rec" id="vs-rec">
-      <div class="vs-h"><span class="rec-dot" aria-hidden="true"></span><span class="grow" role="status">${esc(t('vs.recording'))} <span class="num" id="vs-time">0:00</span></span><button type="button" class="btn sm danger" data-act="vs-stop" id="vs-stop">■ ${esc(t('vs.stop'))}</button></div>
+      <div class="vs-h"><span class="rec-dot" aria-hidden="true"></span><span class="grow" role="status">🎙️ ${esc(t('vs.recording'))} <span class="num" id="vs-time">0:00</span></span><button type="button" class="btn sm danger" data-act="vs-stop" id="vs-stop">■ ${esc(t('vs.stop'))}</button></div>
+      <div class="vs-hint small" id="vs-notice" style="margin:2px 0 0">${esc(t('vs.notice'))}</div>
       <div class="vs-hint" style="margin:4px 0 0">${esc(t('vs.ask_hint'))}</div>
       <ol class="vs-qs" id="vs-qs">${qs.map((q, i) => `<li><label><input type="checkbox" data-vsq="${i}" ${VS.asked.includes(i) ? 'checked' : ''}><span dir="auto">${i + 1}. ${esc(q)}</span></label></li>`).join('')}</ol>
       <div class="vs-tx" dir="auto" id="vs-tx" aria-live="polite"></div>
@@ -1718,7 +1755,7 @@ function voiceHTML() {
       <div class="vs-tx" dir="auto" id="vs-tx"></div><div class="vs-links">${manual}</div></div>`;
   if (!v && (settings().survey_auto !== false || VS.ask === c.client_id)) return `<div class="vs" id="vs-ask">
       <div class="vs-h"><span aria-hidden="true">🎙</span><span class="grow">${esc(t('vs.title'))}</span></div>
-      <div class="vs-hint">${esc(t('vs.hint'))}</div>
+      <div class="vs-hint">${esc(t('vs.hint'))}</div><div class="vs-hint small" id="vs-notice">${esc(t('vs.notice'))}</div>${VS.fail ? `<div class="red small" id="vs-fail">${esc(t(VS.fail))}</div>` : ''}
       <button type="button" class="btn primary vs-go" data-act="vs-start" id="vs-start">${ic('mic')} ${esc(t('vs.consent'))}</button>
       <div class="vs-links"><button type="button" class="linkbtn" data-act="vs-skip" id="vs-skip">${esc(t('vs.skip'))}</button>${manual}</div></div>`;
   // skipped, or not shown automatically (settings.survey_auto off): a small link brings the banner back
@@ -1754,9 +1791,11 @@ function openPay() {
   if (shiftNeeded() && navigator.onLine) { showGate(); return; }
   // no survey step here any more: the voice survey / manual survey live inside the payment window and never block it
   closeCartSheet();
-  if (S.cart.client_id !== VS.cid) { VS.asked = []; VS.cid = S.cart.client_id; }
+  if (S.cart.client_id !== VS.cid) { VS.asked = []; VS.cid = S.cart.client_id; VS.fail = ''; }
   const el = openModal({ title: t('pay.title'), id: 'pay', focus: false, onClose: () => { stopVoice(); refreshCartNumbers(); }, body: '', foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary big grow" id="pay-ok">${esc(t('pay.finish'))}</button>` });
   drawPay(el);
+  // v36 (owner: «عند الضغط ابدأ بدون سؤال الزبون»): Bayar starts the recording at once — no consent prompt (notice shown)
+  if (voiceSurveyOn() && !S.cart.voice && settings().survey_auto !== false && !VS.on) { VS.auto = true; startVoice(); }
   $('#pay-ok', el).onclick = () => payOk();
 }
 function drawPay(bg) {
@@ -1861,7 +1900,7 @@ function buildSaleRequest(v, pay) {
     customer_id: v.cust ? v.cust.id : null, customer_name: v.cust ? v.cust.name : 'Umum', customer_type: v.cust ? v.cust.type : 'eceran',
     items: v.lines.map(l => ({ product_id: l.p.id, qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type })),
     discount: v.discount, payment_method: pay.method, paid_amount: Math.min(pay.paid, v.total),
-    survey: manual ? sv.answers : [], survey_consent: manual || !!vo, survey_transcript: vo ? vsClean(vo.text) : '', // transcript only after the consent tap
+    survey: manual ? sv.answers : [], survey_consent: manual || !!vo, survey_transcript: vo ? vsClean(vo.text) : '', // transcript only when a recording ran (v36: it starts by itself on Bayar)
     channel: c.channel || 'toko', promo_code: cleanPromo(c.promo), notes: '', send_receipt: v.send
   };
 }
@@ -1872,7 +1911,8 @@ function receiptFromCart(v, pay, req) {
     lines: v.lines.map(l => ({ name: l.p.name, unit: l.p.unit || '', qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type, line_total: l.total })),
     subtotal: v.subtotal, discount: v.discount, member_disc: v.memberDisc, member: v.mem ? { pct: v.mem.pct, purchase_no: v.mem.n, member_no: v.mem.no } : null,
     customer_email: v.cust ? v.cust.email || '' : '', total: v.total, method: pay.method, paid: pay.paid, change: pay.change, debt: pay.debt, status: 'ok',
-    promo_code: req.promo_code, channel: req.channel, debt_after: v.cust ? int(v.cust.debt_balance) + pay.debt : 0, send_fee: v.sendFee, send_receipt: v.send
+    promo_code: req.promo_code, channel: req.channel, debt_after: v.cust ? int(v.cust.debt_balance) + pay.debt : 0, send_fee: v.sendFee, send_receipt: v.send,
+    recorded: !!(S.cart.voice && S.cart.voice.consent) // v36: the printed notice "Transaksi direkam untuk layanan & keamanan"
   };
 }
 function localExitRequired(v) {
@@ -2178,7 +2218,7 @@ function receiptLinesHTML(rc) {
     ${rc.debt && rc.approved_by ? `<div class="r2"><span>${esc(t('rc.approved_by'))}</span><span>${esc(rc.approved_by)}</span></div>` : ''}
     ${rc.member ? `<div class="ln"></div><div class="c" id="rc-member">${esc(t('mem.rc_line', { no: rc.member.member_no || '', n: rc.member.purchase_no }))}</div>` : ''}
     <div class="ln"></div>
-    ${(st.receipt_footer || '').split('\n').map(x => `<div class="c">${esc(x)}</div>`).join('')}`;
+    ${(st.receipt_footer || '').split('\n').map(x => `<div class="c">${esc(x)}</div>`).join('')}${rc.recorded ? `<div class="c" id="rc-recorded">${esc(t('rc.recorded'))}</div>` : ''}`;
 }
 const paperW = () => settings().paper === '80' ? '80' : '58';
 function receiptHTML(rc) { return `<div class="receipt w${paperW()}" id="receipt">${receiptLinesHTML(rc)}</div>`; }
@@ -2196,6 +2236,7 @@ function receiptText(rc) {
   if (rc.debt) out.push(`${t('rc.debt')}: ${fmtRp(rc.debt)}`);
   out.push(L2);
   if (st.receipt_footer) out.push(st.receipt_footer);
+  if (rc.recorded) out.push(t('rc.recorded'));
   return out.join('\n');
 }
 function printHTML(html) {
@@ -2289,6 +2330,7 @@ function receiptPlain(rc) {
   if (rc.member) out.push(tid('mem.rc_line', { no: rc.member.member_no || '', n: rc.member.purchase_no }));
   out.push(L2);
   if (st.receipt_footer) out.push(st.receipt_footer);
+  if (rc.recorded) out.push(tid('rc.recorded'));
   return out.join('\n');
 }
 const okEmail = e => /^[^\s@?&#<>"]+@[^\s@?&#<>"]+\.[^\s@?&#<>"]{2,}$/.test(String(e || ''));
@@ -3928,7 +3970,7 @@ const ACT = {
   'sale-mute': () => toggleSaleMute(),
   'cart-clear': async () => { const r = await confirmBox(t('sell.clear_confirm'), { danger: true }); if (r.ok) { S.cart = newCart(); saveCart(); renderCart(); renderGrid(); } },
   'pay': () => openPay(),
-  'vs-start': () => startVoice(),
+  'vs-start': () => { VS.auto = false; startVoice(); },
   'vs-stop': () => stopVoice(),
   'vs-skip': () => skipVoice(),
   'vs-ask': () => { S.cart.voice = null; VS.ask = S.cart.client_id; saveCart(); drawVoice(); },
@@ -4029,6 +4071,7 @@ const I18N = {
     'login.owner_app': 'Aplikasi pemilik →',
     'tc.title': 'Konfirmasi transfer masuk', 'tc.who': 'Dari', 'tc.amount': 'Jumlah', 'tc.invoice': 'Faktur', 'tc.payment': 'Pembayaran', 'tc.ref': 'ref', 'tc.hint': 'Setujui jika dana sudah benar-benar masuk; tolak jika belum.',
     'tamper.locked': 'Akun ini dikunci setelah percobaan menulis kode. Hanya pemilik yang membukanya.',
+    'cam.notice': 'Perangkat ini diawasi kamera untuk keamanan', 'vs.notice': 'Transaksi direkam untuk layanan & keamanan', 'rc.recorded': 'Transaksi direkam untuk layanan & keamanan',
     'err.BAD_PIN': 'PIN salah', 'err.BAD_KEY': 'Kode toko tidak dikenal', 'err.NO_USERS': 'Belum ada pengguna', 'err.BAD_PIN_SESSION': 'Sesi berakhir, masukkan PIN lagi',
     'err.SERVER': 'Server bermasalah, coba lagi', 'err.NETWORK': 'Tidak ada koneksi', 'err.FORBIDDEN': 'Tidak diizinkan untuk peran Anda', 'err.INVALID': 'Data tidak valid',
     'err.NOT_FOUND': 'Data tidak ditemukan', 'err.APPROVAL_REQUIRED': 'Perlu persetujuan pemilik/manajer', 'err.SHIFT_REQUIRED': 'Buka kasir dulu', 'err.NEEDS_OWNER': 'Hanya pemilik yang boleh memutuskan ini',
@@ -4045,8 +4088,8 @@ const I18N = {
     'survey.mic': 'Rekam jawaban dengan suara (ketuk lagi untuk berhenti)', 'survey.mic_denied': 'Mikrofon tidak diizinkan — silakan ketik jawabannya', 'survey.no_speech': 'Pengenalan suara tidak tersedia di browser ini — ketik jawabannya.',
     'survey.need_consent': 'Centang persetujuan pembeli dulu, atau tekan Lewati.', 'survey.skip': 'Lewati', 'survey.save': 'Simpan jawaban', 'survey.save_pay': 'Simpan & bayar',
     'survey.done': 'terisi',
-    'vs.title': 'Survei suara — tanyakan izin pelanggan', 'vs.hint': 'Tanya dulu: “Boleh obrolan kita dicatat untuk survei?” Hanya teks yang disimpan, suara tidak disimpan.',
-    'vs.consent': 'Pelanggan setuju — mulai rekam', 'vs.skip': 'Lewati', 'vs.manual': 'Isi survei manual', 'vs.recording': 'Merekam', 'vs.stop': 'Stop',
+    'vs.title': 'Survei suara', 'vs.hint': 'Rekaman mulai sendiri saat Bayar. Hanya teks yang disimpan, suara tidak disimpan.',
+    'vs.consent': 'Mulai rekam', 'vs.skip': 'Lewati', 'vs.manual': 'Isi survei manual', 'vs.recording': 'Rekaman aktif', 'vs.stop': 'Stop',
     'vs.ask_hint': 'Tanyakan berurutan, centang yang sudah ditanya:', 'vs.saved': 'Survei suara tercatat (teks saja)', 'vs.resume': 'Lanjut rekam',
     'vs.mic_denied': 'Izin mikrofon ditolak', 'vs.need_net': 'Survei suara butuh internet', 'vs.max': 'Rekaman berhenti otomatis (maks. 10 menit)',
     'wa.title': 'Nomor WhatsApp pelanggan', 'wa.known': 'Sudah tersimpan', 'wa.remind': 'Jangan lupa minta nomor WhatsApp pelanggan', 'wa.phone': 'No. WhatsApp', 'wa.name': 'Nama (opsional)',
@@ -4137,6 +4180,7 @@ const I18N = {
     'login.owner_app': '← تطبيق المالك',
     'tc.title': 'تأكيد دخول تحويل', 'tc.who': 'من', 'tc.amount': 'المبلغ', 'tc.invoice': 'فاتورة', 'tc.payment': 'دفعة', 'tc.ref': 'مرجع', 'tc.hint': 'وافق إذا دخل المال فعلًا؛ ارفض إن لم يدخل بعد.',
     'tamper.locked': 'أُوقف هذا الحساب بعد محاولة كتابة كود. لا يفتحه إلا المالك.',
+    'cam.notice': 'هذا الجهاز مراقَب بالكاميرا للأمان', 'vs.notice': 'تُسجَّل المعاملة للخدمة والأمان', 'rc.recorded': 'تُسجَّل المعاملة للخدمة والأمان',
     'err.BAD_PIN': 'الرمز السري خطأ', 'err.BAD_KEY': 'رمز المتجر غير معروف', 'err.NO_USERS': 'لا يوجد مستخدمون', 'err.BAD_PIN_SESSION': 'انتهت الجلسة، أدخل الرمز مرة أخرى',
     'err.SERVER': 'مشكلة في الخادم، حاول مرة أخرى', 'err.NETWORK': 'لا يوجد اتصال', 'err.FORBIDDEN': 'غير مسموح لدورك', 'err.INVALID': 'بيانات غير صالحة',
     'err.NOT_FOUND': 'غير موجود', 'err.APPROVAL_REQUIRED': 'يلزم موافقة المالك/المدير', 'err.SHIFT_REQUIRED': 'افتح الصندوق أولًا', 'err.NEEDS_OWNER': 'المالك فقط يقرر هذا',
@@ -4153,8 +4197,8 @@ const I18N = {
     'survey.mic': 'سجّل الإجابة بالصوت (اضغط مرة أخرى للإيقاف)', 'survey.mic_denied': 'الميكروفون غير مسموح — اكتب الإجابة', 'survey.no_speech': 'التعرف على الصوت غير متاح في هذا المتصفح — اكتب الإجابة.',
     'survey.need_consent': 'ضع علامة موافقة العميل أولًا أو اضغط تخطٍّ.', 'survey.skip': 'تخطٍّ', 'survey.save': 'حفظ الإجابات', 'survey.save_pay': 'حفظ ودفع',
     'survey.done': 'مكتمل',
-    'vs.title': 'استبيان صوتي — اطلب إذن العميل', 'vs.hint': 'اسأل أولًا: هل تسمح بتسجيل حديثنا للاستبيان؟ يُحفظ النص فقط، ولا يُحفظ الصوت.',
-    'vs.consent': 'العميل موافق — ابدأ التسجيل', 'vs.skip': 'تخطٍّ', 'vs.manual': 'تعبئة الاستبيان يدويًا', 'vs.recording': 'جارٍ التسجيل', 'vs.stop': 'إيقاف',
+    'vs.title': 'استبيان صوتي', 'vs.hint': 'يبدأ التسجيل وحده عند الدفع. يُحفظ النص فقط، ولا يُحفظ الصوت.',
+    'vs.consent': 'ابدأ التسجيل', 'vs.skip': 'تخطٍّ', 'vs.manual': 'تعبئة الاستبيان يدويًا', 'vs.recording': 'التسجيل يعمل', 'vs.stop': 'إيقاف',
     'vs.ask_hint': 'اسأل بالترتيب، وضع علامة على ما سألته:', 'vs.saved': 'سُجّل الاستبيان الصوتي (نص فقط)', 'vs.resume': 'متابعة التسجيل',
     'vs.mic_denied': 'تم رفض إذن الميكروفون', 'vs.need_net': 'الاستبيان الصوتي يحتاج إلى الإنترنت', 'vs.max': 'توقف التسجيل تلقائيًا (10 دقائق كحد أقصى)',
     'wa.title': 'رقم واتساب العميل', 'wa.known': 'محفوظ مسبقًا', 'wa.remind': 'لا تنسَ طلب رقم واتساب العميل', 'wa.phone': 'رقم واتساب', 'wa.name': 'الاسم (اختياري)',

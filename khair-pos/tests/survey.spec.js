@@ -1,5 +1,6 @@
-// Owner app POS: the customer survey never blocks "Bayar & Simpan". The payment panel offers a voice survey that
-// starts only after the consent tap (UU PDP) and stops when the sale is saved; the manual survey is an optional
+// Owner app POS: the customer survey never blocks "Bayar & Simpan". The payment panel's voice survey starts BY ITSELF
+// when the cashier starts paying (v36, owner's decision: no question to the customer; a visible notice instead) and
+// stops when the sale is saved; the manual survey is an optional
 // link. After payment the receipt asks for the customer's WhatsApp number; Pengaturan has the shop's WhatsApp
 // number + voice switch; Pelanggan shows WA badges, a "Setuju promo WA" filter and a vCard export.
 const fs = require('fs');
@@ -36,19 +37,24 @@ function speechStub(opts = {}) {
 const sr = page => page.evaluate(() => ({ started: window.__sr.started, running: !!(window.__sr.active && window.__sr.active.running), lang: window.__sr.active && window.__sr.active.lang }));
 const lastSale = async page => (await getDb(page)).sales.slice(-1)[0];
 
-test('voice survey in the payment panel: consent tap → recording → "Bayar & Simpan" stops it and saves the text', async ({ page }) => {
+test('voice survey in the payment panel: starts by itself when paying (no question) → "Bayar & Simpan" stops it and saves the text', async ({ page }) => {
   await page.addInitScript(speechStub);
   await login(page);
   await expect(page.locator('#vs-wrap')).toHaveCount(0); // empty cart: no sale, no banner
   await addBySearch(page, 'ajwa');
   await addBySearch(page, 'kopi');
   await expect(page.locator('#survey')).toHaveCount(0);
-  await expect(page.locator('#vs-ask')).toContainText('Survei suara — tanyakan izin pelanggan');
+  // while items are added nothing is recorded (the device still speaks item names); the notice is already there
+  await expect(page.locator('#vs-ask')).toContainText('Survei suara');
+  await expect(page.locator('#vs-ask #vs-notice')).toHaveText('Transaksi direkam untuk layanan & keamanan');
+  await expect(page.locator('#vs-start')).toHaveText('Mulai rekam');
   expect((await sr(page)).started).toBe(0);
   await expect(page.locator('#btn-checkout')).toBeInViewport();
   await page.screenshot({ path: path.join(SHOTS, 'desktop-pos-voice-consent.png') });
-  await page.click('#vs-start');
-  await expect(page.locator('#vs-rec')).toContainText('Merekam');
+  // v36 (owner: «عند الضغط ابدأ بدون سؤال الزبون»): starting to pay (the amount paid) starts the recording at once
+  await page.click('#cart-paid');
+  await expect(page.locator('#vs-rec')).toContainText('🎙️ Rekaman aktif');
+  await expect(page.locator('#vs-rec #vs-notice')).toHaveText('Transaksi direkam untuk layanan & keamanan');
   // the questions come one at a time, in order (compact: the desktop cart keeps "Bayar & Simpan" on screen)
   await expect(page.locator('#vs-q')).toContainText('1/5');
   await expect(page.locator('#vs-q-text')).toHaveText('Apakah ini pertama kali belanja di Khair Mart?');
@@ -69,6 +75,7 @@ test('voice survey in the payment panel: consent tap → recording → "Bayar & 
   await page.screenshot({ path: path.join(SHOTS, 'desktop-pos-voice-recording.png') });
   await checkoutSkip(page);
   expect((await sr(page)).running).toBe(false);
+  await expect(page.locator('.modal #rc-recorded')).toHaveText('Transaksi direkam untuk layanan & keamanan'); // printed notice
   const sale = await lastSale(page);
   expect(sale.survey_transcript).toBe('sudah sering belanja tahu dari Instagram');
   expect(JSON.parse(sale.survey)).toEqual([]);
@@ -79,9 +86,11 @@ test('voice survey in the payment panel: consent tap → recording → "Bayar & 
   await page.click('#vs-skip');
   await expect(page.locator('#vs-ask')).toHaveCount(0);
   await expect(page.locator('#vs-ask-link')).toBeVisible();
+  await page.click('#cart-paid'); // paying after "Lewati" does not start it
   await checkoutSkip(page);
   expect((await lastSale(page)).survey_transcript).toBe('');
   expect((await sr(page)).started).toBe(2);
+  await expect(page.locator('.modal #rc-recorded')).toHaveCount(0);
   await closeModals(page);
 
   // recording stops when the cashier leaves the POS screen

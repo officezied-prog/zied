@@ -783,8 +783,8 @@ const MockServer = (() => {
     if (!owner && isLockedAcct(u.name) && !['login', 'users', 'device_ping', 'change_pin', 'clear_tamper', 'report_tamper'].includes(action)) { const er = E('TAMPER_LOCKED', 'Akun dikunci setelah percobaan tidak sah. Hanya pemilik yang membuka.'); er.extra = { locked: true }; throw er; }
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
-    if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
-    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'list_corrections', 'save_product'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
+    if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
+    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'list_corrections', 'save_product'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
     if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'list_photos'].includes(action)) deviceTouch(db, u, data.device, false);
 
@@ -1973,10 +1973,15 @@ const MockServer = (() => {
         return { settings: db.settings };
       }
       case 'report_tamper': {
-        if (owner) { logAct(db, u, 'tamper', 'Pemilik: percobaan kode terdeteksi (' + String(data.where || '').slice(0, 60) + ')', u.name, 0, 'warn'); db._dirty = true; return { locked: false }; }
-        if (!isLockedAcct(u.name)) db.settings.locked_accounts = lockedSet().concat([u.name.toLowerCase()]);
-        logAct(db, u, 'tamper', 'Percobaan menulis kode — akun dikunci (' + String(data.where || '').slice(0, 60) + ')', u.name, 0, 'danger'); db._dirty = true;
-        return { locked: true };
+        // v36: with the front-camera photo (two calls, same shot_id) — shared/tamper-guard.js keeps the demo servers identical
+        if (!window.KGuard) throw E('SERVER', 'tamper-guard not loaded');
+        const r = KGuard.mock.report(db, u, data, body.__shotPhoto || '', { owner, now: new Date().toISOString(), date: jktDate(), lock: () => { if (!isLockedAcct(u.name)) db.settings.locked_accounts = lockedSet().concat([u.name.toLowerCase()]); }, logAct: (k, sm, lv) => logAct(db, u, k, sm, u.name, 0, lv) });
+        db._dirty = true;
+        return r;
+      }
+      case 'list_tamper_shots': {
+        needOwner();
+        return { shots: window.KGuard ? KGuard.mock.list(db, data) : [] };
       }
       case 'clear_tamper': {
         needOwner();
@@ -2121,8 +2126,9 @@ const MockServer = (() => {
     if (ensureV16(db)) save(db);
     let res;
     let __codeHit = '';
+    const __tp = window.KGuard ? KGuard.mock.takePhoto(body) : { body, photo: '' }; body = __tp.body; // v36: the tamper photo is not text
     if (body.data && typeof body.data === 'object' && !/^(scan_|att_mark|worker_enroll)/.test(body.action)) { __codeHit = scanCodeAttempt(body.data, 0); body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); }
-    body.__codeHit = __codeHit;
+    body.__codeHit = __codeHit; body.__shotPhoto = __tp.photo;
     db.returns = db.returns || [];
     const snap = new Map((db.products || []).map(p => [p.id, { stock: num(p.stock), shop: shopOf(p) }]));
     db._shopSet = {};

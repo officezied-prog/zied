@@ -50,7 +50,19 @@ function loaderSpecs(req) {
   const range = (table, col, from, to) => ({ table, sql: `SELECT * FROM ${table} WHERE ${col} >= ? AND ${col} <= ? ORDER BY id`, params: [from, to] });
   const all = (table) => ({ table, sql: `SELECT * FROM ${table} ORDER BY id`, params: [] });
 
+  // v36: the tamper photos are read only by the two actions that need them (no extra read on every request).
+  const tamper = {};
+  if (req.action === 'report_tamper' && /^TS[A-Z0-9]{8,20}$/.test(String(data.shot_id || ''))) tamper['Get Tamper Shot'] = eq('pos_tamper_shots', 'shot_id', String(data.shot_id));
+  // (each row carries its small photo: read at most the 30 newest, of one person when the owner asks for one)
+  if (req.action === 'list_tamper_shots') {
+    const nm = String(data.name || '').trim().toLowerCase();
+    tamper['Get Tamper Shots'] = nm
+      ? { table: 'pos_tamper_shots', sql: 'SELECT * FROM pos_tamper_shots WHERE lower(user) = ? ORDER BY id DESC LIMIT 30', params: [nm] }
+      : { table: 'pos_tamper_shots', sql: 'SELECT * FROM pos_tamper_shots ORDER BY id DESC LIMIT 30', params: [] };
+  }
+
   return {
+    ...tamper,
     'Get Users': all('pos_users'),
     'Get Settings': all('pos_settings'),
     'Get Products': all('pos_products'),

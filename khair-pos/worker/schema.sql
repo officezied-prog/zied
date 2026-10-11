@@ -347,6 +347,22 @@ CREATE TABLE IF NOT EXISTS pos_returns (
 CREATE INDEX IF NOT EXISTS idx_pos_returns_return_date ON pos_returns (return_date);
 CREATE INDEX IF NOT EXISTS idx_pos_returns_ref ON pos_returns (ref);
 
+CREATE TABLE IF NOT EXISTS pos_tamper_shots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  shot_id TEXT,
+  at TEXT,
+  shot_date TEXT,
+  user TEXT,
+  role TEXT,
+  place TEXT,
+  kind TEXT,
+  sample TEXT,
+  photo TEXT,
+  photo_status TEXT,
+  device TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pos_tamper_shots_shot_id ON pos_tamper_shots (shot_id);
+
 CREATE TABLE IF NOT EXISTS pos_photos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   photo_id TEXT,

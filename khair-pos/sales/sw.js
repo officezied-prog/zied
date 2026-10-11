@@ -3,7 +3,7 @@
    cache fallback when offline. API calls (POST to n8n) and map tiles are never cached here.
    Only old "khair-sales-*" caches are removed on activate. */
 const CACHE = 'khair-sales-v16';
-const SHELL = ['./', './index.html', './styles.css', './mock.js', './manifest.webmanifest', './icon.svg', '../shared/shop-types.js', '../shared/gmaps-import.js', '../shared/field-mock.js', '../shared/chat-ui.js', '../vendor/leaflet/leaflet.js', '../vendor/leaflet/leaflet.css'];
+const SHELL = ['./', './index.html', './styles.css', './mock.js', './manifest.webmanifest', './icon.svg', '../shared/shop-types.js', '../shared/gmaps-import.js', '../shared/field-mock.js', '../shared/chat-ui.js', '../shared/tamper-guard.js', '../vendor/leaflet/leaflet.js', '../vendor/leaflet/leaflet.css'];
 self.addEventListener('install', e => {
   // one file at a time: a file that cannot be fetched (e.g. the map library) must not leave the whole shell uncached
   e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(u).catch(() => {})))).catch(() => {}));
@@ -17,7 +17,7 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   const scope = new URL('./', self.registration.scope).pathname;
-  const mine = url.origin === self.location.origin && (url.pathname.startsWith(scope) || /\/shared\/(field-mock|shop-types|chat-ui|gmaps-import)\.js$/.test(url.pathname) || /\/vendor\/leaflet\//.test(url.pathname));
+  const mine = url.origin === self.location.origin && (url.pathname.startsWith(scope) || /\/shared\/(field-mock|shop-types|chat-ui|gmaps-import|tamper-guard)\.js$/.test(url.pathname) || /\/vendor\/leaflet\//.test(url.pathname));
   if (!mine) return;
   e.respondWith(
     fetch(req).then(res => {
