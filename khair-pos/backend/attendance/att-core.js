@@ -83,7 +83,57 @@ var KAtt = (function () {
   function parseJSON(s, dflt) { try { var v = typeof s === 'string' ? JSON.parse(s) : s; return v === undefined || v === null ? dflt : v; } catch (e) { return dflt; } }
 
   var DEFAULTS = { att_work_start: '08:00', att_work_end: '21:00', att_grace_min: 10, att_radius_m: 200, att_face_max: 0.5, att_min_gap_min: 2,
-    att_seasons: [], att_off_weekdays: [] };
+    att_seasons: [], att_off_weekdays: [], att_ramadan_auto: true, att_ramadan_end: '23:00' };
+
+  /* ---------- v36 (owner 2026-10-11: "العمل من 8 الصبح الى 9 ليل و يتغير قبل رمضان بشهرين من 8 الصبح الى 11 ليل") ----------
+     The long-hours season is worked out by itself every year: from two calendar months before 1 Ramadan until Eid al-Fitr
+     (1 Shawwal), closing at att_ramadan_end (23:00). Dates: Umm al-Qura table for 1447–1458 H (2026–2036; Indonesia's official
+     date can differ by one day, which does not matter for a two-month season); later years from the device/server Intl Hijri
+     calendar, else a mean-lunar-year estimate. A season typed by hand (att_seasons) still wins on its days. */
+  var RAMADAN_TABLE = { 1447: ['2026-02-18', '2026-03-20'], 1448: ['2027-02-08', '2027-03-09'], 1449: ['2028-01-28', '2028-02-26'],
+    1450: ['2029-01-16', '2029-02-14'], 1451: ['2030-01-05', '2030-02-04'], 1452: ['2030-12-26', '2031-01-24'], 1453: ['2031-12-16', '2032-01-14'],
+    1454: ['2032-12-04', '2033-01-03'], 1455: ['2033-11-23', '2033-12-23'], 1456: ['2034-11-12', '2034-12-12'], 1457: ['2035-11-01', '2035-12-01'],
+    1458: ['2036-10-21', '2036-11-19'] };
+  var MEAN_HIJRI_YEAR = 354.36667;
+  function hijriFirstOf(hy, hm) {
+    // Intl fallback for years beyond the table: scan ±25 days around the mean-year estimate for day 1 of month hm in year hy.
+    var est = Date.parse(RAMADAN_TABLE[1458][hm === 9 ? 0 : 1] + 'T00:00:00Z') + Math.round((hy - 1458) * MEAN_HIJRI_YEAR) * 86400000;
+    try {
+      var f = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura', { timeZone: 'UTC', year: 'numeric', month: 'numeric', day: 'numeric' });
+      for (var k = -25; k <= 25; k++) {
+        var d = new Date(est + k * 86400000), p = {};
+        f.formatToParts(d).forEach(function (x) { p[x.type] = x.value; });
+        if (parseInt(p.year, 10) === hy && Number(p.month) === hm && Number(p.day) === 1) return d.toISOString().slice(0, 10);
+      }
+    } catch (e) { }
+    return new Date(est).toISOString().slice(0, 10);
+  }
+  function ramadanOf(hy) {
+    var r = RAMADAN_TABLE[hy];
+    var start = r ? r[0] : hijriFirstOf(hy, 9), eid = r ? r[1] : hijriFirstOf(hy, 10);
+    return { hijri: hy, ramadan: start, eid: eid, from: monthsBefore(start, 2), to: eid };
+  }
+  function monthsBefore(d, n) {
+    var y = Number(d.slice(0, 4)), m = Number(d.slice(5, 7)) - n, day = Number(d.slice(8, 10));
+    while (m < 1) { m += 12; y--; }
+    var last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    return y + '-' + String(m).padStart(2, '0') + '-' + String(Math.min(day, last)).padStart(2, '0');
+  }
+  /** Hijri years whose season may touch Gregorian day `day` (the season is ~3 months, so ±1 around the estimate is enough). */
+  function hijriAround(day) { var c = Math.round((Number(day.slice(0, 4)) + (Number(day.slice(5, 7)) - 1) / 12 - 622) * 33 / 32); return [c - 1, c, c + 1]; }
+  /** The automatic Ramadan season that contains `day`, or null. */
+  function ramadanSeasonOn(day) {
+    if (!isDate(day)) return null;
+    var hs = hijriAround(day);
+    for (var i = 0; i < hs.length; i++) { var s = ramadanOf(hs[i]); if (day >= s.from && day <= s.to) return s; }
+    return null;
+  }
+  /** The next `n` automatic seasons that have not ended by `day` (shown in Absensi → Jam kerja). */
+  function ramadanSeasons(day, n) {
+    var out = [], h = hijriAround(day)[0];
+    for (var i = 0; out.length < (n || 2) && i < 6; i++) { var s = ramadanOf(h + i); if (s.to >= day) out.push(s); }
+    return out;
+  }
   /** Settings live in pos_settings (skey/svalue JSON) next to the POS settings; store_lat/store_lng come from there too. */
   function settingsOf(raw) {
     var s = JSON.parse(JSON.stringify(DEFAULTS));
@@ -92,11 +142,14 @@ var KAtt = (function () {
   }
   /** Opening hours on a day: a season (e.g. two months before Ramadan → 23:00) overrides the normal end time. */
   function hoursOn(st, day) {
-    var start = isHM(st.att_work_start) ? st.att_work_start : '08:00', end = isHM(st.att_work_end) ? st.att_work_end : '21:00', season = '';
+    var start = isHM(st.att_work_start) ? st.att_work_start : '08:00', end = isHM(st.att_work_end) ? st.att_work_end : '21:00', season = '', auto = false;
+    // v36: the automatic Ramadan season first; a hand-typed season on the same day overrides it below.
+    var rs = st.att_ramadan_auto !== false ? ramadanSeasonOn(day) : null;
+    if (rs) { end = isHM(st.att_ramadan_end) ? st.att_ramadan_end : '23:00'; season = 'Ramadan ' + rs.hijri + ' H'; auto = true; }
     (Array.isArray(st.att_seasons) ? st.att_seasons : []).forEach(function (x) {
-      if (x && isDate(x.from) && isDate(x.to) && day >= x.from && day <= x.to) { if (isHM(x.work_start)) start = x.work_start; if (isHM(x.work_end)) end = x.work_end; season = str(x.name); }
+      if (x && isDate(x.from) && isDate(x.to) && day >= x.from && day <= x.to) { if (isHM(x.work_start)) start = x.work_start; if (isHM(x.work_end)) end = x.work_end; season = str(x.name); auto = false; }
     });
-    return { start: start, end: end, season: season };
+    return { start: start, end: end, season: season, auto: auto };
   }
 
   /* ---------- the chain ---------- */
@@ -214,7 +267,8 @@ var KAtt = (function () {
         var h = hoursOn(st, today);
         return done({ ok: true, today: today, hours: h, grace_min: num(st.att_grace_min), radius_m: num(st.att_radius_m), store: ctx.store || null,
           workers: workers.filter(function (w) { return w.active !== false || isBoss; }).map(function (w) { return workerOut(w, true); }),
-          settings: isBoss ? { att_work_start: st.att_work_start, att_work_end: st.att_work_end, att_grace_min: num(st.att_grace_min), att_radius_m: num(st.att_radius_m), att_seasons: st.att_seasons, att_off_weekdays: st.att_off_weekdays } : undefined });
+          settings: isBoss ? { att_work_start: st.att_work_start, att_work_end: st.att_work_end, att_grace_min: num(st.att_grace_min), att_radius_m: num(st.att_radius_m), att_seasons: st.att_seasons, att_off_weekdays: st.att_off_weekdays,
+            att_ramadan_auto: st.att_ramadan_auto !== false, att_ramadan_end: isHM(st.att_ramadan_end) ? st.att_ramadan_end : '23:00', ramadan: ramadanSeasons(today, 2) } : undefined });
       }
       case 'worker_save': {
         if (!isBoss) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
@@ -355,6 +409,9 @@ var KAtt = (function () {
         if (inS.att_work_end !== undefined) { if (!isHM(inS.att_work_end)) return fail('INVALID', 'Jam tutup tidak valid'); out.att_work_end = inS.att_work_end; }
         if (inS.att_grace_min !== undefined) { var g = Math.round(num(inS.att_grace_min)); if (g < 0 || g > 120) return fail('INVALID', 'Toleransi 0–120 menit'); out.att_grace_min = g; }
         if (inS.att_radius_m !== undefined) { var rr = Math.round(num(inS.att_radius_m)); if (rr < 30 || rr > 5000) return fail('INVALID', 'Radius 30–5000 m'); out.att_radius_m = rr; }
+        // v36: the automatic Ramadan season (on/off) and its closing time.
+        if (inS.att_ramadan_auto !== undefined) { if (typeof inS.att_ramadan_auto !== 'boolean') return fail('INVALID', 'Musim Ramadan otomatis: ya / tidak'); out.att_ramadan_auto = inS.att_ramadan_auto; }
+        if (inS.att_ramadan_end !== undefined) { if (!isHM(inS.att_ramadan_end)) return fail('INVALID', 'Jam tutup musim Ramadan tidak valid'); out.att_ramadan_end = inS.att_ramadan_end; }
         if (inS.att_off_weekdays !== undefined) { if (!Array.isArray(inS.att_off_weekdays) || inS.att_off_weekdays.some(function (x) { return [0, 1, 2, 3, 4, 5, 6].indexOf(x) < 0; })) return fail('INVALID', 'Hari libur tidak valid'); out.att_off_weekdays = inS.att_off_weekdays; }
         if (inS.att_seasons !== undefined) {
           if (!Array.isArray(inS.att_seasons) || inS.att_seasons.length > 6) return fail('INVALID', 'Musim tidak valid');
@@ -371,6 +428,6 @@ var KAtt = (function () {
         return fail('INVALID', 'Aksi tidak dikenal: ' + a);
     }
   }
-  return { core: core, sha256: sha256, verify: verify, recHash: recHash, sealHash: sealHash, hoursOn: hoursOn, DEFAULTS: DEFAULTS };
+  return { core: core, sha256: sha256, verify: verify, recHash: recHash, sealHash: sealHash, hoursOn: hoursOn, ramadanOf: ramadanOf, ramadanSeasons: ramadanSeasons, DEFAULTS: DEFAULTS };
 })();
 if (typeof window !== 'undefined') window.KAtt = KAtt;

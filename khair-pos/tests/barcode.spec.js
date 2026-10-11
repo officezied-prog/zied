@@ -6,7 +6,7 @@ const { test, expect } = require('@playwright/test');
 const { login, getDb } = require('./helpers');
 
 test('scanning a product SKU in POS search adds it to the cart', async ({ page }) => {
-  await login(page, 'Pemilik', '1234'); // owner lands on the POS screen
+  await login(page, 'Pemilik', '1234'); // v36: the helper sells as the manager (the owner no longer sells)
   const db = await getDb(page);
   const prod = db.products.find(p => p.sku && p.active !== false);
   expect(prod).toBeTruthy();

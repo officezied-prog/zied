@@ -21,7 +21,7 @@
  */
 (function () {
   'use strict';
-  var ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop', 'cashier_orders', 'plan_save', 'streets_worked', 'list_send', 'list_reps', 'lists_sent', 'list_ack', 'resolve_links', 'places_status', 'places_search'];
+  var ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop', 'cashier_orders', 'plan_save', 'streets_worked', 'list_send', 'list_reps', 'lists_sent', 'list_ack', 'resolve_links', 'places_status', 'places_search', 'orders_map', 'shop_photos', 'street_returns', 'street_return_set'];
   // Shop type ids: taken from window.KhairShopTypes (shared/shop-types.js) when the page loaded it; this copy is the
   // fallback for pages that load only this file (e.g. the owner app). Same list as backend/field/process-field.js.
   var SHOP_TYPES_FALLBACK = ['perlengkapan_haji', 'travel_umrah', 'oleh_oleh_haji', 'toko_kurma', 'herbal', 'busana_muslim', 'toko_buku_islam', 'warung', 'toko', 'grosir_sembako', 'pasar', 'minimarket', 'supermarket', 'hypermarket', 'grosir_modern', 'bakery', 'toko_kue', 'katering', 'restoran', 'kafe', 'hotel', 'oleh_oleh', 'parsel', 'toko_buah', 'masjid', 'pesantren', 'sekolah', 'majelis_taklim', 'kantor', 'koperasi', 'reseller', 'toko_online', 'lainnya'];
@@ -121,6 +121,57 @@
     db.tracks.push({ user: user, track_date: h.jktDate(pt.t), t: pt.t, lat: Number(pt.lat), lng: Number(pt.lng), acc: Math.round(num(pt.acc)), speed: pt.speed == null ? null : num(pt.speed), battery: pt.battery == null ? null : num(pt.battery) });
   }
 
+  /* ---------- v36: good streets to go back to — the same scoring as backend/field/process-field.js streetReturns ---------- */
+  var STREET_NEAR_M = 60, STREET_GOOD = 2, STREET_DAYS_DEF = 14;
+  function returnDays(db) { var n = Math.round(Number((db.settings || {}).street_return_days)); return n >= 3 && n <= 90 ? n : STREET_DAYS_DEF; }
+  function addDaysYmd(ymd, n) { var d = new Date(ymd + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+  function stNorm(s) { return ' ' + str(s).toLowerCase().replace(/\b(jalan|jln|jl)\b\.?/g, ' ').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim() + ' '; }
+  function segDistM(p, a, b) {
+    var k = Math.cos(p[0] * Math.PI / 180), X = function (q) { return [(q[1] - p[1]) * k * 111320, (q[0] - p[0]) * 110540]; };
+    var A = X(a), B = X(b), dx = B[0] - A[0], dy = B[1] - A[1], L = dx * dx + dy * dy;
+    var t = L ? Math.max(0, Math.min(1, -(A[0] * dx + A[1] * dy) / L)) : 0;
+    return Math.sqrt(Math.pow(A[0] + t * dx, 2) + Math.pow(A[1] + t * dy, 2));
+  }
+  function streetReturns(list, shopList, visits, orders, days, today) {
+    var vBy = {}, oBy = {}, addr = shopList.map(function (s) { return [s, stNorm(s.address)]; });
+    visits.forEach(function (v) { (vBy[v.shop_id] = vBy[v.shop_id] || []).push(v); });
+    orders.forEach(function (o) { if (o.status !== 'batal') (oBy[o.shop_id] = oBy[o.shop_id] || []).push(o); });
+    var out = [];
+    list.forEach(function (r) {
+      var lines = (r.lines || []).filter(function (ln) { return Array.isArray(ln) && ln.length > 1; }), near = {};
+      if (lines.length) {
+        var b = { a: 90, z: -90, c: 180, d: -180 }, pad = 0.0006;
+        lines.forEach(function (ln) { ln.forEach(function (q) { b.a = Math.min(b.a, q[0]); b.z = Math.max(b.z, q[0]); b.c = Math.min(b.c, q[1]); b.d = Math.max(b.d, q[1]); }); });
+        shopList.forEach(function (s) {
+          if (!validLatLng(s.lat, s.lng)) return;
+          var p = [Number(s.lat), Number(s.lng)];
+          if (p[0] < b.a - pad || p[0] > b.z + pad || p[1] < b.c - pad || p[1] > b.d + pad) return;
+          if (lines.some(function (ln) { for (var q = 1; q < ln.length; q++) if (segDistM(p, ln[q - 1], ln[q]) <= STREET_NEAR_M) return true; return false; })) near[s.shop_id] = s;
+        });
+      }
+      var nm = stNorm(r.name);
+      if (!r.drawn && nm.trim().length >= 4) addr.forEach(function (x) { if (!near[x[0].shop_id] && x[1].indexOf(nm) >= 0) near[x[0].shop_id] = x[0]; });
+      var ids = Object.keys(near), customers = 0, nOrd = 0, value = 0, interested = 0, rSum = 0, rN = 0;
+      ids.forEach(function (id) {
+        var s = near[id];
+        if (s.status === 'pelanggan' || num(s.customer_id) > 0) customers++;
+        (oBy[id] || []).forEach(function (o) { nOrd++; value += int(o.total); });
+        (vBy[id] || []).forEach(function (v) { if (['order', 'tertarik', 'sudah_pelanggan'].indexOf(v.outcome) >= 0) interested++; if (num(v.rating) > 0) { rSum += num(v.rating); rN++; } });
+      });
+      var score = nOrd * 3 + customers * 2 + interested + Math.floor(value / 1000000);
+      if (score < STREET_GOOD) return;
+      var dueDate = addDaysYmd(r.last_date, days), next = r.next_date || '';
+      var o = { skey: r.skey, name: r.name, user: r.user, last_date: r.last_date, next_date: next, due_date: dueDate, due: !next && dueDate <= today,
+        overdue: Math.max(0, Math.round((Date.parse(today) - Date.parse(dueDate)) / 86400000)), score: score, shops: ids.length, customers: customers, orders: nOrd, value: value,
+        interested: interested, rating: rN ? Math.round(rSum / rN * 10) / 10 : 0 };
+      if (r.drawn) { o.drawn = true; o.ref = r.ref; }
+      o._lines = lines;
+      out.push(o);
+    });
+    out.sort(function (a, b) { return (b.due ? 1 : 0) - (a.due ? 1 : 0) || b.overdue - a.overdue || b.score - a.score; });
+    return out.slice(0, 100);
+  }
+
   /* ---------- actions ---------- */
   function handle(action, data, user, db, helpers) {
     data = data || {};
@@ -129,7 +180,7 @@
     var h = H(helpers), today = h.jktDate();
     switch (action) {
       case 'field_bootstrap': {
-        needRole(user, ['sales', 'owner', 'manager']);
+        needRole(user, ['sales', 'owner', 'manager', 'akuntan']);
         var st = db.settings || {};
         return {
           user: { name: user.name, role: user.role },
@@ -200,7 +251,10 @@
           if (photo.length > MAX_PHOTO_B64) throw E('INVALID', 'photo too large (max 45 KB base64)');
         }
         if (data.next_visit && !isYmd(data.next_visit)) throw E('INVALID', 'next_visit');
-        var shop;
+        // v36: the shop front photo (a photo of the place — no consent needed), asked for every new shop
+        var shopPhoto = String(data.shop_photo_base64 || '').replace(/^data:[^,]*,/, '');
+        if (shopPhoto.length > MAX_PHOTO_B64) throw E('INVALID', 'shop photo too large (max 45 KB base64)');
+        var shop, isNew = false;
         var vt = clientAt(data, h, today);
         if (data.shop_id) {
           shop = db.shops.find(function (s) { return s.shop_id === data.shop_id; });
@@ -223,21 +277,32 @@
             type_other: !okType || sd.type === 'lainnya' ? (str(sd.type_other) || (!okType ? str(sd.type) : '')).slice(0, 60) : '', chain: str(sd.chain).slice(0, 40),
             lat: Number(data.lat), lng: Number(data.lng), created_by: user.name, created_at: vt, last_visit_at: '', visits: 0, status: 'prospek', customer_id: null, next_visit: ''
           };
-          db.shops.push(shop);
+          db.shops.push(shop); isNew = true;
         }
         var dist = validLatLng(shop.lat, shop.lng) ? Math.round(haversine({ lat: Number(data.lat), lng: Number(data.lng) }, shop)) : null;
         var visit = {
           visit_id: 'KV-' + pad(nextId(db, 'visit'), 5), client_id: cid, user: user.name, visit_date: today, visit_time: vt, shop_id: shop.shop_id, shop_name: shop.name,
           lat: Number(data.lat), lng: Number(data.lng), acc: Math.round(num(data.acc)), distance_m: dist, outcome: outcome, notes: String(data.notes || ''),
-          next_visit: data.next_visit || '', photo_thumb: photo, photo_consent: !!(photo && data.photo_consent === true), photo_place: !!(photo && data.photo_consent !== true), drive_url: ''
+          next_visit: data.next_visit || '', photo_thumb: photo, photo_consent: !!(photo && data.photo_consent === true), photo_place: !!(photo && data.photo_consent !== true), drive_url: '',
+          rating: Math.max(0, Math.min(5, Math.round(num(data.rating)))), shop_photo: shopPhoto
         };
+        if (data.owner_photo_refused === true && !photo) visit.notes = ('[Pemilik tidak bersedia difoto] ' + visit.notes).trim().slice(0, 500);
+        var warnings = [];
+        if (isNew) { // v36: same warnings as the server (an old app copy is still accepted)
+          if (!shop.phone) warnings.push('Nomor telepon toko baru wajib');
+          if (!shop.address) warnings.push('Alamat toko baru wajib');
+          if (!shopPhoto) warnings.push('Foto toko wajib untuk toko baru');
+          if (!photo && data.owner_photo_refused !== true && BLACK_OUTCOMES.indexOf(outcome) < 0) warnings.push('Foto pemilik toko wajib untuk toko baru');
+        }
+        if (shopPhoto && (isNew || !shop.photo_visit)) shop.photo_visit = visit.visit_id;
         db.visits.push(visit);
         shop.last_visit_at = vt; shop.visits = int(shop.visits) + 1;
         if (data.next_visit) shop.next_visit = data.next_visit;
         if (outcome === 'order' || outcome === 'sudah_pelanggan') shop.status = 'pelanggan';
         var dw = dayRow(db, user.name, today);
         if (dw && !dw.ended_at) addTrack(db, user.name, { lat: data.lat, lng: data.lng, acc: data.acc, t: vt }, h); // a point at every check-in (working hours only)
-        return { visit: clone(visit), shop: clone(shop), duplicate: false };
+        var vOut = clone(visit); delete vOut.photo_thumb; delete vOut.shop_photo; // photos are not echoed back (as the server)
+        return { visit: vOut, shop: clone(shop), duplicate: false, warnings: warnings };
       }
       case 'field_order': {
         needRole(user, ['sales']);
@@ -371,7 +436,7 @@
       case 'streets_worked': {
         // v31b/v32: same as backend/field/process-field.js — every rep's streets, KEPT FOREVER (+ planned), latest per street + rep
         // (the server reads them from its permanent street log around the rep; the demo reads its plans)
-        needRole(user, ['sales', 'owner', 'manager']);
+        needRole(user, ['sales', 'owner', 'manager', 'akuntan']);
         var seenS = {}, out = [];
         db.route_plans.slice().sort(function (a, b) { return String(b.plan_date).localeCompare(String(a.plan_date)); }).forEach(function (p) {
           (p.streets || []).forEach(function (x) {
@@ -385,7 +450,7 @@
         return { streets: out, since: '' };
       }
       case 'list_field': {
-        needRole(user, ['owner', 'manager']);
+        needRole(user, ['owner', 'manager', 'akuntan']);
         if (!isYmd(data.from) || !isYmd(data.to) || data.to < data.from) throw E('INVALID', 'from/to');
         // inclusive number of days in the range
         var span = Math.round((Date.parse(data.to + 'T00:00:00Z') - Date.parse(data.from + 'T00:00:00Z')) / 86400000) + 1;
@@ -396,13 +461,65 @@
         var who = function (u) { return !data.user || sameUser(u, data.user); };
         return {
           tracks: withTracks ? db.tracks.filter(function (x) { return inR(x.track_date) && who(x.user); }) : [],
-          visits: db.visits.filter(function (x) { return inR(x.visit_date) && who(x.user); }).map(function (v) { return withPhotos ? v : Object.assign({}, v, { photo_thumb: '' }); }),
+          visits: db.visits.filter(function (x) { return inR(x.visit_date) && who(x.user); }).map(function (v) { return withPhotos ? v : Object.assign({}, v, { photo_thumb: '', shop_photo: '' }); }),
           shops: db.shops,
           orders: db.field_orders.filter(function (x) { return inR(x.order_date) && who(x.user); }),
           days: db.field_days.filter(function (x) { return inR(x.day_date) && who(x.user); }).map(function (x) { if (x.ended_at) return x; var o = dayOut(db, x.user, x.day_date); return Object.assign({}, x, { km: o.km_today, visits: o.visits_today, orders: o.orders_today }); }),
           plans: clone(db.route_plans.filter(function (x) { return inR(x.plan_date) && who(x.user); })),
           include_tracks: withTracks, include_photos: withPhotos
         };
+      }
+      // v36 (owner 2026-10-11): every rep's orders on one map — same rules as backend/field/process-field.js orders_map
+      case 'orders_map': {
+        needRole(user, ['owner', 'manager', 'akuntan']);
+        if (!isYmd(data.from) || !isYmd(data.to) || data.to < data.from) throw E('INVALID', 'Rentang tanggal tidak valid');
+        if ((Date.parse(data.to + 'T00:00:00Z') - Date.parse(data.from + 'T00:00:00Z')) / 86400000 > 92) throw E('INVALID', 'Maksimal 3 bulan');
+        return { orders: db.field_orders.filter(function (o) { return o.status !== 'batal' && o.order_date >= data.from && o.order_date <= data.to && (!data.user || sameUser(o.user, data.user)); })
+          .map(function (o, i) { return { o: o, i: i }; })
+          .sort(function (a, b) { return String(a.o.order_time || a.o.order_date).localeCompare(String(b.o.order_time || b.o.order_date)) || a.i - b.i; })
+          .map(function (x) {
+            var o = x.o, sh = db.shops.find(function (s) { return s.shop_id === o.shop_id; }), has = sh && validLatLng(sh.lat, sh.lng);
+            return { order_id: o.order_id, user: o.user, order_date: o.order_date, order_time: o.order_time || '', shop_id: o.shop_id, shop_name: o.shop_name, total: int(o.total), status: o.status,
+              payment_method: o.payment_method || '', delivery_date: o.delivery_date || '', invoice_no: o.invoice_no || '', items: o.items, notes: o.notes || '',
+              lat: has ? Number(sh.lat) : null, lng: has ? Number(sh.lng) : null, area: sh ? sh.area || '' : '', address: sh ? sh.address || '' : '' };
+          }) };
+      }
+      case 'shop_photos': {
+        // v36: a shop's photos (owner with the rep + shop front), read when opened
+        needRole(user, ['sales', 'owner', 'manager', 'akuntan']);
+        var psh = db.shops.find(function (s) { return s.shop_id === String(data.shop_id || ''); });
+        if (!psh) throw E('NOT_FOUND', 'Toko tidak ditemukan');
+        var pvs = db.visits.filter(function (v) { return v.shop_id === psh.shop_id && (v.shop_photo || v.photo_thumb); }).slice().reverse();
+        var pv = pvs.find(function (v) { return v.visit_id === psh.photo_visit; }) || pvs.find(function (v) { return v.shop_photo; }) || null;
+        var ov = pv && pv.photo_thumb && BLACK_OUTCOMES.indexOf(pv.outcome) < 0 ? pv : pvs.find(function (v) { return v.photo_thumb && BLACK_OUTCOMES.indexOf(v.outcome) < 0; }) || null;
+        var pr = pv || ov;
+        return { shop_id: psh.shop_id, owner_photo: ov ? ov.photo_thumb : '', shop_photo: pv ? pv.shop_photo || '' : '', visit_id: pr ? pr.visit_id : '', visit_time: pr ? pr.visit_time : '', user: pr ? pr.user : '' };
+      }
+      case 'street_returns': {
+        // v36: the good streets to go back to (same scoring as the server; the demo reads the streets of its plans)
+        needRole(user, ['sales', 'owner', 'manager', 'akuntan']);
+        var rdays = returnDays(db), since = h.jktDate(h.now().getTime() - 365 * 86400000), from90 = h.jktDate(h.now().getTime() - 90 * 86400000), last = {}, nextP = {};
+        db.route_plans.forEach(function (p) {
+          (p.streets || []).forEach(function (x) {
+            if (!x || !x.name) return;
+            var k = x.drawn === true ? 'ln:' + String(x.ref || '') : 'st:' + String(x.name).toLowerCase();
+            if (p.plan_date > today) { if (!nextP[k] || p.plan_date > nextP[k]) nextP[k] = p.plan_date; return; }
+            if (p.plan_date < since) return;
+            if (!last[k] || p.plan_date > last[k].last_date) last[k] = { skey: k, name: x.name, user: p.user, last_date: p.plan_date, plan_date: p.plan_date, drawn: x.drawn === true ? 1 : 0, ref: x.ref || '', lines: x.lines || [] };
+          });
+        });
+        var summary = Object.keys(last).map(function (k) { return Object.assign(last[k], { next_date: nextP[k] || '' }); });
+        var list = streetReturns(summary, db.shops, db.visits.filter(function (v) { return v.visit_date >= from90; }), db.field_orders.filter(function (o) { return o.order_date >= from90; }), rdays, today)
+          .filter(function (x) { return user.role !== 'sales' || sameUser(x.user, user.name); })
+          .map(function (x) { var o = Object.assign({}, x); if (user.role === 'sales') o.lines = clone(x._lines); delete o._lines; return o; });
+        return { days: rdays, streets: list, today: today };
+      }
+      case 'street_return_set': {
+        needRole(user, ['owner', 'manager']);
+        var nd = Math.round(Number(data.days));
+        if (!(nd >= 3 && nd <= 90)) throw E('INVALID', 'Jangka kembali: 3–90 hari');
+        db.settings = db.settings || {}; db.settings.street_return_days = nd;
+        return { days: nd };
       }
       case 'cashier_orders': {
         // Read-only list of OPEN field orders (baru/diproses) for the counter cashier to prepare/fulfil, newest first.

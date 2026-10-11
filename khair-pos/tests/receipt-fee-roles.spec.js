@@ -2,7 +2,7 @@
 // "Ganti orang" (another person takes a role: new name + new temporary PIN hashed with the new name); users grouped by role.
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, sha, jktToday, login, getDb, nav, asUser, addBySearch, checkoutSkip, closeModals, typePin } = require('./helpers');
+const { SHOTS, sha, jktToday, login, getDb, nav, asUser, addBySearch, checkoutSkip, closeModals, typePin, switchUser } = require('./helpers');
 
 const NF = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
 const rp = n => (n < 0 ? '-Rp ' : 'Rp ') + NF.format(Math.abs(Math.round(n)));
@@ -21,6 +21,7 @@ test('receipt fee: setting; POS first receipt free, then +fee when ticked; shown
   let db = await getDb(page);
   const cust = db.customers.find(c => c.name === 'Pak Hasan Alatas'), p = db.products.find(x => /Kurma Ajwa/.test(x.name));
   expect(cust.receipts_sent || 0).toBe(0);
+  await switchUser(page, 'Jihan', '2222'); // v36: the owner no longer sells — the manager does
   await nav(page, 'pos');
   // first receipt: on by default and free
   await addBySearch(page, 'ajwa');

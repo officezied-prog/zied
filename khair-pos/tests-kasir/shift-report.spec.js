@@ -29,7 +29,7 @@ test('opening → buka_kas approval (manager approves, selling not blocked); clo
   let db = await H.getDb(page);
   const sh = db.shifts.find(x => x.cashier === 'Siti' && x.status === 'open');
   const ap = db.approvals.find(a => a.kind === 'buka_kas' && a.ref === sh.shift_id);
-  expect(ap).toMatchObject({ status: 'pending', cashier: 'Siti', approver_role: 'manager', total: 500000 });
+  expect(ap).toMatchObject({ status: 'pending', cashier: 'Siti', approver_role: 'mgr_akuntan', total: 500000 });
   expect(JSON.parse(ap.payload)).toEqual({ shift_id: sh.shift_id, opening_cash: 500000, last_counted: lastClosed.counted_cash, last_cashier: lastClosed.cashier });
   expect(ap.summary).toContain('Buka kas Siti: modal awal dihitung Rp 500000');
   expect(db.activity.find(a => a.kind === 'buka_kas' && a.ref === sh.shift_id)).toMatchObject({ user: 'Siti', amount: 500000, level: lastClosed.counted_cash === 500000 ? 'info' : 'warn' });

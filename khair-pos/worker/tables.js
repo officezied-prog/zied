@@ -21,6 +21,8 @@ export const TABLES = {
     stock: 'number', min_stock: 'number', active: 'boolean', notes: 'string',
     image_updated: 'string', supplier: 'string', repack_from: 'number', repack_qty: 'number',
     shop_stock: 'number', size: 'string', weight: 'string', exp_date: 'string', exp_none: 'boolean',
+    // v36: a product the cashier added at goods-in waits for the manager / accountant: review = that approval's id
+    review: 'string',
   },
   pos_customers: {
     name: 'string', phone: 'string', type: 'string', address: 'string', notes: 'string',
@@ -66,6 +68,8 @@ export const TABLES = {
   pos_expenses: {
     expense_date: 'string', category: 'string', amount: 'number', note: 'string',
     user: 'string', photo_id: 'string', paid_from: 'string',
+    // v36 expense invoice check: item lines (JSON), the check result, its approval and who checked it
+    lines: 'string', check_status: 'string', request_id: 'string', checked_by: 'string',
   },
   pos_shifts: {
     shift_id: 'string', cashier: 'string', shift_date: 'string', opened_at: 'string',
@@ -107,6 +111,13 @@ export const TABLES = {
     reason_code: 'string', reason_note: 'string', photo_id: 'string', out_doc_no: 'string',
     carrier_type: 'string', carrier_name: 'string', carrier_vehicle: 'string', carrier_phone: 'string',
   },
+  // v36 (owner 2026-10-11: «صور من يحاول كتابة الكود»): one row per code / sequential-digit attempt that locked an account,
+  // with the small front-camera JPEG (data URL) or why there is none (photo_status ok|pending|denied|none|error).
+  // Created at runtime on the live D1 (src/core.js POS_MIGRATIONS) — no separate migration step.
+  pos_tamper_shots: {
+    shot_id: 'string', at: 'string', shot_date: 'string', user: 'string', role: 'string', place: 'string',
+    kind: 'string', sample: 'string', photo: 'string', photo_status: 'string', device: 'string',
+  },
   pos_photos: {
     photo_id: 'string', kind: 'string', ref: 'string', created_at: 'string',
     photo_date: 'string', user: 'string', drive_file_id: 'string', drive_url: 'string',
@@ -119,12 +130,14 @@ export const TABLES = {
     area: 'string', type: 'string', lat: 'number', lng: 'number', created_by: 'string',
     created_at: 'string', last_visit_at: 'string', visits: 'number', status: 'string',
     customer_id: 'number', next_visit: 'string', type_other: 'string', chain: 'string',
+    photo_visit: 'string', // v36: the visit holding the shop's photos (owner + shop front)
   },
   pos_visits: {
     visit_id: 'string', client_id: 'string', user: 'string', visit_date: 'string',
     visit_time: 'string', shop_id: 'string', shop_name: 'string', lat: 'number', lng: 'number',
     acc: 'number', distance_m: 'number', outcome: 'string', notes: 'string', next_visit: 'string',
     photo_thumb: 'string', drive_url: 'string', rating: 'number',
+    shop_photo: 'string', // v36: photo of the shop front (new shop)
   },
   pos_tracks: {
     user: 'string', track_date: 'string', t: 'string', lat: 'number', lng: 'number',
@@ -222,6 +235,7 @@ export const TABLES = {
     note: 'string', lines: 'string', status: 'string', created_at: 'string', created_by: 'string',
     picked_at: 'string', picked_by: 'string', pick_date: 'string', cancel_reason: 'string',
     cancelled_at: 'string', cancelled_by: 'string', trip: 'string', log: 'string', customer_id: 'number',
+    plate: 'string', dest_phone: 'string', // v36: truck plate on the order + the customer's phone
   },
 };
 
@@ -238,7 +252,7 @@ export const OPS_TABLE = {
   users: 'pos_users', settings: 'pos_settings', approvals: 'pos_approvals',
   expenses: 'pos_expenses', shifts: 'pos_shifts', devices: 'pos_devices',
   repacks: 'pos_repacks', activity: 'pos_activity', bank_lines: 'pos_bank_lines',
-  returns: 'pos_returns',
+  returns: 'pos_returns', tamper_shots: 'pos_tamper_shots',
 };
 
 // Field (sales-lapangan) workflow ops key → table. `product_flags` is a partial UPDATE of
@@ -248,6 +262,7 @@ export const OPS_TABLE_FIELD = {
   shops: 'pos_shops', visits: 'pos_visits', tracks: 'pos_tracks',
   days: 'pos_field_days', orders: 'pos_field_orders', images: 'pos_product_images',
   product_flags: 'pos_products', plans: 'pos_route_plans', street_log: 'pos_street_log', shop_lists: 'pos_shop_lists', api_usage: 'pos_api_usage',
+  settings: 'pos_settings', // v36: street_return_days (the return time to a good street)
 };
 
 // Chat workflow ops key → table.

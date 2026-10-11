@@ -4,9 +4,16 @@
    Pure: no network, no storage, no clock. KChat.core(state, req, nowIso) -> { response, writes }.
      state   = { key_ok:boolean, users:[rows], settings:[{skey,svalue,id} rows], chat:[rows] }
      writes  = [{ table:'chat'|'settings', row }]  (a row with no id is inserted; with _id it updates)
-   Messages are append-only (always inserted). Two channels:
+   Messages are append-only (always inserted). Rooms:
      'general'   — everyone who holds the app (owner, manager, kasir, sales, akuntan)
      'owner_mgr' — private, only the owner and the manager
+     'dm:<a>|<b>' — v36 (owner 2026-10-11: «أريد الدردشة مع كل الفريق المسجل وكل من له يحمل هذا التطبيق»): a private
+                   1-to-1 room between two registered users, visible ONLY to those two (nobody else reads it — the owner
+                   has no oversight of other people's rooms, exactly as before for owner_mgr). <a>/<b> = the user's row id
+                   + '.' + the lower-case name (so a renamed account — "another person takes it" — or a new account with an
+                   old name never inherits someone else's room), sorted.
+   One poll serves all rooms: the fixed rooms' new messages, the new messages of the private rooms the app has open
+   (data.cursors), the team list, and unread counts for EVERY room (from data.seen = {room: last-read time}).
    Names only: the app shows the sender's name, never a role word. Auth mirrors the POS exactly
    (store key, active user, temporary PIN lock, owner master code, must-change-PIN, tamper lock). */
 var KChat = (function () {
@@ -30,6 +37,16 @@ var KChat = (function () {
   }
   function channelsFor(role) { return PRIV_ROLES.indexOf(role) >= 0 ? ['general', 'owner_mgr'] : ['general']; }
   function canSee(role, ch) { return channelsFor(role).indexOf(ch) >= 0; }
+  // v36: private 1-to-1 rooms
+  function uid(u) { var id = u && u.id !== undefined && u.id !== null && str(u.id) !== '' ? str(u.id) + '.' : ''; return id + norm(u && u.name).replace(/[|\s]+/g, '_'); }
+  function dmChannel(a, b) { return 'dm:' + [uid(a), uid(b)].sort().join('|'); }
+  function isActive(u) { return u && u.active !== false && u.active !== 'false'; }
+  /** Everyone registered (active, a known role) except me, each with the private room we share. Names only on screen. */
+  function teamFor(state, meRow) {
+    return (state.users || []).filter(function (u) { return isActive(u) && str(u.name) && ALL_ROLES.indexOf(str(u.role)) >= 0 && norm(u.name) !== norm(meRow.name); })
+      .map(function (u) { return { name: str(u.name), role: str(u.role), channel: dmChannel(meRow, u) }; })
+      .sort(function (x, y) { return x.name.localeCompare(y.name); });
+  }
 
   function settingsMap(rows) { var m = {}; (rows || []).forEach(function (r) { if (r && r.skey !== undefined && r.skey !== null) m[r.skey] = r.svalue; }); return m; }
   function lockedList(rows) {
@@ -55,7 +72,7 @@ var KChat = (function () {
     if (ALL_ROLES.indexOf(role) < 0) return { err: fail('FORBIDDEN', 'Peran tidak dikenal') };
     if (bool(me.must_change) && !viaMaster) return { err: fail('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu di aplikasi Khair Mart') };
     if (role !== 'owner' && lockedList(state.settings).indexOf(norm(me.name)) >= 0) return { err: fail('TAMPER_LOCKED', 'Akun dikunci. Hanya pemilik yang membuka.') };
-    return { role: role, name: str(me.name) };
+    return { role: role, name: str(me.name), row: me };
   }
 
   function activeMsgs(state, nowMs) {
@@ -86,22 +103,36 @@ var KChat = (function () {
     if (a.err) return a.err;
     var role = a.role, name = a.name, data = (req.data && typeof req.data === 'object') ? req.data : {};
     var chans = channelsFor(role), action = str(req.action);
+    var team = teamFor(state, a.row), dms = team.map(function (t) { return t.channel; });
 
     if (action === 'chat_bootstrap' || action === 'chat_poll') {
       var msgs = activeMsgs(state, nowMs);
-      var cursors = (action === 'chat_poll' && data.cursors && typeof data.cursors === 'object') ? data.cursors : {};
+      var cursors = (data.cursors && typeof data.cursors === 'object') ? data.cursors : {};
+      var seen = (data.seen && typeof data.seen === 'object') ? data.seen : {};
       var messages = {};
       chans.forEach(function (ch) {
         var after = action === 'chat_poll' ? (typeof cursors[ch] === 'string' ? cursors[ch] : '') : '';
         messages[ch] = channelMessages(msgs, ch, after);
       });
-      return { response: { ok: true, me: { name: name, role: role }, channels: chans, retention_days: retentionDays(state), messages: messages, now: nowIso }, writes: [] };
+      // v36: the private rooms the app has open (a key in cursors) — never a room I am not in
+      dms.forEach(function (ch) { if (typeof cursors[ch] === 'string') messages[ch] = channelMessages(msgs, ch, action === 'chat_poll' ? cursors[ch] : ''); });
+      // v36: unread per room (messages from others after what this device last read) + the last message time per room
+      var mine = {}; chans.concat(dms).forEach(function (ch) { mine[ch] = true; });
+      var unread = {}, last = {}, meN = norm(name);
+      msgs.forEach(function (m) {
+        var ch = str(m.channel); if (!mine[ch]) return;
+        var at = str(m.created_at); if (at > (last[ch] || '')) last[ch] = at;
+        if (norm(m.from_user || m.from_name) !== meN && at > (typeof seen[ch] === 'string' ? seen[ch] : '')) unread[ch] = (unread[ch] || 0) + 1;
+      });
+      return { response: { ok: true, me: { name: name, role: role }, channels: chans, retention_days: retentionDays(state), messages: messages,
+        team: team, unread: unread, last: last, now: nowIso }, writes: [] };
     }
 
     if (action === 'chat_send') {
       var ch = str(data.channel) || 'general';
-      if (CHANNELS.indexOf(ch) < 0) return fail('INVALID', 'Saluran tidak dikenal');
-      if (!canSee(role, ch)) return fail('FORBIDDEN', 'Anda tidak boleh di saluran ini');
+      var isDm = ch.indexOf('dm:') === 0;
+      if (!isDm && CHANNELS.indexOf(ch) < 0) return fail('INVALID', 'Saluran tidak dikenal');
+      if (isDm ? dms.indexOf(ch) < 0 : !canSee(role, ch)) return fail('FORBIDDEN', 'Anda tidak boleh di saluran ini');
       var body = cleanText(data.body, MSG_MAX).replace(/[ \t]+$/gm, '').replace(/\n{4,}/g, '\n\n\n').trim();
       var image = str(data.image).trim();
       if (image) {
@@ -111,6 +142,9 @@ var KChat = (function () {
       if (!body && !image) return fail('INVALID', 'Pesan kosong');
       var cid = cleanText(data.cid, 40).replace(/[^A-Za-z0-9_.\-]/g, '') || ('c' + nowMs + '-' + Math.floor(Math.random() * 1e9).toString(36));
       var dup = (state.chat || []).find(function (m) { return str(m.cid) === cid; });
+      // v36: a retry of MY message is a duplicate; a cid that belongs to someone else's message never returns it (private
+      // rooms) — this message just gets a fresh cid
+      if (dup && norm(dup.from_user || dup.from_name) !== norm(name)) { cid = 'c' + nowMs + '-' + Math.floor(Math.random() * 1e9).toString(36); dup = null; }
       if (dup) return { response: { ok: true, message: out(dup), dup: true }, writes: [] };
       var row = { channel: ch, cid: cid, from_user: name, from_name: name, from_role: role, body: body, image: image, created_at: nowIso, deleted: false };
       return { response: { ok: true, message: out(row) }, writes: [{ table: 'chat', row: row }] };
@@ -128,6 +162,6 @@ var KChat = (function () {
     return fail('UNKNOWN', 'Aksi tidak dikenal: ' + action);
   }
 
-  return { core: core, channelsFor: channelsFor, CHANNELS: CHANNELS, MSG_MAX: MSG_MAX, IMG_MAX: IMG_MAX, PAGE: PAGE };
+  return { core: core, channelsFor: channelsFor, dmChannel: dmChannel, CHANNELS: CHANNELS, MSG_MAX: MSG_MAX, IMG_MAX: IMG_MAX, PAGE: PAGE };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = KChat;

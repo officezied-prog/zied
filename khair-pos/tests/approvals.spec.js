@@ -29,7 +29,7 @@ test('kasir debt sale is refused without approval; on-site approval needs a vali
 });
 
 test('remote request → owner approves in the inbox → kasir saves with approval_id; receipt/history show the approver', async ({ page }) => {
-  await login(page);
+  await login(page, 'Pemilik', '1234', '', { stay: true }); // v36: the owner approves; he no longer sells
   await asUser(page, 'Siti', '1111', 'open_shift', { opening_cash: 500000 });
   const { sale } = await sitiDebtSale(page);
   const req = await asUser(page, 'Siti', '1111', 'request_credit', sale);

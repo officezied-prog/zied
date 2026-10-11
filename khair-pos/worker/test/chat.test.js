@@ -42,6 +42,8 @@ test('chat: generated runProcessChat == original (chat-core + process-chat)', as
     base('chat_send', 'Siti', '1111', { channel: 'owner_mgr', body: 'secret', cid: 'x' }), // kasir forbidden in owner_mgr
     base('chat_set_retention', 'Pemilik', '1234', { days: 30 }),
     base('chat_set_retention', 'Siti', '1111', { days: 30 }), // kasir forbidden
+    base('chat_send', 'Siti', '1111', { channel: 'dm:2.siti|3.jihan', body: 'pribadi', cid: 'dm-fixed' }), // v36 private room
+    base('chat_poll', 'Jihan', '2222', { cursors: { 'dm:2.siti|3.jihan': '' }, seen: { general: '' } }),
     { action: 'chat_bootstrap', key: 'WRONG', user: 'Siti', pin_hash: h('Siti', '1111'), data: {} },
   ];
   for (const body of cases) {
@@ -85,4 +87,33 @@ test('chat: owner sets retention (writes pos_settings)', async () => {
   const s = a.all("SELECT svalue FROM pos_settings WHERE skey = 'chat_retention_days'", []);
   assert.equal(s.length, 1);
   assert.equal(s[0].svalue, '30');
+});
+
+// v36 (owner 2026-10-11: «أريد الدردشة مع كل الفريق المسجل وكل من له يحمل هذا التطبيق»)
+test('chat v36: a private room with any team member — stored in pos_chat, visible only to its two members, unread in the same poll', async () => {
+  const db = seed();
+  insert(db, 'pos_users', { id: 4, name: 'Wahyu', role: 'sales', pin_hash: h('Wahyu', '4444'), active: true });
+  const a = sqliteAdapter(db);
+  const boot = await handleChat(a, base('chat_bootstrap', 'Siti', '1111'), {}, KEY);
+  assert.equal(boot.ok, true, JSON.stringify(boot));
+  assert.deepEqual(boot.team.map((t) => t.name), ['Jihan', 'Pemilik', 'Wahyu']);
+  const room = boot.team.find((t) => t.name === 'Wahyu').channel;
+  assert.equal(room, 'dm:2.siti|4.wahyu');
+  const sent = await handleChat(a, base('chat_send', 'Siti', '1111', { channel: room, body: 'rahasia kecil', cid: 'dm-1' }), {}, KEY);
+  assert.equal(sent.ok, true, JSON.stringify(sent));
+  assert.equal(a.all('SELECT channel FROM pos_chat WHERE cid = ?', ['dm-1'])[0].channel, room);
+  // Wahyu: unread without opening it, then the message when he opens it
+  const p1 = await handleChat(a, base('chat_poll', 'Wahyu', '4444', { cursors: { general: '' }, seen: {} }), {}, KEY);
+  assert.equal(p1.unread[room], 1);
+  assert.equal(p1.messages[room], undefined);
+  const p2 = await handleChat(a, base('chat_poll', 'Wahyu', '4444', { cursors: { [room]: '' } }), {}, KEY);
+  assert.equal(p2.messages[room][0].body, 'rahasia kecil');
+  // the owner and the manager never see it, even when asking for it
+  for (const [u, p] of [['Pemilik', '1234'], ['Jihan', '2222']]) {
+    const po = await handleChat(a, base('chat_poll', u, p, { cursors: { [room]: '' } }), {}, KEY);
+    assert.equal(po.ok, true);
+    assert.ok(!JSON.stringify(po).includes('rahasia kecil'), u + ' must not receive the private room');
+    const no = await handleChat(a, base('chat_send', u, p, { channel: room, body: 'x', cid: 'dm-x-' + u }), {}, KEY);
+    assert.equal(no.error, 'FORBIDDEN');
+  }
 });

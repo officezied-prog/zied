@@ -138,7 +138,18 @@ Photo kinds in `pos_photos.kind`: `masuk` (scan_purchase), `keluar` (scan_exit),
 `kind: "pemasok"` takes the `photo_id` of a `retur` photo; the return form fills `out_doc_no` from `extracted.doc_no`
 when it is still empty.
 
-`drive_url` may be empty while Google Drive storage is not connected yet.
+**Stored photos (v36, Cloudflare R2 instead of Google Drive).** When the Worker has the R2 binding `PHOTOS`
+(bucket `khair-mart-photos`, bound automatically by `.github/workflows/worker-deploy.yml` when the bucket exists), every
+scan keeps the image exactly as uploaded under `photos/YYYY-MM/<photo_id>.<jpg|png|webp>`; the row gets
+`drive_file_id = "r2:<key>"` and `drive_url = https://<worker>/webhook/khair-pos-photo/file/<photo_id>` (also in the scan
+response and in `list_photos`). Without the binding `drive_url` stays empty and nothing else changes.
+
+`GET /webhook/khair-pos-photo/file/<photo_id>` returns the image (`Content-Type` as uploaded,
+`Cache-Control: private, max-age=31536000, immutable`). Credentials go in headers, never in the URL:
+`X-Khair-Key` (store key), `X-Khair-User` (URI-encoded name), `X-Khair-Pin` (PIN hash or the owner's master code).
+Only **owner / manager / akuntan**: `401 BAD_KEY|BAD_PIN|LOCKED`, `403 FORBIDDEN|PIN_CHANGE_REQUIRED`,
+`404 NOT_FOUND` (not stored / storage off), `400 INVALID` (bad id) — JSON `{ok:false, error, message}`.
+The owner app shows it with "📷 Lihat foto" (fetch → in-app viewer); any other `drive_url` opens as a plain link.
 
 ## Anti-tamper and account lock (v19)
 
@@ -150,10 +161,20 @@ The owner is warned (`INVALID`) but never locked. `login` returns `tamper_locked
 
 | action | who | data | response |
 |---|---|---|---|
-| `report_tamper` | any (the app caught a code attempt) | `{where}` | `{ok, locked}` — locks a non-owner; the owner is only logged |
+| `report_tamper` | any role, sales and akuntan included (the app caught a code attempt) | `{where, kind?, sample?, shot_id?, photo_status?, photo?}` | `{ok, locked, shot_id, photo_status}` — locks a non-owner; the owner is only logged |
+| `list_tamper_shots` | owner | `{name?}` | `{ok, shots:[{shot_id, at, shot_date, user, role, place, kind, sample, photo, photo_status, device}]}` — newest first, at most 30 |
 | `clear_tamper` | owner | `{name}` | `{ok, user}` — removes the name from `locked_accounts` |
 
 The three apps also detect code attempts in inputs client-side and log the user straight out to the lock screen.
+
+**v36 (owner 2026-10-11): photo of whoever types code + sequential digits.** The apps call `report_tamper` twice with the same
+`shot_id` (`TS` + 8–20 of A–Z/0–9): first at once with `photo_status:"pending"` (locks the account, writes one `pos_tamper_shots`
+row and a `danger` activity entry), then with `photo` (a front-camera `data:image/jpeg;base64,…` ≤ 400,000 chars, ≤ 640 px) or the
+reason there is none (`photo_status` `denied` = camera refused, `none` = no camera, `error`). The second call only fills a row
+that is still `pending` and belongs to the same user (otherwise `FORBIDDEN`). `kind:"digits"` = a run of 8+ sequential / repeated
+digits typed in a free-text field (detected client-side only — the server cannot tell a note from a barcode); `sample` keeps only
+its digits. The photo is taken out of the request before the code scan and the 4000-character cut. The Worker creates
+`pos_tamper_shots` itself on first use (no migration step).
 
 ## Protected changes: old invoices and prices (v3)
 
@@ -171,7 +192,7 @@ by someone allowed to).
 
 | action | who | data | response |
 |---|---|---|---|
-| `request_void` | any | `{invoice_no, reason}` | `request_id, approval` (kind `void`, approver_role `owner`) |
+| `request_void` | any | `{invoice_no, reason}` | `request_id, approval` (kind `void`; approver_role `mgr_akuntan` for today's sale, `owner` for an earlier day's — v36) |
 | `change_price` | any | `{product_id, retail_price?, wholesale_price?, cost_price?, reason}` (only the fields that change) | applied directly if the caller may: `applied: true, product`; else `applied: false, request_id, approval` |
 | `decide_approval` | owner/manager (`approver_role` respected) | `{request_id, decision, note, invoice_no?}` — for kind `void` send `invoice_no: approval.ref` | `approval` (+ `sale` when a void was executed, + `product` when a price was applied, + `stock` when an `opname` count was applied) |
 | `list_approvals` | owner/manager | – | `approvals: [pending...]`, each with `can_decide: bool` |
@@ -280,6 +301,19 @@ clients cache images per product and re-fetch only the changed ones.
 Mock mode: demo field rep **Ahmad** (role `sales`, PIN 4444) with about 14 days of seeded days, tracks around
 Condet/Kramat Jati/Cililitan, visits, shops (prospek and pelanggan) and orders. Mock mode keeps these tables inside `kmock.db` under the keys `shops`, `visits`, `tracks`, `field_days`,
 `field_orders` and `product_images`, with the shapes above.
+
+### v36 (owner 2026-10-11): new-shop photos, visits table for the accountant, orders map, good streets to go back to
+
+| action | who | data | response |
+|---|---|---|---|
+| `check_in` (new shop) | sales | as above, plus `shop_photo_base64` (shop front, ≤ 45 KB, a photo of the place: no consent needed) and `owner_photo_refused: true` when the owner does not want to be photographed. The app now requires phone, address, the shop photo and the owner photo (unless refused or a black result); the server still accepts an old app copy and returns `warnings[]` | the visit keeps `shop_photo`; the shop gets `photo_visit` (the visit holding its photos). Photos are never echoed back |
+| `shop_photos` | sales, owner, manager, akuntan | `{shop_id}` | `owner_photo, shop_photo, visit_id, visit_time, user` (read only when opened; shops[] stay small) |
+| `orders_map` | owner, manager, akuntan | `{from, to (≤ 3 months), user?}` | `orders[]` — not cancelled, oldest first (the number on the map), each with the shop's `lat, lng, area, address` |
+| `street_returns` | sales (own streets, with `lines`), owner, manager, akuntan (all) | – | `days, today, streets[]: {skey, name, user, last_date, next_date, due_date, due, overdue, score, shops, customers, orders, value, interested, rating, drawn?, ref?}` — good streets only (score = orders×3 + customers×2 + interested visits + value/1,000,000 ≥ 2, shops ≤ 60 m of the line or with the street name in their address, last 90 days); `due` = the return time passed and not planned again |
+| `street_return_set` | owner, manager | `{days: 3–90}` | `days` (setting `street_return_days`, default 14) |
+
+`list_field`, `field_bootstrap` and `streets_worked` are also readable by the accountant. Visits carry `rating` (0–5) and, within 31 days, `shop_photo`.
+New D1 columns (added by the Worker itself, once per isolate): `pos_visits.shop_photo`, `pos_shops.photo_visit`.
 
 ## Devices: where each app is open (v11)
 
@@ -391,7 +425,7 @@ Matching uses payments of the month ± 3 days; a reference match wins over a dat
 
 - `open_shift` is for **kasir** accounts only (owner / manager → `FORBIDDEN`). Only kasir sales need an open shift (`SHIFT_REQUIRED`);
   owner and manager sell without one.
-- Every `open_shift` creates an approval `kind: "buka_kas"` (`approver_role: "manager"`, `ref: shift_id`, `total: opening_cash`,
+- Every `open_shift` creates an approval `kind: "buka_kas"` (`approver_role: "mgr_akuntan"` since v36 — manager or accountant; the manager's own opening `"owner"`, `ref: shift_id`, `total: opening_cash`,
   `payload: {shift_id, opening_cash, last_counted, last_cashier}`) with a summary comparing the opening count with the last closed drawer
   (counted cash). Manager or owner approves / rejects it like any approval; selling is not blocked. It is also logged (`buka_kas`, warn when
   the opening differs from the last count).
@@ -548,6 +582,28 @@ The apps must use the same rules in their inputs (`maxlength`, `inputmode`, `pat
   person takes the role); the PIN hash must be made with the new name, the new person must change it at first login; refused while
   that user has an open drawer. Logged "Ganti orang: A → B".
 
+## Owner decisions 11 Oct (v36)
+
+- **Old invoice = owner only.** `request_void` on a sale whose `sale_date` is TODAY (Jakarta) → `approver_role: "mgr_akuntan"`
+  (manager or accountant decide, v29). A sale from an EARLIER day → `approver_role: "owner"`; the response carries
+  `approver_role` and `old_invoice`; the approval `payload` holds `{invoice_no, sale_date, reason, total, old}`. A shared request
+  still pending after midnight also becomes owner-only (`can_decide: false`, `decide_approval` → `NEEDS_OWNER`).
+- **Morning opening → manager AND accountant.** A cashier's `open_shift` creates `buka_kas` with `approver_role: "mgr_akuntan"`
+  (+ a `notifikasi` to `manager,akuntan`); the first decision wins, a second `decide_approval` gets `INVALID` "sudah diputuskan oleh
+  <name>". When the manager decides, the accountant gets a notice. The manager's own opening still goes to the owner.
+- **The manager renames the accountant.** `save_user` by a manager on an `akuntan` account is allowed only as a rename
+  (`new_name` + the new temporary `pin_hash`, `role: "akuntan"`, same active state). No role change, PIN reset alone, suspension or
+  new accountant account (still `FORBIDDEN`).
+- **`profit_loss`** (owner only) `{from, to}` → `pl: {from, to, sales{count,total,discount}, voids{count,total}, cogs, gross_profit,
+  expenses{count,total,by_category}, returns{count,refund,restock,net}, stock_diff{count,value}, corrections{count,net,overcharge,
+  undercharge,refund_paid,collected,writeoff}, net_profit}`. `net_profit = gross_profit − expenses + returns.net + stock_diff.value +
+  corrections.collected` (an overcharge correction is already inside the sale totals; a written-off undercharge never was).
+  The Worker now also loads the decided price-correction history (`koreksi` / `refund` / `konsultasi`) for `list_corrections`,
+  `daily_report` and `profit_loss`.
+- **Attendance:** `att_settings` takes `att_ramadan_auto` (boolean, default true) and `att_ramadan_end` (HH:MM, default 23:00);
+  `att_bootstrap.settings.ramadan` lists the next two computed seasons `{hijri, ramadan, eid, from, to}` (from = two months before
+  1 Ramadan, to = Eid al-Fitr). A hand-typed `att_seasons` entry still wins on its days.
+
 ## Attendance by face (v17)
 
 Endpoint `POST https://ziedapp.app.n8n.cloud/webhook/khair-att`, same envelope (`key`, `user`, `pin_hash`, `data`).
@@ -599,7 +655,7 @@ writes `REVERSE` rows with `ref_seq` (a transfer is undone as a pair). Daily che
 | `check_preview` | all 3 | `{warehouse, text, check_date?}` → `{check_date, result}` (nothing saved) |
 | `check_save` | owner, manager | same → `check {check_no CEK-YYMMDD-NNN, result, raw_text, n_diff}` |
 | `check_note` | owner, manager | `{check_no, note}` once |
-| `order_save` | owner, manager | `{order_no? (edit while open), warehouse, order_date, dest_type toko\|pelanggan, dest_name, dest_address, pickup_person, vehicle, note, lines: [{pallet_code, cartons}]}` → `SPB-YYMMDD-NNN`; open orders reserve their cartons |
+| `order_save` | owner, manager | `{order_no? (edit while open), warehouse, order_date, dest_type toko\|pelanggan, dest_name, dest_address, dest_phone?, customer_id?, pickup_person, vehicle, plate?, note, lines: [{pallet_code, cartons}]}` → `SPB-YYMMDD-NNN`; open orders reserve their cartons. v36: a `pelanggan` order always saves its customer to `pos_customers` (the picked one, or the one with the same name, gets the typed phone/address; a new name becomes a new customer; POS-only columns never touched); each stored line carries `container_no`, `full` (the whole pallet is taken) and `pallet_ctn` (the pallet's cartons then) |
 | `order_status` | owner, manager | `{order_no, to, note?}` — flow open → sent → approved \| rejected(note) → ready → dispatch → driver (needs a trip driver; trip_save while dispatch does it) → picked → delivered; rejected → open by editing. Each step appends `{at, by, from, to, note}` to `log` |
 | `order_pick` | owner, manager | `{order_no, pick_date?}` (any step before picked) → OUT movements; `NOT_ENOUGH` if stock changed |
 | `order_cancel` | owner, manager | `{order_no, reason}` (open only; stays visible) |
@@ -609,3 +665,49 @@ writes `REVERSE` rows with `ref_seq` (a transfer is undone as a pair). Daily che
 
 Check result: `{lines: [{kind pallet|product, key, label, theirs, ours, diff}], unknown, missing, unparsed, ignored, n_ok, n_diff, total_theirs, total_ours}`.
 Report readers: `backend/cold/cold-parsers.js` (the DPP "LAPORAN STOCK PER-PID" Excel, its copied cells, WhatsApp lines like "Sukari 3kg 120 ctn").
+
+v36 order output: every order's `lines[]` has `container_no`, `full`, `pallet_ctn` (live from the stock while the order is running,
+as at the pick once picked); the order has `plate` and `dest_phone` (new `cold_orders` columns, added by the Worker itself).
+Documents (`shared/docs-cold.js`: A4/Word, Excel/share file via `orderRows`, WhatsApp `waOrder`) show the container, the plate
+(trip plate first, else the order's) and `PALET UTUH` / `Sebagian (n dari m ctn)` per line.
+
+## Team chat — `POST /webhook/khair-chat` (Phase 3, v36 private rooms)
+
+`chat_bootstrap`, `chat_poll {cursors: {room: last created_at}, seen: {room: last read created_at}}`, `chat_send {channel, body, image?, cid}`,
+`chat_set_retention {days}` (owner). Rooms: `general` (everyone), `owner_mgr` (owner + manager) and, v36, a private room
+`dm:<id>.<name>|<id>.<name>` between any two registered, active users (owner, manager, kasir, sales, akuntan) — only those two can
+read or post in it; nobody else (the owner included) receives it. Bootstrap/poll answer `{me, channels (fixed rooms), messages
+{room: [...]}, team: [{name, role, channel}], unread: {room: n}, last: {room: created_at}, retention_days}`; `messages` holds the
+fixed rooms plus the private rooms named in `cursors`, `unread` covers every room of the user (from `seen`). No extra calls: the
+existing poll (4 s open / 20 s closed, paused with the tab) carries it all. The apps show names only, never a role word.
+
+
+## Expense invoice check and new products at goods-in (v36, owner 2026-10-11)
+
+### Expense item lines + invoice check (`save_expense`)
+- New optional `data.lines: [{name, qty, unit_price}]` (≤ 50). Each line needs a name and qty > 0; the server adds
+  `total = round(qty × unit_price)`. When lines are given their sum must equal `amount` (else `INVALID`).
+- With `photo_id` (a `scan_expense` photo, kind `biaya`) the read invoice is compared line by line: the total, the
+  number of items (`count`), and for each line its `qty` and `unit_price` (lines matched by name, or by position when
+  the counts agree); typed lines missing from the invoice are `extra`, invoice lines not typed are `missing`.
+  Result `check: {status: cocok | selisih | cek_manual, diffs: [{field, name, typed, invoice}], rows, invoice: {count, total, vendor}}`.
+- `selisih` without `mismatch_reason` → `{ok:false, error:'MISMATCH', check, photo_amount}`; nothing saved.
+- `cek_manual` = the photo could not be read (no `ANTHROPIC_API_KEY` in the Worker, or an unreadable photo): saved at
+  once, never blocked.
+- `selisih` (with a reason) and `cek_manual` from a non-owner raise an approval `kind: 'expense_check'`
+  (`approver_role` `mgr_akuntan` for a cashier, `owner` for a manager / accountant); response `check_request_id`.
+- `pos_expenses` gains `lines` (JSON), `check_status` (`'' | cocok | selisih | cek_manual | disetujui | ditolak`),
+  `request_id`, `checked_by`. `decide_approval` on an `expense_check` sets `check_status` disetujui / ditolak.
+- `daily_report.report.expenses` gains `flagged`, `approved`, `rejected`, `flagged_total`.
+
+### New product at goods-in (`save_product` with `from_goods_in: true`)
+- Creating only (no `id`). `category` and `size` or `weight` are required; a cashier also needs `retail_price > 0`;
+  a name that already exists (any case) is refused.
+- Role `kasir` may call it (nothing else in `save_product`). The product is created with stock 0 (stock comes from the
+  goods-in that follows) and `review` = the id of an approval `kind: 'product_new'`, `approver_role: 'mgr_akuntan'`;
+  response `review_request_id`; the cost from the invoice is not echoed to the cashier.
+- `decide_approval` on a `product_new`: approved → `review` cleared, optional `data.prices {retail_price,
+  wholesale_price, wholesale_min_qty}` applied; rejected → the product is switched off (`active: false`), the stock stays.
+  The payload's `cost_price` is shown only to whoever may see costs (owner; manager / accountant with `akuntan_sees_cost`).
+- `pos_products` gains `review`. The Worker adds the new columns itself on the first request (`POS_MIGRATIONS` in
+  `worker/src/core.js`).

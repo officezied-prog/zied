@@ -43,6 +43,7 @@ test('consent + start day + tracking batches + end of day with km / visits / ord
   await page.click('#ci-new');
   await page.fill('#ci-name', 'Warung Uji Coba');
   await H.pickType(page, 'warung');
+  await H.newShopExtras(page);
   await page.click('#oc-order');
   await page.click('#ci-ok');
   await expect(page.locator('#v-order')).toBeVisible();

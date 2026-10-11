@@ -20,7 +20,7 @@ test('sell a retail item via search; receipt shows and stock decreases', async (
 
   const db = await getDb(page);
   const sale = db.sales.find(s => s.invoice_no === inv);
-  expect(sale).toMatchObject({ total: before.retail_price, payment_method: 'tunai', status: 'ok', cashier: 'Pemilik', debt_amount: 0 });
+  expect(sale).toMatchObject({ total: before.retail_price, payment_method: 'tunai', status: 'ok', cashier: 'Jihan', debt_amount: 0 });
   expect(sale.sale_time).toMatch(/\+07:00$/);
   expect(db.items.filter(i => i.invoice_no === inv)).toMatchObject([{ product_id: before.id, qty: 1, price_type: 'eceran', unit_price: before.retail_price }]);
   expect(productByName(db, /Ajwa/).stock).toBe(before.stock - 1);

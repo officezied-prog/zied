@@ -191,12 +191,14 @@ test('save_purchase (goods-in) inserts a purchase and adds to warehouse stock', 
 });
 
 // ---- v29 (owner 2026-10-10): cashier upgrades + manager/accountant (mgr_akuntan) approvals ----
+// v36: a void request is the manager's / accountant's only for TODAY's sale (Jakarta date); an earlier day's sale is the owner's.
+const jkToday = () => new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
 const seedAk = () => { const db = seed(); insert(db, 'pos_users', { id: 4, name: 'Aqil', role: 'akuntan', pin_hash: h('Aqil', '4444'), active: true }); return db; };
 
 test('v29 #6 void: cashier request routes to mgr_akuntan; the accountant can approve; owner+manager notified', async () => {
   const db = seedAk();
   const a = sqliteAdapter(db);
-  const s = await handleRequest(a, base('save_sale', 'Siti', '1111', { client_id: 'vd1', sale_date: '2026-10-06', items: [{ product_id: 1, qty: 2, unit_price: 185000 }], payment_method: 'tunai', paid_amount: 400000 }), {}, KEY);
+  const s = await handleRequest(a, base('save_sale', 'Siti', '1111', { client_id: 'vd1', sale_date: jkToday(), items: [{ product_id: 1, qty: 2, unit_price: 185000 }], payment_method: 'tunai', paid_amount: 400000 }), {}, KEY);
   assert.equal(s.ok, true, JSON.stringify(s));
   const inv = a.all('SELECT invoice_no FROM pos_sales', [])[0].invoice_no;
   const rv = await handleRequest(a, base('request_void', 'Siti', '1111', { invoice_no: inv, reason: 'salah input' }), {}, KEY);
@@ -213,7 +215,7 @@ test('v29 #6 void: cashier request routes to mgr_akuntan; the accountant can app
 test('v29 #6 void: a plain cashier cannot decide the request', async () => {
   const db = seedAk();
   const a = sqliteAdapter(db);
-  await handleRequest(a, base('save_sale', 'Siti', '1111', { client_id: 'vd2', sale_date: '2026-10-06', items: [{ product_id: 1, qty: 1, unit_price: 185000 }], payment_method: 'tunai', paid_amount: 200000 }), {}, KEY);
+  await handleRequest(a, base('save_sale', 'Siti', '1111', { client_id: 'vd2', sale_date: jkToday(), items: [{ product_id: 1, qty: 1, unit_price: 185000 }], payment_method: 'tunai', paid_amount: 200000 }), {}, KEY);
   const inv = a.all('SELECT invoice_no FROM pos_sales', [])[0].invoice_no;
   await handleRequest(a, base('request_void', 'Siti', '1111', { invoice_no: inv, reason: 'x' }), {}, KEY);
   const ap = a.all("SELECT * FROM pos_approvals WHERE kind = 'void'", [])[0];
