@@ -12,7 +12,7 @@ const data = req.data && typeof req.data === 'object' ? req.data : {};
     else if (v && typeof v === 'object') cleanInput(v, depth + 1);
   });
 })(data, 0);
-const ops = { shops: [], visits: [], tracks: [], days: [], orders: [], images: [], product_flags: [], plans: [] };
+const ops = { shops: [], visits: [], tracks: [], days: [], orders: [], images: [], product_flags: [], plans: [], street_log: [] };
 
 function rows(name) {
   try {
@@ -148,9 +148,20 @@ function cleanStreets(raw) {
       });
       if (pts.length > 1) lines.push(pts);
     });
-    out.push({ ref: str(x.ref).slice(0, 60) || ('st:' + name.toLowerCase()), name: name, lines: lines });
+    const o = { ref: str(x.ref).slice(0, 60) || ('st:' + name.toLowerCase()), name: name, lines: lines };
+    if (x.drawn === true) o.drawn = true; // v32: a work line the rep drew point by point (not a named street)
+    out.push(o);
   });
   return out;
+}
+// v32 (owner 2026-10-11: "keep it always, not only 60 days"): every street / drawn line of a plan also goes into a permanent
+// log — one row per street per plan, with its box on the map — so the shared map keeps ALL past work, and reading it stays
+// small (only the streets around the rep, latest per street and rep) however many years of plans pile up.
+function streetKey(x) { return x.drawn === true ? 'ln:' + str(x.ref) : 'st:' + str(x.name).toLowerCase(); }
+function streetBox(lines) {
+  const b = { min_lat: 90, max_lat: -90, min_lng: 180, max_lng: -180 };
+  (lines || []).forEach(function (ln) { ln.forEach(function (q) { b.min_lat = Math.min(b.min_lat, q[0]); b.max_lat = Math.max(b.max_lat, q[0]); b.min_lng = Math.min(b.min_lng, q[1]); b.max_lng = Math.max(b.max_lng, q[1]); }); });
+  return b.min_lat > b.max_lat ? { min_lat: -90, max_lat: 90, min_lng: -180, max_lng: 180 } : b; // no line: shown everywhere (name only)
 }
 function visitOut(v, full) {
   const o = clean(v);
@@ -159,7 +170,11 @@ function visitOut(v, full) {
 }
 // Same ids as khair-pos/shared/shop-types.js (grouped list shown in the apps); unknown → 'lainnya' + type_other.
 const SHOP_TYPES = ['perlengkapan_haji', 'travel_umrah', 'oleh_oleh_haji', 'toko_kurma', 'herbal', 'busana_muslim', 'toko_buku_islam', 'warung', 'toko', 'grosir_sembako', 'pasar', 'minimarket', 'supermarket', 'hypermarket', 'grosir_modern', 'bakery', 'toko_kue', 'katering', 'restoran', 'kafe', 'hotel', 'oleh_oleh', 'parsel', 'toko_buah', 'masjid', 'pesantren', 'sekolah', 'majelis_taklim', 'kantor', 'koperasi', 'reseller', 'toko_online', 'lainnya'];
-const OUTCOMES = ['order', 'tertarik', 'tidak', 'tutup', 'sudah_pelanggan'];
+// v32 (owner 2026-10-11): the visit result colours the point — green = order; orange = shop there, no order (tertarik,
+// sudah_pelanggan); blue = does not want to work with us (tidak); BLACK = closed / owner not there / shop not found / changed
+// business — a photo of the place is required (it is evidence of the place, so it needs no consent from a person).
+const OUTCOMES = ['order', 'tertarik', 'tidak', 'tutup', 'sudah_pelanggan', 'tidak_ada', 'tidak_ditemukan', 'ganti_usaha'];
+const BLACK_OUTCOMES = ['tutup', 'tidak_ada', 'tidak_ditemukan', 'ganti_usaha'];
 
 switch (req.action) {
   case 'field_bootstrap': {
@@ -273,7 +288,8 @@ switch (req.action) {
     }
     let photo = typeof data.photo_base64 === 'string' ? data.photo_base64.replace(/^data:[^,]*,/, '').replace(/\s/g, '') : '';
     const warnings = [];
-    if (photo && data.photo_consent !== true) { photo = ''; warnings.push('Foto tidak disimpan: pemilik toko belum setuju'); }
+    const placePhoto = data.photo_place === true && BLACK_OUTCOMES.indexOf(data.outcome) >= 0; // a photo of the closed / missing shop
+    if (photo && data.photo_consent !== true && !placePhoto) { photo = ''; warnings.push('Foto tidak disimpan: pemilik toko belum setuju'); }
     if (photo.length > 60000) { photo = ''; warnings.push('Foto terlalu besar, tidak disimpan'); }
     const visit = {
       visit_id: 'VS' + rand(7), client_id: req.client_id, user: me.name, visit_date: req.today, visit_time: now, shop_id: shopId, shop_name: str(shop.name),
@@ -283,6 +299,7 @@ switch (req.action) {
       rating: Math.max(0, Math.min(5, Math.round(num(data.rating)))),
       next_visit: isDate(data.next_visit) ? data.next_visit : '', photo_thumb: photo, drive_url: ''
     };
+    if (BLACK_OUTCOMES.indexOf(visit.outcome) >= 0 && !photo) warnings.push('Foto tempat wajib untuk hasil ini'); // the app asks for it; an old app copy is still accepted
     ops.visits.push(forWrite(visit, -1));
     if (myDay && !myDay.ended_at) ops.tracks.push(forWrite({ user: me.name, track_date: req.today, t: now, lat: visit.lat, lng: visit.lng, acc: visit.acc, speed: 0, battery: 0 }, -1));
     return done({ ok: true, duplicate: false, visit: visitOut(visit, false), shop: clean(shop), warnings: warnings });
@@ -339,6 +356,7 @@ switch (req.action) {
       stops.push({ ref: str(x.ref).slice(0, 40) || ('s' + (i + 1)), kind: sh ? 'shop' : 'place', shop_id: sh ? sh.shop_id : '', name: name,
         lat: Math.round(num(x.lat) * 1e6) / 1e6, lng: Math.round(num(x.lng) * 1e6) / 1e6, address: str(x.address).slice(0, 200),
         type: SHOP_TYPES.indexOf(x.type) >= 0 ? x.type : '', src: ['osm', 'map', 'shop'].indexOf(x.src) >= 0 ? x.src : '' });
+      if (/^[a-z_]{1,20}$/.test(str(x.cat))) stops[stops.length - 1].cat = str(x.cat); // v32: the kind searched for (its colour on the map)
     }
     const st = data.start && typeof data.start === 'object' ? data.start : {};
     const en = data.end && typeof data.end === 'object' ? data.end : {};
@@ -352,22 +370,32 @@ switch (req.action) {
       stops: JSON.stringify(stops), streets: JSON.stringify(cleanStreets(data.streets)), note: str(data.note).slice(0, 300),
       created_at: ex ? str(ex.created_at) : now, updated_at: now };
     ops.plans.push(forWrite(plan, ex ? ex.id : -1));
+    // the permanent street log: this plan's streets are (re)written; a street taken out of the plan is marked removed
+    const logged = rows('Get Plan Street Log').filter(function (r) { return str(r.plan_id) === plan.plan_id; }), keep = {};
+    jsonList(plan.streets).forEach(function (x) {
+      const k = streetKey(x); if (keep[k]) return; keep[k] = true;
+      const old = logged.find(function (r) { return str(r.skey) === k; });
+      ops.street_log.push(forWrite(Object.assign({ skey: k, user: me.name, name: x.name, plan_date: pd, plan_id: plan.plan_id, drawn: x.drawn === true ? 1 : 0,
+        ref: x.ref, lines: JSON.stringify(x.lines || []), removed: 0, updated_at: now }, streetBox(x.lines)), old ? old.id : -1));
+    });
+    logged.forEach(function (r) { if (!keep[str(r.skey)] && !num(r.removed)) ops.street_log.push(forWrite({ removed: 1, updated_at: now }, r.id)); });
     return done({ ok: true, plan: planOut(plan) });
   }
 
   case 'streets_worked': {
     // v31b (owner 2026-10-11): every street a rep plans to work is kept on the map for ALL reps, so a second rep does not
-    // repeat the same street. Last 60 days + planned ones (up to 14 days ahead); one entry per street and rep (latest).
+    // repeat the same street. v32: KEPT FOREVER (owner: "always, not only 60 days") — read from the permanent street log,
+    // around the rep's area (data.lat/lng, ±0.2°), latest entry per street and rep (the loader groups them), planned ones too.
     if (role !== 'sales' && !isBoss) return fail('FORBIDDEN', 'Hanya sales, pemilik atau manajer');
     const seen = {}, list = [];
-    rows('Get Area Plans').slice().sort(function (a, b) { return str(b.plan_date).localeCompare(str(a.plan_date)); }).forEach(function (p) {
-      jsonList(p.streets).forEach(function (x) {
-        const k = str(x.name).toLowerCase() + '|' + str(p.user).toLowerCase();
-        if (!x.name || seen[k] || list.length >= 300) return; seen[k] = true;
-        list.push({ name: str(x.name), user: str(p.user), plan_date: str(p.plan_date), status: str(p.plan_date) <= req.today ? 'worked' : 'planned', lines: Array.isArray(x.lines) ? x.lines : [] });
-      });
+    rows('Get Street Log').slice().sort(function (a, b) { return str(b.plan_date).localeCompare(str(a.plan_date)); }).forEach(function (r) {
+      const k = str(r.skey) + '|' + str(r.user).toLowerCase();
+      if (!r.name || num(r.removed) || seen[k] || list.length >= 1000) return; seen[k] = true;
+      const o = { name: str(r.name), user: str(r.user), plan_date: str(r.plan_date), status: str(r.plan_date) <= req.today ? 'worked' : 'planned', lines: jsonList(r.lines) };
+      if (num(r.drawn)) { o.drawn = true; o.ref = str(r.ref); }
+      list.push(o);
     });
-    return done({ ok: true, streets: list, since: addDaysYmd(req.today, -60) });
+    return done({ ok: true, streets: list, since: '' });
   }
 
   case 'list_field': {
