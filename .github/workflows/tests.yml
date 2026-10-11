@@ -1,0 +1,88 @@
+# Tests on every pull request and every push to main — v36 (owner 2026-10-11: "start with item 9").
+# Each suite runs in its own job, so one red suite is easy to see and the others still report.
+#   worker : the real backend (khair-pos/backend/* built into the Worker) over an in-memory SQLite
+#   owner  : khair-pos/tests        (owner / manager / accountant app, demo backend)
+#   kasir  : khair-pos/tests-kasir  (cashier app)
+#   sales  : khair-pos/tests-sales  (field-sales app)
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  worker:
+    name: Worker (backend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: khair-pos/worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: khair-pos/worker/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Test (build + full Worker suite)
+        run: npm test
+      # The generated files are committed for reproducible deploys: they must match backend/* exactly.
+      - name: Generated files are up to date
+        run: |
+          git diff --exit-code -- src/generated schema.sql \
+            || { echo "::error::Run 'cd khair-pos/worker && npm run build' and commit src/generated/* and schema.sql"; exit 1; }
+
+  playwright:
+    name: Playwright (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: owner
+            dir: khair-pos/tests
+          - app: kasir
+            dir: khair-pos/tests-kasir
+          - app: sales
+            dir: khair-pos/tests-sales
+    env:
+      # The configs default to the dev container's /opt/pw-browsers; on the runner Chromium is installed here.
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12' # the suites serve the apps with `python3 -m http.server`
+      - name: Install
+        run: npm install --no-audit --no-fund
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run the ${{ matrix.app }} suite
+        run: npx playwright test
+      - name: Upload the report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-${{ matrix.app }}
+          path: |
+            ${{ matrix.dir }}/test-results
+          if-no-files-found: ignore
+          retention-days: 7

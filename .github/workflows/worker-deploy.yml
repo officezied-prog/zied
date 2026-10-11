@@ -1,0 +1,112 @@
+# Automatic deploy of the Khair Mart Jumla backend (Cloudflare Worker + D1) — v36
+# (owner 2026-10-11: "start with item 9"; and 2026-10-09: "أنت من تعدل الكود لا تنتظرني").
+#
+# On every push to main that touches the backend (khair-pos/backend/** or khair-pos/worker/**), and on demand
+# (Actions tab → "Deploy Worker" → Run workflow):
+#   1. run the Worker test suite (the real backend over an in-memory SQLite) — a red test never deploys;
+#   2. if the R2 bucket for photos exists (or can be created), bind it as PHOTOS for this deploy only;
+#   3. `wrangler deploy` (keep_vars = true in wrangler.toml keeps the dashboard secrets/variables);
+#   4. smoke-test the live Worker; if it does not answer, roll back to the previous version automatically.
+#
+# Repo secrets (Settings → Secrets and variables → Actions):
+#   CLOUDFLARE_API_TOKEN  (required to deploy; without it the deploy is skipped with a notice, never a red failure)
+#   CLOUDFLARE_ACCOUNT_ID (optional — falls back to the store's account id below, which is not secret)
+# One-time setup steps for the owner: khair-pos/worker/README.md → "Automatic deploy".
+name: Deploy Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'khair-pos/backend/**'
+      - 'khair-pos/worker/**'
+      - '.github/workflows/worker-deploy.yml'
+  workflow_dispatch:
+
+# Two deploys never overlap: a newer push waits for the running deploy to finish (not cancelled mid-deploy).
+concurrency:
+  group: worker-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || 'c82e2561b81c97de7c59166d7a915924' }}
+      WORKER_URL: https://khair-mart-jumla.officezied.workers.dev
+      PHOTO_BUCKET: khair-mart-photos
+      WRANGLER_SEND_METRICS: 'false'
+    defaults:
+      run:
+        working-directory: khair-pos/worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: khair-pos/worker/package-lock.json
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Test (build + full Worker suite)
+        run: npm test
+
+      - name: Check the Cloudflare token
+        id: token
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::notice title=Deploy skipped::The repo secret CLOUDFLARE_API_TOKEN is not set, so the Worker was tested but NOT deployed. Setup: khair-pos/worker/README.md → Automatic deploy."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # v36 (owner 2026-10-08: "فعّل حفظ الصور عبر Google Drive") — photos are kept in Cloudflare R2. A deploy that binds a
+      # bucket which does not exist fails, so wrangler.toml has NO binding: it is added here only when the bucket is there.
+      # A token without R2 permission (or an account without R2 enabled) still deploys everything else.
+      - name: Photo storage (R2) — create the bucket if needed and bind it
+        if: steps.token.outputs.present == 'true'
+        run: |
+          npx wrangler r2 bucket create "$PHOTO_BUCKET" --location apac > r2-create.log 2>&1 \
+            && echo "Created R2 bucket $PHOTO_BUCKET" \
+            || { grep -qiE 'already exists|10004' r2-create.log && echo "R2 bucket $PHOTO_BUCKET already exists" || sed -n '1,20p' r2-create.log; }
+          if npx wrangler r2 bucket info "$PHOTO_BUCKET" > /dev/null 2>&1 \
+             || npx wrangler r2 bucket list 2>/dev/null | grep -Eq "^name:[[:space:]]+$PHOTO_BUCKET\$"; then
+            printf '\n# Added by .github/workflows/worker-deploy.yml (the bucket exists)\n[[r2_buckets]]\nbinding = "PHOTOS"\nbucket_name = "%s"\n' "$PHOTO_BUCKET" >> wrangler.toml
+            echo "Photos will be stored in R2 bucket $PHOTO_BUCKET (binding PHOTOS)."
+          else
+            echo "::warning title=Photos not stored::R2 bucket $PHOTO_BUCKET is not available (R2 not enabled on the account, or the token lacks 'Workers R2 Storage: Edit'). Deploying WITHOUT photo storage — everything else works as before."
+          fi
+          rm -f r2-create.log
+
+      - name: Deploy
+        if: steps.token.outputs.present == 'true'
+        run: npx wrangler deploy
+
+      # The Worker answers a request with a wrong store key with {"ok":false,"error":"BAD_KEY"} (HTTP 200): no data is
+      # read or written. If it does not, the previous version is restored at once so the shop never stays down.
+      - name: Smoke test (roll back automatically if the new version does not answer)
+        if: steps.token.outputs.present == 'true'
+        run: |
+          ok=0
+          for i in 1 2 3 4 5; do
+            body=$(curl -sS -m 20 -X POST -H 'Content-Type: text/plain;charset=UTF-8' \
+              --data '{"action":"bootstrap","key":"ci-smoke-test","data":{}}' "$WORKER_URL/webhook/khair-pos" || true)
+            if printf '%s' "$body" | grep -q '"BAD_KEY"'; then ok=1; break; fi
+            echo "Attempt $i: unexpected answer: $(printf '%s' "$body" | head -c 300)"
+            sleep 6
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error title=Deploy rolled back::The new Worker did not answer the smoke test; rolling back to the previous version."
+            npx wrangler rollback -y -m "CI smoke test failed for ${GITHUB_SHA::7}" || true
+            exit 1
+          fi
+          echo "Live Worker answers correctly."

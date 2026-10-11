@@ -4,10 +4,42 @@ const MockServer = (() => {
   const DBKEY = 'kmock.db';
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
-  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_transfers', 'list_photos', 'field_bootstrap', 'list_field', 'product_images', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon'];
+  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_transfers', 'list_photos', 'photo_file', 'field_bootstrap', 'list_field', 'product_images', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon'];
   class MockErr extends Error { constructor(code, message, extra) { super(message || code); this.code = code; this.extra = extra || null; } }
   const E = (code, msg, extra) => new MockErr(code, msg, extra);
   let ready = null;
+
+  // v36 (owner 2026-10-08: "فعّل حفظ الصور عبر Google Drive") — demo twin of the Worker's R2 photo store. The scanned image is
+  // kept in IndexedDB 'kmock-photos' (shared by the demo apps of this site, and never inside kmock.db, so photos can never
+  // fill the demo database); the photo gets drive_file_id 'r2:…' + drive_url '<PHOTO_URL>/file/<photo_id>', as on the Worker.
+  const PHOTO_IDB = 'kmock-photos', memPhotos = {};
+  function photoIdb() {
+    return new Promise(res => { try { const rq = indexedDB.open(PHOTO_IDB, 1); rq.onupgradeneeded = () => rq.result.createObjectStore('img'); rq.onsuccess = () => res(rq.result); rq.onerror = () => res(null); } catch (e) { res(null); } });
+  }
+  function keepPhotoImg(db, photo, data) {
+    const b64 = String((data && data.image_base64) || '').replace(/^data:[^,]*,/, '').replace(/\s/g, '');
+    if (!b64 || !/^[A-Za-z0-9+/=]+$/.test(b64)) return '';
+    const mime = /^image\/(jpeg|png|webp)$/.test(String(data.mime || '')) ? data.mime : 'image/jpeg';
+    memPhotos[photo.photo_id] = 'data:' + mime + ';base64,' + b64;
+    (db._keepImgs = db._keepImgs || []).push(photo.photo_id);
+    photo.drive_file_id = 'r2:photos/' + String(photo.photo_date || '').slice(0, 7) + '/' + photo.photo_id + '.' + ({ 'image/png': 'png', 'image/webp': 'webp' }[mime] || 'jpg');
+    photo.drive_url = ((typeof CONFIG !== 'undefined' && CONFIG.PHOTO_URL) || 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo') + '/file/' + photo.photo_id;
+    return photo.drive_url;
+  }
+  async function flushPhotoImgs(ids) {
+    if (!ids || !ids.length) return;
+    try {
+      const idb = await photoIdb(); if (!idb) return;
+      await new Promise(res => { const tx = idb.transaction('img', 'readwrite'); ids.forEach(id => { if (memPhotos[id]) tx.objectStore('img').put(memPhotos[id], id); }); tx.oncomplete = res; tx.onerror = res; tx.onabort = res; });
+    } catch (e) { }
+  }
+  async function photoImg(id) {
+    if (memPhotos[id]) return memPhotos[id];
+    try {
+      const idb = await photoIdb(); if (!idb) return null;
+      return await new Promise(res => { const rq = idb.transaction('img').objectStore('img').get(id); rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null); });
+    } catch (e) { return null; }
+  }
 
   function load() { try { return JSON.parse(localStorage.getItem(DBKEY) || 'null'); } catch (e) { return null; } }
   function save(db) { try { localStorage.setItem(DBKEY, JSON.stringify(db)); } catch (e) { throw E('SERVER', 'mock storage full'); } }
@@ -784,9 +816,9 @@ const MockServer = (() => {
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
-    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'list_corrections', 'save_product'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
+    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
-    if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'list_photos'].includes(action)) deviceTouch(db, u, data.device, false);
+    if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'list_photos', 'photo_file'].includes(action)) deviceTouch(db, u, data.device, false);
 
     switch (action) {
       case 'att_bootstrap': case 'worker_save': case 'worker_enroll': case 'worker_forget': case 'att_mark': case 'att_report': case 'att_settings':
@@ -1196,8 +1228,9 @@ const MockServer = (() => {
           if (best && best.score >= 0.34) suggestions.push(best);
         });
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'masuk', ref: '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted, match_status: '', match_notes: '' };
+        keepPhotoImg(db, photo, data);
         db.photos.push(photo);
-        return { photo_id: photo.photo_id, extracted, suggestions, drive_url: '' };
+        return { photo_id: photo.photo_id, extracted, suggestions, drive_url: photo.drive_url };
       }
       case 'scan_payment': {
         if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
@@ -1206,8 +1239,9 @@ const MockServer = (() => {
         if (!ex) ex = { date: jktDate(), time: jktTime(new Date()), amount: 500000, sender_name: 'TOKO BERKAH CONDET', sender_bank: 'BCA', receiver_name: 'KHAIR MART', receiver_bank: 'BCA', bank: 'BCA', transfer_ref: String(Date.now()).slice(-10), description: 'Pembayaran', status: 'berhasil', readable: true, notes: '' };
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'bayar', ref: '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted: ex,
           match_status: ex.readable === false || ex.amount === null || ex.status === 'gagal' ? 'perlu_cek' : '', match_notes: strv(ex.notes) };
+        keepPhotoImg(db, photo, data);
         db.photos.push(photo);
-        return { photo_id: photo.photo_id, extracted: ex, drive_url: '' };
+        return { photo_id: photo.photo_id, extracted: ex, drive_url: photo.drive_url };
       }
       case 'scan_exit': {
         if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
@@ -1220,9 +1254,10 @@ const MockServer = (() => {
           : mode === 'perlu_cek' ? { status: 'perlu_cek', notes: 'Foto kurang jelas, sebagian barang tidak terbaca.', diffs: [] }
           : { status: 'cocok', notes: 'Semua barang sesuai nota.', diffs: [] };
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'keluar', ref: sale.invoice_no, created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted: { items: seen }, match_status: match.status, match_notes: match.notes };
+        keepPhotoImg(db, photo, data);
         db.photos.push(photo);
         sale.exit_photo = photo.photo_id; sale.exit_match = match.status;
-        return { photo_id: photo.photo_id, extracted: { items: seen }, match, drive_url: '' };
+        return { photo_id: photo.photo_id, extracted: { items: seen }, match, drive_url: photo.drive_url };
       }
       case 'scan_supplier_return': {
         // v17 photo workflow, kind 'retur': the outgoing return note / goods going back to the supplier (demo: localStorage kmock.retur)
@@ -1233,8 +1268,16 @@ const MockServer = (() => {
         const pno = String(data.purchase_no || '').trim().toUpperCase();
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'retur', ref: /^[A-Z0-9][A-Z0-9 \/.-]{0,39}$/.test(pno) ? pno : '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted: ex,
           match_status: ex.readable === false ? 'perlu_cek' : '', match_notes: String(ex.notes || '') };
+        keepPhotoImg(db, photo, data);
         db.photos.push(photo);
-        return { photo_id: photo.photo_id, extracted: ex, drive_url: '' };
+        return { photo_id: photo.photo_id, extracted: ex, drive_url: photo.drive_url };
+      }
+      case 'photo_file': {
+        // v36: GET <PHOTO_URL>/file/<photo_id> on the Worker — the stored image, owner / manager / akuntan only
+        if (!['owner', 'manager', 'akuntan'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik, manajer, atau akuntan');
+        const ph = db.photos.find(x => x.photo_id === String(data.photo_id || ''));
+        if (!ph || String(ph.drive_file_id || '').indexOf('r2:') !== 0) throw E('NOT_FOUND', 'Foto tidak disimpan');
+        return { photo_id: ph.photo_id, _img: ph.photo_id };
       }
       case 'list_photos': {
         if (!isYmd(data.from) || !isYmd(data.to)) throw E('INVALID', 'from/to');
@@ -2128,6 +2171,9 @@ const MockServer = (() => {
     db._shopSet = {};
     try {
       res = opts.field || FIELD_ACTIONS.includes(body.action) ? fieldHandle(db, body) : handle(db, body);
+      const keepImgs = db._keepImgs; delete db._keepImgs; // v36: scanned images → IndexedDB (demo twin of R2)
+      if (keepImgs) await flushPhotoImgs(keepImgs);
+      if (res && res._img) { const src = await photoImg(res._img); if (!src) throw E('NOT_FOUND', 'Foto tidak ditemukan'); res = { photo_id: res.photo_id, mime: (src.match(/^data:([^;,]+)/) || [])[1] || 'image/jpeg', data_url: src }; }
       const role = db._role || (db.users.find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase() && x.pin_hash === body.pin_hash) || {}).role;
       normShop(db, snap);
       if (res && res.product && res.product.id != null && ['change_price', 'stock_adjust', 'decide_approval'].includes(body.action)) res.product = prodOut(res.product);

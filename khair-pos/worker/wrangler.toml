@@ -9,6 +9,12 @@ compatibility_date = "2025-06-01"
 # Keep variables the owner adds in the Cloudflare dashboard (e.g. a key added as a plain "Variable" instead of a
 # "Secret") when this Worker is deployed again — otherwise `wrangler deploy` would silently remove them.
 keep_vars = true
+# v36: photos are kept in the R2 bucket "khair-mart-photos" (binding PHOTOS). The binding is NOT written here on purpose:
+# a deploy that binds a bucket which does not exist fails. .github/workflows/worker-deploy.yml creates the bucket when
+# needed and appends the [[r2_buckets]] block only when it exists. For a manual deploy with photos, append:
+#   [[r2_buckets]]
+#   binding = "PHOTOS"
+#   bucket_name = "khair-mart-photos"
 
 [[d1_databases]]
 binding = "DB"
