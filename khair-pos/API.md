@@ -610,7 +610,7 @@ writes `REVERSE` rows with `ref_seq` (a transfer is undone as a pair). Daily che
 | `check_preview` | all 3 | `{warehouse, text, check_date?}` → `{check_date, result}` (nothing saved) |
 | `check_save` | owner, manager | same → `check {check_no CEK-YYMMDD-NNN, result, raw_text, n_diff}` |
 | `check_note` | owner, manager | `{check_no, note}` once |
-| `order_save` | owner, manager | `{order_no? (edit while open), warehouse, order_date, dest_type toko\|pelanggan, dest_name, dest_address, pickup_person, vehicle, note, lines: [{pallet_code, cartons}]}` → `SPB-YYMMDD-NNN`; open orders reserve their cartons |
+| `order_save` | owner, manager | `{order_no? (edit while open), warehouse, order_date, dest_type toko\|pelanggan, dest_name, dest_address, dest_phone?, customer_id?, pickup_person, vehicle, plate?, note, lines: [{pallet_code, cartons}]}` → `SPB-YYMMDD-NNN`; open orders reserve their cartons. v36: a `pelanggan` order always saves its customer to `pos_customers` (the picked one, or the one with the same name, gets the typed phone/address; a new name becomes a new customer; POS-only columns never touched); each stored line carries `container_no`, `full` (the whole pallet is taken) and `pallet_ctn` (the pallet's cartons then) |
 | `order_status` | owner, manager | `{order_no, to, note?}` — flow open → sent → approved \| rejected(note) → ready → dispatch → driver (needs a trip driver; trip_save while dispatch does it) → picked → delivered; rejected → open by editing. Each step appends `{at, by, from, to, note}` to `log` |
 | `order_pick` | owner, manager | `{order_no, pick_date?}` (any step before picked) → OUT movements; `NOT_ENOUGH` if stock changed |
 | `order_cancel` | owner, manager | `{order_no, reason}` (open only; stays visible) |
@@ -620,3 +620,19 @@ writes `REVERSE` rows with `ref_seq` (a transfer is undone as a pair). Daily che
 
 Check result: `{lines: [{kind pallet|product, key, label, theirs, ours, diff}], unknown, missing, unparsed, ignored, n_ok, n_diff, total_theirs, total_ours}`.
 Report readers: `backend/cold/cold-parsers.js` (the DPP "LAPORAN STOCK PER-PID" Excel, its copied cells, WhatsApp lines like "Sukari 3kg 120 ctn").
+
+v36 order output: every order's `lines[]` has `container_no`, `full`, `pallet_ctn` (live from the stock while the order is running,
+as at the pick once picked); the order has `plate` and `dest_phone` (new `cold_orders` columns, added by the Worker itself).
+Documents (`shared/docs-cold.js`: A4/Word, Excel/share file via `orderRows`, WhatsApp `waOrder`) show the container, the plate
+(trip plate first, else the order's) and `PALET UTUH` / `Sebagian (n dari m ctn)` per line.
+
+## Team chat — `POST /webhook/khair-chat` (Phase 3, v36 private rooms)
+
+`chat_bootstrap`, `chat_poll {cursors: {room: last created_at}, seen: {room: last read created_at}}`, `chat_send {channel, body, image?, cid}`,
+`chat_set_retention {days}` (owner). Rooms: `general` (everyone), `owner_mgr` (owner + manager) and, v36, a private room
+`dm:<id>.<name>|<id>.<name>` between any two registered, active users (owner, manager, kasir, sales, akuntan) — only those two can
+read or post in it; nobody else (the owner included) receives it. Bootstrap/poll answer `{me, channels (fixed rooms), messages
+{room: [...]}, team: [{name, role, channel}], unread: {room: n}, last: {room: created_at}, retention_days}`; `messages` holds the
+fixed rooms plus the private rooms named in `cursors`, `unread` covers every room of the user (from `seen`). No extra calls: the
+existing poll (4 s open / 20 s closed, paused with the tab) carries it all. The apps show names only, never a role word.
+

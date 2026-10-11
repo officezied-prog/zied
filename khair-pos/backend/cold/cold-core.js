@@ -219,7 +219,20 @@ var KCold = (function () {
       mv.forEach(function (m) { if (m.type === 'IN') received += m.cartons; bal += m.cartons; fin = bal <= 0 && received > 0 ? str(m.move_date) : ''; });
       return Object.assign({}, c, { kind: str(c.kind) || 'container', status: str(c.status) || (pals.length ? 'stored' : 'planned'), log: json(c.log, []), cartons: num(c.cartons), pallets: pals.length, received: received, now: bal, finished_date: fin, origin: str(c.origin), product: str(c.product) });
     }
-    function orderOut(o) { var x = Object.assign({}, o); x.lines = json(o.lines, []); x.trip = json(o.trip, null); x.log = json(o.log, []); return x; }
+    // v36 (owner 2026-10-11: "رقم الحاوية … رقم السيارة … بلات كامل او عدد من الكراتين"): every order line carries the
+    // pallet's CONTAINER number and whether the whole pallet is taken (full) or only some cartons of it. A running order
+    // reads it live from the stock (another order may have taken part of the pallet since); a picked one keeps what was true
+    // at the pick. Older orders get the container from the pallet register.
+    var BAL = null, BALN = -1;
+    function bal(pc, w) { if (!BAL || BALN !== st.movements.length) { BAL = ledger(st.movements, '', ''); BALN = st.movements.length; } return BAL[pc + '|' + w] || 0; }
+    function lineOut(l, o, live) {
+      var x = Object.assign({}, l), p = pallet(l.pallet_code) || {};
+      if (!str(x.container_no)) x.container_no = str(p.container_no);
+      if (live) { var b = bal(x.pallet_code, o.warehouse); x.pallet_ctn = b; x.full = b > 0 && num(x.cartons) >= b; }
+      else { x.full = x.full === undefined || x.full === null || x.full === '' ? null : bool(x.full); x.pallet_ctn = num(x.pallet_ctn); } // null: an order picked before v36 (not known)
+      return x;
+    }
+    function orderOut(o) { var x = Object.assign({}, o), live = HOLD.indexOf(o.status) >= 0; x.lines = json(o.lines, []).map(function (l) { return lineOut(l, o, live); }); x.trip = json(o.trip, null); x.log = json(o.log, []); x.plate = str(o.plate); x.dest_phone = str(o.dest_phone); return x; }
     /** The row with a new status and one more log line {at, by, from, to, note}. */
     function step(row, to, note) { var l = json(row.log, []); l.push({ at: now, by: by, from: str(row.status), to: to, note: note || '' }); return Object.assign({}, row, { status: to, log: JSON.stringify(l.slice(-60)) }); }
     function checkOut(c, full) { var x = { id: c.id, check_no: c.check_no, check_date: c.check_date, warehouse: c.warehouse, at: c.at, by_user: c.by_user, n_diff: num(c.n_diff),
@@ -234,7 +247,8 @@ var KCold = (function () {
         var p = pallet(pc); if (!p) return { err: 'Palet tidak ada: ' + pc, code: 'NOT_FOUND' };
         var free = balanceOf(st, pc, w.code) - (R[pc + '|' + w.code] || 0);
         if (c > free) return { err: 'Stok palet ' + pc + ' tidak cukup: tersedia ' + free + ' ctn', code: 'NOT_ENOUGH' };
-        seen[pc] = true; out.push({ pallet_code: pc, cartons: c, product: p.product, exp_date: str(p.exp_date), lot: str(p.lot) });
+        var whole = balanceOf(st, pc, w.code); // v36: container number + full pallet or some cartons
+        seen[pc] = true; out.push({ pallet_code: pc, cartons: c, product: p.product, exp_date: str(p.exp_date), lot: str(p.lot), container_no: str(p.container_no), full: c >= whole, pallet_ctn: whole });
       }
       return { lines: out };
     }
@@ -460,13 +474,29 @@ var KCold = (function () {
         var ocid = int(data.customer_id), ocust = ocid ? cust(ocid) : null; // Batch C: link to the customer registry
         var dt = data.dest_type === 'pelanggan' ? 'pelanggan' : 'toko', dn2 = clean(data.dest_name, 60) || (ocust ? clean(ocust.name, 60) : '');
         if (dt === 'pelanggan' && !dn2) return fail('INVALID', 'Nama pelanggan wajib');
+        // v36 (owner 2026-10-11: «في أمر جديد يُسجَّل الزبون دائمًا مع العنوان والهاتف وتخرج قائمة بالزبائن»): a customer
+        // order always lands in the customer list — the picked one (or the one with the same name) gets the typed phone /
+        // address, a new name becomes a new customer. Only name/phone/address are written: never POS-only columns (debt…).
+        var oph = str(data.dest_phone) ? normPhone(data.dest_phone) : '';
+        if (dt === 'pelanggan' && str(data.dest_phone) && !oph) return fail('INVALID', 'Nomor telepon tidak valid');
+        var oaddr = clean(data.dest_address, 200);
+        if (dt === 'pelanggan') {
+          if (ocust && norm(ocust.name) !== norm(dn2)) ocust = null; // the name was changed after picking: another customer
+          if (!ocust) ocust = st.customers.find(function (c) { return str(c.name) && norm(c.name) === norm(dn2); }) || null;
+        } else ocust = null;
         var ll = lineList(data.lines, ow, oe ? oe.order_no : '');
         if (ll.err) return fail(ll.code || 'INVALID', ll.err);
+        if (dt === 'pelanggan') {
+          if (!ocust) put('customers', { name: dn2, phone: oph, address: oaddr, type: 'grosir', debt_balance: 0, source: 'gudang' });
+          else if ((oph && oph !== str(ocust.phone)) || (oaddr && oaddr !== str(ocust.address)))
+            put('customers', { id: ocust.id, name: str(ocust.name), phone: oph || str(ocust.phone), address: oaddr || str(ocust.address) });
+        }
         var nth2 = st.orders.filter(function (o) { return str(o.order_no).indexOf('SPB-' + yymmdd) === 0; }).length + 1;
         var orow = Object.assign({}, oe || { order_no: 'SPB-' + yymmdd + '-' + pad3(nth2), status: 'open', created_at: now, created_by: by, trip: '' }, {
-          order_date: od, warehouse: ow.code, dest_type: dt, dest_name: dt === 'toko' ? (dn2 || 'Khair Mart') : dn2, dest_address: clean(data.dest_address, 200) || (ocust ? clean(ocust.address, 200) : ''),
-          customer_id: dt === 'pelanggan' ? (ocid || 0) : 0,
-          pickup_person: clean(data.pickup_person, 40), vehicle: clean(data.vehicle, 40), note: clean(data.note, 200), lines: JSON.stringify(ll.lines) });
+          order_date: od, warehouse: ow.code, dest_type: dt, dest_name: dt === 'toko' ? (dn2 || 'Khair Mart') : dn2, dest_address: oaddr || (ocust ? clean(ocust.address, 200) : ''),
+          dest_phone: dt === 'pelanggan' ? (oph || (ocust ? str(ocust.phone) : '')) : '',
+          customer_id: dt === 'pelanggan' && ocust ? ocust.id : 0,
+          pickup_person: clean(data.pickup_person, 40), vehicle: clean(data.vehicle, 40), plate: clean(data.plate, 12).toUpperCase(), note: clean(data.note, 200), lines: JSON.stringify(ll.lines) });
         if (!oe) orow = step(orow, 'open'); else if (oe.status === 'rejected') orow = step(orow, 'open', 'Diubah');
         put('orders', orow);
         return done({ order: orderOut(orow) });
@@ -486,8 +516,10 @@ var KCold = (function () {
         var lines = json(op.lines, []), short = lines.filter(function (l) { return balanceOf(st, l.pallet_code, op.warehouse) < num(l.cartons); });
         if (short.length) return fail('NOT_ENOUGH', 'Stok tidak cukup: ' + short.map(function (l) { return l.pallet_code + ' (ada ' + balanceOf(st, l.pallet_code, op.warehouse) + ', perlu ' + l.cartons + ')'; }).join(', '));
         var og = nextSeq();
+        lines = lines.map(function (l) { var b = balanceOf(st, l.pallet_code, op.warehouse), p = pallet(l.pallet_code) || {}; // v36: what was true at the pick
+          return Object.assign({}, l, { container_no: str(l.container_no) || str(p.container_no), full: num(l.cartons) >= b, pallet_ctn: b }); });
         lines.forEach(function (l) { move({ type: 'OUT', pallet_code: l.pallet_code, warehouse: op.warehouse, cartons: -num(l.cartons), move_date: pd, grp: og, order_no: op.order_no, reason: 'Ambil ke ' + str(op.dest_name) }); });
-        var picked = put('orders', step(Object.assign({}, op, { picked_at: now, picked_by: by, pick_date: pd }), 'picked'));
+        var picked = put('orders', step(Object.assign({}, op, { picked_at: now, picked_by: by, pick_date: pd, lines: JSON.stringify(lines) }), 'picked'));
         return done({ order: orderOut(picked) });
       }
       case 'order_cancel': {

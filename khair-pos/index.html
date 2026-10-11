@@ -723,7 +723,7 @@ async function enterApp(offline, keepView) {
   refreshAttention(); checkMyRequests();
   AP.seen = null; AP.loaded = false; pollApprovals();
   devOnAppOpen();
-  try { if (window.KChatUI) KChatUI.start({ api: apiChat, lang: S.lang }); } catch (e) { }
+  try { if (window.KChatUI) KChatUI.start({ api: apiChat, lang: S.lang, user: S.user }); } catch (e) { } // v36: user → this device's read marks for the team rooms
 }
 function lock() {
   if (!S.inApp) return;

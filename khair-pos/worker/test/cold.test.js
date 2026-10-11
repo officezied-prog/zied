@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import crypto from 'node:crypto';
 import { newDb, sqliteAdapter, insert } from './shim.js';
-import { handleCold, parseCold, loadColdNodes } from '../src/cold.js';
+import { handleCold, parseCold, loadColdNodes, COLD_MIGRATIONS } from '../src/cold.js';
 import { makeAccessor } from '../src/db.js';
 import { runProcessCold } from '../src/generated/process-cold.gen.js';
 
@@ -178,4 +178,71 @@ test('cold C: order_save links to a registered customer and auto-fills name/addr
   assert.equal(r.order.dest_address, 'Bekasi');
   assert.equal(r.order.customer_id, 50);
   assert.equal(a.all('SELECT customer_id FROM cold_orders WHERE order_no = ?', [r.order.order_no])[0].customer_id, 50);
+});
+
+// ---- v36 (owner 2026-10-11) ----
+
+function v36db() {
+  const db = seed();
+  insert(db, 'cold_containers', { id: 1, container_no: 'CGMU5288973', size: '40', warehouse: 'BOSCO', arrival_date: '2026-09-25' });
+  insert(db, 'cold_pallets', { id: 1, pallet_code: 'P001', product: 'AJWA', warehouse: 'BOSCO', kg_per_ctn: 10, exp_date: '2027-01-01', date_in: '2026-10-01', container_no: 'CGMU5288973' });
+  insert(db, 'cold_pallets', { id: 2, pallet_code: 'P002', product: 'AJWA', warehouse: 'BOSCO', kg_per_ctn: 10, exp_date: '2027-02-01', date_in: '2026-10-01', container_no: 'CGMU5288973' });
+  insert(db, 'cold_movements', { id: 1, seq: 1, move_date: '2026-10-01', type: 'IN', pallet_code: 'P001', warehouse: 'BOSCO', cartons: 50, grp: 1, by_user: 'Pemilik' });
+  insert(db, 'cold_movements', { id: 2, seq: 2, move_date: '2026-10-01', type: 'IN', pallet_code: 'P002', warehouse: 'BOSCO', cartons: 50, grp: 1, by_user: 'Pemilik' });
+  return db;
+}
+
+test('cold v36: a customer typed into an order is saved to pos_customers (name, address, phone); plate + phone persist on the order', async () => {
+  const a = sqliteAdapter(v36db());
+  const r = await handleCold(a, base('order_save', 'Mgr', '2222', { warehouse: 'BOSCO', dest_type: 'pelanggan', dest_name: 'Toko Baru', dest_address: 'Condet 9', dest_phone: '0812 7777 8888',
+    plate: 'b 1234 xy', vehicle: 'Pickup', lines: [{ pallet_code: 'P001', cartons: 50 }, { pallet_code: 'P002', cartons: 10 }] }), {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const cs = a.all("SELECT * FROM pos_customers WHERE name = 'Toko Baru'", []);
+  assert.equal(cs.length, 1);
+  assert.equal(cs[0].address, 'Condet 9');
+  assert.equal(cs[0].phone, '6281277778888');
+  assert.equal(cs[0].source, 'gudang');
+  const row = a.all('SELECT plate, dest_phone, lines FROM cold_orders WHERE order_no = ?', [r.order.order_no])[0];
+  assert.equal(row.plate, 'B 1234 XY');
+  assert.equal(row.dest_phone, '6281277778888');
+  // each line: the container number and full pallet (P001: all 50) vs some cartons (P002: 10 of 50)
+  assert.deepEqual(JSON.parse(row.lines).map((l) => [l.pallet_code, l.container_no, l.full]), [['P001', 'CGMU5288973', true], ['P002', 'CGMU5288973', false]]);
+  const b = await handleCold(a, base('bootstrap', 'Pemilik', '1234'), {}, KEY);
+  const o = b.orders.find((x) => x.order_no === r.order.order_no);
+  assert.equal(o.plate, 'B 1234 XY');
+  assert.deepEqual(o.lines.map((l) => [l.full, l.pallet_ctn]), [[true, 50], [false, 50]]);
+  assert.ok(b.customers.some((c) => c.name === 'Toko Baru' && c.phone === '6281277778888'), 'in the customer list');
+  // a second order for the same name: the customer is updated (new address), never duplicated, and the order links to it
+  const r2 = await handleCold(a, base('order_save', 'Pemilik', '1234', { warehouse: 'BOSCO', dest_type: 'pelanggan', dest_name: 'TOKO BARU', dest_address: 'Condet 10', lines: [{ pallet_code: 'P002', cartons: 5 }] }), {}, KEY);
+  assert.equal(r2.ok, true, JSON.stringify(r2));
+  const cs2 = a.all("SELECT * FROM pos_customers WHERE lower(name) = 'toko baru'", []);
+  assert.equal(cs2.length, 1);
+  assert.equal(cs2[0].address, 'Condet 10');
+  assert.equal(cs2[0].phone, '6281277778888', 'phone kept when not typed');
+  assert.equal(r2.order.customer_id, cs2[0].id);
+  assert.equal(r2.order.dest_phone, '6281277778888');
+});
+
+test('cold v36: an existing customer edited through an order keeps its POS-only columns (debt/member)', async () => {
+  const db = v36db();
+  insert(db, 'pos_customers', { id: 40, name: 'Lama', phone: '6281100000000', address: 'A', type: 'grosir', debt_balance: 250000, member: true, member_no: 'M-1' });
+  const a = sqliteAdapter(db);
+  const r = await handleCold(a, base('order_save', 'Pemilik', '1234', { warehouse: 'BOSCO', dest_type: 'pelanggan', customer_id: 40, dest_name: 'Lama', dest_address: 'B', dest_phone: '0822 1111 2222', lines: [{ pallet_code: 'P001', cartons: 1 }] }), {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const row = a.all('SELECT * FROM pos_customers WHERE id = 40', [])[0];
+  assert.equal(row.address, 'B');
+  assert.equal(row.phone, '6282211112222');
+  assert.equal(row.debt_balance, 250000);
+  assert.equal(row.member_no, 'M-1');
+  assert.equal(a.all('SELECT COUNT(*) AS n FROM pos_customers', [])[0].n, 1);
+});
+
+test('cold v36: the self-migration adds plate / dest_phone to an older cold_orders table (idempotent)', async () => {
+  const db = newDb();
+  db.exec('DROP TABLE cold_orders');
+  db.exec('CREATE TABLE cold_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, order_no TEXT, status TEXT, lines TEXT)');
+  const a = sqliteAdapter(db);
+  for (let i = 0; i < 2; i++) for (const sql of COLD_MIGRATIONS) { try { await a.run(sql, []); } catch (e) { /* already there */ } }
+  const cols = a.all('PRAGMA table_info(cold_orders)', []).map((c) => c.name);
+  assert.ok(cols.includes('plate') && cols.includes('dest_phone'), cols.join(','));
 });

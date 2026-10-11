@@ -35,21 +35,49 @@
     return { cartons: c, kg: Math.round(k * 10) / 10 };
   }
 
+  // v36 (owner 2026-10-11: "رقم الحاوية … رقم السيارة … بلات كامل او عدد من الكراتين"): every format of the order carries the
+  // container number of each pallet, the truck plate, and whether the WHOLE pallet is taken or only some cartons of it.
+  function plateOf(o) { return String((o.trip && o.trip.plate) || o.plate || ''); }
+  function vehicleOf(o) { return String((o.trip && o.trip.vehicle) || o.vehicle || ''); }
+  function contOf(l, ctx) { return String(l.container_no || ((ctx.pal || {})[l.pallet_code] || {}).container_no || ''); }
+  /** "PALET UTUH" when the line takes the whole pallet, else "Sebagian (40 dari 286 ctn)" / "Sebagian". */
+  function takeOf(l) {
+    if (l.full === true || l.full === 'true') return 'PALET UTUH';
+    if (l.full === null || l.full === undefined) return '-'; // an order picked before v36: not recorded
+    var all = Number(l.pallet_ctn) || 0;
+    return all > 0 ? 'Sebagian (' + n0(l.cartons) + ' dari ' + n0(all) + ' ctn)' : 'Sebagian palet';
+  }
+  function fullCount(o) { return (o.lines || []).filter(function (l) { return l.full === true || l.full === 'true'; }).length; }
+  /** The pick order as spreadsheet rows (Excel download and the phone's share sheet use the same rows). */
+  function orderRows(o, ctx) {
+    var t = orderTotals(o, ctx), fc = fullCount(o), w = (ctx.wh || {})[o.warehouse] || {};
+    var rows = [['No', 'PID', 'Kontainer', 'Produk', 'Lot', 'Kedaluwarsa', 'Palet utuh / sebagian', 'Karton']];
+    (o.lines || []).forEach(function (l, i) { var pal = (ctx.pal || {})[l.pallet_code] || {};
+      rows.push([i + 1, l.pallet_code, contOf(l, ctx), prName(ctx, l.product), l.lot || pal.lot || '', l.exp_date || pal.exp_date || '', takeOf(l), Number(l.cartons) || 0]); });
+    rows.push(['', '', '', '', '', '', 'TOTAL', t.cartons]);
+    rows.push([]);
+    [['No. SPB', o.order_no], ['Gudang', w.name || o.warehouse], ['Tanggal', o.order_date], ['Tujuan', o.dest_name + (o.dest_address ? ', ' + o.dest_address : '')],
+      ['Telepon', o.dest_phone ? '+' + o.dest_phone : ''], ['Diambil oleh', o.pickup_person || ''], ['Kendaraan', vehicleOf(o)], ['Plat nomor', plateOf(o)],
+      ['Palet utuh', fc + ' dari ' + (o.lines || []).length + ' palet']].forEach(function (r) { if (r[1] !== '') rows.push(r); });
+    return rows;
+  }
+
   function order(o, ctx) {
     var w = (ctx.wh || {})[o.warehouse] || {}, t = orderTotals(o, ctx);
     var st = o.status === 'cancelled' ? '<div class="stamp">DIBATALKAN</div>' : o.status === 'picked' ? '<div class="stamp">SUDAH DIAMBIL</div>' : '';
     var h = head('SURAT PENGAMBILAN BARANG', o.order_no, ctx, '<div>Tanggal ambil: ' + esc(date(o.order_date)) + '</div>' + st);
     h += '<div class="two"><div class="box"><b>Kepada (gudang)</b><div>' + esc(w.name || o.warehouse) + '</div><div>' + esc(w.address || '') + '</div>' +
       (w.pic_name ? '<div>Up. ' + esc(w.pic_name) + '</div>' : '') + (w.customer_id ? '<div>ID customer: ' + esc(w.customer_id) + '</div>' : '') + '</div>' +
-      '<div class="box"><b>Dikirim ke</b><div>' + esc(o.dest_name) + '</div><div>' + esc(o.dest_address || '') + '</div>' +
-      '<div>Diambil oleh: ' + esc(o.pickup_person || '-') + '</div><div>Kendaraan: ' + esc((o.trip && o.trip.vehicle) || o.vehicle || '-') + (o.trip && o.trip.plate ? ' · ' + esc(o.trip.plate) : '') + '</div></div></div>';
-    h += '<table><thead><tr><th>No</th><th>Palet (PID)</th><th>Produk</th><th>Lot</th><th>Kedaluwarsa</th><th class="n">Karton</th><th class="n">Kg</th></tr></thead><tbody>';
+      '<div class="box"><b>Dikirim ke</b><div>' + esc(o.dest_name) + '</div><div>' + esc(o.dest_address || '') + '</div>' + (o.dest_phone ? '<div>Telp: +' + esc(o.dest_phone) + '</div>' : '') +
+      '<div>Diambil oleh: ' + esc(o.pickup_person || '-') + '</div><div>Kendaraan: ' + esc(vehicleOf(o) || '-') + '</div><div class="plate">Plat nomor: <b>' + esc(plateOf(o) || '-') + '</b></div></div></div>';
+    h += '<table><thead><tr><th>No</th><th>Palet (PID)</th><th>Kontainer</th><th>Produk</th><th>Lot</th><th>Kedaluwarsa</th><th>Palet utuh / sebagian</th><th class="n">Karton</th><th class="n">Kg</th></tr></thead><tbody>';
     (o.lines || []).forEach(function (l, i) {
       var pal = (ctx.pal || {})[l.pallet_code] || {}, p = (ctx.pr || {})[l.product] || {}, k = (Number(l.cartons) || 0) * (Number(pal.kg_per_ctn) || Number(p.kg_per_ctn) || 0);
-      h += '<tr><td>' + (i + 1) + '</td><td>' + esc(l.pallet_code) + '</td><td>' + esc(prName(ctx, l.product)) + '</td><td>' + esc(l.lot || pal.lot || '') + '</td><td>' + esc(date(l.exp_date || pal.exp_date)) +
-        '</td><td class="n">' + n0(l.cartons) + '</td><td class="n">' + kg(k) + '</td></tr>';
+      var full = l.full === true || l.full === 'true';
+      h += '<tr data-line="' + esc(l.pallet_code) + '"><td>' + (i + 1) + '</td><td>' + esc(l.pallet_code) + '</td><td>' + esc(contOf(l, ctx) || '-') + '</td><td>' + esc(prName(ctx, l.product)) + '</td><td>' + esc(l.lot || pal.lot || '') + '</td><td>' + esc(date(l.exp_date || pal.exp_date)) +
+        '</td><td' + (full ? ' class="bad"' : '') + '>' + esc(takeOf(l)) + '</td><td class="n">' + n0(l.cartons) + '</td><td class="n">' + kg(k) + '</td></tr>';
     });
-    h += '<tr><td colspan="5"><b>TOTAL</b></td><td class="n"><b>' + n0(t.cartons) + '</b></td><td class="n"><b>' + kg(t.kg) + '</b></td></tr></tbody></table>';
+    h += '<tr><td colspan="7"><b>TOTAL</b> (' + fullCount(o) + ' palet utuh dari ' + (o.lines || []).length + ')</td><td class="n"><b>' + n0(t.cartons) + '</b></td><td class="n"><b>' + kg(t.kg) + '</b></td></tr></tbody></table>';
     if (o.note) h += '<div class="box">Catatan: ' + esc(o.note) + '</div>';
     if (o.status === 'cancelled' && o.cancel_reason) h += '<div class="box">Alasan batal: ' + esc(o.cancel_reason) + '</div>';
     h += '<div class="sig"><div>Dibuat<div class="line">' + esc(o.created_by || '') + '</div></div><div>Gudang<div class="line">&nbsp;</div></div><div>Sopir<div class="line">' + (esc((o.trip && o.trip.driver) || '') || '&nbsp;') + '</div></div><div>Penerima<div class="line">&nbsp;</div></div></div>';
@@ -59,8 +87,9 @@
     var w = (ctx.wh || {})[o.warehouse] || {}, t = orderTotals(o, ctx), c = ctx.company || {};
     var s = '*SURAT PENGAMBILAN BARANG*\n' + o.order_no + '\n' + (c.name || '') + (w.customer_id ? ' (ID ' + w.customer_id + ')' : '') + '\n' +
       'Gudang: ' + (w.name || o.warehouse) + '\nTanggal ambil: ' + date(o.order_date) + '\nDiambil oleh: ' + (o.pickup_person || '-') +
-      '\nKendaraan: ' + ((o.trip && o.trip.vehicle) || o.vehicle || '-') + (o.trip && o.trip.plate ? ' ' + o.trip.plate : '') + '\n\n';
-    (o.lines || []).forEach(function (l, i) { s += (i + 1) + '. PID ' + l.pallet_code + ' — ' + prName(ctx, l.product) + ' — ' + l.cartons + ' ctn\n'; });
+      '\nKendaraan: ' + (vehicleOf(o) || '-') + '\nPlat nomor: ' + (plateOf(o) || '-') + (o.dest_phone ? '\nTelp. penerima: +' + o.dest_phone : '') + '\n\n';
+    (o.lines || []).forEach(function (l, i) { var cn = contOf(l, ctx), full = l.full === true || l.full === 'true';
+      s += (i + 1) + '. PID ' + l.pallet_code + (cn ? ' — Kont. ' + cn : '') + ' — ' + prName(ctx, l.product) + ' — ' + (full ? '*PALET UTUH* (' + l.cartons + ' ctn)' : l.cartons + ' ctn' + (l.full === null || l.full === undefined ? '' : ' (sebagian palet)')) + '\n'; });
     s += '\nTotal: ' + t.cartons + ' ctn (± ' + kg(t.kg) + ' kg)\nTujuan: ' + o.dest_name + (o.dest_address ? ', ' + o.dest_address : '') + (o.note ? '\nCatatan: ' + o.note : '') +
       '\n\nMohon balas *SETUJU* atau *TOLAK* (sebutkan nomor ' + o.order_no + '), lalu kabari kami jika barang sudah *SIAP*. Terima kasih.';
     return s;
@@ -136,5 +165,5 @@
   function toXls(rows, filename, sheet) { download(new Blob([xlsXml(rows, sheet)], { type: 'application/vnd.ms-excel' }), filename); }
   /** The same sheet as a File, for the phone's share sheet (Android → WhatsApp). */
   function xlsFile(rows, filename, sheet) { try { return new File([xlsXml(rows, sheet)], filename, { type: 'application/vnd.ms-excel' }); } catch (e) { return null; } }
-  root.KColdDocs = { order: order, check: check, stock: stock, waOrder: waOrder, waEntry: waEntry, waDriver: waDriver, waCancel: waCancel, waDispatch: waDispatch, toDoc: toDoc, toXls: toXls, xlsFile: xlsFile, orderTotals: orderTotals, esc: esc, date: date, wib: wib };
+  root.KColdDocs = { orderRows: orderRows, takeOf: takeOf, order: order, check: check, stock: stock, waOrder: waOrder, waEntry: waEntry, waDriver: waDriver, waCancel: waCancel, waDispatch: waDispatch, toDoc: toDoc, toXls: toXls, xlsFile: xlsFile, orderTotals: orderTotals, esc: esc, date: date, wib: wib };
 })(window);

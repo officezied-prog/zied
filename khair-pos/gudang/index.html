@@ -93,6 +93,7 @@
 <script src="../backend/cold/cold-core.js"></script>
 <script src="../shared/cold-mock.js"></script>
 <script src="../shared/docs-cold.js"></script>
+<script src="../shared/chat-ui.js"></script>
 <script>
 'use strict';
 // Same-site framing is allowed: the owner app shows البرادات as one of its own pages. Any other framer is refused.
@@ -101,6 +102,7 @@ if (window.top !== window.self && !EMBED) { try { window.top.location = window.l
 // Backend = Khair Mart Jumla Worker (code, no monthly execution cap). Rollback: swap COLD_URL back to
 // the n8n host (both hosts are allowed in the CSP connect-src, so no other change is needed). n8n is kept.
 const CONFIG = { COLD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-cold', LALAMOVE_URL: 'https://web.lalamove.com/' };
+CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat'; // v36: the team chat (same users, same login)
 const MOCK = /[?&](mock|demo)=1\b/.test(location.search);
 const KP = MOCK ? 'kpos.mock.' : 'kpos.'; // the owner app's storage (same site): its key and this tab's session are reused
 const LS = {
@@ -119,7 +121,7 @@ const I18N = {
     demo: 'Mode demo — data contoh. Kunci: demo · Pemilik 1234 · Jihan 2222 · Akuntan 3333', demo_reset: 'Ulang data demo',
     t_dash: 'Brad (ruang dingin)', t_stok: 'Stok', t_cont: 'Kontainer', t_mut: 'Mutasi', t_cek: 'Cek stok harian', t_ord: 'Order ambil', t_cust: 'Pelanggan', t_set: 'Pengaturan',
     role_owner: 'Pemilik', role_manager: 'Manajer', role_akuntan: 'Akuntan', ro: 'Hanya lihat',
-    to_admin: 'Khair Mart', cu_add: 'Pelanggan baru', cu_search: 'Cari nama / telepon…', phone: 'Telepon / WA', cu_pick: 'Pilih dari daftar pelanggan', varieties: 'Jenis kurma', empty_wh: 'Masih kosong',
+    to_admin: 'Khair Mart', cu_add: 'Pelanggan baru', cu_search: 'Cari nama / telepon…', phone: 'Telepon / WA', cu_pick: 'Pilih dari daftar pelanggan', cu_auto: 'Pelanggan di order ini otomatis disimpan ke daftar pelanggan (nama, alamat, telepon).', full_pal: 'Palet utuh', part_pal: 'sebagian palet', full_btn: 'Utuh', varieties: 'Jenis kurma', empty_wh: 'Masih kosong',
     mode: 'Mode', mode_tabrid: 'Pendinginan (chiller)', mode_takhzin: 'Penyimpanan', mode_tajmid: 'Pembekuan (frozen)', mode_biasa: 'Biasa', mode_none: 'Mode belum diatur',
     wh: 'Gudang', all: 'Semua', product: 'Produk', pallet: 'Palet (PID)', lot: 'Lot', exp: 'Kedaluwarsa', cartons: 'Karton', kg: 'Kg', zone: 'Zona', position: 'Posisi', container: 'Kontainer', date_in: 'Masuk', date: 'Tanggal', search: 'Cari palet, lot, produk…',
     pallets: 'palet', ctn: 'ctn', days_left: '{n} hari lagi', expired: 'sudah lewat {n} hari',
@@ -157,7 +159,7 @@ const I18N = {
     demo: 'وضع تجريبي — بيانات مثال. المفتاح: demo · Pemilik 1234 · Jihan 2222 · Akuntan 3333', demo_reset: 'إعادة البيانات التجريبية',
     t_dash: 'البرّادات', t_stok: 'المخزون', t_cont: 'الحاويات', t_mut: 'الحركات', t_cek: 'الجرد اليومي', t_ord: 'أوامر السحب', t_cust: 'الزبائن', t_set: 'الإعدادات',
     role_owner: 'المالك', role_manager: 'المدير', role_akuntan: 'المحاسب', ro: 'عرض فقط',
-    to_admin: 'الإدارة', cu_add: 'زبون جديد', cu_search: 'ابحث بالاسم أو الهاتف…', phone: 'هاتف / واتساب', cu_pick: 'اختر من قائمة الزبائن', varieties: 'نوع التمر', empty_wh: 'فارغ حاليًا',
+    to_admin: 'الإدارة', cu_add: 'زبون جديد', cu_search: 'ابحث بالاسم أو الهاتف…', phone: 'هاتف / واتساب', cu_pick: 'اختر من قائمة الزبائن', cu_auto: 'يُحفظ زبون هذا الأمر تلقائيًا في قائمة الزبائن (الاسم والعنوان والهاتف).', full_pal: 'بالِت كامل', part_pal: 'جزء من البالِت', full_btn: 'كامل', varieties: 'نوع التمر', empty_wh: 'فارغ حاليًا',
     mode: 'الوضع', mode_tabrid: 'تبريد', mode_takhzin: 'تخزين', mode_tajmid: 'تجميد', mode_biasa: 'براد عادي', mode_none: 'لم يُحدَّد الوضع',
     wh: 'المخزن', all: 'الكل', product: 'المنتج', pallet: 'البالِت (PID)', lot: 'الدفعة', exp: 'الانتهاء', cartons: 'كراتين', kg: 'كغ', zone: 'المنطقة', position: 'الموقع', container: 'الحاوية', date_in: 'الدخول', date: 'التاريخ', search: 'ابحث عن بالِت أو دفعة أو منتج…',
     pallets: 'بالِت', ctn: 'كرتون', days_left: 'بعد {n} يوم', expired: 'انتهى منذ {n} يوم',
@@ -259,8 +261,41 @@ async function act(action, data, okMsg) {
 }
 async function load() { S.D = await api('bootstrap', {}); render(); }
 
+/* ---------- chat (v36, owner 2026-10-11: «أريد الدردشة مع كل الفريق المسجل وكل من له يحمل هذا التطبيق») ----------
+   The same team chat as the other apps (general room + a private room with every registered user). Inside the owner
+   app this page is a frame and the owner app's chat is used, so the panel starts only when the page is opened on its own. */
+let chatLoad = null;
+function loadChatMock() {
+  if (window.KChat && window.KChatMock) return Promise.resolve();
+  const one = src => new Promise(res => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = res; document.head.appendChild(sc); });
+  return chatLoad || (chatLoad = one('../backend/chat/chat-core.js').then(() => one('../shared/chat-mock.js')));
+}
+async function apiChat(action, data) {
+  if (!S.pin_hash) { const e = new Error('NO_SESSION'); e.code = 'NO_SESSION'; throw e; }
+  const body = { action, key: S.key, user: S.user, pin_hash: S.pin_hash, data: data || {} };
+  const mkErr = (code, message) => { const e = new Error(message || code); e.code = code; return e; };
+  let r;
+  if (MOCK) {
+    // demo: the chat core runs on its own small local table, with the demo users of this page
+    await loadChatMock();
+    const d = await KColdMock.db();
+    let cdb = null; try { cdb = JSON.parse(localStorage.getItem('kcold.chat.db') || 'null'); } catch (e) { cdb = null; }
+    if (!cdb) cdb = { settings: {} };
+    cdb.users = d.users;
+    try { r = window.KChatMock.handle(cdb, body, mkErr); } catch (e) { throw e; }
+    if (cdb._dirty) { delete cdb._dirty; try { localStorage.setItem('kcold.chat.db', JSON.stringify(Object.assign({}, cdb, { users: undefined }))); } catch (e) { } }
+    return JSON.parse(JSON.stringify(r));
+  }
+  try { r = await (await fetch(CONFIG.CHAT_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), cache: 'no-store' })).json(); }
+  catch (e) { throw mkErr('NETWORK', t('err_net')); }
+  if (!r || r.ok !== true) throw mkErr((r && r.error) || 'SERVER', (r && r.message) || 'Server error');
+  return r;
+}
+function chatStart() { if (EMBED || !window.KChatUI) return; try { KChatUI.start({ api: apiChat, lang: S.lang, user: S.user }); } catch (e) { } }
+function chatStop() { try { if (window.KChatUI) KChatUI.stop(); } catch (e) { } }
+
 /* ---------- login ---------- */
-function logout() { SS.set('kcold.session', null); S.user = ''; S.pin_hash = ''; S.role = ''; S.D = null; renderLogin(); }
+function logout() { chatStop(); SS.set('kcold.session', null); S.user = ''; S.pin_hash = ''; S.role = ''; S.D = null; renderLogin(); }
 function renderLogin(msg) {
   $('#nav').hidden = true; $('#logout').hidden = true; $('#who').textContent = '';
   const keyKnown = !!S.key;
@@ -286,6 +321,7 @@ async function doLogin() {
     LS.set('kcold.key', key); LS.set('kcold.user', S.user);
     SS.set('kcold.session', { user: S.user, pin_hash: S.pin_hash, role: S.role });
     await load();
+    chatStart();
   } catch (e) { S.pin_hash = ''; renderLogin(e.message || e.error); }
 }
 
@@ -571,8 +607,7 @@ const HOLD = ['open', 'sent', 'approved', 'ready', 'dispatch', 'driver'];
 function goStatus(o, to, note) { return act('order_status', { order_no: o.order_no, to, note }); }
 /** Share the order's Excel file (Android: straight into WhatsApp); else download it. */
 async function shareOrder(o) {
-  const C = ctx(), tt = KColdDocs.orderTotals(o, C);
-  const rows = [['No', 'PID', 'Produk', 'Lot', 'Kedaluwarsa', 'Karton']].concat(o.lines.map((l, i) => [i + 1, l.pallet_code, PR(l.product).name, l.lot, l.exp_date, Number(l.cartons)])).concat([['', '', '', '', 'TOTAL', tt.cartons]]);
+  const rows = KColdDocs.orderRows(o, ctx()); // v36: same rows as the Excel download (container, plate, full pallet)
   const file = KColdDocs.xlsFile ? KColdDocs.xlsFile(rows, o.order_no + '.xls', 'SPB') : null;
   try { if (file && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], text: o.order_no }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
   orderXls(o);
@@ -611,6 +646,10 @@ function vOrd() {
     return h('div', { class: 'order', 'data-no': o.order_no, 'data-status': o.status },
       h('div', { class: 'row' }, h('b', { text: o.order_no, style: 'flex:1' }), h('span', { class: 'chip ' + o.status, text: t('st_' + o.status) })),
       h('div', { class: 'muted', text: WH(o.warehouse).name + ' → ' + o.dest_name + ' · ' + fd(o.order_date) + ' · ' + o.lines.length + ' ' + t('pallets') + ' · ' + n0(tt.cartons) + ' ' + t('ctn') + ' · ' + kgf(tt.kg) + ' kg' }),
+      h('div', { class: 'muted', 'data-lines': '' }, o.lines.map(l => h('div', { 'data-pl': l.pallet_code, 'data-full': l.full ? '1' : '0' },
+        'PID ' + l.pallet_code + (l.container_no ? ' · ' + t('container') + ' ' + l.container_no : '') + ' · ',
+        l.full ? h('b', { text: t('full_pal') + ' (' + n0(l.cartons) + ' ' + t('ctn') + ')' }) : n0(l.cartons) + ' ' + t('ctn') + (l.full === false ? ' (' + t('part_pal') + ')' : '')))),
+      !o.trip && (o.plate || o.vehicle) ? h('div', { class: 'muted', 'data-plate': '' }, t('vehicle') + ': ' + [o.vehicle, o.plate].filter(Boolean).join(' · ')) : null,
       o.trip ? h('div', { class: 'muted', 'data-trip': '' }, t('trip') + ': ' + [o.trip.vehicle, o.trip.driver, o.trip.plate].filter(Boolean).join(' · ') + (o.trip.cost ? ' · ' + rp(o.trip.cost) : '')) : null,
       (o.status === 'cancelled' || o.status === 'rejected') && (o.log || []).length ? h('div', { class: 'bad', text: (o.log[o.log.length - 1] || {}).note || o.cancel_reason || '' }) : null,
       h('div', { class: 'row', style: 'margin-top:8px' }, orderNext(o)),
@@ -629,9 +668,8 @@ function vOrd() {
     h('div', { id: 'or-list' }, cards.length ? cards : h('div', { class: 'card muted', text: t('none') })));
 }
 function orderXls(o) {
-  const C = ctx(), tt = KColdDocs.orderTotals(o, C);
-  KColdDocs.toXls([['No', 'PID', 'Produk', 'Lot', 'Kedaluwarsa', 'Karton']].concat(o.lines.map((l, i) => [i + 1, l.pallet_code, PR(l.product).name, l.lot, l.exp_date, Number(l.cartons)])).concat([['', '', '', '', 'TOTAL', tt.cartons],
-    [], ['No. SPB', o.order_no], ['Gudang', WH(o.warehouse).name], ['Tanggal', o.order_date], ['Tujuan', o.dest_name + (o.dest_address ? ', ' + o.dest_address : '')], ['Diambil oleh', o.pickup_person || '']]), o.order_no + '.xls', 'SPB');
+  // v36 (owner 2026-10-11): the Excel order carries the container number, the truck plate and full pallet / cartons
+  KColdDocs.toXls(KColdDocs.orderRows(o, ctx()), o.order_no + '.xls', 'SPB');
 }
 function orderForm(o) {
   if (!S.D.warehouses.length) { toast(t('need_wh'), true); return; }
@@ -639,17 +677,36 @@ function orderForm(o) {
   const dtype = sel('of-dtype', [['toko', t('dest_toko')], ['pelanggan', t('dest_cust')]], o ? o.dest_type : 'toko'), dname = h('input', { id: 'of-dname', value: o && o.dest_type === 'pelanggan' ? o.dest_name : '' });
   const daddr = h('input', { id: 'of-daddr', value: o ? o.dest_address : (S.D.company.address || '') }), pick = h('input', { id: 'of-pick', value: o ? o.pickup_person : '' });
   const veh = h('input', { id: 'of-veh', value: o ? o.vehicle : '', list: 'veh-list' }), note = h('input', { id: 'of-note', value: o ? o.note : '' });
+  // v36 (owner 2026-10-11): the truck plate on the order itself (the trip form may change it later)
+  const plate = h('input', { id: 'of-plate', value: o ? (o.plate || '') : '', style: 'text-transform:uppercase' });
   // Batch C: pick a customer from the registry → fills destination name + address, links the order.
-  const cpick = sel('of-cust', [['', t('cu_pick')]].concat((S.D.customers || []).map(c => [String(c.id), c.name + (c.phone ? ' · ' + c.phone : '')])), o && o.customer_id ? String(o.customer_id) : '');
-  cpick.addEventListener('change', () => { const c = (S.D.customers || []).find(x => String(x.id) === cpick.value); if (c) { dtype.value = 'pelanggan'; dname.value = c.name; if (c.address) daddr.value = c.address; } });
+  // v36 (owner 2026-10-11: «في أمر جديد يُسجَّل الزبون دائمًا مع العنوان والهاتف وتخرج قائمة بالزبائن»): the list is always
+  // shown (also while it is still empty) with "+ new customer"; the phone is on the order; the server saves the customer.
+  const dphone = h('input', { id: 'of-dphone', inputmode: 'tel', value: o && o.dest_type === 'pelanggan' ? (o.dest_phone || '') : '' });
+  const custs = (S.D.customers || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const cpick = sel('of-cust', [['', t('cu_pick')], ['new', '+ ' + t('cu_add')]].concat(custs.map(c => [String(c.id), c.name + (c.phone ? ' · ' + c.phone : '')])), o && o.customer_id ? String(o.customer_id) : '');
+  cpick.addEventListener('change', () => {
+    if (cpick.value === 'new') { dtype.value = 'pelanggan'; dname.value = ''; daddr.value = ''; dphone.value = ''; dname.focus(); return; }
+    const c = custs.find(x => String(x.id) === cpick.value); if (c) { dtype.value = 'pelanggan'; dname.value = c.name; daddr.value = c.address || ''; dphone.value = c.phone || ''; }
+  });
+  dname.addEventListener('input', () => {
+    if (dname.value.trim() && dtype.value !== 'pelanggan') dtype.value = 'pelanggan';
+    const c = custs.find(x => String(x.id) === cpick.value); if (c && c.name.toLowerCase() !== dname.value.trim().toLowerCase()) cpick.value = 'new';
+  });
   const fp = sel('of-fp', prOpts(false), ''), fc = h('input', { id: 'of-fc', inputmode: 'numeric', placeholder: t('cartons'), style: 'max-width:110px' });
   const tb = h('tbody', { id: 'of-lines' }), sum = h('div', { class: 'muted', id: 'of-sum' });
   const avail = () => S.D.stock.filter(r => r.warehouse === wh.value && r.cartons > 0);
-  function recalc() { const c = Array.from(tb.querySelectorAll('[data-f="cartons"]')).reduce((s, i) => s + (Number(i.value) || 0), 0); sum.textContent = t('total') + ': ' + n0(c) + ' ' + t('ctn'); }
+  function recalc() {
+    const c = Array.from(tb.querySelectorAll('[data-f="cartons"]')).reduce((s, i) => s + (Number(i.value) || 0), 0); sum.textContent = t('total') + ': ' + n0(c) + ' ' + t('ctn');
+    Array.from(tb.querySelectorAll('tr')).forEach(tr => { const r = avail().find(x => x.pallet_code === tr.querySelector('[data-f="pallet_code"]').value), b = tr.querySelector('[data-f="full"]');
+      if (b) b.classList.toggle('pri', !!r && Number(tr.querySelector('[data-f="cartons"]').value) >= r.cartons); });
+  }
   function addLine(pc, n) {
     const ps = sel('', [['', '—']].concat(avail().map(r => [r.pallet_code, r.pallet_code + ' · ' + r.product_name + ' · ' + fd(r.exp_date) + ' · ' + n0(r.cartons) + ' ' + t('ctn')])), pc || '', { 'data-f': 'pallet_code' });
     const ci = h('input', { 'data-f': 'cartons', inputmode: 'numeric', value: n || '', style: 'width:90px', oninput: recalc });
-    tb.append(h('tr', null, h('td', null, ps), h('td', null, ci), h('td', null, h('button', { class: 'btn sm bad', type: 'button', onclick: e => { e.target.closest('tr').remove(); recalc(); } }, '×'))));
+    // v36: take the whole pallet with one tap (the order then says "PALET UTUH")
+    const fb = h('button', { class: 'btn sm', type: 'button', 'data-f': 'full', title: t('full_pal'), onclick: () => { const r = avail().find(x => x.pallet_code === ps.value); if (r) { ci.value = r.cartons; recalc(); } } }, t('full_btn'));
+    tb.append(h('tr', null, h('td', null, ps), h('td', null, ci), h('td', null, fb), h('td', null, h('button', { class: 'btn sm bad', type: 'button', onclick: e => { e.target.closest('tr').remove(); recalc(); } }, '×'))));
     recalc();
   }
   (o ? o.lines : []).forEach(l => addLine(l.pallet_code, l.cartons));
@@ -666,14 +723,16 @@ function orderForm(o) {
   modal(o ? t('or_edit') + ' ' + o.order_no : t('or_new'), h('div', null,
     h('datalist', { id: 'veh-list' }, S.D.vehicles.map(v => h('option', { value: v.name }))),
     h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('wh'), wh)), h('div', { style: 'flex:1;min-width:140px' }, field(t('date'), date))),
-    (S.D.customers || []).length ? field(t('dest_cust'), cpick) : null,
+    field(t('dest_cust'), cpick),
     h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('dest'), dtype)), h('div', { style: 'flex:1;min-width:140px' }, field(t('dest_name'), dname))),
-    field(t('dest_addr'), daddr), h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('pickup'), pick)), h('div', { style: 'flex:1;min-width:140px' }, field(t('vehicle'), veh))), field(t('note'), note),
+    h('div', { class: 'row' }, h('div', { style: 'flex:2;min-width:180px' }, field(t('dest_addr'), daddr)), h('div', { style: 'flex:1;min-width:140px' }, field(t('phone'), dphone))),
+    h('p', { class: 'muted', id: 'of-cu-auto', text: t('cu_auto') }),
+    h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('pickup'), pick)), h('div', { style: 'flex:1;min-width:140px' }, field(t('vehicle'), veh)), h('div', { style: 'flex:1;min-width:110px' }, field(t('plate'), plate))), field(t('note'), note),
     h('h3', { style: 'margin-top:12px', text: t('lines') }), h('div', { class: 'row' }, h('div', { style: 'flex:2;min-width:140px' }, fp), fc, fefoBtn),
     h('div', { class: 'tw' }, h('table', { class: 'lines' }, tb)), h('div', { class: 'row' }, h('button', { class: 'btn sm', type: 'button', id: 'of-add', onclick: () => addLine() }, t('add_row')), sum)),
     [h('button', { class: 'btn pri', type: 'button', id: 'of-save', onclick: async () => {
       const lines = Array.from(tb.querySelectorAll('tr')).map(tr => ({ pallet_code: tr.querySelector('[data-f="pallet_code"]').value, cartons: Number(tr.querySelector('[data-f="cartons"]').value) })).filter(l => l.pallet_code);
-      const r = await act('order_save', { order_no: o ? o.order_no : undefined, warehouse: wh.value, order_date: date.value, dest_type: dtype.value, dest_name: dname.value, dest_address: daddr.value, customer_id: dtype.value === 'pelanggan' ? (Number(cpick.value) || 0) : 0, pickup_person: pick.value, vehicle: veh.value, note: note.value, lines });
+      const r = await act('order_save', { order_no: o ? o.order_no : undefined, warehouse: wh.value, order_date: date.value, dest_type: dtype.value, dest_name: dname.value, dest_address: daddr.value, dest_phone: dtype.value === 'pelanggan' ? dphone.value : '', customer_id: dtype.value === 'pelanggan' ? (Number(cpick.value) || 0) : 0, pickup_person: pick.value, vehicle: veh.value, plate: plate.value, note: note.value, lines });
       if (r) { closeModal(); S.f.ost = 'active'; render(); }
     } }, t('save'))]);
 }
@@ -760,7 +819,7 @@ function custForm(c) {
 }
 
 /* ---------- start ---------- */
-$('#lang').addEventListener('click', () => { S.lang = S.lang === 'ar' ? 'id' : 'ar'; LS.set('kcold.lang', S.lang); if (S.D) render(); else { render(); renderLogin(); } });
+$('#lang').addEventListener('click', () => { S.lang = S.lang === 'ar' ? 'id' : 'ar'; LS.set('kcold.lang', S.lang); try { if (window.KChatUI) KChatUI.setLang(S.lang); } catch (e) { } if (S.D) render(); else { render(); renderLogin(); } });
 $('#logout').addEventListener('click', logout);
 // back to the owner app (same tab, so its login is kept); only shown when this page is opened on its own
 $('#home').addEventListener('click', () => { location.href = '../' + location.search; });
@@ -779,7 +838,7 @@ $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeM
   const sess = own && own.pin_hash ? own : pos && pos.pin_hash && ['owner', 'manager', 'akuntan'].includes(pos.role) ? pos : null;
   if (S.key && sess) {
     S.user = sess.user; S.pin_hash = sess.pin_hash;
-    try { const r = await api('login', {}); S.user = r.me.name; S.role = r.me.role; if (!EMBED) SS.set('kcold.session', { user: S.user, pin_hash: S.pin_hash, role: S.role }); await load(); return; }
+    try { const r = await api('login', {}); S.user = r.me.name; S.role = r.me.role; if (!EMBED) SS.set('kcold.session', { user: S.user, pin_hash: S.pin_hash, role: S.role }); await load(); chatStart(); return; }
     catch (e) { S.pin_hash = ''; }
   }
   renderLogin();

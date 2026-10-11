@@ -222,6 +222,7 @@ export const TABLES = {
     note: 'string', lines: 'string', status: 'string', created_at: 'string', created_by: 'string',
     picked_at: 'string', picked_by: 'string', pick_date: 'string', cancel_reason: 'string',
     cancelled_at: 'string', cancelled_by: 'string', trip: 'string', log: 'string', customer_id: 'number',
+    plate: 'string', dest_phone: 'string', // v36: truck plate on the order + the customer's phone
   },
 };
 
