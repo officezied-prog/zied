@@ -54,6 +54,7 @@
     <section class="view" id="view-approvals" hidden></section>
     <section class="view" id="view-orders" hidden></section>
     <section class="view" id="view-field" hidden></section>
+    <section class="view" id="view-shoplist" hidden></section>
     <section class="view" id="view-suppliers" hidden></section>
     <section class="view" id="view-bank" hidden></section>
     <section class="view" id="view-members" hidden></section>
@@ -128,6 +129,7 @@
 </svg>
 
 <script src="shared/shop-types.js"></script>
+<script src="shared/gmaps-import.js"></script>
 <script src="shared/docs.js"></script>
 <script src="shared/face.js"></script>
 <script src="shared/att-kiosk.js"></script>
@@ -142,7 +144,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.2.1';
+const APP_VERSION = '2.3.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -430,7 +432,7 @@ const isApprover = () => S.role === 'owner' || S.role === 'manager';
 // v17 accountant: reads sales, invoices, goods in/out, returns, ledgers, bank and reports; changes nothing (the server refuses too)
 const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
-const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'approvals', 'settings'];
+const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'approvals', 'shoplist', 'settings'];
 const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|prod-new)$/;
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
@@ -532,6 +534,7 @@ const VIEWS = [
   { id: 'approvals', icon: 'check', label: 'nav.approvals', approver: true },
   { id: 'orders', icon: 'clip', label: 'nav.orders', approver: true },
   { id: 'field', icon: 'pin', label: 'nav.field', approver: true },
+  { id: 'shoplist', icon: 'clip', label: 'nav.shoplist', approver: true }, // v33: shops of a street from Google Maps → a rep's plan (owner, manager, accountant)
   { id: 'koreksi', icon: 'tag', label: 'nav.koreksi', approver: true },
   { id: 'activity', icon: 'activity', label: 'nav.activity', owner: true },
   { id: 'devices', icon: 'device', label: 'nav.devices', owner: true },
@@ -2866,10 +2869,17 @@ const ocMarkO = o => o === 'order' || OUTCOME_CLS[o] === 'oc-orange' ? '✓' : '
 const FAR_M = 200;
 
 /* ---- Lapangan screen ---- */
+/* v33 (owner 2026-10-11): the office (owner, manager, accountant — the cashier in its own app) sends a rep the shops of a
+   street copied from Google Maps (free); they go straight into the rep's plan for that day. UI: shared/gmaps-import.js. */
+RENDER.shoplist = function () {
+  $('#view-shoplist').innerHTML = `<div class="view-head"><h1>${esc(t('nav.shoplist'))}</h1></div><div id="gl-host" style="max-width:760px"></div>`;
+  if (!window.KhairGmaps) { $('#gl-host').innerHTML = `<div class="empty red">${esc(t('err.SERVER'))}</div>`; return; }
+  KhairGmaps.officeUI($('#gl-host'), { api: (a, d) => apiField(a, d), lang: () => S.lang, today, addDays, toast, errMsg });
+};
 RENDER.field = function () {
   if (!isApprover()) { go('pos'); return; }
   const rs = reps();
-  $('#view-field').innerHTML = `<div class="view-head"><h1>${esc(t('nav.field'))}</h1><button class="btn sm" data-act="field-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
+  $('#view-field').innerHTML = `<div class="view-head"><h1>${esc(t('nav.field'))}</h1><div class="row" style="gap:6px"><button class="btn sm" data-act="go" data-view="shoplist" id="fd-shoplist">📋 ${esc(t('nav.shoplist'))}</button><button class="btn sm" data-act="field-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div></div>
     <div class="toolbar"><label class="f" style="margin:0">${esc(t('date'))} <input class="input" type="date" id="fd-date" value="${esc(FD.date)}" style="width:auto"></label>
       <select class="input" id="fd-user" aria-label="${esc(t('field.rep'))}"><option value="">${esc(t('field.all_reps'))}</option>${rs.map(u => `<option ${FD.user === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></div>
     <div id="fd-body"><div class="empty">${esc(t('loading'))}</div></div>`;
@@ -4443,7 +4453,7 @@ Object.assign(I18N.ar, { 'kasirapp.title': 'هذا التطبيق للمالك',
 /* i18n v8: field sales */
 Object.assign(I18N.id, {
   'role.sales': 'Sales (lapangan)', 'salesapp.hint': 'Sales lapangan memakai aplikasi Khair Sales. {name}, silakan masuk di sana.', 'salesapp.open': 'Buka Khair Sales',
-  'nav.field': 'Lapangan', 'navs.field': 'Lapangan', 'nav.orders': 'Pesanan sales', 'navs.orders': 'Pesanan',
+  'nav.field': 'Lapangan', 'navs.field': 'Lapangan', 'nav.shoplist': 'Daftar toko untuk sales', 'navs.shoplist': 'Daftar toko', 'nav.orders': 'Pesanan sales', 'navs.orders': 'Pesanan',
   'img.title': 'Foto produk', 'img.hint': 'Foto diperkecil otomatis (maks. 400 px) sebelum dikirim.', 'img.take': 'Ambil / pilih foto', 'img.replace': 'Ganti foto', 'img.saved': 'Foto produk tersimpan', 'img.too_big': 'Foto terlalu besar setelah diperkecil. Coba foto lain.',
   'ago.now': 'baru saja', 'ago.min': '{n} mnt lalu', 'ago.hour': '{n} jam lalu', 'ago.day': '{n} hari lalu',
   'field.rep': 'Sales', 'field.all_reps': 'Semua sales', 'field.st_working': 'bekerja', 'field.st_ended': 'selesai', 'field.st_off': 'belum mulai', 'field.visits': 'kunjungan', 'field.orders': 'pesanan',
@@ -4464,7 +4474,7 @@ Object.assign(I18N.id, {
 });
 Object.assign(I18N.ar, {
   'role.sales': 'مندوب مبيعات', 'salesapp.hint': 'المندوبون يستخدمون تطبيق Khair Sales. {name}، تفضّل بالدخول هناك.', 'salesapp.open': 'فتح Khair Sales',
-  'nav.field': 'الميدان', 'navs.field': 'الميدان', 'nav.orders': 'طلبات المندوبين', 'navs.orders': 'الطلبات',
+  'nav.field': 'الميدان', 'navs.field': 'الميدان', 'nav.shoplist': 'قائمة محلات للمندوب', 'navs.shoplist': 'قائمة المحلات', 'nav.orders': 'طلبات المندوبين', 'navs.orders': 'الطلبات',
   'img.title': 'صورة المنتج', 'img.hint': 'تُصغَّر الصورة تلقائيًا (حتى 400 بكسل) قبل الإرسال.', 'img.take': 'التقاط / اختيار صورة', 'img.replace': 'تغيير الصورة', 'img.saved': 'حُفظت صورة المنتج', 'img.too_big': 'الصورة كبيرة جدًا بعد التصغير. جرّب صورة أخرى.',
   'ago.now': 'الآن', 'ago.min': 'قبل {n} دقيقة', 'ago.hour': 'قبل {n} ساعة', 'ago.day': 'قبل {n} يوم',
   'field.rep': 'المندوب', 'field.all_reps': 'كل المندوبين', 'field.st_working': 'يعمل', 'field.st_ended': 'أنهى', 'field.st_off': 'لم يبدأ', 'field.visits': 'زيارات', 'field.orders': 'طلبات',

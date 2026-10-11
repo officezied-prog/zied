@@ -4,6 +4,7 @@
 import { execSpecs, makeAccessor, applyOps, Q } from './db.js';
 import { OPS_TABLE_FIELD } from '../tables.js';
 import { runProcessField } from './generated/process-field.gen.js';
+import { resolveMapsLinks } from './gmaps.js';
 
 // ±0.2° (≈ 22 km) around the rep's position / plan start; without one, everywhere.
 function streetBox(data) {
@@ -37,6 +38,9 @@ export function parseField(body, headers) {
     // v32: the shared streets map reads the permanent street log around the rep (no date limit); plan_save reads that day's rows
     street_box: action === 'streets_worked' ? streetBox(data) : null,
     log_date: action === 'plan_save' && isDate(data.plan_date) ? data.plan_date : '__none__',
+    // v33 shop lists from the office: the open ones for the rep's phone; the last 30 days for the office's "sent" list
+    open_lists: action === 'field_bootstrap' || action === 'list_ack' ? 'sent' : '__none__',
+    sent_from: action === 'lists_sent' ? since30 : '9999-12-31',
     img_lo: action === 'product_images' ? 0 : (action === 'set_product_image' && pid > 0 ? pid : 1),
     img_hi: action === 'product_images' ? 1000000000 : (action === 'set_product_image' && pid > 0 ? pid : 0),
   };
@@ -65,6 +69,8 @@ function fieldSpecs(req) {
     'Get Plans': Q.gte('pos_route_plans', 'plan_date', req.plans_from),
     'Get Range Plans': Q.range('pos_route_plans', 'plan_date', req.from, req.to),
     'Get Plan Street Log': Q.eq('pos_street_log', 'plan_date', req.log_date),
+    'Get Open Lists': Q.eq('pos_shop_lists', 'status', req.open_lists),
+    'Get Sent Lists': Q.gte('pos_shop_lists', 'created_at', req.sent_from),
     // latest row per street and rep (SQLite keeps the bare columns of the MAX row), only streets crossing the area box
     'Get Street Log': req.street_box
       ? { table: 'pos_street_log', sql: 'SELECT *, MAX(plan_date) AS last_date FROM pos_street_log WHERE removed = 0 AND max_lat >= ? AND min_lat <= ? AND max_lng >= ? AND min_lng <= ? GROUP BY skey, user ORDER BY last_date DESC LIMIT 1000', params: [req.street_box[0], req.street_box[1], req.street_box[2], req.street_box[3]] }
@@ -97,6 +103,9 @@ export const FIELD_MIGRATIONS = [
   // v32: the permanent street log (shared map, kept forever) + a one-time copy of the streets of the plans made before it
   "CREATE TABLE IF NOT EXISTS pos_street_log (id INTEGER PRIMARY KEY AUTOINCREMENT, skey TEXT, user TEXT, name TEXT, plan_date TEXT, plan_id TEXT, drawn INTEGER NOT NULL DEFAULT 0, ref TEXT, lines TEXT, min_lat REAL, max_lat REAL, min_lng REAL, max_lng REAL, removed INTEGER NOT NULL DEFAULT 0, updated_at TEXT)",
   "CREATE INDEX IF NOT EXISTS idx_pos_street_log_plan_date ON pos_street_log (plan_date)",
+  // v33: shop lists the office sends to a rep (Google Maps places of a street)
+  "CREATE TABLE IF NOT EXISTS pos_shop_lists (id INTEGER PRIMARY KEY AUTOINCREMENT, list_id TEXT, from_user TEXT, from_role TEXT, to_user TEXT, plan_date TEXT, street TEXT, places TEXT, note TEXT, status TEXT, created_at TEXT, received_at TEXT)",
+  "CREATE INDEX IF NOT EXISTS idx_pos_shop_lists_status ON pos_shop_lists (status)",
   "INSERT INTO pos_street_log (skey, user, name, plan_date, plan_id, drawn, ref, lines, min_lat, max_lat, min_lng, max_lng, removed, updated_at) "
     + "SELECT 'st:' || lower(trim(json_extract(s.value, '$.name'))), p.user, trim(json_extract(s.value, '$.name')), p.plan_date, p.plan_id, 0, json_extract(s.value, '$.ref'), "
     + "COALESCE(json_extract(s.value, '$.lines'), '[]'), -90, 90, -180, 180, 0, p.updated_at "
@@ -111,7 +120,7 @@ async function ensureFieldSchema(adapter) {
   fieldSchemaEnsured = true;
 }
 
-export async function handleField(adapter, body, headers, STORE_KEY) {
+export async function handleField(adapter, body, headers, STORE_KEY, deps = {}) {
   const req = parseField(body, headers);
   await ensureFieldSchema(adapter); // before loading: 'Get Plans' reads pos_route_plans
   const nodes = await loadFieldNodes(adapter, req);
@@ -119,5 +128,10 @@ export async function handleField(adapter, body, headers, STORE_KEY) {
   const out = runProcessField($, STORE_KEY)[0].json; // { response, ops, action }
   const ops = out.ops || {};
   await applyOps(adapter, ops, OPS_TABLE_FIELD);
+  // v33: Google Maps short links — the process checked who asks and which links; the Worker follows the redirects
+  if (req.action === 'resolve_links' && out.response && out.response.ok && Array.isArray(out.response.resolve)) {
+    out.response.links = await resolveMapsLinks(out.response.resolve, deps.fetch || fetch);
+    delete out.response.resolve;
+  }
   return out.response; // field workflow has no Finalize node
 }

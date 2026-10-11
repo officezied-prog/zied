@@ -318,3 +318,8 @@ main{overflow:hidden;position:relative;min-width:0}
 
 /* v32 crowded areas grouped into one bubble with the count (tap = zoom in) */
 .clu{display:flex;align-items:center;justify-content:center;border-radius:50%;background:rgba(255,255,255,.92);border:4px solid #1E40AF;color:#0F172A;font-weight:900;font-size:13px;box-shadow:0 1px 6px rgba(0,0,0,.35)}
+
+/* v33 Google Maps places */
+.pl-gm{margin-top:8px;padding:10px;border-radius:12px;background:#F8FAFC;border:1px dashed #94A3B8}
+.pl-gm textarea{margin-top:6px}
+.gm-badge{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:5px;background:#1A73E8;color:#fff;font-size:11px;font-weight:900;vertical-align:1px}

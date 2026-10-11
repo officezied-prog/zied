@@ -92,6 +92,7 @@
 <script src="../shared/att-kiosk.js"></script>
 <script src="../shared/chat-ui.js"></script>
 <script src="../shared/field-mock.js"></script>
+<script src="../shared/gmaps-import.js"></script>
 <script src="mock.js"></script>
 <script>
 'use strict';
@@ -101,7 +102,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.1.0';
+const APP_VERSION = 'kasir-1.2.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -3450,6 +3451,7 @@ RENDER.more = function () {
       ${isApprover() ? `<button class="li" data-act="member-new" id="m-member">${ic('user')}<div class="grow"><div class="t">${esc(t('mem.new'))}</div><div class="s">${esc(t('mem.new_s'))}</div></div></button>` : ''}
       <button class="li" data-act="debt-pay" id="m-debt">${ic('wallet')}<div class="grow"><div class="t">${esc(t('more.debt_pay'))}</div><div class="s">${esc(t('more.debt_pay_s'))}</div></div></button>
       ${S.role === 'manager' && !S.shift ? `<button class="li" data-act="gate-open" id="m-kas-open">${ic('cash')}<div class="grow"><div class="t">${esc(t('gate.title_mgr'))}</div><div class="s">${esc(t('kas.mgr_hint'))}</div></div></button>` : ''}
+      <button class="li" data-act="shoplist-open" id="m-shoplist">${ic('list')}<div class="grow"><div class="t">${esc(t('more.shoplist'))}</div><div class="s">${esc(t('more.shoplist_s'))}</div></div></button>
       <button class="li" data-act="field-orders" id="m-field">${ic('truck')}<div class="grow"><div class="t">${esc(t('more.field'))}</div><div class="s">${esc(t('more.field_s'))}</div></div></button>
       <button class="li" data-act="retur-open" id="m-retur">${ic('undo')}<div class="grow"><div class="t">${esc(t('more.retur'))}</div><div class="s">${esc(t('more.retur_s'))}</div></div></button>
       <button class="li" data-act="void-req" id="m-void">${ic('undo')}<div class="grow"><div class="t">${esc(t('more.void'))}</div><div class="s">${esc(t('more.void_s'))}</div></div></button>
@@ -3972,6 +3974,11 @@ const ACT = {
   'price-pick': el => { const p = prodById(el.dataset.id); closeModal(); if (p) openPriceChange(p); },
   'my-req': () => openMyRequests(),
   'last-rc': () => openLastReceipts(),
+  // v33 (owner 2026-10-11): the cashier too may send a rep the shops of a street copied from Google Maps (free) — shared/gmaps-import.js
+  'shoplist-open': () => {
+    const el = openModal({ title: t('more.shoplist'), id: 'shoplist', body: '<div id="gl-host"></div>', foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button>` });
+    if (window.KhairGmaps && el) KhairGmaps.officeUI($('#gl-host', el), { api: (a, d) => apiField(a, d), lang: () => S.lang, today, addDays, toast, errMsg });
+  },
   'outbox-open': () => openOutbox(),
   'ob-drop': async el => { const r = await confirmBox(t('outbox.drop_confirm'), { danger: true }); if (!r.ok) return; S.outbox = S.outbox.filter(x => x.id !== el.dataset.id); saveOutbox(); const ob = $('#outbox'); if (ob) drawOutbox(ob.closest('.modal-bg')); },
   'apr-open': () => openInbox(),
@@ -4090,7 +4097,7 @@ const I18N = {
     'excat.sewa': 'Sewa', 'excat.gaji': 'Gaji', 'excat.listrik_air': 'Listrik & air', 'excat.transport': 'Transport', 'excat.iklan': 'Iklan', 'excat.kemasan': 'Kemasan', 'excat.perawatan': 'Perawatan', 'excat.lain': 'Lain-lain',
     'more.debt_pay': 'Terima bayar hutang', 'more.debt_pay_s': 'Pelanggan membayar cicilan', 'more.void': 'Batalkan nota hari ini', 'more.void_s': 'Kirim permintaan ke manajer / akuntan',
     'more.price': 'Ubah harga', 'more.price_s': 'Kirim permintaan ubah harga', 'more.price_s_mgr': 'Harga eceran / grosir', 'more.myreq': 'Permintaan saya', 'more.myreq_s': 'Status persetujuan',
-    'more.last_rc': 'Struk terakhir', 'more.lang': 'Bahasa', 'more.voice': 'Suara barang', 'more.voice_s': 'Sebut nama & jumlah barang (tanpa harga)', 'more.lock': 'Kunci layar', 'more.logout': 'Keluar / ganti kasir',
+    'more.shoplist': 'Daftar toko untuk sales', 'more.shoplist_s': 'Dari Google Maps → langsung ke rencana sales (gratis)', 'more.last_rc': 'Struk terakhir', 'more.lang': 'Bahasa', 'more.voice': 'Suara barang', 'more.voice_s': 'Sebut nama & jumlah barang (tanpa harga)', 'more.lock': 'Kunci layar', 'more.logout': 'Keluar / ganti kasir',
     'more.amount_exceeds': 'Melebihi hutang', 'more.paid_ok': 'Diterima {amount}. Sisa hutang {rest}',
     'void.hint': 'Pilih nota hari ini yang mau dibatalkan. Manajer atau akuntan menyetujui (pemilik diberi tahu).', 'void.confirm': 'Minta pembatalan nota {inv}?', 'void.send': 'Kirim permintaan', 'void.sent': 'Permintaan {id} terkirim ke manajer / akuntan',
     'price.now': 'Sekarang', 'price.retail': 'Harga eceran baru', 'price.wholesale': 'Harga grosir baru', 'price.reason_ph': 'mis. harga supplier naik', 'price.hint_kasir': 'Perubahan harga dikirim ke manajer & akuntan; pemilik diberi tahu.',
@@ -4198,7 +4205,7 @@ const I18N = {
     'excat.sewa': 'الإيجار', 'excat.gaji': 'الرواتب', 'excat.listrik_air': 'الكهرباء والماء', 'excat.transport': 'النقل', 'excat.iklan': 'الإعلانات', 'excat.kemasan': 'التغليف', 'excat.perawatan': 'الصيانة', 'excat.lain': 'أخرى',
     'more.debt_pay': 'استلام سداد دَين', 'more.debt_pay_s': 'العميل يدفع قسطًا', 'more.void': 'إلغاء فاتورة اليوم', 'more.void_s': 'إرسال طلب إلى المدير / المحاسب',
     'more.price': 'تغيير السعر', 'more.price_s': 'إرسال طلب تغيير سعر', 'more.price_s_mgr': 'سعر التجزئة / الجملة', 'more.myreq': 'طلباتي', 'more.myreq_s': 'حالة الموافقات',
-    'more.last_rc': 'آخر إيصال', 'more.lang': 'اللغة', 'more.voice': 'صوت الأصناف', 'more.voice_s': 'نطق اسم الصنف والكمية (بدون سعر)', 'more.lock': 'قفل الشاشة', 'more.logout': 'خروج / تغيير الكاشير',
+    'more.shoplist': 'قائمة محلات للمندوب', 'more.shoplist_s': 'من خرائط جوجل ← مباشرة إلى خطة المندوب (مجانًا)', 'more.last_rc': 'آخر إيصال', 'more.lang': 'اللغة', 'more.voice': 'صوت الأصناف', 'more.voice_s': 'نطق اسم الصنف والكمية (بدون سعر)', 'more.lock': 'قفل الشاشة', 'more.logout': 'خروج / تغيير الكاشير',
     'more.amount_exceeds': 'أكبر من الدَّين', 'more.paid_ok': 'استُلم {amount}. المتبقي {rest}',
     'void.hint': 'اختر فاتورة اليوم المراد إلغاؤها. يوافق المدير أو المحاسب (ويُبلَّغ المالك).', 'void.confirm': 'طلب إلغاء الفاتورة {inv}؟', 'void.send': 'إرسال الطلب', 'void.sent': 'أُرسل الطلب {id} إلى المدير / المحاسب',
     'price.now': 'الحالي', 'price.retail': 'سعر التجزئة الجديد', 'price.wholesale': 'سعر الجملة الجديد', 'price.reason_ph': 'مثل: ارتفاع سعر المورد', 'price.hint_kasir': 'طلب تغيير السعر يُرسَل إلى المدير والمحاسب، ويُبلَّغ المالك.',

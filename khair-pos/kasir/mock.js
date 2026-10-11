@@ -1372,7 +1372,7 @@ const MockServer = (() => {
   /* ---- Field sales: handled by shared/field-mock.js (loaded statically by the page; lazy-load fallback kept).
      The cashier app only reaches cashier_orders (read-only); the field mock's per-action role gate forbids the kasir
      every other field action (field_order, list_field, …), mirroring the server's KASIR_ONLY gate. ---- */
-  const FIELD_ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop', 'cashier_orders'];
+  const FIELD_ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop', 'cashier_orders', 'list_send', 'list_reps', 'lists_sent', 'resolve_links']; // v33: + the office's shop lists to a rep
   const ext = () => (window.KhairFieldMock && typeof window.KhairFieldMock.handle === 'function') ? window.KhairFieldMock : null;
   /** Seeds the field tables (and demo rep Ahmad) — synchronous and idempotent; skipped until the store has users. */
   function ensureField(db) {

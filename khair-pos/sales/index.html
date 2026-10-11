@@ -71,6 +71,7 @@
 </svg>
 
 <script src="../shared/shop-types.js"></script>
+<script src="../shared/gmaps-import.js"></script>
 <script src="../shared/field-mock.js"></script>
 <script src="../shared/chat-ui.js"></script>
 <script src="mock.js"></script>
@@ -79,14 +80,14 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.3.0';
+const APP_VERSION = 'sales-1.4.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
 /* Same prefix as the owner and cashier apps (same origin): store key, language and the user list are
    shared on this device. Everything that belongs to Khair Sales lives under the extra "sales." prefix. */
 const PREFIX = MOCK ? 'kpos.mock.' : 'kpos.';
-const FIELD_ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'plan_save', 'streets_worked'];
+const FIELD_ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'plan_save', 'streets_worked', 'list_ack', 'resolve_links'];
 
 /* ========== Small utilities ========== */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -943,7 +944,7 @@ async function refreshData(quiet) {
   try {
     const r = await api('field_bootstrap');
     applyData(r);
-    syncPlans().then(() => { const c = S.inApp && S.view === 'today' && $('#plan-card'); if (c) c.outerHTML = planCardHTML(); }).catch(() => { });
+    takeLists(r.lists).catch(e => console.warn('lists', e)).then(() => syncPlans()).then(() => { const c = S.inApp && S.view === 'today' && $('#plan-card'); if (c) c.outerHTML = planCardHTML(); }).catch(() => { });
     // pending (outbox) visits/orders still count today
     const pendingShops = S.outbox.filter(e => e.action === 'check_in' && e.tmp_shop).map(e => e.local_shop).filter(Boolean);
     pendingShops.forEach(s => { if (!shopById(s.shop_id)) S.shops.push(s); });
@@ -1116,7 +1117,7 @@ function svgMap(el, points, shops, current, orders, plan) {
    During the day the Today card shows the next stop, Google Maps directions, and "visit" (a new place opens the
    new-shop form already filled in, so it becomes a shop at the first visit). */
 const PL = { date: '', start: null, end: null, stops: [], streets: [], note: '', results: [], street: null, seg: 'search', q: '', msg: '', busy: false, map: null, lay: null, el: null, sel: null, worked: [], workedAt: 0,
-  draw: null, found: [], foundOn: '', lineRef: '', cats: null }; // v32: draw = the work line being drawn ({ pts, name }); found = shops of the chosen kinds along a line
+  draw: null, found: [], foundOn: '', lineRef: '', cats: null, gmOpen: false, placing: '', unplaced: [] }; // v33: Google Maps paste box; a place being put on the map; places still without a position // v32: draw = the work line being drawn ({ pts, name }); found = shops of the chosen kinds along a line
 const OSM = { nomi: 'https://nominatim.openstreetmap.org/search', over: ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter'], last: 0 };
 const plansAll = () => FS.get(uk('plans'), {}) || {};
 const planFor = d => plansAll()[d] || null;
@@ -1200,7 +1201,8 @@ function openPlanner(date) {
   const d = date || today(), p = planFor(d);
   Object.assign(PL, { date: d, start: p && p.start ? Object.assign({}, p.start) : null, end: p && p.end ? Object.assign({}, p.end) : null, stops: p ? clone(p.stops || []) : [],
     streets: p ? clone(p.streets || []) : [], note: p ? p.note || '' : '', results: [], street: null,
-    seg: p && ((p.stops || []).length || (p.streets || []).length) ? 'plan' : 'search', q: '', msg: '', busy: false, map: null, lay: null, sel: null, draw: null, found: [], foundOn: '', lineRef: '' });
+    seg: p && ((p.stops || []).length || (p.streets || []).length) ? 'plan' : 'search', q: '', msg: '', busy: false, map: null, lay: null, sel: null, draw: null, found: [], foundOn: '', lineRef: '',
+    gmOpen: false, placing: '', unplaced: unplacedFor(d) });
   if (!PL.cats) { const c = FS.get('find_cats', null); PL.cats = Array.isArray(c) ? c.filter(id => FIND.some(k => k.id === id)) : ['kurma', 'haji', 'muslim']; }
   PL.el = openModal({ title: t('plan.title') + ' · ' + t(d === today() ? 'plan.today' : 'plan.tomorrow') + ' ' + fmtDate(d), id: 'plan', cls: 'map-modal plan-modal',
     body: `<div id="pl-wrap"><div id="pl-drawbar"></div><div class="map full plan-map" id="pl-map"></div><div class="small muted" id="pl-legend" style="margin-top:4px">${esc(t('plan.legend'))}</div><div id="pl-startbox"></div><div class="seg sm" id="pl-seg" style="margin-top:10px"></div><div id="pl-body" style="margin-top:10px"></div></div>`,
@@ -1209,6 +1211,7 @@ function openPlanner(date) {
   initPlanMap();
   drawPlanner();
   loadWorked().then(() => { if (PL.el) drawPlanner(); });
+  if (PL.unplaced.length && navigator.onLine) locateUnplaced(); // places sent without a position: try to find them now
 }
 /** Streets worked / planned by every rep (kept forever; the ones around this rep), so nobody repeats a street; cached on the phone for offline. */
 async function loadWorked(force) {
@@ -1229,19 +1232,23 @@ function drawPlanner() {
     + pointBox('pl-end', '🏁', t('plan.end'), PL.end, `<button class="btn xs" data-act="pl-end-mypos" id="pl-end-mypos">${ic('locate')} ${esc(t('plan.my_pos'))}</button><button class="btn xs" data-act="pl-end-same" id="pl-end-same" ${PL.start ? '' : 'disabled'}>${esc(t('plan.end_same'))}</button>${PL.end ? `<button class="btn xs ghost" data-act="pl-end-clear" id="pl-end-clear" aria-label="${esc(t('plan.remove'))}">✕</button>` : ''}`)
     + `<div class="small muted" style="margin-top:4px">${esc(t('plan.tap_hint'))}</div>`;
   $('#pl-seg', w).innerHTML = `<button type="button" data-act="pl-seg" data-v="search" class="${PL.seg === 'search' ? 'on' : ''}" id="pl-seg-search">${esc(t('plan.tab_search'))}</button><button type="button" data-act="pl-seg" data-v="line" class="${PL.seg === 'line' ? 'on' : ''}" id="pl-seg-line">✏️ ${esc(t('plan.tab_line'))}</button><button type="button" data-act="pl-seg" data-v="plan" class="${PL.seg === 'plan' ? 'on' : ''}" id="pl-seg-plan">${esc(t('plan.tab_plan', { n: PL.stops.length + PL.streets.length }))}</button>`;
-  $('#pl-drawbar', w).innerHTML = drawBarHTML();
+  $('#pl-drawbar', w).innerHTML = drawBarHTML() + placeBarHTML();
   const mp = $('#pl-map', w); if (mp) mp.classList.toggle('drawing', !!PL.draw);
   $('#pl-body', w).innerHTML = PL.seg === 'plan' ? planListHTML() : PL.seg === 'line' ? planLineHTML() : planSearchHTML();
   const ln = $('#pl-line-name', w); if (ln) ln.oninput = e => { if (PL.draw) PL.draw.name = e.target.value; };
+  const gt = $('#pl-gm-text', w); if (gt) gt.oninput = e => { PL.gmText = e.target.value; };
   const q = $('#pl-q', w); if (q) { q.oninput = e => { PL.q = e.target.value; }; q.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); plSearch(); } }; }
   const nt = $('#pl-note', w); if (nt) nt.oninput = e => { PL.note = e.target.value; };
   drawPlanLayers();
 }
 function planSearchHTML() {
-  const named = PL.street ? PL.results.filter(r => r.kind === 'poi' && r.named && !PL.stops.some(s => s.ref === r.ref)).length : 0;
+  const named = PL.street || PL.results.some(r => r.src === 'gm') ? PL.results.filter(r => r.kind === 'poi' && r.named && !PL.stops.some(s => s.ref === r.ref)).length : 0;
   return `<div class="row" style="gap:8px"><input class="input grow" id="pl-q" type="search" placeholder="${esc(t('plan.search_ph'))}" value="${esc(PL.q)}" enterkeyhint="search" autocomplete="off"><button class="btn primary" data-act="pl-search" id="pl-go" ${PL.busy ? 'disabled' : ''}>${ic('search')} ${esc(t('plan.search'))}</button></div>
     <div class="row wrap" style="gap:6px;margin-top:8px"><button class="btn xs" data-act="pl-near" id="pl-near" ${PL.busy ? 'disabled' : ''}>🏪 ${esc(t('plan.near'))}</button><button class="btn xs" data-act="pl-ours" id="pl-ours">⭐ ${esc(t('plan.ours'))}</button>
+      <button class="btn xs ${PL.gmOpen ? 'primary' : ''}" data-act="pl-gm" id="pl-gm" aria-expanded="${PL.gmOpen}">📋 ${esc(t('plan.gm'))}</button>${gmInbox().length ? `<button class="btn xs primary" data-act="pl-gm-inbox" id="pl-gm-inbox" ${PL.busy ? 'disabled' : ''}>📥 ${esc(t('plan.gm_inbox', { n: gmInbox().length }))}</button>` : ''}
       ${named ? `<button class="btn xs primary" data-act="pl-add-all" id="pl-add-all">+ ${esc(t('plan.add_all', { n: named }))}</button>` : ''}</div>
+    ${PL.gmOpen ? `<div class="pl-gm" id="pl-gm-box"><div class="small muted">${esc(t('plan.gm_hint'))}</div><textarea class="input" id="pl-gm-text" rows="4" placeholder="${esc(t('plan.gm_ph'))}">${esc(PL.gmText || '')}</textarea>
+      <button class="btn primary sm" data-act="pl-gm-read" id="pl-gm-read" style="margin-top:6px" ${PL.busy ? 'disabled' : ''}>${esc(t('plan.gm_read'))}</button></div>` : ''}
     ${PL.street ? `<div class="small" style="margin-top:6px" id="pl-street">🛣️ <b>${esc(PL.street.name)}</b></div>` : ''}
     <div class="small muted" id="pl-msg" style="margin-top:6px" role="status">${esc(PL.msg)}</div>
     <div class="list" id="pl-results" style="margin-top:6px">${PL.results.map(resultRowHTML).join('')}</div>
@@ -1255,7 +1262,7 @@ function resultRowHTML(r, i) {
   const btns = r.kind === 'street' ? `<button class="btn xs ${inPlan ? '' : 'primary'}" data-act="pl-work" data-i="${i}">${inPlan ? '✓ ' + esc(t('plan.street_in')) : '🛣️ ' + esc(t('plan.work_street'))}</button><button class="btn xs" data-act="pl-start-at" data-i="${i}">🚩</button><button class="btn xs" data-act="pl-end-at" data-i="${i}">🏁</button>`
     : r.kind === 'area' ? `<button class="btn xs" data-act="pl-start-at" data-i="${i}">🚩 ${esc(t('plan.set_start'))}</button><button class="btn xs" data-act="pl-end-at" data-i="${i}">🏁</button><button class="btn xs" data-act="pl-goto" data-i="${i}">${esc(t('plan.go_there'))}</button>`
     : `<button class="btn xs ${added ? '' : 'primary'}" data-act="pl-toggle" data-i="${i}" aria-pressed="${added}">${added ? '✓ ' + esc(t('plan.added')) : '+ ' + esc(t('plan.add'))}</button>`;
-  return `<div class="li pl-res" data-ref="${esc(r.ref)}" data-kind="${esc(r.kind)}"><div class="grow"><div class="t">${esc(r.name)}${r.ours ? ' ⭐' : ''}</div><div class="s">${esc(sub)}</div>${warn ? `<div class="small pl-warn" data-worked>⚠ ${esc(warn)}</div>` : ''}</div><div class="row wrap" style="gap:4px;flex:none;justify-content:flex-end">${btns}</div></div>`;
+  return `<div class="li pl-res" data-ref="${esc(r.ref)}" data-kind="${esc(r.kind)}"${r.src === 'gm' ? ' data-src="gm"' : ''}><div class="grow"><div class="t">${esc(r.name)}${r.ours ? ' ⭐' : ''}${r.src === 'gm' ? ' <span class="gm-badge" title="Google Maps">G</span>' : ''}${r.approx ? ' <span class="small muted">≈</span>' : ''}</div><div class="s">${esc(sub)}</div>${warn ? `<div class="small pl-warn" data-worked>⚠ ${esc(warn)}</div>` : ''}</div><div class="row wrap" style="gap:4px;flex:none;justify-content:flex-end">${btns}</div></div>`;
 }
 function planKm() { const pts = (PL.start ? [PL.start] : []).concat(PL.stops).concat(PL.end ? [PL.end] : []); let m = 0; for (let i = 1; i < pts.length; i++) m += haversine(pts[i - 1], pts[i]); return m / 1000; }
 function planListHTML() {
@@ -1267,6 +1274,7 @@ function planListHTML() {
   return streets + `<div class="row" style="justify-content:space-between;align-items:center;gap:8px"><button class="btn xs" data-act="pl-sort" id="pl-sort" ${PL.stops.length > 1 ? '' : 'disabled'}>↕ ${esc(t('plan.sort'))}</button><span class="small muted" id="pl-km">${PL.stops.length ? esc(t('plan.km', { km: NF1.format(planKm()) })) : ''}</span></div>
     <div class="list" id="pl-stops" style="margin-top:8px">${PL.stops.length ? PL.stops.map((s, i) => `<div class="li pl-stop" data-ref="${esc(s.ref)}"${s.cat ? ` data-cat="${esc(s.cat)}"` : ''}${g && g.oc[i] ? ` data-oc="${ocKey(g.oc[i])}"` : ''}><span class="plan-pin sm"${g && g.oc[i] ? ocStyle(g.oc[i]) : pinStyle(s.cat)}>${g && g.oc[i] ? ocMark(g.oc[i]) : i + 1}</span><div class="grow"><div class="t">${esc(s.name)}</div><div class="s">${esc([s.kind === 'shop' ? t('plan.shop_ours') : t('plan.place'), s.address].filter(Boolean).join(' · '))}</div></div>
       <div class="row" style="gap:2px;flex:none"><button class="btn xs ghost" data-act="pl-up" data-i="${i}" aria-label="${esc(t('plan.up'))}" ${i ? '' : 'disabled'}>▲</button><button class="btn xs ghost" data-act="pl-down" data-i="${i}" aria-label="${esc(t('plan.down'))}" ${i < PL.stops.length - 1 ? '' : 'disabled'}>▼</button><button class="btn xs ghost danger" data-act="pl-del" data-i="${i}" aria-label="${esc(t('plan.remove'))}">✕</button></div></div>`).join('') : `<div class="muted" id="pl-empty">${esc(t('plan.empty'))}</div>`}</div>
+    ${unplacedHTML()}
     <div class="field" style="margin-top:10px"><label class="f" for="pl-note">${esc(t('notes'))}</label><textarea class="input" id="pl-note" rows="2">${esc(PL.note)}</textarea></div>`;
 }
 function shopsCenter() { const v = S.shops.filter(validPos); return v.length ? { lat: sum(v, s => s.lat) / v.length, lng: sum(v, s => s.lng) / v.length } : null; }
@@ -1286,6 +1294,7 @@ function initPlanMap() {
 }
 function planMapClick(ll) {
   if (PL.draw) { addDrawPt(ll.lat, ll.lng); return; } // drawing the work line: each tap = the next point
+  if (PL.placing) { placeAt(PL.placing, ll.lat, ll.lng); return; } // putting a Google Maps place without a position on the map
   PL.sel = { lat: ll.lat, lng: ll.lng };
   const html = `<div class="pl-pop"><div class="row" style="gap:6px"><button class="btn xs" data-act="pl-sel-start" id="pl-sel-start">🚩 ${esc(t('plan.set_start'))}</button><button class="btn xs" data-act="pl-sel-end" id="pl-sel-end">🏁 ${esc(t('plan.set_end'))}</button><button class="btn xs primary" data-act="pl-sel-add" id="pl-sel-add">+ ${esc(t('plan.point_here'))}</button></div></div>`;
   window.L.popup({ closeButton: true, autoPan: true }).setLatLng(ll).setContent(html).openOn(PL.map);
@@ -1345,7 +1354,7 @@ function toggleStop(it) {
   }
   drawPlanner();
 }
-const stopOf = it => Object.assign({ ref: it.ref, kind: it.shop_id ? 'shop' : 'place', shop_id: it.shop_id || '', name: it.name, lat: it.lat, lng: it.lng, address: it.address || '', type: it.type || '', src: it.src || 'map' }, it.cat ? { cat: it.cat } : {});
+const stopOf = it => Object.assign({ ref: it.ref, kind: it.shop_id ? 'shop' : 'place', shop_id: it.shop_id || '', name: it.name, lat: it.lat, lng: it.lng, address: it.address || '', type: it.type || '', src: it.src || 'map' }, it.cat ? { cat: it.cat } : {}, it.phone ? { phone: it.phone } : {});
 /** Nearest stop first, starting from the start point (or the first stop). */
 function sortStops() {
   const left = PL.stops.slice(), out = [];
@@ -1527,6 +1536,124 @@ function plFind(x) {
   }, 'line');
 }
 
+/* ---- v33 (owner 2026-10-11): shops of a street taken from GOOGLE MAPS for free ----
+   (a) the office (manager / accountant / cashier) sends the rep a list for a street → it goes straight into his plan for
+   that day; (b) the rep pastes places he copied in Google Maps, or shares them to this app (Google Maps → Share → Khair
+   Sales). Each place lands at its own spot: a full link carries the position, a short link is followed by our server,
+   else the address is looked up on OpenStreetMap; a place still without a position waits in "no point yet" until the rep
+   finds it or taps the map. No Google key, nothing to pay. */
+const gmInbox = () => { const v = FS.get('gm_inbox', []); return Array.isArray(v) ? v : []; };
+const unplacedFor = d => { const all = FS.get(uk('unplaced'), {}) || {}; return Array.isArray(all[d]) ? clone(all[d]) : []; };
+function setUnplaced(d, list) {
+  const all = FS.get(uk('unplaced'), {}) || {}, keep = {}, from = addDays(today(), -1);
+  Object.keys(all).forEach(k => { if (k >= from) keep[k] = all[k]; });
+  if (list && list.length) keep[d] = list.slice(0, 60); else delete keep[d];
+  FS.set(uk('unplaced'), keep);
+}
+const gmRef = x => 'gm:' + normTxt(x.name).replace(/[^a-z0-9]+/g, '').slice(0, 20) + ':' + (x.url ? x.url.slice(-10).replace(/[^A-Za-z0-9]/g, '') : normTxt(x.address).replace(/[^a-z0-9]+/g, '').slice(0, 12));
+/** Find the position of places that have none: short links via our server (≤ 8 a call), then OpenStreetMap (≤ 10, 1/s). */
+async function gmLocate(items) {
+  const need = items.filter(x => x.lat == null && x.url);
+  for (let i = 0; i < need.length; i += 8) {
+    const part = need.slice(i, i + 8);
+    try {
+      const r = await api('resolve_links', { urls: part.map(x => x.url) });
+      (r.links || []).forEach(l => part.filter(x => x.url === l.url).forEach(x => {
+        if (l.ok && KhairGmaps.okCoord(l.lat, l.lng)) { x.lat = l.lat; x.lng = l.lng; x.approx = !l.exact; }
+        if (l.name) { const c = l.name.indexOf(','); if (!x.name) x.name = (c > 0 ? l.name.slice(0, c) : l.name).trim().slice(0, 100); if (!x.address && c > 0) x.address = l.name.slice(c + 1).trim().slice(0, 200); }
+      }));
+    } catch (e) { if (e instanceof NetError || !e.code) break; }
+  }
+  for (const x of items.filter(y => y.lat == null && (y.address || y.name)).slice(0, 10)) {
+    try {
+      const r = await nominatim(x.address ? x.address : x.name, PL.map ? PL.map.getBounds() : null);
+      const hit = r.find(y => y.kind === 'poi' && normTxt(y.name).indexOf(normTxt(x.name).slice(0, 8)) >= 0) || r[0];
+      if (hit) { x.lat = hit.lat; x.lng = hit.lng; x.approx = true; }
+    } catch (e) { break; }
+  }
+  return items;
+}
+const gmItem = x => ({ ref: x.ref || gmRef(x), src: 'gm', kind: 'poi', named: true, name: String(x.name || t('plan.place')).slice(0, 100), lat: x.lat, lng: x.lng, address: x.address || '', phone: x.phone || '', type: x.type || '', approx: !!x.approx });
+/** Places from a paste / the share inbox → the result list, in their order along the chosen line (or from the start). */
+function gmImport(items, after) {
+  return planRun(async () => {
+    PL.street = null;
+    await gmLocate(items);
+    const ln = ((PL.streets.find(x => x.ref === PL.lineRef) || PL.streets.slice(-1)[0] || {}).lines || [])[0];
+    const got = items.filter(x => x.lat != null).map(gmItem).map(it => { const ours = S.shops.find(s2 => validPos(s2) && haversine(s2, it) < 40); return ours ? shopItem(ours) : it; });
+    got.forEach(it => { it.at = ln && ln.length > 1 ? alongLine(ln, it).s : (PL.start && validPos(PL.start) ? haversine(PL.start, it) : 0); });
+    PL.results = got.sort((a, b) => a.at - b.at);
+    const miss = items.filter(x => x.lat == null).map(x => Object.assign({ ref: gmRef(x), name: x.name, address: x.address || '', phone: x.phone || '', url: x.url || '' }));
+    miss.forEach(m => { if (!PL.unplaced.some(u => u.ref === m.ref)) PL.unplaced.push(m); });
+    setUnplaced(PL.date, PL.unplaced);
+    PL.msg = t('plan.gm_found', { n: got.length }) + (miss.length ? ' · ' + t('plan.gm_missing', { n: miss.length }) : '');
+    if (after) after();
+    PL.gmOpen = false;
+    fitPlan(PL.results);
+  });
+}
+/** Places of the plan still without a position: try again (server link / OpenStreetMap) and move the found ones into the stops. */
+async function locateUnplaced(loud) {
+  if (!PL.unplaced.length) return;
+  const was = PL.unplaced.length;
+  await gmLocate(PL.unplaced);
+  const found = PL.unplaced.filter(x => x.lat != null);
+  found.forEach(x => { if (!PL.stops.some(s2 => s2.ref === x.ref) && PL.stops.length < 60) PL.stops.push(stopOf(gmItem(x))); });
+  PL.unplaced = PL.unplaced.filter(x => x.lat == null);
+  setUnplaced(PL.date, PL.unplaced);
+  if (loud || found.length) toast(t('plan.gm_located', { k: found.length, n: was }), found.length ? 'ok' : 'warn', 3500);
+  if (PL.el) drawPlanner();
+}
+function placeAt(ref, lat, lng) {
+  const x = PL.unplaced.find(u => u.ref === ref); PL.placing = '';
+  if (x) { x.lat = r5(lat); x.lng = r5(lng); if (PL.stops.length < 60) PL.stops.push(stopOf(gmItem(x))); PL.unplaced = PL.unplaced.filter(u => u.ref !== ref); setUnplaced(PL.date, PL.unplaced); toast(t('plan.gm_placed', { name: x.name }), 'ok', 2500); }
+  drawPlanner();
+}
+function placeBarHTML() {
+  const x = PL.placing && PL.unplaced.find(u => u.ref === PL.placing); if (!x) return '';
+  return `<div class="pl-drawbar" id="pl-placebar"><b>📍 ${esc(t('plan.gm_tap', { name: x.name }))}</b><button class="btn xs ghost" data-act="pl-place-cancel" id="pl-place-cancel">${esc(t('cancel'))}</button></div>`;
+}
+function unplacedHTML() {
+  if (!PL.unplaced.length) return '';
+  return `<div class="small" style="font-weight:800;margin:12px 0 6px">❓ ${esc(t('plan.gm_unplaced', { n: PL.unplaced.length }))} <button class="linkbtn" data-act="pl-place-find" id="pl-place-find">${esc(t('plan.gm_find_again'))}</button></div>
+    <div class="list" id="pl-unplaced">${PL.unplaced.map(x => `<div class="li pl-stop" data-ref="${esc(x.ref)}"><span class="start-pin" aria-hidden="true">❓</span><div class="grow"><div class="t">${esc(x.name)} <span class="gm-badge">G</span></div><div class="s">${esc([x.address, x.phone, x.from ? t('plan.gm_from', { u: x.from }) : ''].filter(Boolean).join(' · '))}</div></div>
+      <div class="row" style="gap:2px;flex:none"><button class="btn xs ${PL.placing === x.ref ? 'primary' : ''}" data-act="pl-place" data-ref="${esc(x.ref)}" ${PL.map ? '' : 'disabled'}>📍 ${esc(t('plan.gm_on_map'))}</button><button class="btn xs ghost danger" data-act="pl-unplaced-del" data-ref="${esc(x.ref)}" aria-label="${esc(t('plan.remove'))}">✕</button></div></div>`).join('')}</div>`;
+}
+/** Shop lists the office sent: each goes into the plan of its day (its street + its places), once; then the server is told. */
+async function takeLists(lists) {
+  if (!isRep() || !Array.isArray(lists) || !lists.length) return;
+  const taken = FS.get(uk('lists_taken'), []) || [];
+  for (const l of lists.filter(x => taken.indexOf(x.list_id) < 0)) {
+    const d = !l.plan_date || l.plan_date < today() ? today() : l.plan_date, p = clone(planFor(d) || { plan_date: d, start: null, end: null, stops: [], streets: [], note: '' });
+    p.stops = p.stops || []; p.streets = p.streets || [];
+    if (l.street && !p.streets.some(x => normTxt(x.name) === normTxt(l.street)) && p.streets.length < 15) p.streets.push({ ref: 'st:' + normTxt(l.street), name: l.street, lines: [] });
+    const un = unplacedFor(d), places = (l.places || []).map((x, i) => Object.assign({}, x, { ref: 'gm:' + l.list_id + ':' + i, from: l.from_user }));
+    places.forEach(x => {
+      if (x.lat != null && KhairGmaps.okCoord(x.lat, x.lng)) {
+        if (p.stops.some(s2 => s2.ref === x.ref) || p.stops.length >= 60) return;
+        const ours = S.shops.find(s2 => validPos(s2) && haversine(s2, x) < 40);
+        p.stops.push(stopOf(ours ? shopItem(ours) : gmItem(x)));
+      } else if (!un.some(u => u.ref === x.ref)) un.push({ ref: x.ref, name: x.name, address: x.address || '', phone: x.phone || '', url: x.url || '', from: l.from_user });
+    });
+    putPlanLocal(Object.assign(p, { updated_at: new Date().toISOString() }), true);
+    setUnplaced(d, un);
+    taken.push(l.list_id);
+    toast('📥 ' + t('plan.list_in', { u: l.from_user, n: places.length, s: l.street || '—', d: fmtDate(d) }), 'ok', 6000);
+  }
+  FS.set(uk('lists_taken'), taken.slice(-200));
+  try { await api('list_ack', { list_ids: lists.map(l => l.list_id) }); } catch (e) { /* told again at the next refresh */ }
+}
+/** "Share → Khair Sales" from Google Maps (Android, installed app): the shared place is kept in an inbox for the planner. */
+function captureShare() {
+  const q = new URLSearchParams(location.search);
+  if (!q.has('share_text') && !q.has('share_url') && !q.has('share_title')) return 0;
+  const items = KhairGmaps.fromShare(q.get('share_title') || '', q.get('share_text') || '', q.get('share_url') || '');
+  if (items.length) FS.set('gm_inbox', gmInbox().concat(items).slice(-100));
+  ['share_title', 'share_text', 'share_url'].forEach(k => q.delete(k));
+  try { history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q : '') + location.hash); } catch (e) { /* ignore */ }
+  return items.length;
+}
+
 /* ---- OpenStreetMap search (free; from the phone; explicit search only, ≤ 1 request/second as the service asks) ---- */
 const OSM_TYPES = { convenience: 'minimarket', supermarket: 'supermarket', department_store: 'hypermarket', mall: 'hypermarket', wholesale: 'grosir_modern', general: 'warung', kiosk: 'warung',
   variety_store: 'toko', frozen_food: 'toko', deli: 'toko', dairy: 'toko', bakery: 'bakery', pastry: 'toko_kue', confectionery: 'toko_kue', greengrocer: 'toko_buah', health_food: 'herbal',
@@ -1672,7 +1799,7 @@ function visitPlanStop(ref) {
   const p = planFor(today()), s = p && (p.stops || []).find(x => x.ref === ref); if (!s) return;
   if (s.shop_id && shopById(s.shop_id)) { resetCheckin(s.shop_id); go('visit', true); return; }
   resetCheckin();
-  CI.isNew = true; CI.form = { name: s.name, owner_name: '', phone: '', address: s.address || '', area: '' };
+  CI.isNew = true; CI.form = { name: s.name, owner_name: '', phone: s.phone || '', address: s.address || '', area: '' };
   if (s.type) { CI.tp.type = s.type; CI.tp.group = KST.groupOf(s.type); }
   go('visit', true);
 }
@@ -2306,7 +2433,7 @@ const ACT = {
   'pl-ours': () => plOurs(),
   'pl-along': el => { const r = PL.results[int(el.dataset.i)]; if (r) return plAlong(r); },
   'pl-toggle': el => { const r = PL.results[int(el.dataset.i)]; if (r) toggleStop(r); },
-  'pl-add-all': () => { PL.results.filter(r => r.kind === 'poi' && r.named && !PL.stops.some(s => s.ref === r.ref)).forEach(r => { if (PL.stops.length < 60) PL.stops.push({ ref: r.ref, kind: r.shop_id ? 'shop' : 'place', shop_id: r.shop_id || '', name: r.name, lat: r.lat, lng: r.lng, address: r.address || '', type: r.type || '', src: r.src || 'osm' }); }); if (PL.start) sortStops(); drawPlanner(); toast(t('plan.added_n', { n: PL.stops.length }), 'ok'); },
+  'pl-add-all': () => { PL.results.filter(r => r.kind === 'poi' && r.named && !PL.stops.some(s => s.ref === r.ref)).forEach(r => { if (PL.stops.length < 60) PL.stops.push(stopOf(Object.assign({}, r, { src: r.src || 'osm' }))); }); if (PL.start) sortStops(); drawPlanner(); toast(t('plan.added_n', { n: PL.stops.length }), 'ok'); },
   'pl-start-at': el => { const r = PL.results[int(el.dataset.i)]; if (!r) return; PL.start = { label: r.name, lat: r.lat, lng: r.lng }; if (PL.map) PL.map.setView([r.lat, r.lng], 16); drawPlanner(); },
   'pl-goto': el => { const r = PL.results[int(el.dataset.i)]; if (r && PL.map) PL.map.setView([r.lat, r.lng], 16); },
   'pl-mypos': async () => { const p = await myPosition(); if (!p) { toast(t('gps.denied'), 'err'); return; } PL.start = { label: t('plan.my_pos_label'), lat: p.lat, lng: p.lng }; if (PL.map) PL.map.setView([p.lat, p.lng], 16); drawPlanner(); },
@@ -2319,6 +2446,14 @@ const ACT = {
   'pl-work': el => { const r = PL.results[int(el.dataset.i)]; if (r) return plWorkStreet(r); },
   'pl-street-shops': el => { const x = PL.streets[int(el.dataset.i)]; if (!x) return; const pts = (x.lines || []).flat(); const c = pts.length ? pts[Math.floor(pts.length / 2)] : null; const bb = pts.length ? [Math.min(...pts.map(q => q[0])), Math.max(...pts.map(q => q[0])), Math.min(...pts.map(q => q[1])), Math.max(...pts.map(q => q[1]))] : null; return plAlong({ name: x.name, lat: c ? c[0] : (PL.start || S.pos || { lat: -6.2655 }).lat, lng: c ? c[1] : (PL.start || S.pos || { lng: 106.8605 }).lng, bbox: bb }); },
   'pl-street-del': el => { const x = PL.streets.splice(int(el.dataset.i), 1)[0]; if (x && x.ref === PL.foundOn) { PL.found = []; PL.foundOn = ''; } if (x && x.ref === PL.lineRef) PL.lineRef = ''; drawPlanner(); },
+  // v33 Google Maps places (paste / share / sent by the office)
+  'pl-gm': () => { PL.gmOpen = !PL.gmOpen; drawPlanner(); const ta = PL.gmOpen && PL.el && $('#pl-gm-text', PL.el); if (ta) ta.focus(); },
+  'pl-gm-read': () => { const ta = PL.el && $('#pl-gm-text', PL.el); const items = KhairGmaps.parse(ta ? ta.value : PL.gmText); if (!items.length) { PL.msg = t('plan.gm_none'); drawPlanner(); return; } return gmImport(items, () => { PL.gmText = ''; }); },
+  'pl-gm-inbox': () => { const items = gmInbox(); if (items.length) return gmImport(items, () => FS.set('gm_inbox', [])); },
+  'pl-place': el => { PL.placing = el.dataset.ref; PL.seg = 'plan'; drawPlanner(); const bar = PL.el && $('#pl-drawbar', PL.el); if (bar && bar.scrollIntoView) bar.scrollIntoView({ block: 'start' }); },
+  'pl-place-cancel': () => { PL.placing = ''; drawPlanner(); },
+  'pl-place-find': () => locateUnplaced(true),
+  'pl-unplaced-del': el => { PL.unplaced = PL.unplaced.filter(x => x.ref !== el.dataset.ref); setUnplaced(PL.date, PL.unplaced); drawPlanner(); },
   // v32 work line drawn point by point + search along it by kind of shop
   'pl-draw': () => {
     PL.draw = { pts: [], name: '' }; PL.seg = 'line'; PL.msg = ''; if (PL.map) PL.map.closePopup(); drawPlanner();
@@ -2341,6 +2476,7 @@ const ACT = {
     if (PL.draw) { if (PL.draw.pts.length > 1) finishDraw(); else PL.draw = null; } // a line still being drawn is kept, not lost
     const nt = PL.el && $('#pl-note', PL.el); if (nt) PL.note = nt.value;
     putPlanLocal({ plan_date: PL.date, start: PL.start, end: PL.end, stops: PL.stops, streets: PL.streets, note: PL.note, updated_at: new Date().toISOString() }, true);
+    setUnplaced(PL.date, PL.unplaced);
     closeModal(); toast(t('plan.saved'), 'ok');
     if (S.view === 'today') RENDER.today();
     syncPlans().then(() => { const c = S.view === 'today' && $('#plan-card'); if (c) c.outerHTML = planCardHTML(); });
@@ -2487,6 +2623,12 @@ const I18N = {
     'plan.overlap': '{p}% garis ini sudah dikerjakan {u} ({d})', 'plan.overlap_planned': '{p}% garis ini sudah direncanakan {u} ({d})',
     'find.kurma': 'Toko kurma', 'find.haji': 'Perlengkapan haji & umrah', 'find.muslim': 'Toko muslim & Timur Tengah', 'find.oleh': 'Oleh-oleh & buah', 'find.ritel': 'Minimarket & supermarket',
     'find.sembako': 'Toko kelontong & sembako', 'find.kuliner': 'Roti, kue & kafe', 'find.masjid': 'Masjid & pesantren',
+    'plan.gm': 'Google Maps', 'plan.gm_hint': 'Di Google Maps buka tokonya → Bagikan → Salin, lalu tempel di sini (bisa banyak toko sekaligus, juga link atau alamat). Gratis, tanpa akun Google. Di HP Android yang memasang aplikasi ini: Bagikan → Khair Sales.',
+    'plan.gm_ph': 'Tempel nama, alamat dan link Google Maps…', 'plan.gm_read': 'Baca daftar', 'plan.gm_none': 'Tidak ada tempat yang terbaca. Tempel teks atau link dari Google Maps.',
+    'plan.gm_found': '{n} tempat dari Google Maps di peta', 'plan.gm_missing': '{n} belum ada titiknya (lihat tab Rencana)', 'plan.gm_inbox': 'Dari Google Maps ({n})',
+    'plan.gm_shared': '{n} tempat dari Google Maps disimpan. Buka Rencana rute → Cari → "Dari Google Maps".', 'plan.gm_unplaced': 'Belum ada titik ({n})', 'plan.gm_find_again': 'Cari lagi',
+    'plan.gm_on_map': 'Di peta', 'plan.gm_tap': 'Ketuk peta di tempat "{name}"', 'plan.gm_placed': '{name} ditaruh di peta', 'plan.gm_located': '{k} dari {n} tempat ditemukan titiknya', 'plan.gm_from': 'dari {u}',
+    'plan.list_in': '{u} mengirim {n} toko untuk {s} → rencana {d}',
     'map.empty': 'Belum ada titik lokasi', 'map.label': 'Peta rute', 'map.offline': 'Peta sederhana', 'map.expand': 'Perbesar', 'map.legend': 'Titik oranye bernomor = pesanan hari ini (urutan masuk). Titik ungu bernomor = rencana rute; setelah dikunjungi warnanya = hasilnya: hijau ✓ = pesan, oranye ✓ = ada tanpa pesanan, biru ✕ = tidak mau, hitam ✕ = tutup / tidak ada / ganti usaha. Lingkaran = toko. Garis biru = rute.',
     'outbox.title': 'Data tertunda', 'outbox.badge': '{n} data tertunda', 'outbox.queued': 'Offline — disimpan, dikirim otomatis', 'outbox.empty': 'Semua data sudah terkirim', 'outbox.synced': '{n} data terkirim',
     'outbox.still': 'Masih {n} data tertunda', 'outbox.send_now': 'Kirim sekarang',
@@ -2612,6 +2754,12 @@ const I18N = {
     'plan.overlap': '{p}% من هذا الخط عمل فيه {u} ({d})', 'plan.overlap_planned': '{p}% من هذا الخط خطّط له {u} ({d})',
     'find.kurma': 'متاجر التمور', 'find.haji': 'مستلزمات الحج والعمرة', 'find.muslim': 'متاجر إسلامية وشرق أوسطية', 'find.oleh': 'هدايا وفواكه', 'find.ritel': 'ميني ماركت وسوبرماركت',
     'find.sembako': 'بقالات ومواد غذائية', 'find.kuliner': 'مخابز وحلويات ومقاهٍ', 'find.masjid': 'مساجد ومعاهد',
+    'plan.gm': 'خرائط جوجل', 'plan.gm_hint': 'في خرائط جوجل افتح المحل ← مشاركة ← نسخ، ثم الصقه هنا (يمكن عدة محلات مرة واحدة، أو روابط أو عناوين). مجاني بلا حساب جوجل. في هاتف أندرويد المثبَّت عليه التطبيق: مشاركة ← Khair Sales.',
+    'plan.gm_ph': 'الصق الاسم والعنوان ورابط خرائط جوجل…', 'plan.gm_read': 'اقرأ القائمة', 'plan.gm_none': 'لم يُقرأ أي مكان. الصق نصًا أو رابطًا من خرائط جوجل.',
+    'plan.gm_found': '{n} مكانًا من خرائط جوجل على الخريطة', 'plan.gm_missing': '{n} بلا نقطة بعد (انظر تبويب الخطة)', 'plan.gm_inbox': 'من خرائط جوجل ({n})',
+    'plan.gm_shared': 'حُفظ {n} مكانًا من خرائط جوجل. افتح خطة المسار ← البحث ← «من خرائط جوجل».', 'plan.gm_unplaced': 'بلا نقطة بعد ({n})', 'plan.gm_find_again': 'ابحث مرة أخرى',
+    'plan.gm_on_map': 'على الخريطة', 'plan.gm_tap': 'اضغط على الخريطة في مكان «{name}»', 'plan.gm_placed': 'وُضع {name} على الخريطة', 'plan.gm_located': 'وُجدت نقطة {k} من {n} مكانًا', 'plan.gm_from': 'من {u}',
+    'plan.list_in': '{u} أرسل {n} محلًا لـ {s} ← خطة {d}',
     'map.empty': 'لا توجد نقاط موقع', 'map.label': 'خريطة المسار', 'map.offline': 'خريطة مبسطة', 'map.expand': 'تكبير', 'map.legend': 'النقاط البرتقالية المرقمة = طلبيات اليوم (بترتيب الوصول). النقاط البنفسجية المرقمة = خطة المسار؛ بعد الزيارة يصبح لونها حسب النتيجة: أخضر ✓ = طلبية، برتقالي ✓ = موجود بلا طلبية، أزرق ✕ = لا يرغب، أسود ✕ = مغلق / غير موجود / غيّر نشاطه. الدوائر = المتاجر. الخط الأزرق = المسار.',
     'outbox.title': 'بيانات معلّقة', 'outbox.badge': '{n} بيانات معلّقة', 'outbox.queued': 'بدون اتصال — حُفظ وسيُرسل تلقائيًا', 'outbox.empty': 'تم إرسال كل البيانات', 'outbox.synced': 'أُرسلت {n}',
     'outbox.still': 'ما زال {n} معلّقًا', 'outbox.send_now': 'أرسل الآن',
@@ -2679,6 +2827,7 @@ async function init() {
   if ('serviceWorker' in navigator && /^https:|^http:\/\/(localhost|127\.0\.0\.1)/.test(location.href) && !/[?&]nosw\b/.test(location.search)) {
     navigator.serviceWorker.register('sw.js', { scope: './' }).catch(() => { });
   }
+  try { const n = captureShare(); if (n) setTimeout(() => toast('📥 ' + t('plan.gm_shared', { n }), 'ok', 5000), 1200); } catch (e) { console.warn('share', e); } // v33 Google Maps → Share → Khair Sales
   if (MOCK) { try { await MockServer.ensure(); } catch (e) { console.error(e); } }
   try { await migrateSecrets(); } catch (e) { console.error(e); }
   const sess = FS.get('session'), live = SESS.get();

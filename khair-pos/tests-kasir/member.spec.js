@@ -60,7 +60,7 @@ test('member badge + automatic member discount; receipt to WhatsApp and e-mail; 
 });
 
 test('register a member at the counter (name, phone, e-mail, consent); a kasir cannot end a membership', async ({ page }) => {
-  await H.login(page);
+  await H.login(page, 'Jihan', '2222'); // Batch A: members are registered by the manager (the kasir has no "member" entry)
   await H.tab(page, 'more');
   await page.click('#m-member');
   await expect(page.locator('#cn-member')).toBeChecked();
@@ -77,7 +77,9 @@ test('register a member at the counter (name, phone, e-mail, consent); a kasir c
   const c = db.customers.find(x => x.name === 'Bu Salma');
   expect(c).toMatchObject({ member: true, email: 'salma@contoh.id', phone: '6281311119999', visits: 0, member_since: jkt() });
   expect(c.member_no).toMatch(/^M[A-Z0-9]{6}$/);
-  expect(db.activity.find(a => a.kind === 'member_baru' && a.ref === c.member_no)).toMatchObject({ user: 'Siti', level: 'info' });
+  expect(db.activity.find(a => a.kind === 'member_baru' && a.ref === c.member_no)).toMatchObject({ user: 'Jihan', level: 'info' });
+  await page.evaluate(() => { sessionStorage.clear(); localStorage.removeItem('kpos.mock.session'); localStorage.removeItem('kpos.mock.kasir.session'); }); // the manager steps away
+  await H.login(page, 'Siti', '1111'); // the cashier at the counter
   const r = await page.evaluate(async id => { try { await api('save_customer', { id, member: false }); return 'ok'; } catch (e) { return e.code; } }, c.id);
   expect(r).toBe('FORBIDDEN');
   // first purchase as a member: 0 %; the badge still says which purchase it is

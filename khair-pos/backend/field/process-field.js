@@ -12,7 +12,7 @@ const data = req.data && typeof req.data === 'object' ? req.data : {};
     else if (v && typeof v === 'object') cleanInput(v, depth + 1);
   });
 })(data, 0);
-const ops = { shops: [], visits: [], tracks: [], days: [], orders: [], images: [], product_flags: [], plans: [], street_log: [] };
+const ops = { shops: [], visits: [], tracks: [], days: [], orders: [], images: [], product_flags: [], plans: [], street_log: [], shop_lists: [] };
 
 function rows(name) {
   try {
@@ -88,12 +88,15 @@ if (me.must_change === true && !viaMaster) return fail('PIN_CHANGE_REQUIRED', 'B
 const role = ['owner', 'manager', 'sales', 'kasir', 'akuntan'].indexOf(me.role) >= 0 ? me.role : 'other';
 if (role === 'other') return fail('FORBIDDEN', 'Aplikasi ini untuk sales lapangan');
 const isBoss = role === 'owner' || role === 'manager';
-const SALES_ONLY = ['day_start', 'day_end', 'track', 'check_in', 'field_order', 'plan_save'];
+const SALES_ONLY = ['day_start', 'day_end', 'track', 'check_in', 'field_order', 'plan_save', 'list_ack'];
 const BOSS_ONLY = ['update_order', 'set_product_image', 'link_shop'];
 // The kasir may reach ONLY cashier_orders. v30 (owner 2026-10-10): the accountant may READ the field report
 // (visits + orders table) for monitoring — field_bootstrap / list_field / product_images only, nothing that writes.
-const KASIR_ONLY = ['cashier_orders'];
-const AKUNTAN_OK = ['field_bootstrap', 'list_field', 'product_images'];
+// v33 (owner 2026-10-11): the office — manager, accountant OR cashier — may also send a rep a SHOP LIST for a street
+// (taken from Google Maps for free); that is the only thing the kasir / akuntan may write here.
+const OFFICE_LISTS = ['list_send', 'list_reps', 'lists_sent', 'resolve_links'];
+const KASIR_ONLY = ['cashier_orders'].concat(OFFICE_LISTS);
+const AKUNTAN_OK = ['field_bootstrap', 'list_field', 'product_images'].concat(OFFICE_LISTS);
 if (role === 'kasir' && KASIR_ONLY.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Kasir hanya boleh melihat pesanan');
 if (role === 'akuntan' && AKUNTAN_OK.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akuntan hanya melihat laporan lapangan');
 if (req.action === 'list_field' && !isBoss && role !== 'akuntan') return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
@@ -163,6 +166,23 @@ function streetBox(lines) {
   (lines || []).forEach(function (ln) { ln.forEach(function (q) { b.min_lat = Math.min(b.min_lat, q[0]); b.max_lat = Math.max(b.max_lat, q[0]); b.min_lng = Math.min(b.min_lng, q[1]); b.max_lng = Math.max(b.max_lng, q[1]); }); });
   return b.min_lat > b.max_lat ? { min_lat: -90, max_lat: 90, min_lng: -180, max_lng: 180 } : b; // no line: shown everywhere (name only)
 }
+// v33: a shop list from the office (Google Maps places of a street) → the rep's plan for that day
+const GMAPS_URL = /^https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl|(?:www\.)?google\.[a-z.]+|maps\.google\.[a-z.]+)\//i;
+function cleanPlaces(raw) {
+  const out = [];
+  (Array.isArray(raw) ? raw : []).slice(0, 60).forEach(function (x) {
+    x = x && typeof x === 'object' ? x : {};
+    const name = str(x.name).slice(0, 100); if (!name) return;
+    const has = isCoord(x.lat, x.lng), url = str(x.url).slice(0, 300);
+    out.push({ name: name, address: str(x.address).slice(0, 200), phone: str(x.phone).replace(/[^\d+]/g, '').slice(0, 20), url: GMAPS_URL.test(url) ? url : '',
+      lat: has ? Math.round(num(x.lat) * 1e6) / 1e6 : null, lng: has ? Math.round(num(x.lng) * 1e6) / 1e6 : null, type: SHOP_TYPES.indexOf(x.type) >= 0 ? x.type : '' });
+  });
+  return out;
+}
+function listOut(l) {
+  return { list_id: str(l.list_id), from_user: str(l.from_user), from_role: str(l.from_role), to_user: str(l.to_user), plan_date: str(l.plan_date), street: str(l.street),
+    places: jsonList(l.places), note: str(l.note), status: str(l.status), created_at: str(l.created_at), received_at: str(l.received_at) };
+}
 function visitOut(v, full) {
   const o = clean(v);
   if (!full) delete o.photo_thumb;
@@ -187,6 +207,7 @@ switch (req.action) {
       day: role === 'sales' ? dayOut(myDay) : null,
       orders: role === 'sales' ? rows('Get Recent Orders').filter(mine).map(clean) : [],
       plans: role === 'sales' ? rows('Get Plans').filter(mine).map(planOut) : [],
+      lists: role === 'sales' ? rows('Get Open Lists').filter(function (l) { return str(l.to_user).toLowerCase() === meKey && str(l.status) === 'sent'; }).map(listOut) : [],
       settings: {}, server_time: new Date().toISOString()
     });
   }
@@ -355,7 +376,8 @@ switch (req.action) {
       if (!name) return fail('INVALID', 'Nama titik ' + (i + 1) + ' wajib');
       stops.push({ ref: str(x.ref).slice(0, 40) || ('s' + (i + 1)), kind: sh ? 'shop' : 'place', shop_id: sh ? sh.shop_id : '', name: name,
         lat: Math.round(num(x.lat) * 1e6) / 1e6, lng: Math.round(num(x.lng) * 1e6) / 1e6, address: str(x.address).slice(0, 200),
-        type: SHOP_TYPES.indexOf(x.type) >= 0 ? x.type : '', src: ['osm', 'map', 'shop'].indexOf(x.src) >= 0 ? x.src : '' });
+        type: SHOP_TYPES.indexOf(x.type) >= 0 ? x.type : '', src: ['osm', 'map', 'shop', 'gm'].indexOf(x.src) >= 0 ? x.src : '' });
+      if (str(x.phone)) stops[stops.length - 1].phone = str(x.phone).replace(/[^\d+]/g, '').slice(0, 20); // v33: a Google Maps place keeps its phone
       if (/^[a-z_]{1,20}$/.test(str(x.cat))) stops[stops.length - 1].cat = str(x.cat); // v32: the kind searched for (its colour on the map)
     }
     const st = data.start && typeof data.start === 'object' ? data.start : {};
@@ -396,6 +418,54 @@ switch (req.action) {
       list.push(o);
     });
     return done({ ok: true, streets: list, since: '' });
+  }
+
+  case 'list_reps': {
+    // the office picks the rep to send a shop list to
+    return done({ ok: true, reps: users.filter(function (u) { return u.role === 'sales'; }).map(function (u) { return str(u.name); }) });
+  }
+
+  case 'list_send': {
+    // v33 (owner 2026-10-11): manager / accountant / cashier (or the owner) send a rep the shops of a street, copied or
+    // shared from Google Maps (free). It reaches the rep's phone at its next refresh and goes into his plan for that day.
+    if (role === 'sales') return fail('FORBIDDEN', 'Daftar toko dikirim dari kantor');
+    const to = users.find(function (u) { return u.role === 'sales' && str(u.name).toLowerCase() === str(data.to_user).toLowerCase(); });
+    if (!to) return fail('INVALID', 'Pilih sales tujuan');
+    const pd = str(data.plan_date);
+    if (!isDate(pd) || pd < req.today || pd > addDaysYmd(req.today, 14)) return fail('INVALID', 'Tanggal: hari ini sampai 14 hari lagi');
+    const places = cleanPlaces(data.places);
+    if (!places.length) return fail('INVALID', 'Daftar toko kosong');
+    const l = { list_id: 'SL' + rand(7), from_user: me.name, from_role: role, to_user: str(to.name), plan_date: pd, street: str(data.street).slice(0, 100),
+      places: JSON.stringify(places), note: str(data.note).slice(0, 300), status: 'sent', created_at: new Date().toISOString(), received_at: '' };
+    ops.shop_lists.push(forWrite(l, -1));
+    return done({ ok: true, list: listOut(l) });
+  }
+
+  case 'lists_sent': {
+    // the office sees what it sent (last 30 days) and whether the rep's phone received it
+    const all = isBoss || role === 'akuntan';
+    const list = rows('Get Sent Lists').filter(function (l) { return all || str(l.from_user).toLowerCase() === meKey; })
+      .sort(function (a, b) { return str(b.created_at).localeCompare(str(a.created_at)); }).slice(0, 100)
+      .map(function (l) { const o = listOut(l); o.n = o.places.length; delete o.places; return o; });
+    return done({ ok: true, lists: list });
+  }
+
+  case 'list_ack': {
+    // the rep's phone took these lists into its plan
+    const ids = (Array.isArray(data.list_ids) ? data.list_ids : []).slice(0, 20).map(str);
+    let n = 0;
+    rows('Get Open Lists').forEach(function (l) {
+      if (ids.indexOf(str(l.list_id)) < 0 || str(l.to_user).toLowerCase() !== meKey || str(l.status) !== 'sent') return;
+      ops.shop_lists.push(forWrite({ status: 'received', received_at: new Date().toISOString() }, l.id)); n++;
+    });
+    return done({ ok: true, acked: n });
+  }
+
+  case 'resolve_links': {
+    // Google Maps short links → position: validated here, followed by the Worker (no page is read, no Google key)
+    const urls = (Array.isArray(data.urls) ? data.urls : []).map(str).filter(function (u) { return u.length <= 300 && GMAPS_URL.test(u); }).slice(0, 8);
+    if (!urls.length) return fail('INVALID', 'Tidak ada link Google Maps');
+    return done({ ok: true, resolve: urls });
   }
 
   case 'list_field': {

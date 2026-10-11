@@ -155,6 +155,11 @@ export const TABLES = {
     skey: 'string', user: 'string', name: 'string', plan_date: 'string', plan_id: 'string', drawn: 'number', ref: 'string',
     lines: 'string', min_lat: 'number', max_lat: 'number', min_lng: 'number', max_lng: 'number', removed: 'number', updated_at: 'string',
   },
+  // v33: shop lists (Google Maps places of a street) the office sends to a rep
+  pos_shop_lists: {
+    list_id: 'string', from_user: 'string', from_role: 'string', to_user: 'string', plan_date: 'string', street: 'string',
+    places: 'string', note: 'string', status: 'string', created_at: 'string', received_at: 'string',
+  },
   // ---- chat / attendance (separate workflows; included for a complete database) ----
   pos_chat: {
     channel: 'string', cid: 'string', from_user: 'string', from_name: 'string',
@@ -240,7 +245,7 @@ export const OPS_TABLE = {
 export const OPS_TABLE_FIELD = {
   shops: 'pos_shops', visits: 'pos_visits', tracks: 'pos_tracks',
   days: 'pos_field_days', orders: 'pos_field_orders', images: 'pos_product_images',
-  product_flags: 'pos_products', plans: 'pos_route_plans', street_log: 'pos_street_log',
+  product_flags: 'pos_products', plans: 'pos_route_plans', street_log: 'pos_street_log', shop_lists: 'pos_shop_lists',
 };
 
 // Chat workflow ops key → table.
