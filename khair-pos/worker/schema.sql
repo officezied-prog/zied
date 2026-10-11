@@ -718,7 +718,9 @@ CREATE TABLE IF NOT EXISTS cold_orders (
   cancelled_by TEXT,
   trip TEXT,
   log TEXT,
-  customer_id REAL
+  customer_id REAL,
+  plate TEXT,
+  dest_phone TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cold_orders_status ON cold_orders (status);
 CREATE INDEX IF NOT EXISTS idx_cold_orders_order_date ON cold_orders (order_date);

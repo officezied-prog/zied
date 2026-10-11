@@ -8,7 +8,7 @@ const sha = s => crypto.createHash('sha256').update(s).digest('hex');
 const ph = (n, pin) => sha('demo:' + n.toLowerCase() + ':' + pin);
 
 // tables like n8n: rows with ids; writes with an id update, without are inserted
-const T = { warehouses: [], products: [], containers: [], pallets: [], movements: [], checks: [], orders: [], settings: {},
+const T = { warehouses: [], products: [], containers: [], pallets: [], movements: [], checks: [], orders: [], customers: [], settings: {},
   users: [{ id: 1, name: 'zied salah', role: 'owner', pin_hash: ph('zied salah', '1234'), active: true },
     { id: 2, name: 'Jihan', role: 'manager', pin_hash: ph('Jihan', '2222'), active: true },
     { id: 3, name: 'Akun', role: 'akuntan', pin_hash: ph('Akun', '3333'), active: true },
@@ -125,13 +125,31 @@ err(call('order_save', { warehouse: 'DPP', dest_type: 'pelanggan', lines: [{ pal
 const o1 = ok(call('order_save', { warehouse: 'DPP', dest_type: 'toko', pickup_person: 'Wahyu', lines: f.lines.map(l => ({ pallet_code: l.pallet_code, cartons: l.cartons })) }, 'manager')).order;
 assert.strictEqual(o1.order_no, 'SPB-261007-001');
 assert.strictEqual(o1.dest_name, 'Khair Mart');
+// v36 (owner 2026-10-11): each line says its container and whether the whole pallet is taken
+assert.deepStrictEqual(o1.lines.map(l => [l.pallet_code, l.container_no, l.full, l.pallet_ctn]), [['2274538', 'CGMU5288973', true, 286], ['2274537', 'CGMU5288973', false, 286]]);
+assert.strictEqual(T.customers.length, 0); // to the shop: no customer row
 // reserved: an open order holds its cartons
 err(call('order_save', { warehouse: 'DPP', lines: [{ pallet_code: '2274538', cartons: 1 }] }), 'NOT_ENOUGH');
 assert.strictEqual(ok(call('fefo', { warehouse: 'DPP', product: 'SUKARI-3', cartons: 300, order_no: o1.order_no })).lines[0].cartons, 286); // editing o1 itself
 const o2 = ok(call('order_save', { warehouse: 'DPP', dest_type: 'pelanggan', dest_name: 'Toko Barokah', dest_address: 'Jl. Dewi Sartika 5', lines: [{ pallet_code: '3619208', cartons: 20 }] })).order;
 assert.strictEqual(o2.order_no, 'SPB-261007-002');
+// v36 (owner 2026-10-11): a customer typed into an order is saved to the customer list (name, address, phone)
+assert.strictEqual(T.customers.length, 1); assert.strictEqual(T.customers[0].name, 'Toko Barokah'); assert.strictEqual(T.customers[0].address, 'Jl. Dewi Sartika 5');
+assert.strictEqual(T.customers[0].source, 'gudang'); assert.strictEqual(T.customers[0].debt_balance, 0);
+err(call('order_save', { warehouse: 'DPP', dest_type: 'pelanggan', dest_name: 'Toko Y', dest_phone: '12', lines: [{ pallet_code: '3619208', cartons: 1 }] }), 'INVALID'); // bad phone
+assert.strictEqual(T.customers.length, 1);
+// the same name again (any case) with a phone: the same customer is updated, not duplicated; the order links to it and keeps the phone
+const o2b = ok(call('order_save', { warehouse: 'DPP', dest_type: 'pelanggan', dest_name: 'toko barokah', dest_phone: '0813 1111 2222', plate: 'b 9 abc', lines: [{ pallet_code: '3619208', cartons: 1 }] })).order;
+assert.strictEqual(T.customers.length, 1); assert.strictEqual(T.customers[0].phone, '6281311112222'); assert.strictEqual(T.customers[0].address, 'Jl. Dewi Sartika 5'); // empty address keeps the old one
+assert.strictEqual(o2b.customer_id, T.customers[0].id); assert.strictEqual(o2b.dest_phone, '6281311112222'); assert.strictEqual(o2b.dest_address, 'Jl. Dewi Sartika 5'); assert.strictEqual(o2b.plate, 'B 9 ABC');
+// picked from the list but renamed in the form → a NEW customer (the picked one is never overwritten with another name)
+ok(call('order_save', { order_no: o2b.order_no, warehouse: 'DPP', dest_type: 'pelanggan', customer_id: T.customers[0].id, dest_name: 'Toko Lain', dest_address: 'Jl. Baru 1', lines: [{ pallet_code: '3619208', cartons: 1 }] }, 'manager'));
+assert.strictEqual(T.customers.length, 2); assert.strictEqual(T.customers[0].name, 'Toko Barokah'); assert.strictEqual(T.customers[1].name, 'Toko Lain');
+err(call('order_save', { warehouse: 'DPP', dest_type: 'pelanggan', dest_name: 'Toko Z', lines: [{ pallet_code: '3619208', cartons: 1 }] }, 'akuntan'), 'FORBIDDEN');
+ok(call('order_cancel', { order_no: o2b.order_no, reason: 'contoh saja' }));
+assert.strictEqual(T.orders.length, 3);
 ok(call('order_save', { order_no: o2.order_no, warehouse: 'DPP', dest_type: 'pelanggan', dest_name: 'Toko Barokah', lines: [{ pallet_code: '3619208', cartons: 25 }] }));
-assert.strictEqual(T.orders.length, 2);
+assert.strictEqual(T.orders.length, 3);
 // the order flow: only the allowed next steps, every step logged with who and when
 err(call('order_status', { order_no: o2.order_no, to: 'ready' }), 'INVALID'); // open → ready skips the warehouse
 ok(call('order_status', { order_no: o2.order_no, to: 'sent' }, 'manager'));
@@ -155,6 +173,7 @@ ok(call('movement_reverse', { seq: adj2.seq, reason: 'Salah input' }));
 const picked = ok(call('order_pick', { order_no: o2.order_no }, 'manager')).order;
 assert.strictEqual(picked.status, 'picked'); assert.strictEqual(picked.trip.cost, 250000); assert.strictEqual(picked.trip.plate, 'B 1 X');
 assert.strictEqual(stock('3619208'), 96);
+assert.deepStrictEqual(picked.lines.map(l => [l.full, l.pallet_ctn, l.container_no]), [[false, 121, 'CGMU5288973']]); // kept as at the pick
 assert.strictEqual(T.movements.filter(m => m.type === 'OUT' && m.order_no === o2.order_no).length, 1);
 err(call('order_pick', { order_no: o2.order_no }), 'INVALID');
 ok(call('order_status', { order_no: o2.order_no, to: 'delivered' }));

@@ -109,6 +109,59 @@ eq('old message hidden by retention', after.messages.general.length, 1);
 eq('retained message is the new one', after.messages.general[0].body, 'new');
 eq('retention 0 keeps all', (() => { const s2 = state({ settings: [], chat: st.chat.slice() }); return KChat.core(s2, req('chat_bootstrap', WHO.owner), NOW).response.messages.general.length; })(), 2);
 
+console.log('— v36: private 1-to-1 rooms with every team member —');
+st = state();
+boot = KChat.core(st, req('chat_bootstrap', WHO.siti), NOW).response;
+eq('kasir team = the 3 others', boot.team.map(t => t.name).join(','), 'Budi,Wahyu,zied salah');
+const dmSW = boot.team.find(t => t.name === 'Wahyu').channel;
+eq('room id from both ids + names, sorted', dmSW, 'dm:3.siti|4.wahyu');
+eq('both sides compute the same room', KChat.core(st, req('chat_bootstrap', WHO.wahyu), NOW).response.team.find(t => t.name === 'Siti').channel, dmSW);
+ok('fixed channels unchanged (no dm in channels)', boot.channels.join(',') === 'general');
+r = KChat.core(st, req('chat_send', WHO.siti, { channel: dmSW, body: 'Wahyu, stok gula?', cid: 'd1' }), '2026-10-07T10:01:00.000Z');
+eq('kasir → sales private ok', r.response.ok, true);
+apply(st, r.writes);
+r = KChat.core(st, req('chat_send', WHO.owner, { channel: dmSW, body: 'masuk', cid: 'd2' }), NOW);
+eq('owner cannot post in a room of two others', r.response.error, 'FORBIDDEN');
+r = KChat.core(st, req('chat_send', WHO.siti, { channel: 'dm:1.zied salah|4.wahyu', body: 'x', cid: 'd3' }), NOW);
+eq('nobody posts in a room that is not theirs', r.response.error, 'FORBIDDEN');
+r = KChat.core(st, req('chat_send', WHO.siti, { channel: 'dm:nonsense', body: 'x', cid: 'd4' }), NOW);
+eq('unknown private room', r.response.error, 'FORBIDDEN');
+let pw = KChat.core(st, req('chat_poll', WHO.wahyu, { cursors: { general: '' }, seen: {} }), '2026-10-07T10:02:00.000Z').response;
+eq('receiver: unread for the private room without opening it', pw.unread[dmSW], 1);
+ok('receiver: messages only for rooms asked for', pw.messages[dmSW] === undefined);
+eq('receiver: last message time of the room', pw.last[dmSW], '2026-10-07T10:01:00.000Z');
+pw = KChat.core(st, req('chat_poll', WHO.wahyu, { cursors: { [dmSW]: '' }, seen: { [dmSW]: '2026-10-07T10:01:00.000Z' } }), '2026-10-07T10:02:00.000Z').response;
+eq('receiver opens the room: the message', pw.messages[dmSW].length, 1);
+eq('message body', pw.messages[dmSW][0].body, 'Wahyu, stok gula?');
+ok('read → no unread', !pw.unread[dmSW]);
+let ps = KChat.core(st, req('chat_poll', WHO.siti, { cursors: { [dmSW]: '' } }), NOW).response;
+ok('my own message is never unread for me', !ps.unread[dmSW]);
+// privacy: the owner (and everyone else) never receives this room, even by asking for it
+for (const who of ['owner', 'budi']) {
+  const po = KChat.core(st, req('chat_poll', WHO[who], { cursors: { [dmSW]: '' }, seen: {} }), NOW).response;
+  ok(who + ' never receives a room of two others', po.messages[dmSW] === undefined && po.unread[dmSW] === undefined && po.last[dmSW] === undefined);
+}
+let bo = KChat.core(st, req('chat_bootstrap', WHO.owner, { cursors: { [dmSW]: '' } }), NOW).response;
+ok('owner bootstrap: nothing of the room', bo.messages[dmSW] === undefined && JSON.stringify(bo).indexOf('stok gula') < 0);
+r = KChat.core(st, req('chat_send', WHO.owner, { channel: 'general', body: 'tebak', cid: 'd1' }), NOW);
+eq('a cid of someone else\'s private message is not a duplicate', r.response.dup, undefined);
+ok('…and never returns that message', JSON.stringify(r.response).indexOf('stok gula') < 0 && r.response.message.body === 'tebak' && r.response.message.cid !== 'd1');
+// a renamed account (another person takes it) or a new account with the same name does not inherit the room
+const st2 = state({ users: baseUsers().map(u => u.name === 'Wahyu' ? Object.assign(u, { name: 'Rudi' }) : u), chat: st.chat.slice() });
+const rudi = KChat.core(st2, req('chat_poll', { name: 'Rudi', pin: PIN.wahyu }, { cursors: { [dmSW]: '' } }), NOW).response;
+ok('the new person does not see the old room', rudi.messages[dmSW] === undefined && rudi.team.find(t => t.name === 'Siti').channel !== dmSW);
+const st3 = state({ users: baseUsers().filter(u => u.name !== 'Wahyu').concat([{ id: 9, name: 'Wahyu', role: 'sales', pin_hash: PIN.wahyu, active: true }]), chat: st.chat.slice() });
+ok('a new account with an old name does not see the old room', KChat.core(st3, req('chat_poll', WHO.wahyu, { cursors: { [dmSW]: '' } }), NOW).response.messages[dmSW] === undefined);
+// inactive users leave the team list; an akuntan is in it
+const st4 = state({ users: baseUsers().map(u => u.name === 'Budi' ? Object.assign(u, { active: false }) : u).concat([{ id: 5, name: 'Rina', role: 'akuntan', pin_hash: H('f'), active: true }]) });
+eq('inactive left out, akuntan in', KChat.core(st4, req('chat_bootstrap', WHO.siti), NOW).response.team.map(t => t.name).join(','), 'Rina,Wahyu,zied salah');
+// unread for the fixed rooms too, from the device's seen map
+st = state();
+apply(st, KChat.core(st, req('chat_send', WHO.owner, { channel: 'general', body: 'a', cid: 'g1' }), '2026-10-07T09:00:00.000Z').writes);
+apply(st, KChat.core(st, req('chat_send', WHO.owner, { channel: 'general', body: 'b', cid: 'g2' }), '2026-10-07T09:30:00.000Z').writes);
+eq('general unread after seen', KChat.core(st, req('chat_poll', WHO.siti, { cursors: {}, seen: { general: '2026-10-07T09:00:00.000Z' } }), NOW).response.unread.general, 1);
+eq('general unread with no seen', KChat.core(st, req('chat_poll', WHO.siti, { cursors: {} }), NOW).response.unread.general, 2);
+
 console.log('— unknown action —');
 eq('unknown action', KChat.core(state(), req('chat_nope', WHO.owner), NOW).response.error, 'UNKNOWN');
 
