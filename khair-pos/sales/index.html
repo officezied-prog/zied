@@ -80,7 +80,7 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.8.1';
+const APP_VERSION = 'sales-1.8.2';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1318,9 +1318,10 @@ function tapStreet(seq, hit) {
   const pb = el.querySelector('#pl-sel-part'); if (pb) pb.disabled = !hit;
   b.innerHTML = '<span>🛣️ ' + (hit ? esc(t('plan.street_named', { name: '\u2063' })).replace('\u2063', '<bdi>' + esc(hit.name) + '</bdi>') : esc(t(hit === null ? 'plan.street_none_here' : 'plan.street_here'))) + '</span>'; // one span: the name flows inside the sentence
   if (hit && hit.geom && PL.prev) window.L.polyline(hit.geom, { color: '#F59E0B', weight: 9, opacity: .85 }).addTo(PL.prev);
-  if (hit) wholeStreet(hit).then(lines => { // owner: "when I choose the street I want the WHOLE street coloured" — every piece of it with that name
+  if (hit) (hit.shapeP = wholeStreet(hit)).then(lines => { // owner: "when I choose the street I want the WHOLE street coloured" — every piece of it with that name
+    if (!lines.piece) hit.lines = lines; // only the piece (servers busy): "Kerjakan" will try the whole street again
     if (seq !== PL.tap || !PL.prev || !lines.length) return;
-    hit.lines = lines; PL.prev.clearLayers();
+    PL.prev.clearLayers();
     lines.forEach(ln => window.L.polyline(ln, { color: '#F59E0B', weight: 9, opacity: .85 }).addTo(PL.prev));
   }, () => { });
 }
@@ -1411,9 +1412,16 @@ async function wholeStreet(r) {
   const bb = r.bbox && r.bbox.length === 4 ? r.bbox : [r.lat, r.lat, r.lng, r.lng], pad = 0.03, nm = String(r.name).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const key = normTxt(r.name) + '|' + (Math.round((bb[0] + bb[1]) / 2 * 50) / 50) + '|' + (Math.round((bb[2] + bb[3]) / 2 * 50) / 50), cache = FS.get('street_shapes', {}) || {};
   if (cache[key] && Array.isArray(cache[key].l) && cache[key].l.length) return cache[key].l; // v35d: a street fetched once is kept on the phone — no new request
-  let lines;
-  try { lines = overpassItems(await overpass(`[out:json][timeout:25];way["highway"]["name"="${nm}"](${bb[0] - pad},${bb[2] - pad},${bb[1] + pad},${bb[3] + pad});out geom;`)).lines; }
-  catch (e) { if (r.geom && r.geom.length > 1) return [r.geom]; throw e; } // servers busy: at least the piece under the finger
+  let lines = [];
+  try { lines = overpassItems(await overpass(`[out:json][timeout:15];way["highway"]["name"="${nm}"](${bb[0] - pad},${bb[2] - pad},${bb[1] + pad},${bb[3] + pad});out geom;`, 15000, 1)).lines; }
+  catch (e) { console.warn('street shape (overpass)', e); }
+  if (!lines.length) { // Overpass busy → the same street's pieces from Nominatim (bounded to the area, every piece)
+    try {
+      const list = await nomiJSON(`search?format=jsonv2&q=${encodeURIComponent(r.name)}&countrycodes=id&viewbox=${bb[2] - pad},${bb[1] + pad},${bb[3] + pad},${bb[0] - pad}&bounded=1&dedupe=0&limit=50&polygon_geojson=1&polygon_threshold=0.00002&accept-language=id`, 15000);
+      lines = (Array.isArray(list) ? list : []).filter(o => normTxt(o.name) === normTxt(r.name)).map(o => nomiWay(o, r.name)).filter(Boolean).map(w => w.geometry.map(g => [g.lat, g.lon]));
+    } catch (e) { console.warn('street shape (nominatim)', e); }
+  }
+  if (!lines.length) { if (r.geom && r.geom.length > 1) { const a = [r.geom]; a.piece = true; return a; } throw new Error('street shape'); } // both busy: the piece under the finger
   lines = simplifyLines(joinLines(lines));
   if (lines.length) {
     cache[key] = { l: lines, t: Date.now() };
@@ -1736,10 +1744,10 @@ function plFind(x) {
   if (!cats.length || !lines.length) { PL.msg = t(cats.length ? 'plan.no_line' : 'plan.find_pick'); PL.seg = 'line'; drawPlanner(); return; }
   return planRun(async () => {
     let ql;
-    if (x.drawn) ql = `[out:json][timeout:40];(${lines.slice(0, 5).map(ln => findQL(cats, `(around:${FIND_R},${qCoords(ln)})`)).join('')});out center 300;`;
+    if (x.drawn) ql = `[out:json][timeout:25];(${lines.slice(0, 5).map(ln => findQL(cats, `(around:${FIND_R},${qCoords(ln)})`)).join('')});out center 300;`;
     else {
       const b = boxOf(lines.flat()), pad = 0.01, nm = String(x.name).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-      ql = `[out:json][timeout:40];way["highway"]["name"="${nm}"](${b[0] - pad},${b[2] - pad},${b[1] + pad},${b[3] + pad})->.s;(${findQL(cats, '(around.s:60)')});out center 300;`;
+      ql = `[out:json][timeout:25];way["highway"]["name"="${nm}"](${b[0] - pad},${b[2] - pad},${b[1] + pad},${b[3] + pad})->.s;(${findQL(cats, '(around.s:60)')});out center 300;`;
     }
     const [js, gp] = await Promise.all([overpass(ql).catch(e => { if (!PL.g || !PL.g.enabled) throw e; return { elements: [] }; }), googleAlong(cats, lines)]);
     const free = findItems(js, cats, x.drawn ? lines[0] : null), ln0 = lines[0];
@@ -1958,9 +1966,9 @@ async function nominatim(q, b) {
 /** v35d (owner: "the street colouring worked once, then stopped"): a public Overpass server refuses a phone that asks too
  *  often (HTTP 429) or answers "timed out" inside a 200. So: 4 free servers, starting with the last one that answered; a
  *  refusal / time-out / runtime error moves to the next; when all are busy, one more round after a short pause. */
-async function overpass(ql, ms) {
+async function overpass(ql, ms, rounds) {
   let err = null; const n = OSM.over.length, s0 = OSM.ovi || 0;
-  for (let k = 0; k < 2 * n; k++) {
+  for (let k = 0; k < (rounds || 2) * n; k++) {
     if (k === n) await new Promise(r => setTimeout(r, 2000));
     const i = (s0 + k) % n;
     try {
@@ -2052,15 +2060,18 @@ function simplifyLines(lines) {
 async function plWorkStreet(r) {
   const ref = 'st:' + normTxt(r.name), ex = PL.streets.find(x => x.ref === ref);
   if (!ex && PL.streets.length >= 15) { toast(t('plan.max_streets'), 'err'); return; }
-  let lines = Array.isArray(r.lines) && r.lines.length ? r.lines : null;
+  let lines = Array.isArray(r.lines) && r.lines.length ? r.lines : null, piece = false;
   if (!lines) {
     PL.busy = true; PL.msg = t('plan.street_finding'); drawPlanner();
-    try { lines = await wholeStreet(r); } catch (e) { console.warn('street shape', e); }
+    if (r.shapeP) lines = await r.shapeP.catch(() => null); // the look-up started when the street was tapped — not asked twice
+    if (!lines || lines.piece) { try { lines = await wholeStreet(r); } catch (e) { console.warn('street shape', e); } }
+    piece = !!(lines && lines.piece);
     PL.busy = false;
   }
   lines = simplifyLines(joinLines(lines || []));
   if (!lines.length) { PL.msg = navigator.onLine ? t('plan.street_noline') : t('plan.need_net'); drawPlanner(); toast(PL.msg, 'err', 5000); return; }
   if (ex) ex.lines = lines; else PL.streets.push({ ref, name: r.name, lines });
+  if (piece) toast(t('plan.street_piece'), 'warn', 6000);
   const warn = workedNote(r.name); if (warn) toast('⚠ ' + warn, 'warn', 5000);
   // v35d (owner: "at the bottom of the work-line window: which kinds of shop the app looks for in that street"): the street
   // opens in the work-line tab — the kinds are chosen there — and only those kinds are searched along it
@@ -2105,23 +2116,32 @@ function nearestStreet(js, ll) {
   });
   if (!best) return null;
   const la = best.g.map(q => q.lat), lo = best.g.map(q => q.lon);
-  return { ref: 'osm:st', src: 'osm', kind: 'street', named: true, name: best.name, lat: ll.lat, lng: ll.lng,
+  return { ref: 'osm:st', src: 'osm', kind: 'street', named: true, name: best.name, lat: ll.lat, lng: ll.lng, d: best.d,
     bbox: [Math.min(...la), Math.max(...la), Math.min(...lo), Math.max(...lo)], geom: best.g.map(q => [q.lat, q.lon]) };
 }
+/* v35e (owner, again: "colouring worked once then stopped — now it says the map server is busy"): the tap and the shape went
+   to Overpass only, right after the heavy shop search had used up the phone's turn there. Now the street under the finger
+   comes from the address service (Nominatim — another free OpenStreetMap service, light) and Overpass is the second
+   choice; the whole street: Overpass, else Nominatim; and if both are busy, the piece under the finger is coloured. */
+async function nomiJSON(path, ms) {
+  const wait = OSM.last + 1100 - Date.now(); if (wait > 0) await new Promise(r => setTimeout(r, wait)); // Nominatim: ≤ 1 request a second
+  OSM.last = Date.now();
+  return osmJSON('https://nominatim.openstreetmap.org/' + path, null, ms || 12000);
+}
+const nomiWay = (o, nm) => o && (o.category || o.class) === 'highway' && o.geojson && o.geojson.type === 'LineString' && Array.isArray(o.geojson.coordinates)
+  ? { type: 'way', tags: { highway: o.type || 'road', name: nm }, geometry: o.geojson.coordinates.map(c => ({ lat: c[1], lon: c[0] })) } : null;
 async function streetAt(ll) {
-  try { return nearestStreet(await overpass(`[out:json][timeout:15];way(around:40,${(+ll.lat).toFixed(6)},${(+ll.lng).toFixed(6)})["highway"]["name"]["highway"!~"^(platform|proposed|construction|corridor|elevator)$"];out tags geom;`, 15000), ll); }
-  catch (e) { // every Overpass server busy → the street under the finger from the address service (Nominatim, free) instead
-    const wait = OSM.last + 1100 - Date.now(); if (wait > 0) await new Promise(r => setTimeout(r, wait));
-    OSM.last = Date.now();
-    const r = await osmJSON(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${(+ll.lat).toFixed(6)}&lon=${(+ll.lng).toFixed(6)}&zoom=17&polygon_geojson=1&accept-language=id`, null, 12000);
-    const g = r && r.geojson, nm = r && (r.name || (r.address || {}).road);
-    if (!r || (r.category || r.class) !== 'highway' || !nm || !g || g.type !== 'LineString') return null;
-    return nearestStreet({ elements: [{ type: 'way', tags: { highway: r.type || 'road', name: nm }, geometry: g.coordinates.map(c => ({ lat: c[1], lon: c[0] })) }] }, ll);
-  }
+  const la = (+ll.lat).toFixed(6), lo = (+ll.lng).toFixed(6);
+  try {
+    const r = await nomiJSON(`reverse?format=jsonv2&lat=${la}&lon=${lo}&zoom=17&polygon_geojson=1&accept-language=id`, 10000);
+    const nm = r && (r.name || (r.address || {}).road), w = nm && nomiWay(r, nm);
+    if (w) { const hit = nearestStreet({ elements: [w] }, ll); if (hit && hit.d <= 60) return hit; } // the road nearest the finger
+  } catch (e) { console.warn('nominatim reverse', e); }
+  return nearestStreet(await overpass(`[out:json][timeout:10];way(around:40,${la},${lo})["highway"]["name"]["highway"!~"^(platform|proposed|construction|corridor|elevator)$"];out tags geom;`, 12000, 1), ll);
 }
 async function plStreetAt(ll, known) {
   if (PL.map) PL.map.closePopup();
-  if (known) return plWorkStreet(Object.assign({}, known, { geom: undefined })); // already found when the map was tapped (even while a shop search runs)
+  if (known) return plWorkStreet(Object.assign({}, known)); // already found when the map was tapped (even while a shop search runs) — with the piece under the finger
   if (PL.busy) { toast(t('plan.searching'), '', 2000); return; }
   PL.busy = true; PL.msg = t('plan.street_finding'); PL.seg = 'search'; drawPlanner();
   let hit = null;
@@ -2967,7 +2987,7 @@ const I18N = {
     'plan.part_tap_start': 'Ketuk di {name} tempat kerja DIMULAI', 'plan.part_tap_end': 'Sekarang ketuk tempat kerja SELESAI di {name}',
     'plan.part_on_street': 'Ketuk tepat di {name} (garis oranye)', 'plan.part_short': 'Titik akhir terlalu dekat dengan awal — ketuk lebih jauh di jalan ini',
     'plan.part_saved': 'Bagian jalan ditambahkan ({km} km), dengan warnanya sendiri. Pilih jenis toko lalu ketuk "Cari".',
-    'plan.street_noline': 'Bentuk jalan tidak bisa diambil sekarang (server peta sibuk). Coba lagi sebentar.', 'plan.street_named': 'Kerjakan seluruh {name}', 'plan.street_none_here': 'Tidak ada jalan bernama di sini',
+    'plan.street_noline': 'Bentuk jalan tidak bisa diambil sekarang (server peta sibuk). Coba lagi sebentar.', 'plan.street_piece': 'Server peta sibuk: baru bagian jalan di titik ketukan yang diwarnai. Ketuk jalan itu lagi nanti untuk seluruh jalan.', 'plan.street_named': 'Kerjakan seluruh {name}', 'plan.street_none_here': 'Tidak ada jalan bernama di sini',
     'plan.snapping': 'Menempelkan garis ke jalan…', 'plan.snapped': '{n} titik ditempelkan ke jalan terdekat.',
     'plan.tab_routes': '🗂️ Riwayat', 'plan.routes_hint': 'Semua jalan & garis kerja yang pernah dikerjakan / direncanakan sales. Pilih tanggal, sales, atau hanya yang ada di peta sekarang — ketuk untuk melihatnya di peta.',
     'plan.rq_7': '7 hari', 'plan.rq_30': '30 hari', 'plan.rq_all': 'Semua', 'plan.rf_from': 'Dari tanggal', 'plan.rf_to': 'Sampai tanggal', 'plan.rf_user': 'Sales', 'plan.rf_all': 'Semua sales', 'plan.rf_me': 'Saya',
@@ -3109,7 +3129,7 @@ const I18N = {
     'plan.part_tap_start': 'اضغط على {name} حيث يبدأ العمل', 'plan.part_tap_end': 'الآن اضغط على المكان الذي ينتهي فيه العمل في {name}',
     'plan.part_on_street': 'اضغط فوق {name} نفسه (الخط البرتقالي)', 'plan.part_short': 'نقطة النهاية قريبة جدًا من البداية — اضغط أبعد على الشارع',
     'plan.part_saved': 'أُضيف جزء الشارع ({km} كم) بلونه الخاص. اختر أنواع المتاجر ثم اضغط «ابحث».',
-    'plan.street_noline': 'تعذّر جلب شكل الشارع الآن (خادم الخرائط مشغول). حاول بعد قليل.', 'plan.street_named': 'اعمل في {name} كاملًا', 'plan.street_none_here': 'لا يوجد شارع له اسم هنا',
+    'plan.street_noline': 'تعذّر جلب شكل الشارع الآن (خادم الخرائط مشغول). حاول بعد قليل.', 'plan.street_piece': 'خادم الخرائط مشغول: لُوِّن جزء الشارع عند نقطة الضغط فقط. اضغط على الشارع نفسه لاحقًا ليُلوَّن كله.', 'plan.street_named': 'اعمل في {name} كاملًا', 'plan.street_none_here': 'لا يوجد شارع له اسم هنا',
     'plan.snapping': 'جارٍ إرجاع الخط إلى الطريق…', 'plan.snapped': 'أُرجعت {n} نقطة إلى أقرب طريق.',
     'plan.tab_routes': '🗂️ المسارات', 'plan.routes_hint': 'كل الشوارع وخطوط العمل التي عمل فيها المندوبون أو خططوا لها. اختر التاريخ أو المندوب أو ما يظهر على الخريطة الآن فقط — اضغط على مسار لتراه على الخريطة.',
     'plan.rq_7': '7 أيام', 'plan.rq_30': '30 يومًا', 'plan.rq_all': 'الكل', 'plan.rf_from': 'من تاريخ', 'plan.rf_to': 'إلى تاريخ', 'plan.rf_user': 'المندوب', 'plan.rf_all': 'كل المندوبين', 'plan.rf_me': 'أنا',
