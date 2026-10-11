@@ -144,7 +144,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.3.3';
+const APP_VERSION = '2.4.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -2821,7 +2821,7 @@ function openProductPhoto(p) {
 }
 
 /* ---- Field data (list_field), cached briefly ---- */
-const FD = { date: today(), user: '', data: null, err: '', map: null, cache: {} };
+const FD = { date: today(), user: '', data: null, err: '', map: null, cache: {}, routes: null, routesAt: 0, rmap: null, rlay: null, rf: { from: addDays(today(), -29), to: today(), user: '', view: false }, rhl: -1 };
 const FO = { list: [], newCount: 0, status: 'baru', loaded: false, data: null };
 /** list_field. Server limits: tracks only for ranges ≤ 7 days, photo_thumb only ≤ 31 days; noTracks for long ranges. */
 async function loadField(from, to, user, useCache, noTracks) {
@@ -2956,6 +2956,7 @@ function drawFieldView() {
   const body = $('#fd-body'); if (!body) return;
   body.style.opacity = '';
   if (FD.map) { try { FD.map.remove(); } catch (e) { } FD.map = null; }
+  if (FD.rmap) { try { FD.rmap.remove(); } catch (e) { } FD.rmap = null; FD.rlay = null; }
   if (!FD.data) { body.innerHTML = `<div class="empty red">${esc(FD.err || t('err.SERVER'))}</div>`; return; }
   const d = FD.data;
   const users = [...new Set(reps().map(u => u.name).concat(d.days.map(x => x.user)))].filter(u => !FD.user || u === FD.user);
@@ -2976,8 +2977,89 @@ function drawFieldView() {
     <div class="rgrid">
       <div class="panel"><h3>${esc(t('field.visit_list'))} <span class="badge gray">${cur ? cur.vis.length : 0}</span></h3><div class="pb list" id="fd-visits">${cur && cur.vis.length ? cur.vis.slice().sort((a, b) => String(a.visit_time).localeCompare(String(b.visit_time))).map((v, i) => visitRowHTML(v, i + 1)).join('') : `<div class="muted">${esc(t('no_data'))}</div>`}</div></div>
       <div class="panel"><h3>${esc(t('field.leads'))} <span class="small muted">(${esc(t('last_n_days', { n: 14 }))})</span> <span class="badge gray">${leads.length}</span></h3><div class="pb list" id="fd-leads">${leads.map(s => leadRowHTML(s)).join('') || `<div class="muted">${esc(t('no_data'))}</div>`}</div></div>
-    </div>`;
+    </div>
+    <div class="panel" style="margin-top:14px" id="fd-routes-panel"><h3>🗂️ ${esc(t('field.routes'))} <span class="badge gray" id="fd-routes-n">…</span></h3><div class="pb">
+      <div class="small muted">${esc(t('field.routes_hint'))}</div>
+      <div class="toolbar" style="margin-top:8px;flex-wrap:wrap" id="fd-rf"></div>
+      <div id="fd-routes-map" class="fd-map"></div>
+      <div class="list" id="fd-routes" style="margin-top:8px"><div class="muted">${esc(t('loading'))}</div></div></div></div>`;
   if (cur) drawFieldMap(cur, d.shops);
+  drawRoutesPanel();
+}
+/* ---- v35 (owner 2026-10-11: "a button to choose the routes walked by DATE … all the routes in one place — all of them, by
+   area, or the ones of the area the map is on"): every street / work line any rep worked or planned (kept forever, the same
+   list the reps see), on one map — a colour per rep — and in a list, filtered by dates, rep and "only on the map now". ---- */
+const ROUTE_C = ['#E11D48', '#2563EB', '#16A34A', '#D97706', '#7C3AED', '#0891B2', '#DB2777', '#65A30D'];
+const routeColor = u => { const us = [...new Set((FD.routes || []).map(w => w.user))].sort(); return ROUTE_C[Math.max(0, us.indexOf(u)) % ROUTE_C.length]; };
+const rBox = ln => ln._b || (ln._b = [Math.min(...ln.map(q => q[0])), Math.max(...ln.map(q => q[0])), Math.min(...ln.map(q => q[1])), Math.max(...ln.map(q => q[1]))]);
+const rLines = w => (w.lines || []).filter(ln => Array.isArray(ln) && ln.length > 1);
+const rKm = w => rLines(w).reduce((a, ln) => { for (let i = 1; i < ln.length; i++) a += geoM({ lat: ln[i - 1][0], lng: ln[i - 1][1] }, { lat: ln[i][0], lng: ln[i][1] }); return a; }, 0) / 1000;
+const rOk = w => { const f = FD.rf; return (!f.from || w.plan_date >= f.from) && (!f.to || w.plan_date <= f.to) && (!f.user || w.user === f.user); };
+function rInView(w) {
+  const m = FD.rmap; if (!m || !FD.rf.view) return true;
+  const b = m.getBounds(); return rLines(w).some(ln => { const c = rBox(ln); return !(c[1] < b.getSouth() || c[0] > b.getNorth() || c[3] < b.getWest() || c[2] > b.getEast()); });
+}
+async function drawRoutesPanel() {
+  const panel = $('#fd-routes-panel'); if (!panel) return;
+  if (!FD.routes || Date.now() - FD.routesAt > 300000) {
+    try { const r = await apiField('streets_worked'); FD.routes = r.streets || []; FD.routesAt = Date.now(); FD.rhl = -1; }
+    catch (e) { if (!FD.routes) { const l = $('#fd-routes'); if (l) l.innerHTML = `<div class="muted">${esc(errMsg(e))}</div>`; $('#fd-routes-n').textContent = '—'; return; } }
+  }
+  if ($('#fd-routes-panel') !== panel) return; // the page was drawn again meanwhile
+  routesFilterBar();
+  const el = $('#fd-routes-map');
+  const ok = navigator.onLine && await loadLeaflet();
+  if ($('#fd-routes-map') !== el) return;
+  if (ok) {
+    try {
+      const L = window.L, m = L.map(el, { zoomControl: true, attributionControl: true });
+      FD.rmap = m; el.dataset.mode = 'leaflet';
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(m);
+      FD.rlay = L.layerGroup().addTo(m);
+      const st = S.settings || {}; m.setView([num(st.store_lat) || -6.2655, num(st.store_lng) || 106.8605], 13);
+      m.on('moveend', () => { if (FD.rf.view) routesListO(); });
+      routesDraw(true);
+    } catch (e) { if (FD.rmap) { try { FD.rmap.remove(); } catch (x) { } } FD.rmap = null; FD.rlay = null; el.dataset.mode = 'none'; el.innerHTML = `<div class="empty">${esc(t('field.routes_nomap'))}</div>`; }
+  } else { el.dataset.mode = 'none'; el.innerHTML = `<div class="empty">${esc(t('field.routes_nomap'))}</div>`; }
+  routesListO();
+}
+function routesFilterBar() {
+  const bar = $('#fd-rf'); if (!bar) return;
+  const f = FD.rf, T = today(), users = [...new Set((FD.routes || []).map(w => w.user))].sort();
+  const quick = [['7', addDays(T, -6)], ['30', addDays(T, -29)], ['all', '']].map(([k, from]) => { const on = f.from === from && (k === 'all' ? !f.to : f.to === T); return `<button type="button" class="chip ${on ? 'on' : ''}" data-rq="${k}" aria-pressed="${on}" id="fd-rq-${k}">${esc(t('field.rq_' + k))}</button>`; }).join('');
+  bar.innerHTML = `${quick}<label class="f" style="margin:0">${esc(t('field.rf_from'))} <input class="input" type="date" id="fd-rf-from" value="${esc(f.from)}" style="width:auto"></label><label class="f" style="margin:0">${esc(t('field.rf_to'))} <input class="input" type="date" id="fd-rf-to" value="${esc(f.to)}" style="width:auto"></label>
+    <select class="input" id="fd-rf-user" aria-label="${esc(t('field.rep'))}" style="width:auto"><option value="">${esc(t('field.all_reps'))}</option>${users.map(u => `<option ${f.user === u ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select>
+    <label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="fd-rf-view" ${f.view ? 'checked' : ''}> ${esc(t('field.rf_view'))}</label>`;
+  const upd = fit => { routesFilterBar(); routesDraw(fit); routesListO(); };
+  bar.querySelectorAll('[data-rq]').forEach(b => b.onclick = () => { const k = b.dataset.rq; f.from = k === 'all' ? '' : addDays(T, k === '7' ? -6 : -29); f.to = k === 'all' ? '' : T; upd(true); });
+  $('#fd-rf-from').onchange = e => { f.from = e.target.value; upd(true); };
+  $('#fd-rf-to').onchange = e => { f.to = e.target.value; upd(true); };
+  $('#fd-rf-user').onchange = e => { f.user = e.target.value; upd(true); };
+  $('#fd-rf-view').onchange = e => { f.view = e.target.checked; routesListO(); };
+}
+function routesDraw(fit) {
+  const m = FD.rmap, L = window.L; if (!m || !FD.rlay) return;
+  FD.rlay.clearLayers();
+  const hl = (FD.routes || [])[FD.rhl], pts = [];
+  (FD.routes || []).forEach(w => {
+    if (!rOk(w) && w !== hl) return;
+    rLines(w).forEach(ln => { L.polyline(ln, w === hl ? { color: '#F59E0B', weight: 9, opacity: .95 } : { color: routeColor(w.user), weight: 5, opacity: .7 }).bindTooltip(esc(`${w.name} · ${w.user} · ${fmtDate(w.plan_date)}`)).addTo(FD.rlay); ln.forEach(q => pts.push(q)); });
+  });
+  if (fit && pts.length) { const v = FD.rf.view; FD.rf.view = false; m.fitBounds(pts, { padding: [24, 24], maxZoom: 16, animate: false }); FD.rf.view = v; }
+}
+function routesListO() {
+  const box = $('#fd-routes'); if (!box) return;
+  const all = (FD.routes || []).map((w, i) => ({ w, i })).filter(o => rOk(o.w) && rInView(o.w)).sort((a, b) => String(b.w.plan_date).localeCompare(String(a.w.plan_date)) || String(a.w.name).localeCompare(String(b.w.name)));
+  $('#fd-routes-n').textContent = all.length;
+  box.innerHTML = all.slice(0, 300).map(({ w, i }) => `<button type="button" class="li fd-route ${i === FD.rhl ? 'sel' : ''}" data-ri="${i}" data-user="${esc(w.user)}" data-date="${esc(w.plan_date)}" style="min-height:0;padding:8px 12px;text-align:start;width:100%;cursor:pointer">
+      <span aria-hidden="true" style="width:12px;height:12px;border-radius:50%;flex:none;background:${routeColor(w.user)}"></span><span aria-hidden="true">${w.drawn ? '✏️' : '🛣️'}</span>
+      <div class="grow"><div class="t">${esc(w.name)}</div><div class="s">${esc([w.user, fmtDate(w.plan_date), t(w.status === 'planned' ? 'field.r_planned' : 'field.r_worked'), NF1.format(rKm(w)) + ' km'].join(' · '))}</div></div></button>`).join('')
+    || `<div class="muted" id="fd-no-routes">${esc(t((FD.routes || []).length ? 'field.no_routes' : 'field.no_routes0'))}</div>`;
+  box.querySelectorAll('[data-ri]').forEach(b => b.onclick = () => {
+    FD.rhl = +b.dataset.ri; const w = FD.routes[FD.rhl];
+    routesDraw(false); routesListO();
+    const pts = rLines(w).flat(); if (FD.rmap && pts.length) FD.rmap.fitBounds(pts, { padding: [30, 30], maxZoom: 17, animate: false });
+  });
 }
 function visitRowHTML(v, n) {
   const far = v.distance_m != null && v.distance_m > FAR_M;
@@ -4500,6 +4582,9 @@ Object.assign(I18N.id, {
   'ago.now': 'baru saja', 'ago.min': '{n} mnt lalu', 'ago.hour': '{n} jam lalu', 'ago.day': '{n} hari lalu',
   'field.rep': 'Sales', 'field.all_reps': 'Semua sales', 'field.st_working': 'bekerja', 'field.st_ended': 'selesai', 'field.st_off': 'belum mulai', 'field.visits': 'kunjungan', 'field.orders': 'pesanan',
   'field.last_loc': 'Lokasi terakhir', 'field.no_loc': 'Belum ada lokasi', 'field.no_reps': 'Belum ada sales lapangan. Tambahkan di Pengaturan → Pengguna (peran Sales).',
+  'field.routes': 'Riwayat rute sales', 'field.routes_hint': 'Semua jalan & garis kerja yang pernah dikerjakan / direncanakan sales (disimpan selamanya), satu warna per sales. Pilih tanggal, sales, atau hanya yang ada di peta sekarang — klik rute untuk melihatnya di peta.',
+  'field.rq_7': '7 hari', 'field.rq_30': '30 hari', 'field.rq_all': 'Semua', 'field.rf_from': 'Dari', 'field.rf_to': 'Sampai', 'field.rf_view': 'Hanya di peta sekarang', 'field.r_planned': 'direncanakan', 'field.r_worked': 'dikerjakan',
+  'field.no_routes': 'Tidak ada rute untuk pilihan ini.', 'field.no_routes0': 'Belum ada rute yang dikerjakan sales.', 'field.routes_nomap': 'Peta tidak tersedia (offline) — daftar rute tetap di bawah.',
   'field.map': 'Rute & kunjungan', 'field.no_route': 'Tidak ada rute di tanggal ini.', 'field.start': 'Mulai', 'field.svg_note': 'Peta sederhana (offline). Ketuk nomor kunjungan untuk detail.',
   'field.plan': 'Rencana rute', 'field.plan_card': 'Rencana: {k}/{n} dikunjungi', 'field.plan_start': 'Mulai dari', 'field.plan_ours': 'toko kita', 'field.plan_new': 'tempat baru', 'field.plan_end': 'Selesai di', 'field.plan_streets': 'Jalan kerja',
   'field.visit_list': 'Kunjungan', 'field.leads': 'Toko baru', 'field.linked': 'Pelanggan: {name}', 'field.make_customer': 'Jadikan pelanggan', 'field.convert_q': 'Jadikan "{name}" pelanggan grosir?', 'field.converted': '{name} sekarang pelanggan grosir',
@@ -4528,6 +4613,9 @@ Object.assign(I18N.ar, {
   'ago.now': 'الآن', 'ago.min': 'قبل {n} دقيقة', 'ago.hour': 'قبل {n} ساعة', 'ago.day': 'قبل {n} يوم',
   'field.rep': 'المندوب', 'field.all_reps': 'كل المندوبين', 'field.st_working': 'يعمل', 'field.st_ended': 'أنهى', 'field.st_off': 'لم يبدأ', 'field.visits': 'زيارات', 'field.orders': 'طلبات',
   'field.last_loc': 'آخر موقع', 'field.no_loc': 'لا موقع بعد', 'field.no_reps': 'لا يوجد مندوبون. أضفهم من الإعدادات ← المستخدمون (دور مندوب).',
+  'field.routes': 'سجل مسارات المندوبين', 'field.routes_hint': 'كل الشوارع وخطوط العمل التي عمل فيها المندوبون أو خططوا لها (محفوظة دائمًا)، ولكل مندوب لون. اختر التاريخ أو المندوب أو ما يظهر على الخريطة الآن فقط — اضغط على مسار لتراه على الخريطة.',
+  'field.rq_7': '7 أيام', 'field.rq_30': '30 يومًا', 'field.rq_all': 'الكل', 'field.rf_from': 'من', 'field.rf_to': 'إلى', 'field.rf_view': 'فقط ما على الخريطة الآن', 'field.r_planned': 'مخطط له', 'field.r_worked': 'تم العمل فيه',
+  'field.no_routes': 'لا مسارات لهذا الاختيار.', 'field.no_routes0': 'لا توجد مسارات عمل فيها المندوبون بعد.', 'field.routes_nomap': 'الخريطة غير متاحة (بدون إنترنت) — قائمة المسارات في الأسفل.',
   'field.map': 'المسار والزيارات', 'field.no_route': 'لا يوجد مسار في هذا التاريخ.', 'field.start': 'البداية', 'field.svg_note': 'خريطة مبسطة (بدون إنترنت). اضغط رقم الزيارة للتفاصيل.',
   'field.plan': 'خطة المسار', 'field.plan_card': 'الخطة: زار {k} من {n}', 'field.plan_start': 'نقطة البداية', 'field.plan_ours': 'محل عندنا', 'field.plan_new': 'مكان جديد', 'field.plan_end': 'نقطة النهاية', 'field.plan_streets': 'شوارع العمل',
   'field.visit_list': 'الزيارات', 'field.leads': 'متاجر جديدة', 'field.linked': 'عميل: {name}', 'field.make_customer': 'تحويل إلى عميل', 'field.convert_q': 'تحويل "{name}" إلى عميل جملة؟', 'field.converted': '{name} أصبح عميل جملة',
