@@ -42,15 +42,30 @@ function loaderSpecs(req) {
   const photoId = req.action === 'request_return' ? String(data.photo_id || SENTINEL_NONE) : req.photo_id;
   const purchaseNo = req.action === 'request_return' && data.kind === 'pemasok' ? String(data.purchase_no || SENTINEL_NONE) : req.purchase_no;
   const returnsRef = inReturnOrSale ? String((data.kind === 'pemasok' ? data.purchase_no : data.invoice_no) || SENTINEL_NONE) : SENTINEL_NONE;
-  const retFrom = req.action === 'list_returns' && isD(data.from) ? data.from : (req.action === 'daily_report' ? req.from : '9999-12-31');
-  const retTo = req.action === 'list_returns' && isD(data.to) ? data.to : (req.action === 'daily_report' ? req.to : '0000-01-01');
+  const retFrom = req.action === 'list_returns' && isD(data.from) ? data.from : (['daily_report', 'profit_loss'].indexOf(req.action) >= 0 ? req.from : '9999-12-31');
+  const retTo = req.action === 'list_returns' && isD(data.to) ? data.to : (['daily_report', 'profit_loss'].indexOf(req.action) >= 0 ? req.to : '0000-01-01');
+  // v36: the price-correction history (koreksi + its refunds / consultations, decided or not) for the actions that report on it.
+  // Before, only pending approvals were loaded, so list_corrections and the daily report's corrections block saw nothing decided.
+  const corrHistory = ['list_corrections', 'daily_report', 'profit_loss'].indexOf(req.action) >= 0 ? 1 : 0;
   const discApproval = String(data.discount_approval_id || SENTINEL_NONE);
 
   const eq = (table, col, val) => ({ table, sql: `SELECT * FROM ${table} WHERE ${col} = ? ORDER BY id`, params: [val] });
   const range = (table, col, from, to) => ({ table, sql: `SELECT * FROM ${table} WHERE ${col} >= ? AND ${col} <= ? ORDER BY id`, params: [from, to] });
   const all = (table) => ({ table, sql: `SELECT * FROM ${table} ORDER BY id`, params: [] });
 
+  // v36: the tamper photos are read only by the two actions that need them (no extra read on every request).
+  const tamper = {};
+  if (req.action === 'report_tamper' && /^TS[A-Z0-9]{8,20}$/.test(String(data.shot_id || ''))) tamper['Get Tamper Shot'] = eq('pos_tamper_shots', 'shot_id', String(data.shot_id));
+  // (each row carries its small photo: read at most the 30 newest, of one person when the owner asks for one)
+  if (req.action === 'list_tamper_shots') {
+    const nm = String(data.name || '').trim().toLowerCase();
+    tamper['Get Tamper Shots'] = nm
+      ? { table: 'pos_tamper_shots', sql: 'SELECT * FROM pos_tamper_shots WHERE lower(user) = ? ORDER BY id DESC LIMIT 30', params: [nm] }
+      : { table: 'pos_tamper_shots', sql: 'SELECT * FROM pos_tamper_shots ORDER BY id DESC LIMIT 30', params: [] };
+  }
+
   return {
+    ...tamper,
     'Get Users': all('pos_users'),
     'Get Settings': all('pos_settings'),
     'Get Products': all('pos_products'),
@@ -70,6 +85,8 @@ function loaderSpecs(req) {
     'Get Range Payments': range('pos_payments', 'pay_date', req.pay_from, req.pay_to),
     'Get Range Purchases': range('pos_purchases', 'purchase_date', req.from, req.to),
     'Get Range Expenses': range('pos_expenses', 'expense_date', req.from, req.to),
+    // v36: the expense an expense_check approval belongs to (decide_approval marks it checked / rejected)
+    'Get Expense By Request': eq('pos_expenses', 'request_id', req.action === 'decide_approval' ? req.approval_id : SENTINEL_NONE),
     'Get Range Shifts': range('pos_shifts', 'shift_date', req.shift_from, req.shift_to),
     'Get Range Repacks': range('pos_repacks', 'repack_date', req.from, req.to),
     'Get Range Activity': range('pos_activity', 'act_date', req.act_from, req.act_to),
@@ -79,8 +96,8 @@ function loaderSpecs(req) {
     // needed), and party payments for this customer OR this supplier.
     'Get Approvals': {
       table: 'pos_approvals',
-      sql: 'SELECT * FROM pos_approvals WHERE status = ? OR request_id = ? OR request_id = ? ORDER BY id',
-      params: ['pending', req.approval_id, discApproval],
+      sql: "SELECT * FROM pos_approvals WHERE status = ? OR request_id = ? OR request_id = ? OR (? = 1 AND kind IN ('koreksi', 'refund', 'konsultasi')) ORDER BY id",
+      params: ['pending', req.approval_id, discApproval, corrHistory],
     },
     'Get Party Payments': {
       table: 'pos_payments',

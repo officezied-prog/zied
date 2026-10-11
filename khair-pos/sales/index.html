@@ -74,13 +74,14 @@
 <script src="../shared/gmaps-import.js"></script>
 <script src="../shared/field-mock.js"></script>
 <script src="../shared/chat-ui.js"></script>
+<script src="../shared/tamper-guard.js"></script>
 <script src="mock.js"></script>
 <script>
 'use strict';
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.8.2';
+const APP_VERSION = 'sales-1.9.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -303,7 +304,9 @@ async function api(action, data, opts) {
   } catch (e) {
     if (e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_USERS' || e.code === 'LOCKED') forceRelogin(e);
     if (e.code === 'PIN_CHANGE_REQUIRED' && S.inApp && S.pin_hash) askNewPin(S.user, S.role, S.pin_hash);
-    if ((e.code === 'TAMPER' || e.code === 'TAMPER_LOCKED') && typeof tamperLockUI === 'function') tamperLockUI();
+    // v36: a code attempt the SERVER caught (it has just locked the account) gets the front-camera photo too
+    if (e.code === 'TAMPER' && typeof tamperTrip === 'function' && !TAMPERED && !TAMPER_BUSY) tamperTrip('server:' + action);
+    else if ((e.code === 'TAMPER' || e.code === 'TAMPER_LOCKED') && typeof tamperLockUI === 'function') tamperLockUI();
     throw e;
   }
 }
@@ -441,23 +444,48 @@ function enforceRule(el) {
 /* v19 anti-tamper (client): a clear code attempt in a field instantly stops the account; only the owner opens it. */
 const CODE_RUN = /[<>{}\[\];`$\\|=]{3,}/, CODE_TOK = /<\s*\/?\s*script\b|<\/[a-z]|javascript:|\$\{|=>|\beval\s*\(|\bfunction\s*\(|\b(?:document|window|globalThis|self)\s*\.\s*[a-z_$]|\brequire\s*\(|\bimport\s*\(/i;
 const codeAttempt = v => { v = String(v || ''); return CODE_RUN.test(v) || CODE_TOK.test(v); };
-let TAMPERED = false;
-function tamperLockUI(msg) {
+let TAMPERED = false, TAMPER_BUSY = false;
+function tamperLockUI(msg, force) {
+  if (TAMPER_BUSY && !force) return; // v36: a trip in progress locks the screen itself once the photo has been sent
   TAMPERED = true;
   try { closeModal && closeModal(true); } catch (e) { }
   S.pin_hash = ''; S.inApp = false; try { FS.set('session', { user: S.user, role: S.role }); SESS.del(); } catch (e) { }
   L.sel = S.user || '';
   showLogin('pin', msg || t('tamper.locked'));
 }
-async function tamperTrip(where) {
-  if (TAMPERED || !S.inApp || !S.user) return;
-  try { await api('report_tamper', { where: String(where || '').slice(0, 60) }); } catch (e) { }
-  tamperLockUI();
+/* v36 (owner 2026-10-11: «صور من يحاول كتابة الكود هذا ضروري جدا»): the account is locked on the server at once (photo
+   'pending'), then the FRONT-camera photo of whoever typed it — or why there is none (camera refused / no camera) — follows
+   for the same shot (../shared/tamper-guard.js). The screen is covered meanwhile; the lock never waits for the camera. */
+async function tamperTrip(where, kind, sample) {
+  if (TAMPERED || TAMPER_BUSY || !S.inApp || !S.user) return;
+  TAMPER_BUSY = true;
+  const G = window.KGuard, base = { where: String(where || '').slice(0, 60), kind: kind === 'digits' ? 'digits' : 'code', sample: kind === 'digits' ? String(sample || '').slice(0, 24) : '' };
+  try {
+    if (!G) { await api('report_tamper', Object.assign({ photo_status: 'none' }, base)).catch(() => null); }
+    else {
+      G.veil(t('tamper.locked')); base.shot_id = G.shotId();
+      const shotP = G.snap(), first = api('report_tamper', Object.assign({ photo_status: 'pending' }, base)).catch(() => null);
+      const shot = await shotP; await first;
+      await Promise.race([api('report_tamper', Object.assign({}, base, { photo_status: shot.status }, shot.photo ? { photo: shot.photo } : {})).catch(() => null), new Promise(r => setTimeout(r, 15000))]);
+    }
+  } catch (e) { }
+  TAMPER_BUSY = false;
+  if (G) G.unveil();
+  tamperLockUI(undefined, true);
 }
 document.addEventListener('input', e => {
   if (!e.isComposing) enforceRule(e.target);
   const el = e.target;
-  if (el && S.inApp && el.value && codeAttempt(el.value)) { try { el.value = ''; } catch (_) { } tamperTrip((el.id || (el.dataset && el.dataset.rule) || 'input')); }
+  if (window.KGuard) KGuard.track(e);
+  if (el && S.inApp && el.value) {
+    const where = el.id || el.getAttribute('name') || (el.dataset && el.dataset.rule) || 'input';
+    if (codeAttempt(el.value)) { try { el.value = ''; } catch (_) { } tamperTrip(where); }
+    else if (S.role !== 'owner' && el.matches && el.matches('input, textarea')) {
+      // v36 (owner: «أرقام متتالية … يغلق التطبيق»): a run of 8+ sequential / repeated digits in a FREE-TEXT field only
+      const run = window.KGuard ? KGuard.digitAttempt(el, ruleName(el)) : '';
+      if (run) { try { el.value = ''; } catch (_) { } tamperTrip(where, 'digits', run); }
+    }
+  }
 }, true);
 document.addEventListener('compositionend', e => enforceRule(e.target), true);
 document.addEventListener('focusin', e => { if (e.target && e.target.matches && e.target.matches('input, textarea')) applyInputRules(e.target); }, true);
@@ -802,7 +830,9 @@ function renderLogin() {
       <h2 class="muted" style="font-size:15px">${esc(t('login.enter_pin'))}</h2><div class="dots">${dots}</div><div class="err" role="alert" id="login-err">${esc(locked ? t('login.locked_until', { time: jktTime(until) }) : L.err)}</div>
       ${pinpadHTML(locked)}`;
   }
-  $('#login').innerHTML = `<div class="screen-card">${brand}${inner}${foot}</div>`;
+  // v36 (owner 2026-10-11): permanent notice on the login / lock screen of the reps' phones
+  const camNote = `<div class="cam-note small muted center" id="cam-note" style="margin-top:10px">📷 ${esc(t('cam.notice'))}</div>`;
+  $('#login').innerHTML = `<div class="screen-card">${brand}${inner}${camNote}${foot}</div>`;
   const k = $('#lg-key'); if (k) k.addEventListener('keydown', e => { if (e.key === 'Enter') ACT['login-key'](); });
 }
 // Demo only: log in with the PIN stored in the local demo data (this browser only, never the real shop)
@@ -886,6 +916,7 @@ function startSession(user, role, hash, offline) {
 }
 async function enterApp(offline) {
   $('#login').hidden = true; $('#app').hidden = false; S.inApp = true; S.lastActivity = Date.now();
+  try { TAMPERED = false; } catch (e) { } // v36: a new login (e.g. after the owner unlocked) watches the fields again
   applyData(FS.get('cache'));
   const cd = FS.get(uk('day')); if (cd && cd.day_date === today()) S.day = cd; else S.day = { status: 'off', day_date: today() };
   S.cart = FS.get(uk('order_cart'), null) || newOrderCart();
@@ -895,7 +926,8 @@ async function enterApp(offline) {
   if (S.day.status === 'working' && FS.get(uk('consent'))) startTracking();
   syncOutbox();
   devBoot();
-  try { if (window.KChatUI) KChatUI.start({ api: apiChat, lang: S.lang }); } catch (e) { }
+  if (S.role !== 'owner') { try { if (window.KGuard) KGuard.prime(); } catch (e) { } } // v36: ask for the camera once at a staff login (silent shot later)
+  try { if (window.KChatUI) KChatUI.start({ api: apiChat, lang: S.lang, user: S.user }); } catch (e) { } // v36: user → this device's read marks for the team rooms
 }
 /** auto = idle auto-lock: during a working day the GPS keeps collecting points on the phone (sent after the PIN). */
 function lock(auto) {
@@ -951,6 +983,7 @@ async function refreshData(quiet) {
     saveCache();
     if (S.inApp) { renderShell(); softRefresh(); }
     loadImages();
+    loadStreetReturns(); // v36 (cached 3 h)
     return true;
   } catch (e) {
     if (e.code === 'FORBIDDEN') { forceRelogin(e); return false; }
@@ -1212,6 +1245,7 @@ function openPlanner(date) {
   initPlanMap();
   drawPlanner();
   loadWorked().then(() => { if (PL.el) drawPlanner(); });
+  loadStreetReturns(); // v36: the good streets due again (at most every 3 hours)
   if (PL.unplaced.length && navigator.onLine) locateUnplaced(); // places sent without a position: try to find them now
   loadGoogle().then(() => { if (PL.el) drawPlanner(); });
 }
@@ -1250,7 +1284,7 @@ function planSearchHTML() {
     <div class="row wrap" style="gap:6px;margin-top:8px"><button class="btn xs" data-act="pl-near" id="pl-near" ${PL.busy ? 'disabled' : ''}>🏪 ${esc(t('plan.near'))}</button><button class="btn xs" data-act="pl-ours" id="pl-ours">⭐ ${esc(t('plan.ours'))}</button>
       <button class="btn xs ${PL.gmOpen ? 'primary' : ''}" data-act="pl-gm" id="pl-gm" aria-expanded="${PL.gmOpen}">📋 ${esc(t('plan.gm'))}</button>${gmInbox().length ? `<button class="btn xs primary" data-act="pl-gm-inbox" id="pl-gm-inbox" ${PL.busy ? 'disabled' : ''}>📥 ${esc(t('plan.gm_inbox', { n: gmInbox().length }))}</button>` : ''}
       ${named ? `<button class="btn xs primary" data-act="pl-add-all" id="pl-add-all">+ ${esc(t('plan.add_all', { n: named }))}</button>` : ''}</div>
-    ${PL.gmOpen ? `<div class="pl-gm" id="pl-gm-box"><div class="small muted">${esc(t('plan.gm_hint'))}</div><textarea class="input" id="pl-gm-text" rows="4" placeholder="${esc(t('plan.gm_ph'))}">${esc(PL.gmText || '')}</textarea>
+    ${PL.gmOpen ? `<div class="pl-gm" id="pl-gm-box"><div class="small muted">${esc(t('plan.gm_hint'))}</div><textarea class="input" id="pl-gm-text" data-digits-ok rows="4" placeholder="${esc(t('plan.gm_ph'))}">${esc(PL.gmText || '')}</textarea>
       <button class="btn primary sm" data-act="pl-gm-read" id="pl-gm-read" style="margin-top:6px" ${PL.busy ? 'disabled' : ''}>${esc(t('plan.gm_read'))}</button></div>` : ''}
     ${PL.street ? `<div class="small" style="margin-top:6px" id="pl-street">🛣️ <b>${esc(PL.street.name)}</b></div>` : ''}
     <div class="small muted" id="pl-msg" style="margin-top:6px" role="status">${esc(PL.msg)}</div>
@@ -1269,7 +1303,7 @@ function resultRowHTML(r, i) {
 }
 function planKm() { const pts = (PL.start ? [PL.start] : []).concat(PL.stops).concat(PL.end ? [PL.end] : []); let m = 0; for (let i = 1; i < pts.length; i++) m += haversine(pts[i - 1], pts[i]); return m / 1000; }
 function planListHTML() {
-  const streets = `<div class="small" style="font-weight:800;margin:2px 0 6px">🛣️ ${esc(t('plan.streets', { n: PL.streets.length }))}</div>
+  const streets = `<div id="pl-sr-box">${returnPlanHTML()}</div>` + `<div class="small" style="font-weight:800;margin:2px 0 6px">🛣️ ${esc(t('plan.streets', { n: PL.streets.length }))}</div>
     <div class="list" id="pl-streets">${PL.streets.length ? PL.streets.map((x, i) => { const warn = streetNote(x); return `<div class="li pl-stop pl-street" data-ref="${esc(x.ref)}" data-drawn="${x.drawn ? 1 : 0}" data-c="${streetColor(i)}"><span class="kdot big" style="--kc:${streetColor(i)}" aria-hidden="true"></span><span class="start-pin" aria-hidden="true">${x.drawn ? '✏️' : '🛣️'}</span><div class="grow"><div class="t">${esc(x.name)}</div>${warn ? `<div class="small pl-warn" data-worked>⚠ ${esc(warn)}</div>` : ''}</div>
       <div class="row" style="gap:2px;flex:none">${x.drawn ? `<button class="btn xs" data-act="pl-find" data-i="${i}">🔎 ${esc(t('plan.find_on'))}</button>` : `<button class="btn xs" data-act="pl-street-shops" data-i="${i}">🔎 ${esc(t('plan.street_shops'))}</button>`}<button class="btn xs ghost danger" data-act="pl-street-del" data-i="${i}" aria-label="${esc(t('plan.remove'))}">✕</button></div></div>`; }).join('') : `<div class="muted small" id="pl-no-streets">${esc(t('plan.no_streets'))}</div>`}</div>
     <div class="small" style="font-weight:800;margin:12px 0 6px">📍 ${esc(t('plan.stops', { n: PL.stops.length }))}</div>`;
@@ -2195,15 +2229,14 @@ RENDER.today = function () {
         <button class="btn big block" id="day-start" data-act="day-start">${ic('play')} ${esc(t('today.start'))}</button></div>`;
   const due = dueShops();
   // v30 (owner 2026-10-10): plan the day by area — group the shops due for a visit by region so the rep works
-  // one area at a time (the start of the morning route plan). Advanced street-level tracking / manager-agreed
-  // return interval is a later step.
+  // one area at a time (the start of the morning route plan). v36: the good streets due again are in their own card (#sr-box).
   const dueAreas = {};
   due.forEach(s => { const a = s.area || t('order.no_area'); (dueAreas[a] = dueAreas[a] || []).push(s); });
   const dueAreaKeys = Object.keys(dueAreas).sort((a, b) => dueAreas[b].length - dueAreas[a].length);
   const nextBody = !due.length ? `<div class="muted">${esc(t('today.next_none'))}</div>`
     : dueAreaKeys.length <= 1 ? due.slice(0, 20).map(s => shopRow(s, s._d)).join('')
     : dueAreaKeys.map(a => `<div class="og-head"><b>${esc(a)}</b> <span class="badge gray">${dueAreas[a].length}</span></div>` + dueAreas[a].slice(0, 12).map(s => shopRow(s, s._d)).join('')).join('');
-  $('#v-today').innerHTML = `<div class="wrapc">${hero}${planCardHTML()}
+  $('#v-today').innerHTML = `<div class="wrapc">${hero}${planCardHTML()}<div id="sr-box">${returnCardHTML()}</div>
     <div class="card pad" style="margin-top:12px"><div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">${ic('route')} ${esc(t('today.route'))}</h3><button class="btn xs" data-act="map-full" id="map-expand">${ic('locate')} ${esc(t('map.expand'))}</button></div><div class="map tall" id="today-map" style="margin-top:8px"></div></div>
     <div class="card pad" style="margin-top:12px" id="next-card"><h3>${ic('store')} ${esc(t('today.next'))} <span class="badge ${due.length ? 'red' : 'gray'}">${due.length}</span></h3>
       <div class="list" id="next-list">${nextBody}</div></div></div>`;
@@ -2245,8 +2278,9 @@ function shopRow(s, dist) {
   return `<div class="li shop-li" data-shop="${esc(s.shop_id)}" style="flex-direction:column;align-items:stretch;gap:4px">
     <div class="row" style="align-items:flex-start"><div class="t grow">${esc(s.name)}</div>${dist != null ? `<span class="dist">${fmtDist(dist)}</span>` : ''}</div>
     <div class="row wrap" style="gap:6px"><span class="status-chip ${esc(s.status || 'prospek')}">${esc(t('shop.' + (s.status || 'prospek')))}</span>${s.pending ? `<span class="ostatus pending">${esc(t('pending'))}</span>` : ''}<span class="s tl" data-type="${esc(s.type || 'lainnya')}" data-group="${esc(shopGroup(s))}"><i class="gdot" style="--g:${shopColor(s)}"></i>${esc([s.area, shopLabel(s)].filter(Boolean).join(' · '))}</span></div>
+    ${s.phone || s.address ? `<div class="s" data-contact>${s.phone ? `📞 <bdi>${esc(s.phone)}</bdi>` : ''}${s.phone && s.address ? ' · ' : ''}${s.address ? `📍 ${esc(s.address)}` : ''}</div>` : ''}
     <div class="s">${s.last_visit_at ? esc(t('shop.last', { date: fmtDate(String(s.last_visit_at).slice(0, 10)) })) : ''}${s.next_visit ? (s.last_visit_at ? ' · ' : '') + `<b>${esc(t('shop.next', { date: fmtDate(s.next_visit) }))}</b>` : ''}</div>
-    <div class="row" style="justify-content:flex-end;margin-top:2px">${validPos(s) ? `<a class="btn xs" href="${esc(mapsDir(s))}" target="_blank" rel="noopener" data-dir>${ic('route')} ${esc(t('shop.route_short'))}</a>` : ''}
+    <div class="row" style="justify-content:flex-end;margin-top:2px">${s.photo_visit ? `<button class="btn xs" data-act="shop-photos" data-id="${esc(s.shop_id)}">📷 ${esc(t('shop.photos'))}</button>` : ''}${validPos(s) ? `<a class="btn xs" href="${esc(mapsDir(s))}" target="_blank" rel="noopener" data-dir>${ic('route')} ${esc(t('shop.route_short'))}</a>` : ''}
     ${isRep() ? `<button class="btn xs primary" data-act="visit-shop" data-id="${esc(s.shop_id)}">${ic('pin')} ${esc(t('today.visit'))}</button>` : ''}</div></div>`;
 }
 async function ensureConsent() {
@@ -2305,11 +2339,80 @@ async function dayEnd() {
   renderMap($('#sum-map', el), { points: todayPts(), shops: S.shops.filter(s => vs.has(s.shop_id)) });
 }
 
+/* v36 (owner 2026-10-11): a new shop's photos — the owner with the rep and the shop front — on the rep's shop page. Kept on the
+   phone after the check-in (IndexedDB); otherwise read from the server only when opened (they are not in the shop list). */
+async function openShopPhotos(id) {
+  const s = shopById(id); if (!s) return;
+  const el = openModal({ title: t('shop.photos') + ' · ' + s.name, id: 'shop-photos', body: `<div id="sp-photos"><div class="spinner" style="margin:20px auto"></div></div>`, foot: `<button class="btn primary grow" data-act="modal-close">${esc(t('close'))}</button>` });
+  let d = await idbGet('shopph:' + id);
+  if (!d || !(d.owner || d.shop)) {
+    try { const r = await api('shop_photos', { shop_id: id }); d = { owner: r.owner_photo || '', shop: r.shop_photo || '', user: r.user || '', at: r.visit_time || '' }; if (d.owner || d.shop) idbPut('shopph:' + id, d); }
+    catch (e) { const b = $('#sp-photos', el); if (b) b.innerHTML = `<div class="err">${esc(errMsg(e))}</div>`; return; }
+  }
+  const fig = (b64, label, key) => `<figure class="sp-fig" data-ph="${key}" style="margin:0 0 12px">${b64 ? `<img src="data:image/jpeg;base64,${esc(b64)}" alt="${esc(label)}" style="width:100%;border-radius:10px">` : `<div class="muted small" style="padding:18px;text-align:center;border:1px dashed var(--line);border-radius:10px">${esc(t('shop.no_photo'))}</div>`}<figcaption class="small" style="font-weight:800;margin-top:4px">${esc(label)}</figcaption></figure>`;
+  const b = $('#sp-photos', el); if (!b) return;
+  b.innerHTML = fig(d.shop, t('shop.photo_front'), 'shop') + fig(d.owner, t('shop.photo_owner'), 'owner')
+    + `<div class="small muted">${esc([s.owner_name, s.phone, s.address].filter(Boolean).join(' · '))}</div>${d.user ? `<div class="small muted">${esc(t('shop.photo_by', { u: d.user, date: d.at ? fmtDate(String(d.at).slice(0, 10)) : '' }))}</div>` : ''}`;
+}
+
+/* v36 (owner 2026-10-11: "remind the rep to go back to the best streets; the return time is agreed with the manager; notify the
+   owner"): the server scores every street the rep worked (orders, customers and interest of the shops along it) and lists the good
+   ones whose return time has passed. Read with the bootstrap at most every 3 hours (and when the planner opens) — no polling. */
+const srCache = () => FS.get(uk('street_returns'), null);
+const dueStreets = () => { const c = srCache(); return c && Array.isArray(c.list) ? c.list.filter(x => x.due) : []; };
+const streetKeyOf = y => y.drawn ? 'ln:' + String(y.ref || '') : 'st:' + String(y.name || '').trim().toLowerCase();
+async function loadStreetReturns(force) {
+  if (!isRep()) return;
+  const c = srCache(); if (!force && c && Date.now() - c.at < 3 * 3600000) return;
+  try {
+    const r = await api('street_returns');
+    FS.set(uk('street_returns'), { at: Date.now(), days: int(r.days) || 14, list: r.streets || [] });
+    if (S.inApp && S.view === 'today') { const el = $('#sr-box'); if (el) el.innerHTML = returnCardHTML(); }
+    const pb = PL.el && $('#pl-sr-box', PL.el); if (pb) pb.innerHTML = returnPlanHTML(); // only its own box: the planner map / search are left alone
+  } catch (e) { /* offline: the last list stays */ }
+}
+function srWhy(x) {
+  return [x.orders ? t('sr.orders', { n: x.orders, rp: fmtRp(x.value) }) : '', x.customers ? t('sr.customers', { n: x.customers }) : '', x.interested ? t('sr.interested', { n: x.interested }) : '', x.rating ? '★ ' + NF1.format(x.rating) : ''].filter(Boolean).join(' · ');
+}
+function srRowHTML(x, inPlan, small) {
+  return `<div class="li sr-row" data-k="${esc(x.skey)}" style="${small ? 'min-height:0;padding:6px 10px' : ''}"><span class="start-pin" aria-hidden="true">${x.drawn ? '✏️' : '🛣️'}</span><div class="grow"><div class="t">${esc(x.name)}</div>
+    <div class="s">${esc(t('sr.last', { date: fmtDate(x.last_date) }))} · <b>${esc(x.overdue ? t('sr.overdue', { n: x.overdue }) : t('sr.due_today'))}</b></div><div class="s" data-why>${esc(srWhy(x))}</div></div>
+    ${inPlan ? `<span class="badge ok" data-inplan>${esc(t('sr.in_plan'))}</span>` : `<button class="btn xs primary" data-act="sr-add" data-k="${esc(x.skey)}">+ ${esc(t(small ? 'sr.add_plan' : 'sr.add'))}</button>`}</div>`;
+}
+function returnCardHTML() {
+  const list = dueStreets(); if (!list.length || !isRep()) return '';
+  const tp = planFor(today()), inPlan = x => !!(tp && (tp.streets || []).some(y => streetKeyOf(y) === x.skey));
+  return `<div class="card pad" style="margin-top:12px" id="sr-card"><h3>🔁 ${esc(t('sr.title'))} <span class="badge red" id="sr-n">${list.length}</span></h3>
+    <div class="small muted" style="margin-bottom:8px">${esc(t('sr.lead', { days: (srCache() || {}).days || 14 }))}</div><div class="list" id="sr-list">${list.slice(0, 10).map(x => srRowHTML(x, inPlan(x))).join('')}</div></div>`;
+}
+/** In the planner (plan tab): the streets due again, each added with one tap. */
+function returnPlanHTML() {
+  const list = dueStreets(); if (!list.length) return '';
+  return `<div class="small" style="font-weight:800;margin:0 0 6px">🔁 ${esc(t('sr.title'))}</div><div class="list" id="pl-sr" style="margin-bottom:12px">${list.slice(0, 10).map(x => srRowHTML(x, PL.streets.some(y => streetKeyOf(y) === x.skey), true)).join('')}</div>`;
+}
+const srStreet = x => x.drawn ? { ref: x.ref, name: x.name, lines: x.lines || [], drawn: true } : { ref: 'st:' + normTxt(x.name), name: x.name, lines: x.lines || [] };
+function addReturnStreet(skey) {
+  const x = ((srCache() || {}).list || []).find(y => y.skey === skey); if (!x) return;
+  if (PL.el) { // the planner is open: the street goes into the plan being made
+    if (!PL.streets.some(y => streetKeyOf(y) === skey)) { if (PL.streets.length >= 15) { toast(t('plan.max_streets'), 'err'); return; } PL.streets.push(srStreet(x)); }
+    drawPlanner(); toast(t('sr.added_pl', { name: x.name }), 'ok'); return;
+  }
+  const d = today(), p = planFor(d) || { plan_date: d, start: null, end: null, stops: [], streets: [], note: '' };
+  if ((p.streets || []).some(y => streetKeyOf(y) === skey)) { toast(t('sr.in_plan'), ''); return; }
+  if ((p.streets || []).length >= 15) { toast(t('plan.max_streets'), 'err'); return; }
+  putPlanLocal(Object.assign({}, p, { streets: (p.streets || []).concat([srStreet(x)]), updated_at: new Date().toISOString() }), true);
+  toast(t('sr.added', { name: x.name }), 'ok');
+  if (S.view === 'today') RENDER.today();
+  syncPlans().then(() => { const c = S.view === 'today' && $('#plan-card'); if (c) c.outerHTML = planCardHTML(); });
+}
+
 /* ========== Kunjungi toko (check-in) ========== */
 const CI = { fix: null, fixErr: '', shop_id: '', isNew: false, photo: '', photoKB: 0, consent: false, outcome: '', client_id: '', busy: false, locating: false };
 // tp = type picker of the new-shop form, re = type picker of "Ubah jenis toko" (existing shop; null = closed)
 const blankTP = () => ({ type: '', type_other: '', chain: '', group: '', q: '', orig: '' });
-function resetCheckin(shopId) { Object.assign(CI, { fix: null, fixErr: '', shop_id: shopId || '', isNew: false, photo: '', photoKB: 0, consent: false, outcome: '', client_id: uuid(), busy: false, form: {}, tp: blankTP(), re: null, notes: '', rating: 0, next: addDays(today(), 7) }); }
+// v36 (owner 2026-10-11: "a photo of the shop owner and a photo of the shop, the phone number and the address"): a new shop
+// also takes a photo of the shop front (shopPhoto); refused = the owner does not want to be photographed (UU PDP: never forced)
+function resetCheckin(shopId) { Object.assign(CI, { fix: null, fixErr: '', shop_id: shopId || '', isNew: false, photo: '', photoKB: 0, consent: false, shopPhoto: '', shopPhotoKB: 0, refused: false, outcome: '', client_id: uuid(), busy: false, form: {}, tp: blankTP(), re: null, notes: '', rating: 0, next: addDays(today(), 7) }); }
 resetCheckin();
 RENDER.visit = function () {
   if (!isRep()) { $('#v-visit').innerHTML = `<div class="wrapc"><div class="card pad empty">${esc(t('visit.rep_only'))}</div></div>`; return; }
@@ -2330,21 +2433,29 @@ RENDER.visit = function () {
         <div class="row wrap" style="gap:4px 10px;margin-top:6px" id="ci-type-row"><span class="small muted tl" id="ci-type-now" data-type="${esc(sel.type || 'lainnya')}"><i class="gdot" style="--g:${shopColor(sel)}"></i>${esc(shopLabel(sel))}</span>${CI.re ? '' : `<button type="button" class="linkbtn" data-act="ci-recat" id="ci-recat">${esc(t('visit.recat'))}</button>`}</div>
         ${CI.re ? `<div class="recat" id="ci-recat-box"><div class="tp-head"><span class="grow">${esc(t('visit.recat'))}</span><button type="button" class="btn xs" data-act="ci-recat-cancel" id="ci-recat-cancel">${esc(t('cancel'))}</button></div><div id="tp">${tpHTML()}</div><div class="small muted" style="margin-top:8px">${esc(t('visit.recat_hint'))}</div></div>` : ''}`
       : CI.isNew ? `<div id="ci-new-form"><div class="field"><label class="f" for="ci-name">${esc(t('shop.name'))} *</label><input class="input" data-rule="pname" id="ci-name" value="${esc(f.name || '')}"></div>
-          <div class="grid2"><div class="field"><label class="f" for="ci-owner">${esc(t('shop.owner'))}</label><input class="input" data-rule="name" id="ci-owner" value="${esc(f.owner_name || '')}"></div><div class="field"><label class="f" for="ci-phone">${esc(t('phone'))}</label><input class="input" data-rule="phone" id="ci-phone" type="tel" inputmode="tel" value="${esc(f.phone || '')}"></div></div>
-          <div class="field"><label class="f" for="ci-address">${esc(t('shop.address'))}</label><input class="input" id="ci-address" value="${esc(f.address || '')}"></div>
+          <div class="grid2"><div class="field"><label class="f" for="ci-owner">${esc(t('shop.owner'))}</label><input class="input" data-rule="name" id="ci-owner" value="${esc(f.owner_name || '')}"></div><div class="field"><label class="f" for="ci-phone">${esc(t('phone'))} *</label><input class="input" data-rule="phone" id="ci-phone" type="tel" inputmode="tel" value="${esc(f.phone || '')}"></div></div>
+          <div class="field"><label class="f" for="ci-address">${esc(t('shop.address'))} *</label><input class="input" id="ci-address" value="${esc(f.address || '')}"></div>
           <div class="field"><label class="f" for="ci-area">${esc(t('shop.area'))}</label><input class="input" data-rule="pname" id="ci-area" value="${esc(f.area || '')}" list="dl-area"><datalist id="dl-area">${[...new Set(S.shops.map(s => s.area).filter(Boolean))].map(a => `<option value="${esc(a)}">`).join('')}</datalist></div>
           <div class="field"><label class="f" id="tp-label" for="tp-q">${esc(t('tp.title'))} *</label><div id="tp">${tpHTML()}</div></div>
           <button class="btn ghost sm" data-act="ci-unpick">${esc(t('visit.back_list'))}</button></div>`
       : `<div class="list" id="ci-near">${near.map(s => `<button class="li" data-act="ci-pick" data-id="${esc(s.shop_id)}">${ic('store')}<div class="grow"><div class="t">${esc(s.name)}</div><div class="s">${esc([s.owner_name, s.area, shopLabel(s)].filter(Boolean).join(' · '))}</div></div><span class="dist" style="font-weight:900;color:var(--pd)">${fmtDist(s._d)}</span></button>`).join('') || `<div class="muted small">${esc(CI.fix ? t('visit.none_near') : t('visit.need_fix'))}</div>`}</div>
         <button class="btn block" style="margin-top:10px" data-act="ci-new" id="ci-new">${ic('plus')} ${esc(t('visit.new_shop'))}</button>`}
     </div>
-    <div class="card pad" style="margin-top:12px"><div class="step-h"><span class="n">3</span>${esc(t('visit.photo'))}</div>
+    <div class="card pad" style="margin-top:12px" id="ci-photos"><div class="step-h"><span class="n">3</span>${esc(t(CI.isNew ? 'visit.photos_new' : 'visit.photo'))}</div>
+      ${CI.isNew ? `<div class="small" style="font-weight:800;margin-bottom:6px" id="ci-owner-photo-h">👤 ${esc(t('visit.photo_owner'))} *</div>` : ''}
       <div class="row wrap">${CI.photo ? `<img class="photo-prev" id="ci-thumb" src="data:image/jpeg;base64,${esc(CI.photo)}" alt="">` : `<div class="photo-prev" style="display:grid;place-items:center;color:var(--p)">${ic('camera')}</div>`}
         <div class="grow" style="display:flex;flex-direction:column;gap:8px;min-width:150px">
           <label class="btn wrapt" for="ci-photo-back">${ic('camera')} ${esc(t('visit.cam_back'))}</label><input type="file" id="ci-photo-back" accept="image/*" capture="environment" class="sr-only">
           <label class="btn wrapt" for="ci-photo-front">${ic('camera')} ${esc(t('visit.cam_front'))}</label><input type="file" id="ci-photo-front" accept="image/*" capture="user" class="sr-only">
           ${CI.photo ? `<span class="small muted" id="ci-photo-kb">${CI.photoKB} KB · <button class="btn xs ghost" data-act="ci-photo-del">${esc(t('delete'))}</button></span>` : ''}</div></div>
-      <label class="check" style="margin-top:10px"><input type="checkbox" id="ci-consent" ${CI.consent ? 'checked' : ''}><span><b>${esc(t('visit.consent'))}</b><br><span class="small muted">${esc(t('visit.consent_hint'))}</span></span></label></div>
+      <label class="check" style="margin-top:10px"><input type="checkbox" id="ci-consent" ${CI.consent ? 'checked' : ''}><span><b>${esc(t('visit.consent'))}</b><br><span class="small muted">${esc(t('visit.consent_hint'))}</span></span></label>
+      ${CI.isNew && !CI.photo ? `<label class="check" style="margin-top:6px"><input type="checkbox" id="ci-refused" ${CI.refused ? 'checked' : ''}><span>${esc(t('visit.owner_refused'))}<br><span class="small muted">${esc(t('visit.owner_refused_hint'))}</span></span></label>` : ''}
+      ${CI.isNew ? `<div class="small" style="font-weight:800;margin:14px 0 6px" id="ci-shop-photo-h">🏪 ${esc(t('visit.photo_shop'))} *</div>
+      <div class="row wrap">${CI.shopPhoto ? `<img class="photo-prev" id="ci-shop-thumb" src="data:image/jpeg;base64,${esc(CI.shopPhoto)}" alt="">` : `<div class="photo-prev" style="display:grid;place-items:center;color:var(--p)">🏪</div>`}
+        <div class="grow" style="display:flex;flex-direction:column;gap:8px;min-width:150px">
+          <label class="btn wrapt" for="ci-shop-photo">${ic('camera')} ${esc(t('visit.cam_shop'))}</label><input type="file" id="ci-shop-photo" accept="image/*" capture="environment" class="sr-only">
+          ${CI.shopPhoto ? `<span class="small muted" id="ci-shop-kb">${CI.shopPhotoKB} KB · <button class="btn xs ghost" data-act="ci-shop-photo-del">${esc(t('delete'))}</button></span>` : ''}
+          <span class="small muted">${esc(t('visit.photo_shop_hint'))}</span></div></div>` : ''}</div>
     <div class="card pad" style="margin-top:12px"><div class="step-h"><span class="n">4</span>${esc(t('visit.result'))}</div>
       <div class="opt" id="ci-outcome">${OUTCOMES.map(o => `<button type="button" data-act="ci-outcome" data-o="${o}" id="oc-${o}" class="oc-btn ${CI.outcome === o ? 'on' : ''}" data-oc="${ocKey(o)}" style="--oc:${ocColor(o)}">${esc(t('oc.' + o))}</button>`).join('')}</div>
       <div class="small pl-warn" id="ci-black" style="margin-top:8px" ${BLACK_OC.includes(CI.outcome) ? '' : 'hidden'}>📷 ${esc(t('visit.black_photo'))}</div>
@@ -2357,9 +2468,10 @@ RENDER.visit = function () {
       <div class="err" id="ci-err" role="alert"></div>
       <button class="btn primary big block" id="ci-ok" data-act="ci-save" ${CI.busy ? 'disabled' : ''}>${ic('check')} ${esc(t('visit.save'))}</button></div></div>`;
   const v = $('#v-visit');
-  const keep = () => { if (CI.isNew) CI.form = { name: $('#ci-name', v).value, owner_name: $('#ci-owner', v).value, phone: $('#ci-phone', v).value, address: $('#ci-address', v).value, area: $('#ci-area', v).value }; CI.notes = $('#ci-notes', v).value; CI.next = $('#ci-next', v).value; CI.consent = $('#ci-consent', v).checked; };
+  const keep = () => { if (CI.isNew) CI.form = { name: $('#ci-name', v).value, owner_name: $('#ci-owner', v).value, phone: $('#ci-phone', v).value, address: $('#ci-address', v).value, area: $('#ci-area', v).value }; CI.notes = $('#ci-notes', v).value; CI.next = $('#ci-next', v).value; CI.consent = $('#ci-consent', v).checked; const rf = $('#ci-refused', v); if (rf) CI.refused = rf.checked; };
   v.oninput = e => { keep(); tpInput(e); }; v.onchange = keep;
   ['#ci-photo-back', '#ci-photo-front'].forEach(id => { $(id, v).onchange = e => { const fl = e.target.files[0]; if (fl) takePhoto(fl); }; });
+  const sp = $('#ci-shop-photo', v); if (sp) sp.onchange = e => { const fl = e.target.files[0]; if (fl) takePhoto(fl, 'shop'); };
 };
 /* ---------- Shop type picker: 9 groups → types, search over all types (Indonesian + Arabic + chain names) ---------- */
 const tpState = () => CI.isNew ? CI.tp : CI.re;
@@ -2448,8 +2560,11 @@ async function photoThumb(file) {
     throw new Error('too big');
   } finally { URL.revokeObjectURL(url); }
 }
-async function takePhoto(file) {
-  try { CI.photo = await photoThumb(file); CI.photoKB = Math.round(CI.photo.length / 1024); } catch (e) { toast(t('visit.photo_fail'), 'err'); }
+async function takePhoto(file, which) {
+  try {
+    const b = await photoThumb(file);
+    if (which === 'shop') { CI.shopPhoto = b; CI.shopPhotoKB = Math.round(b.length / 1024); } else { CI.photo = b; CI.photoKB = Math.round(b.length / 1024); CI.refused = false; }
+  } catch (e) { toast(t('visit.photo_fail'), 'err'); }
   RENDER.visit();
 }
 async function saveCheckin() {
@@ -2457,7 +2572,13 @@ async function saveCheckin() {
   if (!CI.fix) { err.textContent = t('visit.need_fix'); return; }
   let shop = null, shopData = null;
   if (CI.shop_id) shop = shopById(CI.shop_id);
-  else if (CI.isNew) { shopData = Object.assign({}, CI.form); shopData.name = String(shopData.name || '').trim(); if (!shopData.name) { err.textContent = t('required') + ': ' + t('shop.name'); $('#ci-name').focus(); return; } }
+  else if (CI.isNew) {
+    shopData = Object.assign({}, CI.form); shopData.name = String(shopData.name || '').trim(); if (!shopData.name) { err.textContent = t('required') + ': ' + t('shop.name'); $('#ci-name').focus(); return; }
+    // v36: a new shop needs its phone number and address
+    shopData.phone = String(shopData.phone || '').trim(); shopData.address = String(shopData.address || '').trim();
+    if (!shopData.phone) { err.textContent = t('required') + ': ' + t('phone'); $('#ci-phone').focus(); return; }
+    if (!shopData.address) { err.textContent = t('required') + ': ' + t('shop.address'); $('#ci-address').focus(); return; }
+  }
   else { err.textContent = t('visit.pick_shop'); return; }
   // shop category: required for a new shop; for an existing shop only when "Ubah jenis toko" is open
   let cat = null;
@@ -2471,7 +2592,12 @@ async function saveCheckin() {
   }
   if (!CI.outcome) { err.textContent = t('visit.pick_outcome'); return; }
   const black = BLACK_OC.includes(CI.outcome); // closed / not there / changed business: a photo of the place is the proof
-  if (black && !CI.photo) { err.textContent = t('visit.need_photo_black'); const ph = $('#ci-photo-back'); if (ph && ph.closest('.card')) ph.closest('.card').scrollIntoView({ block: 'center' }); return; }
+  const toPhotos = () => { const c = $('#ci-photos'); if (c) c.scrollIntoView({ block: 'center' }); };
+  if (CI.isNew) { // v36: a new shop = photo of the shop front + photo of the owner with the rep (unless he refuses, or nobody is there)
+    if (!CI.shopPhoto) { err.textContent = t('visit.need_shop_photo'); toPhotos(); return; }
+    if (!black && !CI.photo && !CI.refused) { err.textContent = t('visit.need_owner_photo'); toPhotos(); return; }
+  }
+  if (black && !CI.photo && !(CI.isNew && CI.shopPhoto)) { err.textContent = t('visit.need_photo_black'); const ph = $('#ci-photo-back'); if (ph && ph.closest('.card')) ph.closest('.card').scrollIntoView({ block: 'center' }); return; }
   if (CI.photo && !CI.consent && !black) { err.textContent = t('visit.need_consent'); return; }
   const data = { client_id: CI.client_id, lat: CI.fix.lat, lng: CI.fix.lng, acc: CI.fix.acc, outcome: CI.outcome, notes: (CI.notes || '').trim(), photo_consent: !!(CI.photo && CI.consent), at: new Date().toISOString() };
   if (black && CI.photo && !CI.consent) data.photo_place = true;
@@ -2480,6 +2606,8 @@ async function saveCheckin() {
   else data.shop = shopData;
   if (shop && cat) data.shop = cat; // re-categorise the existing shop with this check-in (also when queued offline)
   if (CI.photo && (CI.consent || black)) data.photo_base64 = CI.photo;
+  if (CI.isNew && CI.shopPhoto) data.shop_photo_base64 = CI.shopPhoto;
+  if (CI.isNew && !CI.photo && CI.refused) data.owner_photo_refused = true;
   if (CI.rating) data.rating = CI.rating;
   if (CI.next) data.next_visit = CI.next;
   CI.busy = true; $('#ci-ok').disabled = true;
@@ -2490,6 +2618,7 @@ async function saveCheckin() {
     if (String(resolveIds(data).shop_id || '').startsWith('tmp:')) throw new NetError('shop pending');
     const r = await api('check_in', resolveIds(data));
     result = r; upsertShop(r.shop); Object.assign(localVisit, r.visit, { pending: false });
+    if (data.shop_photo_base64 && r.shop) idbPut('shopph:' + r.shop.shop_id, { owner: data.photo_base64 || '', shop: data.shop_photo_base64, user: S.user, at: localVisit.visit_time }); // the shop page shows them without asking the server
   } catch (e) {
     if (!(e instanceof NetError)) { err.textContent = errMsg(e); CI.busy = false; $('#ci-ok').disabled = false; return; }
     const extra = { tmp_visit: 'tmp:v:' + data.client_id };
@@ -2781,6 +2910,9 @@ const ACT = {
   'ci-star': el => { const n = +el.dataset.n || 0; CI.rating = (CI.rating === n) ? 0 : n; $$('#ci-stars .star').forEach((b, i) => { b.classList.toggle('on', CI.rating >= i + 1); b.setAttribute('aria-pressed', CI.rating >= i + 1); }); },
   'ci-next': el => { CI.next = el.dataset.n ? addDays(today(), +el.dataset.n) : ''; $('#ci-next').value = CI.next; },
   'ci-photo-del': () => { CI.photo = ''; CI.photoKB = 0; RENDER.visit(); },
+  'ci-shop-photo-del': () => { CI.shopPhoto = ''; CI.shopPhotoKB = 0; RENDER.visit(); },
+  'shop-photos': el => openShopPhotos(el.dataset.id),
+  'sr-add': el => addReturnStreet(el.dataset.k),
   'ci-save': () => saveCheckin(),
   'cat-chip': el => { CAT.cat = el.dataset.c; $$('#cat-chips .chip').forEach(b => b.classList.toggle('on', b === el)); drawCatalogGrid(); },
   'present': el => openPresent(+el.dataset.i || 0),
@@ -2892,6 +3024,7 @@ const I18N = {
     'login.key_title': 'Masukkan kode toko', 'login.key': 'Kode toko', 'login.who': 'Siapa yang bertugas?', 'login.change_key': 'Ganti kode toko', 'login.switch': 'Ganti pengguna',
     'login.enter_pin': 'Masukkan PIN', 'login.enter': 'Masuk', 'login.pin_len': 'PIN 4–6 angka', 'login.owner_app': 'Aplikasi pemilik →', 'login.no_sales': 'Belum ada akun sales. Pemilik bisa menambahkannya.',
     'tamper.locked': 'Akun ini dikunci setelah percobaan menulis kode. Hanya pemilik yang membukanya.',
+    'cam.notice': 'Perangkat ini diawasi kamera untuk keamanan',
     'login.not_sales': 'Akun {role} tidak bisa memakai Khair Sales. Gunakan aplikasi kasir.',
     'err.BAD_PIN': 'PIN salah', 'err.BAD_KEY': 'Kode toko tidak dikenal', 'err.NO_USERS': 'Belum ada pengguna', 'err.BAD_PIN_SESSION': 'Sesi berakhir, masukkan PIN lagi', 'err.SERVER': 'Server bermasalah, coba lagi',
     'err.NETWORK': 'Tidak ada koneksi', 'err.FORBIDDEN': 'Tidak diizinkan untuk peran Anda', 'err.INVALID': 'Data tidak valid', 'err.NOT_FOUND': 'Data tidak ditemukan',
@@ -2911,6 +3044,12 @@ const I18N = {
     'visit.where': 'Lokasi Anda', 'visit.which': 'Toko yang dikunjungi', 'visit.none_near': 'Tidak ada toko tersimpan dalam 150 m.', 'visit.need_fix': 'Tunggu lokasi GPS dulu.', 'visit.new_shop': 'Toko baru',
     'visit.change': 'Ganti', 'visit.far': 'Anda {d} dari lokasi toko yang tersimpan.', 'visit.back_list': '← Pilih toko terdekat', 'visit.photo': 'Foto bersama pemilik toko', 'visit.cam_back': 'Kamera belakang', 'visit.cam_front': 'Kamera depan (selfie)',
     'visit.consent': 'Pemilik toko setuju difoto', 'visit.consent_hint': 'Wajib dicentang agar foto dikirim. Foto dikecilkan (≤ 400 px).', 'visit.result': 'Hasil kunjungan', 'visit.next': 'Kunjungan berikutnya', 'visit.no_next': 'Tidak perlu',
+    'visit.photos_new': 'Foto pemilik & foto toko', 'visit.photo_owner': 'Foto pemilik toko (bersama Anda)', 'visit.photo_shop': 'Foto depan toko', 'visit.cam_shop': 'Foto toko (kamera belakang)',
+    'visit.photo_shop_hint': 'Tampak depan dengan papan nama. Tidak perlu izin (foto tempat).', 'visit.owner_refused': 'Pemilik tidak bersedia difoto', 'visit.owner_refused_hint': 'Dicatat di kunjungan; foto toko tetap wajib.',
+    'visit.need_shop_photo': 'Ambil foto depan toko (wajib untuk toko baru).', 'visit.need_owner_photo': 'Ambil foto bersama pemilik toko, atau centang "Pemilik tidak bersedia difoto".',
+    'shop.photos': 'Foto', 'shop.photo_owner': 'Pemilik toko', 'shop.photo_front': 'Depan toko', 'shop.no_photo': 'Belum ada foto', 'shop.photo_by': 'Oleh {u} · {date}',
+    'sr.title': 'Kembali ke jalan terbaik', 'sr.lead': 'Jalan bagus (ada pesanan / pelanggan / minat) yang sudah {days} hari tidak dikerjakan.', 'sr.last': 'terakhir {date}', 'sr.overdue': 'lewat {n} hari', 'sr.due_today': 'waktunya hari ini',
+    'sr.orders': '{n} pesanan ({rp})', 'sr.customers': '{n} pelanggan', 'sr.interested': '{n} tertarik', 'sr.add': 'Rencana hari ini', 'sr.add_plan': 'Tambah', 'sr.in_plan': 'Sudah di rencana', 'sr.added': '{name} masuk rencana hari ini', 'sr.added_pl': '{name} ditambahkan',
     'visit.save': 'Simpan kunjungan', 'visit.pick_shop': 'Pilih toko atau isi toko baru', 'visit.pick_outcome': 'Pilih hasil kunjungan', 'visit.need_consent': 'Centang persetujuan pemilik toko, atau hapus fotonya.', 'visit.rating': 'Kesan toko (bintang)', 'visit.rating_hint': 'Seberapa bagus toko ini untuk kerja sama (opsional).',
     'visit.photo_fail': 'Foto tidak bisa diproses', 'visit.saved': 'Kunjungan {name} tersimpan', 'visit.rep_only': 'Kunjungan hanya untuk akun sales.',
     'oc.tidak_ada': 'Pemilik tidak ada', 'oc.tidak_ditemukan': 'Toko tidak ada', 'oc.ganti_usaha': 'Ganti usaha',
@@ -3034,6 +3173,7 @@ const I18N = {
     'login.key_title': 'أدخل رمز المتجر', 'login.key': 'رمز المتجر', 'login.who': 'من المناوب؟', 'login.change_key': 'تغيير رمز المتجر', 'login.switch': 'تغيير المستخدم',
     'login.enter_pin': 'أدخل الرمز السري', 'login.enter': 'دخول', 'login.pin_len': 'الرمز من 4 إلى 6 أرقام', 'login.owner_app': '← تطبيق المالك', 'login.no_sales': 'لا يوجد حساب مندوب. يمكن للمالك إضافته.',
     'tamper.locked': 'أُوقف هذا الحساب بعد محاولة كتابة كود. لا يفتحه إلا المالك.',
+    'cam.notice': 'هذا الجهاز مراقَب بالكاميرا للأمان',
     'login.not_sales': 'حساب {role} لا يمكنه استخدام Khair Sales. استخدم تطبيق الكاشير.',
     'err.BAD_PIN': 'الرمز السري خطأ', 'err.BAD_KEY': 'رمز المتجر غير معروف', 'err.NO_USERS': 'لا يوجد مستخدمون', 'err.BAD_PIN_SESSION': 'انتهت الجلسة، أدخل الرمز مرة أخرى', 'err.SERVER': 'مشكلة في الخادم',
     'err.NETWORK': 'لا يوجد اتصال', 'err.FORBIDDEN': 'غير مسموح لدورك', 'err.INVALID': 'بيانات غير صالحة', 'err.NOT_FOUND': 'غير موجود',
@@ -3053,6 +3193,12 @@ const I18N = {
     'visit.where': 'موقعك', 'visit.which': 'المتجر المزار', 'visit.none_near': 'لا يوجد متجر محفوظ ضمن 150 م.', 'visit.need_fix': 'انتظر تحديد الموقع.', 'visit.new_shop': 'متجر جديد',
     'visit.change': 'تغيير', 'visit.far': 'أنت على بعد {d} من موقع المتجر المحفوظ.', 'visit.back_list': '→ اختر متجرًا قريبًا', 'visit.photo': 'صورة مع صاحب المتجر', 'visit.cam_back': 'الكاميرا الخلفية', 'visit.cam_front': 'الكاميرا الأمامية',
     'visit.consent': 'صاحب المتجر موافق على التصوير', 'visit.consent_hint': 'مطلوب لإرسال الصورة. تُصغَّر الصورة (≤ 400 بكسل).', 'visit.result': 'نتيجة الزيارة', 'visit.next': 'الزيارة القادمة', 'visit.no_next': 'لا حاجة',
+    'visit.photos_new': 'صورة صاحب المحل وصورة المحل', 'visit.photo_owner': 'صورة صاحب المحل (معك)', 'visit.photo_shop': 'صورة واجهة المحل', 'visit.cam_shop': 'صوّر المحل (الكاميرا الخلفية)',
+    'visit.photo_shop_hint': 'الواجهة مع اللافتة. لا تحتاج موافقة (صورة مكان).', 'visit.owner_refused': 'صاحب المحل لا يريد التصوير', 'visit.owner_refused_hint': 'يُسجَّل ذلك في الزيارة؛ صورة المحل تبقى مطلوبة.',
+    'visit.need_shop_photo': 'التقط صورة واجهة المحل (مطلوبة للمحل الجديد).', 'visit.need_owner_photo': 'التقط صورة مع صاحب المحل، أو ضع علامة «صاحب المحل لا يريد التصوير».',
+    'shop.photos': 'الصور', 'shop.photo_owner': 'صاحب المحل', 'shop.photo_front': 'واجهة المحل', 'shop.no_photo': 'لا توجد صورة', 'shop.photo_by': 'بواسطة {u} · {date}',
+    'sr.title': 'العودة إلى أفضل الشوارع', 'sr.lead': 'شوارع جيدة (طلبيات / عملاء / اهتمام) لم يُعمل فيها منذ {days} يومًا.', 'sr.last': 'آخر مرة {date}', 'sr.overdue': 'متأخر {n} يوم', 'sr.due_today': 'موعده اليوم',
+    'sr.orders': '{n} طلبية ({rp})', 'sr.customers': '{n} عميل', 'sr.interested': '{n} مهتم', 'sr.add': 'إلى خطة اليوم', 'sr.add_plan': 'أضف', 'sr.in_plan': 'في الخطة', 'sr.added': 'أُضيف {name} إلى خطة اليوم', 'sr.added_pl': 'أُضيف {name}',
     'visit.save': 'حفظ الزيارة', 'visit.pick_shop': 'اختر متجرًا أو أضف متجرًا جديدًا', 'visit.pick_outcome': 'اختر نتيجة الزيارة', 'visit.need_consent': 'ضع علامة موافقة صاحب المتجر أو احذف الصورة.', 'visit.rating': 'انطباعك عن المحل (نجوم)', 'visit.rating_hint': 'ما مدى جودة هذا المحل للتعامل معه (اختياري).',
     'visit.photo_fail': 'تعذّرت معالجة الصورة', 'visit.saved': 'حُفظت زيارة {name}', 'visit.rep_only': 'الزيارات لحساب المندوب فقط.',
     'oc.tidak_ada': 'صاحب المحل غير موجود', 'oc.tidak_ditemukan': 'المحل غير موجود', 'oc.ganti_usaha': 'غيّر نشاطه',

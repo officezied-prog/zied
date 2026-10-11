@@ -9,6 +9,31 @@ const MockServer = (() => {
   const V16_DEFAULTS = { limit_agreements: [], receipt_send_fee: 500, max_discount_pct: 3, sell_from_shop_only: true, return_owner_min_value: 2000000, return_owner_min_qty: 0, return_fee_pct: 0, require_return_photo: true, require_carrier: true, member_enabled: true, member_tiers: [{ from: 2, pct: 2 }, { from: 5, pct: 3 }, { from: 10, pct: 5 }] };
   class MockErr extends Error { constructor(code, message) { super(message || code); this.code = code; } }
   const E = (code, msg, extra) => { const e = new MockErr(code, msg); if (extra) e.extra = extra; return e; };
+
+  // v36 (owner 2026-10-08: "فعّل حفظ الصور عبر Google Drive") — demo twin of the Worker's R2 photo store. The scanned image is
+  // kept in IndexedDB 'kmock-photos' (shared by the demo apps of this site, and never inside kmock.db, so photos can never
+  // fill the demo database); the photo gets drive_file_id 'r2:…' + drive_url '<PHOTO_URL>/file/<photo_id>', as on the Worker.
+  const PHOTO_IDB = 'kmock-photos', memPhotos = {};
+  function photoIdb() {
+    return new Promise(res => { try { const rq = indexedDB.open(PHOTO_IDB, 1); rq.onupgradeneeded = () => rq.result.createObjectStore('img'); rq.onsuccess = () => res(rq.result); rq.onerror = () => res(null); } catch (e) { res(null); } });
+  }
+  function keepPhotoImg(db, photo, data) {
+    const b64 = String((data && data.image_base64) || '').replace(/^data:[^,]*,/, '').replace(/\s/g, '');
+    if (!b64 || !/^[A-Za-z0-9+/=]+$/.test(b64)) return '';
+    const mime = /^image\/(jpeg|png|webp)$/.test(String(data.mime || '')) ? data.mime : 'image/jpeg';
+    memPhotos[photo.photo_id] = 'data:' + mime + ';base64,' + b64;
+    (db._keepImgs = db._keepImgs || []).push(photo.photo_id);
+    photo.drive_file_id = 'r2:photos/' + String(photo.photo_date || '').slice(0, 7) + '/' + photo.photo_id + '.' + ({ 'image/png': 'png', 'image/webp': 'webp' }[mime] || 'jpg');
+    photo.drive_url = ((typeof CONFIG !== 'undefined' && CONFIG.PHOTO_URL) || 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo') + '/file/' + photo.photo_id;
+    return photo.drive_url;
+  }
+  async function flushPhotoImgs(ids) {
+    if (!ids || !ids.length) return;
+    try {
+      const idb = await photoIdb(); if (!idb) return;
+      await new Promise(res => { const tx = idb.transaction('img', 'readwrite'); ids.forEach(id => { if (memPhotos[id]) tx.objectStore('img').put(memPhotos[id], id); }); tx.oncomplete = res; tx.onerror = res; tx.onabort = res; });
+    } catch (e) { }
+  }
   let ready = null;
 
   function load() { try { return JSON.parse(localStorage.getItem(DBKEY) || 'null'); } catch (e) { return null; } }
@@ -348,6 +373,7 @@ const MockServer = (() => {
   const discountOf = P => { const amount = Math.max(0, P.listTotal - (P.total - (P.sendFee || 0))); return { amount, pct: P.listTotal > 0 ? Math.round(amount / P.listTotal * 1000) / 10 : 0 }; };
   const marginPct = (total, cost) => total > 0 ? Math.round((total - cost) / total * 1000) / 10 : 0;
   /** What a non-owner may see of an approval: no profit (discount), quantities only (purchase fix). */
+  let viewer = ''; // v36: the current caller's name (set per request)
   function approvalOut(a, role) {
     if (!a) return a;
     const o = Object.assign({}, a);
@@ -356,6 +382,7 @@ const MockServer = (() => {
         const pl = parseObj(a.payload); ['profit_before', 'profit_after', 'margin_before', 'margin_after', 'cost'].forEach(f => { delete pl[f]; });
         o.payload = JSON.stringify(pl); o.summary = str(o.summary).replace(/ \| laba[^|]*/g, '');
       }
+      if (a.kind === 'product_new') { const pl = parseObj(a.payload); delete pl.cost_price; o.payload = JSON.stringify(pl); } // v36: the invoice cost stays with the owner
       if (a.kind === 'purchase_fix') {
         const pl = parseObj(a.payload);
         if (Array.isArray(pl.changes)) pl.changes = pl.changes.map(qtyOnly);
@@ -370,9 +397,14 @@ const MockServer = (() => {
         }
       }
     }
-    o.can_decide = role === 'owner' || (role === 'manager' && a.approver_role !== 'owner');
+    o.can_decide = canDecideAp(role, a) && !(role !== 'owner' && a.kind === 'void' && str(a.cashier).toLowerCase() === str(viewer).toLowerCase());
     return o;
   }
+  // v36 — mirror of the server's canDecide: owner anything; manager all but owner-only; accountant the shared mgr_akuntan ones;
+  // a void of an EARLIER day's sale only the owner (owner 2026-10-11: "إصلاح فاتورة قديمة لا يتم إلا بموافقتي الشخصية").
+  function voidSaleDate(a) { const pl = parseObj(a.payload); if (isYmd(pl.sale_date)) return pl.sale_date; const m = /(\d{4}-\d{2}-\d{2})/.exec(str(a.summary)); return m ? m[1] : ''; }
+  function isOldVoid(a) { return !!a && a.kind === 'void' && (!voidSaleDate(a) || voidSaleDate(a) < jktDate()); }
+  function canDecideAp(role, a) { return role === 'owner' || (a.approver_role !== 'owner' && !isOldVoid(a) && (a.approver_role === 'mgr_akuntan' ? (role === 'manager' || role === 'akuntan') : role === 'manager')); }
   const qtyOnly = c => { const x = Object.assign({}, c); ['cost_price', 'from_total', 'to_total', 'd_total'].forEach(f => { delete x[f]; }); return x; };
   /* v16 warehouse (gudang) and shelf (toko): stock = total, shop_stock = on the shelf; a product without shop_stock counts all
      its stock as on the shelf. Only sales, voids and move_stock set the shelf (shopSet); every other change of a product row
@@ -473,6 +505,7 @@ const MockServer = (() => {
     if (!db.users.length) throw E('NO_USERS', 'Run setup first');
     // v16 (as on the server): lock after 5 wrong PINs in a row (15 min), owner master code opens every account, own PIN at first login
     const u = db.users.find(x => x.active !== false && x.name.toLowerCase() === String(user || '').trim().toLowerCase());
+    viewer = u ? u.name : ''; // v36: who asks (a void is never decided by the one who requested it)
     if (!u) throw E('BAD_PIN', 'Nama atau PIN salah');
     if (Date.parse(u.locked_until) > Date.now()) throw E('LOCKED', lockMsg(u.locked_until), { locked_until: str(u.locked_until) });
     const masterOwner = isHex64(pin_hash) && u.pin_hash !== pin_hash ? db.users.find(x => x.active !== false && x.role === 'owner' && isHex64(x.master_hash) && x.master_hash === pin_hash) || null : null;
@@ -487,7 +520,7 @@ const MockServer = (() => {
     if ((num(u.fail_count) > 0 || str(u.locked_until)) && !['change_pin', 'set_master', 'save_user'].includes(action)) { u.fail_count = 0; u.locked_until = ''; dirty = true; }
     if (u.must_change === true && !viaMaster && !['login', 'change_pin', 'users', 'device_ping'].includes(action)) throw E('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
     lastRole = u.role;
-    if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
+    if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
     if (action !== 'device_ping') deviceTouch(db, u, data.device, false);
     const owner = u.role === 'owner';
     const needOwner = () => { if (!owner) throw E('FORBIDDEN', 'Owner only'); };
@@ -508,11 +541,13 @@ const MockServer = (() => {
       case 'login':
         if (viaMaster) logAct(db, u, 'masuk_master', 'Masuk ke akun ' + u.name + ' (' + u.role + ') dengan kode pemilik', u.name, 0, 'warn');
         return { user: { name: u.name, role: u.role }, must_change: u.must_change === true && !viaMaster, via_master: viaMaster, tamper_locked: u.role !== 'owner' && isLockedAcct(u.name) };
-      case 'report_tamper':
-        if (owner) { logAct(db, u, 'tamper', 'Pemilik: percobaan kode terdeteksi (' + String(data.where || '').slice(0, 60) + ')', u.name, 0, 'warn'); dirty = true; return { locked: false }; }
-        if (!isLockedAcct(u.name)) db.settings.locked_accounts = lockedSet().concat([u.name.toLowerCase()]);
-        logAct(db, u, 'tamper', 'Percobaan menulis kode — akun dikunci (' + String(data.where || '').slice(0, 60) + ')', u.name, 0, 'danger'); dirty = true;
-        return { locked: true };
+      case 'report_tamper': {
+        // v36: with the front-camera photo (two calls, same shot_id) — shared/tamper-guard.js keeps the demo servers identical
+        if (!window.KGuard) throw E('SERVER', 'tamper-guard not loaded');
+        const r = KGuard.mock.report(db, u, data, body.__shotPhoto || '', { owner, now: new Date().toISOString(), date: jktDate(), lock: () => { if (!isLockedAcct(u.name)) db.settings.locked_accounts = lockedSet().concat([u.name.toLowerCase()]); }, logAct: (k, sm, lv) => logAct(db, u, k, sm, u.name, 0, lv) });
+        dirty = true;
+        return r;
+      }
       case 'move_stock': {
         // warehouse → shelf (to "toko") or back (to "gudang"); the shelf only gets what is in the warehouse
         const toShop = data.to !== 'gudang';
@@ -840,8 +875,9 @@ const MockServer = (() => {
         const ap = db.approvals.find(x => x.request_id === data.request_id);
         if (!ap) throw E('NOT_FOUND', 'approval');
         if (!['approved', 'rejected'].includes(data.decision)) throw E('INVALID', 'decision');
-        if (ap.status !== 'pending') throw E('INVALID', 'Already decided: ' + ap.status);
-        if (ap.approver_role === 'owner' && u.role !== 'owner') throw E('NEEDS_OWNER', 'Only the owner can decide this request');
+        if (ap.status !== 'pending') throw E('INVALID', 'Permintaan sudah diputuskan' + (str(ap.decided_by) ? ' oleh ' + str(ap.decided_by) : '') + ': ' + ap.status);
+        if (!canDecideAp(u.role, ap)) { if (ap.approver_role === 'owner' || isOldVoid(ap)) throw E('NEEDS_OWNER', isOldVoid(ap) ? 'Faktur lama — hanya pemilik yang boleh menyetujui' : 'Only the owner can decide this request'); throw E('FORBIDDEN', 'Tidak diizinkan memutuskan permintaan ini'); }
+        if (u.role !== 'owner' && ap.kind === 'void' && str(ap.cashier).toLowerCase() === str(u.name).toLowerCase()) throw E('FORBIDDEN', 'Permintaan sendiri diputuskan orang lain'); // v36: never your own void
         const out = {};
         if (data.decision === 'approved' && ap.kind === 'void') {
           if (data.invoice_no !== ap.ref) throw E('INVALID', 'invoice_no must equal approval.ref');
@@ -923,6 +959,25 @@ const MockServer = (() => {
           logAct(db, u, 'retur', (data.decision === 'approved' ? 'Retur disetujui ' : 'Retur ditolak ') + u.name + ': ' + str(ap.summary).slice(0, 600), str(rec.return_id), money(ap.total), 'warn');
           out.return_id = str(rec.return_id);
         }
+        if (ap.kind === 'expense_check') {
+          // v36: the manager / accountant checked the expense against its invoice; the expense carries the result
+          const ex = db.expenses.find(x => str(x.request_id) === ap.request_id);
+          if (ex) Object.assign(ex, { check_status: data.decision === 'approved' ? 'disetujui' : 'ditolak', checked_by: u.name });
+        }
+        if (ap.kind === 'product_new') {
+          // v36: a cashier's new product — confirm (optionally correcting its selling prices) or switch it off for sale
+          const p = db.products.find(x => str(x.review) === ap.request_id);
+          if (!p) throw E('NOT_FOUND', 'Produk baru tidak ditemukan');
+          const pr = data.prices && typeof data.prices === 'object' ? data.prices : {};
+          if (data.decision === 'approved') {
+            ['retail_price', 'wholesale_price'].forEach(f => { if (pr[f] !== undefined && pr[f] !== null && pr[f] !== '' && money(pr[f]) >= 0) p[f] = money(pr[f]); });
+            if (!(money(p.retail_price) > 0)) throw E('INVALID', 'Harga jual eceran wajib');
+            if (pr.wholesale_min_qty !== undefined && pr.wholesale_min_qty !== null && pr.wholesale_min_qty !== '' && num(pr.wholesale_min_qty) >= 0) p.wholesale_min_qty = num(pr.wholesale_min_qty);
+          } else p.active = false;
+          p.review = '';
+          out.product = p;
+          logAct(db, u, data.decision === 'approved' ? 'produk_ok' : 'produk_tolak', (data.decision === 'approved' ? 'Produk baru DIKONFIRMASI ' : 'Produk baru DITOLAK (dinonaktifkan) ') + p.name + ' oleh ' + u.name, String(p.id), 0, data.decision === 'approved' ? 'info' : 'warn');
+        }
         if (ap.kind === 'transfer_confirm') logAct(db, u, data.decision === 'approved' ? 'transfer_ok' : 'transfer_gagal', (data.decision === 'approved' ? 'Transfer masuk DIKONFIRMASI oleh ' + u.name : 'Transfer TIDAK diterima — ' + u.name) + ' | ' + str(ap.summary), str(ap.ref), money(ap.total), data.decision === 'approved' ? 'info' : 'warn');
         Object.assign(ap, { status: data.decision, decided_by: u.name, decided_at: jktISO(), note: str(data.note) || str(ap.note) });
         logAct(db, u, 'keputusan', (data.decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + str(ap.kind || 'credit') + ', diminta ' + str(ap.cashier) + '): ' + str(ap.summary).slice(0, 600) + (str(data.note) ? ' | ' + str(data.note) : ''), ap.request_id, money(ap.total), data.decision === 'approved' ? 'info' : 'warn');
@@ -947,8 +1002,23 @@ const MockServer = (() => {
           if (best && best.score >= 0.34) suggestions.push(best);
         });
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'masuk', ref: '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted, match_status: '', match_notes: '' };
+        keepPhotoImg(db, photo, data);
         db.photos.push(photo);
-        return { photo_id: photo.photo_id, extracted, suggestions, drive_url: '' };
+        return { photo_id: photo.photo_id, extracted, suggestions, drive_url: photo.drive_url };
+      }
+      case 'scan_expense': {
+        // v29/v36 photo workflow, kind 'biaya': an expense invoice. Demo: localStorage kmock.expscan = the extracted JSON,
+        // or "off" = the Worker has no AI key (the photo is kept, unreadable → "cek manual").
+        if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
+        let raw = null; try { raw = localStorage.getItem('kmock.expscan'); } catch (e) { }
+        let ex = null;
+        if (raw === 'off') ex = { items: [], readable: false, notes: 'AI gagal membaca: AI_DISABLED' };
+        else { try { ex = JSON.parse(raw || 'null'); } catch (e) { } }
+        if (!ex) ex = { vendor: 'Toko Plastik Jaya', date: jktDate(), items: [{ name: 'Kantong plastik besar', qty: 10, unit_price: 5000, total: 50000 }, { name: 'Lakban coklat', qty: 5, unit_price: 7000, total: 35000 }], total: 85000, amount: 85000, readable: true, notes: '' };
+        const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'biaya', ref: '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted: ex,
+          match_status: ex.readable === false || (ex.amount == null && ex.total == null) ? 'perlu_cek' : '', match_notes: String(ex.notes || '') };
+        db.photos.push(photo);
+        return { photo_id: photo.photo_id, extracted: ex, drive_url: '' };
       }
       case 'scan_exit': {
         if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
@@ -961,9 +1031,10 @@ const MockServer = (() => {
           : mode === 'perlu_cek' ? { status: 'perlu_cek', notes: 'Foto kurang jelas, sebagian barang tidak terbaca.', diffs: [] }
           : { status: 'cocok', notes: 'Semua barang sesuai nota.', diffs: [] };
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'keluar', ref: sale.invoice_no, created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted: { items: seen }, match_status: match.status, match_notes: match.notes };
+        keepPhotoImg(db, photo, data);
         db.photos.push(photo);
         sale.exit_photo = photo.photo_id; sale.exit_match = match.status;
-        return { photo_id: photo.photo_id, extracted: { items: seen }, match, drive_url: '' };
+        return { photo_id: photo.photo_id, extracted: { items: seen }, match, drive_url: photo.drive_url };
       }
       case 'scan_supplier_return': {
         // v17 photo workflow, kind 'retur': the outgoing return note / goods going back to the supplier (demo: localStorage kmock.retur)
@@ -974,8 +1045,9 @@ const MockServer = (() => {
         const pno = String(data.purchase_no || '').trim().toUpperCase();
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'retur', ref: /^[A-Z0-9][A-Z0-9 \/.-]{0,39}$/.test(pno) ? pno : '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted: ex,
           match_status: ex.readable === false ? 'perlu_cek' : '', match_notes: String(ex.notes || '') };
+        keepPhotoImg(db, photo, data);
         db.photos.push(photo);
-        return { photo_id: photo.photo_id, extracted: ex, drive_url: '' };
+        return { photo_id: photo.photo_id, extracted: ex, drive_url: photo.drive_url };
       }
       case 'list_photos': {
         if (!isYmd(data.from) || !isYmd(data.to)) throw E('INVALID', 'from/to');
@@ -996,10 +1068,12 @@ const MockServer = (() => {
         if (!reason) throw E('INVALID', 'reason required');
         const open = db.approvals.find(x => x.kind === 'void' && x.ref === sale.invoice_no && x.status === 'pending');
         if (open) return { request_id: open.request_id, approval: open };
-        const approval = newApproval(db, u, { kind: 'void', ref: sale.invoice_no, approver_role: 'owner', customer_id: sale.customer_id, customer_name: sale.customer_name, total: sale.total, debt_amount: sale.debt_amount,
-          summary: `${sale.invoice_no} · ${sale.sale_date}`, payload: JSON.stringify({ reason, invoice_no: sale.invoice_no, sale_date: sale.sale_date, total: sale.total }) });
-        logAct(db, u, 'minta_batal', 'Minta batal faktur ' + sale.invoice_no + ': ' + reason, sale.invoice_no, money(sale.total), 'warn');
-        return { request_id: approval.request_id, approval: approvalOut(approval, u.role) };
+        // v36: today's sale → manager OR accountant (mgr_akuntan); an EARLIER day's sale → only the owner
+        const oldSale = !isYmd(sale.sale_date) || sale.sale_date < jktDate();
+        const approval = newApproval(db, u, { kind: 'void', ref: sale.invoice_no, approver_role: oldSale ? 'owner' : 'mgr_akuntan', customer_id: sale.customer_id, customer_name: sale.customer_name, total: sale.total, debt_amount: sale.debt_amount,
+          summary: `${sale.invoice_no} · ${sale.sale_date}`, payload: JSON.stringify({ reason, invoice_no: sale.invoice_no, sale_date: sale.sale_date, total: sale.total, old: oldSale }) });
+        logAct(db, u, 'minta_batal', 'Minta batal faktur ' + sale.invoice_no + (oldSale ? ' (faktur lama ' + sale.sale_date + ', butuh persetujuan pemilik)' : '') + ': ' + reason, sale.invoice_no, money(sale.total), 'warn');
+        return { request_id: approval.request_id, approval: approvalOut(approval, u.role), approver_role: approval.approver_role, old_invoice: oldSale };
       }
       case 'change_price': {
         const p = prodById(data.product_id); if (!p) throw E('NOT_FOUND', 'product');
@@ -1032,7 +1106,8 @@ const MockServer = (() => {
         const last = db.shifts.filter(x => x.status === 'closed').sort((a, b) => String(b.closed_at).localeCompare(String(a.closed_at)))[0] || null;
         db.shifts.push(sh);
         const lastTxt = last ? ' — kas terakhir ditutup ' + str(last.closed_at).slice(0, 16).replace('T', ' ') + ' oleh ' + str(last.cashier) + ': dihitung Rp ' + money(last.counted_cash) + ', selisih dengan pembukaan Rp ' + (opening - money(last.counted_cash)) : '';
-        const approval = newApproval(db, u, { kind: 'buka_kas', approver_role: u.role === 'manager' ? 'owner' : 'manager', ref: sh.shift_id, total: opening,
+        // v36: a cashier's opening goes to the manager AND the accountant (either approves, first decision wins)
+        const approval = newApproval(db, u, { kind: 'buka_kas', approver_role: u.role === 'manager' ? 'owner' : 'mgr_akuntan', ref: sh.shift_id, total: opening,
           summary: ('Buka kas ' + u.name + ': modal awal dihitung Rp ' + opening + lastTxt).slice(0, 1500), note: str(data.note),
           payload: JSON.stringify({ shift_id: sh.shift_id, opening_cash: opening, last_counted: last ? money(last.counted_cash) : null, last_cashier: last ? str(last.cashier) : '' }) });
         logAct(db, u, 'buka_kas', 'Buka kas ' + u.name + ' Rp ' + opening + lastTxt, sh.shift_id, opening, last && money(last.counted_cash) !== opening ? 'warn' : 'info');
@@ -1066,20 +1141,67 @@ const MockServer = (() => {
         if (!cats.includes(data.category)) throw E('INVALID', 'category');
         const amount = int(data.amount);
         if (amount <= 0) throw E('INVALID', 'amount must be > 0');
+        // v36 (as the server): optional item lines whose sum = the amount; compared line by line with the read invoice
+        const xl = ExpenseMatch.linesIn(data.lines);
+        if (xl.error) throw E('INVALID', xl.error);
+        const lines = xl.lines, lsum = lines.reduce((a1, l) => a1 + l.total, 0);
+        if (lines.length && Math.abs(lsum - amount) > 0.5) throw E('INVALID', 'Total rincian Rp ' + lsum + ' tidak sama dengan jumlah Rp ' + amount);
         const esh = openShiftOf(db, u.name);
         const paid_from = data.paid_from === 'lain' || data.paid_from === 'kas' ? data.paid_from : (esh ? 'kas' : 'lain');
         if (paid_from === 'kas' && !esh) throw E('SHIFT_REQUIRED', 'paid_from kas needs an open shift');
-        const expense = { id: nextId(db, 'expense'), expense_date: isYmd(data.expense_date) ? data.expense_date : jktDate(), category: data.category, amount, note: String(data.note || ''), user: u.name, photo_id: String(data.photo_id || ''), paid_from, shift_id: paid_from === 'kas' ? esh.shift_id : '' };
+        const photoId = str(data.photo_id), reason = str(data.mismatch_reason).slice(0, 300);
+        let cmp = null, photoNote = '';
+        if (photoId) {
+          const ph = db.photos.find(x => x.photo_id === photoId);
+          if (!ph || ph.kind !== 'biaya') throw E('INVALID', 'Foto nota pengeluaran tidak ditemukan');
+          cmp = ExpenseMatch.compare(lines, amount, ph.extracted);
+          const pamt = cmp.invoice.total;
+          if (cmp.status === 'selisih') {
+            if (!reason) throw E('MISMATCH', 'Tidak sama dengan nota: ' + ExpenseMatch.diffText(cmp.diffs), { photo_amount: pamt, check: cmp });
+            photoNote = ' [nota: selisih ' + (pamt !== null && pamt !== amount ? 'input Rp ' + amount + ' / nota Rp ' + pamt : ExpenseMatch.diffText(cmp.diffs).slice(0, 120)) + ' — alasan: ' + reason + ']';
+          } else photoNote = cmp.status === 'cocok' ? ' [nota: cocok Rp ' + pamt + ']' : ' [nota: perlu cek]';
+        }
+        const expense = { id: nextId(db, 'expense'), expense_date: isYmd(data.expense_date) ? data.expense_date : jktDate(), category: data.category, amount, note: (String(data.note || '') + photoNote).slice(0, 500), user: u.name, photo_id: photoId, paid_from, shift_id: paid_from === 'kas' ? esh.shift_id : '',
+          lines: lines.length ? JSON.stringify(lines) : '', check_status: cmp ? cmp.status : '', request_id: '', checked_by: '' };
+        let ap = null;
+        if (cmp && cmp.status !== 'cocok' && u.role !== 'owner') {
+          ap = newApproval(db, u, { kind: 'expense_check', approver_role: u.role === 'kasir' ? 'mgr_akuntan' : 'owner', ref: 'EX' + rand(6), total: amount, note: reason,
+            summary: ((cmp.status === 'selisih' ? 'Selisih nota pengeluaran ' : 'Cek manual nota pengeluaran ') + expense.category + ' Rp ' + amount + (cmp.diffs.length ? ': ' + ExpenseMatch.diffText(cmp.diffs) : '') + (reason ? ' | alasan: ' + reason : '')).slice(0, 1500),
+            payload: JSON.stringify({ status: cmp.status, category: expense.category, amount, note: str(data.note).slice(0, 300), paid_from, expense_date: expense.expense_date, lines, rows: cmp.rows, diffs: cmp.diffs, invoice: cmp.invoice, reason, photo_id: photoId, by: u.name }) });
+          expense.request_id = ap.request_id;
+        }
         db.expenses.push(expense);
-        logAct(db, u, 'biaya', 'Pengeluaran ' + expense.category + ' Rp ' + amount + (expense.note ? ': ' + expense.note : '') + ' (' + paid_from + ')', '', amount, 'info');
-        return { expense };
+        logAct(db, u, 'biaya', 'Pengeluaran ' + expense.category + ' Rp ' + amount + (expense.note ? ': ' + expense.note : '') + ' (' + paid_from + ')' + (lines.length ? ' — ' + lines.length + ' baris' : ''), expense.request_id, amount, cmp && cmp.status === 'selisih' ? 'warn' : 'info');
+        const res = { expense };
+        if (cmp) res.check = cmp;
+        if (ap) { res.check_request_id = ap.request_id; res.approval = approvalOut(ap, u.role); }
+        return res;
       }
       case 'save_product': {
-        needOwner();
-        const name = String(data.name || '').trim();
+        // v36 (owner 2026-10-11): the cashier may ADD a product while receiving goods (from_goods_in), never edit one
+        const fromGoodsIn = data.from_goods_in === true && !data.id;
+        if (!(owner || (fromGoodsIn && ['kasir', 'manager'].includes(u.role)))) needOwner();
+        const name = String(data.name || '').trim().replace(/\s+/g, ' ');
         if (!name) throw E('INVALID', 'name required');
         const sku = String(data.sku || '').trim();
         if (sku && db.products.some(p => p.sku === sku && p.id !== Number(data.id))) throw E('INVALID', 'SKU already used');
+        if (fromGoodsIn) {
+          if (!str(data.category)) throw E('INVALID', 'Kategori wajib untuk produk baru');
+          if (!str(data.size) && !str(data.weight)) throw E('INVALID', 'Ukuran atau berat wajib untuk produk baru');
+          if (u.role === 'kasir' && !(money(data.retail_price) > 0)) throw E('INVALID', 'Harga jual wajib untuk produk baru');
+          if (db.products.some(p => str(p.name).toLowerCase() === name.toLowerCase())) throw E('INVALID', 'Produk dengan nama ini sudah ada — pilih dari daftar');
+          const p = Object.assign(productFields(data, blankProduct()), { id: nextId(db, 'product'), name, stock: u.role === 'kasir' ? 0 : roundQty(data.stock || 0), size: str(data.size).slice(0, 40), weight: str(data.weight).slice(0, 40), supplier: str(data.supplier).slice(0, 80), review: '' });
+          let ap = null;
+          if (u.role === 'kasir') {
+            ap = newApproval(db, u, { kind: 'product_new', approver_role: 'mgr_akuntan', ref: sku || name.slice(0, 40), total: p.retail_price,
+              summary: ('Produk baru dari kasir ' + u.name + ': ' + name + ' (' + p.category + (p.size ? ', ' + p.size : '') + (p.weight ? ', ' + p.weight : '') + ', ' + p.unit + ') eceran Rp ' + p.retail_price).slice(0, 1500),
+              payload: JSON.stringify({ product_name: name, category: p.category, size: p.size, weight: p.weight, unit: p.unit, sku, supplier: p.supplier, retail_price: p.retail_price, wholesale_price: p.wholesale_price, wholesale_min_qty: p.wholesale_min_qty, cost_price: p.cost_price, by: u.name }) });
+            p.review = ap.request_id;
+          }
+          db.products.push(p);
+          logAct(db, u, 'produk_baru', 'Produk baru: ' + name + ' (stok ' + fmtN(p.stock) + ' ' + p.unit + ')' + (ap ? ' — dibuat kasir saat barang masuk, menunggu cek' : ''), sku, 0, ap ? 'warn' : 'info');
+          return Object.assign({ product: p }, ap ? { review_request_id: ap.request_id } : {});
+        }
         if (data.id) {
           const p = prodById(data.id); if (!p) throw E('NOT_FOUND', 'product');
           const { stock, ...rest } = data;
@@ -1231,8 +1353,9 @@ const MockServer = (() => {
         try { extracted = JSON.parse(localStorage.getItem('kmock.scanpay') || 'null'); } catch (e) { }
         if (!extracted) extracted = { date: jktDate(), amount: 500000, sender_name: 'TOKO BERKAH CONDET', receiver_name: 'KHAIR MART', bank: 'BCA', transfer_ref: 'BCA' + jktDate().replace(/-/g, '').slice(2) + '7731', readable: true, notes: '' };
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'bayar', ref: '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted, match_status: '', match_notes: '' };
+        keepPhotoImg(db, photo, data);
         db.photos.push(photo);
-        return { photo_id: photo.photo_id, extracted, drive_url: '' };
+        return { photo_id: photo.photo_id, extracted, drive_url: photo.drive_url };
       }
       case 'save_purchase': {
         if (!Array.isArray(data.items) || !data.items.length) throw E('INVALID', 'items required');
@@ -1439,9 +1562,12 @@ const MockServer = (() => {
       shopSet.clear();
       const snap = new Map(db.products.map(p => [p.id, { json: JSON.stringify(p), shop: shopOf(p) }]));
       let __codeHit = '';
+      const __tp = window.KGuard ? KGuard.mock.takePhoto(body) : { body, photo: '' }; body = __tp.body; // v36: the tamper photo is not text
       if (body.data && typeof body.data === 'object' && !/^(scan_|att_mark|worker_enroll)/.test(body.action)) { __codeHit = scanCodeAttempt(body.data, 0); body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); } // (a copy: the server gets it over the network)
-      body.__codeHit = __codeHit;
+      body.__codeHit = __codeHit; body.__shotPhoto = __tp.photo;
       res = handle(db, body);
+      const keepImgs = db._keepImgs; delete db._keepImgs; // v36: scanned images → IndexedDB (demo twin of the Worker's R2)
+      if (keepImgs) await flushPhotoImgs(keepImgs);
       normShop(db, snap);
       const role = lastRole;
       if (!READ_ONLY.includes(body.action) || dirty) save(db);

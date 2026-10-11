@@ -52,6 +52,9 @@ async function switchUser(page, user, pin, query = '') {
   await expect(page.locator('#app')).toBeVisible();
 }
 async function login(page, user = 'Pemilik', pin = '1234', query = '', opts = {}) {
+  // v36 (owner 2026-10-11): the owner no longer sells — his cashier page is a read-only list of today's sales. A test that
+  // logs in to land on the selling screen (no opts.stay) sells as the manager, who still does; opts.stay keeps the owner.
+  if (user === 'Pemilik' && !opts.stay) { user = 'Jihan'; pin = '2222'; }
   await openApp(page, query, opts);
   await enterKey(page);
   if (user === 'Pemilik') {

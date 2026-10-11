@@ -22,7 +22,7 @@ test('accountant: lands on reports, sees only the audit views, cannot change any
   await expect(page.locator('#view-reports')).toBeVisible();
   await expect(page.locator('body')).toHaveClass(/\bro\b/);
   const views = await page.locator('#nav [data-view]').evaluateAll(b => b.map(x => x.dataset.view));
-  expect(views.sort()).toEqual(['approvals', 'bank', 'cold', 'customers', 'history', 'koreksi', 'products', 'purchases', 'reports', 'retur', 'settings', 'shoplist', 'suppliers']); // shoplist = send a rep the shops of a street from Google Maps (v33) // cold = البرادات page (read-only there too); products = create-only (v22); approvals = the manager-or-accountant inbox (v29)
+  expect(views.sort()).toEqual(['approvals', 'bank', 'cold', 'customers', 'field', 'history', 'koreksi', 'products', 'purchases', 'reports', 'retur', 'settings', 'shoplist', 'suppliers']); // field = the field page, read-only (v36) // shoplist = send a rep the shops of a street from Google Maps (v33) // cold = البرادات page (read-only there too); products = create-only (v22); approvals = the manager-or-accountant inbox (v29)
   await page.evaluate(() => go('pos'));
   await expect(page.locator('#view-reports')).toBeVisible(); // POS is not reachable
   await nav(page, 'purchases');
@@ -41,7 +41,7 @@ test('accountant: lands on reports, sees only the audit views, cannot change any
   await page.keyboard.press('Escape');
   for (const v of ['suppliers', 'retur', 'bank', 'history']) await nav(page, v);
   // the server refuses every write
-  for (const [a, d] of [['save_sale', { items: [] }], ['receive_payment', { customer_id: 1, amount: 1 }], ['save_purchase', { supplier: 'X' }], ['save_settings', { settings: {} }], ['request_return', {}], ['list_approvals', {}]]) {
+  for (const [a, d] of [['save_sale', { items: [] }], ['receive_payment', { customer_id: 1, amount: 1 }], ['save_purchase', { supplier: 'X' }], ['save_settings', { settings: {} }], ['request_return', {}], ['request_void', { invoice_no: 'X', reason: 'x' }]]) { // v36: list_approvals is allowed (shared mgr_akuntan requests)
     expect((await asUser(page, 'Lestari', '5555', a, d)).error).toBe('FORBIDDEN');
   }
   const r = await asUser(page, 'Lestari', '5555', 'daily_report', { date: await page.evaluate(() => today()) });

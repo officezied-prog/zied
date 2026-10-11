@@ -6,13 +6,14 @@ import { handleRequest } from './core.js';
 import { handleField } from './field.js';
 import { handleChat } from './chat.js';
 import { handleAtt } from './attendance.js';
-import { handlePhoto } from './photo.js';
+import { handlePhoto, handlePhotoFile } from './photo.js';
 import { handleCold } from './cold.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*', // store-key auth, no cookies → safe
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  // v36: the stored-photo GET sends the usual credentials as headers (never in the URL).
+  'Access-Control-Allow-Headers': 'Content-Type, X-Khair-Key, X-Khair-User, X-Khair-Pin',
   'Access-Control-Max-Age': '86400',
 };
 
@@ -42,6 +43,38 @@ function d1Adapter(DB) {
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
+    const url = new URL(request.url);
+    // v36 (owner 2026-10-08: "فعّل حفظ الصور عبر Google Drive"): GET .../khair-pos-photo/file/<photo_id> streams a photo
+    // kept in R2 — owner / manager / accountant only (src/photo.js handlePhotoFile).
+    const fileMatch = request.method === 'GET' && /\/khair-pos-photo\/file\/([^/]+)$/.exec(url.pathname);
+    if (fileMatch) {
+      if (!env || !env.DB || !env.STORE_KEY) return json({ ok: false, error: 'SERVER', message: 'Backend not configured' }, 500);
+      const headers = {};
+      request.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
+      try {
+        let id = '';
+        try { id = decodeURIComponent(fileMatch[1]); } catch (e) { id = ''; }
+        const r = await handlePhotoFile(d1Adapter(env.DB), id, headers, env.STORE_KEY, env);
+        if (!r.object) return json(r.json, r.status);
+        const obj = r.object;
+        return new Response(obj.body, {
+          status: 200,
+          headers: {
+            'Content-Type': (obj.httpMetadata && obj.httpMetadata.contentType) || 'image/jpeg',
+            // A photo never changes once stored: cache it for a year, privately (per device), and only for these credentials.
+            'Cache-Control': 'private, max-age=31536000, immutable',
+            Vary: 'X-Khair-Key, X-Khair-User, X-Khair-Pin',
+            ...(obj.httpEtag ? { ETag: obj.httpEtag } : {}),
+            ...(obj.size !== undefined ? { 'Content-Length': String(obj.size) } : {}),
+            'X-Content-Type-Options': 'nosniff',
+            'Content-Disposition': 'inline',
+            ...CORS,
+          },
+        });
+      } catch (e) {
+        return json({ ok: false, error: 'SERVER', message: 'Server error' }, 500);
+      }
+    }
     if (request.method !== 'POST') {
       return json({ ok: false, error: 'METHOD', message: 'POST only' }, 405);
     }
@@ -54,12 +87,13 @@ export default {
     request.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
     // Route by path. khair-pos-photo → Photo (needs env for the AI key), khair-field →
     // Field, khair-chat → Chat, khair-att → Attendance, everything else → POS API.
-    const path = new URL(request.url).pathname;
+    const path = url.pathname;
     const adapter = d1Adapter(env.DB);
     try {
       let response;
       if (path.endsWith('khair-pos-photo')) {
-        response = await handlePhoto(adapter, text, headers, env.STORE_KEY, env);
+        // v36: the base of the stored-photo links (…/webhook/khair-pos-photo) on this Worker's own host.
+        response = await handlePhoto(adapter, text, headers, env.STORE_KEY, env, { base: url.origin + path });
       } else {
         const handler = path.endsWith('khair-field') ? handleField
           : path.endsWith('khair-chat') ? handleChat

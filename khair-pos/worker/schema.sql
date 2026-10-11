@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS pos_products (
   size TEXT,
   weight TEXT,
   exp_date TEXT,
-  exp_none INTEGER
+  exp_none INTEGER,
+  review TEXT
 );
 
 CREATE TABLE IF NOT EXISTS pos_customers (
@@ -199,9 +200,14 @@ CREATE TABLE IF NOT EXISTS pos_expenses (
   note TEXT,
   user TEXT,
   photo_id TEXT,
-  paid_from TEXT
+  paid_from TEXT,
+  lines TEXT,
+  check_status TEXT,
+  request_id TEXT,
+  checked_by TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pos_expenses_expense_date ON pos_expenses (expense_date);
+CREATE INDEX IF NOT EXISTS idx_pos_expenses_request_id ON pos_expenses (request_id);
 
 CREATE TABLE IF NOT EXISTS pos_shifts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -347,6 +353,22 @@ CREATE TABLE IF NOT EXISTS pos_returns (
 CREATE INDEX IF NOT EXISTS idx_pos_returns_return_date ON pos_returns (return_date);
 CREATE INDEX IF NOT EXISTS idx_pos_returns_ref ON pos_returns (ref);
 
+CREATE TABLE IF NOT EXISTS pos_tamper_shots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  shot_id TEXT,
+  at TEXT,
+  shot_date TEXT,
+  user TEXT,
+  role TEXT,
+  place TEXT,
+  kind TEXT,
+  sample TEXT,
+  photo TEXT,
+  photo_status TEXT,
+  device TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pos_tamper_shots_shot_id ON pos_tamper_shots (shot_id);
+
 CREATE TABLE IF NOT EXISTS pos_photos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   photo_id TEXT,
@@ -382,7 +404,8 @@ CREATE TABLE IF NOT EXISTS pos_shops (
   customer_id REAL,
   next_visit TEXT,
   type_other TEXT,
-  chain TEXT
+  chain TEXT,
+  photo_visit TEXT
 );
 
 CREATE TABLE IF NOT EXISTS pos_visits (
@@ -403,8 +426,10 @@ CREATE TABLE IF NOT EXISTS pos_visits (
   next_visit TEXT,
   photo_thumb TEXT,
   drive_url TEXT,
-  rating REAL
+  rating REAL,
+  shop_photo TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_pos_visits_shop_id ON pos_visits (shop_id);
 
 CREATE TABLE IF NOT EXISTS pos_tracks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -718,7 +743,9 @@ CREATE TABLE IF NOT EXISTS cold_orders (
   cancelled_by TEXT,
   trip TEXT,
   log TEXT,
-  customer_id REAL
+  customer_id REAL,
+  plate TEXT,
+  dest_phone TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cold_orders_status ON cold_orders (status);
 CREATE INDEX IF NOT EXISTS idx_cold_orders_order_date ON cold_orders (order_date);

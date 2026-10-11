@@ -108,7 +108,7 @@ test('Lapangan: SVG fallback map with route and numbered visits, far-visit warni
 });
 
 test('Pesanan sales: badge, open order, Proses → POS sale → order diproses with invoice; Batal with note', async ({ page }) => {
-  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await login(page, 'Jihan', '2222', '', { stay: true }); // v36: the manager turns an order into a sale (the owner does not sell)
   let db = await getDb(page);
   const nNew = db.field_orders.filter(o => o.status === 'baru').length;
   expect(nNew).toBeGreaterThan(0);

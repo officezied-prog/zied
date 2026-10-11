@@ -88,8 +88,8 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
   `report_tamper` (the app reports a code attempt it caught). All three apps detect code client-side and instantly log the
   user out to the lock screen; the owner sees a banner on open. Server: `backend/process.js`, harness `harness19.js`
   (+ harness16 V1/V6, harness18 M3 updated). Process v19 pasted by the owner 07 Oct, verified equal (N chars, only
-  the Process node changed), published: active version 69aa1dc0. Camera capture of people was declined (UU PDP); the lock + owner alert is the
-  deterrent instead. Decided but NOT yet built: Phase 2 = manager-performed price correction of already-sold goods with an
+  the Process node changed), published: active version 69aa1dc0. Camera capture of people was declined (UU PDP) at first; the lock + owner alert was the
+  deterrent — superseded by v36 below (the owner decided on the front-camera photo with a visible notice). Decided but NOT yet built: Phase 2 = manager-performed price correction of already-sold goods with an
   owner banner and the difference in reports + customer debt.
 - **v20 Phase 2 IN PROGRESS (price correction) — server engine built + tested, NOT deployed, no UI yet:** new action
   `correct_price` (owner/manager): data {product_id, old_price, new_price, from, to, reason, update_catalog?}. Re-prices every
@@ -154,6 +154,29 @@ login. The owner sets his 8-digit master code in his app → Settings → Kode p
 
 - Leaflet 1.9.4 is vendored in `vendor/leaflet` (no cdnjs; CSP no longer allows cdnjs). Khair Sales cache is `khair-sales-v3`.
 - Khair Sales: swiping in presentation mode on the product photo now works (image drag cancelled the swipe).
+
+## v36 security / recording (11 Oct, owner's decisions)
+- **Photo of whoever types code** (owner: «صور من يحاول كتابة الكود هذا ضروري جدا», earlier «الكاميرا الأمامية تكفي مع لافتة»):
+  the owner DECIDED it (this replaces the earlier UU PDP refusal), with a visible notice — a permanent line
+  "📷 Perangkat ini diawasi kamera untuk keamanan" / «هذا الجهاز مراقَب بالكاميرا للأمان» on the login / lock screen of Khair Kasir,
+  Khair Sales and a staff session of the owner app. On a code attempt the app covers the screen, locks the account on the server at once
+  (`report_tamper`, photo 'pending'), takes ONE front-camera frame (JPEG ≤ 640 px) and sends it for the same `shot_id`; camera refused /
+  no camera → recorded "tanpa foto (kamera ditolak / tidak ada kamera)", the lock works the same. The camera permission is asked once at a
+  staff login so the shot is silent later. Shared code `shared/tamper-guard.js` (KGuard). Table `pos_tamper_shots` (created by the Worker
+  itself on first use). The owner sees the photos in "Perlu perhatian" (bell), Pengaturan → Pengguna ("Foto" next to "Buka kunci") and
+  Aktivitas, and unlocks from the photo window (`list_tamper_shots`, owner-only). Fixed on the way: the server refused `report_tamper` from
+  sales / akuntan accounts (FORBIDDEN), so a rep's code attempt never locked the account; now it does (demo servers too).
+- **Sequential digits close the app** (owner, khair mart 2 #41–42): a run of 8+ digits that is a sequence (12345678, 87654321, 1234567890),
+  one repeated digit (11111111) or a short block repeated (12121212, 12341234) typed into a FREE-TEXT field (names, notes, reasons,
+  addresses, chat) locks like a code attempt, with the photo. Never in number / money / quantity / barcode / SKU / phone / PIN / e-mail /
+  document or reference / promo fields or any search box, nor when the digits come as a barcode-scanner burst; pasted Google Maps lists
+  (`data-digits-ok`) are exempt. Client-side only (the server cannot tell a note from a barcode).
+- **Recording starts by itself on "Bayar"** (owner: «في التسجيل التلقائي عند الضغط ابدأ بدون سؤال الزبون»): Khair Kasir starts the voice survey
+  when the payment window opens — no consent tap; the owner app when the cashier starts paying (phone pay bar, or the method / amount in the
+  panel; not with the first item, so item names are still spoken). Visible notice instead of the question: "🎙️ Rekaman aktif" while
+  recording, "Transaksi direkam untuk layanan & keamanan" in the window and printed on the receipt of a recorded sale. Still text only (no
+  audio). Settings "survey_auto" off = no automatic start ("Mulai rekam" button). An automatic start that fails (microphone refused / no
+  internet) is said quietly in the window, not as an error toast.
 
 ## Khair Gudang Dingin (cold storage, v1, 07 Oct)
 - Page `khair-pos/gudang/` (owner app menu "Gudang Dingin" for owner / manager / akuntan; same login reused in the same tab). Demo `gudang/?mock=1`.

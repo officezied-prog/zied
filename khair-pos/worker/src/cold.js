@@ -58,6 +58,12 @@ const COLD_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_cold_pallets_warehouse ON cold_pallets (warehouse)',
   'CREATE INDEX IF NOT EXISTS idx_cold_orders_status ON cold_orders (status)',
 ];
+// v36 (owner 2026-10-11): the order carries the truck plate and the customer's phone. ADD COLUMN only, never destructive;
+// on a table created above from tables.js they already exist and the duplicate-column error is swallowed.
+export const COLD_MIGRATIONS = [
+  'ALTER TABLE cold_orders ADD COLUMN plate TEXT',
+  'ALTER TABLE cold_orders ADD COLUMN dest_phone TEXT',
+];
 function createSql(table) {
   const cols = ['id INTEGER PRIMARY KEY AUTOINCREMENT'];
   for (const [c, t] of Object.entries(TABLES[table])) cols.push(`${c} ${SQL_TYPE[t]}`);
@@ -86,6 +92,7 @@ async function ensureColdSchema(adapter) {
   if (coldSchemaEnsured) return;
   for (const t of COLD_TABLES) { try { await adapter.run(createSql(t), []); } catch (e) { /* exists */ } }
   for (const sql of COLD_INDEXES) { try { await adapter.run(sql, []); } catch (e) { /* exists */ } }
+  for (const sql of COLD_MIGRATIONS) { try { await adapter.run(sql, []); } catch (e) { /* column already exists */ } }
   // Seed the cut-over setup ONLY into a fresh (empty) cold DB — never once any cooler exists.
   try {
     const any = await adapter.all('SELECT 1 FROM cold_warehouses LIMIT 1', []);

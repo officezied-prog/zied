@@ -38,7 +38,7 @@ test('hold → next sale → resume (same lines, discount, override) → pay; su
   await expect(page.locator('#held-chip')).toHaveText('Ditahan (1)');
   const st = await heldStored(page);
   expect(st).toHaveLength(1);
-  expect(st[0]).toMatchObject({ label: 'Bapak topi hitam', by: 'Pemilik' });
+  expect(st[0]).toMatchObject({ label: 'Bapak topi hitam', by: 'Jihan' }); // v36: the manager sells (the owner no longer does)
   expect(JSON.stringify(st[0])).not.toMatch(/unit_price|retail_price|cost/);
 
   // next customer

@@ -20,8 +20,10 @@ export function parseRequest(body, headers) {
   const shift = function (d, n) { return new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10); };
   const periodEnd = period ? new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0)).toISOString().slice(0, 10) : '';
   // get_sales: a range; daily_report: one day.
-  const salesFrom = action === 'get_sales' && isDate(data.from) ? data.from : (action === 'daily_report' && isDate(data.date) ? data.date : '9999-12-31');
-  const salesTo = action === 'get_sales' && isDate(data.to) ? data.to : (action === 'daily_report' && isDate(data.date) ? data.date : '0000-01-01');
+  // v36: profit_loss (the monthly profit & loss statement) reads the same ranges as get_sales.
+  const rangeAction = action === 'get_sales' || action === 'profit_loss';
+  const salesFrom = rangeAction && isDate(data.from) ? data.from : (action === 'daily_report' && isDate(data.date) ? data.date : '9999-12-31');
+  const salesTo = rangeAction && isDate(data.to) ? data.to : (action === 'daily_report' && isDate(data.date) ? data.date : '0000-01-01');
   return {
     action: action,
     key: String(body.key || ''),

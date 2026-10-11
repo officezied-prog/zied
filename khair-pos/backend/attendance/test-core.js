@@ -64,6 +64,34 @@ assert.strictEqual(call('att_settings', { settings: { att_grace_min: 5 } }, MGR,
 assert.strictEqual(KAtt.hoursOn(settings(), '2027-01-10').end, '23:00');
 assert.strictEqual(KAtt.hoursOn(settings(), '2026-10-10').end, '21:00');
 
+// v36: the Ramadan season is computed every year by itself (two months before 1 Ramadan → Eid al-Fitr, 08:00–23:00)
+const R48 = KAtt.ramadanOf(1448);
+assert.deepStrictEqual([R48.ramadan, R48.eid, R48.from, R48.to], ['2027-02-08', '2027-03-09', '2026-12-08', '2027-03-09']);
+assert.deepStrictEqual([KAtt.ramadanOf(1447).from, KAtt.ramadanOf(1449).from, KAtt.ramadanOf(1449).to], ['2025-12-18', '2027-11-28', '2028-02-26']);
+const auto = { att_work_start: '08:00', att_work_end: '21:00' }; // nothing typed by hand
+assert.deepStrictEqual(KAtt.hoursOn(auto, '2026-12-07'), { start: '08:00', end: '21:00', season: '', auto: false }); // the day before
+assert.deepStrictEqual(KAtt.hoursOn(auto, '2026-12-08'), { start: '08:00', end: '23:00', season: 'Ramadan 1448 H', auto: true });
+assert.strictEqual(KAtt.hoursOn(auto, '2027-03-09').end, '23:00'); // Eid al-Fitr is the last long day
+assert.strictEqual(KAtt.hoursOn(auto, '2027-03-10').end, '21:00');
+assert.strictEqual(KAtt.hoursOn(auto, '2028-01-15').end, '23:00'); // the next year's season (1449: from 28 Nov 2027)
+assert.strictEqual(KAtt.hoursOn(Object.assign({ att_ramadan_auto: false }, auto), '2027-01-10').end, '21:00'); // switched off
+assert.strictEqual(KAtt.hoursOn(Object.assign({ att_ramadan_end: '22:30' }, auto), '2027-01-10').end, '22:30');
+// a hand-typed season still wins on its own days
+assert.strictEqual(KAtt.hoursOn(Object.assign({ att_seasons: [{ name: 'Libur', from: '2027-01-01', to: '2027-01-02', work_end: '17:00' }] }, auto), '2027-01-01').end, '17:00');
+// beyond the table (Intl / mean-year fallback): still a ~3-month season ending around Eid
+const R60 = KAtt.ramadanOf(1460);
+assert(/^20(38|39)-/.test(R60.ramadan) && R60.eid > R60.ramadan && R60.from < R60.ramadan, JSON.stringify(R60));
+assert.deepStrictEqual(KAtt.ramadanSeasons('2026-10-11', 2).map(x => x.hijri), [1448, 1449]);
+assert.deepStrictEqual(KAtt.ramadanSeasons('2027-03-09', 1).map(x => x.hijri), [1448]); // still today
+// the owner sees the computed seasons and can switch them / change the closing time
+r = call('att_bootstrap', {}, OWNER, '2026-10-08T02:00:00Z');
+assert(r.ok && r.settings.att_ramadan_auto === true && r.settings.att_ramadan_end === '23:00' && r.settings.ramadan[0].hijri === 1448 && r.settings.ramadan[0].from === '2026-12-08');
+assert.strictEqual(call('att_settings', { settings: { att_ramadan_end: '25:00' } }, OWNER, D1).error, 'INVALID');
+assert.strictEqual(call('att_settings', { settings: { att_ramadan_auto: 'no' } }, OWNER, D1).error, 'INVALID');
+assert(call('att_settings', { settings: { att_ramadan_auto: false, att_ramadan_end: '22:00' } }, OWNER, '2026-10-08T02:10:00Z').ok);
+assert.strictEqual(settings().att_ramadan_auto, false); assert.strictEqual(settings().att_ramadan_end, '22:00');
+assert(call('att_settings', { settings: { att_ramadan_auto: true, att_ramadan_end: '23:00' } }, OWNER, '2026-10-08T02:11:00Z').ok);
+
 // report: owner sees wages, manager does not; chain intact
 let rep = call('att_report', { from: '2026-10-07', to: '2026-10-08' }, OWNER, '2026-10-08T03:00:00Z');
 assert(rep.ok && rep.verify.ok, JSON.stringify(rep.verify));

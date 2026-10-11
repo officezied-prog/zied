@@ -12,7 +12,7 @@ const data = req.data && typeof req.data === 'object' ? req.data : {};
     else if (v && typeof v === 'object') cleanInput(v, depth + 1);
   });
 })(data, 0);
-const ops = { shops: [], visits: [], tracks: [], days: [], orders: [], images: [], product_flags: [], plans: [], street_log: [], shop_lists: [], api_usage: [] };
+const ops = { shops: [], visits: [], tracks: [], days: [], orders: [], images: [], product_flags: [], plans: [], street_log: [], shop_lists: [], api_usage: [], settings: [] };
 
 function rows(name) {
   try {
@@ -89,14 +89,16 @@ const role = ['owner', 'manager', 'sales', 'kasir', 'akuntan'].indexOf(me.role) 
 if (role === 'other') return fail('FORBIDDEN', 'Aplikasi ini untuk sales lapangan');
 const isBoss = role === 'owner' || role === 'manager';
 const SALES_ONLY = ['day_start', 'day_end', 'track', 'check_in', 'field_order', 'plan_save', 'list_ack'];
-const BOSS_ONLY = ['update_order', 'set_product_image', 'link_shop'];
+const BOSS_ONLY = ['update_order', 'set_product_image', 'link_shop', 'street_return_set'];
 // The kasir may reach ONLY cashier_orders. v30 (owner 2026-10-10): the accountant may READ the field report
 // (visits + orders table) for monitoring — field_bootstrap / list_field / product_images only, nothing that writes.
 // v33 (owner 2026-10-11): the office — manager, accountant OR cashier — may also send a rep a SHOP LIST for a street
 // (taken from Google Maps for free); that is the only thing the kasir / akuntan may write here.
 const OFFICE_LISTS = ['list_send', 'list_reps', 'lists_sent', 'resolve_links'];
 const KASIR_ONLY = ['cashier_orders'].concat(OFFICE_LISTS);
-const AKUNTAN_OK = ['field_bootstrap', 'list_field', 'product_images'].concat(OFFICE_LISTS);
+// v36 (owner 2026-10-11: "a copy for the manager, the accountant and the owner"): the accountant also reads the field page —
+// worked streets, the orders map, the streets to go back to and a new shop's photos (all read-only).
+const AKUNTAN_OK = ['field_bootstrap', 'list_field', 'product_images', 'streets_worked', 'orders_map', 'street_returns', 'shop_photos'].concat(OFFICE_LISTS);
 if (role === 'kasir' && KASIR_ONLY.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Kasir hanya boleh melihat pesanan');
 if (role === 'akuntan' && AKUNTAN_OK.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akuntan hanya melihat laporan lapangan');
 if (req.action === 'list_field' && !isBoss && role !== 'akuntan') return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
@@ -186,8 +188,72 @@ function listOut(l) {
 }
 function visitOut(v, full) {
   const o = clean(v);
-  if (!full) delete o.photo_thumb;
+  if (!full) { delete o.photo_thumb; delete o.shop_photo; }
   return o;
+}
+// v36 (owner 2026-10-11: "a photo of the shop owner and a photo of the shop, the phone number and the address"): the photos
+// stay on the visit (pos_visits is read by date, never in full); the shop row only names the visit that holds them.
+function photoB64(v) { return typeof v === 'string' ? v.replace(/^data:[^,]*,/, '').replace(/\s/g, '') : ''; }
+// v36 (owner 2026-10-11: "remind the rep to go back to the best streets; the return time is set with the manager; notify the
+// owner"): a worked street is scored by the shops along it (≤ 60 m of its line, or the street's name in the shop address) and
+// what they did in the last 90 days — orders (count, value), customers, interested visits. A good street whose return time
+// (setting street_return_days, default 14) has passed and that nobody planned again is "due".
+const STREET_NEAR_M = 60, STREET_GOOD = 2, STREET_DAYS_DEF = 14; // the 90 days of visits / orders are read by the Worker loaders
+function returnDays() {
+  const r = rows('Get Field Settings').find(function (x) { return str(x.skey) === 'street_return_days'; });
+  let v = r ? r.svalue : null; try { v = JSON.parse(v); } catch (e) { }
+  const n = Math.round(num(v));
+  return n >= 3 && n <= 90 ? n : STREET_DAYS_DEF;
+}
+function stNorm(s) { return ' ' + str(s).toLowerCase().replace(/\b(jalan|jln|jl)\b\.?/g, ' ').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim() + ' '; }
+function segDistM(p, a, b) {
+  const k = Math.cos(p[0] * Math.PI / 180), X = function (q) { return [(q[1] - p[1]) * k * 111320, (q[0] - p[0]) * 110540]; };
+  const A = X(a), B = X(b), dx = B[0] - A[0], dy = B[1] - A[1], L = dx * dx + dy * dy;
+  const t = L ? Math.max(0, Math.min(1, -(A[0] * dx + A[1] * dy) / L)) : 0;
+  return Math.sqrt(Math.pow(A[0] + t * dx, 2) + Math.pow(A[1] + t * dy, 2));
+}
+function streetReturns(list, shopList, visits, orders, days) {
+  const grid = {}, cell = function (la, ln) { return Math.floor(la * 100) + ':' + Math.floor(ln * 100); };
+  shopList.forEach(function (s) { if (isCoord(s.lat, s.lng)) (grid[cell(num(s.lat), num(s.lng))] = grid[cell(num(s.lat), num(s.lng))] || []).push(s); });
+  const vBy = {}, oBy = {}, addr = shopList.map(function (s) { return [s, stNorm(s.address)]; });
+  visits.forEach(function (v) { (vBy[v.shop_id] = vBy[v.shop_id] || []).push(v); });
+  orders.forEach(function (o) { if (str(o.status) !== 'batal') (oBy[o.shop_id] = oBy[o.shop_id] || []).push(o); });
+  const out = [];
+  list.forEach(function (r) {
+    const lines = jsonList(r.lines).filter(function (ln) { return Array.isArray(ln) && ln.length > 1; }), near = {};
+    if (lines.length) {
+      const b = streetBox(lines), pad = 0.0006;
+      const la0 = Math.floor((b.min_lat - pad) * 100), la1 = Math.floor((b.max_lat + pad) * 100), ln0 = Math.floor((b.min_lng - pad) * 100), ln1 = Math.floor((b.max_lng + pad) * 100);
+      if ((la1 - la0 + 1) * (ln1 - ln0 + 1) <= 400) {
+        for (let i = la0; i <= la1; i++) for (let j = ln0; j <= ln1; j++) (grid[i + ':' + j] || []).forEach(function (s) {
+          const p = [num(s.lat), num(s.lng)];
+          if (p[0] < b.min_lat - pad || p[0] > b.max_lat + pad || p[1] < b.min_lng - pad || p[1] > b.max_lng + pad) return;
+          if (lines.some(function (ln) { for (let q = 1; q < ln.length; q++) if (segDistM(p, ln[q - 1], ln[q]) <= STREET_NEAR_M) return true; return false; })) near[s.shop_id] = s;
+        });
+      }
+    }
+    const nm = stNorm(r.name);
+    if (!num(r.drawn) && nm.trim().length >= 4) addr.forEach(function (x) { if (!near[x[0].shop_id] && x[1].indexOf(nm) >= 0) near[x[0].shop_id] = x[0]; });
+    const ids = Object.keys(near);
+    let customers = 0, nOrd = 0, value = 0, interested = 0, rSum = 0, rN = 0;
+    ids.forEach(function (id) {
+      const s = near[id];
+      if (str(s.status) === 'pelanggan' || num(s.customer_id) > 0) customers++;
+      (oBy[id] || []).forEach(function (o) { nOrd++; value += money(o.total); });
+      (vBy[id] || []).forEach(function (v) { if (['order', 'tertarik', 'sudah_pelanggan'].indexOf(str(v.outcome)) >= 0) interested++; if (num(v.rating) > 0) { rSum += num(v.rating); rN++; } });
+    });
+    const score = nOrd * 3 + customers * 2 + interested + Math.floor(value / 1000000);
+    if (score < STREET_GOOD) return;
+    const last = str(r.last_date || r.plan_date), dueDate = addDaysYmd(last, days), next = str(r.next_date);
+    const overdue = Math.round((Date.parse(req.today) - Date.parse(dueDate)) / 86400000);
+    const o = { skey: str(r.skey), name: str(r.name), user: str(r.user), last_date: last, next_date: next, due_date: dueDate, due: !next && dueDate <= req.today,
+      overdue: Math.max(0, overdue), score: score, shops: ids.length, customers: customers, orders: nOrd, value: value, interested: interested, rating: rN ? Math.round(rSum / rN * 10) / 10 : 0 };
+    if (num(r.drawn)) { o.drawn = true; o.ref = str(r.ref); }
+    o._lines = lines;
+    out.push(o);
+  });
+  out.sort(function (a, b) { return (b.due ? 1 : 0) - (a.due ? 1 : 0) || b.overdue - a.overdue || b.score - a.score; });
+  return out.slice(0, 100);
 }
 // Same ids as khair-pos/shared/shop-types.js (grouped list shown in the apps); unknown → 'lainnya' + type_other.
 const SHOP_TYPES = ['perlengkapan_haji', 'travel_umrah', 'oleh_oleh_haji', 'toko_kurma', 'herbal', 'busana_muslim', 'toko_buku_islam', 'warung', 'toko', 'grosir_sembako', 'pasar', 'minimarket', 'supermarket', 'hypermarket', 'grosir_modern', 'bakery', 'toko_kue', 'katering', 'restoran', 'kafe', 'hotel', 'oleh_oleh', 'parsel', 'toko_buah', 'masjid', 'pesantren', 'sekolah', 'majelis_taklim', 'kantor', 'koperasi', 'reseller', 'toko_online', 'lainnya'];
@@ -277,7 +343,7 @@ switch (req.action) {
     if (data.shop_id && !shop) return fail('NOT_FOUND', 'Toko tidak ditemukan');
     const now = clientAt();
     let distance = -1;
-    let shopId;
+    let shopId, isNewShop = false;
     if (shop) {
       if (isCoord(shop.lat, shop.lng)) distance = Math.round(dist(num(shop.lat), num(shop.lng), num(data.lat), num(data.lng)));
       const ns = Object.assign({}, shop, {
@@ -294,6 +360,7 @@ switch (req.action) {
       shop = ns;
       shopId = shop.shop_id;
     } else {
+      isNewShop = true;
       const name = str(sd.name);
       if (!name) return fail('INVALID', 'Nama toko wajib');
       shopId = 'SP' + rand(6);
@@ -308,8 +375,11 @@ switch (req.action) {
       };
       ops.shops.push(forWrite(shop, -1));
     }
-    let photo = typeof data.photo_base64 === 'string' ? data.photo_base64.replace(/^data:[^,]*,/, '').replace(/\s/g, '') : '';
+    let photo = photoB64(data.photo_base64);
     const warnings = [];
+    // v36: the shop front (a photo of the place: no consent from a person needed) — asked for every new shop
+    let shopPhoto = photoB64(data.shop_photo_base64);
+    if (shopPhoto.length > 60000) { shopPhoto = ''; warnings.push('Foto toko terlalu besar, tidak disimpan'); }
     const placePhoto = data.photo_place === true && BLACK_OUTCOMES.indexOf(data.outcome) >= 0; // a photo of the closed / missing shop
     if (photo && data.photo_consent !== true && !placePhoto) { photo = ''; warnings.push('Foto tidak disimpan: pemilik toko belum setuju'); }
     if (photo.length > 60000) { photo = ''; warnings.push('Foto terlalu besar, tidak disimpan'); }
@@ -319,9 +389,19 @@ switch (req.action) {
       outcome: OUTCOMES.indexOf(data.outcome) >= 0 ? data.outcome : 'tertarik', notes: str(data.notes).slice(0, 500),
       // v30 (owner 2026-10-10): the rep's impression of the shop, 1–5 stars (0 = not rated).
       rating: Math.max(0, Math.min(5, Math.round(num(data.rating)))),
-      next_visit: isDate(data.next_visit) ? data.next_visit : '', photo_thumb: photo, drive_url: ''
+      next_visit: isDate(data.next_visit) ? data.next_visit : '', photo_thumb: photo, drive_url: '', shop_photo: shopPhoto
     };
-    if (BLACK_OUTCOMES.indexOf(visit.outcome) >= 0 && !photo) warnings.push('Foto tempat wajib untuk hasil ini'); // the app asks for it; an old app copy is still accepted
+    if (data.owner_photo_refused === true && !photo) visit.notes = ('[Pemilik tidak bersedia difoto] ' + visit.notes).trim().slice(0, 500);
+    if (BLACK_OUTCOMES.indexOf(visit.outcome) >= 0 && !photo && !shopPhoto) warnings.push('Foto tempat wajib untuk hasil ini'); // the app asks for it; an old app copy is still accepted
+    if (isNewShop) {
+      // v36: what the app now asks for every new shop (an old app copy is still accepted, with a warning)
+      if (!shop.phone) warnings.push('Nomor telepon toko baru wajib');
+      if (!shop.address) warnings.push('Alamat toko baru wajib');
+      if (!shopPhoto) warnings.push('Foto toko wajib untuk toko baru');
+      if (!photo && data.owner_photo_refused !== true && BLACK_OUTCOMES.indexOf(visit.outcome) < 0) warnings.push('Foto pemilik toko wajib untuk toko baru');
+    }
+    // the shop row names the visit that holds its photos (the new shop's, or a first shop photo of an older shop)
+    if (shopPhoto && (isNewShop || !str(shop.photo_visit))) { shop.photo_visit = visit.visit_id; ops.shops[ops.shops.length - 1].photo_visit = visit.visit_id; }
     ops.visits.push(forWrite(visit, -1));
     if (myDay && !myDay.ended_at) ops.tracks.push(forWrite({ user: me.name, track_date: req.today, t: now, lat: visit.lat, lng: visit.lng, acc: visit.acc, speed: 0, battery: 0 }, -1));
     return done({ ok: true, duplicate: false, visit: visitOut(visit, false), shop: clean(shop), warnings: warnings });
@@ -409,7 +489,7 @@ switch (req.action) {
     // v31b (owner 2026-10-11): every street a rep plans to work is kept on the map for ALL reps, so a second rep does not
     // repeat the same street. v32: KEPT FOREVER (owner: "always, not only 60 days") — read from the permanent street log,
     // around the rep's area (data.lat/lng, ±0.2°), latest entry per street and rep (the loader groups them), planned ones too.
-    if (role !== 'sales' && !isBoss) return fail('FORBIDDEN', 'Hanya sales, pemilik atau manajer');
+    if (role !== 'sales' && !isBoss && role !== 'akuntan') return fail('FORBIDDEN', 'Hanya sales, pemilik, manajer atau akuntan');
     const seen = {}, list = [];
     rows('Get Street Log').slice().sort(function (a, b) { return str(b.plan_date).localeCompare(str(a.plan_date)); }).forEach(function (r) {
       const k = str(r.skey) + '|' + str(r.user).toLowerCase();
@@ -509,6 +589,55 @@ switch (req.action) {
       days: rows('Get Range Days').filter(byUser).map(clean),
       plans: rows('Get Range Plans').filter(byUser).map(planOut)
     });
+  }
+
+  case 'orders_map': {
+    // v36 (owner 2026-10-11: "every order marked on the map with a sign and a sequence number, to know which area has the
+    // most orders and who ordered first"): every rep's accepted (not cancelled) field orders of a period, oldest first, each
+    // with its shop's position and area — small: no visits, tracks or photos.
+    if (role === 'sales') return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+    if (!isDate(data.from) || !isDate(data.to) || data.from > data.to) return fail('INVALID', 'Rentang tanggal tidak valid');
+    if ((Date.parse(data.to) - Date.parse(data.from)) / 86400000 > 92) return fail('INVALID', 'Maksimal 3 bulan');
+    const u = str(data.user).toLowerCase();
+    const list = rows('Get Range Orders').filter(function (o) { return str(o.status) !== 'batal' && (!u || str(o.user).toLowerCase() === u); })
+      .sort(function (a, b) { return str(a.order_time || a.order_date).localeCompare(str(b.order_time || b.order_date)) || num(a.id) - num(b.id); })
+      .map(function (o) {
+        const s = shopById[o.shop_id], has = s && isCoord(s.lat, s.lng);
+        return { order_id: str(o.order_id), user: str(o.user), order_date: str(o.order_date), order_time: str(o.order_time), shop_id: str(o.shop_id), shop_name: str(o.shop_name),
+          total: money(o.total), status: str(o.status), payment_method: str(o.payment_method), delivery_date: str(o.delivery_date), invoice_no: str(o.invoice_no), items: o.items, notes: str(o.notes),
+          lat: has ? num(s.lat) : null, lng: has ? num(s.lng) : null, area: s ? str(s.area) : '', address: s ? str(s.address) : '' };
+      });
+    return done({ ok: true, orders: list });
+  }
+
+  case 'shop_photos': {
+    // v36: the photos of a shop (owner with the rep + shop front), read only when someone opens them
+    const s = shopById[str(data.shop_id)];
+    if (!s) return fail('NOT_FOUND', 'Toko tidak ditemukan');
+    const vs = rows('Get Shop Visits').filter(function (v) { return str(v.shop_id) === s.shop_id; }).sort(function (a, b) { return num(b.id) - num(a.id); });
+    const pv = vs.find(function (v) { return str(v.visit_id) === str(s.photo_visit); }) || vs.find(function (v) { return str(v.shop_photo); }) || null;
+    const ov = pv && str(pv.photo_thumb) && BLACK_OUTCOMES.indexOf(pv.outcome) < 0 ? pv : vs.find(function (v) { return str(v.photo_thumb) && BLACK_OUTCOMES.indexOf(v.outcome) < 0; }) || null;
+    return done({ ok: true, shop_id: s.shop_id, owner_photo: ov ? str(ov.photo_thumb) : '', shop_photo: pv ? str(pv.shop_photo) : '',
+      visit_id: pv ? str(pv.visit_id) : (ov ? str(ov.visit_id) : ''), visit_time: pv ? str(pv.visit_time) : (ov ? str(ov.visit_time) : ''), user: pv ? str(pv.user) : (ov ? str(ov.user) : '') });
+  }
+
+  case 'street_returns': {
+    // v36: the good streets to go back to — a rep gets his own (with the street line, to put it in his plan with one tap);
+    // the owner, manager and accountant get every rep's
+    const days = returnDays();
+    const list = streetReturns(rows('Get Street Summary'), shops, rows('Get Score Visits'), rows('Get Score Orders'), days)
+      .filter(function (x) { return role !== 'sales' || str(x.user).toLowerCase() === meKey; })
+      .map(function (x) { const o = Object.assign({}, x); if (role === 'sales') o.lines = x._lines; delete o._lines; return o; });
+    return done({ ok: true, days: days, streets: list, today: req.today });
+  }
+
+  case 'street_return_set': {
+    // v36: the return time to a good street — set by the manager (or the owner), 3 … 90 days
+    const n = Math.round(num(data.days));
+    if (!(n >= 3 && n <= 90)) return fail('INVALID', 'Jangka kembali: 3–90 hari');
+    const r = rows('Get Field Settings').find(function (x) { return str(x.skey) === 'street_return_days'; });
+    ops.settings.push({ _id: r ? r.id : -1, skey: 'street_return_days', svalue: JSON.stringify(n) });
+    return done({ ok: true, days: n });
   }
 
   case 'cashier_orders': {

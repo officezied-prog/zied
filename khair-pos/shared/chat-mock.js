@@ -15,6 +15,9 @@
         { id: 2, channel: 'general', cid: 'seed2', from_user: 'Pemilik', from_name: 'Pemilik', from_role: 'owner', body: 'Pagi, semangat! Stok gula hampir habis ya.', image: '', created_at: back(nowIso, 5400), deleted: false },
         { id: 3, channel: 'owner_mgr', cid: 'seed3', from_user: 'Pemilik', from_name: 'Pemilik', from_role: 'owner', body: 'Tolong kirim laporan kas sore ini.', image: '', created_at: back(nowIso, 3600), deleted: false }
       ];
+      // v36: one private 1-to-1 message (Pemilik → Siti) so the demo shows the team list with an unread badge
+      var users = db.users || [], own = users.find(function (u) { return u.name === 'Pemilik'; }), siti = users.find(function (u) { return u.name === 'Siti'; });
+      if (own && siti && window.KChat && KChat.dmChannel) db.chat.push({ id: 4, channel: KChat.dmChannel(own, siti), cid: 'seed4', from_user: 'Pemilik', from_name: 'Pemilik', from_role: 'owner', body: 'Siti, tolong cek harga minyak goreng hari ini ya.', image: '', created_at: back(nowIso, 1800), deleted: false });
     }
     if (typeof db.chat_seq !== 'number') db.chat_seq = db.chat.reduce(function (m, x) { return Math.max(m, Number(x.id) || 0); }, 0);
   }

@@ -4,10 +4,42 @@ const MockServer = (() => {
   const DBKEY = 'kmock.db';
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
-  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_transfers', 'list_photos', 'field_bootstrap', 'list_field', 'product_images', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon'];
+  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_transfers', 'list_photos', 'photo_file', 'field_bootstrap', 'list_field', 'product_images', 'orders_map', 'shop_photos', 'street_returns', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon', 'profit_loss'];
   class MockErr extends Error { constructor(code, message, extra) { super(message || code); this.code = code; this.extra = extra || null; } }
   const E = (code, msg, extra) => new MockErr(code, msg, extra);
   let ready = null;
+
+  // v36 (owner 2026-10-08: "فعّل حفظ الصور عبر Google Drive") — demo twin of the Worker's R2 photo store. The scanned image is
+  // kept in IndexedDB 'kmock-photos' (shared by the demo apps of this site, and never inside kmock.db, so photos can never
+  // fill the demo database); the photo gets drive_file_id 'r2:…' + drive_url '<PHOTO_URL>/file/<photo_id>', as on the Worker.
+  const PHOTO_IDB = 'kmock-photos', memPhotos = {};
+  function photoIdb() {
+    return new Promise(res => { try { const rq = indexedDB.open(PHOTO_IDB, 1); rq.onupgradeneeded = () => rq.result.createObjectStore('img'); rq.onsuccess = () => res(rq.result); rq.onerror = () => res(null); } catch (e) { res(null); } });
+  }
+  function keepPhotoImg(db, photo, data) {
+    const b64 = String((data && data.image_base64) || '').replace(/^data:[^,]*,/, '').replace(/\s/g, '');
+    if (!b64 || !/^[A-Za-z0-9+/=]+$/.test(b64)) return '';
+    const mime = /^image\/(jpeg|png|webp)$/.test(String(data.mime || '')) ? data.mime : 'image/jpeg';
+    memPhotos[photo.photo_id] = 'data:' + mime + ';base64,' + b64;
+    (db._keepImgs = db._keepImgs || []).push(photo.photo_id);
+    photo.drive_file_id = 'r2:photos/' + String(photo.photo_date || '').slice(0, 7) + '/' + photo.photo_id + '.' + ({ 'image/png': 'png', 'image/webp': 'webp' }[mime] || 'jpg');
+    photo.drive_url = ((typeof CONFIG !== 'undefined' && CONFIG.PHOTO_URL) || 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo') + '/file/' + photo.photo_id;
+    return photo.drive_url;
+  }
+  async function flushPhotoImgs(ids) {
+    if (!ids || !ids.length) return;
+    try {
+      const idb = await photoIdb(); if (!idb) return;
+      await new Promise(res => { const tx = idb.transaction('img', 'readwrite'); ids.forEach(id => { if (memPhotos[id]) tx.objectStore('img').put(memPhotos[id], id); }); tx.oncomplete = res; tx.onerror = res; tx.onabort = res; });
+    } catch (e) { }
+  }
+  async function photoImg(id) {
+    if (memPhotos[id]) return memPhotos[id];
+    try {
+      const idb = await photoIdb(); if (!idb) return null;
+      return await new Promise(res => { const rq = idb.transaction('img').objectStore('img').get(id); rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null); });
+    } catch (e) { return null; }
+  }
 
   function load() { try { return JSON.parse(localStorage.getItem(DBKEY) || 'null'); } catch (e) { return null; } }
   function save(db) { try { localStorage.setItem(DBKEY, JSON.stringify(db)); } catch (e) { throw E('SERVER', 'mock storage full'); } }
@@ -29,7 +61,7 @@ const MockServer = (() => {
   }
   function strip(o) {
     if (o && typeof o === 'object' && !Array.isArray(o) && typeof o.payload === 'string' && o.kind === 'price') o = Object.assign({}, o, { payload: stripPayload(o.payload) });
-    if (o && typeof o === 'object' && !Array.isArray(o) && o.request_id && (o.kind === 'purchase_fix' || (o.kind === 'discount' && stripRole !== 'manager') || o.kind === 'retur')) o = aprOut(o);
+    if (o && typeof o === 'object' && !Array.isArray(o) && o.request_id && (o.kind === 'purchase_fix' || (o.kind === 'discount' && stripRole !== 'manager') || o.kind === 'retur' || o.kind === 'product_new')) o = aprOut(o);
     if (Array.isArray(o)) return o.map(strip);
     if (o && typeof o === 'object') { const r = {}; for (const k in o) if (!COST_KEYS.includes(k)) r[k] = strip(o[k]); return r; }
     return o;
@@ -188,6 +220,12 @@ const MockServer = (() => {
   const internalSup = s => ['PENYESUAIAN STOK', 'STOK OPNAME', REPACK_SUP].includes(strv(s).toUpperCase());
   const roleOf = u => u.role === 'owner' ? 'owner' : u.role === 'manager' ? 'manager' : u.role === 'sales' ? 'sales' : 'kasir';
   const isAppr = u => u.role === 'owner' || u.role === 'manager';
+  // v36 — mirror of the server's canDecide: the owner decides anything; the manager all but owner-only requests; the accountant the
+  // shared manager-or-accountant ones (mgr_akuntan); a void of an EARLIER day's sale only the owner ("إصلاح فاتورة قديمة لا يتم إلا بموافقتي الشخصية").
+  const voidSaleDate = a => { try { const pl = JSON.parse(a.payload || '{}'); if (pl && isYmd(pl.sale_date)) return pl.sale_date; } catch (e) { } const m = /(\d{4}-\d{2}-\d{2})/.exec(strv(a.summary)); return m ? m[1] : ''; };
+  const isOldVoid = a => !!a && a.kind === 'void' && (!voidSaleDate(a) || voidSaleDate(a) < jktDate());
+  const isOwnVoid = (u, a) => !!a && a.kind === 'void' && strv(a.cashier).toLowerCase() === strv(u.name).toLowerCase(); // never decide your own void
+  const canDecideAp = (u, a) => u.role === 'owner' || (a.approver_role !== 'owner' && !isOldVoid(a) && !isOwnVoid(u, a) && (a.approver_role === 'mgr_akuntan' ? ['manager', 'akuntan'].includes(u.role) : u.role === 'manager'));
   function logAct(db, u, kind, summary, ref, amount, level) {
     db.activity = db.activity || [];
     db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + randId(8), at: new Date().toISOString(), act_date: jktDate(), user: u.name, role: roleOf(u), kind,
@@ -241,6 +279,11 @@ const MockServer = (() => {
     if (a.kind === 'retur') {
       const o = Object.assign({}, a);
       try { const pl = JSON.parse(a.payload || '{}'); if (pl.kind === 'pemasok') { delete pl.value; delete pl.refund; (pl.lines || []).forEach(l => { delete l.unit_price; delete l.value; }); o.payload = JSON.stringify(pl); o.total = 0; o.summary = strv(o.summary).replace(/ \| nilai Rp -?\d+/g, ''); } } catch (e) { o.payload = ''; }
+      return o;
+    }
+    if (a.kind === 'product_new') { // v36: the supplier-invoice cost of a cashier's new product
+      const o = Object.assign({}, a);
+      try { const pl = JSON.parse(a.payload || '{}'); delete pl.cost_price; o.payload = JSON.stringify(pl); } catch (e) { o.payload = ''; }
       return o;
     }
     if (a.kind === 'discount') {
@@ -394,6 +437,56 @@ const MockServer = (() => {
     return { status: diffs.length ? 'tidak_cocok' : (unsure ? 'perlu_cek' : 'cocok'), diffs: diffs.slice(0, 50), notes: '' };
   }
   const diffText = diffs => diffs.map(d => d.name + ': input ' + (d.recorded_qty === null ? '-' : fmtN(d.recorded_qty)) + ' / nota ' + (d.photo_qty === null ? '-' : fmtN(d.photo_qty))).join('; ');
+  // v36 (owner 2026-10-11): expense item lines vs the AI-read invoice — the server's expenseLinesIn / expenseCompare.
+  function expenseLinesIn(raw) {
+    const list = Array.isArray(raw) ? raw.slice(0, 50) : [], out = [];
+    for (let i = 0; i < list.length; i++) {
+      const l = list[i] || {}, name = strv(l.name).replace(/\s+/g, ' ').slice(0, 80), qty = roundQty(l.qty), price = int(l.unit_price);
+      if (!name && !qty && !price) continue;
+      if (!name) return { error: 'Nama barang wajib di baris ' + (i + 1) };
+      if (!(qty > 0)) return { error: 'Jumlah tidak valid: ' + name };
+      if (price < 0) return { error: 'Harga tidak valid: ' + name };
+      out.push({ name, qty, unit_price: price, total: Math.round(qty * price) });
+    }
+    return { lines: out };
+  }
+  function expenseCompare(lines, amount, ex) {
+    ex = ex && typeof ex === 'object' ? ex : {};
+    const nn = x => x === null || x === undefined || x === '' || !Number.isFinite(Number(x)) ? null : Number(x);
+    const items = (Array.isArray(ex.items) ? ex.items : []).filter(it => it && strv(it.name));
+    let pamt = nn(ex.amount); if (pamt === null) pamt = nn(ex.total); if (pamt !== null) pamt = Math.round(pamt);
+    const invoice = { count: items.length, total: pamt, vendor: ex.vendor ? strv(ex.vendor).slice(0, 120) : '' };
+    if (ex.readable === false || (pamt === null && !items.length)) return { status: 'cek_manual', diffs: [], rows: [], invoice };
+    const diffs = [], rows = [];
+    let unsure = false;
+    if (pamt !== null && Math.abs(pamt - int(amount)) > 0.5) diffs.push({ field: 'total', name: '', typed: int(amount), invoice: pamt });
+    if (lines.length && !items.length) unsure = true;
+    else if (lines.length) {
+      if (lines.length !== items.length) diffs.push({ field: 'count', name: '', typed: lines.length, invoice: items.length });
+      const used = {}, pair = [];
+      lines.forEach((l, i) => { let best = -1, bs = 0; items.forEach((it, k) => { if (used[k]) return; const sc = nScore(it.name, l.name); if (sc > bs) { bs = sc; best = k; } }); if (bs >= 0.5) { used[best] = true; pair[i] = best; } });
+      if (lines.length === items.length) lines.forEach((l, i) => { if (pair[i] === undefined && !used[i]) { used[i] = true; pair[i] = i; } });
+      lines.forEach((l, i) => {
+        const row = { name: l.name, qty: l.qty, unit_price: int(l.unit_price), inv_name: '', inv_qty: null, inv_price: null, bad: [] };
+        rows.push(row);
+        if (pair[i] === undefined) { row.bad.push('extra'); diffs.push({ field: 'extra', name: l.name, typed: l.total, invoice: null }); return; }
+        const it = items[pair[i]], iq = nn(it.qty);
+        let ip = nn(it.unit_price);
+        if (ip === null && nn(it.total) !== null && iq) ip = Math.round(Number(it.total) / iq);
+        row.inv_name = strv(it.name).slice(0, 80); row.inv_qty = iq; row.inv_price = ip === null ? null : Math.round(ip);
+        if (iq === null || ip === null) unsure = true;
+        if (iq !== null && Math.abs(iq - num(l.qty)) > 0.001) { row.bad.push('qty'); diffs.push({ field: 'qty', name: l.name, typed: l.qty, invoice: iq }); }
+        if (ip !== null && Math.abs(Math.round(ip) - int(l.unit_price)) > 0.5) { row.bad.push('price'); diffs.push({ field: 'price', name: l.name, typed: int(l.unit_price), invoice: Math.round(ip) }); }
+      });
+      items.forEach((it, k) => { if (used[k]) return; const iq = nn(it.qty), ip = nn(it.unit_price); rows.push({ name: '', qty: null, unit_price: null, inv_name: strv(it.name).slice(0, 80), inv_qty: iq, inv_price: ip === null ? null : Math.round(ip), bad: ['missing'] }); diffs.push({ field: 'missing', name: strv(it.name).slice(0, 80), typed: null, invoice: nn(it.total) }); });
+    }
+    return { status: diffs.length ? 'selisih' : (unsure ? 'cek_manual' : 'cocok'), diffs: diffs.slice(0, 60), rows: rows.slice(0, 60), invoice };
+  }
+  const expenseDiffText = diffs => diffs.map(d => {
+    const v = (f, x) => x === null || x === undefined ? '-' : (f === 'qty' || f === 'count' ? fmtN(x) : 'Rp ' + int(x));
+    const what = { total: 'Total', count: 'Jumlah jenis barang', qty: 'Qty ' + strv(d.name), price: 'Harga ' + strv(d.name), extra: 'Tidak ada di nota: ' + strv(d.name), missing: 'Tidak diketik: ' + strv(d.name) }[d.field] || d.field;
+    return d.field === 'extra' || d.field === 'missing' ? what : what + ' input ' + v(d.field, d.typed) + ' / nota ' + v(d.field, d.invoice);
+  }).join('; ');
   /* corrections of a saved goods-in (purchase_no) */
   function purchaseFixChanges(db, no, lines) {
     const cur = {};
@@ -783,10 +876,10 @@ const MockServer = (() => {
     if (!owner && isLockedAcct(u.name) && !['login', 'users', 'device_ping', 'change_pin', 'clear_tamper', 'report_tamper'].includes(action)) { const er = E('TAMPER_LOCKED', 'Akun dikunci setelah percobaan tidak sah. Hanya pemilik yang membuka.'); er.extra = { locked: true }; throw er; }
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
-    if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
-    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'list_corrections', 'save_product'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
+    if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
+    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
-    if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'list_photos'].includes(action)) deviceTouch(db, u, data.device, false);
+    if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'scan_expense', 'list_photos', 'photo_file'].includes(action)) deviceTouch(db, u, data.device, false);
 
     switch (action) {
       case 'att_bootstrap': case 'worker_save': case 'worker_enroll': case 'worker_forget': case 'att_mark': case 'att_report': case 'att_settings':
@@ -1081,16 +1174,17 @@ const MockServer = (() => {
         return { approval: ap };
       }
       case 'list_approvals': {
-        if (!['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Owner/manager only');
-        return { approvals: db.approvals.filter(x => x.status === 'pending').map(x => Object.assign({}, x, { can_decide: x.approver_role !== 'owner' || u.role === 'owner' })) };
+        if (!['owner', 'manager', 'akuntan'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+        // the accountant only sees the shared manager-or-accountant requests (v29/v36, as on the server)
+        return { approvals: db.approvals.filter(x => x.status === 'pending' && (isAppr(u) || x.approver_role === 'mgr_akuntan')).map(x => Object.assign({}, x, { can_decide: canDecideAp(u, x) })) };
       }
       case 'decide_approval': {
-        if (!['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Owner/manager only');
+        if (!['owner', 'manager', 'akuntan'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
         const ap = db.approvals.find(x => x.request_id === data.request_id);
         if (!ap) throw E('NOT_FOUND', 'approval');
         if (!['approved', 'rejected'].includes(data.decision)) throw E('INVALID', 'decision');
-        if (ap.status !== 'pending') throw E('INVALID', 'Already decided: ' + ap.status);
-        if (ap.approver_role === 'owner' && u.role !== 'owner') throw E('NEEDS_OWNER', 'Only the owner can decide this request');
+        if (ap.status !== 'pending') throw E('INVALID', 'Permintaan sudah diputuskan' + (strv(ap.decided_by) ? ' oleh ' + strv(ap.decided_by) : '') + ': ' + ap.status);
+        if (!canDecideAp(u, ap)) { if (ap.approver_role === 'owner' || isOldVoid(ap)) throw E('NEEDS_OWNER', isOldVoid(ap) ? 'Faktur lama — hanya pemilik yang boleh menyetujui' : 'Only the owner can decide this request'); throw E('FORBIDDEN', isOwnVoid(u, ap) ? 'Permintaan sendiri diputuskan orang lain' : 'Tidak diizinkan memutuskan permintaan ini'); }
         const out = {};
         let planFinal = '';
         if (data.decision === 'approved' && ap.kind === 'void') {
@@ -1172,6 +1266,25 @@ const MockServer = (() => {
           planFinal = (data.decision === 'approved' && nApproved > 0) ? 'approved' : 'rejected';
           logAct(db, u, planFinal === 'approved' ? 'setuju_bayar' : 'tolak_bayar', (planFinal === 'approved' ? 'Setuju bayar ' + nApproved + ' pemasok: ' : 'Tolak rencana bayar: ') + strv(ap.summary).slice(0, 500), ap.request_id, int(ap.total), planFinal === 'approved' ? 'info' : 'warn');
         }
+        if (ap.kind === 'expense_check') {
+          // v36: the expense carries the check result for the reports
+          const ex = db.expenses.find(x => strv(x.request_id) === ap.request_id);
+          if (ex) Object.assign(ex, { check_status: data.decision === 'approved' ? 'disetujui' : 'ditolak', checked_by: u.name });
+        }
+        if (ap.kind === 'product_new') {
+          // v36: confirm a cashier's new product (optionally correcting its selling prices) or switch it off for sale
+          const p = db.products.find(x => strv(x.review) === ap.request_id);
+          if (!p) throw E('NOT_FOUND', 'Produk baru tidak ditemukan');
+          const pr = data.prices && typeof data.prices === 'object' ? data.prices : {};
+          if (data.decision === 'approved') {
+            ['retail_price', 'wholesale_price'].forEach(f => { if (pr[f] !== undefined && pr[f] !== null && pr[f] !== '' && int(pr[f]) >= 0) p[f] = int(pr[f]); });
+            if (!(int(p.retail_price) > 0)) throw E('INVALID', 'Harga jual eceran wajib');
+            if (pr.wholesale_min_qty !== undefined && pr.wholesale_min_qty !== null && pr.wholesale_min_qty !== '' && num(pr.wholesale_min_qty) >= 0) p.wholesale_min_qty = num(pr.wholesale_min_qty);
+          } else p.active = false;
+          p.review = '';
+          out.product = p;
+          logAct(db, u, data.decision === 'approved' ? 'produk_ok' : 'produk_tolak', (data.decision === 'approved' ? 'Produk baru DIKONFIRMASI ' : 'Produk baru DITOLAK (dinonaktifkan) ') + p.name + ' oleh ' + u.name, String(p.id), 0, data.decision === 'approved' ? 'info' : 'warn');
+        }
         if (ap.kind === 'transfer_confirm') logAct(db, u, data.decision === 'approved' ? 'transfer_ok' : 'transfer_gagal', (data.decision === 'approved' ? 'Transfer masuk DIKONFIRMASI oleh ' + u.name : 'Transfer TIDAK diterima — ' + u.name + (String(data.note || '') ? ': ' + data.note : '')) + ' | ' + strv(ap.summary), strv(ap.ref), int(ap.total), data.decision === 'approved' ? 'info' : 'warn');
         logAct(db, u, 'keputusan', (data.decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + (ap.kind || 'credit') + ', diminta ' + ap.cashier + '): ' + strv(ap.summary).slice(0, 600) + (strv(data.note) ? ' | ' + strv(data.note) : ''), ap.request_id, int(ap.total), data.decision === 'approved' ? 'info' : 'warn');
         Object.assign(ap, { status: ap.kind === 'pay_plan' ? planFinal : data.decision, decided_by: u.name, decided_at: jktISO(), note: String(data.note || '') });
@@ -1196,8 +1309,23 @@ const MockServer = (() => {
           if (best && best.score >= 0.34) suggestions.push(best);
         });
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'masuk', ref: '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted, match_status: '', match_notes: '' };
+        keepPhotoImg(db, photo, data);
         db.photos.push(photo);
-        return { photo_id: photo.photo_id, extracted, suggestions, drive_url: '' };
+        return { photo_id: photo.photo_id, extracted, suggestions, drive_url: photo.drive_url };
+      }
+      case 'scan_expense': {
+        // v29/v36 photo workflow, kind 'biaya' (same demo as Khair Kasir): localStorage kmock.expscan = the extracted JSON,
+        // or "off" = the Worker has no AI key (the photo is kept, unreadable → "cek manual").
+        if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
+        let raw = null; try { raw = localStorage.getItem('kmock.expscan'); } catch (e) { }
+        let ex = null;
+        if (raw === 'off') ex = { items: [], readable: false, notes: 'AI gagal membaca: AI_DISABLED' };
+        else { try { ex = JSON.parse(raw || 'null'); } catch (e) { } }
+        if (!ex) ex = { vendor: 'Toko Plastik Jaya', date: jktDate(), items: [{ name: 'Kantong plastik besar', qty: 10, unit_price: 5000, total: 50000 }, { name: 'Lakban coklat', qty: 5, unit_price: 7000, total: 35000 }], total: 85000, amount: 85000, readable: true, notes: '' };
+        const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'biaya', ref: '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted: ex,
+          match_status: ex.readable === false || (ex.amount == null && ex.total == null) ? 'perlu_cek' : '', match_notes: strv(ex.notes) };
+        db.photos.push(photo);
+        return { photo_id: photo.photo_id, extracted: ex, drive_url: '' };
       }
       case 'scan_payment': {
         if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
@@ -1206,8 +1334,9 @@ const MockServer = (() => {
         if (!ex) ex = { date: jktDate(), time: jktTime(new Date()), amount: 500000, sender_name: 'TOKO BERKAH CONDET', sender_bank: 'BCA', receiver_name: 'KHAIR MART', receiver_bank: 'BCA', bank: 'BCA', transfer_ref: String(Date.now()).slice(-10), description: 'Pembayaran', status: 'berhasil', readable: true, notes: '' };
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'bayar', ref: '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted: ex,
           match_status: ex.readable === false || ex.amount === null || ex.status === 'gagal' ? 'perlu_cek' : '', match_notes: strv(ex.notes) };
+        keepPhotoImg(db, photo, data);
         db.photos.push(photo);
-        return { photo_id: photo.photo_id, extracted: ex, drive_url: '' };
+        return { photo_id: photo.photo_id, extracted: ex, drive_url: photo.drive_url };
       }
       case 'scan_exit': {
         if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
@@ -1220,9 +1349,10 @@ const MockServer = (() => {
           : mode === 'perlu_cek' ? { status: 'perlu_cek', notes: 'Foto kurang jelas, sebagian barang tidak terbaca.', diffs: [] }
           : { status: 'cocok', notes: 'Semua barang sesuai nota.', diffs: [] };
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'keluar', ref: sale.invoice_no, created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted: { items: seen }, match_status: match.status, match_notes: match.notes };
+        keepPhotoImg(db, photo, data);
         db.photos.push(photo);
         sale.exit_photo = photo.photo_id; sale.exit_match = match.status;
-        return { photo_id: photo.photo_id, extracted: { items: seen }, match, drive_url: '' };
+        return { photo_id: photo.photo_id, extracted: { items: seen }, match, drive_url: photo.drive_url };
       }
       case 'scan_supplier_return': {
         // v17 photo workflow, kind 'retur': the outgoing return note / goods going back to the supplier (demo: localStorage kmock.retur)
@@ -1233,8 +1363,16 @@ const MockServer = (() => {
         const pno = String(data.purchase_no || '').trim().toUpperCase();
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'retur', ref: /^[A-Z0-9][A-Z0-9 \/.-]{0,39}$/.test(pno) ? pno : '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted: ex,
           match_status: ex.readable === false ? 'perlu_cek' : '', match_notes: String(ex.notes || '') };
+        keepPhotoImg(db, photo, data);
         db.photos.push(photo);
-        return { photo_id: photo.photo_id, extracted: ex, drive_url: '' };
+        return { photo_id: photo.photo_id, extracted: ex, drive_url: photo.drive_url };
+      }
+      case 'photo_file': {
+        // v36: GET <PHOTO_URL>/file/<photo_id> on the Worker — the stored image, owner / manager / akuntan only
+        if (!['owner', 'manager', 'akuntan'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik, manajer, atau akuntan');
+        const ph = db.photos.find(x => x.photo_id === String(data.photo_id || ''));
+        if (!ph || String(ph.drive_file_id || '').indexOf('r2:') !== 0) throw E('NOT_FOUND', 'Foto tidak disimpan');
+        return { photo_id: ph.photo_id, _img: ph.photo_id };
       }
       case 'list_photos': {
         if (!isYmd(data.from) || !isYmd(data.to)) throw E('INVALID', 'from/to');
@@ -1255,10 +1393,12 @@ const MockServer = (() => {
         if (!reason) throw E('INVALID', 'reason required');
         const open = db.approvals.find(x => x.kind === 'void' && x.ref === sale.invoice_no && x.status === 'pending');
         if (open) return { request_id: open.request_id, approval: open };
-        const approval = newApproval(db, u, { kind: 'void', ref: sale.invoice_no, approver_role: 'owner', customer_id: sale.customer_id, customer_name: sale.customer_name, total: sale.total, debt_amount: sale.debt_amount,
-          summary: `${sale.invoice_no} · ${sale.sale_date}`, payload: JSON.stringify({ reason, invoice_no: sale.invoice_no, sale_date: sale.sale_date, total: sale.total }) });
-        logAct(db, u, 'minta_batal', 'Minta batal faktur ' + sale.invoice_no + ': ' + reason, sale.invoice_no, sale.total, 'warn');
-        return { request_id: approval.request_id, approval };
+        // v36: today's sale → manager OR accountant (mgr_akuntan); an EARLIER day's sale → only the owner
+        const oldSale = !isYmd(sale.sale_date) || sale.sale_date < jktDate();
+        const approval = newApproval(db, u, { kind: 'void', ref: sale.invoice_no, approver_role: oldSale ? 'owner' : 'mgr_akuntan', customer_id: sale.customer_id, customer_name: sale.customer_name, total: sale.total, debt_amount: sale.debt_amount,
+          summary: `${sale.invoice_no} · ${sale.sale_date}`, payload: JSON.stringify({ reason, invoice_no: sale.invoice_no, sale_date: sale.sale_date, total: sale.total, old: oldSale }) });
+        logAct(db, u, 'minta_batal', 'Minta batal faktur ' + sale.invoice_no + (oldSale ? ' (faktur lama ' + sale.sale_date + ', butuh persetujuan pemilik)' : '') + ': ' + reason, sale.invoice_no, sale.total, 'warn');
+        return { request_id: approval.request_id, approval, approver_role: approval.approver_role, old_invoice: oldSale };
       }
       case 'change_price': {
         const p = prodById(data.product_id); if (!p) throw E('NOT_FOUND', 'product');
@@ -1290,7 +1430,8 @@ const MockServer = (() => {
         const opening = sh.opening_cash;
         const last = db.shifts.filter(x => x.status === 'closed').sort((a, b) => String(b.closed_at).localeCompare(String(a.closed_at)))[0] || null;
         const lastTxt = last ? ' — kas terakhir ditutup ' + String(last.closed_at).slice(0, 16).replace('T', ' ') + ' oleh ' + strv(last.cashier) + ': dihitung Rp ' + int(last.counted_cash) + ', selisih dengan pembukaan Rp ' + (opening - int(last.counted_cash)) : '';
-        const bk = newApproval(db, u, { kind: 'buka_kas', approver_role: roleOf(u) === 'manager' ? 'owner' : 'manager', ref: sh.shift_id, total: opening, summary: ('Buka kas ' + u.name + ': modal awal dihitung Rp ' + opening + lastTxt).slice(0, 1500), note: String(data.note || ''),
+        // v36: a cashier's opening goes to the manager AND the accountant (either approves, first decision wins)
+        const bk = newApproval(db, u, { kind: 'buka_kas', approver_role: roleOf(u) === 'manager' ? 'owner' : 'mgr_akuntan', ref: sh.shift_id, total: opening, summary: ('Buka kas ' + u.name + ': modal awal dihitung Rp ' + opening + lastTxt).slice(0, 1500), note: String(data.note || ''),
           payload: JSON.stringify({ shift_id: sh.shift_id, opening_cash: opening, last_counted: last ? int(last.counted_cash) : null, last_cashier: last ? strv(last.cashier) : '' }) });
         logAct(db, u, 'buka_kas', 'Buka kas ' + u.name + ' Rp ' + opening + lastTxt, sh.shift_id, opening, last && int(last.counted_cash) !== opening ? 'warn' : 'info');
         return { shift: blind(shiftSummary(db, sh), u.role), request_id: bk.request_id, approval: bk };
@@ -1322,21 +1463,58 @@ const MockServer = (() => {
         if (!cats.includes(data.category)) throw E('INVALID', 'category');
         const amount = int(data.amount);
         if (amount <= 0) throw E('INVALID', 'amount must be > 0');
+        // v36 (as the server): optional item lines whose sum = the amount; with an invoice photo, compared line by line
+        const xl = expenseLinesIn(data.lines);
+        if (xl.error) throw E('INVALID', xl.error);
+        const lines = xl.lines, lsum = sum(lines, l => l.total);
+        if (lines.length && Math.abs(lsum - amount) > 0.5) throw E('INVALID', 'Total rincian Rp ' + lsum + ' tidak sama dengan jumlah Rp ' + amount);
         const esh = openShiftOf(db, u.name);
         const paid_from = data.paid_from === 'lain' || data.paid_from === 'kas' ? data.paid_from : (esh ? 'kas' : 'lain');
         if (paid_from === 'kas' && !esh) throw E('SHIFT_REQUIRED', 'paid_from kas needs an open shift');
-        const expense = { id: nextId(db, 'expense'), expense_date: isYmd(data.expense_date) ? data.expense_date : jktDate(), category: data.category, amount, note: String(data.note || ''), user: u.name, photo_id: String(data.photo_id || ''), paid_from, shift_id: paid_from === 'kas' ? esh.shift_id : '' };
+        const photoId = strv(data.photo_id), reason = strv(data.mismatch_reason).slice(0, 300);
+        let cmp = null, photoNote = '';
+        if (photoId) {
+          const ph = db.photos.find(x => x.photo_id === photoId);
+          if (!ph || ph.kind !== 'biaya') throw E('INVALID', 'Foto nota pengeluaran tidak ditemukan');
+          cmp = expenseCompare(lines, amount, photoEx(ph));
+          const pamt = cmp.invoice.total;
+          if (cmp.status === 'selisih') {
+            if (!reason) throw E('MISMATCH', 'Tidak sama dengan nota: ' + expenseDiffText(cmp.diffs), { photo_amount: pamt, check: cmp });
+            photoNote = ' [nota: selisih ' + (pamt !== null && pamt !== amount ? 'input Rp ' + amount + ' / nota Rp ' + pamt : expenseDiffText(cmp.diffs).slice(0, 120)) + ' — alasan: ' + reason + ']';
+          } else photoNote = cmp.status === 'cocok' ? ' [nota: cocok Rp ' + pamt + ']' : ' [nota: perlu cek]';
+        }
+        const expense = { id: nextId(db, 'expense'), expense_date: isYmd(data.expense_date) ? data.expense_date : jktDate(), category: data.category, amount, note: (String(data.note || '') + photoNote).slice(0, 500), user: u.name, photo_id: photoId, paid_from, shift_id: paid_from === 'kas' ? esh.shift_id : '',
+          lines: lines.length ? JSON.stringify(lines) : '', check_status: cmp ? cmp.status : '', request_id: '', checked_by: '' };
+        let ap = null;
+        if (cmp && cmp.status !== 'cocok' && !owner) {
+          ap = newApproval(db, u, { kind: 'expense_check', approver_role: u.role === 'kasir' ? 'mgr_akuntan' : 'owner', ref: 'EX' + randId(6), total: amount, note: reason,
+            summary: ((cmp.status === 'selisih' ? 'Selisih nota pengeluaran ' : 'Cek manual nota pengeluaran ') + expense.category + ' Rp ' + amount + (cmp.diffs.length ? ': ' + expenseDiffText(cmp.diffs) : '') + (reason ? ' | alasan: ' + reason : '')).slice(0, 1500),
+            payload: JSON.stringify({ status: cmp.status, category: expense.category, amount, note: strv(data.note).slice(0, 300), paid_from, expense_date: expense.expense_date, lines, rows: cmp.rows, diffs: cmp.diffs, invoice: cmp.invoice, reason, photo_id: photoId, by: u.name }) });
+          expense.request_id = ap.request_id;
+        }
         db.expenses.push(expense);
-        logAct(db, u, 'biaya', 'Pengeluaran ' + expense.category + ' Rp ' + amount + (expense.note ? ': ' + expense.note : '') + ' (' + paid_from + ')', '', amount, 'info');
-        return { expense };
+        logAct(db, u, 'biaya', 'Pengeluaran ' + expense.category + ' Rp ' + amount + (expense.note ? ': ' + expense.note : '') + ' (' + paid_from + ')' + (lines.length ? ' — ' + lines.length + ' baris' : ''), expense.request_id, amount, cmp && cmp.status === 'selisih' ? 'warn' : 'info');
+        const res = { expense };
+        if (cmp) res.check = cmp;
+        if (ap) { res.check_request_id = ap.request_id; res.approval = ap; }
+        return res;
       }
       case 'save_product': {
+        // v36 (owner 2026-10-11): the cashier may ADD a product while receiving goods (from_goods_in), never edit one
+        const fromGoodsIn = data.from_goods_in === true && !data.id;
         if (!owner) {
-          if (u.role !== 'manager' && u.role !== 'akuntan') throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+          if (u.role !== 'manager' && u.role !== 'akuntan' && !(u.role === 'kasir' && fromGoodsIn)) throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
           if (data.id) throw E('FORBIDDEN', 'Hanya pemilik yang boleh mengubah produk yang sudah ada');
         }
         const name = safeName(data.name, 80);
         if (!name) throw E('INVALID', strv(data.name) ? 'Nama produk hanya boleh huruf, angka dan . , \' & ( ) / % + # -' : 'Nama produk wajib');
+        // v36 (owner: "بضاعة جديدة في فاتورة المزود ← يسأل الحجم والوزن والفئة"): from a supplier invoice, category + size/weight are required
+        if (fromGoodsIn) {
+          if (!strv(data.category)) throw E('INVALID', 'Kategori wajib untuk produk baru');
+          if (!strv(data.size) && !strv(data.weight)) throw E('INVALID', 'Ukuran atau berat wajib untuk produk baru');
+          if (u.role === 'kasir' && !(int(data.retail_price) > 0)) throw E('INVALID', 'Harga jual wajib untuk produk baru');
+          if (db.products.some(p => strv(p.name).toLowerCase() === name.toLowerCase())) throw E('INVALID', 'Produk dengan nama ini sudah ada — pilih dari daftar');
+        }
         const sku = String(data.sku || '').trim();
         if (sku && !/^[A-Za-z0-9._-]{1,40}$/.test(sku)) throw E('INVALID', 'SKU / barcode hanya boleh huruf, angka, titik, garis');
         if (strv(data.category) && !safeName(data.category, 40)) throw E('INVALID', 'Kategori hanya boleh huruf dan angka');
@@ -1364,9 +1542,17 @@ const MockServer = (() => {
           return { product: p };
         }
         const p = Object.assign(productFields(data, blankProduct()), { id: nextId(db, 'product'), name, stock: roundQty(data.stock || 0) }, rp);
+        let rap = null;
+        if (u.role === 'kasir') { // v36: a cashier's new product is flagged "new — check" for the manager / accountant
+          p.stock = 0;
+          rap = newApproval(db, u, { kind: 'product_new', approver_role: 'mgr_akuntan', ref: sku || name.slice(0, 40), total: p.retail_price,
+            summary: ('Produk baru dari kasir ' + u.name + ': ' + name + ' (' + p.category + (p.size ? ', ' + p.size : '') + (p.weight ? ', ' + p.weight : '') + ', ' + p.unit + ') eceran Rp ' + p.retail_price).slice(0, 1500),
+            payload: JSON.stringify({ product_name: name, category: p.category, size: p.size, weight: p.weight, unit: p.unit, sku, supplier: p.supplier, retail_price: p.retail_price, wholesale_price: p.wholesale_price, wholesale_min_qty: p.wholesale_min_qty, cost_price: p.cost_price, by: u.name }) });
+          p.review = rap.request_id;
+        }
         db.products.push(p);
-        logAct(db, u, 'produk_baru', 'Produk baru: ' + name + ' (stok ' + fmtN(p.stock) + ' ' + p.unit + ')', sku, 0, 'info');
-        return { product: p };
+        logAct(db, u, 'produk_baru', 'Produk baru: ' + name + ' (stok ' + fmtN(p.stock) + ' ' + p.unit + ')' + (rap ? ' — dibuat kasir saat barang masuk, menunggu cek' : ''), sku, 0, rap ? 'warn' : 'info');
+        return Object.assign({ product: p }, rap ? { review_request_id: rap.request_id } : {});
       }
       case 'import_products': {
         needOwner();
@@ -1730,7 +1916,10 @@ const MockServer = (() => {
           top_items: Object.values(prod).sort((a, b) => b.total - a.total).slice(0, 10),
           payments_in: { count: pin.length, total: sum(pin, p => int(p.amount)), tunai: mSum(pin, 'tunai'), transfer: mSum(pin, 'transfer'), qris: mSum(pin, 'qris') },
           payments_out: { count: pout.length, total: sum(pout, p => int(p.amount)), tunai: mSum(pout, 'tunai'), transfer: mSum(pout, 'transfer'), qris: mSum(pout, 'qris') },
-          expenses: { count: exps.length, total: sum(exps, e => int(e.amount)), from_kas: sum(exps.filter(e => e.paid_from === 'kas'), e => int(e.amount)) },
+          expenses: { count: exps.length, total: sum(exps, e => int(e.amount)), from_kas: sum(exps.filter(e => e.paid_from === 'kas'), e => int(e.amount)),
+            // v36: invoice checks — open (difference / check by hand), approved and rejected
+            flagged: exps.filter(e => e.check_status === 'selisih' || e.check_status === 'cek_manual').length, approved: exps.filter(e => e.check_status === 'disetujui').length,
+            rejected: exps.filter(e => e.check_status === 'ditolak').length, flagged_total: sum(exps.filter(e => ['selisih', 'cek_manual', 'ditolak'].includes(e.check_status)), e => int(e.amount)) },
           shifts
         };
         rep.bank = { sales_transfer: byMethod.transfer, sales_qris: byMethod.qris, payments_transfer: rep.payments_in.transfer, payments_qris: rep.payments_in.qris, out_transfer: rep.payments_out.transfer + rep.payments_out.qris };
@@ -1943,6 +2132,34 @@ const MockServer = (() => {
         return { repack: outR, stock: [{ product_id: from.id, stock: from.stock }, Object.assign({ product_id: to.id, stock: to.stock }, owner ? { cost_price: toCost } : {})] };
       }
       case 'stock_count': return stockCount(db, u, data);
+      case 'profit_loss': {
+        // v36 (owner 2026-10-11: "الكشف الشهري يكتب الربح والخسارة") — same lines as the server's profit_loss
+        needOwner();
+        if (!isYmd(data.from) || !isYmd(data.to) || data.from > data.to) throw E('INVALID', 'Rentang tanggal tidak valid');
+        const inP = d => strv(d) >= data.from && strv(d) <= data.to;
+        const wibDay = iso => iso ? new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(0, 10) : '';
+        const pS = db.sales.filter(x => inP(x.sale_date)), okS = pS.filter(x => x.status !== 'void'), voidS = pS.filter(x => x.status === 'void');
+        const salesTotal = sum(okS, x => int(x.total)), gross = sum(okS, x => int(x.profit));
+        const pExp = db.expenses.filter(e => inP(e.expense_date)), byCat = {};
+        pExp.forEach(e => { const k = strv(e.category) || 'lain'; byCat[k] = (byCat[k] || 0) + int(e.amount); });
+        const adj = db.purchases.filter(x => inP(x.purchase_date) && ['STOK OPNAME', 'PENYESUAIAN STOK'].includes(strv(x.supplier).toUpperCase()));
+        const stockDiff = sum(adj, x => Math.round(num(x.qty) * int(x.cost_price)));
+        const custRet = (db.returns || []).filter(x => x.status === 'approved' && x.kind !== 'pemasok' && inP(x.return_date));
+        let restock = 0;
+        custRet.forEach(x => { let lines = []; try { lines = typeof x.lines === 'string' ? JSON.parse(x.lines || '[]') : (x.lines || []); } catch (e) { lines = []; } (Array.isArray(lines) ? lines : []).forEach(l => { if (l && l.condition !== 'rusak') { const p = prodById(l.product_id); restock += Math.round(num(l.qty) * int(p ? p.cost_price : 0)); } }); });
+        const retRefund = sum(custRet, x => int(x.refund));
+        const corr = db.approvals.filter(a => a.kind === 'koreksi' && inP(wibDay(a.decided_at || a.created_at)));
+        let over = 0, under = 0;
+        corr.forEach(a => { let pl = {}; try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; } const un = int(pl.under_total); under += un; over += int(a.total) - un; });
+        const decidedIn = (kind, status) => db.approvals.filter(a => a.kind === kind && a.status === status && inP(wibDay(a.decided_at)));
+        const collected = sum(decidedIn('konsultasi', 'approved'), a => int(a.total)), writeoff = sum(decidedIn('konsultasi', 'rejected'), a => int(a.total)), refundPaid = sum(decidedIn('refund', 'approved'), a => int(a.total));
+        const expTotal = sum(pExp, e => int(e.amount)), retNet = restock - retRefund;
+        const pl = { from: data.from, to: data.to, sales: { count: okS.length, total: salesTotal, discount: sum(okS, x => int(x.discount)) }, voids: { count: voidS.length, total: sum(voidS, x => int(x.total)) },
+          cogs: salesTotal - gross, gross_profit: gross, expenses: { count: pExp.length, total: expTotal, by_category: byCat }, returns: { count: custRet.length, refund: retRefund, restock, net: retNet },
+          stock_diff: { count: adj.length, value: stockDiff }, corrections: { count: corr.length, net: over + under, overcharge: over, undercharge: under, refund_paid: refundPaid, collected, writeoff } };
+        pl.net_profit = gross - expTotal + retNet + stockDiff + collected;
+        return { pl };
+      }
       case 'get_sales': {
         if (!isYmd(data.from) || !isYmd(data.to)) throw E('INVALID', 'from/to');
         const inR = d => d >= data.from && d <= data.to;
@@ -1973,10 +2190,15 @@ const MockServer = (() => {
         return { settings: db.settings };
       }
       case 'report_tamper': {
-        if (owner) { logAct(db, u, 'tamper', 'Pemilik: percobaan kode terdeteksi (' + String(data.where || '').slice(0, 60) + ')', u.name, 0, 'warn'); db._dirty = true; return { locked: false }; }
-        if (!isLockedAcct(u.name)) db.settings.locked_accounts = lockedSet().concat([u.name.toLowerCase()]);
-        logAct(db, u, 'tamper', 'Percobaan menulis kode — akun dikunci (' + String(data.where || '').slice(0, 60) + ')', u.name, 0, 'danger'); db._dirty = true;
-        return { locked: true };
+        // v36: with the front-camera photo (two calls, same shot_id) — shared/tamper-guard.js keeps the demo servers identical
+        if (!window.KGuard) throw E('SERVER', 'tamper-guard not loaded');
+        const r = KGuard.mock.report(db, u, data, body.__shotPhoto || '', { owner, now: new Date().toISOString(), date: jktDate(), lock: () => { if (!isLockedAcct(u.name)) db.settings.locked_accounts = lockedSet().concat([u.name.toLowerCase()]); }, logAct: (k, sm, lv) => logAct(db, u, k, sm, u.name, 0, lv) });
+        db._dirty = true;
+        return r;
+      }
+      case 'list_tamper_shots': {
+        needOwner();
+        return { shots: window.KGuard ? KGuard.mock.list(db, data) : [] };
       }
       case 'clear_tamper': {
         needOwner();
@@ -2012,7 +2234,9 @@ const MockServer = (() => {
         if (u.role !== 'owner') {
           if (u.role !== 'manager') throw E('FORBIDDEN', 'Owner only');
           const t0 = db.users.find(v => v.name.toLowerCase() === String(data.name || '').trim().toLowerCase());
-          if (!['kasir', 'sales'].includes(data.role) || (t0 && !['kasir', 'sales'].includes(t0.role))) throw E('FORBIDDEN', 'Manajer hanya mengatur akun kasir dan sales');
+          // v36: the manager may also RENAME the existing accountant account (name only — not its role, active state or a new account)
+          const akRename = t0 && t0.role === 'akuntan' && data.role === 'akuntan' && strv(data.new_name) !== '' && (data.active === undefined || (data.active !== false) === (t0.active !== false));
+          if (!akRename && (!['kasir', 'sales'].includes(data.role) || (t0 && !['kasir', 'sales'].includes(t0.role)))) throw E('FORBIDDEN', 'Manajer hanya mengatur akun kasir dan sales (akun akuntan: hanya ganti nama)');
         }
         const name = personName(data.name);
         if (!name) throw E('INVALID', strv(data.name) ? 'Nama pengguna hanya boleh huruf, spasi dan . \' -' : 'Nama wajib');
@@ -2057,7 +2281,7 @@ const MockServer = (() => {
   }
 
   /* ---- Field sales (v8): handled by shared/field-mock.js (loaded in mock mode only) ---- */
-  const FIELD_ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop'];
+  const FIELD_ACTIONS = ['field_bootstrap', 'day_start', 'day_end', 'track', 'check_in', 'field_order', 'list_field', 'update_order', 'set_product_image', 'product_images', 'link_shop', 'orders_map', 'shop_photos', 'street_returns', 'street_return_set']; // v36
   const ext = () => (window.KhairFieldMock && typeof window.KhairFieldMock.handle === 'function') ? window.KhairFieldMock : null;
   /** Seeds the field tables (and demo rep Ahmad) — synchronous and idempotent; skipped until the store has users. */
   function ensureField(db) {
@@ -2121,13 +2345,17 @@ const MockServer = (() => {
     if (ensureV16(db)) save(db);
     let res;
     let __codeHit = '';
+    const __tp = window.KGuard ? KGuard.mock.takePhoto(body) : { body, photo: '' }; body = __tp.body; // v36: the tamper photo is not text
     if (body.data && typeof body.data === 'object' && !/^(scan_|att_mark|worker_enroll)/.test(body.action)) { __codeHit = scanCodeAttempt(body.data, 0); body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); }
-    body.__codeHit = __codeHit;
+    body.__codeHit = __codeHit; body.__shotPhoto = __tp.photo;
     db.returns = db.returns || [];
     const snap = new Map((db.products || []).map(p => [p.id, { stock: num(p.stock), shop: shopOf(p) }]));
     db._shopSet = {};
     try {
       res = opts.field || FIELD_ACTIONS.includes(body.action) ? fieldHandle(db, body) : handle(db, body);
+      const keepImgs = db._keepImgs; delete db._keepImgs; // v36: scanned images → IndexedDB (demo twin of R2)
+      if (keepImgs) await flushPhotoImgs(keepImgs);
+      if (res && res._img) { const src = await photoImg(res._img); if (!src) throw E('NOT_FOUND', 'Foto tidak ditemukan'); res = { photo_id: res.photo_id, mime: (src.match(/^data:([^;,]+)/) || [])[1] || 'image/jpeg', data_url: src }; }
       const role = db._role || (db.users.find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase() && x.pin_hash === body.pin_hash) || {}).role;
       normShop(db, snap);
       if (res && res.product && res.product.id != null && ['change_price', 'stock_adjust', 'decide_approval'].includes(body.action)) res.product = prodOut(res.product);

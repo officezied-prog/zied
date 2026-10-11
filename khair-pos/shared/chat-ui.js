@@ -9,6 +9,10 @@
 
    `api('chat_bootstrap')` / `api('chat_poll', {cursors})` / `api('chat_send', {channel, body, image, cid})`
    mirror backend/chat/chat-core.js. Channels: 'general' (everyone) and 'owner_mgr' (owner + manager).
+   v36 (owner 2026-10-11: «أريد الدردشة مع كل الفريق المسجل وكل من له يحمل هذا التطبيق»): a "Team" tab lists every
+   registered user (names only) with an unread badge; tapping one opens a private 1-to-1 room ('dm:…', only the two of
+   them). No extra polling: the same poll carries {cursors, seen} and returns the open rooms' messages, the team list
+   and the unread count of every room. KChatUI.start({ api, lang, user }) — `user` loads this device's read marks at once.
    Names only — the panel shows the sender's name, never a role word. */
 (function () {
   'use strict';
@@ -16,11 +20,11 @@
   var POLL_OPEN = 4000, POLL_IDLE = 20000;
 
   var T = {
-    id: { title: 'Obrolan', general: 'Umum', owner_mgr: 'Pemilik & Manajer', send: 'Kirim', ph: 'Tulis pesan…',
+    id: { title: 'Obrolan', general: 'Umum', owner_mgr: 'Pemilik & Manajer', team: 'Tim', back: 'Kembali ke tim', team_hint: 'Pilih nama untuk obrolan pribadi (hanya kalian berdua).', send: 'Kirim', ph: 'Tulis pesan…',
       img: 'Gambar', empty: 'Belum ada pesan.', you: 'Anda', close: 'Tutup', today: 'Hari ini', yesterday: 'Kemarin',
       sending: 'mengirim…', failed: 'gagal', big: 'Gambar terlalu besar — coba foto lebih kecil.', retry: 'Coba lagi',
       locked: 'Akun terkunci.', offline: 'Luring — pesan menunggu.' },
-    ar: { title: 'المحادثة', general: 'عام', owner_mgr: 'المالك والمدير', send: 'إرسال', ph: 'اكتب رسالة…',
+    ar: { title: 'المحادثة', general: 'عام', owner_mgr: 'المالك والمدير', team: 'الفريق', back: 'رجوع إلى الفريق', team_hint: 'اختر اسمًا لمحادثة خاصة (بينكما فقط).', send: 'إرسال', ph: 'اكتب رسالة…',
       img: 'صورة', empty: 'لا توجد رسائل بعد.', you: 'أنت', close: 'إغلاق', today: 'اليوم', yesterday: 'أمس',
       sending: 'يُرسل…', failed: 'فشل', big: 'الصورة كبيرة جداً — جرّب صورة أصغر.', retry: 'إعادة',
       locked: 'الحساب مقفل.', offline: 'غير متصل — الرسالة تنتظر.' }
@@ -74,6 +78,16 @@
       '.kchat-ic.send{background:#0a7d4b;color:#fff}',
       '.kchat-ic:disabled{opacity:.5;cursor:default}',
       '.kchat-note{font-size:12px;color:#94a3b8;padding:0 2px 4px;text-align:center}',
+      // v36: team list + private room bar
+      '.kchat-peer{display:none;align-items:center;gap:8px;background:#e8f5ee;padding:6px 10px;border-bottom:1px solid #cfe9db;flex:0 0 auto}',
+      '.kchat-peer b{flex:1;font-size:14px;color:#0a7d4b}',
+      '.kchat-back{border:none;background:#fff;border-radius:8px;padding:4px 10px;cursor:pointer;font-size:16px;line-height:1;color:#0a7d4b}',
+      '.kchat-hint{color:#64748b;font-size:12px;text-align:center;margin:2px 0 4px}',
+      '.kchat-member{display:flex;align-items:center;gap:10px;width:100%;border:none;background:#fff;border-radius:12px;padding:10px 12px;cursor:pointer;text-align:start;box-shadow:0 1px 2px rgba(0,0,0,.08);font:inherit;color:inherit}',
+      '.kchat-member .av{flex:0 0 auto;width:34px;height:34px;border-radius:50%;background:#0a7d4b;color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:15px}',
+      '.kchat-member .nm{flex:1;font-size:14px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.kchat-member .tm{font-size:11px;color:#94a3b8}',
+      '.kchat-mbadge{min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:#e11d48;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}',
       '@media (max-width:480px){.kchat-panel{width:100%}}',
       // on phones the apps put their nav in a bottom bar — float the launcher above it
       '@media (max-width:760px){.kchat-fab{bottom:calc(72px + env(safe-area-inset-bottom))}}'
@@ -123,11 +137,15 @@
     S.msgs[ch].sort(function (a, b) { return String(a.created_at).localeCompare(String(b.created_at)); });
   }
 
+  function isDm(ch) { return String(ch || '').indexOf('dm:') === 0; }
   function unreadFor(ch) {
+    // v36: a private room this device has not opened yet → the server's count (same poll); an open one → counted here
+    if (isDm(ch) && !(ch in S.cursors)) return (S.unreadSrv && S.unreadSrv[ch]) || 0;
     var seen = (S.seen && S.seen[ch]) || '';
     return (S.msgs[ch] || []).reduce(function (n, m) { return (!m.pending && m.from_name !== (S.me && S.me.name) && String(m.created_at) > seen) ? n + 1 : n; }, 0);
   }
-  function totalUnread() { return (S.channels || []).reduce(function (n, ch) { return n + unreadFor(ch); }, 0); }
+  function teamUnread() { return (S.team || []).reduce(function (n, t) { return n + unreadFor(t.channel); }, 0); }
+  function totalUnread() { return (S.channels || []).reduce(function (n, ch) { return n + unreadFor(ch); }, 0) + teamUnread(); }
 
   function renderBadge() {
     if (!S.fab) return;
@@ -137,6 +155,7 @@
   }
 
   function markSeen(ch) {
+    if (S.unreadSrv && S.unreadSrv[ch]) S.unreadSrv[ch] = 0;
     var arr = S.msgs[ch] || []; if (!arr.length) return;
     S.seen = S.seen || {}; S.seen[ch] = arr[arr.length - 1].created_at;
     store('seen.' + (S.me ? S.me.name : '_'), S.seen);
@@ -144,18 +163,60 @@
 
   function renderTabs() {
     S.tabs.innerHTML = '';
-    if (!S.channels || S.channels.length < 2) { S.tabs.style.display = 'none'; return; }
+    var tabs = (S.channels || []).slice(); if ((S.team || []).length) tabs.push('team'); // v36: the team tab
+    if (tabs.length < 2) { S.tabs.style.display = 'none'; renderPeer(); return; }
     S.tabs.style.display = 'flex';
-    S.channels.forEach(function (ch) {
-      var b = el('button', 'kchat-tab' + (ch === S.cur ? ' on' : ''), tr(ch));
-      var dot = el('span', 'dot'); if (ch !== S.cur && unreadFor(ch) > 0) dot.style.display = 'block';
+    var onTeam = S.view === 'team' || isDm(S.cur);
+    tabs.forEach(function (ch) {
+      var on = ch === 'team' ? onTeam : (!onTeam && ch === S.cur);
+      var b = el('button', 'kchat-tab' + (on ? ' on' : ''), tr(ch)); b.setAttribute('data-ch', ch);
+      var dot = el('span', 'dot'); if (!on && (ch === 'team' ? teamUnread() : unreadFor(ch)) > 0) dot.style.display = 'block';
       b.appendChild(dot);
-      b.addEventListener('click', function () { S.cur = ch; markSeen(ch); renderTabs(); renderList(); renderBadge(); });
+      b.addEventListener('click', function () {
+        if (ch === 'team') { S.view = 'team'; S.cur = S.channels[0]; S.peer = null; }
+        else { S.view = 'room'; S.cur = ch; S.peer = null; markSeen(ch); }
+        renderTabs(); renderList(); renderBadge();
+      });
       S.tabs.appendChild(b);
+    });
+    renderPeer();
+  }
+
+  /* v36: the bar above a private room (back to the team list + the other person's name) */
+  function renderPeer() {
+    if (!S.peerBar) return;
+    var dm = S.view !== 'team' && isDm(S.cur) && S.peer;
+    S.peerBar.style.display = dm ? 'flex' : 'none';
+    S.foot.style.display = S.view === 'team' ? 'none' : '';
+    if (dm) { S.peerName.textContent = S.peer.name; S.backBtn.textContent = S.lang === 'ar' ? '›' : '‹'; S.backBtn.title = tr('back'); S.backBtn.setAttribute('aria-label', tr('back')); }
+  }
+
+  function openDm(t) {
+    S.view = 'room'; S.cur = t.channel; S.peer = t;
+    if (!(t.channel in S.cursors)) { S.cursors[t.channel] = ''; S.msgs[t.channel] = S.msgs[t.channel] || []; }
+    renderTabs(); renderList(); markSeen(t.channel); renderBadge();
+    refresh(true); // fetch the room now (the same poll call, just sooner)
+  }
+
+  function renderTeam() {
+    var list = S.list; list.innerHTML = '';
+    var team = (S.team || []).slice().sort(function (a, b) {
+      return (unreadFor(b.channel) > 0) - (unreadFor(a.channel) > 0) || String((S.last || {})[b.channel] || '').localeCompare(String((S.last || {})[a.channel] || '')) || a.name.localeCompare(b.name);
+    });
+    list.appendChild(el('div', 'kchat-hint', tr('team_hint')));
+    team.forEach(function (t) {
+      var b = el('button', 'kchat-member'); b.type = 'button'; b.setAttribute('data-name', t.name);
+      b.appendChild(el('span', 'av', (t.name || '?').trim().charAt(0).toUpperCase()));
+      b.appendChild(el('span', 'nm', t.name));
+      var at = (S.last || {})[t.channel]; if (at) b.appendChild(el('span', 'tm', dayLabel(at) === tr('today') ? timeLabel(at) : dayLabel(at)));
+      var n = unreadFor(t.channel); if (n > 0) b.appendChild(el('span', 'kchat-mbadge', n > 99 ? '99+' : String(n)));
+      b.addEventListener('click', function () { openDm(t); });
+      list.appendChild(b);
     });
   }
 
   function renderList(keepScroll) {
+    if (S.view === 'team') { renderTeam(); return; }
     var list = S.list, atBottom = (list.scrollTop + list.clientHeight >= list.scrollHeight - 40);
     list.innerHTML = '';
     var arr = (S.msgs[S.cur] || []);
@@ -215,10 +276,14 @@
     head.appendChild(S.titleEl); head.appendChild(x);
     // tabs
     S.tabs = el('div', 'kchat-tabs');
+    // v36: private-room bar
+    S.peerBar = el('div', 'kchat-peer'); S.backBtn = el('button', 'kchat-back', '‹'); S.peerName = el('b');
+    S.backBtn.addEventListener('click', function () { S.view = 'team'; S.cur = S.channels[0]; S.peer = null; renderTabs(); renderList(); renderBadge(); });
+    S.peerBar.appendChild(S.backBtn); S.peerBar.appendChild(S.peerName);
     // list
     S.list = el('div', 'kchat-list');
     // foot
-    var foot = el('div', 'kchat-foot');
+    var foot = el('div', 'kchat-foot'); S.foot = foot;
     S.note = el('div', 'kchat-note'); S.note.style.display = 'none';
     S.prev = el('div', 'kchat-prev'); S.prevImg = el('img'); var px = el('button', null, '×'); px.addEventListener('click', clearImage);
     S.prev.appendChild(S.prevImg); S.prev.appendChild(px);
@@ -233,7 +298,7 @@
     row.appendChild(imgBtn); row.appendChild(S.ta); row.appendChild(S.send);
     foot.appendChild(S.note); foot.appendChild(S.prev); foot.appendChild(row);
 
-    S.panel.appendChild(head); S.panel.appendChild(S.tabs); S.panel.appendChild(S.list); S.panel.appendChild(foot);
+    S.panel.appendChild(head); S.panel.appendChild(S.tabs); S.panel.appendChild(S.peerBar); S.panel.appendChild(S.list); S.panel.appendChild(foot);
     S.wrap.appendChild(S.panel);
     S.wrap.addEventListener('click', function (e) { if (e.target === S.wrap) close(); });
     document.body.appendChild(S.wrap);
@@ -243,7 +308,7 @@
     if (!S.wrap) buildPanel();
     S.wrap.classList.add('open'); S.openState = true;
     applyDir();
-    renderTabs(); renderList(); if (S.cur) markSeen(S.cur); renderBadge();
+    renderTabs(); renderList(); if (S.cur && S.view !== 'team') markSeen(S.cur); renderBadge();
     schedule(true);
     refresh();
   }
@@ -260,24 +325,41 @@
     if (S.timer) clearTimeout(S.timer);
     S.timer = setTimeout(tick, fast ? POLL_OPEN : POLL_IDLE);
   }
-  function tick() { refresh(); }
+  // v36 (lean, CLAUDE.md): no chat calls while the app is in the background — one call as soon as it is shown again
+  function tick() { if (typeof document !== 'undefined' && document.hidden) { S.paused = true; return; } refresh(); }
+  function onVisible() { if (S && S.paused && !document.hidden) { S.paused = false; refresh(); } }
 
-  function refresh() {
-    if (S.busy) { schedule(S.openState); return; }
-    S.busy = true;
+  function refresh(soon) {
+    if (S.busy) { if (soon) S.again = true; else schedule(S.openState); return; }
+    S.busy = true; S.again = false;
     var first = !S.loaded;
-    var p = first ? S.api('chat_bootstrap', {}) : S.api('chat_poll', { cursors: S.cursors });
+    // v36: the same single call also reports what this device has read (seen) → unread counts for every room
+    var p = first ? S.api('chat_bootstrap', { seen: S.seen || {} }) : S.api('chat_poll', { cursors: S.cursors, seen: S.seen || {} });
+    var mine = S;
     p.then(function (res) {
+      if (S !== mine) return; // stopped (logout) meanwhile
       S.busy = false; S.loaded = true;
-      if (res && res.me) S.me = res.me;
-      if (res && res.channels) { S.channels = res.channels; if (!S.cur || S.channels.indexOf(S.cur) < 0) S.cur = S.channels[0]; }
+      if (res && res.me) {
+        S.me = res.me;
+        // read marks of this user on this device (when the app did not pass `user`): load once and ask again at once
+        if (S.seenFor !== res.me.name) { S.seenFor = res.me.name; S.seen = store('seen.' + res.me.name) || {}; S.again = true; }
+      }
+      if (res && res.channels) { S.channels = res.channels; if (!S.cur || (!isDm(S.cur) && S.channels.indexOf(S.cur) < 0)) S.cur = S.channels[0]; }
+      if (res && Array.isArray(res.team)) {
+        S.team = res.team;
+        if (S.peer) { var still = S.team.find(function (t) { return t.channel === S.peer.channel; }); if (!still) { S.peer = null; S.view = 'team'; S.cur = S.channels[0]; } }
+      }
+      if (res && res.unread && typeof res.unread === 'object') S.unreadSrv = res.unread;
+      if (res && res.last && typeof res.last === 'object') S.last = res.last;
       if (res && typeof res.retention_days === 'number') S.retention = res.retention_days;
       if (res && res.messages) Object.keys(res.messages).forEach(function (ch) { ingest(ch, res.messages[ch]); });
       if (S.fab) S.fab.style.display = 'flex';
-      if (S.openState) { renderTabs(); renderList(true); if (S.cur) markSeen(S.cur); }
+      if (S.openState) { renderTabs(); renderList(true); if (S.cur && S.view !== 'team') markSeen(S.cur); }
       renderBadge();
+      if (S.again) { S.again = false; refresh(); return; }
       schedule(S.openState);
     }).catch(function (e) {
+      if (S !== mine) return;
       S.busy = false;
       if (e && (e.code === 'TAMPER_LOCKED' || e.code === 'LOCKED' || e.code === 'BAD_PIN' || e.code === 'BAD_KEY' || e.code === 'NO_SESSION' || e.code === 'PIN_CHANGE_REQUIRED')) {
         if (S.fab) S.fab.style.display = 'none'; if (S.openState) close();
@@ -293,17 +375,23 @@
       if (S && S.api) { S.api = opts.api || S.api; if (opts.lang) S.lang = opts.lang; applyDir(); renderBadge(); return; }
       if (typeof opts.api !== 'function') return;
       injectCss();
-      S = { api: opts.api, lang: opts.lang === 'ar' ? 'ar' : 'id', channels: [], cur: null, msgs: {}, cursors: {}, seen: store('seen._tmp') || {}, me: null, busy: false, loaded: false, openState: false, retention: 0, pendingImg: '' };
+      // v36: read marks are per user on this device ('kchat.seen.<name>'); `user` lets the very first call carry them
+      S = { api: opts.api, lang: opts.lang === 'ar' ? 'ar' : 'id', channels: [], cur: null, msgs: {}, cursors: {}, seen: opts.user ? (store('seen.' + opts.user) || {}) : {}, seenFor: opts.user || null,
+        me: null, busy: false, loaded: false, openState: false, retention: 0, pendingImg: '', team: [], unreadSrv: {}, last: {}, view: 'room', peer: null };
       S.fab = el('button', 'kchat-fab', '💬'); S.fab.setAttribute('aria-label', tr('title')); S.fab.style.display = 'none';
       S.badge = el('span', 'kchat-badge'); S.fab.appendChild(S.badge);
       S.fab.addEventListener('click', open);
       document.body.appendChild(S.fab);
+      document.addEventListener('visibilitychange', onVisible);
       refresh();
     },
     setLang: function (lang) { if (S) { S.lang = lang === 'ar' ? 'ar' : 'id'; applyDir(); if (S.openState) { renderTabs(); renderList(true); } } },
+    // v36: open a private room with a team member by name (used by the apps and the tests)
+    openWith: function (name) { if (!S) return false; var t = (S.team || []).find(function (x) { return x.name === name; }); if (!t) return false; if (!S.openState) open(); openDm(t); return true; },
     stop: function () {
       if (!S) return;
       if (S.timer) clearTimeout(S.timer);
+      document.removeEventListener('visibilitychange', onVisible);
       if (S.fab && S.fab.parentNode) S.fab.parentNode.removeChild(S.fab);
       if (S.wrap && S.wrap.parentNode) S.wrap.parentNode.removeChild(S.wrap);
       S = null;

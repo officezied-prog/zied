@@ -34,6 +34,13 @@ test('purchase is blocked without a photo; mock AI scan prefills editable lines;
   await unmatched.locator('[data-act="pu-newprod"]').click();
   await expect(page.locator('#pf-name')).toHaveValue('Madu Sidr Yaman 500gr');
   await page.fill('#pf-retail_price', '275000');
+  // v36 (owner: "بضاعة جديدة في فاتورة المزود ← يسأل الحجم والوزن والفئة"): category + size/weight are required here
+  await page.click('#pf-save');
+  await expect(page.locator('#pf-err')).toContainText('Kategori');
+  await page.fill('#pf-category', 'Madu');
+  await page.click('#pf-save');
+  await expect(page.locator('#pf-err')).toContainText('Ukuran atau berat');
+  await page.fill('#pf-weight', '500 g');
   await page.click('#pf-save');
   await expect(page.locator('#pu-lines tr.unmatched')).toHaveCount(0);
   // edit: drop the manual line, change qty of the Medjool line, re-map the Gula line by hand
@@ -122,7 +129,7 @@ test('large sale requires an exit photo; match result cocok / tidak cocok; missi
 });
 
 test('reports: Kontrol foto card numbers match the data', async ({ page }) => {
-  await login(page);
+  await login(page, 'Pemilik', '1234', '', { stay: true });
   await nav(page, 'reports');
   await page.click('[data-act="rep-preset"][data-p="month"]');
   const from = jktToday().slice(0, 8) + '01', to = jktToday();

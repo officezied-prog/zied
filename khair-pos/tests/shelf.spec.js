@@ -3,7 +3,7 @@
 // to move them, sell_from_shop_only setting, queued offline sales never refused (jual_tanpa_rak).
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, jktToday, login, getDb, nav, asUser, addBySearch, checkoutSkip, editDb, closeModals, CARRIER } = require('./helpers');
+const { SHOTS, jktToday, login, getDb, nav, asUser, addBySearch, checkoutSkip, editDb, closeModals, CARRIER, switchUser } = require('./helpers');
 
 const shelf = p => p.shop_stock === undefined || p.shop_stock === null || p.shop_stock === '' ? p.stock : Math.min(p.shop_stock, p.stock);
 const fq = q => new Intl.NumberFormat('id-ID', { maximumFractionDigits: 3 }).format(q);
@@ -117,7 +117,8 @@ test('goods-in adds to the warehouse only; a sale above the shelf → NOT_ON_SHE
   await asUser(page, 'Pemilik', '1234', 'void_sale', { invoice_no: inv, reason: 'uji rak' });
   expect(P(await getDb(page), /Za'atar/)).toMatchObject({ stock: zaa.stock, shop_stock: 2 });
 
-  // setting off: sales from the warehouse are allowed
+  // setting off: sales from the warehouse are allowed (an owner setting; v36: the manager did the selling above)
+  await switchUser(page, 'Pemilik', '1234');
   await nav(page, 'settings');
   await expect(page.locator('#st-shelf-only')).toBeChecked();
   await page.uncheck('#st-shelf-only');

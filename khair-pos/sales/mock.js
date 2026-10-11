@@ -198,7 +198,9 @@ const MockServer = (() => {
     }
     if (action === 'login') {
       if (viaMaster) logAct(db, u, 'masuk_master', 'Masuk ke akun ' + u.name + ' (' + u.role + ') dengan kode pemilik', u.name, 0, 'warn');
-      return { user: { name: u.name, role: u.role }, must_change: u.must_change === true && !viaMaster, via_master: viaMaster };
+      // v36: like the server, the login reports an account locked after a code attempt (it returned before that check)
+      const la = db.settings && Array.isArray(db.settings.locked_accounts) ? db.settings.locked_accounts.map(x => String(x).toLowerCase()) : [];
+      return { user: { name: u.name, role: u.role }, must_change: u.must_change === true && !viaMaster, via_master: viaMaster, tamper_locked: u.role !== 'owner' && la.includes(String(u.name).toLowerCase()) };
     }
     if (action !== 'device_ping') deviceTouch(db, u, data.device, false);
     const owner = u.role === 'owner';
@@ -216,11 +218,13 @@ const MockServer = (() => {
 
     switch (action) {
       case 'login': return { user: { name: u.name, role: u.role }, tamper_locked: u.role !== 'owner' && isLockedAcct(u.name) };
-      case 'report_tamper':
-        if (owner) { logAct(db, u, 'tamper', 'Pemilik: percobaan kode terdeteksi', u.name, 0, 'warn'); dirty = true; return { locked: false }; }
-        if (!isLockedAcct(u.name)) db.settings.locked_accounts = lockedSet().concat([u.name.toLowerCase()]);
-        logAct(db, u, 'tamper', 'Percobaan menulis kode — akun dikunci (' + String(data.where || '').slice(0, 60) + ')', u.name, 0, 'danger'); dirty = true;
-        return { locked: true };
+      case 'report_tamper': {
+        // v36: with the front-camera photo (two calls, same shot_id) — shared/tamper-guard.js keeps the demo servers identical
+        if (!window.KGuard) throw E('SERVER', 'tamper-guard not loaded');
+        const r = KGuard.mock.report(db, u, data, body.__shotPhoto || '', { owner, now: new Date().toISOString(), date: jktDate(), lock: () => { if (!isLockedAcct(u.name)) db.settings.locked_accounts = lockedSet().concat([u.name.toLowerCase()]); }, logAct: (k, sm, lv) => logAct(db, u, k, sm, u.name, 0, lv) });
+        dirty = true;
+        return r;
+      }
       case 'device_ping': {
         if (!deviceTouch(db, u, data.device, true)) throw E('INVALID', 'device.id tidak valid');
         return { require_location: db.settings.require_device_location === true, server_time: new Date().toISOString() };
@@ -637,8 +641,9 @@ const MockServer = (() => {
     try {
       const role = (db.users.find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase() && x.pin_hash === body.pin_hash) || {}).role;
       let __codeHit = '';
+      const __tp = window.KGuard ? KGuard.mock.takePhoto(body) : { body, photo: '' }; body = __tp.body; // v36: the tamper photo is not text
       if (body.data && typeof body.data === 'object' && !/^scan_/.test(body.action) && !(window.KhairFieldMock && KhairFieldMock.actions.includes(body.action))) { __codeHit = scanCodeAttempt(body.data, 0); body = Object.assign({}, body, { data: JSON.parse(JSON.stringify(body.data)) }); cleanInput(body.data, 0); }
-      body.__codeHit = __codeHit;
+      body.__codeHit = __codeHit; body.__shotPhoto = __tp.photo;
       res = handle(db, body);
       if (fieldSeeded || dirty || !(READ_ONLY.includes(body.action) || ['field_bootstrap', 'list_field', 'product_images'].includes(body.action))) save(db);
       res = Object.assign({ ok: true }, role === 'owner' || ['users', 'setup'].includes(body.action) ? res : strip(res));

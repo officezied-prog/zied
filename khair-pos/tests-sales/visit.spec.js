@@ -1,7 +1,7 @@
 // Check-in: GPS fix with accuracy → nearby shop (< 150 m) or new shop → photo with consent → outcome → check_in.
 const H = require('./helpers'); const { test, expect } = H;
 
-test('check-in at a NEW shop with a photo of the owner (consent required, ≤ 400 px, ≤ 45 KB)', async ({ page, context }) => {
+test('check-in at a NEW shop: phone, address, photo of the shop front and of the owner (consent required, ≤ 400 px, ≤ 45 KB)', async ({ page, context }) => {
   await H.login(page);
   await H.setPos(context, -6.2580, 106.8640, 9);
   await H.startDay(page);
@@ -10,15 +10,31 @@ test('check-in at a NEW shop with a photo of the owner (consent required, ≤ 40
   await page.click('#ci-new');
   await page.fill('#ci-name', 'Toko Kurma Pak Umar');
   await page.fill('#ci-owner', 'Pak Umar');
-  await page.fill('#ci-phone', '0812-3456-7890');
-  await page.fill('#ci-address', 'Jl. Raya Condet No. 99');
   await page.fill('#ci-area', 'Condet');
   await H.pickType(page, 'toko');
+  await page.click('#oc-tertarik');
+  // v36 (owner 2026-10-11): a new shop needs its phone, its address, a photo of the shop front and a photo of the owner
+  await expect(page.locator('label[for="ci-phone"]')).toContainText('*');
+  await page.click('#ci-ok');
+  await expect(page.locator('#ci-err')).toHaveText('Wajib diisi: No. HP');
+  await page.fill('#ci-phone', '0812-3456-7890');
+  await page.click('#ci-ok');
+  await expect(page.locator('#ci-err')).toHaveText('Wajib diisi: Alamat');
+  await page.fill('#ci-address', 'Jl. Raya Condet No. 99');
+  await page.click('#ci-ok');
+  await expect(page.locator('#ci-err')).toContainText('foto depan toko');
+  await page.setInputFiles('#ci-shop-photo', await H.photoFile(page, 'toko.png'));
+  await expect(page.locator('#ci-shop-thumb')).toBeVisible();
+  expect(parseInt(await page.locator('#ci-shop-kb').textContent())).toBeLessThanOrEqual(45);
+  await page.click('#ci-ok');
+  await expect(page.locator('#ci-err')).toContainText('foto bersama pemilik toko');
+  await expect(page.locator('#ci-refused')).toBeVisible(); // he may refuse (UU PDP) — not used here
+  expect((await H.getDb(page)).shops.some(s => s.name === 'Toko Kurma Pak Umar')).toBe(false);
   await page.setInputFiles('#ci-photo-back', await H.photoFile(page));
+  await expect(page.locator('#ci-refused')).toHaveCount(0);
   await expect(page.locator('#ci-thumb')).toBeVisible();
   const kb = parseInt(await page.locator('#ci-photo-kb').textContent());
   expect(kb).toBeLessThanOrEqual(45);
-  await page.click('#oc-tertarik');
   await page.fill('#ci-notes', 'Minta katalog Ramadan');
   await page.click('[data-act="ci-next"][data-n="3"]');
   await H.shot(page, 'phone-08-checkin-new', true);
@@ -30,9 +46,13 @@ test('check-in at a NEW shop with a photo of the owner (consent required, ≤ 40
   await expect(page.locator('.toast.ok', { hasText: 'Toko Kurma Pak Umar' })).toBeVisible();
   const db = await H.getDb(page);
   const shop = db.shops.find(s => s.name === 'Toko Kurma Pak Umar');
-  expect(shop).toMatchObject({ owner_name: 'Pak Umar', area: 'Condet', type: 'toko', status: 'prospek', created_by: 'Ahmad', lat: -6.258, lng: 106.864 });
+  expect(shop).toMatchObject({ owner_name: 'Pak Umar', phone: '081234567890', address: 'Jl. Raya Condet No. 99', area: 'Condet', type: 'toko', status: 'prospek', created_by: 'Ahmad', lat: -6.258, lng: 106.864 });
   const v = db.visits[db.visits.length - 1];
   expect(v).toMatchObject({ shop_id: shop.shop_id, outcome: 'tertarik', notes: 'Minta katalog Ramadan', user: 'Ahmad', acc: 9, distance_m: 0, photo_consent: true });
+  expect(shop.photo_visit).toBe(v.visit_id); // the shop names the visit that holds its photos
+  expect(v.shop_photo.startsWith('/9j/')).toBe(true);
+  expect(v.shop_photo.length).toBeLessThanOrEqual(45 * 1024);
+  expect(v.shop_photo).not.toBe(v.photo_thumb);
   expect(v.photo_thumb.length).toBeLessThanOrEqual(45 * 1024);
   expect(v.photo_thumb.startsWith('/9j/')).toBe(true); // JPEG
   const dims = await page.evaluate(b => new Promise(r => { const i = new Image(); i.onload = () => r([i.naturalWidth, i.naturalHeight]); i.src = 'data:image/jpeg;base64,' + b; }), v.photo_thumb);
@@ -41,6 +61,42 @@ test('check-in at a NEW shop with a photo of the owner (consent required, ≤ 40
   // the check-in point is in the track (working hours)
   expect(db.tracks.some(x => x.user === 'Ahmad' && x.lat === -6.258 && x.lng === 106.864)).toBe(true);
   await expect(page.locator('#st-visits')).toHaveText('1');
+  // the rep's shop page: phone + address and both photos (kept on the phone — and read from the server on another phone)
+  await H.tab(page, 'shops');
+  const row = page.locator(`#sh-list [data-shop="${shop.shop_id}"]`);
+  await expect(row.locator('[data-contact]')).toContainText('081234567890');
+  await expect(row.locator('[data-contact]')).toContainText('Jl. Raya Condet No. 99');
+  await row.locator('[data-act="shop-photos"]').click();
+  await expect(page.locator('#shop-photos [data-ph="shop"] img')).toHaveAttribute('src', 'data:image/jpeg;base64,' + v.shop_photo);
+  await expect(page.locator('#shop-photos [data-ph="owner"] img')).toHaveAttribute('src', 'data:image/jpeg;base64,' + v.photo_thumb);
+  await H.shot(page, 'phone-08b-shop-photos');
+  await H.closeModals(page);
+  await page.evaluate(() => new Promise(r => { const q = indexedDB.deleteDatabase('khair-sales'); q.onsuccess = q.onerror = q.onblocked = () => r(); }));
+  await page.reload();
+  await expect(page.locator('#app:not([hidden]) #v-today .hero, #login .screen-card').first()).toBeVisible();
+  if (await page.locator('#login .screen-card').isVisible()) await H.login(page, 'Ahmad', '4444', { noGoto: true });
+  await H.tab(page, 'shops');
+  await page.locator(`#sh-list [data-shop="${shop.shop_id}"] [data-act="shop-photos"]`).click();
+  await expect(page.locator('#shop-photos [data-ph="shop"] img')).toHaveAttribute('src', 'data:image/jpeg;base64,' + v.shop_photo);
+  await expect(page.locator('#shop-photos [data-ph="owner"] img')).toHaveAttribute('src', 'data:image/jpeg;base64,' + v.photo_thumb);
+});
+
+test('new shop: the owner may refuse to be photographed — noted on the visit; the shop photo is still required', async ({ page, context }) => {
+  await H.login(page);
+  await H.setPos(context, -6.2590, 106.8650, 9);
+  await H.tab(page, 'visit');
+  await page.click('#ci-new');
+  await page.fill('#ci-name', 'Toko Malu Difoto');
+  await H.pickType(page, 'toko');
+  await page.click('#oc-tertarik');
+  await H.newShopExtras(page, { refused: true });
+  await page.click('#ci-ok');
+  await expect(page.locator('.toast.ok', { hasText: 'Toko Malu Difoto' })).toBeVisible();
+  const db = await H.getDb(page);
+  const v = db.visits[db.visits.length - 1];
+  expect(v.photo_thumb).toBe('');
+  expect(v.shop_photo.length).toBeGreaterThan(100);
+  expect(v.notes).toBe('[Pemilik tidak bersedia difoto]');
 });
 
 test('check-in at an EXISTING shop nearby (< 150 m), with the Google Maps route link', async ({ page, context }) => {
@@ -84,6 +140,7 @@ test('offline: check-in at a new shop + an order are queued, then synced in orde
   await page.click('#ci-new');
   await page.fill('#ci-name', 'Warung Offline Bu Ani');
   await H.pickType(page, 'warung');
+  await H.newShopExtras(page);
   await page.click('#oc-order');
   await page.click('#ci-ok');
   await expect(page.locator('.toast.warn', { hasText: 'Offline' }).first()).toBeVisible();

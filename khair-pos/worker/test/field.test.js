@@ -439,3 +439,156 @@ test('field v34b: a key pasted with spaces / quotes is cleaned; Google\'s own er
   assert.match(bad.message, /^Google: 400 INVALID_ARGUMENT — API key not valid/);
   assert.ok(!/AIzaSyDUMMY/.test(bad.message), 'a key in Google\'s message is hidden');
 });
+
+// ---- v36 (owner 2026-10-11): new shop = owner photo + shop photo + phone + address; accountant reads the field page;
+//      every rep's orders on a map; go back to the best streets (return time set by the manager) ----
+const PH = 'data:image/jpeg;base64,/9j/' + 'B'.repeat(400);
+const SH = 'data:image/jpeg;base64,/9j/' + 'C'.repeat(500);
+test('field v36: a new shop keeps the owner photo + the shop front photo; the shop names the visit; shop_photos reads them', async () => {
+  const db = officeDb(); const a = sqliteAdapter(db);
+  const r = await handleField(a, base('check_in', 'Rani', '3333', { client_id: 'ns1', lat: -6.27, lng: 106.86, acc: 8, outcome: 'tertarik', rating: 5,
+    shop: { name: 'Toko Foto', owner_name: 'Bu Sari', phone: '0812 1111 2222', address: 'Jl. Raya Condet 7', type: 'toko' },
+    photo_base64: PH, photo_consent: true, shop_photo_base64: SH }), {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.warnings, [], 'nothing missing');
+  assert.equal(r.visit.photo_thumb, undefined, 'photos are not echoed back');
+  assert.equal(r.visit.shop_photo, undefined);
+  assert.equal(r.shop.photo_visit, r.visit.visit_id);
+  const v = a.all("SELECT * FROM pos_visits WHERE client_id = 'ns1'", [])[0];
+  assert.equal(v.shop_photo, '/9j/' + 'C'.repeat(500));
+  assert.equal(v.photo_thumb, '/9j/' + 'B'.repeat(400));
+  assert.equal(a.all('SELECT photo_visit FROM pos_shops WHERE shop_id = ?', [r.shop.shop_id])[0].photo_visit, r.visit.visit_id);
+  // read when opened: the rep, the owner and the accountant; the cashier may not
+  for (const [u, p] of [['Rani', '3333'], ['Pemilik', '1234'], ['Aqil', '8888']]) {
+    const ph = await handleField(a, base('shop_photos', u, p, { shop_id: r.shop.shop_id }), {}, KEY);
+    assert.equal(ph.ok, true, JSON.stringify(ph));
+    assert.equal(ph.owner_photo, '/9j/' + 'B'.repeat(400));
+    assert.equal(ph.shop_photo, '/9j/' + 'C'.repeat(500));
+    assert.equal(ph.user, 'Rani');
+  }
+  assert.equal((await handleField(a, base('shop_photos', 'Kasir1', '7777', { shop_id: r.shop.shop_id }), {}, KEY)).error, 'FORBIDDEN');
+  // the owner's ≤ 31-day report carries both photos; a long range carries none
+  const l = await handleField(a, base('list_field', 'Aqil', '8888', { from: TODAY(), to: TODAY() }), {}, KEY);
+  const lv = l.visits.find(x => x.client_id === 'ns1');
+  assert.equal(lv.rating, 5); assert.ok(lv.shop_photo && lv.photo_thumb);
+  const ll = await handleField(a, base('list_field', 'Pemilik', '1234', { from: plus(TODAY(), -100), to: TODAY() }), {}, KEY);
+  assert.equal(ll.visits.find(x => x.client_id === 'ns1').shop_photo, undefined);
+});
+test('field v36: an old app copy (no phone / address / photos) is still accepted, with warnings; a refusal is noted', async () => {
+  const a = sqliteAdapter(seed());
+  const r = await handleField(a, base('check_in', 'Rani', '3333', { client_id: 'ns2', lat: -6.27, lng: 106.86, acc: 8, outcome: 'tertarik', shop: { name: 'Toko Lama', type: 'toko' } }), {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.warnings.length, 4);
+  const r2 = await handleField(a, base('check_in', 'Rani', '3333', { client_id: 'ns3', lat: -6.27, lng: 106.86, acc: 8, outcome: 'tertarik', owner_photo_refused: true, notes: 'ramah',
+    shop: { name: 'Toko Malu', phone: '0812', address: 'Jl. X', type: 'toko' }, shop_photo_base64: SH }), {}, KEY);
+  assert.deepEqual(r2.warnings, []);
+  assert.match(a.all("SELECT notes FROM pos_visits WHERE client_id = 'ns3'", [])[0].notes, /^\[Pemilik tidak bersedia difoto\] ramah$/);
+});
+test('field v36: migrations add the photo columns to an older database (idempotent)', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE pos_visits (id INTEGER PRIMARY KEY AUTOINCREMENT, visit_id TEXT, shop_id TEXT, photo_thumb TEXT); CREATE TABLE pos_shops (id INTEGER PRIMARY KEY AUTOINCREMENT, shop_id TEXT); CREATE TABLE pos_field_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT); CREATE TABLE pos_route_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, plan_id TEXT, user TEXT, plan_date TEXT, start_label TEXT, start_lat REAL, start_lng REAL, stops TEXT, note TEXT, created_at TEXT, updated_at TEXT)');
+  const a = sqliteAdapter(db);
+  for (let k = 0; k < 2; k++) for (const sql of FIELD_MIGRATIONS) { try { await a.run(sql, []); } catch (e) { /* already there */ } }
+  const cols = t => a.all(`PRAGMA table_info(${t})`, []).map(c => c.name);
+  assert.ok(cols('pos_visits').includes('shop_photo'));
+  assert.ok(cols('pos_shops').includes('photo_visit'));
+});
+
+test('field v36: orders_map — every rep\'s accepted orders, oldest first, with the shop position and area; not for a rep', async () => {
+  const db = officeDb();
+  insert(db, 'pos_shops', { id: 2, shop_id: 'S2', name: 'Toko B', area: 'Cililitan', type: 'toko', status: 'pelanggan', visits: 1, lat: -6.26, lng: 106.87 });
+  insert(db, 'pos_shops', { id: 3, shop_id: 'S3', name: 'Toko C', area: '', type: 'toko', status: 'prospek', visits: 1 });
+  const D = TODAY();
+  insert(db, 'pos_field_orders', { order_id: 'O2', client_id: 'c2', user: 'Budi', order_date: D, order_time: D + 'T03:10:00.000Z', shop_id: 'S2', shop_name: 'Toko B', items: '[]', total: 50000, status: 'baru' });
+  insert(db, 'pos_field_orders', { order_id: 'O1', client_id: 'c1', user: 'Rani', order_date: D, order_time: D + 'T02:00:00.000Z', shop_id: 'S2', shop_name: 'Toko B', items: '[]', total: 75000, status: 'diproses' });
+  insert(db, 'pos_field_orders', { order_id: 'O3', client_id: 'c3', user: 'Rani', order_date: D, order_time: D + 'T04:00:00.000Z', shop_id: 'S3', shop_name: 'Toko C', items: '[]', total: 10000, status: 'baru' });
+  insert(db, 'pos_field_orders', { order_id: 'OX', client_id: 'cx', user: 'Rani', order_date: D, order_time: D + 'T01:00:00.000Z', shop_id: 'S2', shop_name: 'Toko B', items: '[]', total: 1, status: 'batal' });
+  insert(db, 'pos_field_orders', { order_id: 'OOLD', client_id: 'co', user: 'Rani', order_date: plus(D, -40), order_time: '', shop_id: 'S2', shop_name: 'Toko B', items: '[]', total: 1, status: 'dikirim' });
+  const a = sqliteAdapter(db);
+  const r = await handleField(a, base('orders_map', 'Aqil', '8888', { from: plus(D, -6), to: D }), {}, KEY);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.orders.map(o => o.order_id), ['O1', 'O2', 'O3'], 'cancelled and out-of-range left out; acceptance order');
+  assert.deepEqual([r.orders[0].lat, r.orders[0].lng, r.orders[0].area], [-6.26, 106.87, 'Cililitan']);
+  assert.equal(r.orders[2].lat, null, 'a shop without a position has no pin');
+  const one = await handleField(a, base('orders_map', 'Pemilik', '1234', { from: plus(D, -6), to: D, user: 'budi' }), {}, KEY);
+  assert.deepEqual(one.orders.map(o => o.order_id), ['O2']);
+  assert.equal((await handleField(a, base('orders_map', 'Rani', '3333', { from: D, to: D }), {}, KEY)).error, 'FORBIDDEN');
+  assert.equal((await handleField(a, base('orders_map', 'Pemilik', '1234', { from: plus(D, -200), to: D }), {}, KEY)).error, 'INVALID');
+});
+
+const SLINE = [[-6.2700, 106.8600], [-6.2750, 106.8600], [-6.2800, 106.8600]];
+function streetsDb() {
+  const db = officeDb();
+  insert(db, 'pos_users', { id: 6, name: 'Budi', role: 'sales', pin_hash: h('Budi', '6666'), active: true });
+  const D = TODAY();
+  const log = (skey, user, name, date, lines, extra = {}) => insert(db, 'pos_street_log', Object.assign({ skey, user, name, plan_date: date, plan_id: 'P' + date + user, drawn: 0, ref: skey, lines: JSON.stringify(lines), min_lat: -90, max_lat: 90, min_lng: -180, max_lng: 180, removed: 0, updated_at: '' }, extra));
+  log('st:jalan bagus', 'Rani', 'Jalan Bagus', plus(D, -30), [SLINE]);
+  log('st:jalan bagus', 'Rani', 'Jalan Bagus', plus(D, -20), [SLINE]);          // the latest work: 20 days ago → due (14)
+  log('st:jalan sepi', 'Rani', 'Jalan Sepi', plus(D, -25), [[[-6.30, 106.90], [-6.31, 106.90]]]); // no shop along it → not good
+  log('st:jalan baru', 'Budi', 'Jalan Baru', plus(D, -3), [[[-6.2600, 106.8700], [-6.2650, 106.8700]]]); // good, not due yet
+  log('st:jalan lagi', 'Budi', 'Jalan Lagi', plus(D, -40), [[[-6.2500, 106.8800], [-6.2550, 106.8800]]]); // good + due but planned again →
+  log('st:jalan lagi', 'Budi', 'Jalan Lagi', plus(D, 2), [[[-6.2500, 106.8800], [-6.2550, 106.8800]]]);  // … not due
+  log('st:jalan raya condet', 'Rani', 'Jalan Raya Condet', plus(D, -16), []);    // no line: shops by their address
+  log('st:jalan hapus', 'Rani', 'Jalan Hapus', plus(D, -30), [SLINE], { removed: 1 }); // taken out of the plan: not worked
+  // shops along the streets (≤ 60 m), one far away
+  insert(db, 'pos_shops', { shop_id: 'B1', name: 'Bagus 1', status: 'pelanggan', customer_id: 7, lat: -6.2740, lng: 106.8603, address: '' });
+  insert(db, 'pos_shops', { shop_id: 'B2', name: 'Bagus 2', status: 'prospek', lat: -6.2760, lng: 106.8596, address: '' });
+  insert(db, 'pos_shops', { shop_id: 'FAR', name: 'Jauh', status: 'pelanggan', lat: -6.2750, lng: 106.8650, address: '' });
+  insert(db, 'pos_shops', { shop_id: 'N1', name: 'Baru 1', status: 'pelanggan', lat: -6.2620, lng: 106.8701, address: '' });
+  insert(db, 'pos_shops', { shop_id: 'L1', name: 'Lagi 1', status: 'pelanggan', lat: -6.2520, lng: 106.8800, address: '' });
+  insert(db, 'pos_shops', { shop_id: 'A1', name: 'Alamat 1', status: 'prospek', address: 'Jl. Raya Condet No. 12' });
+  insert(db, 'pos_visits', { visit_id: 'V1', client_id: 'v1', user: 'Rani', visit_date: plus(D, -20), shop_id: 'B2', outcome: 'tertarik', rating: 4 });
+  insert(db, 'pos_visits', { visit_id: 'V2', client_id: 'v2', user: 'Rani', visit_date: plus(D, -16), shop_id: 'A1', outcome: 'tertarik', rating: 0 });
+  insert(db, 'pos_visits', { visit_id: 'V3', client_id: 'v3', user: 'Rani', visit_date: plus(D, -16), shop_id: 'A1', outcome: 'order', rating: 5 });
+  insert(db, 'pos_field_orders', { order_id: 'BO1', client_id: 'bo1', user: 'Rani', order_date: plus(D, -20), shop_id: 'B1', items: '[]', total: 2500000, status: 'dikirim' });
+  insert(db, 'pos_field_orders', { order_id: 'BO2', client_id: 'bo2', user: 'Rani', order_date: plus(D, -20), shop_id: 'B1', items: '[]', total: 100, status: 'batal' });
+  return db;
+}
+test('field v36: street_returns scores the worked streets and lists the good ones due again (rep: his own, with the line)', async () => {
+  const a = sqliteAdapter(streetsDb());
+  const o = await handleField(a, base('street_returns', 'Pemilik', '1234'), {}, KEY);
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.days, 14);
+  const by = Object.fromEntries(o.streets.map(s => [s.name, s]));
+  assert.deepEqual(Object.keys(by).sort(), ['Jalan Bagus', 'Jalan Baru', 'Jalan Lagi', 'Jalan Raya Condet'], 'the street with no shop / taken out is not listed');
+  assert.deepEqual(o.streets.filter(s => s.due).map(s => s.name), ['Jalan Bagus', 'Jalan Raya Condet'], 'most overdue first');
+  const b = by['Jalan Bagus'];
+  assert.equal(b.last_date, plus(TODAY(), -20)); assert.equal(b.due_date, plus(TODAY(), -6)); assert.equal(b.overdue, 6);
+  assert.deepEqual([b.shops, b.customers, b.orders, b.value, b.interested, b.rating], [2, 1, 1, 2500000, 1, 4], 'far shop and cancelled order left out');
+  assert.equal(b.score, 1 * 3 + 1 * 2 + 1 + 2);
+  assert.equal(b.lines, undefined, 'the office list carries no lines');
+  assert.equal(by['Jalan Lagi'].due, false); assert.equal(by['Jalan Lagi'].next_date, plus(TODAY(), 2));
+  assert.equal(by['Jalan Baru'].due, false);
+  assert.deepEqual([by['Jalan Raya Condet'].shops, by['Jalan Raya Condet'].interested], [1, 2], 'matched by the shop address');
+  // the rep sees only his own, with the line to put in his plan
+  const r = await handleField(a, base('street_returns', 'Rani', '3333'), {}, KEY);
+  assert.deepEqual(r.streets.map(s => s.name).sort(), ['Jalan Bagus', 'Jalan Raya Condet']);
+  assert.deepEqual(r.streets.find(s => s.name === 'Jalan Bagus').lines, [SLINE]);
+  // the accountant reads; the cashier cannot
+  assert.equal((await handleField(a, base('street_returns', 'Aqil', '8888'), {}, KEY)).streets.length, 4);
+  assert.equal((await handleField(a, base('street_returns', 'Kasir1', '7777'), {}, KEY)).error, 'FORBIDDEN');
+});
+test('field v36: the return time is set by the manager / owner (3–90 days) and moves the due date', async () => {
+  const db = streetsDb();
+  insert(db, 'pos_users', { id: 9, name: 'Jihan', role: 'manager', pin_hash: h('Jihan', '9999'), active: true });
+  const a = sqliteAdapter(db);
+  assert.equal((await handleField(a, base('street_return_set', 'Rani', '3333', { days: 30 }), {}, KEY)).error, 'FORBIDDEN');
+  assert.equal((await handleField(a, base('street_return_set', 'Aqil', '8888', { days: 30 }), {}, KEY)).error, 'FORBIDDEN');
+  assert.equal((await handleField(a, base('street_return_set', 'Jihan', '9999', { days: 2 }), {}, KEY)).error, 'INVALID');
+  const s = await handleField(a, base('street_return_set', 'Jihan', '9999', { days: 30 }), {}, KEY);
+  assert.equal(s.ok, true, JSON.stringify(s));
+  assert.equal(JSON.parse(a.all("SELECT svalue FROM pos_settings WHERE skey = 'street_return_days'", [])[0].svalue), 30);
+  await handleField(a, base('street_return_set', 'Pemilik', '1234', { days: 18 }), {}, KEY);
+  assert.equal(a.all("SELECT COUNT(*) AS n FROM pos_settings WHERE skey = 'street_return_days'", [])[0].n, 1, 'updated, not duplicated');
+  const o = await handleField(a, base('street_returns', 'Pemilik', '1234'), {}, KEY);
+  assert.equal(o.days, 18);
+  assert.deepEqual(o.streets.filter(x => x.due).map(x => x.name), ['Jalan Bagus'], '20 days ago is due at 18 days; 16 days ago is not');
+});
+test('field v36: generated == original for the new actions', async () => {
+  for (const body of [base('street_returns', 'Pemilik', '1234'), base('orders_map', 'Pemilik', '1234', { from: plus(TODAY(), -6), to: TODAY() }), base('shop_photos', 'Rani', '3333', { shop_id: 'B1' })]) {
+    const nodes = await loadFieldNodes(sqliteAdapter(streetsDb()), parseField(body, {}));
+    const $ = makeAccessor(nodes);
+    assert.deepEqual(frozen(() => runProcessField($, KEY)[0].json), frozen(() => origFieldFn($)[0].json), body.action);
+  }
+});
