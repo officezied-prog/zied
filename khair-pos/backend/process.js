@@ -2236,7 +2236,13 @@ switch (req.action) {
           base[f] = (f === 'category' || f === 'unit' || f === 'notes' || f === 'supplier') ? str(r[f]) : (f === 'wholesale_min_qty' || f === 'min_stock' ? num(r[f]) : money(r[f]));
         }
       });
-      if (r.stock !== undefined && r.stock !== null && r.stock !== '') base.stock = num(r.stock);
+      if (r.stock !== undefined && r.stock !== null && r.stock !== '') {
+        base.stock = num(r.stock);
+        // v39 (first set-up: products imported first, quantities later): a product with nothing in the warehouse keeps
+        // all of its stock on the shelf, so the imported quantity can be sold at once. One with warehouse stock keeps
+        // its shelf as it was (capped at the new total by normShop).
+        if (ex && shopOf(ex) >= num(ex.stock)) shopSet[String(ex.id)] = Math.max(0, base.stock);
+      }
       base.active = true;
       ops.products.push(forWrite(base, ex ? ex.id : -1));
       if (ex) updated++; else { created++; if (sku) bySku[sku] = base; byName[base.name.toLowerCase()] = base; }
