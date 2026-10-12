@@ -81,7 +81,7 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.9.0';
+const APP_VERSION = 'sales-1.9.1';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -646,7 +646,10 @@ function devTick() { if (S.inApp && S.pin_hash && document.visibilityState === '
 setInterval(devTick, 60000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') devTick(); });
 // When the app becomes visible again, pull fresh data once so a returning rep sees current orders/shops without waiting.
-document.addEventListener('visibilitychange', () => { if (!document.hidden && S.inApp && S.pin_hash) { try { refreshData(true); } catch(e){} } });
+// v38 (free server plan): at most once every 10 minutes — a rep switches to WhatsApp / Maps and back many times an hour,
+// and each full load reads every product, shop and customer.
+var lastFieldLoad = 0; // var: refreshData may run before this line
+document.addEventListener('visibilitychange', () => { if (!document.hidden && S.inApp && S.pin_hash && Date.now() - lastFieldLoad > 10 * 60000) { try { refreshData(true); } catch(e){} } });
 function devIndicator() {
   const b = $('#tb-loc'); if (!b) return;
   b.hidden = !(S.inApp && DEV.status === 'granted' && DEV.watch != null && $('#tb-gps').hidden);
@@ -975,6 +978,7 @@ function saveCache() { FS.set('cache', { products: S.products, shops: S.shops.fi
 async function refreshData(quiet) {
   try {
     const r = await api('field_bootstrap');
+    lastFieldLoad = Date.now();
     applyData(r);
     takeLists(r.lists).catch(e => console.warn('lists', e)).then(() => syncPlans()).then(() => { const c = S.inApp && S.view === 'today' && $('#plan-card'); if (c) c.outerHTML = planCardHTML(); }).catch(() => { });
     // pending (outbox) visits/orders still count today

@@ -34,7 +34,12 @@ function toDb(table, col, v) {
 // Range comparisons on YYYY-MM-DD strings are lexicographic in both n8n and SQLite, so an
 // inverted sentinel range (from '9999-12-31' > to '0000-01-01') returns nothing — matching
 // n8n exactly for actions that don't need that range.
-function loaderSpecs(req) {
+// v38 (owner 2026-10-12: stay on the free Cloudflare plan; 1,856 products are coming): the frequent polls — the approvals
+// inbox every minute, the sales / activity refreshes, the device ping — never read the two big tables (every product,
+// every customer), which they do not use. Fewer D1 rows read per day and less CPU per request; test/light-polls.test.js
+// proves each of these answers (and writes) exactly the same with and without them.
+export const LIGHT_ACTIONS = ['list_approvals', 'check_approval', 'get_sales', 'list_activity', 'device_ping'];
+export function loaderSpecs(req, opts = {}) {
   const data = (req && req.data) || {};
   const inReturnOrSale = ['request_return', 'get_sale'].indexOf(req.action) >= 0;
   const isD = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s == null ? '' : s));
@@ -68,9 +73,12 @@ function loaderSpecs(req) {
     ...tamper,
     'Get Users': all('pos_users'),
     'Get Settings': all('pos_settings'),
-    'Get Products': all('pos_products'),
-    'Get Customers': all('pos_customers'),
+    ...(!opts.full && LIGHT_ACTIONS.indexOf(req.action) >= 0 ? {} : { 'Get Products': all('pos_products'), 'Get Customers': all('pos_customers') }),
     'Get Devices': all('pos_devices'),
+    // v38: yesterday's and today's D1 use (UTC days) — read only by the owner's approvals poll, which shows it
+    'Get D1 Usage': req.action === 'list_approvals'
+      ? range('pos_api_usage', 'month', new Date(Date.now() - 86400000).toISOString().slice(0, 10), new Date().toISOString().slice(0, 10))
+      : eq('pos_api_usage', 'month', SENTINEL_NONE),
     'Get Sale By Client': eq('pos_sales', 'client_id', req.client_id),
     'Get Sale By Invoice': eq('pos_sales', 'invoice_no', saleInvoice),
     'Get Items By Invoice': eq('pos_sale_items', 'invoice_no', saleInvoice),

@@ -1823,7 +1823,14 @@ switch (req.action) {
   case 'list_approvals': {
     if (!isApprover && role !== 'akuntan') return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
     // The accountant only sees the shared "manager or accountant" approvals; owner/manager see all.
-    return done({ ok: true, approvals: approvalRows.filter(function (a) { return a.status === 'pending' && (isApprover || a.approver_role === 'mgr_akuntan'); }).map(approvalOut) });
+    const apOut = { ok: true, approvals: approvalRows.filter(function (a) { return a.status === 'pending' && (isApprover || a.approver_role === 'mgr_akuntan'); }).map(approvalOut) };
+    // v38 (free Cloudflare plan): the owner sees how much of the daily free D1 allowance is used (yesterday and today, UTC)
+    if (role === 'owner') {
+      const uDay = new Date().toISOString().slice(0, 10), yDay = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      const uSum = function (api, d) { return rows('Get D1 Usage').filter(function (x) { return x.api === api && x.month === d; }).reduce(function (a1, x) { return a1 + num(x.n); }, 0); };
+      apOut.usage = { day: uDay, read: uSum('d1_read', uDay), write: uSum('d1_write', uDay), y_read: uSum('d1_read', yDay), y_write: uSum('d1_write', yDay), read_limit: 5000000, write_limit: 100000 };
+    }
+    return done(apOut);
   }
 
   case 'list_disputes': {

@@ -1274,7 +1274,10 @@ const MockServer = (() => {
       case 'list_approvals': {
         if (!['owner', 'manager', 'akuntan'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
         // the accountant only sees the shared manager-or-accountant requests (v29/v36, as on the server)
-        return { approvals: db.approvals.filter(x => x.status === 'pending' && (isAppr(u) || x.approver_role === 'mgr_akuntan')).map(x => Object.assign({}, x, { can_decide: canDecideAp(u, x) })) };
+        const apOut = { approvals: db.approvals.filter(x => x.status === 'pending' && (isAppr(u) || x.approver_role === 'mgr_akuntan')).map(x => Object.assign({}, x, { can_decide: canDecideAp(u, x) })) };
+        // v38 the owner's view of the free D1 allowance (demo: db.d1_usage, else small numbers)
+        if (u.role === 'owner') apOut.usage = Object.assign({ day: new Date().toISOString().slice(0, 10), read: 182000, write: 950, y_read: 640000, y_write: 2100, read_limit: 5000000, write_limit: 100000 }, db.d1_usage || {});
+        return apOut;
       }
       case 'decide_approval': {
         if (!['owner', 'manager', 'akuntan'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
