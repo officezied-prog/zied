@@ -146,7 +146,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.6.2';
+const APP_VERSION = '2.6.3';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -3957,12 +3957,18 @@ function openImport() {
     const rows = IM.data.map(r => mapRow(r, IM.map)).filter(r => r.name || r.sku);
     const btn = $('#im-go', el); btn.disabled = true;
     let created = 0, updated = 0, done = 0;
+    // v39: 200 rows per call; if the server cannot take that many in one request (the free plan's 50-query limit, a slow
+    // line), the same rows are sent again 15 at a time and the rest continues in small parts — never twice the same row
+    // (a resent row updates, it is not added again).
+    let size = 200;
     try {
-      for (let i = 0; i < rows.length; i += 200) {
-        const batch = rows.slice(i, i + 200);
+      for (let i = 0; i < rows.length;) {
+        const batch = rows.slice(i, i + size);
         btn.textContent = t('imp.progress', { done, total: rows.length });
-        const r = await api('import_products', { rows: batch });
-        created += int(r.created); updated += int(r.updated); done += batch.length;
+        let r;
+        try { r = await api('import_products', { rows: batch }); }
+        catch (e) { if (size > 15 && (e instanceof NetError || e.code === 'SERVER')) { size = 15; continue; } throw e; }
+        created += int(r.created); updated += int(r.updated); done += batch.length; i += batch.length;
       }
       closeModal();
       toast(t('imp.done', { c: created, u: updated }), 'ok', 5000);

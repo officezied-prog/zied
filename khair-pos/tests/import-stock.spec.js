@@ -18,3 +18,19 @@ test('import without quantities, then only barcode + quantity: the stock is on t
   if (wh) expect(db.products.find(x => x.sku === wh.sku).shop_stock).toBe(wh.shop_stock); // shelf kept, the extra went to the warehouse
 });
 function num(v) { const x = Number(v); return isFinite(x) ? x : 0; }
+
+// v39: when the server refuses a big group (the free plan's 50-query limit), the import goes on 15 rows at a time.
+test('the CSV import finishes in groups of 15 when the server refuses 200 rows at once', async ({ page }) => {
+  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await page.evaluate(() => { window.__sizes = []; const o = window.api; window.api = (a, d, x) => { if (a === 'import_products') { window.__sizes.push(d.rows.length); if (d.rows.length > 15) return Promise.reject(new NetError('HTTP 500')); } return o(a, d, x); }; });
+  const csv = '"Nama Produk","Barcode","Kategori","Satuan","Harga Modal","Harga Jual"\n' + Array.from({ length: 40 }, (_, i) => `"Produk Impor ${i}","IMP${1000 + i}","Food","pcs","1000","${1500 + i}"`).join('\n');
+  await page.click('#nav [data-view="products"]');
+  await page.click('[data-act="import-csv"]');
+  await page.setInputFiles('#im-file', { name: 'produk.csv', mimeType: 'text/csv', buffer: Buffer.from(csv, 'utf8') });
+  await expect(page.locator('#im-go')).toBeEnabled();
+  await page.click('#im-go');
+  await expect(page.locator('.toast.ok')).toContainText('40');
+  expect(await page.evaluate(() => window.__sizes)).toEqual([40, 15, 15, 10]);
+  const db = await getDb(page);
+  expect(db.products.filter(p => /^IMP10/.test(p.sku)).length).toBe(40);
+});

@@ -43,7 +43,28 @@ function d1Adapter(DB) {
       use.read += Number(meta.rows_read) || 0; use.write += Number(meta.rows_written) || Number(meta.changes) || 0;
       return { lastInsertRowid: meta.last_row_id, changes: meta.changes };
     },
+    // v39: many statements in ONE D1 call (and one transaction). [{ sql, params, kind: 'all' | 'run' }] → per statement:
+    // the rows ('all') or { lastInsertRowid, changes } ('run'), in order.
+    async batch(list) {
+      const res = await DB.batch(list.map((q) => DB.prepare(q.sql).bind(...(q.params || []))));
+      return res.map((r, i) => {
+        const m = (r && r.meta) || {};
+        use.read += Number(m.rows_read) || (list[i].kind === 'all' ? ((r && r.results) || []).length : 0);
+        use.write += Number(m.rows_written) || (list[i].kind === 'run' ? Number(m.changes) || 0 : 0);
+        return list[i].kind === 'all' ? ((r && r.results) || []) : { lastInsertRowid: m.last_row_id, changes: m.changes };
+      });
+    },
   };
+}
+
+// v39: GET …/health/batch — 60 trivial SELECTs in ONE batch. On the free plan (50 D1 queries per request) this answers
+// ok only if a batch counts as one query; the deploy smoke test prints it. No data, no auth needed.
+async function batchHealth(DB) {
+  const t = Date.now();
+  try {
+    const res = await DB.batch(Array.from({ length: 60 }, (_, i) => DB.prepare('SELECT ? AS n').bind(i)));
+    return { ok: res.length === 60, batch: res.length, ms: Date.now() - t };
+  } catch (e) { return { ok: false, batch: 60, error: String((e && e.message) || e).slice(0, 200) }; }
 }
 
 // v38 (owner 2026-10-12: "we start free, and pay the $5 only when the work needs it"): the D1 rows read / written today,
@@ -101,6 +122,10 @@ export default {
       } catch (e) {
         return json({ ok: false, error: 'SERVER', message: 'Server error' }, 500);
       }
+    }
+    if (request.method === 'GET' && /\/health\/batch$/.test(url.pathname)) {
+      if (!env || !env.DB) return json({ ok: false, error: 'SERVER' }, 500);
+      return json(await batchHealth(env.DB), 200);
     }
     if (request.method !== 'POST') {
       return json({ ok: false, error: 'METHOD', message: 'POST only' }, 405);
