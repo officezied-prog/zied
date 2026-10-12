@@ -242,6 +242,9 @@ test('Arabic supplier return screen', async ({ page }) => {
   await page.click('#lang-ar');
   await H.tab(page, 'masuk');
   await page.setInputFiles('#pu-photo', await H.photoFile(page, 'nota.png'));
+  // the scanned line must be in before saving (on a slow runner Simpan came before the scan and saved nothing)
+  await expect(page.locator('#pu-photo-ok')).toBeVisible();
+  await expect(page.locator('[data-pu-exp]')).toHaveCount(1);
   await H.pickCarrier(page, 'teman', { name: 'أحمد' });
   await H.fillPuExp(page);
   await page.click('#pu-save');
