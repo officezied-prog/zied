@@ -95,6 +95,7 @@ export const TABLES = {
   pos_activity: {
     act_id: 'string', at: 'string', act_date: 'string', user: 'string', role: 'string',
     kind: 'string', summary: 'string', ref: 'string', amount: 'number', level: 'string',
+    detail: 'string', // v37: JSON of an invoice change (kind 'ubah_faktur')
   },
   pos_bank_lines: {
     line_id: 'string', account_id: 'string', period: 'string', seq: 'number',

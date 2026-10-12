@@ -711,3 +711,28 @@ existing poll (4 s open / 20 s closed, paused with the tab) carries it all. The 
   The payload's `cost_price` is shown only to whoever may see costs (owner; manager / accountant with `akuntan_sees_cost`).
 - `pos_products` gains `review`. The Worker adds the new columns itself on the first request (`POS_MIGRATIONS` in
   `worker/src/core.js`).
+
+## Invoice changes, stock count every two months, goods in today (v37, owner 2026-10-12)
+Owner: «المتابعة اليومية للفواتير التي تم تنزيلها مع الكميات الموجودة والكميات التي يتم جردها آخر كل شهرين، وأي فاتورة يتم تنزيلها مصادَق عليها
+لا يمكن تغييرها إلا بموافقة المدير، وإرسال إشعار إلى المالك: تم تغيير فاتورة، بالتاريخ والوقت، بالتدقيق، ومن قام بتغييرها ومن طلب تغييرها».
+- **Invoice change record.** Every change to an already-saved invoice writes ONE `pos_activity` row of kind `ubah_faktur` (level `warn`,
+  `ref` = invoice / goods-in no., new column `detail` = JSON `{doc: masuk|jual, what: koreksi_masuk|batal|koreksi_harga|retur, no, nos?,
+  doc_date, party, changes: [{name, qty_from, qty_to, price_from, price_to, total_from, total_to, qty_ret, condition, qty, invoices}], reason,
+  requested_by, requested_at, approved_by, approved_role, approved_at, request_id, amount, details?}`). Written by `decide_approval`
+  approving `purchase_fix` (manager or owner), `void` and `retur`; `request_purchase_fix` by the owner (direct); `void_sale` (owner);
+  `correct_price`. The summary reads "FAKTUR DIUBAH — … | diminta X <time> WIB, disetujui Y <time> WIB". The owner's bootstrap
+  `notifications` include these rows made by others; the owner app shows them in the bell ("Faktur diubah (n)").
+- A saved goods-in note is never edited in place: the only route is `request_purchase_fix` (cashier → manager, manager → owner, owner
+  direct); a correction adds its own `KOREKSI` row.
+- `list_invoice_changes {from, to}` (owner, manager, akuntan) → `{changes: [...]}` newest first; purchase prices of goods-in changes only
+  for whoever may see costs (`akuntan_sees_cost`); `summary` only for the owner.
+- **Stock count.** Setting `opname_every_days` (default 60, 7–180): `set_opname_every {days}` (owner or manager; `save_settings` for the
+  owner too). Setting `opname_state` (kept by the server): `since`, `last_full`, `last_full_by`, `cycle_from`, `counted` (product ids; sent
+  to the apps only as `counted_n`). Every APPLIED count (owner direct, or approved) adds its products to the cycle; when the cycle covers
+  ≥ 90 % of the active products, `last_full` = today. `bootstrap.opname = {every_days, last_full, since, next_due, days_left,
+  status: ok|due|overdue, counted_n, active_n}`; `stock_count` (owner) and `decide_approval` (opname) return the new `opname`. The first
+  bootstrap sets `since`; once overdue, the next bootstrap writes one `notifikasi` (user `Sistem`, ref `owner,manager`) per due date.
+- **`daily_report`** adds `report.goods_in = {count, lines, qty, mismatch, total?, notes: [{purchase_no, supplier, at, by, match_status,
+  match_notes, carrier_*, lines: [{product_id, name, unit, qty, exp_date, stock_now, shop_now, cost_price?, total?}], changes_today}]}`
+  and `report.invoice_changes = {count, list}` (cost fields only for whoever may see costs).
+- Worker fix: `correct_price` now loads its sales date range (on the Worker it always answered NOT_FOUND before).

@@ -21,7 +21,9 @@ export function parseRequest(body, headers) {
   const periodEnd = period ? new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0)).toISOString().slice(0, 10) : '';
   // get_sales: a range; daily_report: one day.
   // v36: profit_loss (the monthly profit & loss statement) reads the same ranges as get_sales.
-  const rangeAction = action === 'get_sales' || action === 'profit_loss';
+  // v37: correct_price too — it re-prices the sales of its date range, but its range was never loaded on the Worker, so every
+  // price correction of sold goods answered NOT_FOUND ("Tidak ada penjualan … pada rentang itu").
+  const rangeAction = action === 'get_sales' || action === 'profit_loss' || action === 'correct_price';
   const salesFrom = rangeAction && isDate(data.from) ? data.from : (action === 'daily_report' && isDate(data.date) ? data.date : '9999-12-31');
   const salesTo = rangeAction && isDate(data.to) ? data.to : (action === 'daily_report' && isDate(data.date) ? data.date : '0000-01-01');
   return {
@@ -47,6 +49,11 @@ export function parseRequest(body, headers) {
     purchase_no: ['request_purchase_fix', 'decide_approval'].indexOf(action) >= 0 && data.purchase_no ? String(data.purchase_no) : '__none__',
     act_from: action === 'list_activity' && isDate(data.from) ? data.from : (action === 'bootstrap' ? weekAgo : '9999-12-31'),
     act_to: action === 'list_activity' && isDate(data.to) ? data.to : (action === 'bootstrap' ? today : '0000-01-01'),
+    // v37: invoice changes (activity kind 'ubah_faktur') for the audit list (its period) and the daily report (its day; there also
+    // the goods-in entries 'masuk' of that day, for the time each note was entered).
+    chg_from: action === 'list_invoice_changes' && isDate(data.from) ? data.from : (action === 'daily_report' && isDate(data.date) ? data.date : '9999-12-31'),
+    chg_to: action === 'list_invoice_changes' && isDate(data.to) ? data.to : (action === 'daily_report' && isDate(data.date) ? data.date : '0000-01-01'),
+    chg_kind2: action === 'daily_report' ? 'masuk' : '__none__',
     party_cid: ['receive_payment', 'allocate_payment', 'party_ledger'].indexOf(action) >= 0 && Number(data.customer_id) > 0 ? Number(data.customer_id) : -1,
     party_supplier: ['pay_supplier', 'allocate_payment', 'party_ledger'].indexOf(action) >= 0 && String(data.supplier || '').trim() ? String(data.supplier).trim().slice(0, 80) : '__none__',
   };
