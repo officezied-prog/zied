@@ -30,6 +30,7 @@
     <span class="gps" id="tb-gps" hidden role="status"><i></i><span id="tb-gps-l"></span></span>
     <span class="gps" id="tb-loc" hidden role="status">📍</span>
     <button class="pill warn" id="tb-outbox" data-act="outbox-open" hidden></button>
+    <button class="icon-btn" id="tb-lang" data-act="toggle-lang" title="Bahasa / اللغة" aria-label="Bahasa / اللغة"><span class="tb-lang-l" id="tb-lang-l">ع</span></button>
     <button class="icon-btn" id="tb-menu" data-act="menu" data-i18n-title="menu"><svg class="i"><use href="#i-menu"/></svg></button>
   </header>
   <main id="main">
@@ -81,7 +82,7 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.9.1';
+const APP_VERSION = 'sales-1.9.2';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -366,6 +367,7 @@ function applyLangAttrs() {
   document.documentElement.lang = S.lang;
   document.documentElement.dir = S.lang === 'ar' ? 'rtl' : 'ltr';
   $$('[data-i18n-title]').forEach(el => { el.title = t(el.dataset.i18nTitle); el.setAttribute('aria-label', t(el.dataset.i18nTitle)); });
+  const tl = document.getElementById('tb-lang-l'); if (tl) tl.textContent = S.lang === 'ar' ? 'ID' : 'ع'; // v41: one tap switches the language while working
 }
 function setLang(l) {
   S.lang = l === 'ar' ? 'ar' : 'id'; store.set('lang', S.lang);
@@ -778,7 +780,7 @@ const TABS = [{ id: 'today', icon: 'home', label: 'tab.today' }, { id: 'visit', 
 const RENDER = {};
 function renderShell() {
   $('#tabs').innerHTML = TABS.map(v => `<button class="tab ${S.view === v.id ? 'on' : ''}" id="tab-${v.id}" data-act="tab" data-v="${v.id}">${ic(v.icon)}<span>${esc(t(v.label))}</span></button>`).join('');
-  $('#tb-name').textContent = S.user; $('#tb-user').textContent = '';
+  $('#tb-name').textContent = S.user; $('#tb-user').textContent = APP_VERSION; // v41 (owner 2026-10-12): the version is always visible
   $('#tb-demo').hidden = !MOCK;
   updateOutboxBadge(); updateGpsIndicator(); applyLangAttrs();
 }
@@ -810,7 +812,7 @@ async function loadUsers() {
 const ownerHref = () => '../index.html' + (DEMO ? '?demo=1' : (MOCK ? '?mock=1' : ''));
 function renderLogin() {
   const brand = `<div class="brand"><div class="mark" aria-hidden="true">S</div><div>Khair Sales${MOCK ? ' <span class="demo">DEMO</span>' : ''}</div></div>`;
-  const foot = `<div class="foot-links"><div class="langs"><button class="btn xs ${S.lang === 'id' ? 'primary' : ''}" data-act="set-lang" data-lang="id">ID</button><button class="btn xs ${S.lang === 'ar' ? 'primary' : ''}" data-act="set-lang" data-lang="ar">العربية</button></div><a class="owner-link" href="${esc(ownerHref())}">${esc(t('login.owner_app'))}</a></div>`;
+  const foot = `<div class="foot-links"><div class="langs"><button class="btn xs ${S.lang === 'id' ? 'primary' : ''}" data-act="set-lang" data-lang="id">ID</button><button class="btn xs ${S.lang === 'ar' ? 'primary' : ''}" data-act="set-lang" data-lang="ar">العربية</button></div><a class="owner-link" href="${esc(ownerHref())}">${esc(t('login.owner_app'))}</a><div class="small muted" id="login-ver">${esc(t('app.version'))}: <b>${esc(APP_VERSION)}</b></div></div>`;
   let inner;
   if (L.step === 'key') {
     inner = `<h2>${esc(t('login.key_title'))}</h2><div class="field"><label class="f" for="lg-key">${esc(t('login.key'))}</label><input id="lg-key" class="input" autocomplete="off" autocapitalize="off" spellcheck="false" value="${esc(MOCK ? 'demo' : '')}"></div>
@@ -2884,6 +2886,7 @@ const ACT = {
   'logout': () => { closeModal(true); logout(); },
   'refresh': async () => { closeModal(true); if (await refreshData()) toast(t('saved'), 'ok'); },
   'set-lang': el => setLang(el.dataset.lang),
+  'toggle-lang': () => setLang(S.lang === 'ar' ? 'id' : 'ar'),
   'outbox-open': () => { closeModal(true); openOutbox(); },
   'login-key': async () => {
     const key = String(($('#lg-key') || {}).value || '').trim();
@@ -3327,6 +3330,9 @@ const I18N = {
    local test server is never closed. */
 
 /* v16 login texts */
+/* v41 (owner 2026-10-12): the app version is shown on the login screen and in the top bar */
+Object.assign(I18N.id, { 'app.version': 'Versi' });
+Object.assign(I18N.ar, { 'app.version': 'النسخة' });
 Object.assign(I18N.id, {
   'login.locked_until': 'Terlalu banyak PIN salah. Coba lagi jam {time}', 'login.tries_left': '{n} kali lagi, lalu akun dikunci 15 menit',
   'err.LOCKED': 'Akun terkunci sementara', 'err.PIN_CHANGE_REQUIRED': 'Buat PIN baru dulu',
