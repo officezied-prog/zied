@@ -85,6 +85,7 @@
   <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></symbol>
   <symbol id="i-hash" viewBox="0 0 24 24"><path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16"/></symbol>
   <symbol id="i-wa" viewBox="0 0 24 24"><path d="M3 21l1.7-5A8.5 8.5 0 1 1 8 19.4z"/><path d="M9 9.5c.3 2 2.3 4.2 4.5 4.8l1.2-1.2 2 1-.4 1.5c-3.7.4-8-3.9-7.6-7.6L10.2 7.6l1 2z"/></symbol>
+  <symbol id="i-repack" viewBox="0 0 24 24"><path d="M3 7l5-3 5 3v6l-5 3-5-3z"/><path d="M14 13l3.5-2L21 13v4l-3.5 2-3.5-2z"/><path d="M11 15.5l2 1"/></symbol>
 </svg>
 
 <script src="../shared/docs.js"></script>
@@ -3711,6 +3712,7 @@ RENDER.more = function () {
       <button class="li" data-act="retur-open" id="m-retur">${ic('undo')}<div class="grow"><div class="t">${esc(t('more.retur'))}</div><div class="s">${esc(t('more.retur_s'))}</div></div></button>
       <button class="li" data-act="void-req" id="m-void">${ic('undo')}<div class="grow"><div class="t">${esc(t('more.void'))}</div><div class="s">${esc(t('more.void_s'))}</div></div></button>
       <button class="li" data-act="price-req" id="m-price">${ic('tag')}<div class="grow"><div class="t">${esc(t('more.price'))}</div><div class="s">${esc(S.role === 'kasir' ? t('more.price_s') : t('more.price_s_mgr'))}</div></div></button>
+      <button class="li" data-act="repack-open" id="m-repack">${ic('repack')}<div class="grow"><div class="t">${esc(t('rk.title'))}</div><div class="s">${esc(t(S.role === 'kasir' ? 'rk.more_s' : 'rk.more_s_mgr'))}</div></div></button>
       <button class="li" data-act="stock-count" id="m-count">${ic('count')}<div class="grow"><div class="t">${esc(t('more.count'))}</div><div class="s">${esc(t('more.count_s'))}</div></div></button>
       <button class="li" data-act="my-req" id="m-myreq">${ic('list')}<div class="grow"><div class="t">${esc(t('more.myreq'))}</div><div class="s">${esc(t('more.myreq_s'))}</div></div>${mine ? `<span class="badge warn">${mine}</span>` : ''}</button>
       ${isApprover() ? `<button class="li" data-act="apr-open" id="m-apr">${ic('check')}<div class="grow"><div class="t">${esc(t('apr.inbox'))} (<span id="m-apr-n">${AP.count}</span>)</div><div class="s">${esc(t('apr.inbox_s'))}</div></div></button>` : ''}
@@ -3959,6 +3961,132 @@ function openPriceChange(p) {
   };
 }
 
+/* ========== v38 Kemas ulang (owner 2026-10-12: «المالك يصله إشعار فقط، والمدير والمحاسب يوافق على الكمية والعملية كلها، والكاشير هو الذي
+   يطلب القيام بها، لكن يجب التأكد: ممكن 2 كاشير يقوم بنفس الطلب والتعليب، انتبه منها»). The cashier picks a shop-made pack, says how many packs
+   were made (and, if known, how much bulk went in), sees the yield and SENDS A REQUEST — nothing moves until the manager or the accountant
+   approves. One request per bulk product at a time (the server says who asked first); the request carries a client id kept for this form,
+   so a double tap, a retry or a resend is the same request. A manager here repacks directly (as in the owner app; the owner is told). ========== */
+const rkPacks = () => S.products.filter(p => p.active !== false && num(p.repack_from) > 0 && prodById(p.repack_from));
+/** Same formulas as the server: packs expected from the bulk used, the yield and the loss. */
+function rkCalc(size, qty, fromQty) { const expected = size > 0 ? roundQty(fromQty / size) : 0; return { expected, yieldPct: expected > 0 ? Math.round(qty / expected * 1000) / 10 : 0, loss: roundQty(fromQty - qty * size) }; }
+/** The preview line: bulk used → expected packs, made = yield %, loss; too little bulk in stock → red. */
+function rkPreview(box, size, unit, stock, qty, fromQty) {
+  if (!box) return;
+  if (!(qty > 0) || !(fromQty > 0) || !(size > 0)) { box.className = 'rp-preview'; box.innerHTML = `<span class="muted">${esc(t('rk.preview_empty'))}</span>`; return; }
+  const c = rkCalc(size, qty, fromQty), over = stock != null && fromQty > num(stock) + 1e-9;
+  box.className = 'rp-preview' + (over ? ' bad' : c.yieldPct < 95 ? ' low' : '');
+  box.innerHTML = `<div>${esc(t('rk.pv_used', { q: fmtQty(fromQty), u: unit || '', e: fmtQty(c.expected) }))}</div>
+    <div><b data-yield>${esc(t('rk.pv_yield', { n: fmtQty(qty), p: NF1.format(c.yieldPct) }))}</b> · <span data-loss>${esc(t('rk.pv_loss', { q: fmtQty(c.loss), u: unit || '' }))}</span></div>
+    ${over ? `<div data-short><b>${esc(t('rk.not_enough', { q: fmtQty(stock), u: unit || '' }))}</b></div>` : ''}`;
+}
+function openRepack() {
+  const mgr = S.role === 'manager' || S.role === 'owner', packs = rkPacks();
+  const R = { cid: uuid() }; // one client id per form: a double tap / retry / resend is the same request
+  const el = openModal({
+    title: t('rk.title'), id: 'repack', focus: false,
+    body: `<p class="small muted" style="margin-top:0">${esc(t(mgr ? 'rk.hint_mgr' : 'rk.hint'))}</p>
+      ${packs.length ? '' : `<div class="empty" id="rk-none">${esc(t('rk.none'))}</div>`}
+      <div class="field"><label class="f" for="rk-to">${esc(t('rk.pack_product'))}</label><select class="input" id="rk-to"><option value="">— ${esc(t('rk.pick'))} —</option>${packs.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select></div>
+      <div id="rk-info" class="small muted" style="margin:-4px 0 10px"></div>
+      <div class="grid2"><div class="field"><label class="f" for="rk-qty">${esc(t('rk.pieces'))}</label><input class="input num" id="rk-qty" data-rule="num" inputmode="decimal" autocomplete="off"></div>
+        <div class="field"><label class="f" for="rk-from">${esc(t('rk.bulk_used'))} (<span id="rk-unit">—</span>)</label><input class="input num" id="rk-from" data-rule="num" inputmode="decimal" autocomplete="off" placeholder="${esc(t('rk.auto'))}"></div></div>
+      <div class="grid2"><div class="field"><label class="f" for="rk-cost">${esc(t('rk.pack_cost'))} (Rp)</label><input class="input num" id="rk-cost" data-rule="num" inputmode="numeric" autocomplete="off"></div>
+        <div class="field"><label class="f" for="rk-exp">${esc(t('rk.exp'))}</label><input class="input" type="date" id="rk-exp"></div></div>
+      <div class="field"><label class="f" for="rk-note">${esc(t('notes'))}</label><input class="input" id="rk-note" maxlength="300" autocomplete="off"></div>
+      <div class="rp-preview" id="rk-preview"></div><div class="err" id="rk-err" role="alert"></div><div id="rk-res"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button><button class="btn primary" id="rk-ok" ${packs.length ? '' : 'disabled'}>${ic(mgr ? 'check' : 'send')} ${esc(t(mgr ? 'rk.save' : 'rk.send'))}</button>`
+  });
+  const read = () => {
+    const to = prodById($('#rk-to', el).value), from = to ? prodById(to.repack_from) : null;
+    const qty = qtyVal($('#rk-qty', el).value || ''), rawFrom = $('#rk-from', el).value.trim();
+    const size = to ? num(to.repack_qty) : 0, fromQty = rawFrom ? qtyVal(rawFrom) : roundQty(qty * size);
+    return { to, from, qty, size, rawFrom, fromQty };
+  };
+  const draw = () => {
+    const r = read();
+    $('#rk-unit', el).textContent = r.from ? (r.from.unit || '') : '—';
+    $('#rk-info', el).innerHTML = r.from ? `${esc(t('rk.from_bulk'))}: <b>${esc(r.from.name)}</b> · ${esc(t('stock'))} <b class="num" id="rk-bulk-stock">${fmtQty(r.from.stock)} ${esc(r.from.unit || '')}</b> · ${esc(t('rk.size'))}: <b>${fmtQty(r.size)} ${esc(r.from.unit || '')}</b>` : '';
+    rkPreview($('#rk-preview', el), r.size, r.from ? r.from.unit : '', r.from ? r.from.stock : null, r.qty, r.fromQty);
+  };
+  ['#rk-to', '#rk-qty', '#rk-from'].forEach(s => $(s, el).addEventListener('input', draw));
+  $('#rk-to', el).addEventListener('change', draw);
+  $('#rk-cost', el).addEventListener('change', e => { const x = moneyVal(e.target.value); e.target.value = x ? fmtNum(x) : ''; });
+  draw();
+  const ok = $('#rk-ok', el), err = $('#rk-err', el), res = $('#rk-res', el);
+  const lockForm = () => { $$('#rk-to, #rk-qty, #rk-from, #rk-cost, #rk-exp, #rk-note', el).forEach(i => { i.disabled = true; }); ok.hidden = true; };
+  ok.onclick = async () => {
+    const r = read();
+    err.textContent = ''; res.innerHTML = '';
+    if (!r.to) { err.textContent = t('rk.pick_first'); return; }
+    if (!(r.qty > 0) || !(r.fromQty > 0)) { err.textContent = t('rk.qty_invalid'); $('#rk-qty', el).focus(); return; }
+    if (r.fromQty > num(r.from.stock) + 1e-9) { err.textContent = t('rk.not_enough', { q: fmtQty(r.from.stock), u: r.from.unit || '' }); return; }
+    const data = { to_product_id: r.to.id, to_qty: r.qty, note: $('#rk-note', el).value.trim() };
+    if (r.rawFrom) data.from_qty = r.fromQty;
+    const pc = moneyVal($('#rk-cost', el).value); if (pc) data.packaging_cost = pc;
+    const ex = $('#rk-exp', el).value; if (/^\d{4}-\d{2}-\d{2}$/.test(ex)) data.exp_date = ex;
+    ok.disabled = true;
+    try {
+      if (mgr) {
+        const out = await api('repack', data), rp = out.repack || {};
+        applyStock(out.stock); saveCache(); renderGrid();
+        res.innerHTML = `<div class="status cocok" id="rk-done" data-yield="${esc(rp.yield_pct)}"><div class="st">${ic('check')} ${esc(t('rk.saved', { from: fmtQty(rp.from_qty) + ' ' + (rp.from_unit || ''), n: fmtQty(rp.to_qty), name: rp.to_name || '' }))}</div>
+          <div>${esc(t('rk.pv_yield', { n: fmtQty(rp.to_qty), p: NF1.format(num(rp.yield_pct)) }))} · ${esc(t('rk.pv_loss', { q: fmtQty(rp.loss_qty), u: rp.from_unit || '' }))}</div><div class="small muted">${esc(t('rk.owner_told'))}</div></div>`;
+        lockForm(); toast(t('rk.saved_toast'), 'ok');
+        return;
+      }
+      data.client_id = R.cid;
+      const out = await api('request_repack', data), a = out.approval || {}, id = out.request_id || a.request_id;
+      trackMyRequest(id, 'repack', t('req.repack', { name: r.to.name, n: fmtQty(r.qty) }));
+      if (a.status && a.status !== 'pending') updateMyRequest(a);
+      res.innerHTML = `<div class="status perlu_cek" id="rk-pending" data-req="${esc(id)}"><div class="st">${ic('lock')} ${esc(t('rk.sent'))}</div>
+        <div>${esc(t('apr.request_id'))}: <b class="num">${esc(id)}</b>${a.status && a.status !== 'pending' ? ` · <b>${esc(t('req.st_' + a.status))}</b>` : ''}</div>
+        <div class="small">${esc(t('rk.wait'))}</div><div class="small muted">${esc(t('rk.owner_told_req'))}</div></div>`;
+      lockForm(); toast(t('rk.sent_toast'), 'ok');
+    } catch (e) {
+      ok.disabled = false;
+      const pend = e.res && e.res.pending;
+      if (e.code === 'REPACK_PENDING' && pend) {
+        res.innerHTML = `<div class="status tidak_cocok" id="rk-busy" data-by="${esc(pend.cashier)}"><div class="st">${ic('lock')} ${esc(t('rk.busy_title'))}</div>
+          <div>${esc(t('rk.busy', { name: pend.cashier, time: fmtDateTime(pend.created_at), id: pend.request_id, bulk: pend.from_name, pack: pend.to_name, n: fmtQty(pend.to_qty) }))}</div>
+          <div class="small">${esc(t(pend.stale ? 'rk.busy_stale' : 'rk.busy_wait'))}</div></div>`;
+      } else err.textContent = e instanceof NetError ? t('rk.need_online') : errMsg(e); // the same client id is sent again on the next tap
+    }
+  };
+}
+/** v38: a repack request still waiting after 24 h can be cancelled by the cashier who asked (the lock on the bulk is freed). */
+async function cancelMyRepack(id, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api('cancel_repack', { request_id: id });
+    if (r.approval) updateMyRequest(r.approval);
+    KS.set('my_requests', MYREQ.list); renderShell();
+    toast(t('rk.cancelled'), 'ok');
+  } catch (e) { toast(e instanceof NetError ? t('apr.need_online') : errMsg(e), 'err'); if (btn) btn.disabled = false; }
+  const m = $('#myreq'); if (m) drawMyRequests(m.closest('.modal-bg'));
+}
+/** The approval card (manager here; manager / accountant in the owner app): bulk, bulk in stock now, the packs, expected vs made, editable. */
+function repackAprBodyHTML(a, pl) {
+  const can = a.can_decide !== false, bulk = prodById(pl.from_product_id), u = pl.from_unit || '';
+  const stock = bulk ? num(bulk.stock) : null;
+  return `<div class="apr-sum" style="grid-template-columns:1fr 1fr 1fr" data-repack-sum><div><div class="k">${esc(t('rk.bulk'))}</div><div class="v">${esc(pl.from_name || '')}</div></div>
+      <div><div class="k">${esc(t('rk.bulk_stock'))}</div><div class="v num ${stock != null && num(pl.from_qty) > stock + 1e-9 ? 'red' : ''}" data-rk-stock>${stock == null ? '—' : fmtQty(stock) + ' ' + esc(u)}</div></div>
+      <div><div class="k">${esc(t('rk.bulk_asked'))}</div><div class="v num">${fmtQty(pl.from_qty)} ${esc(u)}</div></div></div>
+    <div class="grid2" style="margin-top:6px"><div class="field"><label class="f">${esc(t('rk.pieces'))} (${esc(pl.to_name || '')})</label><input class="input num" data-rule="num" inputmode="decimal" data-rk-to value="${esc(fmtQtyInput(pl.to_qty))}" ${can ? '' : 'disabled'}></div>
+      <div class="field"><label class="f">${esc(t('rk.bulk_used'))} (${esc(u)})</label><input class="input num" data-rule="num" inputmode="decimal" data-rk-from value="${esc(fmtQtyInput(pl.from_qty))}" ${can ? '' : 'disabled'}></div></div>
+    <div class="rp-preview" data-rk-preview data-size="${esc(pl.pack_size)}" data-unit="${esc(u)}" data-stock="${stock == null ? '' : esc(stock)}"></div>
+    ${pl.exp_date || pl.note || pl.packaging_cost ? `<div class="small" style="margin-bottom:6px">${esc([pl.exp_date ? t('rk.exp') + ' ' + fmtDate(pl.exp_date) : '', pl.packaging_cost ? t('rk.pack_cost') + ' ' + fmtRp(pl.packaging_cost) : '', pl.note ? '“' + pl.note + '”' : ''].filter(Boolean).join(' · '))}</div>` : ''}
+    <div class="small muted" style="margin-bottom:8px">${esc(t('apr.repack_hint'))}</div>`;
+}
+/** Live preview on the card while the approver corrects the quantities. */
+function bindRepackCard(card) {
+  const pv = $('[data-rk-preview]', card); if (!pv || card.__rk) return;
+  card.__rk = true;
+  const upd = () => rkPreview(pv, num(pv.dataset.size), pv.dataset.unit, pv.dataset.stock === '' ? null : num(pv.dataset.stock), qtyVal($('[data-rk-to]', card).value || ''), qtyVal($('[data-rk-from]', card).value || ''));
+  $$('[data-rk-to], [data-rk-from]', card).forEach(i => i.addEventListener('input', upd));
+  upd();
+}
+const repackCardQty = card => ({ to_qty: qtyVal($('[data-rk-to]', card).value || ''), from_qty: qtyVal($('[data-rk-from]', card).value || '') });
+
 /* ========== My requests (credit / void / price) and their status ========== */
 const MYREQ = { list: KS.get('my_requests', []) };
 const myPendingCount = () => MYREQ.list.filter(r => r.user === S.user && r.status === 'pending').length;
@@ -3978,13 +4106,13 @@ async function checkMyRequests() {
   for (const r of MYREQ.list.filter(x => x.user === S.user && x.status === 'pending')) {
     try {
       const a = (await api('check_approval', { request_id: r.id })).approval || {};
-      if (updateMyRequest(a)) { changed = true; toast(t(a.status === 'rejected' ? 'req.toast_rej' : 'req.toast_ok', { label: r.label, name: a.decided_by || '' }), a.status === 'rejected' ? 'err' : 'ok', 5000); }
+      if (updateMyRequest(a)) { changed = true; toast(t(a.status === 'rejected' ? 'req.toast_rej' : a.status === 'cancelled' ? 'req.toast_cancel' : 'req.toast_ok', { label: r.label, name: a.decided_by || '' }), a.status === 'rejected' ? 'err' : a.status === 'cancelled' ? 'warn' : 'ok', 5000); }
     } catch (e) { if (e instanceof NetError) break; if (e.code === 'NOT_FOUND') { r.status = 'gone'; changed = true; } }
   }
   if (changed) { KS.set('my_requests', MYREQ.list); renderShell(); if (S.view === 'more') RENDER.more(); if (S.view === 'kas') RENDER.kas(); if (S.view === 'masuk') { PUH.groups = null; loadPuHistory(); } const m = $('#myreq'); if (m) drawMyRequests(m.closest('.modal-bg')); }
 }
 setInterval(() => { if (document.hidden) return; checkMyRequests(); }, 90000);
-const REQ_BADGE = { pending: 'warn', approved: 'ok', used: 'ok', auto: 'ok', rejected: 'red', gone: 'gray' };
+const REQ_BADGE = { pending: 'warn', approved: 'ok', used: 'ok', auto: 'ok', rejected: 'red', gone: 'gray', cancelled: 'gray' };
 function openMyRequests() {
   const el = openModal({ title: t('more.myreq'), id: 'myreq', body: '', foot: `<button class="btn" id="mr-refresh">${ic('refresh')} ${esc(t('refresh'))}</button><button class="btn primary" data-act="modal-close">${esc(t('close'))}</button>` });
   $('#mr-refresh', el).onclick = () => checkMyRequests();
@@ -3993,7 +4121,7 @@ function openMyRequests() {
 }
 function drawMyRequests(el) {
   const list = MYREQ.list.filter(r => r.user === S.user).slice().reverse();
-  $('.modal-b', el).innerHTML = list.length ? `<div class="list">${list.map(r => `<div class="li" data-req="${esc(r.id)}"><div class="grow"><div class="t">${esc(r.label)}</div><div class="s">${esc(r.id)} · ${esc(fmtDateTime(new Date(r.at).toISOString()))}${r.by ? ' · ' + esc(r.by) : ''}${r.note ? ` · “${esc(r.note)}”` : ''}</div>${r.kind === 'retur' && (r.status === 'approved' || r.status === 'used') ? `<button class="btn xs" style="margin-top:6px" data-act="rt-slip" data-id="${esc(r.id)}">${ic('receipt')} ${esc(t('rt.slip_btn'))}${r.ref ? ' ' + esc(r.ref) : ''}</button>` : ''}</div><span class="badge ${REQ_BADGE[r.status] || 'gray'}" data-status="${esc(r.status)}">${esc(t('req.st_' + r.status))}</span></div>`).join('')}</div>`
+  $('.modal-b', el).innerHTML = list.length ? `<div class="list">${list.map(r => `<div class="li" data-req="${esc(r.id)}"><div class="grow"><div class="t">${esc(r.label)}</div><div class="s">${esc(r.id)} · ${esc(fmtDateTime(new Date(r.at).toISOString()))}${r.by ? ' · ' + esc(r.by) : ''}${r.note ? ` · “${esc(r.note)}”` : ''}</div>${r.kind === 'retur' && (r.status === 'approved' || r.status === 'used') ? `<button class="btn xs" style="margin-top:6px" data-act="rt-slip" data-id="${esc(r.id)}">${ic('receipt')} ${esc(t('rt.slip_btn'))}${r.ref ? ' ' + esc(r.ref) : ''}</button>` : ''}${r.kind === 'repack' && r.status === 'pending' && Date.now() - r.at >= 24 * 3600000 ? `<button class="btn xs" style="margin-top:6px" data-act="req-cancel" data-id="${esc(r.id)}">${ic('x')} ${esc(t('rk.cancel'))}</button>` : ''}</div><span class="badge ${REQ_BADGE[r.status] || 'gray'}" data-status="${esc(r.status)}">${esc(t('req.st_' + r.status))}</span></div>`).join('')}</div>`
     : `<div class="empty">${esc(t('no_data'))}</div>`;
 }
 
@@ -4077,6 +4205,7 @@ function aprBodyHTML(a) {
   if (kind === 'void') return head(t('apr.kind_void', { inv: a.ref }), 'red') + voidOldHTML(a, pl) + `<div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('rc.customer'))}</div><div class="v">${esc(a.customer_name || t('sell.walkin'))}</div></div><div><div class="k">${esc(t('total'))}</div><div class="v num">${fmtRp(a.total)}</div></div></div><div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason || a.summary || '')}”</b></div>`;
   if (kind === 'expense_check') return head(t(pl.status === 'cek_manual' ? 'apr.kind_exp_manual' : 'apr.kind_exp_mm', { amount: fmtRp(pl.amount != null ? pl.amount : a.total) }), 'warn') + expenseCheckBodyHTML(pl);
   if (kind === 'product_new') return head(t('apr.kind_newprod', { name: pl.product_name || '' }), 'warn') + productNewBodyHTML(a, pl);
+  if (kind === 'repack') return head(t('apr.kind_repack', { name: pl.to_name || '' }), 'warn') + repackAprBodyHTML(a, pl); // v38
   if (kind === 'price') {
     const rows = Object.entries(pl.changes || {}).filter(([f]) => f !== 'cost_price').map(([f, ch]) => `<tr><td>${esc(t('price.f_' + f))}</td><td class="r num">${ch.from == null ? '—' : fmtRp(ch.from)}</td><td class="r num"><b>${ch.to == null ? '—' : fmtRp(ch.to)}</b></td></tr>`).join('');
     return head(t('apr.kind_price', { name: pl.product_name || a.summary || '' }), '') + `<table class="tbl" style="margin:8px 0"><thead><tr><th></th><th class="r">${esc(t('price.old'))}</th><th class="r">${esc(t('price.new'))}</th></tr></thead><tbody>${rows}</tbody></table>${pl.changes && pl.changes.cost_price ? `<div class="small muted">${esc(t('apr.cost_hidden'))}</div>` : ''}${pl.reason ? `<div style="margin-bottom:8px">${esc(t('reason'))}: <b>“${esc(pl.reason)}”</b></div>` : ''}`;
@@ -4137,7 +4266,7 @@ function drawInbox(el) {
   $$('.apr-card', box).forEach(c => { if (!want.has(c.dataset.req)) c.remove(); });
   AP.list.forEach((a, i) => {
     let c = [...box.children].find(n => n.dataset.req === a.request_id);
-    if (!c) { const tmp = document.createElement('div'); tmp.innerHTML = aprCardHTML(a); c = tmp.firstElementChild; }
+    if (!c) { const tmp = document.createElement('div'); tmp.innerHTML = aprCardHTML(a); c = tmp.firstElementChild; if (a.kind === 'repack') bindRepackCard(c); }
     if (box.children[i] !== c) box.insertBefore(c, box.children[i] || null);
   });
 }
@@ -4151,6 +4280,7 @@ async function decideApproval(id, decision, btn) {
     if (ap.kind === 'void') data.invoice_no = ap.ref;
     if (ap.kind === 'purchase_fix') data.purchase_no = ap.ref;
     if (ap.kind === 'product_new' && decision === 'approved' && card) data.prices = newProdPrices(card);
+    if (ap.kind === 'repack' && decision === 'approved' && card) Object.assign(data, repackCardQty(card)); // v38: the quantities as corrected on the card
     const r = await api('decide_approval', data);
     AP.list = AP.list.filter(a => a.request_id !== id); AP.count = AP.list.length;
     updateApprovalBadge();
@@ -4267,6 +4397,8 @@ const ACT = {
   'void-req': () => openVoidRequest(),
   'void-pick': el => requestVoid(el.dataset.inv),
   'price-req': () => openPricePicker(),
+  'repack-open': () => openRepack(), // v38
+  'req-cancel': el => cancelMyRepack(el.dataset.id, el), // v38
   'price-pick': el => { const p = prodById(el.dataset.id); closeModal(); if (p) openPriceChange(p); },
   'my-req': () => openMyRequests(),
   'last-rc': () => openLastReceipts(),
@@ -4933,6 +5065,49 @@ Object.assign(I18N.ar, {
   'apr.exp_mm_hint': 'المال صُرف. موافقة = قبول الفرق؛ رفض = يُعلَّم للمالك.',
   'apr.exp_manual_hint': 'لم تُقرأ الفاتورة آليًا: طابق الفاتورة الورقية مع التفاصيل ثم وافق أو ارفض.',
   'apr.newprod_hint': 'راجع سعر البيع (يمكن تصحيحه). موافقة = تأكيد الصنف؛ رفض = إيقاف الصنف حتى يصلحه المالك (المخزون يبقى مسجّلًا).'
+});
+/* v38 i18n: Kemas ulang — the cashier's request, its approval card, the lock on the bulk product */
+Object.assign(I18N.id, {
+  'rk.title': 'Kemas ulang', 'rk.more_s': 'Minta persetujuan kemas ulang (curah → kemasan)', 'rk.more_s_mgr': 'Curah → kemasan kecil',
+  'rk.hint': 'Barang curah yang sudah dikemas kecil: pilih kemasannya, isi berapa kemasan jadi. Stok baru berubah setelah manajer / akuntan menyetujui.',
+  'rk.hint_mgr': 'Barang curah yang dikemas kecil di toko: stok curah berkurang, stok kemasan bertambah. Pemilik diberi tahu.',
+  'rk.none': 'Belum ada produk kemas ulang. Pemilik mengaturnya di form produk.', 'rk.pack_product': 'Produk kemasan', 'rk.pick': 'pilih',
+  'rk.pieces': 'Jumlah kemasan jadi', 'rk.bulk_used': 'Curah dipakai', 'rk.auto': 'otomatis', 'rk.pack_cost': 'Biaya kemasan', 'rk.exp': 'Kedaluwarsa',
+  'rk.from_bulk': 'Dari', 'rk.size': 'Isi per kemasan', 'rk.preview_empty': 'Pilih produk kemasan dan isi jumlah kemasan jadi.',
+  'rk.pv_used': 'Curah dipakai {q} {u} → seharusnya {e} kemasan', 'rk.pv_yield': 'Jadi {n} = hasil {p}%', 'rk.pv_loss': 'susut {q} {u}',
+  'rk.not_enough': 'Stok curah tidak cukup ({q} {u})', 'rk.pick_first': 'Pilih produk kemasan dulu', 'rk.qty_invalid': 'Jumlah tidak valid',
+  'rk.send': 'Kirim permintaan', 'rk.save': 'Simpan kemas ulang', 'rk.sent': 'Permintaan kemas ulang terkirim', 'rk.sent_toast': 'Permintaan kemas ulang terkirim',
+  'rk.wait': 'Menunggu persetujuan manajer / akuntan. Stok belum berubah.', 'rk.owner_told_req': 'Pemilik diberi tahu.', 'rk.owner_told': 'Pemilik diberi tahu.',
+  'rk.saved': 'Kemas ulang tersimpan: {from} → {name} × {n}', 'rk.saved_toast': 'Kemas ulang tersimpan', 'rk.need_online': 'Perlu internet — tekan kirim lagi saat online (tidak akan terkirim dua kali)',
+  'rk.busy_title': 'Sudah ada permintaan untuk curah ini', 'rk.busy': '{name} sudah meminta kemas ulang {bulk} ({pack} × {n}) pada {time} — no. {id}.',
+  'rk.busy_wait': 'Tunggu keputusan manajer / akuntan, atau hubungi mereka. Jangan dikemas dua kali.',
+  'rk.busy_stale': 'Permintaan itu sudah lebih dari 24 jam: peminta atau manajer / akuntan bisa membatalkannya.',
+  'rk.cancel': 'Batalkan (lebih dari 24 jam)', 'rk.cancelled': 'Permintaan kemas ulang dibatalkan',
+  'rk.bulk': 'Curah', 'rk.bulk_stock': 'Stok curah sekarang', 'rk.bulk_asked': 'Curah diminta',
+  'req.repack': 'Kemas ulang {name} × {n}', 'req.st_cancelled': 'Dibatalkan', 'req.toast_cancel': '{label}: dibatalkan {name}',
+  'apr.kind_repack': 'Kemas ulang: {name}', 'apr.repack_hint': 'Cek jumlah kemasan jadi dan curah yang dipakai (boleh diperbaiki). Setujui = stok curah berkurang, stok kemasan bertambah; tolak = stok tidak berubah. Pemilik diberi tahu.',
+  'err.REPACK_PENDING': 'Sudah ada permintaan kemas ulang untuk curah ini', 'err.REPACK_STOCK': 'Stok curah tidak cukup lagi', 'err.TOO_EARLY': 'Belum bisa dibatalkan'
+});
+Object.assign(I18N.ar, {
+  'rk.title': 'إعادة التعبئة', 'rk.more_s': 'طلب موافقة على إعادة التعبئة (سائب ← عبوات)', 'rk.more_s_mgr': 'سائب ← عبوات صغيرة',
+  'rk.hint': 'بضاعة سائبة عُبّئت في عبوات صغيرة: اختر العبوة واكتب عدد العبوات الناتجة. لا يتغير المخزون إلا بعد موافقة المدير / المحاسب.',
+  'rk.hint_mgr': 'بضاعة سائبة تُعبّأ صغيرة في المتجر: ينقص مخزون السائب ويزيد مخزون العبوات. يصل إشعار إلى المالك.',
+  'rk.none': 'لا توجد منتجات معاد تعبئتها. يضبطها المالك في نموذج المنتج.', 'rk.pack_product': 'منتج العبوة', 'rk.pick': 'اختر',
+  'rk.pieces': 'عدد العبوات الناتجة', 'rk.bulk_used': 'السائب المستخدم', 'rk.auto': 'تلقائي', 'rk.pack_cost': 'تكلفة التغليف', 'rk.exp': 'تاريخ الانتهاء',
+  'rk.from_bulk': 'من', 'rk.size': 'محتوى العبوة', 'rk.preview_empty': 'اختر منتج العبوة واكتب عدد العبوات الناتجة.',
+  'rk.pv_used': 'السائب المستخدم {q} {u} ← المتوقع {e} عبوة', 'rk.pv_yield': 'الناتج {n} = نسبة {p}%', 'rk.pv_loss': 'الفاقد {q} {u}',
+  'rk.not_enough': 'مخزون السائب لا يكفي ({q} {u})', 'rk.pick_first': 'اختر منتج العبوة أولًا', 'rk.qty_invalid': 'الكمية غير صحيحة',
+  'rk.send': 'إرسال الطلب', 'rk.save': 'حفظ إعادة التعبئة', 'rk.sent': 'أُرسل طلب إعادة التعبئة', 'rk.sent_toast': 'أُرسل طلب إعادة التعبئة',
+  'rk.wait': 'بانتظار موافقة المدير / المحاسب. المخزون لم يتغير بعد.', 'rk.owner_told_req': 'يصل إشعار إلى المالك.', 'rk.owner_told': 'يصل إشعار إلى المالك.',
+  'rk.saved': 'حُفظت إعادة التعبئة: {from} ← {name} × {n}', 'rk.saved_toast': 'حُفظت إعادة التعبئة', 'rk.need_online': 'يلزم الإنترنت — اضغط إرسال مرة أخرى عند الاتصال (لن يُرسل مرتين)',
+  'rk.busy_title': 'يوجد طلب سابق لهذا السائب', 'rk.busy': 'طلب {name} إعادة تعبئة {bulk} ({pack} × {n}) في {time} — رقم {id}.',
+  'rk.busy_wait': 'انتظر قرار المدير / المحاسب أو تواصل معهما. لا تُعبّأ مرتين.',
+  'rk.busy_stale': 'مضى على ذلك الطلب أكثر من 24 ساعة: يمكن لصاحبه أو للمدير / المحاسب إلغاؤه.',
+  'rk.cancel': 'إلغاء (أكثر من 24 ساعة)', 'rk.cancelled': 'أُلغي طلب إعادة التعبئة',
+  'rk.bulk': 'السائب', 'rk.bulk_stock': 'مخزون السائب الآن', 'rk.bulk_asked': 'السائب المطلوب',
+  'req.repack': 'إعادة تعبئة {name} × {n}', 'req.st_cancelled': 'ملغى', 'req.toast_cancel': '{label}: ألغاه {name}',
+  'apr.kind_repack': 'إعادة تعبئة: {name}', 'apr.repack_hint': 'راجع عدد العبوات الناتجة والسائب المستخدم (يمكن تصحيحهما). موافقة = ينقص السائب ويزيد مخزون العبوات؛ رفض = لا يتغير المخزون. يصل إشعار إلى المالك.',
+  'err.REPACK_PENDING': 'يوجد طلب إعادة تعبئة سابق لهذا السائب', 'err.REPACK_STOCK': 'مخزون السائب لم يعد يكفي', 'err.TOO_EARLY': 'لا يمكن الإلغاء بعد'
 });
 /* ========== Boot ========== */
 /* ========== Trial links (?demo=1 / ?mock=1) can be closed by the owner ==========

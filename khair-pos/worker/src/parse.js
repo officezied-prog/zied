@@ -43,6 +43,8 @@ export function parseRequest(body, headers) {
     bank_account: bankAction && data.account_id ? String(data.account_id) : '__none__',
     bank_period: period || '__none__',
     approval_id: String(data.approval_id || data.request_id || '__none__'),
+    // v38: a resent repack request (double tap / retry / offline resend) is found by its client id, decided or not.
+    approval_client: action === 'request_repack' && data.client_id ? String(data.client_id).slice(0, 60) : '__none__',
     photo_id: ['save_purchase', 'receive_payment', 'pay_supplier', 'save_expense'].indexOf(action) >= 0 && data.photo_id ? String(data.photo_id) : '__none__',
     ip: String(headers['x-forwarded-for'] || headers['x-real-ip'] || '').split(',')[0].trim(),
     ua: String(headers['user-agent'] || '').slice(0, 300),

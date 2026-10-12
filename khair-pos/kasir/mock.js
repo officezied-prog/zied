@@ -215,6 +215,125 @@ const MockServer = (() => {
       summary: str(summary).slice(0, 1000), ref: str(ref).slice(0, 60), amount: money(amount), level: level || 'info' });
     dirty = true;
   }
+  /* ---- v38 (owner 2026-10-12: «المالك يصله إشعار فقط، والمدير والمحاسب يوافق على الكمية والعملية كلها، والكاشير هو الذي يطلب القيام بها، لكن
+     يجب التأكد: ممكن 2 كاشير يقوم بنفس الطلب والتعليب، انتبه منها»): mirror of the server's repack request (request_repack → approval kind
+     'repack' for the manager OR the accountant → decide_approval moves the stock; cancel_repack after 24 h), the one-pending-request-per-bulk
+     lock, the client-id resend and the owner's notices (activity kind 'notifikasi', target roles in ref). Keep identical to backend/process.js and the owner app's mock.js. ---- */
+  const REPACK_STALE_MS = 24 * 3600000, REPACK_SUP = 'KEMAS ULANG';
+  function notifyR(db, u, roles, summary, level) {
+    db.activity = db.activity || [];
+    db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + rand(8), at: new Date().toISOString(), act_date: jktDate(), user: u.name, role: u.role, kind: 'notifikasi',
+      summary: str(summary).slice(0, 1000), ref: roles.join(',').slice(0, 60), amount: 0, level: level || 'info' });
+  }
+  function repackPlan(db, toId, toQtyIn, fromQtyIn) {
+    const to = db.products.find(p => p.id === Number(toId));
+    if (!to) throw E('NOT_FOUND', 'Produk kemasan tidak ditemukan');
+    const from = num(to.repack_from) > 0 ? db.products.find(p => p.id === Number(to.repack_from)) : null;
+    if (!from || !(num(to.repack_qty) > 0)) throw E('INVALID', 'Produk ini belum diatur sebagai kemasan ulang (asal curah + isi per kemasan)');
+    const toQty = roundQty(toQtyIn);
+    if (!(toQty > 0)) throw E('INVALID', 'Jumlah kemasan jadi tidak valid');
+    const size = num(to.repack_qty);
+    const fromQty = fromQtyIn === undefined || fromQtyIn === null || fromQtyIn === '' ? roundQty(toQty * size) : roundQty(fromQtyIn);
+    if (!(fromQty > 0)) throw E('INVALID', 'Jumlah curah yang dipakai tidak valid');
+    const expected = Math.round(fromQty / size * 1000) / 1000;
+    return { to, from, toQty, fromQty, size, expected, yield_pct: expected > 0 ? Math.round(toQty / expected * 1000) / 10 : 0, loss_qty: roundQty(fromQty - toQty * size) };
+  }
+  const repackText = pl => str(pl.from_name) + ' ' + fmtN(pl.from_qty) + ' ' + str(pl.from_unit) + ' → ' + str(pl.to_name) + ' x' + fmtN(pl.to_qty) + ' (hasil ' + pl.yield_pct + '%, susut ' + fmtN(pl.loss_qty) + ' ' + str(pl.from_unit) + ')';
+  function applyRepack(db, u, P, o) {
+    const { from, to, toQty, fromQty } = P;
+    const packCost = Math.max(0, int(o.packaging_cost));
+    const unitCost = Math.round((fromQty * int(from.cost_price) + packCost) / toQty);
+    const date = isYmd(o.date) ? o.date : jktDate();
+    const oldTo = Math.max(0, num(to.stock));
+    from.stock = roundQty(num(from.stock) - fromQty);
+    const toCost = oldTo + toQty > 0 ? Math.round((oldTo * int(to.cost_price) + toQty * unitCost) / (oldTo + toQty)) : unitCost;
+    to.stock = roundQty(num(to.stock) + toQty); to.cost_price = toCost;
+    const user = str(o.user) || u.name;
+    const rp = { repack_id: 'RP' + rand(6), repack_date: date, repack_time: new Date().toISOString(), user, from_product_id: from.id, from_name: from.name, from_unit: from.unit, from_qty: fromQty,
+      to_product_id: to.id, to_name: to.name, to_unit: to.unit, to_qty: toQty, pack_size: P.size, expected_qty: P.expected, yield_pct: P.yield_pct, loss_qty: P.loss_qty, packaging_cost: packCost, unit_cost: unitCost,
+      exp_date: isYmd(o.exp_date) ? o.exp_date : '', note: str(o.note).slice(0, 300), requested_by: str(o.requested_by), approved_by: str(o.approved_by), request_id: str(o.request_id) };
+    db.repacks = db.repacks || [];
+    db.repacks.push(Object.assign({ id: nextId(db, 'repack') }, rp));
+    const tag = rp.repack_id + (rp.requested_by ? ', diminta ' + rp.requested_by + ', disetujui ' + rp.approved_by : '');
+    db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: date, supplier: REPACK_SUP, product_id: from.id, name: from.name, qty: -fromQty, cost_price: int(from.cost_price), total: 0, note: ('→ ' + to.name + ' x' + toQty + ' (' + tag + ') ' + rp.note).trim(), user, photo_id: '', exp_date: '' });
+    db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: date, supplier: REPACK_SUP, product_id: to.id, name: to.name, qty: toQty, cost_price: unitCost, total: 0, note: ('dari ' + from.name + ' ' + fromQty + ' ' + from.unit + ' (' + tag + ') ' + rp.note).trim(), user, photo_id: '', exp_date: rp.exp_date });
+    logAct(db, u, 'kemas_ulang', 'Kemas ulang ' + repackText(rp) + (rp.requested_by ? ' — diminta ' + rp.requested_by + ', disetujui ' + rp.approved_by : ''), rp.repack_id, 0, o.level || (rp.yield_pct < 95 ? 'warn' : 'info'));
+    const out = Object.assign({}, rp);
+    if (u.role !== 'owner') { delete out.unit_cost; delete out.packaging_cost; }
+    return { rp, out, stock: [{ product_id: from.id, stock: from.stock }, Object.assign({ product_id: to.id, stock: to.stock }, u.role === 'owner' ? { cost_price: toCost } : {})] };
+  }
+  const pendingRepackFor = (db, fromId) => db.approvals.find(a => a.kind === 'repack' && a.status === 'pending' && str(a.ref) === String(fromId)) || null;
+  function repackBusy(p) {
+    let pl = {}; try { pl = JSON.parse(p.payload || '{}') || {}; } catch (e) { pl = {}; }
+    const stale = !(Date.now() - Date.parse(p.created_at) < REPACK_STALE_MS);
+    return E('REPACK_PENDING', 'Sudah ada permintaan kemas ulang ' + str(pl.from_name) + ' oleh ' + str(p.cashier) + ' (' + wibStamp(p.created_at) + ', ' + str(p.request_id) + ': ' + str(pl.to_name) + ' x' + fmtN(pl.to_qty) + ') yang menunggu persetujuan manajer/akuntan. Tunggu keputusannya atau hubungi manajer/akuntan.' +
+      (stale ? ' Permintaan itu sudah lebih dari 24 jam: peminta atau manajer/akuntan bisa membatalkannya.' : ''),
+      { pending: { request_id: str(p.request_id), cashier: str(p.cashier), created_at: str(p.created_at), from_name: str(pl.from_name), to_name: str(pl.to_name), to_qty: num(pl.to_qty), stale } });
+  }
+  /** The repack actions (direct repack, request, cancel) — the decision is in decide_approval (repackDecide). */
+  function repackAction(db, u, action, data, canDecide) {
+    const appr = u.role === 'owner' || u.role === 'manager';
+    if (action === 'repack') {
+      if (!appr) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
+      const P = repackPlan(db, data.to_product_id, data.to_qty, data.from_qty);
+      if (P.fromQty > num(P.from.stock) + 1e-9) throw E('INVALID', 'Stok ' + P.from.name + ' tidak cukup (' + num(P.from.stock) + ' ' + P.from.unit + ')');
+      const pend = pendingRepackFor(db, P.from.id);
+      if (pend) throw repackBusy(pend);
+      const R = applyRepack(db, u, P, { packaging_cost: data.packaging_cost, date: data.date, exp_date: data.exp_date, note: data.note });
+      if (u.role === 'manager') notifyR(db, u, ['owner'], 'Kemas ulang oleh manajer ' + u.name + ': ' + repackText(R.rp) + (R.rp.yield_pct < 95 ? ' — PERHATIAN: hasil di bawah 95%' : ''), R.rp.yield_pct < 95 ? 'warn' : 'info');
+      return { repack: R.out, stock: R.stock };
+    }
+    if (action === 'request_repack') {
+      if (u.role !== 'kasir') throw E('FORBIDDEN', 'Pemilik dan manajer langsung kemas ulang (Gudang → Kemas ulang)');
+      const cid = str(data.client_id).slice(0, 60);
+      if (!cid) throw E('INVALID', 'client_id wajib');
+      const same = db.approvals.find(a => a.kind === 'repack' && str(a.client_id) === cid);
+      if (same) return { duplicate: true, request_id: same.request_id, approval: same };
+      const P = repackPlan(db, data.to_product_id, data.to_qty, data.from_qty);
+      if (P.fromQty > num(P.from.stock) + 1e-9) throw E('INVALID', 'Stok ' + P.from.name + ' tidak cukup (' + num(P.from.stock) + ' ' + P.from.unit + ')');
+      const pend = pendingRepackFor(db, P.from.id);
+      if (pend) throw repackBusy(pend);
+      const pl = { to_product_id: P.to.id, to_name: P.to.name, to_unit: P.to.unit, from_product_id: P.from.id, from_name: P.from.name, from_unit: P.from.unit,
+        pack_size: P.size, to_qty: P.toQty, from_qty: P.fromQty, from_typed: !(data.from_qty === undefined || data.from_qty === null || data.from_qty === ''),
+        expected_qty: P.expected, yield_pct: P.yield_pct, loss_qty: P.loss_qty, bulk_stock: num(P.from.stock),
+        packaging_cost: Math.max(0, int(data.packaging_cost)), exp_date: isYmd(data.exp_date) ? data.exp_date : '', note: str(data.note).slice(0, 300) };
+      const a = newApproval(db, u, { kind: 'repack', approver_role: 'mgr_akuntan', ref: String(P.from.id), client_id: cid, note: pl.note, created_at: new Date().toISOString(),
+        summary: ('Minta kemas ulang ' + repackText(pl)).slice(0, 1500), payload: JSON.stringify(pl) });
+      notifyR(db, u, ['owner', 'manager', 'akuntan'], 'Permintaan kemas ulang oleh ' + u.name + ' (' + wibStamp(a.created_at) + '): ' + repackText(pl) + ' — menunggu persetujuan manajer/akuntan', pl.yield_pct < 95 ? 'warn' : 'info');
+      return { request_id: a.request_id, approval: a };
+    }
+    if (action === 'cancel_repack') {
+      const a = db.approvals.find(x => x.request_id === String(data.request_id || ''));
+      if (!a || a.kind !== 'repack') throw E('NOT_FOUND', 'Permintaan kemas ulang tidak ditemukan');
+      if (a.status !== 'pending') throw E('INVALID', 'Permintaan sudah diputuskan' + (str(a.decided_by) ? ' oleh ' + str(a.decided_by) : '') + ': ' + a.status);
+      const mine = str(a.cashier).toLowerCase() === u.name.toLowerCase();
+      if (!mine && !canDecide(a)) throw E('FORBIDDEN', 'Hanya peminta atau manajer/akuntan yang bisa membatalkan');
+      if (Date.now() - Date.parse(a.created_at) < REPACK_STALE_MS) throw E('TOO_EARLY', 'Bisa dibatalkan setelah 24 jam (mulai ' + wibStamp(new Date(Date.parse(a.created_at) + REPACK_STALE_MS).toISOString()) + '). Sebelum itu manajer/akuntan memutuskannya.');
+      Object.assign(a, { status: 'cancelled', decided_by: u.name, decided_at: new Date().toISOString(), note: (str(data.note) || 'dibatalkan setelah 24 jam menunggu').slice(0, 300) });
+      notifyR(db, u, ['owner', 'manager', 'akuntan'], 'Permintaan kemas ulang ' + str(a.request_id) + ' (diminta ' + str(a.cashier) + ' ' + wibStamp(a.created_at) + ') DIBATALKAN oleh ' + u.name + ': ' + str(a.summary).replace(/^Minta kemas ulang /, '').slice(0, 300), 'info');
+      return { approval: a };
+    }
+    return null;
+  }
+  /** decide_approval for kind 'repack': approve (optionally corrected quantities, bulk stock checked NOW) or reject. */
+  function repackDecide(db, u, ap, data, out) {
+    let pl = {}; try { pl = JSON.parse(ap.payload || '{}') || {}; } catch (e) { pl = {}; }
+    const told = u.role === 'owner' ? ['manager', 'akuntan'] : ['owner', u.role === 'akuntan' ? 'manager' : 'akuntan'];
+    const when = ' (diminta ' + str(ap.cashier) + ' ' + wibStamp(ap.created_at) + ')';
+    if (data.decision === 'approved') {
+      const given = v => !(v === undefined || v === null || v === '');
+      const P = repackPlan(db, pl.to_product_id, given(data.to_qty) ? data.to_qty : pl.to_qty, given(data.from_qty) ? data.from_qty : pl.from_qty);
+      if (String(P.from.id) !== str(pl.from_product_id)) throw E('INVALID', 'Produk kemasan sudah diatur ulang sejak permintaan — tolak dan minta ulang');
+      if (P.fromQty > num(P.from.stock) + 1e-9) throw E('REPACK_STOCK', 'Stok ' + P.from.name + ' sekarang ' + fmtN(P.from.stock) + ' ' + P.from.unit + ', permintaan butuh ' + fmtN(P.fromQty) + ' ' + P.from.unit + ' (sudah terpakai kemas ulang lain atau terjual). Koreksi jumlahnya atau tolak.');
+      const corrected = P.toQty !== num(pl.to_qty) || P.fromQty !== num(pl.from_qty);
+      const R = applyRepack(db, u, P, { packaging_cost: pl.packaging_cost, exp_date: pl.exp_date, note: pl.note, user: str(ap.cashier), requested_by: str(ap.cashier), approved_by: u.name, request_id: ap.request_id, level: 'info' });
+      pl.final = { to_qty: P.toQty, from_qty: P.fromQty, expected_qty: P.expected, yield_pct: P.yield_pct, loss_qty: P.loss_qty, repack_id: R.rp.repack_id, corrected };
+      ap.payload = JSON.stringify(pl);
+      out.stock = R.stock; out.repack = R.out;
+      notifyR(db, u, told, 'Kemas ulang DISETUJUI oleh ' + u.name + when + ': ' + repackText(R.rp) + (corrected ? ' — dikoreksi dari ' + fmtN(pl.from_qty) + ' ' + str(pl.from_unit) + ' → x' + fmtN(pl.to_qty) : '') +
+        (R.rp.yield_pct < 95 ? ' — PERHATIAN: hasil di bawah 95%' : ''), R.rp.yield_pct < 95 ? 'warn' : 'info');
+    } else notifyR(db, u, told, 'Kemas ulang DITOLAK oleh ' + u.name + when + ': ' + repackText(pl) + (str(data.note) ? ' | ' + str(data.note) : '') + ' — stok tidak berubah', 'info');
+  }
   /* ---- v37 (owner 2026-10-12: «أي فاتورة … لا يمكن تغييرها إلا بموافقة المدير، وإرسال إشعار إلى المالك: تم تغيير فاتورة …»
      «والكميات التي يتم جردها آخر كل شهرين»): mirror of the server's invoice-change audit (activity 'ubah_faktur' + detail) and of
      the two-monthly full stock count (settings.opname_state / opname_every_days). Keep identical to backend/process.js. ---- */
@@ -947,6 +1066,7 @@ const MockServer = (() => {
         if (!ap) throw E('NOT_FOUND', 'approval');
         return { approval: approvalOut(ap, u.role) };
       }
+      case 'repack': case 'request_repack': case 'cancel_repack': return repackAction(db, u, action, data, x => canDecideAp(u.role, x)); // v38
       case 'list_approvals': {
         if (!['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Owner/manager only');
         return { approvals: db.approvals.filter(x => x.status === 'pending').map(x => approvalOut(x, u.role)) };
@@ -1053,6 +1173,7 @@ const MockServer = (() => {
           const ex = db.expenses.find(x => str(x.request_id) === ap.request_id);
           if (ex) Object.assign(ex, { check_status: data.decision === 'approved' ? 'disetujui' : 'ditolak', checked_by: u.name });
         }
+        if (ap.kind === 'repack') repackDecide(db, u, ap, data, out); // v38
         if (ap.kind === 'product_new') {
           // v36: a cashier's new product — confirm (optionally correcting its selling prices) or switch it off for sale
           const p = db.products.find(x => str(x.review) === ap.request_id);
@@ -1069,7 +1190,7 @@ const MockServer = (() => {
         }
         if (ap.kind === 'transfer_confirm') logAct(db, u, data.decision === 'approved' ? 'transfer_ok' : 'transfer_gagal', (data.decision === 'approved' ? 'Transfer masuk DIKONFIRMASI oleh ' + u.name : 'Transfer TIDAK diterima — ' + u.name) + ' | ' + str(ap.summary), str(ap.ref), money(ap.total), data.decision === 'approved' ? 'info' : 'warn');
         Object.assign(ap, { status: data.decision, decided_by: u.name, decided_at: jktISO(), note: str(data.note) || str(ap.note) });
-        logAct(db, u, 'keputusan', (data.decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + str(ap.kind || 'credit') + ', diminta ' + str(ap.cashier) + '): ' + str(ap.summary).slice(0, 600) + (str(data.note) ? ' | ' + str(data.note) : ''), ap.request_id, money(ap.total), data.decision === 'approved' ? 'info' : 'warn');
+        if (ap.kind !== 'repack') logAct(db, u, 'keputusan', (data.decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + str(ap.kind || 'credit') + ', diminta ' + str(ap.cashier) + '): ' + str(ap.summary).slice(0, 600) + (str(data.note) ? ' | ' + str(data.note) : ''), ap.request_id, money(ap.total), data.decision === 'approved' ? 'info' : 'warn');
         return Object.assign({ approval: approvalOut(ap, u.role) }, out);
       }
       case 'scan_purchase': {
