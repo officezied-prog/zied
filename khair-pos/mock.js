@@ -1677,7 +1677,11 @@ const MockServer = (() => {
           const clean = {}; for (const k in r) if (r[k] !== '' && r[k] != null) clean[k] = r[k];
           if (p) {
             Object.assign(p, productFields(clean, {}));
-            if (r.stock !== undefined && r.stock !== '') p.stock = roundQty(r.stock);
+            if (r.stock !== undefined && r.stock !== '') {
+              // v39: nothing in the warehouse → the imported quantity is all on the shelf (as on the server)
+              if (shopOf(p) >= num(p.stock)) { db._shopSet = db._shopSet || {}; db._shopSet[p.id] = Math.max(0, roundQty(r.stock)); }
+              p.stock = roundQty(r.stock);
+            }
             updated++;
           } else if (name) {
             db.products.push(Object.assign(productFields(clean, blankProduct()), { id: nextId(db, 'product'), name, stock: roundQty(r.stock || 0) }));
