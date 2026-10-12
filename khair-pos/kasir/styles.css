@@ -404,3 +404,8 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
   #print-area{display:block!important}
   #print-area .receipt{border:0;max-width:none;width:100%;padding:0;font-size:12px}
 }
+
+/* v38 Kemas ulang: the yield preview (request form + approval card) */
+.rp-preview{border-radius:10px;padding:10px 12px;background:#F8FAFC;border:1px solid var(--line2);margin:6px 0 10px;font-size:14px;min-height:20px}
+.rp-preview.low{background:var(--warnt);color:var(--warn)}
+.rp-preview.bad{background:var(--redt);color:var(--redd)}

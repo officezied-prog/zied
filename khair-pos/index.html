@@ -146,7 +146,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.6.5';
+const APP_VERSION = '2.7.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -438,7 +438,7 @@ const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
 // v36 (owner 2026-10-11: "the visits table … a copy for the manager, the accountant and the owner"): + the field page, read-only
 const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'invchg', 'approvals', 'shoplist', 'field', 'settings'];
-const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
+const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
@@ -734,7 +734,7 @@ async function enterApp(offline, keepView) {
   AP.seen = null; AP.loaded = false; pollApprovals();
   devOnAppOpen();
   if (!isOwner()) { try { if (window.KGuard) KGuard.prime(); } catch (e) { } } // v36: ask for the camera once at a staff login (silent shot later)
-  try { if (window.KChatUI) KChatUI.start({ api: apiChat, lang: S.lang, user: S.user }); } catch (e) { } // v36: user → this device's read marks for the team rooms
+  try { if (window.KChatUI) KChatUI.start({ api: apiChat, lang: S.lang, user: S.user, onNotices: ntApply }); } catch (e) { } // v36: user → this device's read marks for the team rooms; v38: notice state (closed / replied)
 }
 function lock() {
   if (!S.inApp) return;
@@ -774,6 +774,7 @@ function applyData(d) {
   if (Array.isArray(d.users) && S.inApp && S.user) { const me = d.users.find(u => u.name.toLowerCase() === S.user.toLowerCase()); if (me && (me.role === 'kasir' || me.role === 'sales') && S.role !== me.role) setTimeout(() => showKasirRedirect(S.user, me.role), 0); }
   if (Array.isArray(d.open_shifts)) S.openShifts = d.open_shifts;
   if (Array.isArray(d.activity_recent)) { ACTV.recent = d.activity_recent; if (S.inApp) updateActBadge(); }
+  if (Array.isArray(d.notifications)) { S.notices = d.notifications; if (S.inApp) updateBell(); } // v38: role-addressed notices (bell)
   if (d.must_change === true && S.inApp && typeof showPinChange === 'function') setTimeout(() => showPinChange(), 0);
   if ('via_master' in d && S.inApp) { S.viaMaster = d.via_master === true; }
   if (d.settings && S.inApp) setTimeout(() => devBlockCheck(), 0);
@@ -2051,7 +2052,7 @@ async function pollApprovals() {
     AP.fresh = new Set(fresh.map(a => a.request_id));
     if (fresh.length) {
       beep(); try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) { }
-      toast(t(fresh[0].kind === 'opname' ? 'gd.new_toast' : fresh[0].kind === 'purchase_fix' ? 'apr.new_fix' : fresh[0].kind === 'buka_kas' ? 'apr.new_bukakas' : fresh[0].kind === 'discount' ? 'apr.new_disc' : fresh[0].kind === 'retur' ? 'apr.new_retur' : fresh[0].kind === 'pay_plan' ? 'apr.new_payplan' : fresh[0].kind === 'transfer' ? 'apr.new_transfer' : fresh[0].kind === 'kesepakatan' ? 'apr.new_agree' : 'apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name, no: fresh[0].ref }), 'warn', 6000);
+      toast(t(fresh[0].kind === 'opname' ? 'gd.new_toast' : fresh[0].kind === 'purchase_fix' ? 'apr.new_fix' : fresh[0].kind === 'buka_kas' ? 'apr.new_bukakas' : fresh[0].kind === 'discount' ? 'apr.new_disc' : fresh[0].kind === 'retur' ? 'apr.new_retur' : fresh[0].kind === 'pay_plan' ? 'apr.new_payplan' : fresh[0].kind === 'transfer' ? 'apr.new_transfer' : fresh[0].kind === 'kesepakatan' ? 'apr.new_agree' : fresh[0].kind === 'repack' ? 'apr.new_repack' : 'apr.new_toast', { cashier: fresh[0].cashier, customer: fresh[0].customer_name, no: fresh[0].ref }), 'warn', 6000);
     }
     updateApprovalBadge();
     if (S.view === 'approvals') drawApprovals();
@@ -2075,6 +2076,7 @@ function aprBodyHTML(a) {
   if (kind === 'pay_plan') return payPlanAprHTML(a, pl);
   if (kind === 'transfer') return transferAprHTML(a, pl);
   if (kind === 'kesepakatan') return agreeAprHTML(a, pl);
+  if (kind === 'repack') return repackAprHTML(a, pl); // v38
   if (kind === 'transfer_confirm') return `<div class="row wrap"><b class="grow" style="font-size:17px">${ic('bank')} ${esc(t('tc.title'))}</b><span class="badge blue">${esc(a.request_id)}</span></div>
     <div class="apr-sum" style="grid-template-columns:1fr 1fr"><div><div class="k">${esc(t('tc.who'))}</div><div class="v">${esc(a.customer_name || '—')}</div></div><div><div class="k">${esc(t('tc.amount'))}</div><div class="v num"><b>${esc(fmtRp(a.total))}</b></div></div></div>
     <div class="small">${esc(pl.ref_type === 'faktur' ? t('tc.invoice') : t('tc.payment'))}: <b>${esc(pl.ref || a.ref)}</b>${pl.bank ? ' · ' + esc(pl.bank) : ''}${pl.transfer_ref ? ' · ' + esc(t('tc.ref')) + ' ' + esc(pl.transfer_ref) : ''}</div>
@@ -2159,11 +2161,44 @@ function transferAprHTML(a, pl) {
     <div class="apr-sum" style="grid-template-columns:1fr 1fr;margin-top:6px"><div><div class="k">${esc(t('tf.payee'))}</div><div class="v">${esc(pl.payee || '—')}</div></div><div><div class="k">${esc(t('tf.amount'))}</div><div class="v num"><b>${fmtRp(pl.amount || a.total)}</b></div></div></div>
     ${pl.reason ? `<div class="small" style="margin-top:6px">${esc(t('tf.reason'))}: <b>“${esc(pl.reason)}”</b></div>` : ''}`;
 }
+/* v38 (owner 2026-10-12: «المالك يصله إشعار فقط، والمدير والمحاسب يوافق على الكمية والعملية كلها، والكاشير هو الذي يطلب القيام بها»): a cashier's
+   repack request — the manager or the accountant checks the bulk to be used against the bulk in stock NOW, may correct the packs made / bulk
+   used (live yield + loss), then approves (the stock moves) or rejects (nothing moves). The owner only gets the notices. */
+function rkCalc(size, qty, fromQty) { const expected = size > 0 ? roundQty(fromQty / size) : 0; return { expected, yieldPct: expected > 0 ? Math.round(qty / expected * 1000) / 10 : 0, loss: roundQty(fromQty - qty * size) }; }
+function rkPreview(box, size, unit, stock, qty, fromQty) {
+  if (!box) return;
+  if (!(qty > 0) || !(fromQty > 0) || !(size > 0)) { box.className = 'rp-preview'; box.innerHTML = `<span class="muted">${esc(t('rp.preview_empty'))}</span>`; return; }
+  const c = rkCalc(size, qty, fromQty), over = stock != null && fromQty > num(stock) + 1e-9;
+  box.className = 'rp-preview' + (over ? ' bad' : c.yieldPct < 95 ? ' low' : '');
+  box.innerHTML = `<div>${esc(t('rp.pv_used', { q: fmtQty(fromQty), u: unit || '', e: fmtQty(c.expected) }))}</div>
+    <div><b data-yield>${esc(t('rp.pv_yield', { n: fmtQty(qty), p: NF1.format(c.yieldPct) }))}</b> · <span data-loss>${esc(t('rp.pv_loss', { q: fmtQty(c.loss), u: unit || '' }))}</span></div>
+    ${over ? `<div data-short><b>${esc(t('rp.not_enough', { q: fmtQty(stock), u: unit || '' }))}</b></div>` : ''}`;
+}
+function repackAprHTML(a, pl) {
+  const can = a.can_decide !== false, bulk = prodById(pl.from_product_id), u = pl.from_unit || '', stock = bulk ? num(bulk.stock) : null;
+  return `<div class="row wrap"><b class="grow" style="font-size:17px">${ic('repack')} ${esc(t('apr.kind_repack', { name: pl.to_name || '' }))}</b><span class="badge amber">${esc(a.request_id)}</span></div>
+    <div class="small muted">${esc(t('rc.cashier'))}: <b>${esc(a.cashier)}</b> · ${esc(fmtDateTime(a.created_at))}</div>
+    <div class="apr-sum" style="grid-template-columns:1fr 1fr 1fr" data-repack-sum><div><div class="k">${esc(t('rk.bulk'))}</div><div class="v">${esc(pl.from_name || '')}</div></div>
+      <div><div class="k">${esc(t('rk.bulk_stock'))}</div><div class="v num ${stock != null && num(pl.from_qty) > stock + 1e-9 ? 'red' : ''}" data-rk-stock>${stock == null ? '—' : fmtQty(stock) + ' ' + esc(u)}</div></div>
+      <div><div class="k">${esc(t('rk.bulk_asked'))}</div><div class="v num">${fmtQty(pl.from_qty)} ${esc(u)}</div></div></div>
+    <div class="grid2" style="margin-top:6px"><div class="field"><label class="f">${esc(t('rp.pieces'))} (${esc(pl.to_name || '')})</label><input class="input num" inputmode="decimal" data-rk-to value="${esc(fmtQtyInput(pl.to_qty))}" ${can ? '' : 'disabled'}></div>
+      <div class="field"><label class="f">${esc(t('rp.bulk_used'))} (${esc(u)})</label><input class="input num" inputmode="decimal" data-rk-from value="${esc(fmtQtyInput(pl.from_qty))}" ${can ? '' : 'disabled'}></div></div>
+    <div class="rp-preview" data-rk-preview data-size="${esc(pl.pack_size)}" data-unit="${esc(u)}" data-stock="${stock == null ? '' : esc(stock)}"></div>
+    ${pl.exp_date || pl.note || pl.packaging_cost ? `<div class="small" style="margin-bottom:6px">${esc([pl.exp_date ? t('pu.exp') + ' ' + fmtDate(pl.exp_date) : '', pl.packaging_cost ? t('rp.pack_cost') + ' ' + fmtRp(pl.packaging_cost) : '', pl.note ? '“' + pl.note + '”' : ''].filter(Boolean).join(' · '))}</div>` : ''}
+    <div class="small muted" style="margin-bottom:6px">${esc(t('apr.repack_hint'))}</div>`;
+}
+function bindRepackCard(card) {
+  const pv = $('[data-rk-preview]', card); if (!pv) return;
+  const upd = () => rkPreview(pv, num(pv.dataset.size), pv.dataset.unit, pv.dataset.stock === '' ? null : num(pv.dataset.stock), qtyVal($('[data-rk-to]', card).value || ''), qtyVal($('[data-rk-from]', card).value || ''));
+  $$('[data-rk-to], [data-rk-from]', card).forEach(i => i.addEventListener('input', upd));
+  upd();
+}
+const repackCardQty = card => ({ to_qty: qtyVal($('[data-rk-to]', card).value || ''), from_qty: qtyVal($('[data-rk-from]', card).value || '') });
 function drawApprovals() {
   const box = $('#apr-list'); if (!box) return;
   const sig = AP.list.map(a => a.request_id + (a.can_decide === false ? '-' : '+')).join('|') + '#' + S.lang + '#' + S.user; // a new login may decide what the last one could only see
   if (box.dataset.sig === sig && box.querySelector('.apr-card, .empty')) return; // unchanged: keep typed notes
-  const notes = {}; $$('.apr-card', box).forEach(c => { notes[c.dataset.req] = $('[data-note]', c).value; });
+  const notes = {}, rkq = {}; $$('.apr-card', box).forEach(c => { notes[c.dataset.req] = $('[data-note]', c).value; if ($('[data-rk-to]', c)) rkq[c.dataset.req] = [$('[data-rk-to]', c).value, $('[data-rk-from]', c).value]; });
   box.dataset.sig = sig;
   box.innerHTML = AP.list.length ? AP.list.map(a => {
     const can = a.can_decide !== false;
@@ -2173,7 +2208,7 @@ function drawApprovals() {
       <div class="row" style="margin-top:10px;justify-content:flex-end">${can ? '' : `<span class="badge gold grow" style="justify-content:center" data-owner-only>${ic('lock')} ${esc(t(a.kind === 'opname' ? (a.approver_role === 'owner' ? 'gd.needs_owner' : 'gd.needs_mgr') : a.kind === 'void' && a.approver_role !== 'owner' && !voidOldDate(a, aprPayload(a)) && String(a.cashier).toLowerCase() === String(S.user).toLowerCase() ? 'apr.own_req' : 'apr.owner_only'))}</span>`}
         <button class="btn danger" data-act="apr-decide" data-d="rejected" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t('apr.reject'))}</button><button class="btn primary" data-act="apr-decide" data-d="approved" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t('apr.approve'))}</button></div>
     </div>`; }).join('') : `<div class="empty">${ic('check')}<div>${esc(t('apr.none'))}</div></div>`;
-  $$('.apr-card', box).forEach(c => { if (notes[c.dataset.req]) $('[data-note]', c).value = notes[c.dataset.req]; });
+  $$('.apr-card', box).forEach(c => { if (notes[c.dataset.req]) $('[data-note]', c).value = notes[c.dataset.req]; if (rkq[c.dataset.req]) { $('[data-rk-to]', c).value = rkq[c.dataset.req][0]; $('[data-rk-from]', c).value = rkq[c.dataset.req][1]; } if (c.dataset.kind === 'repack') bindRepackCard(c); }); // v38: typed quantities survive a poll
 }
 async function decideApproval(id, decision, btn) {
   const card = btn.closest('.apr-card');
@@ -2196,6 +2231,7 @@ async function decideApproval(id, decision, btn) {
       data.prices = {};
       $$('[data-np-price]', card).forEach(i => { const f = i.dataset.npPrice; if (i.value.trim() !== '') data.prices[f] = f === 'wholesale_min_qty' ? qtyVal(i.value) : moneyVal(i.value); });
     }
+    if (ap.kind === 'repack' && decision === 'approved' && card) Object.assign(data, repackCardQty(card)); // v38: the quantities as corrected on the card
     const r = await api('decide_approval', data);
     AP.list = AP.list.filter(a => a.request_id !== id); AP.count = AP.list.length;
     updateApprovalBadge(); renderShell(); drawApprovals();
@@ -2772,7 +2808,7 @@ async function checkMyRequests() {
       const a = (await api('check_approval', { request_id: r.id })).approval || {};
       if (['approved', 'rejected', 'used', 'auto'].includes(a.status)) {
         ATT.myReq = ATT.myReq.filter(x => x.id !== r.id);
-        ATT.notifs.unshift({ id: r.id, at: Date.now(), read: false, ok: a.status !== 'rejected', text: t(a.status === 'rejected' ? 'notif.rejected' : 'notif.approved', { label: r.label, name: a.decided_by || '' }) + (a.note ? ` — “${a.note}”` : '') });
+        ATT.notifs.unshift({ id: r.id, at: Date.now(), read: false, ok: a.status !== 'rejected', by: a.decided_by || '', text: t(a.status === 'rejected' ? 'notif.rejected' : 'notif.approved', { label: r.label, name: a.decided_by || '' }) + (a.note ? ` — “${a.note}”` : '') });
         changed = true;
       }
     } catch (e) { if (e instanceof NetError) break; if (e.code === 'NOT_FOUND') { ATT.myReq = ATT.myReq.filter(x => x.id !== r.id); changed = true; } }
@@ -2823,7 +2859,7 @@ async function refreshAttention(force) {
   // v38: these 30 days (sales, items, payments… for the stock / drawer alerts) are read at most every 30 minutes, not every 4
   try { d = await loadSales(addDays(today(), -30), today(), true, 30 * 60000); } catch (e) { }
   ATT.items = computeAttention(d).concat(await gudangAttention(), await loadFieldAttention(), await bankAttention(), laterAttention());
-  updateBell(); renderNavDots();
+  updateBell(); renderNavDots(); ntFlush(); // v38: a "Tutup" made offline reaches the server with the next refresh
   if (S.view === 'home') drawAttention();
 }
 /** Owner's important activity notes and the daily report reminder (listed after the stock / field items). */
@@ -2844,8 +2880,9 @@ function laterAttention() {
   return items;
 }
 function attentionHTML(items, limit) {
+  items = attOpen(items); // v38: closed / answered notices leave the list
   if (!items.length) return `<div class="muted" style="padding:6px 2px">${ic('check')} ${esc(t('att.none'))}</div>`;
-  return `<div class="list">${items.slice(0, limit || items.length).map(x => `<button class="li att ${x.level}" data-act="att-go" data-go="${x.go}" data-key="${esc(x.key)}" ${x.low ? 'data-low="1"' : ''} ${x.daily ? 'data-daily="1"' : ''} ${x.tab ? `data-tab="${x.tab}"` : ''} ${x.kasRep ? 'data-kasrep="1"' : ''} style="min-height:48px;padding:8px 12px">${ic(x.icon)}<div class="grow t" style="font-weight:600">${esc(x.text)}</div><span class="muted">›</span></button>`).join('')}</div>`;
+  return `<div class="list">${items.slice(0, limit || items.length).map(x => `<div class="nt-wrap" data-nt-row="${esc(attNid(x))}"><button class="li att ${x.level}" data-act="att-go" data-go="${x.go}" data-key="${esc(x.key)}" ${x.low ? 'data-low="1"' : ''} ${x.daily ? 'data-daily="1"' : ''} ${x.tab ? `data-tab="${x.tab}"` : ''} ${x.kasRep ? 'data-kasrep="1"' : ''} style="min-height:48px;padding:8px 12px">${ic(x.icon)}<div class="grow t" style="font-weight:600">${esc(x.text)}</div><span class="muted">›</span></button>${ntActs(attNid(x), { text: x.text, actor: x.who || '' })}</div>`).join('')}</div>`;
 }
 function renderNavDots() {
   const b = $('#nav [data-view="orders"]'); if (!b) return;
@@ -2855,18 +2892,20 @@ function renderNavDots() {
 function updateBell() {
   const b = $('#tb-bell'); if (!b) return;
   b.hidden = !S.inApp;
-  const n = ATT.items.length + ATT.notifs.filter(x => !x.read).length;
+  const n = bellCount(); // v38: open notices only (closed / answered ones no longer count)
   b.innerHTML = `${ic('bell')}${n ? `<b>${n}</b>` : ''}`;
   b.setAttribute('aria-label', `${t('notif.title')} (${n})`);
 }
 function openBell() {
   const unread = ATT.notifs.filter(x => !x.read);
-  openModal({
-    title: t('notif.title'), cls: 'narrow',
-    body: `<h3 style="margin:0 0 8px;font-size:15px">${esc(t('att.title'))}</h3><div id="bell-att">${attentionHTML(ATT.items)}</div>
-      <h3 style="margin:16px 0 8px;font-size:15px">${esc(t('notif.results'))}</h3><div class="list" id="bell-notifs">${ATT.notifs.length ? ATT.notifs.slice(0, 15).map(x => `<div class="li" style="min-height:0;padding:8px 12px;${x.read ? '' : 'border-color:var(--accent)'}"><span class="badge ${x.ok ? 'green' : 'red'}">${esc(x.ok ? '✓' : '✕')}</span><div class="grow"><div class="t" style="font-weight:600">${esc(x.text)}</div><div class="s">${esc(fmtDateTime(new Date(x.at).toISOString()))}</div></div></div>`).join('') : `<div class="muted">${esc(t('notif.none'))}</div>`}</div>`
-  });
+  openModal({ title: t('notif.title'), cls: 'narrow', body: `<div id="bell-body">${bellBody()}</div>` }); // v38: body re-drawn in place after Balas / Tutup
   if (unread.length) { ATT.notifs.forEach(x => x.read = true); store.set('notifs', ATT.notifs); updateBell(); }
+}
+function bellBody() {
+  const res = ATT.notifs.filter(x => !ntHandled('r:' + x.id)).slice(0, 15), srv = ntServerOpen(); // v38
+  return `<h3 style="margin:0 0 8px;font-size:15px">${esc(t('att.title'))}</h3><div id="bell-att">${attentionHTML(ATT.items)}</div>
+      ${srv.length ? `<h3 style="margin:16px 0 8px;font-size:15px">${esc(t('nt.section'))}</h3><div class="list" id="bell-srv">${srv.map(ntServerRowHTML).join('')}</div>` : ''}
+      <h3 style="margin:16px 0 8px;font-size:15px">${esc(t('notif.results'))}</h3><div class="list" id="bell-notifs">${res.length ? res.map(x => `<div class="li nt-li" data-nt-row="${esc('r:' + x.id)}" style="min-height:0;padding:8px 12px;${x.read ? '' : 'border-color:var(--accent)'}"><span class="badge ${x.ok ? 'green' : 'red'}">${esc(x.ok ? '✓' : '✕')}</span><div class="grow"><div class="t" style="font-weight:600">${esc(x.text)}</div><div class="s">${esc(fmtDateTime(new Date(x.at).toISOString()))}</div></div>${ntActs('r:' + x.id, { text: x.text, at: new Date(x.at).toISOString(), actor: x.by || '' })}</div>`).join('') : `<div class="muted">${esc(t('notif.none'))}</div>`}</div>`;
 }
 setInterval(() => { if (document.hidden) return; refreshAttention(); checkMyRequests(); if (store.get('order_updates', []).length) flushOrderUpdates(); }, 240000);
 setInterval(() => { if (document.hidden) return; checkMyRequests(); }, 90000);
@@ -2941,7 +2980,7 @@ function hourlySVG(hours) {
 function blockHTML(id, title, inner, more) { return `<div class="panel" id="${id}"><h3>${esc(title)}${more ? `<button class="btn xs" style="margin-inline-start:auto" data-act="home-all" data-block="${id}">${esc(t('home.all'))}</button>` : ''}</h3><div class="pb">${inner}</div></div>`; }
 function homeTopRows(top, n) { return `<table class="tbl" data-rows><tbody>${top.slice(0, n).map((p, i) => `<tr><td class="muted">${i + 1}</td><td>${esc(p.name)}</td><td class="r num">${fmtQty(p.qty)} <span class="small muted">${esc(p.unit)}</span></td><td class="r num">${fmtRp(p.omzet)}</td></tr>`).join('') || `<tr><td class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table>`; }
 function homeCashierRows(list, n) { return `<table class="tbl" data-rows><thead><tr><th>${esc(t('rc.cashier'))}</th><th class="r">${esc(t('home.tx'))}</th><th class="r">${esc(t('rep.omzet'))}</th><th class="r">${esc(t('void'))}</th><th class="r">${esc(t('shift.difference'))}</th></tr></thead><tbody>${list.slice(0, n).map(c => `<tr><td>${esc(c.name)}</td><td class="r num">${fmtNum(c.n)}</td><td class="r num">${fmtRp(c.omzet)}</td><td class="r num ${c.voids ? 'red' : ''}">${fmtNum(c.voids)}</td><td class="r num ${c.diff < 0 ? 'red' : c.diff > 0 ? 'amber' : ''}">${c.diff ? (c.diff > 0 ? '+' : '') + fmtRp(c.diff) : '—'}</td></tr>`).join('') || `<tr><td colspan="5" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table>`; }
-function drawAttention() { const b = $('#home-att .pb'); if (b) b.innerHTML = attentionHTML(ATT.items, 5); const btn = $('#home-att [data-act="home-all"]'); if (btn) btn.hidden = ATT.items.length <= 5; }
+function drawAttention() { const b = $('#home-att .pb'); if (b) b.innerHTML = attentionHTML(ATT.items, 5); const btn = $('#home-att [data-act="home-all"]'); if (btn) btn.hidden = attOpen(ATT.items).length <= 5; } // v38: open notices only
 function drawHome() {
   const body = $('#home-body'); if (!body) return;
   body.style.opacity = '';
@@ -2953,7 +2992,7 @@ function drawHome() {
       ${H.hasProfit ? kpi('h-laba', t('rep.profit'), fmtRp(H.laba), `${esc(t('rep.margin'))} ${fmtPct(H.margin)}`, 'gold') : ''}
       ${kpi('h-debt', t('rep.new_debt'), fmtRp(H.newDebt))}${kpi('h-exp', t('yr.expenses'), fmtRp(H.expenses))}</div>
     <div class="rgrid">
-      ${blockHTML('home-att', t('att.title'), attentionHTML(ATT.items, 5), ATT.items.length > 5)}
+      ${blockHTML('home-att', t('att.title'), attentionHTML(ATT.items, 5), attOpen(ATT.items).length > 5)}
       ${blockHTML('home-top', t('home.top'), homeTopRows(H.top, 5), H.top.length > 5)}
     </div>
     <div class="panel chart" style="margin-bottom:14px" id="home-hourly"><h3>${ic('chart')} ${esc(t('home.hourly'))}</h3><div class="pb">${hourlySVG(H.hours)}</div>
@@ -6331,14 +6370,14 @@ const ACT_GROUPS = { masuk: ['masuk', 'minta_koreksi', 'koreksi_masuk'], harga: 
 const ACT_ICON = { retur: 'return', masuk: 'truck', harga: 'tag', stok: 'warehouse', kas: 'cash', jual: 'cart', bayar: 'wallet', pengguna: 'gear', perangkat: 'device', lain: 'activity' };
 function actGroup(a) {
   if (a.kind === 'ubah_faktur') { let d = {}; try { d = JSON.parse(a.detail || '{}') || {}; } catch (e) { } return d.doc === 'masuk' || /Barang masuk/.test(a.summary || '') ? 'masuk' : d.what === 'retur' ? 'retur' : 'jual'; } // v37
-  if (a.kind === 'keputusan') { const m = /\((\w+)/.exec(a.summary || ''); return { credit: 'jual', void: 'jual', discount: 'jual', retur: 'retur', kesepakatan: 'pengguna', price: 'harga', opname: 'stok', purchase_fix: 'masuk', buka_kas: 'kas', pay_plan: 'bayar', transfer: 'bayar' }[m ? m[1] : 'credit'] || 'jual'; }
+  if (a.kind === 'keputusan') { const m = /\((\w+)/.exec(a.summary || ''); return { credit: 'jual', void: 'jual', discount: 'jual', retur: 'retur', kesepakatan: 'pengguna', price: 'harga', opname: 'stok', purchase_fix: 'masuk', buka_kas: 'kas', pay_plan: 'bayar', transfer: 'bayar', repack: 'stok' }[m ? m[1] : 'credit'] || 'jual'; }
   for (const [g, ks] of Object.entries(ACT_GROUPS)) if (ks.includes(a.kind)) return g;
   return 'lain';
 }
 const actSeen = () => store.get('act_seen', '');
 function actUnread() {
   const seen = Date.parse(actSeen()) || 0;
-  return (ACTV.recent || []).filter(a => (Date.parse(a.at) || 0) > seen && String(a.user).toLowerCase() !== String(S.user).toLowerCase());
+  return (ACTV.recent || []).filter(a => (Date.parse(a.at) || 0) > seen && String(a.user).toLowerCase() !== String(S.user).toLowerCase() && !ntHandled('a:' + a.act_id)); // v38
 }
 function updateActBadge() {
   const b = $('#tb-act'); if (!b) return;
@@ -6483,7 +6522,7 @@ function drawActivity() {
     ${list.length ? `<div class="act-list" id="act-list">${list.slice(0, 500).map(a => { const g = actGroup(a); return `<div class="act-row ${a.level === 'warn' ? 'warn' : ''}" data-kind="${esc(a.kind)}" data-level="${esc(a.level)}" data-group="${g}">
       <span class="act-ic" title="${esc(t('actg.' + g))}">${ic(ACT_ICON[g] || 'activity')}</span>
       <div class="grow"><div class="t">${esc(a.summary)}</div><div class="s"><b class="num">${esc(fmtDate(a.act_date || jktDate(a.at)))} ${esc(jktTime(a.at))}</b> · ${esc(a.user)} · ${esc(t('ak.' + a.kind))}${a.ref ? ' · ' + esc(a.ref) : ''}</div></div>
-      ${int(a.amount) ? `<div class="act-amt num ${int(a.amount) < 0 ? 'red' : ''}">${fmtRp(a.amount)}</div>` : ''}${a.kind === 'tamper' && a.ref && a.user !== S.user ? `<button class="btn xs" data-act="tamper-shots" data-name="${esc(a.ref)}">${ic('camera')} ${esc(t('tamper.photo_btn'))}</button>` : ''}</div>`; }).join('')}</div>` : `<div class="empty">${esc(t('no_data'))}</div>`}`;
+      ${int(a.amount) ? `<div class="act-amt num ${int(a.amount) < 0 ? 'red' : ''}">${fmtRp(a.amount)}</div>` : ''}${a.kind === 'tamper' && a.ref && a.user !== S.user ? `<button class="btn xs" data-act="tamper-shots" data-name="${esc(a.ref)}">${ic('camera')} ${esc(t('tamper.photo_btn'))}</button>` : ''}${a.act_id && String(a.user).toLowerCase() !== String(S.user).toLowerCase() ? ntActs('a:' + a.act_id, ntActInfo(a)) : ''}</div>`; }).join('')}</div>` : `<div class="empty">${esc(t('no_data'))}</div>`}`;
 }
 Object.assign(ACT, {
   'dev-consent': el => devSetConsent(el.dataset.v),
@@ -6656,7 +6695,11 @@ async function saveRepack() {
     toast(t('rp.saved_toast'), 'ok');
     Object.keys(salesCache).forEach(k => delete salesCache[k]); gdInvalidate();
     if (S.view === 'gudang') gdDrawRepack($('#gd-body'));
-  } catch (e) { err.textContent = errMsg(e); btn.disabled = false; }
+  } catch (e) {
+    const pend = e.code === 'REPACK_PENDING' && e.data && e.data.pending; // v38: a cashier's request for this bulk waits → decide it, do not repack twice
+    err.textContent = pend ? t('rk.busy', { name: pend.cashier, time: fmtDateTime(pend.created_at), id: pend.request_id, bulk: pend.from_name, pack: pend.to_name, n: fmtQty(pend.to_qty) }) + ' ' + t('rk.busy_mgr') : errMsg(e);
+    btn.disabled = false;
+  }
 }
 let rpSeq = 0;
 async function loadRepackHistory() {
@@ -6668,7 +6711,7 @@ async function loadRepackHistory() {
   const tot = new Map();
   list.forEach(r => { const k = String(r.to_product_id); const a = tot.get(k) || { name: r.to_name, from: r.from_name, unit: r.from_unit, to_unit: r.to_unit, used: 0, made: 0, exp: 0, n: 0, cost: 0 }; a.used = roundQty(a.used + num(r.from_qty)); a.made = roundQty(a.made + num(r.to_qty)); a.exp = roundQty(a.exp + num(r.expected_qty)); a.n++; a.cost += int(r.packaging_cost); tot.set(k, a); });
   box.innerHTML = list.length ? `<div class="tbl-wrap" style="margin-bottom:12px"><table class="tbl" id="rp-hist"><thead><tr><th>${esc(t('date'))}</th><th>${esc(t('rp.made'))}</th><th class="r">${esc(t('rp.bulk_used'))}</th><th class="r">${esc(t('rp.expected'))}</th><th class="r">${esc(t('rp.yield'))}</th><th class="r">${esc(t('rp.loss'))}</th>${own ? `<th class="r">${esc(t('rp.pack_cost'))}</th>` : ''}<th class="hide-phone">${esc(t('pc.user'))}</th></tr></thead><tbody>
-      ${list.map(r => `<tr class="${num(r.yield_pct) < 95 ? 'low' : ''}" data-rp="${esc(r.repack_id)}"><td class="num">${esc(fmtDate(r.repack_date))}</td><td><b>${esc(r.to_name)}</b> × <b class="num">${fmtQty(r.to_qty)}</b><div class="small muted">${esc(r.from_name)}${r.note ? ' · ' + esc(r.note) : ''}</div></td>
+      ${list.map(r => `<tr class="${num(r.yield_pct) < 95 ? 'low' : ''}" data-rp="${esc(r.repack_id)}"><td class="num">${esc(fmtDate(r.repack_date))}</td><td><b>${esc(r.to_name)}</b> × <b class="num">${fmtQty(r.to_qty)}</b><div class="small muted">${esc(r.from_name)}${r.note ? ' · ' + esc(r.note) : ''}</div>${r.approved_by ? `<div class="small" data-rp-by>${esc(t('rp.req_by', { req: r.requested_by || r.user || '', apr: r.approved_by }))}</div>` : ''}</td>
         <td class="r num">${fmtQty(r.from_qty)} ${esc(r.from_unit || '')}</td><td class="r num">${fmtQty(r.expected_qty)}</td><td class="r num" data-yield><b>${NF1.format(num(r.yield_pct))}%</b></td><td class="r num">${fmtQty(r.loss_qty)} ${esc(r.from_unit || '')}</td>${own ? `<td class="r num">${r.packaging_cost != null ? fmtRp(r.packaging_cost) : '—'}</td>` : ''}<td class="hide-phone">${esc(r.user || '')}</td></tr>`).join('')}</tbody></table></div>
     <h4 style="margin:0 0 6px">${esc(t('rp.totals'))}</h4><div class="tbl-wrap"><table class="tbl" id="rp-totals"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('rp.bulk_used'))}</th><th class="r">${esc(t('rp.made'))}</th><th class="r">${esc(t('rp.avg_yield'))}</th></tr></thead><tbody>
       ${[...tot.entries()].map(([k, a]) => { const y = a.exp ? a.made / a.exp * 100 : 0; return `<tr class="${y < 95 ? 'low' : ''}" data-pack="${esc(k)}"><td>${esc(a.name)}<div class="small muted">${esc(a.from)} · ${esc(t('rp.n_times', { n: a.n }))}</div></td><td class="r num">${fmtQty(a.used)} ${esc(a.unit || '')}</td><td class="r num">${fmtQty(a.made)} ${esc(a.to_unit || '')}</td><td class="r num" data-avg><b>${NF1.format(y)}%</b></td></tr>`; }).join('')}</tbody></table></div>`
@@ -9177,7 +9220,7 @@ function opnameDueHTML() {
 const IC = { preset: '30d', from: '', to: '', doc: '', q: '', data: null, err: '', seq: 0 };
 const invChgSeen = () => store.get('invchg_seen', '');
 /** Invoice changes made by someone else since the owner last opened "Perubahan faktur" (from the activity he already has). */
-function invChgUnread() { const seen = Date.parse(invChgSeen()) || 0; return (ACTV.recent || []).filter(a => a.kind === 'ubah_faktur' && (Date.parse(a.at) || 0) > seen && String(a.user).toLowerCase() !== String(S.user).toLowerCase()); }
+function invChgUnread() { const seen = Date.parse(invChgSeen()) || 0; return (ACTV.recent || []).filter(a => a.kind === 'ubah_faktur' && (Date.parse(a.at) || 0) > seen && String(a.user).toLowerCase() !== String(S.user).toLowerCase() && !ntHandled('a:' + a.act_id)); } // v38: + not answered / closed
 const IC_WHAT = ['koreksi_masuk', 'batal', 'koreksi_harga', 'retur'];
 function icChangeText(c) {
   const parts = [];
@@ -9222,13 +9265,13 @@ function icFiltered() {
   return (IC.data || []).filter(c => (!IC.doc || c.doc === IC.doc) && (!q || norm(`${icDocText(c)} ${c.party || ''} ${c.reason || ''} ${c.requested_by || ''} ${c.approved_by || ''} ${(c.changes || []).map(icChangeText).join(' ')}`).includes(q)));
 }
 function icTableHTML(list, printing) {
-  return `<table class="tbl" id="${printing ? 'ic-print-table' : 'ic-table'}"><thead><tr><th>${esc(t('ic.when'))}</th><th>${esc(t('ic.invoice'))}</th><th>${esc(t('ic.what'))}</th><th>${esc(t('ic.changes'))}</th><th>${esc(t('reason'))}</th><th>${esc(t('ic.who'))}</th>${printing ? '' : `<th class="r">${esc(t('total'))}</th>`}</tr></thead><tbody>
+  return `<table class="tbl" id="${printing ? 'ic-print-table' : 'ic-table'}"><thead><tr><th>${esc(t('ic.when'))}</th><th>${esc(t('ic.invoice'))}</th><th>${esc(t('ic.what'))}</th><th>${esc(t('ic.changes'))}</th><th>${esc(t('reason'))}</th><th>${esc(t('ic.who'))}</th>${printing ? '' : `<th class="r">${esc(t('total'))}</th><th>${esc(t('nt.col'))}</th>`}</tr></thead><tbody>
     ${list.map(c => `<tr data-chg="${esc(c.act_id || '')}" data-doc="${esc(c.doc || '')}" data-what="${esc(c.what || '')}"><td class="num" style="white-space:nowrap">${esc(fmtDateTime(c.at))}</td>
       <td><b class="num">${esc(icDocText(c))}</b><div class="small muted">${esc(t(c.doc === 'masuk' ? 'ic.doc_masuk' : 'ic.doc_jual'))}${c.doc_date ? ' · ' + esc(/^\d{4}-\d{2}-\d{2}$/.test(c.doc_date) ? fmtDate(c.doc_date) : c.doc_date) : ''}${c.party ? ' · ' + esc(c.party) : ''}</div></td>
       <td>${esc(t(IC_WHAT.includes(c.what) ? 'ic.w_' + c.what : 'ic.w_other'))}</td>
       <td>${(c.changes || []).map(x => `<div>${esc(icChangeText(x))}</div>`).join('') || '—'}</td>
       <td>${esc(c.reason || '—')}</td>
-      <td class="small" data-who>${esc(icWho(c))}</td>${printing ? '' : `<td class="r num ${int(c.amount) < 0 ? 'red' : ''}">${c.amount != null && int(c.amount) ? fmtRp(c.amount) : '—'}</td>`}</tr>`).join('')}</tbody></table>`;
+      <td class="small" data-who>${esc(icWho(c))}</td>${printing ? '' : `<td class="r num ${int(c.amount) < 0 ? 'red' : ''}">${c.amount != null && int(c.amount) ? fmtRp(c.amount) : '—'}</td><td class="nt-cell">${c.act_id ? ntActs('a:' + c.act_id, ntChgInfo(c)) : ''}</td>`}</tr>`).join('')}</tbody></table>`;
 }
 function drawInvChg() {
   const box = $('#ic-body'); if (!box) return;
@@ -9316,6 +9359,182 @@ Object.assign(I18N.ar, {
   'ak.ubah_faktur': 'تغيير فاتورة', 'ak.opname_penuh': 'جرد كامل',
   'dr.goods_in': 'البضاعة الواردة اليوم ({n} فاتورة)', 'dr.gi_mismatch': '{n} تختلف عن الفاتورة', 'dr.gi_total': 'قيمة الشراء', 'dr.gi_changed': 'صُحّحت {n} مرة', 'dr.gi_qty': 'الكمية الواردة', 'dr.gi_stock': 'المخزون الآن',
   'dr.gi_none': 'لا توجد بضاعة واردة اليوم.', 'dr.invchg': 'تغييرات الفواتير اليوم ({n})'
+});
+/* v38 i18n: a cashier's repack request — approval card, history (asked / approved by), the lock on the bulk product */
+Object.assign(I18N.id, {
+  'apr.kind_repack': 'Kemas ulang: {name}', 'apr.new_repack': 'Permintaan kemas ulang baru dari {cashier}',
+  'apr.repack_hint': 'Cek jumlah kemasan jadi dan curah yang dipakai (boleh diperbaiki). Setujui = stok curah berkurang, stok kemasan bertambah; tolak = stok tidak berubah. Pemilik diberi tahu.',
+  'rk.bulk': 'Curah', 'rk.bulk_stock': 'Stok curah sekarang', 'rk.bulk_asked': 'Curah diminta', 'rp.req_by': 'Diminta {req} · disetujui {apr}',
+  'rk.busy': '{name} sudah meminta kemas ulang {bulk} ({pack} × {n}) pada {time} — no. {id}.', 'rk.busy_mgr': 'Putuskan permintaan itu di Persetujuan (bisa dikoreksi) — jangan dikemas dua kali.',
+  'err.REPACK_PENDING': 'Sudah ada permintaan kemas ulang untuk curah ini', 'err.REPACK_STOCK': 'Stok curah tidak cukup lagi', 'err.TOO_EARLY': 'Belum bisa dibatalkan',
+  'ak.notifikasi': 'Pemberitahuan'
+});
+Object.assign(I18N.ar, {
+  'apr.kind_repack': 'إعادة تعبئة: {name}', 'apr.new_repack': 'طلب إعادة تعبئة جديد من {cashier}',
+  'apr.repack_hint': 'راجع عدد العبوات الناتجة والسائب المستخدم (يمكن تصحيحهما). موافقة = ينقص السائب ويزيد مخزون العبوات؛ رفض = لا يتغير المخزون. يصل إشعار إلى المالك.',
+  'rk.bulk': 'السائب', 'rk.bulk_stock': 'مخزون السائب الآن', 'rk.bulk_asked': 'السائب المطلوب', 'rp.req_by': 'طلبه {req} · وافق {apr}',
+  'rk.busy': 'طلب {name} إعادة تعبئة {bulk} ({pack} × {n}) في {time} — رقم {id}.', 'rk.busy_mgr': 'قرّر ذلك الطلب في الموافقات (يمكن تصحيحه) — لا تُعبّأ مرتين.',
+  'err.REPACK_PENDING': 'يوجد طلب إعادة تعبئة سابق لهذا السائب', 'err.REPACK_STOCK': 'مخزون السائب لم يعد يكفي', 'err.TOO_EARLY': 'لا يمكن الإلغاء بعد',
+  'ak.notifikasi': 'إشعار'
+});
+
+/* ========== v38 (owner 2026-10-12: "For any notice come to me make for me I can reply" + «نعم زر رد او اغلق مباشر ما في مشكل») ==========
+   Every notice shown to the owner — "Perlu perhatian" items (bell + Beranda), the server notices addressed to him (bell
+   "Pemberitahuan"), the results of his own requests, every activity row of someone else and every invoice-change row — has
+   two buttons side by side: "Balas" (a private chat message to the person who caused it, with the notice quoted: text, date &
+   time, ref / invoice no.; no human behind it, or himself → he picks the person, default the manager) and "Tutup" (one tap,
+   no question: gone from the bell / open lists, the count drops; still in the full history, marked). Replying counts as
+   handled too. The state is kept on the server through the chat backend (notice_close + the ref on the reply), so it holds on
+   every device; it rides on the existing chat poll (no new polling). The manager and the accountant get the same on theirs. */
+const NT = { for: '', closed: {}, replied: {}, pend: [], busy: false, reg: {} };
+const NT_ROLES = ['owner', 'manager', 'kasir', 'sales', 'akuntan'];
+function ntS() {
+  const u = String(S.user || '').toLowerCase();
+  if (NT.for !== u) { const c = store.get('nt.' + u, null) || {}; Object.assign(NT, { for: u, closed: c.closed || {}, replied: c.replied || {}, pend: Array.isArray(c.pend) ? c.pend : [], reg: {} }); }
+  return NT;
+}
+function ntSave() { const n = ntS(); if (n.for) store.set('nt.' + n.for, { closed: n.closed, replied: n.replied, pend: n.pend }); }
+/** The server's state (chat poll / close / send) → this device; closes not yet confirmed stay closed here. */
+function ntApply(ns) {
+  if (!ns || typeof ns !== 'object' || !S.inApp) return;
+  const n = ntS(), closed = Object.assign({}, ns.closed || {});
+  n.pend.forEach(id => { if (!closed[id]) closed[id] = n.closed[id] || new Date().toISOString(); });
+  n.closed = closed; n.replied = Object.assign({}, ns.replied || {});
+  ntSave(); ntRefreshViews(); ntFlush();
+}
+function ntHandled(id) {
+  const n = ntS(); if (!id) return null;
+  if (n.replied[id]) return { k: 'r', at: n.replied[id].at || '', to: n.replied[id].to || '' };
+  if (n.closed[id]) return { k: 'c', at: n.closed[id] };
+  return null;
+}
+/** A "Perlu perhatian" item is a live count: closed for today, back when its numbers change (language-independent id). */
+function attNid(x) {
+  const d = String(x.text || '').replace(/[٠-٩]/g, c => String(c.charCodeAt(0) - 0x660)).replace(/[۰-۹]/g, c => String(c.charCodeAt(0) - 0x6F0));
+  return ('att:' + x.key + ':' + (d.match(/\d+/g) || []).sort().join('.') + ':' + today()).slice(0, 120);
+}
+const attOpen = items => (items || []).filter(x => !ntHandled(attNid(x)));
+/** Notices addressed to me by the server (bootstrap) + for the owner the same kinds from his fresher activity feed. Invoice
+    changes are not listed one by one here — they have their own "Faktur diubah" item and page. */
+function ntServerOpen() {
+  const me = String(S.user || '').toLowerCase(), seen = {}, out = [];
+  const mine = a => a && a.act_id && a.kind === 'notifikasi' && String(a.ref || '').split(',').includes(S.role) && String(a.user || '').toLowerCase() !== me;
+  (S.notices || []).concat(isOwner() ? (ACTV.recent || []) : []).forEach(a => { if (mine(a) && !seen[a.act_id]) { seen[a.act_id] = 1; out.push(a); } });
+  return out.filter(a => !ntHandled('a:' + a.act_id)).sort((x, y) => String(y.at).localeCompare(String(x.at))).slice(0, 30);
+}
+function bellCount() { return attOpen(ATT.items).length + ATT.notifs.filter(x => !x.read && !ntHandled('r:' + x.id)).length + ntServerOpen().length; }
+function ntServerRowHTML(a) {
+  const id = 'a:' + a.act_id;
+  return `<div class="li nt-li" data-nt-row="${esc(id)}" style="min-height:0;padding:8px 12px"><span class="badge ${a.level === 'warn' ? 'amber' : 'blue'}">!</span><div class="grow"><div class="t" style="font-weight:600">${esc(a.summary)}</div><div class="s">${esc(fmtDateTime(a.at))} · ${esc(a.user)}</div></div>${ntActs(id, ntActInfo(a))}</div>`;
+}
+const NT_DOC_RE = /\b(?:KM\d{6}-[A-Z0-9]{3,}|PB-[A-Z0-9-]{4,}|[A-Z]{2,4}-\d[\w-]{2,})\b/;
+function ntActInfo(a) {
+  const roleRef = /^(owner|manager|kasir|sales|akuntan)(,|$)/.test(String(a.ref || ''));
+  const m = NT_DOC_RE.exec(String(a.summary || ''));
+  return { text: String(a.summary || ''), at: a.at || '', no: a.ref && !roleRef ? String(a.ref) : m ? m[0] : '', actor: a.role === 'system' || String(a.user).toLowerCase() === 'sistem' ? '' : String(a.user || '') };
+}
+function ntChgInfo(c) {
+  const me = String(S.user || '').toLowerCase(), req = String(c.requested_by || '');
+  return { text: `${t(IC_WHAT.includes(c.what) ? 'ic.w_' + c.what : 'ic.w_other')} ${icDocText(c)}: ${(c.changes || []).map(icChangeText).join('; ')}${c.reason ? ' — ' + c.reason : ''}`.trim(),
+    at: c.at || '', no: icDocText(c), actor: req && req.toLowerCase() !== me ? req : String(c.approved_by || '') };
+}
+/** The two buttons (or, once handled, the mark + "Balas" again). Registers the notice for the reply window. */
+function ntActs(id, info) {
+  if (!id) return '';
+  ntS().reg[id] = info || {};
+  const h = ntHandled(id);
+  const mark = h ? `<span class="nt-mark ${h.k === 'r' ? 'r' : 'c'}" data-nt-mark="${h.k}">${esc(h.k === 'r' ? t('nt.replied', { at: h.at ? fmtDateTime(h.at) : '' }) + (h.to ? ' · ' + h.to : '') : t('nt.closed', { at: h.at ? fmtDateTime(h.at) : '' }))}</span>` : '';
+  return `<span class="nt-acts">${mark}<button class="btn xs" data-act="nt-reply" data-nt-id="${esc(id)}">${esc(t('nt.reply'))}</button>${h ? '' : `<button class="btn xs" data-act="nt-close" data-nt-id="${esc(id)}">${esc(t('nt.close'))}</button>`}</span>`;
+}
+function ntRefreshViews() {
+  if (!S.inApp) return;
+  ATT.items = ATT.items.filter(x => !['tamper', 'act', 'daily', 'opname-due', 'invchg'].includes(x.key)).concat(laterAttention()); // counts of the activity / invoice-change items
+  updateBell(); updateActBadge();
+  const bb = $('#bell-body'); if (bb) bb.innerHTML = bellBody();
+  if (S.view === 'home') drawAttention();
+  if (S.view === 'activity' && ACTV.data) drawActivity();
+  if (S.view === 'invchg' && IC.data) drawInvChg();
+}
+function ntClose(ids) {
+  const n = ntS(), at = new Date().toISOString();
+  ids.filter(Boolean).forEach(id => { n.closed[id] = n.closed[id] || at; if (!n.pend.includes(id)) n.pend.push(id); });
+  n.pend = n.pend.slice(-200);
+  ntSave(); ntRefreshViews(); ntFlush();
+}
+/** Send the closes still waiting (one call; nothing at all when none is waiting). */
+function ntFlush() {
+  const n = ntS();
+  if (n.busy || !n.pend.length || !S.inApp || !window.KChatUI) return;
+  n.busy = true;
+  const ids = n.pend.slice(0, 50), who = n.for;
+  KChatUI.closeNotices(ids).then(ns => {
+    if (NT.for !== who) return; NT.busy = false;
+    NT.pend = NT.pend.filter(x => !ids.includes(x)); ntSave();
+    if (ns) ntApply(ns); else ntRefreshViews();
+  }).catch(() => { if (NT.for === who) NT.busy = false; }); // offline: kept here, sent with the next refresh
+}
+/** People one can write to privately (names only), from the chat team list (or the users list before the chat has loaded). */
+function ntPeople() {
+  const me = String(S.user || '').toLowerCase();
+  let list = (window.KChatUI && KChatUI.team ? KChatUI.team() : []).map(x => ({ name: x.name, role: x.role }));
+  if (!list.length) list = (S.users || []).filter(u => u.active !== false && NT_ROLES.includes(u.role) && String(u.name).toLowerCase() !== me).map(u => ({ name: u.name, role: u.role }));
+  return list.sort((a, b) => a.name.localeCompare(b.name));
+}
+function ntReplyOpen(id) {
+  const info = ntS().reg[id] || {}, people = ntPeople(), me = String(S.user || '').toLowerCase(), actor = String(info.actor || '');
+  const hit = actor && actor.toLowerCase() !== me ? people.find(p => p.name.toLowerCase() === actor.toLowerCase()) : null;
+  const def = hit || people.find(p => p.role === (S.role === 'manager' ? 'owner' : 'manager')) || people.find(p => p.role === 'manager' || p.role === 'owner') || people[0];
+  const at = info.at || new Date().toISOString();
+  const el = openModal({
+    title: t('nt.reply_title'), cls: 'narrow', id: 'nt-reply',
+    body: `<div class="nt-quote" id="nt-quote"><div class="small muted">↩ ${esc([t('nt.about'), fmtDateTime(at), info.no || ''].filter(Boolean).join(' · '))}</div><div>${esc(info.text || '')}</div></div>
+      <div class="field"><label class="f" for="nt-to">${esc(t('nt.to'))}</label><select class="input" id="nt-to" data-mode="${hit ? 'actor' : 'pick'}">${people.map(p => `<option value="${esc(p.name)}" ${def && p.name === def.name ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>
+        <div class="small muted" id="nt-to-hint">${esc(t(hit ? 'nt.to_actor' : 'nt.to_pick'))}</div></div>
+      <div class="field"><label class="f" for="nt-msg">${esc(t('nt.msg'))}</label><textarea class="input" id="nt-msg" rows="3" maxlength="2000" autofocus></textarea></div>
+      <div class="red small" id="nt-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="nt-send">${esc(t('nt.send'))}</button>`
+  });
+  const send = async () => {
+    const to = $('#nt-to', el).value, body = $('#nt-msg', el).value.trim(), err = $('#nt-err', el), btn = $('#nt-send', el);
+    if (!to) { err.textContent = t('nt.no_person'); return; }
+    if (!body) { err.textContent = t('nt.empty'); return; }
+    if (!window.KChatUI || !KChatUI.sendTo) { err.textContent = t('err.SERVER'); return; }
+    btn.disabled = true; err.textContent = '';
+    try {
+      const quote = { text: String(info.text || '').slice(0, 400), at, no: info.no || '', by: actor && actor.toLowerCase() !== me ? actor : '' };
+      const res = await KChatUI.sendTo(to, { body, quote, ref: id });
+      const n = ntS(); n.replied[id] = { at: (res && res.message && res.message.created_at) || new Date().toISOString(), to }; n.pend = n.pend.filter(x => x !== id); ntSave();
+      if (topModal() === el) closeModal();
+      toast(t('nt.sent', { name: to }), 'ok'); ntRefreshViews();
+    } catch (e) { btn.disabled = false; err.textContent = e && e.code === 'NOT_FOUND' ? t('nt.no_person') : errMsg(e); }
+  };
+  $('#nt-send', el).onclick = send;
+}
+Object.assign(ACT, {
+  'nt-reply': el => ntReplyOpen(el.dataset.ntId),
+  'nt-close': el => ntClose([el.dataset.ntId])
+});
+(function ntCss() {
+  if (document.getElementById('nt-css')) return;
+  const st = document.createElement('style'); st.id = 'nt-css';
+  st.textContent = '.nt-wrap{display:flex;flex-wrap:wrap;align-items:center;gap:6px}.nt-wrap>.li{flex:1 1 220px}'
+    + '.nt-acts{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;flex:0 0 auto}.nt-li{flex-wrap:wrap}'
+    + '.nt-mark{font-size:12px;font-weight:600;border-radius:999px;padding:2px 8px;white-space:nowrap}.nt-mark.r{background:var(--ok-l,#dcfce7);color:var(--ok,#15803d)}.nt-mark.c{background:var(--border,#e2e8f0);color:var(--muted,#64748b)}'
+    + '.nt-quote{border-inline-start:3px solid var(--accent,#0a7d4b);background:var(--bg2,rgba(10,125,75,.06));border-radius:6px;padding:6px 10px;margin-bottom:12px;white-space:pre-wrap;word-break:break-word}'
+    + '.act-row .nt-acts{margin-inline-start:auto}.nt-cell{white-space:nowrap}';
+  document.head.appendChild(st);
+})();
+Object.assign(I18N.id, {
+  'ak.notifikasi': 'Pemberitahuan', 'nt.reply': '↩ Balas', 'nt.close': '✕ Tutup', 'nt.replied': '↩ dibalas {at}', 'nt.closed': '✓ ditutup {at}', 'nt.section': 'Pemberitahuan', 'nt.col': 'Tindak lanjut',
+  'nt.reply_title': 'Balas pemberitahuan', 'nt.about': 'Pemberitahuan', 'nt.to': 'Kepada', 'nt.to_actor': 'Orang yang membuat pemberitahuan ini — pesan pribadi, hanya kalian berdua.',
+  'nt.to_pick': 'Pemberitahuan dari sistem — pilih orangnya (pesan pribadi, hanya kalian berdua).', 'nt.msg': 'Pesan', 'nt.send': 'Kirim',
+  'nt.empty': 'Tulis pesannya dulu.', 'nt.no_person': 'Orang ini tidak ada di daftar tim.', 'nt.sent': 'Terkirim ke {name} — jawabannya muncul di Obrolan.'
+});
+Object.assign(I18N.ar, {
+  'ak.notifikasi': 'إشعار', 'nt.reply': '↩ رد', 'nt.close': '✕ إغلاق', 'nt.replied': '↩ تم الرد {at}', 'nt.closed': '✓ أُغلق {at}', 'nt.section': 'الإشعارات', 'nt.col': 'المتابعة',
+  'nt.reply_title': 'الرد على الإشعار', 'nt.about': 'إشعار', 'nt.to': 'إلى', 'nt.to_actor': 'الشخص صاحب هذا الإشعار — رسالة خاصة بينكما فقط.',
+  'nt.to_pick': 'إشعار من النظام — اختر الشخص (رسالة خاصة بينكما فقط).', 'nt.msg': 'الرسالة', 'nt.send': 'إرسال',
+  'nt.empty': 'اكتب الرسالة أولاً.', 'nt.no_person': 'هذا الشخص غير موجود في قائمة الفريق.', 'nt.sent': 'أُرسلت إلى {name} — يظهر رده في المحادثة.'
 });
 
 /* ========== Boot ========== */
