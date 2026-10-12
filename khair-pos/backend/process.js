@@ -33,7 +33,9 @@ var __codeHit = scanCodeAttempt(data);
     else if (v && typeof v === 'object') cleanInput(v, depth + 1);
   });
 })(data, 0);
-const ops = { sales: [], sale_items: [], payments: [], purchases: [], products: [], customers: [], users: [], settings: [], approvals: [], expenses: [], shifts: [], devices: [], repacks: [], activity: [], bank_lines: [], returns: [], tamper_shots: [] };
+const ops = { sales: [], sale_items: [], payments: [], purchases: [], products: [], customers: [], users: [], settings: [], approvals: [], expenses: [], shifts: [], devices: [], repacks: [], activity: [], bank_lines: [], returns: [], tamper_shots: [], guard: [] };
+// v38: ops.guard = race guards the Worker runs around the writes (worker/src/core.js): 'decide' claims a pending approval
+// (only one of two simultaneous decisions writes), 'repack_lock' keeps one pending repack request per bulk product.
 
 function rows(name) {
   try {
@@ -139,7 +141,7 @@ const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' 
 // v29 (owner 2026-10-10): the accountant also shares the "manager or accountant" approvals (goods-in mismatch,
 // void today's invoice, price change) — list_approvals + decide_approval, limited to approver_role 'mgr_akuntan'
 // by canDecide — and may register a member (save_customer); the cashier may no longer create members.
-const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes'];
+const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes', 'cancel_repack'];
 if (role === 'akuntan' && AKUNTAN_READ.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
 // v36: report_tamper too — the field app reports a code attempt here (it was refused before, so the rep's account was never locked).
 if (role === 'sales' && ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
@@ -974,6 +976,76 @@ function reconText(acc, period, rep) {
 }
 function fixSummary(no, changes) { return 'Koreksi barang masuk ' + no + ': ' + changes.map(function (c) { return c.name + ' ' + fmtN(c.from_qty) + '→' + fmtN(c.to_qty) + (c.d_total ? ' (Rp ' + c.from_total + '→' + c.to_total + ')' : ''); }).join('; '); }
 
+// ---- v38 (owner 2026-10-12: «المالك يصله إشعار فقط، والمدير والمحاسب يوافق على الكمية والعملية كلها، والكاشير هو الذي يطلب القيام بها، لكن
+// يجب التأكد: ممكن 2 كاشير يقوم بنفس الطلب والتعليب، انتبه منها»): in-shop repacking. The cashier REQUESTS (request_repack, nothing moves),
+// the manager OR the accountant approves (approval kind 'repack', mgr_akuntan, first decision wins, may correct the quantities), the owner
+// only gets notices. One pending request per BULK product at a time (the lock); each request carries a client id (a double tap / retry
+// / resend returns the same request); the bulk stock is re-checked at approval; a request pending 24 h or more can be cancelled. ----
+const REPACK_STALE_MS = 24 * 3600000;
+/** The pack product, its bulk product and the quantities (packs made; bulk used = packs × size unless typed). */
+function repackPlan(toId, toQtyIn, fromQtyIn) {
+  const to = productById[String(toId)];
+  if (!to) return { error: fail('NOT_FOUND', 'Produk kemasan tidak ditemukan') };
+  const from = num(to.repack_from) > 0 ? productById[String(to.repack_from)] : null;
+  if (!from || !(num(to.repack_qty) > 0)) return { error: fail('INVALID', 'Produk ini belum diatur sebagai kemasan ulang (asal curah + isi per kemasan)') };
+  const toQty = Math.round(num(toQtyIn) * 1000) / 1000;
+  if (!(toQty > 0)) return { error: fail('INVALID', 'Jumlah kemasan jadi tidak valid') };
+  const size = num(to.repack_qty);
+  const fromQty = fromQtyIn === undefined || fromQtyIn === null || fromQtyIn === '' ? Math.round(toQty * size * 1000) / 1000 : Math.round(num(fromQtyIn) * 1000) / 1000;
+  if (!(fromQty > 0)) return { error: fail('INVALID', 'Jumlah curah yang dipakai tidak valid') };
+  const expected = Math.round(fromQty / size * 1000) / 1000;
+  return { to: to, from: from, toQty: toQty, fromQty: fromQty, size: size, expected: expected,
+    yield_pct: expected > 0 ? Math.round(toQty / expected * 1000) / 10 : 0, loss_qty: Math.round((fromQty - toQty * size) * 1000) / 1000 };
+}
+function repackText(pl) { return str(pl.from_name) + ' ' + fmtN(pl.from_qty) + ' ' + str(pl.from_unit) + ' → ' + str(pl.to_name) + ' x' + fmtN(pl.to_qty) + ' (hasil ' + pl.yield_pct + '%, susut ' + fmtN(pl.loss_qty) + ' ' + str(pl.from_unit) + ')'; }
+/** Moves the stock bulk → packs and records it (pos_repacks + two KEMAS ULANG goods rows + the activity line). */
+function applyRepack(P, o) {
+  const from = P.from, to = P.to, toQty = P.toQty, fromQty = P.fromQty;
+  const packCost = Math.max(0, money(o.packaging_cost));
+  const unitCost = Math.round((fromQty * money(from.cost_price) + packCost) / toQty);
+  const date = isDate(o.date) ? o.date : jkDate();
+  const fromNew = Math.round((num(from.stock) - fromQty) * 1000) / 1000;
+  const oldTo = Math.max(0, num(to.stock));
+  const toNew = Math.round((num(to.stock) + toQty) * 1000) / 1000;
+  const toCost = oldTo + toQty > 0 ? Math.round((oldTo * money(to.cost_price) + toQty * unitCost) / (oldTo + toQty)) : unitCost;
+  ops.products.push(forWrite(Object.assign({}, from, { stock: fromNew }), from.id));
+  ops.products.push(forWrite(Object.assign({}, to, { stock: toNew, cost_price: toCost }), to.id));
+  const user = str(o.user) || me.name;
+  const rp = {
+    repack_id: 'RP' + rand(6), repack_date: date, repack_time: new Date().toISOString(), user: user,
+    from_product_id: from.id, from_name: str(from.name), from_unit: str(from.unit), from_qty: fromQty,
+    to_product_id: to.id, to_name: str(to.name), to_unit: str(to.unit), to_qty: toQty, pack_size: P.size,
+    expected_qty: P.expected, yield_pct: P.yield_pct, loss_qty: P.loss_qty, packaging_cost: packCost, unit_cost: unitCost,
+    exp_date: isDate(o.exp_date) ? o.exp_date : '', note: str(o.note).slice(0, 300),
+    // v38: who asked (a cashier's request) and who approved it; empty for a direct repack by the owner / manager
+    requested_by: str(o.requested_by), approved_by: str(o.approved_by), request_id: str(o.request_id)
+  };
+  ops.repacks.push(forWrite(rp, -1));
+  const tag = rp.repack_id + (rp.requested_by ? ', diminta ' + rp.requested_by + ', disetujui ' + rp.approved_by : '');
+  ops.purchases.push(forWrite({ purchase_date: date, supplier: 'KEMAS ULANG', product_id: from.id, name: str(from.name), qty: -fromQty, cost_price: money(from.cost_price), total: 0,
+    note: ('→ ' + str(to.name) + ' x' + toQty + ' (' + tag + ') ' + rp.note).trim(), user: user, photo_id: '', exp_date: '' }, -1));
+  ops.purchases.push(forWrite({ purchase_date: date, supplier: 'KEMAS ULANG', product_id: to.id, name: str(to.name), qty: toQty, cost_price: unitCost, total: 0,
+    note: ('dari ' + str(from.name) + ' ' + fromQty + ' ' + str(from.unit) + ' (' + tag + ') ' + rp.note).trim(), user: user, photo_id: '', exp_date: rp.exp_date }, -1));
+  const stock = [{ product_id: from.id, stock: fromNew }, { product_id: to.id, stock: toNew }];
+  if (role === 'owner') stock[1].cost_price = toCost;
+  logAct('kemas_ulang', 'Kemas ulang ' + repackText(rp) + (rp.requested_by ? ' — diminta ' + rp.requested_by + ', disetujui ' + rp.approved_by : ''), rp.repack_id, 0, o.level || (rp.yield_pct < 95 ? 'warn' : 'info'));
+  const out = Object.assign({}, rp);
+  if (role !== 'owner') { delete out.unit_cost; delete out.packaging_cost; }
+  return { rp: rp, out: out, stock: stock };
+}
+/** The pending repack request that holds the lock on this bulk product (one at a time). */
+function pendingRepackFor(fromId) { return approvalRows.find(function (a) { return a.kind === 'repack' && a.status === 'pending' && str(a.ref) === String(fromId); }) || null; }
+function repackBusy(p) {
+  let pl = {};
+  try { pl = JSON.parse(p.payload || '{}') || {}; } catch (e) { pl = {}; }
+  const stale = !(Date.now() - Date.parse(p.created_at) < REPACK_STALE_MS);
+  Object.keys(ops).forEach(function (k) { ops[k] = []; });
+  return done({ ok: false, error: 'REPACK_PENDING',
+    message: 'Sudah ada permintaan kemas ulang ' + str(pl.from_name) + ' oleh ' + str(p.cashier) + ' (' + wibStamp(p.created_at) + ', ' + str(p.request_id) + ': ' + str(pl.to_name) + ' x' + fmtN(pl.to_qty) + ') yang menunggu persetujuan manajer/akuntan. Tunggu keputusannya atau hubungi manajer/akuntan.' +
+      (stale ? ' Permintaan itu sudah lebih dari 24 jam: peminta atau manajer/akuntan bisa membatalkannya.' : ''),
+    pending: { request_id: str(p.request_id), cashier: str(p.cashier), created_at: str(p.created_at), from_name: str(pl.from_name), to_name: str(pl.to_name), to_qty: num(pl.to_qty), stale: stale } });
+}
+
 // ---- Devices: where each phone / tablet / computer running one of the apps is (the app asks the user's consent
 // first). Every request may carry data.device = {id, app, label, lat, lng, acc, loc_status, battery}; the row is
 // written only when something changed (new device, other user, status, moved > 100 m) or every 10 minutes, so
@@ -1464,46 +1536,64 @@ switch (req.action) {
 
   case 'repack': {
     // Bulk → small packs made in the shop: how much bulk went in, how many packs came out, the loss and the pack cost.
+    // The owner and the manager repack directly (a cashier sends request_repack instead — v38).
     if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
-    const to = productById[String(data.to_product_id)];
-    if (!to) return fail('NOT_FOUND', 'Produk kemasan tidak ditemukan');
-    const from = num(to.repack_from) > 0 ? productById[String(to.repack_from)] : null;
-    if (!from || !(num(to.repack_qty) > 0)) return fail('INVALID', 'Produk ini belum diatur sebagai kemasan ulang (asal curah + isi per kemasan)');
-    const toQty = Math.round(num(data.to_qty) * 1000) / 1000;
-    if (!(toQty > 0)) return fail('INVALID', 'Jumlah kemasan jadi tidak valid');
-    const size = num(to.repack_qty);
-    const fromQty = data.from_qty === undefined || data.from_qty === null || data.from_qty === '' ? Math.round(toQty * size * 1000) / 1000 : Math.round(num(data.from_qty) * 1000) / 1000;
-    if (!(fromQty > 0)) return fail('INVALID', 'Jumlah curah yang dipakai tidak valid');
-    if (fromQty > num(from.stock) + 1e-9) return fail('INVALID', 'Stok ' + str(from.name) + ' tidak cukup (' + num(from.stock) + ' ' + str(from.unit) + ')');
-    const packCost = Math.max(0, money(data.packaging_cost));
-    const expected = Math.round(fromQty / size * 1000) / 1000;
-    const unitCost = Math.round((fromQty * money(from.cost_price) + packCost) / toQty);
-    const date = isDate(data.date) ? data.date : jkDate();
-    const fromNew = Math.round((num(from.stock) - fromQty) * 1000) / 1000;
-    const oldTo = Math.max(0, num(to.stock));
-    const toNew = Math.round((num(to.stock) + toQty) * 1000) / 1000;
-    const toCost = oldTo + toQty > 0 ? Math.round((oldTo * money(to.cost_price) + toQty * unitCost) / (oldTo + toQty)) : unitCost;
-    ops.products.push(forWrite(Object.assign({}, from, { stock: fromNew }), from.id));
-    ops.products.push(forWrite(Object.assign({}, to, { stock: toNew, cost_price: toCost }), to.id));
-    const rp = {
-      repack_id: 'RP' + rand(6), repack_date: date, repack_time: new Date().toISOString(), user: me.name,
-      from_product_id: from.id, from_name: str(from.name), from_unit: str(from.unit), from_qty: fromQty,
-      to_product_id: to.id, to_name: str(to.name), to_unit: str(to.unit), to_qty: toQty, pack_size: size,
-      expected_qty: expected, yield_pct: expected > 0 ? Math.round(toQty / expected * 1000) / 10 : 0,
-      loss_qty: Math.round((fromQty - toQty * size) * 1000) / 1000, packaging_cost: packCost, unit_cost: unitCost,
-      exp_date: isDate(data.exp_date) ? data.exp_date : '', note: str(data.note).slice(0, 300)
+    const P = repackPlan(data.to_product_id, data.to_qty, data.from_qty);
+    if (P.error) return P.error;
+    if (P.fromQty > num(P.from.stock) + 1e-9) return fail('INVALID', 'Stok ' + str(P.from.name) + ' tidak cukup (' + num(P.from.stock) + ' ' + str(P.from.unit) + ')');
+    // v38: no double repack — while a cashier's request for the same bulk waits, it is decided first (Persetujuan), not repacked twice.
+    const pend = pendingRepackFor(P.from.id);
+    if (pend) return repackBusy(pend);
+    const R = applyRepack(P, { packaging_cost: data.packaging_cost, date: data.date, exp_date: data.exp_date, note: data.note });
+    // v38 (owner 2026-10-12: «المالك يصله إشعار فقط»): the manager's own repack is told to the owner (his own needs no notice).
+    if (role === 'manager') notify(['owner'], 'Kemas ulang oleh manajer ' + me.name + ': ' + repackText(R.rp) + (R.rp.yield_pct < 95 ? ' — PERHATIAN: hasil di bawah 95%' : ''), R.rp.yield_pct < 95 ? 'warn' : 'info');
+    return done({ ok: true, repack: R.out, stock: R.stock });
+  }
+
+  case 'request_repack': {
+    // v38: the cashier asks; nothing moves in stock until the manager or the accountant approves.
+    if (role !== 'kasir') return fail('FORBIDDEN', 'Pemilik dan manajer langsung kemas ulang (Gudang → Kemas ulang)');
+    const cid = str(data.client_id).slice(0, 60);
+    if (!cid) return fail('INVALID', 'client_id wajib');
+    // idempotent: a double tap, a retry or an offline resend of the same request returns the request already made
+    const same = approvalRows.find(function (a) { return a.kind === 'repack' && str(a.client_id) === cid; });
+    if (same) return done({ ok: true, duplicate: true, request_id: same.request_id, approval: approvalOut(same) });
+    const P = repackPlan(data.to_product_id, data.to_qty, data.from_qty);
+    if (P.error) return P.error;
+    if (P.fromQty > num(P.from.stock) + 1e-9) return fail('INVALID', 'Stok ' + str(P.from.name) + ' tidak cukup (' + num(P.from.stock) + ' ' + str(P.from.unit) + ')');
+    // the lock: one pending request per bulk product — a second cashier (or the same one) is told who asked and when
+    const pend = pendingRepackFor(P.from.id);
+    if (pend) return repackBusy(pend);
+    const pl = {
+      to_product_id: P.to.id, to_name: str(P.to.name), to_unit: str(P.to.unit), from_product_id: P.from.id, from_name: str(P.from.name), from_unit: str(P.from.unit),
+      pack_size: P.size, to_qty: P.toQty, from_qty: P.fromQty, from_typed: !(data.from_qty === undefined || data.from_qty === null || data.from_qty === ''),
+      expected_qty: P.expected, yield_pct: P.yield_pct, loss_qty: P.loss_qty, bulk_stock: num(P.from.stock),
+      packaging_cost: Math.max(0, money(data.packaging_cost)), exp_date: isDate(data.exp_date) ? data.exp_date : '', note: str(data.note).slice(0, 300)
     };
-    ops.repacks.push(forWrite(rp, -1));
-    ops.purchases.push(forWrite({ purchase_date: date, supplier: 'KEMAS ULANG', product_id: from.id, name: str(from.name), qty: -fromQty, cost_price: money(from.cost_price), total: 0,
-      note: ('→ ' + str(to.name) + ' x' + toQty + ' (' + rp.repack_id + ') ' + rp.note).trim(), user: me.name, photo_id: '', exp_date: '' }, -1));
-    ops.purchases.push(forWrite({ purchase_date: date, supplier: 'KEMAS ULANG', product_id: to.id, name: str(to.name), qty: toQty, cost_price: unitCost, total: 0,
-      note: ('dari ' + str(from.name) + ' ' + fromQty + ' ' + str(from.unit) + ' (' + rp.repack_id + ') ' + rp.note).trim(), user: me.name, photo_id: '', exp_date: rp.exp_date }, -1));
-    const stock = [{ product_id: from.id, stock: fromNew }, { product_id: to.id, stock: toNew }];
-    if (role === 'owner') stock[1].cost_price = toCost;
-    logAct('kemas_ulang', 'Kemas ulang ' + rp.from_name + ' ' + fmtN(fromQty) + ' ' + rp.from_unit + ' → ' + rp.to_name + ' x' + fmtN(toQty) + ' (hasil ' + rp.yield_pct + '%, susut ' + fmtN(rp.loss_qty) + ' ' + rp.from_unit + ')', rp.repack_id, 0, rp.yield_pct < 95 ? 'warn' : 'info');
-    const out = Object.assign({}, rp);
-    if (role !== 'owner') { delete out.unit_cost; delete out.packaging_cost; }
-    return done({ ok: true, repack: out, stock: stock });
+    const a = newApproval({ kind: 'repack', approver_role: 'mgr_akuntan', ref: String(P.from.id), client_id: cid, note: pl.note,
+      summary: ('Minta kemas ulang ' + repackText(pl)).slice(0, 1500), payload: JSON.stringify(pl) });
+    ops.approvals.push(forWrite(a, -1));
+    ops.guard.push({ type: 'repack_lock', ref: String(P.from.id), request_id: a.request_id, from_name: str(P.from.name) });
+    // one notice: the owner (only told), the manager and the accountant (they decide)
+    notify(['owner', 'manager', 'akuntan'], 'Permintaan kemas ulang oleh ' + me.name + ' (' + wibStamp(a.created_at) + '): ' + repackText(pl) + ' — menunggu persetujuan manajer/akuntan', pl.yield_pct < 95 ? 'warn' : 'info');
+    return done({ ok: true, request_id: a.request_id, approval: approvalOut(a) });
+  }
+
+  case 'cancel_repack': {
+    // v38: a request still pending after 24 h can be cancelled by the cashier who asked or by the manager / accountant,
+    // so the lock on the bulk product never sticks for ever.
+    const a = approvalById(String(data.request_id || ''));
+    if (!a || a.kind !== 'repack') return fail('NOT_FOUND', 'Permintaan kemas ulang tidak ditemukan');
+    if (a.status !== 'pending') return fail('INVALID', 'Permintaan sudah diputuskan' + (str(a.decided_by) ? ' oleh ' + str(a.decided_by) : '') + ': ' + a.status);
+    const mine = str(a.cashier).toLowerCase() === me.name.toLowerCase();
+    if (!mine && !canDecide(a)) return fail('FORBIDDEN', 'Hanya peminta atau manajer/akuntan yang bisa membatalkan');
+    const age = Date.now() - Date.parse(a.created_at);
+    if (age < REPACK_STALE_MS) return fail('TOO_EARLY', 'Bisa dibatalkan setelah 24 jam (mulai ' + wibStamp(new Date(Date.parse(a.created_at) + REPACK_STALE_MS).toISOString()) + '). Sebelum itu manajer/akuntan memutuskannya.');
+    const na = Object.assign({}, a, { status: 'cancelled', decided_by: me.name, decided_at: new Date().toISOString(), note: (str(data.note) || 'dibatalkan setelah 24 jam menunggu').slice(0, 300) });
+    ops.approvals.push(forWrite(na, a.id));
+    ops.guard.push({ type: 'decide', request_id: a.request_id });
+    notify(['owner', 'manager', 'akuntan'], 'Permintaan kemas ulang ' + str(a.request_id) + ' (diminta ' + str(a.cashier) + ' ' + wibStamp(a.created_at) + ') DIBATALKAN oleh ' + me.name + ': ' + str(a.summary).replace(/^Minta kemas ulang /, '').slice(0, 300), 'info');
+    return done({ ok: true, approval: approvalOut(na) });
   }
 
   case 'stock_count': {
@@ -2130,6 +2220,36 @@ switch (req.action) {
       finalStatus = decision === 'approved' ? 'used' : 'rejected';
       // the owner is told by the generic manager / accountant notice below (both decisions)
     }
+    if (a.kind === 'repack') {
+      // v38: the manager or the accountant decides a cashier's repack request (first decision wins — checked above). They may
+      // correct the quantities (data.to_qty / data.from_qty); everything is validated again, and the bulk stock is checked
+      // NOW (another repack or a sale may have used it since the request). The owner only gets the notice.
+      let pl = {};
+      try { pl = JSON.parse(a.payload || '{}') || {}; } catch (e) { pl = {}; }
+      // told: the owner + the other approver (the owner deciding himself → the manager and the accountant)
+      const told = role === 'owner' ? ['manager', 'akuntan'] : ['owner', role === 'akuntan' ? 'manager' : 'akuntan'];
+      ops.guard.push({ type: 'decide', request_id: a.request_id }); // two approvers at the same second: only the first one writes
+      const when = ' (diminta ' + str(a.cashier) + ' ' + wibStamp(a.created_at) + ')';
+      if (decision === 'approved') {
+        const given = function (v) { return !(v === undefined || v === null || v === ''); };
+        const P = repackPlan(pl.to_product_id, given(data.to_qty) ? data.to_qty : pl.to_qty, given(data.from_qty) ? data.from_qty : pl.from_qty);
+        if (P.error) return P.error;
+        if (String(P.from.id) !== str(pl.from_product_id)) return fail('INVALID', 'Produk kemasan sudah diatur ulang sejak permintaan — tolak dan minta ulang');
+        if (P.fromQty > num(P.from.stock) + 1e-9) return fail('REPACK_STOCK', 'Stok ' + str(P.from.name) + ' sekarang ' + fmtN(P.from.stock) + ' ' + str(P.from.unit) + ', permintaan butuh ' + fmtN(P.fromQty) + ' ' + str(P.from.unit) + ' (sudah terpakai kemas ulang lain atau terjual). Koreksi jumlahnya atau tolak.');
+        const corrected = P.toQty !== num(pl.to_qty) || P.fromQty !== num(pl.from_qty);
+        const R = applyRepack(P, { packaging_cost: pl.packaging_cost, exp_date: pl.exp_date, note: pl.note, user: str(a.cashier), requested_by: str(a.cashier), approved_by: me.name, request_id: a.request_id, level: 'info' });
+        pl.final = { to_qty: P.toQty, from_qty: P.fromQty, expected_qty: P.expected, yield_pct: P.yield_pct, loss_qty: P.loss_qty, repack_id: R.rp.repack_id, corrected: corrected };
+        a.payload = JSON.stringify(pl);
+        out.stock = R.stock; out.repack = R.out;
+        finalStatus = 'used';
+        notify(told, 'Kemas ulang DISETUJUI oleh ' + me.name + when + ': ' + repackText(R.rp) +
+          (corrected ? ' — dikoreksi dari ' + fmtN(pl.from_qty) + ' ' + str(pl.from_unit) + ' → x' + fmtN(pl.to_qty) : '') +
+          (R.rp.yield_pct < 95 ? ' — PERHATIAN: hasil di bawah 95%' : ''), R.rp.yield_pct < 95 ? 'warn' : 'info');
+      } else {
+        finalStatus = 'rejected';
+        notify(told, 'Kemas ulang DITOLAK oleh ' + me.name + when + ': ' + repackText(pl) + (str(data.note) ? ' | ' + str(data.note) : '') + ' — stok tidak berubah', 'info');
+      }
+    }
     if (a.kind === 'product_new') {
       // v36 (owner 2026-10-11): a product the cashier added while receiving goods is usable at once; the manager /
       // accountant confirms it (optionally correcting the selling prices) or rejects it (the product is switched off
@@ -2154,10 +2274,10 @@ switch (req.action) {
     }
     const na = Object.assign({}, a, { status: finalStatus === 'used' ? 'approved' : finalStatus, decided_by: me.name, decided_at: new Date().toISOString(), note: str(data.note) || str(a.note) });
     ops.approvals.push(forWrite(na, a.id));
-    logAct('keputusan', (decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + str(a.kind || 'credit') + ', diminta ' + str(a.cashier) + '): ' + str(a.summary).slice(0, 600) + (str(data.note) ? ' | ' + str(data.note) : ''), a.request_id, money(a.total), decision === 'approved' ? 'info' : 'warn');
+    if (a.kind !== 'repack') logAct('keputusan', (decision === 'approved' ? 'Disetujui' : 'Ditolak') + ' (' + str(a.kind || 'credit') + ', diminta ' + str(a.cashier) + '): ' + str(a.summary).slice(0, 600) + (str(data.note) ? ' | ' + str(data.note) : ''), a.request_id, money(a.total), decision === 'approved' ? 'info' : 'warn');
     // v29 notifications: the owner always sees the log above. When the ACCOUNTANT decides a shared request,
     // also drop a manager + owner notice; a manager deciding void / price / goods-in mismatch notifies the owner.
-    if (a.approver_role === 'mgr_akuntan' || a.kind === 'member') {
+    if ((a.approver_role === 'mgr_akuntan' || a.kind === 'member') && a.kind !== 'repack') { // v38: a repack decision has its own notice above
       const whatTxt = { purchase_mismatch: 'selisih penerimaan barang', void: 'pembatalan faktur', price: 'perubahan harga', member: 'pendaftaran member', expense_check: 'cek nota pengeluaran', product_new: 'produk baru dari kasir', buka_kas: 'buka kas (modal awal)' }[a.kind] || str(a.kind);
       const verb = decision === 'approved' ? 'disetujui' : 'ditolak';
       if (role === 'akuntan') notify(['manager', 'owner'], 'Akuntan ' + me.name + ' ' + verb + ' ' + whatTxt + ': ' + str(a.summary).slice(0, 300), decision === 'approved' ? 'info' : 'warn');

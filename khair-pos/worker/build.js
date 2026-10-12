@@ -19,7 +19,7 @@ const INDEXES = {
   pos_sale_items: ['sale_date', 'invoice_no'],
   pos_payments: ['pay_date', 'customer_id', 'supplier'],
   pos_purchases: ['purchase_date', 'purchase_no', 'supplier'],
-  pos_approvals: ['status', 'request_id'],
+  pos_approvals: ['status', 'request_id', 'client_id'], // v38: client_id — a resent repack request is found by it
   pos_expenses: ['expense_date', 'request_id'],
   pos_shifts: ['status', 'shift_date'],
   pos_repacks: ['repack_date'],

@@ -3,7 +3,7 @@
    local mock DB (kmock.db), so the demo behaves like the real Chat workflow. */
 (function () {
   'use strict';
-  var ACTIONS = ['chat_bootstrap', 'chat_poll', 'chat_send', 'chat_set_retention'];
+  var ACTIONS = ['chat_bootstrap', 'chat_poll', 'chat_send', 'chat_set_retention', 'notice_close']; // v38 (owner 2026-10-12: «نعم زر رد او اغلق مباشر ما في مشكل»)
 
   function back(iso, sec) { return new Date(Date.parse(iso) - sec * 1000).toISOString(); }
 

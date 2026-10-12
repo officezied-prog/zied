@@ -191,6 +191,7 @@ CREATE TABLE IF NOT EXISTS pos_approvals (
 );
 CREATE INDEX IF NOT EXISTS idx_pos_approvals_status ON pos_approvals (status);
 CREATE INDEX IF NOT EXISTS idx_pos_approvals_request_id ON pos_approvals (request_id);
+CREATE INDEX IF NOT EXISTS idx_pos_approvals_client_id ON pos_approvals (client_id);
 
 CREATE TABLE IF NOT EXISTS pos_expenses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -278,7 +279,10 @@ CREATE TABLE IF NOT EXISTS pos_repacks (
   packaging_cost REAL,
   unit_cost REAL,
   exp_date TEXT,
-  note TEXT
+  note TEXT,
+  requested_by TEXT,
+  approved_by TEXT,
+  request_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pos_repacks_repack_date ON pos_repacks (repack_date);
 
@@ -564,7 +568,9 @@ CREATE TABLE IF NOT EXISTS pos_chat (
   body TEXT,
   image TEXT,
   created_at TEXT,
-  deleted INTEGER
+  deleted INTEGER,
+  quote TEXT,
+  ref TEXT
 );
 
 CREATE TABLE IF NOT EXISTS pos_workers (

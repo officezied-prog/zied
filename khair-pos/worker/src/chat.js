@@ -28,7 +28,24 @@ export async function loadChatNodes(adapter, req) {
   return nodes;
 }
 
+// v38 (owner 2026-10-12: "For any notice come to me make for me I can reply"): a reply to a notice carries the quoted notice
+// and its id on the message; "Tutup" rows use the same ref column. Added by the Worker itself on first use (no migration step).
+export const CHAT_MIGRATIONS = [
+  'ALTER TABLE pos_chat ADD COLUMN quote TEXT',
+  'ALTER TABLE pos_chat ADD COLUMN ref TEXT',
+];
+let chatSchemaEnsured = false;
+export async function ensureChatSchema(adapter) {
+  if (chatSchemaEnsured) return;
+  for (const sql of CHAT_MIGRATIONS) {
+    try { await adapter.run(sql, []); } catch (e) { /* column already exists — already migrated */ }
+  }
+  chatSchemaEnsured = true;
+}
+export function _resetChatSchemaForTests() { chatSchemaEnsured = false; }
+
 export async function handleChat(adapter, body, headers, STORE_KEY) {
+  await ensureChatSchema(adapter);
   const req = parseChat(body);
   const nodes = await loadChatNodes(adapter, req);
   const $ = makeAccessor(nodes);

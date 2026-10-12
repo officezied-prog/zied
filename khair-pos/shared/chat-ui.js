@@ -13,7 +13,12 @@
    registered user (names only) with an unread badge; tapping one opens a private 1-to-1 room ('dm:…', only the two of
    them). No extra polling: the same poll carries {cursors, seen} and returns the open rooms' messages, the team list
    and the unread count of every room. KChatUI.start({ api, lang, user }) — `user` loads this device's read marks at once.
-   Names only — the panel shows the sender's name, never a role word. */
+   Names only — the panel shows the sender's name, never a role word.
+   v38 (owner 2026-10-12: "For any notice come to me make for me I can reply" + «نعم زر رد او اغلق مباشر ما في مشكل»):
+   a message may carry `quote` (the notice it answers: text, time, ref/invoice no.) — shown as a compact block above the text,
+   in every app. The apps reply / close notices through KChatUI.sendTo(name, {body, quote, ref}) / KChatUI.closeNotices(ids);
+   the user's notice state (closed / replied) rides on the same poll (data.notice_v → res.notices only when it changed) and is
+   handed to opts.onNotices(state). KChatUI.team() lists the people one can write to. */
 (function () {
   'use strict';
   var IMG_MAX = 180000, MAX_DIM = 900, Q = 0.55;
@@ -23,11 +28,11 @@
     id: { title: 'Obrolan', general: 'Umum', owner_mgr: 'Pemilik & Manajer', team: 'Tim', back: 'Kembali ke tim', team_hint: 'Pilih nama untuk obrolan pribadi (hanya kalian berdua).', send: 'Kirim', ph: 'Tulis pesan…',
       img: 'Gambar', empty: 'Belum ada pesan.', you: 'Anda', close: 'Tutup', today: 'Hari ini', yesterday: 'Kemarin',
       sending: 'mengirim…', failed: 'gagal', big: 'Gambar terlalu besar — coba foto lebih kecil.', retry: 'Coba lagi',
-      locked: 'Akun terkunci.', offline: 'Luring — pesan menunggu.' },
+      locked: 'Akun terkunci.', offline: 'Luring — pesan menunggu.', quote: 'Pemberitahuan' },
     ar: { title: 'المحادثة', general: 'عام', owner_mgr: 'المالك والمدير', team: 'الفريق', back: 'رجوع إلى الفريق', team_hint: 'اختر اسمًا لمحادثة خاصة (بينكما فقط).', send: 'إرسال', ph: 'اكتب رسالة…',
       img: 'صورة', empty: 'لا توجد رسائل بعد.', you: 'أنت', close: 'إغلاق', today: 'اليوم', yesterday: 'أمس',
       sending: 'يُرسل…', failed: 'فشل', big: 'الصورة كبيرة جداً — جرّب صورة أصغر.', retry: 'إعادة',
-      locked: 'الحساب مقفل.', offline: 'غير متصل — الرسالة تنتظر.' }
+      locked: 'الحساب مقفل.', offline: 'غير متصل — الرسالة تنتظر.', quote: 'إشعار' }
   };
 
   var S = null; // state while running
@@ -88,6 +93,10 @@
       '.kchat-member .nm{flex:1;font-size:14px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.kchat-member .tm{font-size:11px;color:#94a3b8}',
       '.kchat-mbadge{min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:#e11d48;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}',
+      // v38: the quoted notice above a reply
+      '.kchat-quote{border-inline-start:3px solid #0a7d4b;background:rgba(10,125,75,.08);border-radius:6px;padding:4px 8px;margin:2px 0 5px;font-size:12px;line-height:1.3}',
+      '.kchat-quote .kq-h{font-weight:700;color:#0a7d4b;font-size:11px;margin-bottom:2px}',
+      '.kchat-quote .kq-t{color:#334155;white-space:pre-wrap;word-break:break-word;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}',
       '@media (max-width:480px){.kchat-panel{width:100%}}',
       // on phones the apps put their nav in a bottom bar — float the launcher above it
       '@media (max-width:760px){.kchat-fab{bottom:calc(72px + env(safe-area-inset-bottom))}}'
@@ -228,6 +237,7 @@
       var mine = m.from_name === (S.me && S.me.name);
       var box = el('div', 'kchat-msg' + (mine ? ' me' : '') + (m.pending ? ' pending' : ''));
       if (!mine) box.appendChild(el('div', 'kchat-who', m.from_name));
+      if (m.quote && m.quote.text) box.appendChild(quoteEl(m.quote)); // v38
       if (m.body) box.appendChild(el('div', 'kchat-body', m.body));
       if (m.image) { var im = el('img', 'kchat-img'); im.src = m.image; im.alt = tr('img'); im.addEventListener('click', function () { im.classList.toggle('full'); }); box.appendChild(im); }
       var tm = el('div', 'kchat-time', (m.failed ? tr('failed') + ' · ' : m.pending ? tr('sending') + ' ' : '') + timeLabel(m.created_at));
@@ -238,7 +248,34 @@
     if (!keepScroll || atBottom) list.scrollTop = list.scrollHeight;
   }
 
+  /* v38: the compact block of the notice a message answers (notice text + date/time + ref / invoice no.) */
+  function quoteEl(q) {
+    var b = el('div', 'kchat-quote'), at = q.at ? (dayLabel(q.at) + ' ' + timeLabel(q.at)).trim() : '';
+    b.appendChild(el('div', 'kq-h', ['↩ ' + tr('quote'), at, q.no || ''].filter(Boolean).join(' · ')));
+    b.appendChild(el('div', 'kq-t', (q.by ? q.by + ': ' : '') + q.text));
+    return b;
+  }
+  /* v38: hand the notice state (closed / replied) to the app */
+  function takeNotices(ns) {
+    if (!ns || typeof ns !== 'object') return;
+    S.noticeV = String(ns.v == null ? '' : ns.v);
+    if (typeof S.onNotices === 'function') { try { S.onNotices(ns); } catch (e) { } }
+  }
+
   function note(msg) { S.note.textContent = msg || ''; S.note.style.display = msg ? 'block' : 'none'; }
+
+  /* one send (also a retry); v38: a reply to a notice carries quote + ref */
+  function post(m) {
+    var data = { channel: m.channel, body: m.body, image: m.image, cid: m.cid };
+    if (m.quote) data.quote = m.quote;
+    if (m.ref) data.ref = m.ref;
+    return S.api('chat_send', data).then(function (res) {
+      m.pending = false; m.failed = false;
+      if (res && res.message) { m.created_at = res.message.created_at; m.from_name = res.message.from_name || m.from_name; if (m.created_at > (S.cursors[m.channel] || '')) S.cursors[m.channel] = m.created_at; }
+      if (res && res.notices) takeNotices(res.notices);
+      return res;
+    });
+  }
 
   function doSend(existing) {
     var m = existing;
@@ -250,9 +287,7 @@
       S.ta.value = ''; S.ta.style.height = 'auto'; clearImage();
     } else { m.pending = true; m.failed = false; }
     note(''); renderList();
-    S.api('chat_send', { channel: m.channel, body: m.body, image: m.image, cid: m.cid }).then(function (res) {
-      m.pending = false; m.failed = false;
-      if (res && res.message) { m.created_at = res.message.created_at; m.from_name = res.message.from_name || m.from_name; if (m.created_at > (S.cursors[m.channel] || '')) S.cursors[m.channel] = m.created_at; }
+    post(m).then(function () {
       markSeen(m.channel); renderList(); renderBadge();
     }).catch(function (e) {
       m.pending = false;
@@ -334,7 +369,7 @@
     S.busy = true; S.again = false;
     var first = !S.loaded;
     // v36: the same single call also reports what this device has read (seen) → unread counts for every room
-    var p = first ? S.api('chat_bootstrap', { seen: S.seen || {} }) : S.api('chat_poll', { cursors: S.cursors, seen: S.seen || {} });
+    var p = first ? S.api('chat_bootstrap', { seen: S.seen || {} }) : S.api('chat_poll', { cursors: S.cursors, seen: S.seen || {}, notice_v: S.noticeV || '' }); // v38: notice_v
     var mine = S;
     p.then(function (res) {
       if (S !== mine) return; // stopped (logout) meanwhile
@@ -353,6 +388,7 @@
       if (res && res.last && typeof res.last === 'object') S.last = res.last;
       if (res && typeof res.retention_days === 'number') S.retention = res.retention_days;
       if (res && res.messages) Object.keys(res.messages).forEach(function (ch) { ingest(ch, res.messages[ch]); });
+      if (res && res.notices) takeNotices(res.notices); // v38
       if (S.fab) S.fab.style.display = 'flex';
       if (S.openState) { renderTabs(); renderList(true); if (S.cur && S.view !== 'team') markSeen(S.cur); }
       renderBadge();
@@ -372,12 +408,13 @@
   var API = {
     start: function (opts) {
       opts = opts || {};
-      if (S && S.api) { S.api = opts.api || S.api; if (opts.lang) S.lang = opts.lang; applyDir(); renderBadge(); return; }
+      if (S && S.api) { S.api = opts.api || S.api; if (opts.lang) S.lang = opts.lang; if (opts.onNotices) S.onNotices = opts.onNotices; applyDir(); renderBadge(); return; }
       if (typeof opts.api !== 'function') return;
       injectCss();
       // v36: read marks are per user on this device ('kchat.seen.<name>'); `user` lets the very first call carry them
       S = { api: opts.api, lang: opts.lang === 'ar' ? 'ar' : 'id', channels: [], cur: null, msgs: {}, cursors: {}, seen: opts.user ? (store('seen.' + opts.user) || {}) : {}, seenFor: opts.user || null,
-        me: null, busy: false, loaded: false, openState: false, retention: 0, pendingImg: '', team: [], unreadSrv: {}, last: {}, view: 'room', peer: null };
+        me: null, busy: false, loaded: false, openState: false, retention: 0, pendingImg: '', team: [], unreadSrv: {}, last: {}, view: 'room', peer: null,
+        onNotices: opts.onNotices || null, noticeV: '' };
       S.fab = el('button', 'kchat-fab', '💬'); S.fab.setAttribute('aria-label', tr('title')); S.fab.style.display = 'none';
       S.badge = el('span', 'kchat-badge'); S.fab.appendChild(S.badge);
       S.fab.addEventListener('click', open);
@@ -388,6 +425,31 @@
     setLang: function (lang) { if (S) { S.lang = lang === 'ar' ? 'ar' : 'id'; applyDir(); if (S.openState) { renderTabs(); renderList(true); } } },
     // v36: open a private room with a team member by name (used by the apps and the tests)
     openWith: function (name) { if (!S) return false; var t = (S.team || []).find(function (x) { return x.name === name; }); if (!t) return false; if (!S.openState) open(); openDm(t); return true; },
+    // v38: the people this user can write to privately ([{name, role, channel}]) — names for the reply picker
+    team: function () { return S ? (S.team || []).map(function (t) { return { name: t.name, role: t.role, channel: t.channel }; }) : []; },
+    /** v38: a private message to one team member (a reply to a notice: {body, quote, ref}). Resolves with the server's answer. */
+    sendTo: function (name, msg) {
+      if (!S) return Promise.reject(Object.assign(new Error('chat not started'), { code: 'NO_SESSION' }));
+      msg = msg || {};
+      var mine = S, find = function () { return (mine.team || []).find(function (x) { return x.name === name; }); };
+      var ready = find() ? Promise.resolve() : mine.api('chat_poll', { cursors: {}, seen: mine.seen || {} }).then(function (res) { if (res && Array.isArray(res.team)) mine.team = res.team; });
+      return ready.then(function () {
+        var t = find(); if (!t) throw Object.assign(new Error('not in team'), { code: 'NOT_FOUND' });
+        if (!(t.channel in mine.cursors)) { mine.cursors[t.channel] = ''; mine.msgs[t.channel] = mine.msgs[t.channel] || []; }
+        var m = { cid: uuid(), channel: t.channel, from_name: mine.me ? mine.me.name : '', body: String(msg.body || '').trim(), image: '', created_at: new Date().toISOString(), pending: true, failed: false };
+        if (msg.quote) m.quote = msg.quote; if (msg.ref) m.ref = msg.ref;
+        mine.msgs[t.channel].push(m);
+        return post(m).then(function (res) { if (S === mine) { markSeen(t.channel); if (S.openState) renderList(true); renderBadge(); } return res; }, function (e) {
+          mine.msgs[t.channel] = (mine.msgs[t.channel] || []).filter(function (x) { return x !== m; }); throw e;
+        });
+      });
+    },
+    /** v38: "Tutup" — close notices (ids) for every device of this user. Resolves with the new notice state. */
+    closeNotices: function (ids) {
+      if (!S) return Promise.reject(Object.assign(new Error('chat not started'), { code: 'NO_SESSION' }));
+      var mine = S;
+      return mine.api('notice_close', { ids: ids }).then(function (res) { if (S === mine && res && res.notices) takeNotices(res.notices); return res && res.notices; });
+    },
     stop: function () {
       if (!S) return;
       if (S.timer) clearTimeout(S.timer);

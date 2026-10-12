@@ -681,6 +681,17 @@ read or post in it; nobody else (the owner included) receives it. Bootstrap/poll
 fixed rooms plus the private rooms named in `cursors`, `unread` covers every room of the user (from `seen`). No extra calls: the
 existing poll (4 s open / 20 s closed, paused with the tab) carries it all. The apps show names only, never a role word.
 
+v38 notice replies (owner 2026-10-12: "For any notice come to me make for me I can reply" + «نعم زر رد او اغلق مباشر ما في مشكل»):
+- `chat_send` takes optional `quote {text ≤ 400, at, no ≤ 60, by}` (the notice answered — shown as a compact block above the
+  message in every app) and `ref` (the notice id: `a:<act_id>` activity / server notice / invoice change, `r:<request_id>` result
+  of my request, `att:<key>:<numbers>:<date>` a "Perlu perhatian" item). Stored on the message (`pos_chat.quote` JSON, `pos_chat.ref`,
+  columns added by the Worker itself); messages return `quote` / `ref` only when present (old clients and old messages unchanged).
+- `notice_close {ids: [...≤ 50]}` ("Tutup", any user, his own notices): one append-only row per id in the user's hidden channel
+  `nt:<id>.<name>` (no room: never readable or postable). Answer `{closed, notices}`.
+- `notices = {v, closed: {id: at}, replied: {id: {at, to}}}` (the last 60 days, ≤ 500): always on `chat_bootstrap`, on `chat_send` with
+  a `ref` and on `notice_close`; on `chat_poll` only when `data.notice_v` is sent and differs from `v` — so other devices learn a
+  close / reply on their normal poll, and old clients (no `notice_v`) get nothing extra.
+
 
 ## Expense invoice check and new products at goods-in (v36, owner 2026-10-11)
 
@@ -736,3 +747,33 @@ Owner: «المتابعة اليومية للفواتير التي تم تنزي
   match_notes, carrier_*, lines: [{product_id, name, unit, qty, exp_date, stock_now, shop_now, cost_price?, total?}], changes_today}]}`
   and `report.invoice_changes = {count, list}` (cost fields only for whoever may see costs).
 - Worker fix: `correct_price` now loads its sales date range (on the Worker it always answered NOT_FOUND before).
+
+## Repack on a cashier's request (v38, owner 2026-10-12)
+
+«المالك يصله إشعار فقط، والمدير والمحاسب يوافق على الكمية والعملية كلها، والكاشير هو الذي يطلب القيام بها، لكن يجب التأكد: ممكن 2 كاشير يقوم
+بنفس الطلب والتعليب، انتبه منها»
+
+- `request_repack {client_id, to_product_id, to_qty, from_qty?, packaging_cost?, exp_date?, note?}` — **kasir only** (owner / manager use
+  `repack`). Nothing moves in stock. Creates approval `kind: 'repack'`, `approver_role: 'mgr_akuntan'`, `ref` = the BULK product id,
+  `client_id`, payload `{to_product_id, to_name, to_unit, from_product_id, from_name, from_unit, pack_size, to_qty, from_qty, from_typed,
+  expected_qty, yield_pct, loss_qty, bulk_stock, packaging_cost, exp_date, note}`. One `notifikasi` (ref `owner,manager,akuntan`; warn when
+  the yield is below 95 %). → `{request_id, approval}`.
+  - **Resend:** the same `client_id` returns the request already made (`duplicate: true`, decided or not) — a double tap / retry /
+    offline resend never makes two.
+  - **Lock:** while a repack request for the same bulk product is pending, a new request (any pack of that bulk, anyone) — and a direct
+    `repack` by the owner / manager — answers `REPACK_PENDING` with `pending: {request_id, cashier, created_at, from_name, to_name, to_qty,
+    stale}` and a message naming who asked and when. The Worker re-checks this on the database after writing (two requests at the same
+    moment: the later one is cancelled at once, `decided_by: 'Sistem'`) — `ops.guard` `repack_lock` in `worker/src/core.js`.
+- `decide_approval` on `repack` (manager or accountant; the owner may too; first decision wins — the Worker claims the row with one
+  conditional UPDATE, `ops.guard` `decide`): `approved` with optional corrected `to_qty` / `from_qty` → validated again, the bulk stock is
+  checked NOW (`REPACK_STOCK` with the stock left — nothing moves, still pending), then the same repack as `repack` (`pos_repacks` row with
+  new columns `requested_by`, `approved_by`, `request_id`; `user` = the cashier; the KEMAS ULANG rows name both) → `{stock, repack}`; the
+  approval payload gets `final: {to_qty, from_qty, expected_qty, yield_pct, loss_qty, repack_id, corrected}`. `rejected` → nothing moves.
+  One `notifikasi` to the owner + the other approver (approved: final quantities, yield / loss, the correction; warn below 95 %).
+  No generic `keputusan` line for repacks.
+- `cancel_repack {request_id, note?}` — the cashier who asked or an approver (manager / accountant / owner), only once the request has
+  waited 24 h (`TOO_EARLY` before) → status `cancelled`, notice to owner / manager / accountant. Frees the lock.
+- `repack` by the manager now also sends the owner a `notifikasi` (the owner's own repack: no notice).
+- Apps: Khair Kasir "Lainnya → Kemas ulang" (kasir: request; manager: direct), status in "Permintaan saya" (+ "Batalkan" after 24 h), the
+  manager's inbox card; owner app Persetujuan card (manager + accountant, quantities editable, live yield), Gudang → Kemas ulang history
+  "Diminta X · disetujui Y".
