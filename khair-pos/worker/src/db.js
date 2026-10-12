@@ -125,6 +125,12 @@ export function loaderSpecs(req, opts = {}) {
 // coerced). Reads are independent, so they run concurrently. Shared by every workflow.
 export async function execSpecs(adapter, specs) {
   const names = Object.keys(specs);
+  // v39 (free Cloudflare plan: at most 50 D1 queries per request): with a batching adapter every read of this request goes
+  // to D1 in ONE call (the loaders alone were 29 queries, so a 10-item sale passed the limit).
+  if (adapter.batch && names.length > 1) {
+    const res = await adapter.batch(names.map((name) => ({ sql: specs[name].sql, params: specs[name].params, kind: 'all' })));
+    return Object.fromEntries(names.map((name, i) => [name, (res[i] || []).map((r) => coerceOut(specs[name].table, r))]));
+  }
   const results = await Promise.all(names.map(async (name) => {
     const { table, sql, params } = specs[name];
     const rows = await adapter.all(sql, params);
@@ -162,37 +168,36 @@ export function makeAccessor(nodes) {
 // written (process emits full rows for updates, partial for inserts). Returns the written
 // rows (with ids) per ops key, which Finalize uses to fill new customer/product/payment ids.
 export async function applyOps(adapter, ops, opsMap = OPS_TABLE) {
-  const upserts = {};
+  // v39: every write of the request is prepared first, then sent in ONE D1 batch (one call, one transaction: all or
+  // nothing) when the adapter can batch; otherwise one by one, as before.
+  const plan = [];
   for (const [key, table] of Object.entries(opsMap)) {
     const rows = (ops && ops[key]) || [];
     if (!rows.length) continue;
     const known = Object.keys(TABLES[table]);
-    const written = [];
     for (const row of rows) {
       const cols = known.filter((c) => row[c] !== undefined);
       const vals = cols.map((c) => toDb(table, c, row[c]));
       const isInsert = row._id === undefined || row._id === null || row._id === -1;
-      let id;
-      if (isInsert) {
-        const placeholders = cols.map(() => '?').join(', ');
-        const sql = `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders})`;
-        const res = await adapter.run(sql, vals);
-        id = Number(res.lastInsertRowid);
-      } else {
-        id = Number(row._id);
-        if (cols.length) {
-          const setClause = cols.map((c) => `${c} = ?`).join(', ');
-          const sql = `UPDATE ${table} SET ${setClause} WHERE id = ?`;
-          await adapter.run(sql, [...vals, id]);
-        }
-      }
-      // Echo the written row (with its id) for Finalize; booleans back to true/false.
-      const out = { id };
-      for (const c of cols) out[c] = row[c];
-      coerceOut(table, out);
-      written.push(out);
+      let sql = null, params = null;
+      if (isInsert) sql = `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`, params = vals;
+      else if (cols.length) sql = `UPDATE ${table} SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`, params = [...vals, Number(row._id)];
+      plan.push({ key, table, row, cols, isInsert, sql, params });
     }
-    upserts[key] = written;
+  }
+  const stmts = plan.filter((p) => p.sql);
+  let results;
+  if (adapter.batch && stmts.length > 1) results = await adapter.batch(stmts.map((p) => ({ sql: p.sql, params: p.params, kind: 'run' })));
+  else { results = []; for (const p of stmts) results.push(await adapter.run(p.sql, p.params)); }
+  stmts.forEach((p, i) => { p.res = results[i]; });
+  const upserts = {};
+  for (const p of plan) {
+    const id = p.isInsert ? Number(p.res && p.res.lastInsertRowid) : Number(p.row._id);
+    // Echo the written row (with its id) for Finalize; booleans back to true/false.
+    const out = { id };
+    for (const c of p.cols) out[c] = p.row[c];
+    coerceOut(p.table, out);
+    (upserts[p.key] = upserts[p.key] || []).push(out);
   }
   return upserts;
 }
