@@ -59,7 +59,7 @@ test('accountant: Products is read-only but can ADD a new product; editing an ex
   await expect(page.locator('#view-products [data-act="import-csv"]')).toHaveCount(0); // no CSV import (owner only)
   await expect(page.locator('#pr-inact')).toHaveCount(0); // no "show inactive" toggle (owner only)
   await expect(page.locator('#prod-table [data-act="price-change"]')).toHaveCount(0); // no price edit (manager only)
-  await expect(page.locator('#prod-table [data-act="stock-adj"]')).toHaveCount(0); // no stock adjust (owner only)
+  await expect(page.locator('#prod-table [data-act="stock-adj"]')).toHaveCount(0); // no stock adjust (owner / manager only)
   await expect(page.locator('#prod-table tr.click')).toHaveCount(0); // rows are not click-to-edit
   // create a NEW product end-to-end
   const before = (await getDb(page)).products.length;

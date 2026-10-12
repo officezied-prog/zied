@@ -150,11 +150,18 @@ const MockServer = (() => {
   function opnameLog(db, p, diff, counted, system, note, user) {
     db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: jktDate(), supplier: OPNAME_SUPPLIER, product_id: p.id, name: p.name, qty: diff, cost_price: p.cost_price, total: 0, note: `${note || 'Stok opname'} (dihitung ${fmtQty(counted)}, sistem ${fmtQty(system)})`, user });
   }
+  // v40: a notice for the owner only (kind 'notifikasi', ref 'owner'), as notify(['owner'], …) on the server
+  function ownerNotice(db, u, summary, level) {
+    db.activity = db.activity || [];
+    db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + Math.random().toString(36).slice(2, 10).toUpperCase(), at: new Date().toISOString(), act_date: jktDate(), user: u.name, role: u.role, kind: 'notifikasi', summary, ref: 'owner', amount: 0, level: level || 'info' });
+  }
+  const rpDots = v => (v > 0 ? '+' : v < 0 ? '-' : '') + 'Rp ' + String(Math.round(Math.abs(v))).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  const countValueText = (db, lines) => { const ch = (lines || []).filter(l => Number(l.diff)); return ch.length ? ' (nilai modal ' + rpDots(ch.reduce((s, l) => { const p = db.products.find(x => x.id === Number(l.product_id)); return s + Number(l.diff) * Number(p ? p.cost_price : 0); }, 0)) + ')' : ''; };
   function stockCount(db, u, data) {
     if (u.role === 'sales') throw E('FORBIDDEN', 'Sales accounts cannot count stock');
     const counts = data.counts;
     if (!Array.isArray(counts) || !counts.length) throw E('INVALID', 'counts required');
-    if (counts.length > 500) throw E('INVALID', 'max 500 lines per count');
+    if (counts.length > 2000) throw E('INVALID', 'max 2000 lines per count');
     const seen = new Set();
     const lines = counts.map(c => {
       const p = db.products.find(x => x.id === Number(c && c.product_id));
@@ -168,9 +175,11 @@ const MockServer = (() => {
     const note = String(data.note || '').trim();
     const changed = lines.filter(l => l.diff !== 0);
     const cnt = 'Stok opname ' + lines.length + ' barang, ' + changed.length + ' selisih: ' + changed.slice(0, 20).map(l => l.name + ' ' + l.system + '→' + l.counted).join('; ');
-    if (u.role === 'owner') logAct(db, u, 'opname', cnt, '', 0, changed.length ? 'warn' : 'info');
+    const direct = u.role === 'owner' || u.role === 'manager'; // v40: the manager's own count is applied at once; the owner is told
+    if (direct) logAct(db, u, 'opname', cnt, '', 0, changed.length ? 'warn' : 'info');
     else logAct(db, u, 'minta_opname', 'Minta ' + cnt, '', 0, 'info');
-    if (u.role === 'owner') {
+    if (direct) {
+      if (u.role === 'manager') ownerNotice(db, u, 'Stok opname oleh manajer ' + u.name + ' langsung diterapkan: ' + lines.length + ' barang, ' + changed.length + ' selisih' + countValueText(db, lines) + (changed.length ? ': ' + changed.slice(0, 10).map(l => l.name + ' ' + l.system + '→' + l.counted).join('; ') : ''), changed.length ? 'warn' : 'info');
       const stock = lines.map(l => {
         const p = db.products.find(x => x.id === l.product_id);
         if (l.diff) opnameLog(db, p, l.diff, l.counted, l.system, note, u.name);
@@ -180,9 +189,23 @@ const MockServer = (() => {
       opnameProgress(db, u, lines, u.name); // v37
       return { applied: true, lines, stock, opname: opnameStatus(db) };
     }
-    const diffs = lines.filter(l => l.diff);
-    const summary = `Stok opname ${lines.length} barang, ${diffs.length} selisih` + (diffs.length ? ': ' + diffs.slice(0, 3).map(l => `${l.name} ${fmtQty(l.system)}→${fmtQty(l.counted)}`).join(', ') + (diffs.length > 3 ? ', …' : '') : '');
-    const approval = newApproval(db, u, { kind: 'opname', approver_role: 'owner', summary, payload: JSON.stringify({ lines, counted_at: jktISO(), by: u.name, note }) });
+    // v40 (owner 2026-10-12): the cashier's / accountant's count goes to the MANAGER (one approval for the whole table) and the
+    // owner is told; a new count by the same person joins the table still waiting (as on the server)
+    const apRole = 'manager';
+    const sumOf = ls => { const diffs = ls.filter(l => l.diff); return `Stok opname ${ls.length} barang, ${diffs.length} selisih` + (diffs.length ? ': ' + diffs.slice(0, 3).map(l => `${l.name} ${fmtQty(l.system)}→${fmtQty(l.counted)}`).join(', ') + (diffs.length > 3 ? ', …' : '') : ''); };
+    const prev = db.approvals.find(a => a.kind === 'opname' && a.status === 'pending' && String(a.cashier).toLowerCase() === String(u.name).toLowerCase());
+    if (prev) {
+      let pl0 = {}; try { pl0 = JSON.parse(prev.payload || '{}'); } catch (e) { }
+      const byPid = new Map((pl0.lines || []).map(l => [String(l.product_id), l]));
+      lines.forEach(l => byPid.set(String(l.product_id), l));
+      const merged = [...byPid.values()];
+      Object.assign(prev, { approver_role: apRole, summary: sumOf(merged), payload: JSON.stringify({ lines: merged, counted_at: jktISO(), by: u.name, note: [pl0.note, note].filter(Boolean).join(' | ') }) });
+      const approval = prev;
+      return { applied: false, merged: true, request_id: prev.request_id, approval: approvalOut(approval, u.role), lines: merged };
+    }
+    const approval = newApproval(db, u, { kind: 'opname', approver_role: apRole, summary: sumOf(lines), payload: JSON.stringify({ lines, counted_at: jktISO(), by: u.name, note }) });
+    const nDiff = lines.filter(l => l.diff).length;
+    ownerNotice(db, u, `Stok opname dari ${u.name}: ${lines.length} barang, ${nDiff} selisih — menunggu persetujuan manajer (${approval.request_id})`, nDiff ? 'warn' : 'info');
     return { applied: false, request_id: approval.request_id, approval: approvalOut(approval, u.role), lines };
   }
   /** Approved opname: each line's diff is added to the CURRENT stock (sales made meanwhile are kept). */
@@ -974,6 +997,11 @@ const MockServer = (() => {
           out.product = p;
         }
         if (data.decision === 'approved' && ap.kind === 'opname') { out.stock = applyOpname(db, ap, u.name); const opl = parseObj(ap.payload); opnameProgress(db, u, opl.lines || [], u.name + ' (dihitung ' + (opl.by || ap.cashier) + ')'); out.opname = opnameStatus(db); }
+        if (ap.kind === 'opname' && u.role !== 'owner') { // v40: the owner is told what the manager decided (as on the server)
+          let plN = {}; try { plN = JSON.parse(ap.payload || '{}'); } catch (e) { }
+          const lsN = plN.lines || [], nD = lsN.filter(l => Number(l.diff)).length;
+          ownerNotice(db, u, `Stok opname ${ap.cashier} ${data.decision === 'approved' ? 'DISETUJUI' : 'DITOLAK'} oleh ${u.name}: ${lsN.length} barang, ${nD} selisih${countValueText(db, lsN)} — ${ap.request_id}`, data.decision === 'approved' && nD ? 'warn' : 'info');
+        }
         if (data.decision === 'approved' && ap.kind === 'purchase_fix') {
           const pl = parseObj(ap.payload), no = str(pl.purchase_no);
           // as on the server: the rows are looked up by data.purchase_no, which must be approval.ref
@@ -1332,11 +1360,12 @@ const MockServer = (() => {
         return { created, updated, skipped };
       }
       case 'stock_adjust': {
-        needOwner();
+        if (!owner && u.role !== 'manager') throw E('FORBIDDEN', 'Owner / manager only'); // v40: the manager too; the owner is told
         const p = prodById(data.product_id); if (!p) throw E('NOT_FOUND', 'product');
         if (!String(data.reason || '').trim()) throw E('INVALID', 'reason required');
         if (!Number.isFinite(Number(data.new_stock))) throw E('INVALID', 'new_stock');
         const diff = roundQty(roundQty(data.new_stock) - num(p.stock));
+        if (!owner) ownerNotice(db, u, 'Stok ' + p.name + ' diubah oleh manajer ' + u.name + ': ' + fmtN(p.stock) + '→' + fmtN(roundQty(data.new_stock)) + (diff ? ' (nilai modal ' + rpDots(diff * Number(p.cost_price || 0)) + ')' : '') + ' | ' + String(data.reason), diff ? 'warn' : 'info');
         db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: jktDate(), supplier: ADJUST_SUPPLIER, product_id: p.id, name: p.name, qty: diff, cost_price: p.cost_price, total: 0, note: String(data.reason), user: u.name });
         logAct(db, u, 'stok', 'Penyesuaian stok ' + str(p.name) + ': ' + fmtN(p.stock) + '→' + fmtN(data.new_stock) + (str(data.reason) ? ' | ' + str(data.reason) : ''), String(p.id), 0, 'warn');
         p.stock = roundQty(data.new_stock);

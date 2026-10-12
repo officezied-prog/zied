@@ -69,7 +69,7 @@ test('purchase (barang masuk) updates stock and weighted average cost; stock adj
   expect(db.purchases.slice(-1)[0]).toMatchObject({ supplier: 'PT Kurma Nusantara', product_id: p.id, qty: 10, cost_price: 175000, total: 1750000, user: 'Jihan' });
   await expect(page.locator('[data-newcost]')).toHaveCount(0); // the weighted-average cost in the result is for the owner only
 
-  // stock opname is the owner's (stock_adjust is owner-only): writes a 'PENYESUAIAN STOK' purchase row with qty = difference, total 0
+  // stock opname by the owner (stock_adjust: owner or manager, v40): writes a 'PENYESUAIAN STOK' purchase row with qty = difference, total 0
   await switchUser(page, 'Pemilik', '1234');
   await nav(page, 'products');
   await page.fill('#pr-q', 'medjool');
