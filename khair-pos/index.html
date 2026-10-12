@@ -146,7 +146,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.6.4';
+const APP_VERSION = '2.6.5';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -553,7 +553,7 @@ const RENDER = {};
 function renderShell() {
   $('#nav').innerHTML = VIEWS.filter(v => viewAllowed(v) && !v.tab).map(v => `<button class="nav-btn ${S.view === v.id ? 'on' : ''} ${phoneViews().includes(v.id) ? '' : 'hide-phone'}" data-act="go" data-view="${v.id}" ${S.view === v.id ? 'aria-current="page"' : ''}>${ic(v.icon)}<span class="l-long">${esc(t(v.label))}</span><span class="l-short" aria-hidden="true">${esc(t(v.label.replace('nav.', 'navs.')))}</span>${v.id === 'orders' && FO.newCount ? `<b class="dot" data-orders-new>${FO.newCount}</b>` : ''}</button>`).join('') + `<button class="nav-btn show-phone ${phoneViews().includes(S.view) ? '' : 'on'}" id="nav-more" data-act="nav-more">${ic('menu')}<span>${esc(t('nav.more'))}</span>${canAudit() && AP.count ? `<b class="dot">${AP.count}</b>` : ''}</button>`;
   $('#tb-store').textContent = settings().store_name || 'Khair Mart';
-  $('#tb-sub').textContent = 'POS · ' + (MOCK ? 'demo' : maskKey(S.key));
+  $('#tb-sub').textContent = 'POS · v' + APP_VERSION + ' · ' + (MOCK ? 'demo' : maskKey(S.key));
   $('#tb-user').textContent = S.user;
   $('#tb-role').textContent = ''; // names only (owner's decision 07 Oct)
   const tbm = $('#tb-master'); if (tbm) { tbm.hidden = !S.viaMaster; tbm.textContent = t('mc.via'); }
@@ -645,7 +645,8 @@ function renderLogin() {
   }
   // v36 (owner 2026-10-11): a permanent notice on the lock screen of a staff session (manager / accountant) on this device
   const camNote = S.user && S.role && S.role !== 'owner' ? `<div class="cam-note small muted center" id="cam-note" style="margin-top:8px">📷 ${esc(t('cam.notice'))}</div>` : '';
-  box.innerHTML = `<div class="login-card">${brand}${inner}${camNote}${langs}</div>`;
+  // v41 (owner 2026-10-12): the version is always visible on the login screen and in the top bar
+  box.innerHTML = `<div class="login-card">${brand}${inner}${camNote}${langs}<div class="small muted center" id="login-ver" style="margin-top:8px">${esc(t('app.version'))}: <b>${esc(APP_VERSION)}</b></div></div>`;
   const k = $('#lg-key'); if (k) { k.addEventListener('keydown', e => { if (e.key === 'Enter') ACT['login-key'](); }); setTimeout(() => k.focus(), 30); }
   const p2 = $('#su-pin2'); if (p2) p2.addEventListener('keydown', e => { if (e.key === 'Enter') ACT['login-setup'](); });
 }
@@ -4794,7 +4795,7 @@ const I18N = {
     'set.survey_auto': 'Mulai rekam otomatis saat bayar (tanpa bertanya)', 'set.survey_voice': 'Survei suara saat bayar', 'set.survey_voice_hint': 'Rekaman mulai sendiri saat Bayar, dengan tanda "Rekaman aktif" dan catatan di struk; hanya teks yang disimpan, suara tidak. Butuh Chrome di Android.', 'set.wa_shop': 'Nomor WhatsApp toko', 'set.wa_shop_hint': 'Tombol “Kirim ke WA toko” di struk mengirim nomor pelanggan baru ke nomor ini.', 'set.survey_new': 'Pertanyaan baru…', 'set.survey_reset': 'Kembalikan ke bawaan', 'set.users': 'Pengguna', 'set.add_user': 'Tambah pengguna',
     'set.role': 'Peran', 'set.reset_pin': 'Ganti PIN', 'set.activate': 'Aktifkan', 'set.deactivate': 'Nonaktifkan', 'set.deactivate_confirm': 'Nonaktifkan {name}? Ia tidak bisa masuk lagi.', 'set.user_exists': 'Nama sudah dipakai',
     'set.suspend': 'Nonaktifkan', 'set.reenable': 'Aktifkan kembali',
-    'set.app': 'Aplikasi', 'set.language': 'Bahasa', 'set.autolock': 'Kunci otomatis jika tidak dipakai', 'set.reload_data': 'Muat ulang data', 'set.data_reloaded': 'Data diperbarui',
+    'set.app': 'Aplikasi', 'app.version': 'Versi', 'set.language': 'Bahasa', 'set.autolock': 'Kunci otomatis jika tidak dipakai', 'set.reload_data': 'Muat ulang data', 'set.data_reloaded': 'Data diperbarui',
     'set.logout_store': 'Keluar dari toko', 'set.logout_confirm': 'Keluar dan hapus kode toko dari perangkat ini?', 'set.outbox': 'Antrian offline',
     'set.mock_hint': 'Mode DEMO: data hanya tersimpan di browser ini (kode toko: demo, Pemilik PIN 1234, Siti PIN 1111).', 'set.mock_reset': 'Reset data demo'
   },
@@ -4871,7 +4872,7 @@ const I18N = {
     'set.survey_auto': 'بدء التسجيل تلقائيًا عند الدفع (دون سؤال)', 'set.survey_voice': 'استبيان صوتي أثناء الدفع', 'set.survey_voice_hint': 'يبدأ التسجيل وحده عند الدفع مع إشارة «التسجيل يعمل» وسطر على الإيصال؛ يُحفظ النص فقط دون الصوت. يحتاج Chrome على أندرويد.', 'set.wa_shop': 'رقم واتساب المتجر', 'set.wa_shop_hint': 'زر «إرسال إلى واتساب المتجر» في الإيصال يرسل رقم العميل الجديد إلى هذا الرقم.', 'set.survey_new': 'سؤال جديد…', 'set.survey_reset': 'استعادة الأسئلة الافتراضية', 'set.users': 'المستخدمون', 'set.add_user': 'إضافة مستخدم',
     'set.role': 'الدور', 'set.reset_pin': 'تغيير الرقم السري', 'set.activate': 'تفعيل', 'set.deactivate': 'تعطيل', 'set.deactivate_confirm': 'تعطيل {name}؟ لن يستطيع الدخول.', 'set.user_exists': 'الاسم مستخدم',
     'set.suspend': 'إيقاف', 'set.reenable': 'تفعيل',
-    'set.app': 'التطبيق', 'set.language': 'اللغة', 'set.autolock': 'القفل التلقائي عند عدم الاستخدام', 'set.reload_data': 'تحديث البيانات', 'set.data_reloaded': 'تم تحديث البيانات',
+    'set.app': 'التطبيق', 'app.version': 'النسخة', 'set.language': 'اللغة', 'set.autolock': 'القفل التلقائي عند عدم الاستخدام', 'set.reload_data': 'تحديث البيانات', 'set.data_reloaded': 'تم تحديث البيانات',
     'set.logout_store': 'الخروج من المتجر', 'set.logout_confirm': 'الخروج وحذف رمز المتجر من هذا الجهاز؟', 'set.outbox': 'العمليات غير المرسلة',
     'set.mock_hint': 'وضع تجريبي: البيانات محفوظة في هذا المتصفح فقط (الرمز: demo، المالك 1234، سيتي 1111).', 'set.mock_reset': 'إعادة ضبط البيانات التجريبية'
   }
