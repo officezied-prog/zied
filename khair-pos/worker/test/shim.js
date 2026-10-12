@@ -16,32 +16,62 @@ export function newDb() {
 }
 
 export function sqliteAdapter(db) {
-  return {
-    all(sql, params) { return db.prepare(sql).all(...(params || [])); },
+  const ad = {
+    calls: 0, // D1 calls this adapter made (a batch is one call, as on D1)
+    all(sql, params) { ad.calls++; return db.prepare(sql).all(...(params || [])); },
     run(sql, params) {
+      ad.calls++;
       const r = db.prepare(sql).run(...(params || []));
       return { lastInsertRowid: Number(r.lastInsertRowid), changes: r.changes };
     },
+    // like D1's batch: one call, one transaction (all or nothing), results in order
+    batch(list) {
+      ad.calls++;
+      db.exec('BEGIN');
+      try {
+        const out = list.map((q) => {
+          if (q.kind === 'all') return db.prepare(q.sql).all(...(q.params || []));
+          const r = db.prepare(q.sql).run(...(q.params || []));
+          return { lastInsertRowid: Number(r.lastInsertRowid), changes: r.changes };
+        });
+        db.exec('COMMIT');
+        return out;
+      } catch (e) { db.exec('ROLLBACK'); throw e; }
+    },
   };
+  return ad;
 }
 
 // A Cloudflare-D1-shaped binding over node:sqlite: prepare(sql).bind(...p).all()/.run(),
 // matching the shape src/index.js's d1Adapter expects. Lets the real Worker fetch handler be
 // tested end-to-end (routing, CORS, error handling) against a real in-memory SQLite.
-export function d1Mock(db) {
-  return {
+export function d1Mock(db, opts = {}) {
+  const B = {
+    calls: 0, // D1 calls per the free-plan rule (a batch is one); opts.maxCalls makes the 51st call fail like D1 Free
+    _count() { B.calls++; if (opts.maxCalls && B.calls > opts.maxCalls) throw new Error('Too many API requests by single worker invocation.'); },
     prepare(sql) {
       const stmt = db.prepare(sql);
       return {
         bind(...params) {
           return {
-            async all() { return { results: stmt.all(...params), meta: {} }; },
-            async run() { const r = stmt.run(...params); return { meta: { last_row_id: Number(r.lastInsertRowid), changes: r.changes } }; },
+            sql,
+            async all() { B._count(); return { results: stmt.all(...params), meta: {} }; },
+            async run() { B._count(); const r = stmt.run(...params); return { meta: { last_row_id: Number(r.lastInsertRowid), changes: r.changes } }; },
+            _exec() { // inside a batch (no own call)
+              if (/^\s*(select|with|pragma)\b/i.test(sql)) return { results: stmt.all(...params), meta: {} };
+              const r = stmt.run(...params); return { results: [], meta: { last_row_id: Number(r.lastInsertRowid), changes: r.changes } };
+            },
           };
         },
       };
     },
+    async batch(list) {
+      B._count();
+      db.exec('BEGIN');
+      try { const out = list.map((b) => b._exec()); db.exec('COMMIT'); return out; } catch (e) { db.exec('ROLLBACK'); throw e; }
+    },
   };
+  return B;
 }
 
 // Seed a row (explicit id allowed) with the same boolean→0/1 / object→JSON coercion the

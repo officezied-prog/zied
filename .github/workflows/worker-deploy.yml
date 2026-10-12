@@ -110,3 +110,7 @@ jobs:
             exit 1
           fi
           echo "Live Worker answers correctly."
+          # v39: does one D1 batch count as one query? (the free plan allows 50 per request) — printed, never fails the deploy
+          echo "D1 batch check (60 statements in one batch):"
+          curl -sS -m 20 "$WORKER_URL/webhook/khair-pos/health/batch" || true
+          echo
