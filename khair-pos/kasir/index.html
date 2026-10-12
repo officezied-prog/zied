@@ -105,7 +105,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.6.0';
+const APP_VERSION = 'kasir-1.6.1';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -3715,7 +3715,7 @@ RENDER.more = function () {
       <button class="li" data-act="retur-open" id="m-retur">${ic('undo')}<div class="grow"><div class="t">${esc(t('more.retur'))}</div><div class="s">${esc(t('more.retur_s'))}</div></div></button>
       <button class="li" data-act="void-req" id="m-void">${ic('undo')}<div class="grow"><div class="t">${esc(t('more.void'))}</div><div class="s">${esc(t('more.void_s'))}</div></div></button>
       <button class="li" data-act="price-req" id="m-price">${ic('tag')}<div class="grow"><div class="t">${esc(t('more.price'))}</div><div class="s">${esc(S.role === 'kasir' ? t('more.price_s') : t('more.price_s_mgr'))}</div></div></button>
-      <button class="li" data-act="repack-open" id="m-repack">${ic('repack')}<div class="grow"><div class="t">${esc(t('rk.title'))}</div><div class="s">${esc(t(S.role === 'kasir' ? 'rk.more_s' : 'rk.more_s_mgr'))}</div></div></button>
+      <button class="li" data-act="repack-open" id="m-repack">${ic('repack')}<div class="grow"><div class="t">${esc(t('rk.title'))}</div><div class="s">${esc(t('rk.more_s'))}</div></div></button>
       <button class="li" data-act="stock-count" id="m-count">${ic('count')}<div class="grow"><div class="t">${esc(t('more.count'))}</div><div class="s">${esc(t('more.count_s'))}</div></div></button>
       <button class="li" data-act="my-req" id="m-myreq">${ic('list')}<div class="grow"><div class="t">${esc(t('more.myreq'))}</div><div class="s">${esc(t('more.myreq_s'))}</div></div>${mine ? `<span class="badge warn">${mine}</span>` : ''}</button>
       ${isApprover() ? `<button class="li" data-act="apr-open" id="m-apr">${ic('check')}<div class="grow"><div class="t">${esc(t('apr.inbox'))} (<span id="m-apr-n">${AP.count}</span>)</div><div class="s">${esc(t('apr.inbox_s'))}</div></div></button>` : ''}
@@ -3968,7 +3968,10 @@ function openPriceChange(p) {
    يطلب القيام بها، لكن يجب التأكد: ممكن 2 كاشير يقوم بنفس الطلب والتعليب، انتبه منها»). The cashier picks a shop-made pack, says how many packs
    were made (and, if known, how much bulk went in), sees the yield and SENDS A REQUEST — nothing moves until the manager or the accountant
    approves. One request per bulk product at a time (the server says who asked first); the request carries a client id kept for this form,
-   so a double tap, a retry or a resend is the same request. A manager here repacks directly (as in the owner app; the owner is told). ========== */
+   so a double tap, a retry or a resend is the same request. A manager here repacks directly (as in the owner app; the owner is told).
+   v39 (owner 2026-10-12: «طلب التعليب لا يحتاج إلى موافقات … بس يقوم بإرسال معلومات للمدير ولي أنا وللمحاسب»): no request any more — the
+   cashier SAVES the repack, the stock moves at once and the owner, manager and accountant are told. Same bulk repacked in the last 2 h →
+   the server names who and when and the cashier confirms it is another repack ("Ya, ini kemas ulang baru") or stops. ========== */
 const rkPacks = () => S.products.filter(p => p.active !== false && num(p.repack_from) > 0 && prodById(p.repack_from));
 /** Same formulas as the server: packs expected from the bulk used, the yield and the loss. */
 function rkCalc(size, qty, fromQty) { const expected = size > 0 ? roundQty(fromQty / size) : 0; return { expected, yieldPct: expected > 0 ? Math.round(qty / expected * 1000) / 10 : 0, loss: roundQty(fromQty - qty * size) }; }
@@ -3984,7 +3987,7 @@ function rkPreview(box, size, unit, stock, qty, fromQty) {
 }
 function openRepack() {
   const mgr = S.role === 'manager' || S.role === 'owner', packs = rkPacks();
-  const R = { cid: uuid() }; // one client id per form: a double tap / retry / resend is the same request
+  const R = { cid: uuid() }; // one client id per form: a double tap / retry / resend is recorded once
   const el = openModal({
     title: t('rk.title'), id: 'repack', focus: false,
     body: `<p class="small muted" style="margin-top:0">${esc(t(mgr ? 'rk.hint_mgr' : 'rk.hint'))}</p>
@@ -3997,7 +4000,7 @@ function openRepack() {
         <div class="field"><label class="f" for="rk-exp">${esc(t('rk.exp'))}</label><input class="input" type="date" id="rk-exp"></div></div>
       <div class="field"><label class="f" for="rk-note">${esc(t('notes'))}</label><input class="input" id="rk-note" maxlength="300" autocomplete="off"></div>
       <div class="rp-preview" id="rk-preview"></div><div class="err" id="rk-err" role="alert"></div><div id="rk-res"></div>`,
-    foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button><button class="btn primary" id="rk-ok" ${packs.length ? '' : 'disabled'}>${ic(mgr ? 'check' : 'send')} ${esc(t(mgr ? 'rk.save' : 'rk.send'))}</button>`
+    foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button><button class="btn primary" id="rk-ok" ${packs.length ? '' : 'disabled'}>${ic('check')} ${esc(t('rk.save'))}</button>`
   });
   const read = () => {
     const to = prodById($('#rk-to', el).value), from = to ? prodById(to.repack_from) : null;
@@ -4017,44 +4020,45 @@ function openRepack() {
   draw();
   const ok = $('#rk-ok', el), err = $('#rk-err', el), res = $('#rk-res', el);
   const lockForm = () => { $$('#rk-to, #rk-qty, #rk-from, #rk-cost, #rk-exp, #rk-note', el).forEach(i => { i.disabled = true; }); ok.hidden = true; };
-  ok.onclick = async () => {
+  const send = async (confirmRecent) => {
     const r = read();
     err.textContent = ''; res.innerHTML = '';
     if (!r.to) { err.textContent = t('rk.pick_first'); return; }
     if (!(r.qty > 0) || !(r.fromQty > 0)) { err.textContent = t('rk.qty_invalid'); $('#rk-qty', el).focus(); return; }
     if (r.fromQty > num(r.from.stock) + 1e-9) { err.textContent = t('rk.not_enough', { q: fmtQty(r.from.stock), u: r.from.unit || '' }); return; }
-    const data = { to_product_id: r.to.id, to_qty: r.qty, note: $('#rk-note', el).value.trim() };
+    const data = { client_id: R.cid, to_product_id: r.to.id, to_qty: r.qty, note: $('#rk-note', el).value.trim() };
     if (r.rawFrom) data.from_qty = r.fromQty;
     const pc = moneyVal($('#rk-cost', el).value); if (pc) data.packaging_cost = pc;
     const ex = $('#rk-exp', el).value; if (/^\d{4}-\d{2}-\d{2}$/.test(ex)) data.exp_date = ex;
+    if (confirmRecent) data.confirm_recent = true;
     ok.disabled = true;
     try {
-      if (mgr) {
-        const out = await api('repack', data), rp = out.repack || {};
-        applyStock(out.stock); saveCache(); renderGrid();
-        res.innerHTML = `<div class="status cocok" id="rk-done" data-yield="${esc(rp.yield_pct)}"><div class="st">${ic('check')} ${esc(t('rk.saved', { from: fmtQty(rp.from_qty) + ' ' + (rp.from_unit || ''), n: fmtQty(rp.to_qty), name: rp.to_name || '' }))}</div>
-          <div>${esc(t('rk.pv_yield', { n: fmtQty(rp.to_qty), p: NF1.format(num(rp.yield_pct)) }))} · ${esc(t('rk.pv_loss', { q: fmtQty(rp.loss_qty), u: rp.from_unit || '' }))}</div><div class="small muted">${esc(t('rk.owner_told'))}</div></div>`;
-        lockForm(); toast(t('rk.saved_toast'), 'ok');
-        return;
-      }
-      data.client_id = R.cid;
-      const out = await api('request_repack', data), a = out.approval || {}, id = out.request_id || a.request_id;
-      trackMyRequest(id, 'repack', t('req.repack', { name: r.to.name, n: fmtQty(r.qty) }));
-      if (a.status && a.status !== 'pending') updateMyRequest(a);
-      res.innerHTML = `<div class="status perlu_cek" id="rk-pending" data-req="${esc(id)}"><div class="st">${ic('lock')} ${esc(t('rk.sent'))}</div>
-        <div>${esc(t('apr.request_id'))}: <b class="num">${esc(id)}</b>${a.status && a.status !== 'pending' ? ` · <b>${esc(t('req.st_' + a.status))}</b>` : ''}</div>
-        <div class="small">${esc(t('rk.wait'))}</div><div class="small muted">${esc(t('rk.owner_told_req'))}</div></div>`;
-      lockForm(); toast(t('rk.sent_toast'), 'ok');
+      // v39: no approval — the stock moves at once (cashier and manager alike); the owner / manager / accountant are told
+      const out = await api('repack', data), rp = out.repack || {};
+      if (out.stock) applyStock(out.stock);
+      saveCache(); renderGrid();
+      res.innerHTML = `<div class="status cocok" id="rk-done" data-yield="${esc(rp.yield_pct)}"><div class="st">${ic('check')} ${esc(t('rk.saved', { from: fmtQty(rp.from_qty) + ' ' + (rp.from_unit || ''), n: fmtQty(rp.to_qty), name: rp.to_name || '' }))}</div>
+        <div>${esc(t('rk.pv_yield', { n: fmtQty(rp.to_qty), p: NF1.format(num(rp.yield_pct)) }))} · ${esc(t('rk.pv_loss', { q: fmtQty(rp.loss_qty), u: rp.from_unit || '' }))}</div><div class="small muted" id="rk-told">${esc(t(mgr ? 'rk.owner_told' : 'rk.all_told'))}</div></div>`;
+      lockForm(); toast(t('rk.saved_toast'), 'ok');
     } catch (e) {
       ok.disabled = false;
-      const pend = e.res && e.res.pending;
-      if (e.code === 'REPACK_PENDING' && pend) {
+      const pend = e.res && e.res.pending, rec = e.res && e.res.recent;
+      if (e.code === 'REPACK_RECENT' && rec) {
+        // v38/v39 («ممكن 2 كاشير يقوم بنفس الطلب والتعليب، انتبه منها»): someone repacked this bulk in the last 2 h — the same work, or another?
+        res.innerHTML = `<div class="status tidak_cocok" id="rk-recent" data-by="${esc(rec.user)}"><div class="st">${ic('repack')} ${esc(t('rk.recent_title'))}</div>
+          <div>${esc(t('rk.recent', { name: rec.user, time: fmtDateTime(rec.at), bulk: rec.from_name, q: fmtQty(rec.from_qty), u: rec.from_unit || '', pack: rec.to_name, n: fmtQty(rec.to_qty) }))}</div>
+          <div class="small">${esc(t('rk.recent_q'))}</div>
+          <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn xs primary" id="rk-again">${ic('check')} ${esc(t('rk.recent_yes'))}</button><button class="btn xs" id="rk-same">${ic('x')} ${esc(t('rk.recent_no'))}</button></div></div>`;
+        $('#rk-again', res).onclick = () => send(true);
+        $('#rk-same', res).onclick = () => closeModal();
+      } else if (e.code === 'REPACK_PENDING' && pend) {
         res.innerHTML = `<div class="status tidak_cocok" id="rk-busy" data-by="${esc(pend.cashier)}"><div class="st">${ic('lock')} ${esc(t('rk.busy_title'))}</div>
           <div>${esc(t('rk.busy', { name: pend.cashier, time: fmtDateTime(pend.created_at), id: pend.request_id, bulk: pend.from_name, pack: pend.to_name, n: fmtQty(pend.to_qty) }))}</div>
           <div class="small">${esc(t(pend.stale ? 'rk.busy_stale' : 'rk.busy_wait'))}</div></div>`;
       } else err.textContent = e instanceof NetError ? t('rk.need_online') : errMsg(e); // the same client id is sent again on the next tap
     }
   };
+  ok.onclick = () => send(false);
 }
 /** v38: a repack request still waiting after 24 h can be cancelled by the cashier who asked (the lock on the bulk is freed). */
 async function cancelMyRepack(id, btn) {
@@ -5133,16 +5137,19 @@ Object.assign(I18N.ar, {
 });
 /* v38 i18n: Kemas ulang — the cashier's request, its approval card, the lock on the bulk product */
 Object.assign(I18N.id, {
-  'rk.title': 'Kemas ulang', 'rk.more_s': 'Minta persetujuan kemas ulang (curah → kemasan)', 'rk.more_s_mgr': 'Curah → kemasan kecil',
-  'rk.hint': 'Barang curah yang sudah dikemas kecil: pilih kemasannya, isi berapa kemasan jadi. Stok baru berubah setelah manajer / akuntan menyetujui.',
-  'rk.hint_mgr': 'Barang curah yang dikemas kecil di toko: stok curah berkurang, stok kemasan bertambah. Pemilik diberi tahu.',
+  'rk.title': 'Kemas ulang', 'rk.more_s': 'Curah → kemasan kecil (stok langsung berubah)', 'rk.more_s_mgr': 'Curah → kemasan kecil',
+  'rk.hint': 'Barang curah yang sudah dikemas kecil: pilih kemasannya, isi berapa kemasan jadi lalu simpan. Stok langsung berubah; pemilik, manajer dan akuntan diberi tahu.',
+  'rk.hint_mgr': 'Barang curah yang dikemas kecil di toko: stok curah berkurang, stok kemasan bertambah. Pemilik dan akuntan diberi tahu.',
   'rk.none': 'Belum ada produk kemas ulang. Pemilik mengaturnya di form produk.', 'rk.pack_product': 'Produk kemasan', 'rk.pick': 'pilih',
   'rk.pieces': 'Jumlah kemasan jadi', 'rk.bulk_used': 'Curah dipakai', 'rk.auto': 'otomatis', 'rk.pack_cost': 'Biaya kemasan', 'rk.exp': 'Kedaluwarsa',
   'rk.from_bulk': 'Dari', 'rk.size': 'Isi per kemasan', 'rk.preview_empty': 'Pilih produk kemasan dan isi jumlah kemasan jadi.',
   'rk.pv_used': 'Curah dipakai {q} {u} → seharusnya {e} kemasan', 'rk.pv_yield': 'Jadi {n} = hasil {p}%', 'rk.pv_loss': 'susut {q} {u}',
   'rk.not_enough': 'Stok curah tidak cukup ({q} {u})', 'rk.pick_first': 'Pilih produk kemasan dulu', 'rk.qty_invalid': 'Jumlah tidak valid',
   'rk.send': 'Kirim permintaan', 'rk.save': 'Simpan kemas ulang', 'rk.sent': 'Permintaan kemas ulang terkirim', 'rk.sent_toast': 'Permintaan kemas ulang terkirim',
-  'rk.wait': 'Menunggu persetujuan manajer / akuntan. Stok belum berubah.', 'rk.owner_told_req': 'Pemilik diberi tahu.', 'rk.owner_told': 'Pemilik diberi tahu.',
+  'rk.wait': 'Menunggu persetujuan manajer / akuntan. Stok belum berubah.', 'rk.owner_told_req': 'Pemilik diberi tahu.', 'rk.owner_told': 'Pemilik dan akuntan diberi tahu.', 'rk.all_told': 'Pemilik, manajer dan akuntan diberi tahu.',
+  'rk.recent_title': 'Curah ini baru saja dikemas ulang', 'rk.recent': '{name} sudah mengemas ulang {bulk} {q} {u} → {pack} × {n} pada {time}.',
+  'rk.recent_q': 'Apakah ini kemas ulang lain (bukan yang sama)? Jangan dicatat dua kali.', 'rk.recent_yes': 'Ya, ini kemas ulang baru', 'rk.recent_no': 'Bukan, itu yang sama',
+  'err.REPACK_RECENT': 'Curah ini baru saja dikemas ulang', 'err.STOCK_CHANGED': 'Stok baru saja berubah — cek lalu simpan ulang',
   'rk.saved': 'Kemas ulang tersimpan: {from} → {name} × {n}', 'rk.saved_toast': 'Kemas ulang tersimpan', 'rk.need_online': 'Perlu internet — tekan kirim lagi saat online (tidak akan terkirim dua kali)',
   'rk.busy_title': 'Sudah ada permintaan untuk curah ini', 'rk.busy': '{name} sudah meminta kemas ulang {bulk} ({pack} × {n}) pada {time} — no. {id}.',
   'rk.busy_wait': 'Tunggu keputusan manajer / akuntan, atau hubungi mereka. Jangan dikemas dua kali.',
@@ -5154,16 +5161,19 @@ Object.assign(I18N.id, {
   'err.REPACK_PENDING': 'Sudah ada permintaan kemas ulang untuk curah ini', 'err.REPACK_STOCK': 'Stok curah tidak cukup lagi', 'err.TOO_EARLY': 'Belum bisa dibatalkan'
 });
 Object.assign(I18N.ar, {
-  'rk.title': 'إعادة التعبئة', 'rk.more_s': 'طلب موافقة على إعادة التعبئة (سائب ← عبوات)', 'rk.more_s_mgr': 'سائب ← عبوات صغيرة',
-  'rk.hint': 'بضاعة سائبة عُبّئت في عبوات صغيرة: اختر العبوة واكتب عدد العبوات الناتجة. لا يتغير المخزون إلا بعد موافقة المدير / المحاسب.',
-  'rk.hint_mgr': 'بضاعة سائبة تُعبّأ صغيرة في المتجر: ينقص مخزون السائب ويزيد مخزون العبوات. يصل إشعار إلى المالك.',
+  'rk.title': 'إعادة التعبئة', 'rk.more_s': 'سائب ← عبوات صغيرة (يتغير المخزون فورًا)', 'rk.more_s_mgr': 'سائب ← عبوات صغيرة',
+  'rk.hint': 'بضاعة سائبة عُبّئت في عبوات صغيرة: اختر العبوة واكتب عدد العبوات الناتجة ثم احفظ. يتغير المخزون فورًا ويصل إشعار إلى المالك والمدير والمحاسب.',
+  'rk.hint_mgr': 'بضاعة سائبة تُعبّأ صغيرة في المتجر: ينقص مخزون السائب ويزيد مخزون العبوات. يصل إشعار إلى المالك والمحاسب.',
   'rk.none': 'لا توجد منتجات معاد تعبئتها. يضبطها المالك في نموذج المنتج.', 'rk.pack_product': 'منتج العبوة', 'rk.pick': 'اختر',
   'rk.pieces': 'عدد العبوات الناتجة', 'rk.bulk_used': 'السائب المستخدم', 'rk.auto': 'تلقائي', 'rk.pack_cost': 'تكلفة التغليف', 'rk.exp': 'تاريخ الانتهاء',
   'rk.from_bulk': 'من', 'rk.size': 'محتوى العبوة', 'rk.preview_empty': 'اختر منتج العبوة واكتب عدد العبوات الناتجة.',
   'rk.pv_used': 'السائب المستخدم {q} {u} ← المتوقع {e} عبوة', 'rk.pv_yield': 'الناتج {n} = نسبة {p}%', 'rk.pv_loss': 'الفاقد {q} {u}',
   'rk.not_enough': 'مخزون السائب لا يكفي ({q} {u})', 'rk.pick_first': 'اختر منتج العبوة أولًا', 'rk.qty_invalid': 'الكمية غير صحيحة',
   'rk.send': 'إرسال الطلب', 'rk.save': 'حفظ إعادة التعبئة', 'rk.sent': 'أُرسل طلب إعادة التعبئة', 'rk.sent_toast': 'أُرسل طلب إعادة التعبئة',
-  'rk.wait': 'بانتظار موافقة المدير / المحاسب. المخزون لم يتغير بعد.', 'rk.owner_told_req': 'يصل إشعار إلى المالك.', 'rk.owner_told': 'يصل إشعار إلى المالك.',
+  'rk.wait': 'بانتظار موافقة المدير / المحاسب. المخزون لم يتغير بعد.', 'rk.owner_told_req': 'يصل إشعار إلى المالك.', 'rk.owner_told': 'يصل إشعار إلى المالك والمحاسب.', 'rk.all_told': 'يصل إشعار إلى المالك والمدير والمحاسب.',
+  'rk.recent_title': 'هذا السائب أُعيدت تعبئته قبل قليل', 'rk.recent': 'أعاد {name} تعبئة {bulk} {q} {u} ← {pack} × {n} في {time}.',
+  'rk.recent_q': 'هل هذه تعبئة أخرى (ليست نفسها)؟ لا تُسجَّل مرتين.', 'rk.recent_yes': 'نعم، هذه تعبئة جديدة', 'rk.recent_no': 'لا، هي نفسها',
+  'err.REPACK_RECENT': 'هذا السائب أُعيدت تعبئته قبل قليل', 'err.STOCK_CHANGED': 'تغيّر المخزون للتو — راجع ثم احفظ مرة أخرى',
   'rk.saved': 'حُفظت إعادة التعبئة: {from} ← {name} × {n}', 'rk.saved_toast': 'حُفظت إعادة التعبئة', 'rk.need_online': 'يلزم الإنترنت — اضغط إرسال مرة أخرى عند الاتصال (لن يُرسل مرتين)',
   'rk.busy_title': 'يوجد طلب سابق لهذا السائب', 'rk.busy': 'طلب {name} إعادة تعبئة {bulk} ({pack} × {n}) في {time} — رقم {id}.',
   'rk.busy_wait': 'انتظر قرار المدير / المحاسب أو تواصل معهما. لا تُعبّأ مرتين.',

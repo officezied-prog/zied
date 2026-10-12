@@ -30,6 +30,9 @@ export const POS_MIGRATIONS = [
   'ALTER TABLE pos_repacks ADD COLUMN approved_by TEXT',
   'ALTER TABLE pos_repacks ADD COLUMN request_id TEXT',
   'CREATE INDEX IF NOT EXISTS idx_pos_approvals_client_id ON pos_approvals (client_id)',
+  // v39 (owner 2026-10-12: «طلب التعليب لا يحتاج إلى موافقات»): the cashier repacks directly; the form's client id makes a resend
+  // record nothing twice.
+  'ALTER TABLE pos_repacks ADD COLUMN client_id TEXT',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;
@@ -67,6 +70,28 @@ export async function handleRequest(adapter, body, headers, STORE_KEY) {
     }
     claimed.push(String(g.request_id));
   }
+  // v39 'stock_claim' (a direct repack): the bulk stock moves from the value process.js read to the new one with ONE conditional
+  // UPDATE; if two cashiers record a repack of the same bulk at the same second, only the first gets it — the second writes nothing
+  // and is shown the repack that just happened (so the same work is never recorded twice and no stock change is lost).
+  const stockClaims = [];
+  const undoClaims = async () => { for (const c of stockClaims) { try { await adapter.run('UPDATE pos_products SET stock = ? WHERE id = ? AND stock = ?', [c.from, c.product_id, c.to]); } catch (e2) { /* keep the first error */ } } };
+  for (const g of guards) {
+    if (g.type !== 'stock_claim') continue;
+    const r = await adapter.run('UPDATE pos_products SET stock = ? WHERE id = ? AND stock = ?', [Number(g.to), Number(g.product_id), Number(g.from)]);
+    if (!(Number(r && r.changes) > 0)) {
+      await undoClaims();
+      for (const id of claimed) await adapter.run("UPDATE pos_approvals SET status = 'pending' WHERE request_id = ? AND status = 'deciding'", [id]);
+      const last = (await adapter.all('SELECT * FROM pos_repacks WHERE from_product_id = ? ORDER BY id DESC LIMIT 1', [Number(g.product_id)]))[0];
+      const wib = (iso) => { const t0 = Date.parse(iso); return isFinite(t0) ? new Date(t0 + 7 * 3600000).toISOString().slice(0, 16).replace('T', ' ') + ' WIB' : ''; };
+      if (last && Date.now() - Date.parse(last.repack_time) < 2 * 3600000) {
+        return { ok: false, error: 'REPACK_RECENT',
+          message: last.user + ' baru saja mengemas ulang ' + last.from_name + ' ' + Number(last.from_qty) + ' ' + (last.from_unit || '') + ' → ' + last.to_name + ' x' + Number(last.to_qty) + ' pada ' + wib(last.repack_time) + ' (' + last.repack_id + '). Kalau ini kemas ulang lain (bukan yang sama), tekan "Ya, ini kemas ulang baru".',
+          recent: { repack_id: last.repack_id, user: last.user, at: last.repack_time, from_name: last.from_name, from_qty: Number(last.from_qty), from_unit: last.from_unit || '', to_name: last.to_name, to_qty: Number(last.to_qty) } };
+      }
+      return { ok: false, error: 'STOCK_CHANGED', message: 'Stok ' + (g.from_name || '') + ' baru saja berubah. Buka lagi dan cek, lalu simpan ulang.' };
+    }
+    stockClaims.push({ product_id: Number(g.product_id), from: Number(g.from), to: Number(g.to) });
+  }
   try {
     const lock = guards.find((g) => g.type === 'repack_lock');
     let upserts;
@@ -91,6 +116,7 @@ export async function handleRequest(adapter, body, headers, STORE_KEY) {
     return finalize(out.response, upserts);
   } catch (e) {
     // a failed write never leaves an approval stuck in 'deciding'
+    await undoClaims();
     for (const id of claimed) { try { await adapter.run("UPDATE pos_approvals SET status = 'pending' WHERE request_id = ? AND status = 'deciding'", [id]); } catch (e2) { /* keep the first error */ } }
     throw e;
   }

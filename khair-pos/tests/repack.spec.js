@@ -43,7 +43,9 @@ test('owner repacks 5 kg of bulk dates into 9 × 500 g: preview, stock, weighted
   expect(rp).toMatchObject({ from_product_id: bulk.id, to_product_id: pack.id, from_qty: 5, to_qty: 9, expected_qty: 10, yield_pct: 90, loss_qty: 0.5, packaging_cost: 4500, unit_cost: unitCost, user: 'Pemilik' });
   const rows = db.purchases.filter(r => r.supplier === 'KEMAS ULANG' && r.note.includes(rp.repack_id));
   expect(rows.map(r => [r.product_id, r.qty])).toEqual([[bulk.id, -5], [pack.id, 9]]);
-  expect(db.activity.slice(-1)[0]).toMatchObject({ kind: 'kemas_ulang', level: 'warn', ref: rp.repack_id });
+  expect(db.activity.filter(a => a.kind === 'kemas_ulang').slice(-1)[0]).toMatchObject({ kind: 'kemas_ulang', level: 'warn', ref: rp.repack_id });
+  // v39: the owner's own repack is told to the manager and the accountant
+  expect(db.activity.slice(-1)[0]).toMatchObject({ kind: 'notifikasi', ref: 'manager,akuntan' });
   // history: newest first, low yield highlighted; totals per product
   await expect(page.locator(`#rp-hist tr[data-rp="${rp.repack_id}"]`)).toHaveClass(/low/);
   await expect(page.locator(`#rp-hist tr[data-rp="${rp.repack_id}"] [data-yield]`)).toHaveText('90,0%');
@@ -78,7 +80,8 @@ test('manager can repack but never sees the pack cost; not enough bulk is refuse
   expect(r.repacks.length).toBeGreaterThan(0);
   expect(r.repacks.some(x => 'unit_cost' in x || 'packaging_cost' in x)).toBe(false);
   expect((await getDb(page)).products.find(p => p.id === bulk.id).stock).toBe(Math.round((bulk.stock - 1) * 1000) / 1000);
-  expect((await asUser(page, 'Siti', '1111', 'repack', { to_product_id: pack.id, to_qty: 1 })).error).toBe('FORBIDDEN');
+  // v39: the cashier repacks too (no approval) — here the same bulk was just repacked, so she is asked first
+  expect((await asUser(page, 'Siti', '1111', 'repack', { to_product_id: pack.id, to_qty: 1 })).error).toBe('REPACK_RECENT');
 });
 
 test('product form: "Pemasok utama" and "Kemasan toko (kemas ulang)" are saved; phone + Arabic screenshot of Kemas ulang', async ({ page }) => {
