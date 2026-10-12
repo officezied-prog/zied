@@ -146,7 +146,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.6.1';
+const APP_VERSION = '2.6.2';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -2026,6 +2026,7 @@ async function pollApprovals() {
   if (!canAudit() || !S.inApp || !S.pin_hash || $('#app').hidden) return;
   try {
     const r = await api('list_approvals');
+    if (r.usage) setD1Usage(r.usage);
     // an agreement is shown only to the other party (owner proposal → manager; manager proposal → owner)
     const list = (r.approvals || []).filter(a => (!a.status || a.status === 'pending') && (a.kind !== 'kesepakatan' || (String(a.cashier).toLowerCase() !== String(S.user).toLowerCase() && a.approver_role === S.role)));
     const fresh = AP.seen ? list.filter(a => !AP.seen.has(a.request_id)) : [];
@@ -2785,11 +2786,28 @@ function computeAttention(d) {
   if (low.length) items.push({ key: 'low', level: 'warn', icon: 'box', text: t('att.low', { n: low.length }), go: 'products', low: true });
   return items;
 }
+/* v38 (owner 2026-10-12: "start free, pay the $5 only when the work needs it"): yesterday's and today's use of the free daily D1
+   allowance (5,000,000 rows read, 100,000 written; it starts again at 07:00 Jakarta), carried by the owner's approvals poll. */
+const D1 = { u: store.get('d1_usage', null) };
+const d1Pct = u => u && u.read_limit ? Math.max(u.read / u.read_limit, u.y_read / u.read_limit, u.write / u.write_limit, u.y_write / u.write_limit) : 0;
+function d1PanelHTML() {
+  const u = D1.u;
+  const line = (k, n, lim, id) => { const p = lim ? int(n) / lim * 100 : 0; return `<div class="dr-row"><span>${esc(k)}</span><b class="num ${p >= 85 ? 'red' : p >= 60 ? 'amber' : 'green'}" data-d1="${id}">${fmtNum(int(n))} / ${fmtNum(lim)} · ${fmtPct(p)}</b></div>`; };
+  return `<div class="panel" id="st-d1"><h3>${ic('activity')} ${esc(t('d1.title'))}</h3><div class="pb">
+    ${u ? line(t('d1.read_today'), u.read, u.read_limit, 'read') + line(t('d1.read_y'), u.y_read, u.read_limit, 'y-read') + line(t('d1.write_today'), u.write, u.write_limit, 'write') + line(t('d1.write_y'), u.y_write, u.write_limit, 'y-write') : `<div class="muted small">${esc(t('loading'))}</div>`}
+    <p class="small ${d1Pct(u) >= 0.6 ? 'red' : 'muted'}" id="st-d1-hint" style="margin-bottom:0">${esc(t(d1Pct(u) >= 0.6 ? 'd1.hint_up' : 'd1.hint'))}</p></div></div>`;
+}
+function setD1Usage(u) {
+  if (!u || typeof u !== 'object') return;
+  D1.u = u; store.set('d1_usage', u);
+  const p = $('#st-d1'); if (p) p.outerHTML = d1PanelHTML();
+}
 async function refreshAttention(force) {
   if (!S.inApp || !S.pin_hash) return;
   if (force) { clearFieldCache(); FD.sr.at = 0; Object.keys(salesCache).forEach(k => delete salesCache[k]); }
   let d = null;
-  try { d = await loadSales(addDays(today(), -30), today(), true); } catch (e) { }
+  // v38: these 30 days (sales, items, payments… for the stock / drawer alerts) are read at most every 30 minutes, not every 4
+  try { d = await loadSales(addDays(today(), -30), today(), true, 30 * 60000); } catch (e) { }
   ATT.items = computeAttention(d).concat(await gudangAttention(), await loadFieldAttention(), await bankAttention(), laterAttention());
   updateBell(); renderNavDots();
   if (S.view === 'home') drawAttention();
@@ -2805,6 +2823,8 @@ function laterAttention() {
   // v37: the two-monthly full stock count (owner + manager) and invoice changes made by others (owner)
   const op = isApprover() ? opnameInfo(settings()) : null;
   if (op && op.status !== 'ok') items.push({ key: 'opname-due', level: op.status === 'overdue' ? 'err' : 'warn', icon: 'warehouse', text: t(op.status === 'overdue' ? 'att.opname_late' : 'att.opname_due', { n: Math.abs(op.left), date: fmtDate(op.next), last: op.last ? fmtDate(op.last) : t('op.never') }), go: 'gudang', tab: 'opname' });
+  const dp = isOwner() ? d1Pct(D1.u) : 0; // v38: near the free daily server allowance
+  if (dp >= 0.6) items.push({ key: 'd1', level: dp >= 0.85 ? 'err' : 'warn', icon: 'activity', text: t('att.d1', { p: Math.round(dp * 100) }), go: 'settings' });
   const nC = isOwner() ? invChgUnread().length : 0;
   if (nC) items.push({ key: 'invchg', level: 'err', icon: 'clip', text: t('att.invchg', { n: nC }), go: 'invchg' });
   return items;
@@ -3944,9 +3964,9 @@ function openImport() {
 
 /* ========== Shared: sales loader ========== */
 const salesCache = {};
-async function loadSales(from, to, useCache) {
+async function loadSales(from, to, useCache, ttl = 120000) {
   const k = from + '|' + to;
-  if (useCache && salesCache[k] && Date.now() - salesCache[k].at < 120000) return salesCache[k].data;
+  if (useCache && salesCache[k] && Date.now() - salesCache[k].at < ttl) return salesCache[k].data;
   const r = await api('get_sales', { from, to });
   const pays = r.payments || [];
   // v13: one payments table for both directions — "payments" stays customer money in, supplier payments are separate
@@ -5110,6 +5130,7 @@ RENDER.settings = function () {
   const v = $('#view-settings');
   v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.settings'))}</h1></div>
   <div class="rgrid">
+    ${own ? d1PanelHTML() : ''}
     ${own ? `<div class="panel"><h3>${esc(t('set.store'))}</h3><div class="pb">
       <div class="field"><label class="f" for="st-name">${esc(t('set.store_name'))}</label><input class="input" id="st-name" value="${esc(st.store_name)}"></div>
       <div class="field"><label class="f" for="st-addr">${esc(t('address'))}</label><input class="input" id="st-addr" value="${esc(st.address)}"></div>
@@ -7722,6 +7743,7 @@ Object.assign(I18N.id, {
   'dr.corrections': 'Koreksi harga', 'dr.cor_count': 'Jumlah koreksi', 'dr.cor_net': 'Selisih (rugi−/laba+)', 'dr.cor_refund': 'Refund dibayar', 'dr.cor_writeoff': 'Kurang bayar direlakan',
   'dr.cash': 'Uang tunai', 'dr.c_sales': 'Penjualan tunai', 'dr.c_pin': 'Bayar hutang tunai', 'dr.c_pout': 'Bayar pemasok tunai', 'dr.c_exp': 'Pengeluaran dari kas', 'dr.payments': 'Pembayaran & biaya', 'dr.pin': 'Pembayaran masuk', 'dr.pout': 'Bayar pemasok', 'dr.expenses': 'Pengeluaran',
   'dr.sec_cashiers': '① Per kasir', 'dr.sec_store': '② Total toko (semua kasir)', 'dr.pc_tx': '{n} transaksi · {q} barang', 'dr.pc_sales': 'Penjualan', 'dr.pc_pin': 'Bayar hutang diterima', 'dr.pc_pout': 'Uang keluar (bayar / retur)', 'dr.pc_exp': 'Pengeluaran dibayar', 'dr.pc_drawer': 'Kas laci', 'dr.pc_no_drawer': 'Tanpa laci kas', 'dr.pc_n_drawers': '{n} laci', 'dr.pc_check': 'Jumlah semua kasir {a} = total toko {b}', 'dr.pc_none': 'Belum ada transaksi pada hari ini.',
+  'd1.title': 'Pemakaian server gratis (Cloudflare)', 'd1.read_today': 'Baca data hari ini', 'd1.read_y': 'Baca data kemarin', 'd1.write_today': 'Tulis data hari ini', 'd1.write_y': 'Tulis data kemarin', 'd1.hint': 'Batas gratis per hari; mulai lagi tiap jam 07:00 WIB. Aman di bawah 60%.', 'd1.hint_up': 'Mendekati batas gratis harian. Jika terus begini, upgrade ke Workers Paid ($5/bulan) supaya sistem tidak berhenti.', 'att.d1': 'Server gratis terpakai {p}% dari batas harian — pertimbangkan upgrade ($5/bulan)',
   'dr.drawers': 'Kas laci', 'dr.send_title': 'Kirim ke WhatsApp', 'dr.with_profit': 'Sertakan laba', 'dr.send_company': 'Kirim ke WA Toko', 'dr.send_manager': 'Kirim ke WA Manajer', 'dr.send_owner': 'Kirim ke WA Pemilik', 'dr.set_numbers': 'Nomor WhatsApp yang kosong diatur di Pengaturan.', 'dr.preview': 'Lihat teks pesan',
   'set.key_show': 'Tampilkan', 'set.key_hide': 'Sembunyikan', 'set.loc_title': 'Lokasi toko', 'set.loc_hint': 'Dipakai untuk jarak perangkat ke toko. Tekan tombol di bawah saat berada di toko.', 'set.lat': 'Lintang (lat)', 'set.lng': 'Bujur (lng)', 'set.loc_here': 'Pakai lokasi saya sekarang', 'set.loc_got': 'Lokasi diambil (± {acc} m) — tekan Simpan',
   'set.loc_bad': 'Lintang / bujur tidak valid', 'set.req_loc': 'Wajibkan lokasi perangkat untuk kasir & manajer', 'set.req_loc_hint': 'Aplikasi kasir / manajer tidak bisa dipakai sebelum lokasi diizinkan.',
@@ -7792,6 +7814,7 @@ Object.assign(I18N.ar, {
   'dr.corrections': 'تصحيح الأسعار', 'dr.cor_count': 'عدد التصحيحات', 'dr.cor_net': 'الفرق (خسارة− / ربح+)', 'dr.cor_refund': 'إرجاع مدفوع', 'dr.cor_writeoff': 'نقص مُتنازَل عنه',
   'dr.cash': 'النقد', 'dr.c_sales': 'مبيعات نقدية', 'dr.c_pin': 'سداد ديون نقدًا', 'dr.c_pout': 'دفع للموردين نقدًا', 'dr.c_exp': 'مصاريف من الصندوق', 'dr.payments': 'المدفوعات والمصاريف', 'dr.pin': 'دفعات واردة', 'dr.pout': 'دفع للموردين', 'dr.expenses': 'المصاريف',
   'dr.sec_cashiers': '① حصيلة كل كاشير', 'dr.sec_store': '② الحصيلة العامة للمتجر (كل الكاشيرات)', 'dr.pc_tx': '{n} عملية · {q} صنف', 'dr.pc_sales': 'المبيعات', 'dr.pc_pin': 'تسديد ديون استلمه', 'dr.pc_pout': 'أموال خرجت (دفع / مرتجع)', 'dr.pc_exp': 'مصروفات دفعها', 'dr.pc_drawer': 'صندوقه', 'dr.pc_no_drawer': 'بدون صندوق نقد', 'dr.pc_n_drawers': '{n} صناديق', 'dr.pc_check': 'مجموع كل الكاشيرات {a} = إجمالي المتجر {b}', 'dr.pc_none': 'لا توجد عمليات في هذا اليوم.',
+  'd1.title': 'استهلاك الخادم المجاني', 'd1.read_today': 'قراءات اليوم', 'd1.read_y': 'قراءات أمس', 'd1.write_today': 'كتابات اليوم', 'd1.write_y': 'كتابات أمس', 'd1.hint': 'حد مجاني يومي، يبدأ من جديد كل يوم الساعة 07:00 بتوقيت جاكرتا. آمن تحت 60%.', 'd1.hint_up': 'اقتربنا من الحد اليومي المجاني. إن استمر هكذا فرقِّ الخطة (5 دولار شهريًا) حتى لا يتوقف النظام.', 'att.d1': 'الخادم المجاني مستهلَك {p}% من حده اليومي — فكّر في الترقية (5 دولار شهريًا)',
   'dr.drawers': 'صناديق النقد', 'dr.send_title': 'إرسال إلى واتساب', 'dr.with_profit': 'تضمين الربح', 'dr.send_company': 'إرسال لواتساب المتجر', 'dr.send_manager': 'إرسال لواتساب المدير', 'dr.send_owner': 'إرسال لواتساب المالك', 'dr.set_numbers': 'أرقام واتساب الفارغة تُضبط في الإعدادات.', 'dr.preview': 'عرض نص الرسالة',
   'set.key_show': 'إظهار', 'set.key_hide': 'إخفاء', 'set.loc_title': 'موقع المتجر', 'set.loc_hint': 'يُستخدم لحساب مسافة الأجهزة عن المتجر. اضغط الزر أدناه وأنت في المتجر.', 'set.lat': 'خط العرض', 'set.lng': 'خط الطول', 'set.loc_here': 'استخدم موقعي الآن', 'set.loc_got': 'أُخذ الموقع (± {acc} م) — اضغط حفظ',
   'set.loc_bad': 'إحداثيات غير صالحة', 'set.req_loc': 'إلزام الكاشير والمدير بمشاركة موقع الجهاز', 'set.req_loc_hint': 'لا يُفتح تطبيق الكاشير / المدير قبل السماح بالموقع.',

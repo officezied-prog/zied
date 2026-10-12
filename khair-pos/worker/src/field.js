@@ -53,12 +53,16 @@ export function parseField(body, headers) {
   };
 }
 
-function fieldSpecs(req) {
+// v38 (free Cloudflare plan): the GPS batch a working rep sends every 10 minutes never reads every product and every customer
+// (it does not use them; test/light-polls.test.js checks the answer and the writes are the same).
+export const FIELD_LIGHT = ['track'];
+export function fieldSpecs(req, opts = {}) {
+  const light = !opts.full && FIELD_LIGHT.indexOf(req.action) >= 0;
   return {
     'Get Users': Q.all('pos_users'),
-    'Get Products': Q.all('pos_products'),
+    ...(light ? {} : { 'Get Products': Q.all('pos_products') }),
     'Get Shops': Q.all('pos_shops'),
-    'Get Customers': Q.all('pos_customers'),
+    ...(light ? {} : { 'Get Customers': Q.all('pos_customers') }),
     'Get Today Days': Q.eq('pos_field_days', 'day_date', req.today),
     'Get Today Tracks': Q.eq('pos_tracks', 'track_date', req.today),
     'Get Today Visits': Q.eq('pos_visits', 'visit_date', req.today),
