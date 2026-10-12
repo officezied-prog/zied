@@ -1498,7 +1498,9 @@ switch (req.action) {
   }
 
   case 'stock_count': {
-    const list = Array.isArray(data.counts) ? data.counts.slice(0, 500) : [];
+    // v40: a whole-store count fits in one table (the store has ~1,900 products); more is refused, never cut silently
+    if (Array.isArray(data.counts) && data.counts.length > 2000) return fail('INVALID', 'Maksimal 2000 barang sekali kirim');
+    const list = Array.isArray(data.counts) ? data.counts : [];
     const lines = [];
     for (let i = 0; i < list.length; i++) {
       const it = list[i] || {};
@@ -1514,13 +1516,34 @@ switch (req.action) {
     const changed = lines.filter(function (l) { return l.diff !== 0; });
     const cnt = 'Stok opname ' + lines.length + ' barang, ' + changed.length + ' selisih: ' + changed.slice(0, 20).map(function (l) { return l.name + ' ' + l.system + '→' + l.counted; }).join('; ');
     if (role === 'owner') { logAct('opname', cnt, '', 0, changed.length ? 'warn' : 'info'); const st0 = applyCount(lines, note, me.name); return done({ ok: true, applied: true, lines: lines, stock: st0, opname: opnameStatus() }); }
+    // v40 (owner 2026-10-12: «إصلاح عدد المخزون يقوم بها الكاشير أو العامل ويرسلها للموافقة من المدير ويصل إشعار المالك … جدول كامل
+    // يقوم المدير بموافقة مرة واحدة على الكل»): the cashier's (or accountant's) count goes to the MANAGER, who approves the whole
+    // table with one tap; the owner is told. A manager's own count still goes to the owner — nobody approves their own count.
+    // A new count by the same person while the earlier one still waits joins that same table (one approval, not several).
+    const apRole = role === 'manager' ? 'owner' : 'manager';
+    const opSummary = function (ls) { const ch = ls.filter(function (l) { return num(l.diff) !== 0; }); return ('Stok opname ' + ls.length + ' barang, ' + ch.length + ' selisih: ' + ch.slice(0, 20).map(function (l) { return l.name + ' ' + l.system + '→' + l.counted; }).join('; ')).slice(0, 1500); };
+    const prev = approvalRows.find(function (x) { return x.kind === 'opname' && x.status === 'pending' && str(x.cashier).toLowerCase() === str(me.name).toLowerCase(); });
+    let pl0 = {};
+    if (prev) { try { pl0 = JSON.parse(prev.payload || '{}'); } catch (e) { pl0 = {}; } }
+    const byPid = {};
+    (Array.isArray(pl0.lines) ? pl0.lines : []).forEach(function (l) { byPid[String(l.product_id)] = l; });
+    lines.forEach(function (l) { byPid[String(l.product_id)] = l; }); // a product counted again: the newer count wins
+    const merged = Object.keys(byPid).map(function (k) { return byPid[k]; });
+    if (prev && merged.length <= 2000) { // a table never grows past 2000 lines (then a new one starts) — nothing is ever dropped
+      const up = Object.assign({}, prev, { approver_role: apRole, summary: opSummary(merged), note: [str(prev.note), note].filter(Boolean).join(' | ').slice(0, 300),
+        payload: JSON.stringify({ lines: merged, counted_at: new Date().toISOString(), by: me.name }) });
+      ops.approvals.push(forWrite(up, prev.id));
+      logAct('minta_opname', 'Tambah ke ' + prev.request_id + ': ' + cnt, prev.request_id, 0, 'info');
+      return done({ ok: true, applied: false, merged: true, request_id: prev.request_id, approval: approvalOut(up), lines: merged });
+    }
     logAct('minta_opname', 'Minta ' + cnt, '', 0, 'info');
     const a = newApproval({
-      kind: 'opname', approver_role: 'owner', ref: 'OP' + rand(5), note: note,
-      summary: ('Stok opname ' + lines.length + ' barang, ' + changed.length + ' selisih: ' + changed.slice(0, 20).map(function (l) { return l.name + ' ' + l.system + '→' + l.counted; }).join('; ')).slice(0, 1500),
+      kind: 'opname', approver_role: apRole, ref: 'OP' + rand(5), note: note,
+      summary: opSummary(lines),
       payload: JSON.stringify({ lines: lines, counted_at: new Date().toISOString(), by: me.name })
     });
     ops.approvals.push(forWrite(a, -1));
+    notify(['owner'], 'Stok opname dari ' + me.name + ': ' + lines.length + ' barang, ' + changed.length + ' selisih — menunggu ' + (apRole === 'manager' ? 'persetujuan manajer' : 'persetujuan Anda') + ' (' + a.request_id + ')', changed.length ? 'warn' : 'info');
     return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a), lines: lines });
   }
 
@@ -1921,6 +1944,14 @@ switch (req.action) {
       out.stock = applyCount(Array.isArray(pl.lines) ? pl.lines : [], a.note, me.name + ' (dihitung ' + str(a.cashier) + ')');
       out.opname = opnameStatus();
       finalStatus = 'used';
+    }
+    if (a.kind === 'opname' && role !== 'owner') { // v40: the owner is told what the manager decided on a stock count
+      let plN = {};
+      try { plN = JSON.parse(a.payload || '{}'); } catch (e) { plN = {}; }
+      const lsN = Array.isArray(plN.lines) ? plN.lines : [], chN = lsN.filter(function (l) { return num(l.diff) !== 0; });
+      const valN = chN.reduce(function (s1, l) { const p = productById[String(l.product_id)]; return s1 + num(l.diff) * money(p ? p.cost_price : 0); }, 0);
+      notify(['owner'], 'Stok opname ' + str(a.cashier) + ' ' + (decision === 'approved' ? 'DISETUJUI' : 'DITOLAK') + ' oleh ' + me.name + ': ' + lsN.length + ' barang, ' + chN.length +
+        ' selisih' + (chN.length ? ' (nilai modal ' + (valN > 0 ? '+' : valN < 0 ? '-' : '') + 'Rp ' + String(Math.round(Math.abs(valN))).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ')' : '') + ' — ' + a.request_id, decision === 'approved' && chN.length ? 'warn' : 'info');
     }
     if (decision === 'approved' && a.kind === 'purchase_fix') {
       let pl = {};

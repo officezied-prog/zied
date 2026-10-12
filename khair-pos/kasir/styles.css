@@ -72,6 +72,15 @@ button.li:hover{border-color:var(--p)}
 .li .t{font-weight:800}
 .li .s{font-size:13.5px;color:var(--muted)}
 .li > svg.i{color:var(--p)}
+/* stock count table (v40): one row per product, the count box at the end */
+.sc-table{border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:#fff}
+.sc-th{display:flex;gap:10px;padding:8px 10px;background:var(--pll);font-size:13px;font-weight:800;color:var(--muted)}
+.sc-row{display:flex;align-items:center;gap:10px;padding:6px 10px;border-top:1px solid var(--line);min-height:56px}
+.sc-row:nth-child(even){background:#F8FAFC}
+.sc-row .t{font-weight:800;line-height:1.25}
+.sc-row .s{font-size:12.5px;color:var(--muted)}
+.sc-row.done{background:var(--okt)}
+.sc-row.done .input{border-color:var(--ok)}
 .sumrow{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0}
 
 /* ========== Shell ========== */
