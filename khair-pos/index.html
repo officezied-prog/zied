@@ -790,6 +790,19 @@ function applyPendingToLocal() {
   }
 }
 const pendingQty = pid => sum(S.outbox.flatMap(e => e.req.items.filter(i => i.product_id == pid)), i => num(i.qty));
+/* v38: a background refresh (the login's bootstrap arriving late, "Muat ulang data", back online) redraws the open page. What
+   the person had already typed there (only the fields they changed) is put back, so a half-filled form is never wiped. */
+document.addEventListener('input', e => { const el = e.target; if (el && el.id && el.type !== 'file' && el.closest && el.closest('.view')) el.dataset.typed = '1'; }, true);
+function keepTyped(redraw) {
+  const v = document.querySelector('.view:not([hidden])');
+  const kept = v ? [...v.querySelectorAll('[data-typed="1"][id]')].map(el => [el.id, el.type === 'checkbox' || el.type === 'radio' ? el.checked : el.value, el === document.activeElement]) : [];
+  redraw();
+  kept.forEach(([id, val, focus]) => {
+    const el = document.getElementById(id); if (!el || el.type === 'file') return;
+    if (typeof val === 'boolean') el.checked = val; else el.value = val;
+    el.dataset.typed = '1'; if (focus) el.focus();
+  });
+}
 async function refreshData(quiet) {
   try {
     const r = await api('bootstrap');
@@ -798,7 +811,7 @@ async function refreshData(quiet) {
     ST.qs = null;
     saveCache();
     S.offline = false;
-    if (S.inApp) { renderShell(); if (S.view === 'pos') { renderPosSkeleton(); renderGrid(); renderCart(); focusSearch(); } else RENDER[S.view] && RENDER[S.view](); }
+    if (S.inApp) { renderShell(); if (S.view === 'pos') { renderPosSkeleton(); renderGrid(); renderCart(); focusSearch(); } else keepTyped(() => RENDER[S.view] && RENDER[S.view]()); }
     const hl = $('#held-list'); if (hl) drawHeld(hl); // an open held list is re-priced with the fresh data
     return true;
   } catch (e) {
