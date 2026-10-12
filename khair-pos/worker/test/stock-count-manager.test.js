@@ -1,5 +1,6 @@
 // v40 (owner 2026-10-12): the cashier's stock count goes to the MANAGER, who approves the whole table at once; the owner is
-// told when it is sent and when it is decided; a second count by the same cashier joins the table still waiting.
+// told when it is sent and when it is decided; a second count by the same cashier joins the table still waiting. The manager's
+// own count and single-product fixes apply at once — the owner only gets a notice.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -55,23 +56,36 @@ test('cashier count → one manager approval for the whole table; a second count
   assert.equal(notices(db).at(-1).ref, 'owner');
 });
 
-test('a manager\'s own count still goes to the owner (nobody approves their own count); a rejection is told too', async () => {
+// owner 2026-10-12: «المدير هو من يقوم بالتغيير ويصل مجرد إعلام فقط للمالك»
+test('the manager changes stock himself (own count, single-product fix) — the owner only gets a notice; a rejection is told too', async () => {
   const db = seed(), ad = sqliteAdapter(db);
-  const r = await call(ad, 'Jihan', 'stock_count', { counts: [{ product_id: 2, counted: 48 }] });
-  const a = db.prepare('SELECT * FROM pos_approvals WHERE request_id = ?').get(r.request_id);
-  assert.equal(a.approver_role, 'owner');
-  assert.match(notices(db).at(-1).summary, /menunggu persetujuan Anda/);
-  const self = await call(ad, 'Jihan', 'decide_approval', { request_id: r.request_id, decision: 'approved' });
-  assert.equal(self.ok, false);
+  const st = (id) => db.prepare('SELECT stock FROM pos_products WHERE id = ?').get(id).stock;
+  const r = await call(ad, 'Jihan', 'stock_count', { counts: [{ product_id: 2, counted: 48 }, { product_id: 3, counted: 10 }] });
+  assert.equal(r.applied, true, JSON.stringify(r));
+  assert.equal(st(2), 48);
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM pos_approvals WHERE kind = 'opname'").get().c, 0); // no approval at all
+  assert.match(notices(db).at(-1).summary, /Stok opname oleh manajer Jihan langsung diterapkan: 2 barang, 1 selisih \(nilai modal -Rp 40\.000\): Kismis 50→48/);
+  assert.equal(notices(db).at(-1).ref, 'owner');
+  // a single product's stock fixed by the manager (was owner-only) → applied, the owner is told with the value
+  const adj = await call(ad, 'Jihan', 'stock_adjust', { product_id: 1, new_stock: 22, reason: 'salah hitung' });
+  assert.equal(adj.ok, true, JSON.stringify(adj));
+  assert.equal(st(1), 22);
+  assert.match(notices(db).at(-1).summary, /Stok Kurma Ajwa diubah oleh manajer Jihan: 20→22 \(nilai modal \+Rp 300\.000\) \| salah hitung/);
+  assert.equal(db.prepare("SELECT qty FROM pos_purchases WHERE supplier = 'PENYESUAIAN STOK'").get().qty, 2);
+  // the cashier still may not fix stock directly
+  assert.equal((await call(ad, 'Siti', 'stock_adjust', { product_id: 1, new_stock: 0, reason: 'x' })).error, 'FORBIDDEN');
   // the cashier's count rejected by the manager → the owner hears about it
   const c = await call(ad, 'Siti', 'stock_count', { counts: [{ product_id: 3, counted: 9 }] });
   const rej = await call(ad, 'Jihan', 'decide_approval', { request_id: c.request_id, decision: 'rejected' });
   assert.equal(rej.ok, true);
   assert.match(notices(db).at(-1).summary, /Stok opname Siti DITOLAK oleh Jihan: 1 barang, 1 selisih/);
-  assert.equal(db.prepare('SELECT stock FROM pos_products WHERE id = 3').get().stock, 10); // nothing changed
-  // the owner applies his own count at once, as before
+  assert.equal(st(3), 10); // nothing changed
+  // the owner's own count and fix: applied at once, no notice to himself
+  const n0 = notices(db).length;
   const o = await call(ad, 'Pemilik', 'stock_count', { counts: [{ product_id: 1, counted: 19 }] });
   assert.equal(o.applied, true);
+  await call(ad, 'Pemilik', 'stock_adjust', { product_id: 2, new_stock: 47, reason: 'rusak' });
+  assert.equal(notices(db).length, n0);
 });
 
 // v40: the cashier's table holds the whole store (~1,900 products) — one send, one approval, one tap for the manager,

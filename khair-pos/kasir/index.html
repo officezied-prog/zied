@@ -4535,7 +4535,7 @@ const I18N = {
    answer is not displayed either, only its request id). The count is a draft per user on this device until it
    is sent, so it survives a reload and offline periods ("butuh internet untuk mengirim"). */
 const scKey = () => 'stock_count.' + String(S.user || '').toLowerCase();
-/** v40: a cashier's count goes to the manager (the owner is told); a manager's own count goes to the owner. */
+/** v40: a cashier's count goes to the manager (the owner is told); a manager's own count is applied at once (the owner is told). */
 const scK = k => S.role === 'manager' ? k + '_mgr' : k;
 const scLoad = () => Object.assign({ lines: [], note: '' }, KS.get(scKey(), null) || {});
 const scSave = D => KS.set(scKey(), { lines: D.lines, note: D.note });
@@ -4544,7 +4544,7 @@ const scSave = D => KS.set(scKey(), { lines: D.lines, note: D.note });
     no system stock in the table. Rows are drawn a page at a time so a store with thousands of products stays fast. */
 const SC_PAGE = 60, SC_MAX = 2000;
 function openStockCount() {
-  const D = scLoad(), V = { cat: '', limit: SC_PAGE };
+  const D = scLoad(), V = { mode: 'all', cat: '', limit: SC_PAGE }; // mode: all products | one category | counted only
   const ALL = S.products.filter(p => p.active !== false).sort((a, b) => String(a.name).localeCompare(String(b.name)));
   const cats = [...new Set(ALL.map(p => String(p.category || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const el = openModal({
@@ -4553,8 +4553,11 @@ function openStockCount() {
       ${(() => { const o = opnameInfo(settings()); return o ? `<p class="small" id="sc-due" data-status="${o.status}" style="margin-top:0"><b>${esc(t('op.last_next', { last: o.last ? fmtDate(o.last) : t('op.never'), next: fmtDate(o.next) }))}</b>${o.status === 'overdue' ? ` <span class="badge red">${esc(t('op.late_n', { n: -o.left }))}</span>` : ''}</p>` : ''; })()}
       <div class="scanbar"><div class="search">${ic('search')}<input class="input" id="sc-q" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="${esc(t('sc.search'))}" aria-label="${esc(t('sc.search'))}"></div>
         ${'BarcodeDetector' in window ? `<button class="icon-btn" id="sc-cam" type="button" aria-label="${esc(t('sell.camera'))}">${ic('scan')}</button>` : ''}</div>
-      <div class="chips" id="sc-cats" style="margin-top:8px">${[['', t('sc.all')], ['__done', '']].concat(cats.map(c => [c, c])).map(([k, lbl]) => `<button type="button" class="chip ${k === V.cat ? 'on' : ''}" data-sc-cat="${esc(k)}">${esc(lbl)}</button>`).join('')}</div>
-      <h3 style="font-size:16px;margin:8px 0" id="sc-head"></h3>
+      <div class="sc-modes" role="group">
+        <button type="button" class="btn sc-mode" id="sc-all" data-sc-mode="all" aria-pressed="false">${ic('list')}<span>${esc(t('sc.all'))}</span><b class="sc-n">${ALL.length}</b></button>
+        <button type="button" class="btn sc-mode" id="sc-bycat" data-sc-mode="cat" aria-pressed="false">${ic('tag')}<span>${esc(t('sc.by_cat'))}</span></button></div>
+      <div class="chips" id="sc-cats" style="margin-top:8px" hidden>${cats.map(c => `<button type="button" class="chip" data-sc-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+      <div class="row" style="align-items:center;margin:8px 0;gap:8px"><h3 class="grow" style="font-size:16px;margin:0" id="sc-head"></h3><button type="button" class="chip" id="sc-done" data-sc-mode="done" aria-pressed="false"></button></div>
       <div class="sc-table" id="sc-lines" role="table" aria-labelledby="sc-head"><div class="sc-th" role="row"><span class="grow" role="columnheader">${esc(t('sc.col_item'))}</span><span role="columnheader" style="width:96px;text-align:center">${esc(t('sc.col_count'))}</span></div><div id="sc-rows"></div></div>
       <button class="btn ghost block" id="sc-more" type="button" style="margin-top:6px" hidden></button>
       <div class="field" style="margin-top:12px"><label class="f" for="sc-note">${esc(t('sc.note'))}</label><input class="input" id="sc-note" value="${esc(D.note || '')}"></div>
@@ -4569,13 +4572,13 @@ function openStockCount() {
   const head = () => {
     const n = filled().length;
     $('#sc-head', el).textContent = t('sc.counted', { n, total: ALL.length });
-    $('[data-sc-cat="__done"]', el).textContent = t('sc.done_chip', { n });
+    $('#sc-done', el).textContent = t('sc.done_chip', { n });
     $('span', send).textContent = t('sc.send', { n }); send.disabled = !n;
   };
   const view = () => {
     const qv = q.value.trim(); let list = qv ? filterProducts(qv) : ALL;
-    if (V.cat === '__done') list = list.filter(p => isSet(lineOf(p.id)));
-    else if (V.cat) list = list.filter(p => String(p.category || '').trim() === V.cat);
+    if (V.mode === 'done') list = list.filter(p => isSet(lineOf(p.id)));
+    else if (V.mode === 'cat') list = V.cat ? list.filter(p => String(p.category || '').trim() === V.cat) : [];
     return list;
   };
   const rowHTML = p => { const l = lineOf(p.id), v = l ? String(l.c || '') : '';
@@ -4583,18 +4586,25 @@ function openStockCount() {
       <input class="input num" role="cell" style="width:96px;font-weight:800;font-size:18px;text-align:center" data-rule="num" data-sc="${esc(p.id)}" type="text" inputmode="${isWeightUnit(p.unit) ? 'decimal' : 'numeric'}" autocomplete="off" enterkeyhint="next" value="${esc(v)}" aria-label="${esc(t('sc.qty'))} ${esc(p.name)}"></div>`; };
   const draw = () => {
     const list = view(), left = list.length - V.limit;
-    box.innerHTML = list.slice(0, V.limit).map(rowHTML).join('') || `<div class="empty" id="sc-empty">${esc(t(V.cat === '__done' && !q.value.trim() ? 'sc.empty' : 'sc.nomatch'))}</div>`;
+    box.innerHTML = list.slice(0, V.limit).map(rowHTML).join('') || `<div class="empty" id="sc-empty">${esc(t(V.mode === 'cat' && !V.cat ? 'sc.pick_cat' : V.mode === 'done' && !q.value.trim() ? 'sc.empty' : 'sc.nomatch'))}</div>`;
     more.hidden = left <= 0; if (left > 0) more.textContent = t('sc.more', { n: Math.min(SC_PAGE, left), left });
     head();
   };
   const focusRow = p => {
-    if (V.cat && V.cat !== '__done' && String(p.category || '').trim() !== V.cat || V.cat === '__done' && !isSet(lineOf(p.id))) setCat('');
+    if (V.mode === 'cat' && String(p.category || '').trim() !== V.cat || V.mode === 'done' && !isSet(lineOf(p.id))) setMode('all');
     let inp = $(`[data-sc="${p.id}"]`, box);
     if (!inp) { q.value = p.sku || p.name; V.limit = SC_PAGE; draw(); inp = $(`[data-sc="${p.id}"]`, box); }
     err.textContent = '';
     if (inp) { inp.focus(); inp.select(); inp.scrollIntoView({ block: 'nearest' }); }
   };
-  const setCat = k => { V.cat = k; V.limit = SC_PAGE; $$('[data-sc-cat]', el).forEach(b => b.classList.toggle('on', b.dataset.scCat === k)); draw(); };
+  const setMode = m => {
+    V.mode = m; V.limit = SC_PAGE;
+    $$('[data-sc-mode]', el).forEach(b => { const on = b.dataset.scMode === m; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
+    $('#sc-cats', el).hidden = m !== 'cat';
+    draw();
+  };
+  const setCat = k => { V.cat = k; $$('[data-sc-cat]', el).forEach(b => b.classList.toggle('on', b.dataset.scCat === k)); setMode('cat'); };
+  $$('[data-sc-mode]', el).forEach(b => { b.onclick = () => setMode(b.dataset.scMode); });
   $('#sc-cats', el).onclick = e => { const b = e.target.closest('[data-sc-cat]'); if (b) setCat(b.dataset.scCat); };
   more.onclick = () => { V.limit += SC_PAGE; draw(); };
   q.addEventListener('input', () => { V.limit = SC_PAGE; draw(); });
@@ -4647,13 +4657,13 @@ function openStockCount() {
       if (!res.n) return;
     }
     // only the outcome is shown — never the system stock / differences in the answer
-    const msg = t(res.applied ? 'sc.applied' : res.merged ? 'sc.sent_merged' : scK('sc.sent'));
+    const msg = t(res.applied ? scK('sc.applied') : res.merged ? 'sc.sent_merged' : 'sc.sent');
     $('#sc-res', el).innerHTML = `<div class="status ${res.applied ? 'cocok' : 'need'}" id="sc-sent"><div class="st">${ic('check')} ${esc(msg)}</div>${res.ids.length ? `<div>${esc(t('apr.request_id'))}: <b>${esc(res.ids.join(', '))}</b></div>` : ''}<div class="small">${esc(t('req.opname', { n: res.n }))}</div></div>`;
     $('#sc-note', el).value = D.note || '';
     draw();
     toast(msg, 'ok', 4000);
   };
-  draw();
+  setMode('all');
   if (!navigator.onLine) err.textContent = t('sc.offline');
   setTimeout(() => { if (!isTouch()) q.focus(); }, 30);
 }
@@ -4661,13 +4671,13 @@ Object.assign(ACT, { 'stock-count': () => openStockCount() });
 Object.assign(I18N.id, {
   'more.count': 'Hitung stok', 'more.count_s': 'Hitung barang di rak/gudang, dikirim untuk disetujui', 'sc.title': 'Hitung stok',
   'sc.hint': 'Isi jumlah yang ada di rak / gudang di tabel (Enter = baris berikutnya), lalu kirim. Manajer menyetujui semuanya sekaligus; pemilik diberi tahu.',
-  'sc.hint_mgr': 'Isi jumlah yang ada di rak / gudang di tabel (Enter = baris berikutnya), lalu kirim. Hasil hitungan manajer disetujui pemilik.',
+  'sc.hint_mgr': 'Isi jumlah yang ada di rak / gudang di tabel (Enter = baris berikutnya), lalu simpan. Hitungan manajer langsung diterapkan; pemilik diberi tahu.',
   'sc.search': 'Cari / scan barang', 'sc.counted': 'Sudah dihitung: {n} dari {total} barang', 'sc.qty': 'Jumlah dihitung', 'sc.empty': 'Belum ada barang yang dihitung. Isi jumlahnya di tabel.',
-  'sc.all': 'Semua', 'sc.done_chip': 'Sudah dihitung ({n})', 'sc.col_item': 'Barang', 'sc.col_count': 'Jumlah', 'sc.nomatch': 'Tidak ada barang yang cocok.',
+  'sc.all': 'Semua barang', 'sc.by_cat': 'Per kategori', 'sc.pick_cat': 'Pilih kategori di atas.', 'sc.done_chip': 'Sudah dihitung ({n})', 'sc.col_item': 'Barang', 'sc.col_count': 'Jumlah', 'sc.nomatch': 'Tidak ada barang yang cocok.',
   'sc.more': 'Tampilkan {n} lagi (sisa {left})', 'sc.part_sent': '{n} barang sudah terkirim, sisanya tetap tersimpan',
   'sc.note': 'Catatan (opsional)', 'sc.draft': 'Hitungan tersimpan otomatis di HP ini sampai dikirim.', 'sc.send': 'Kirim ({n})', 'sc.send_ok': 'Kirim',
   'sc.confirm': 'Kirim hasil hitung {n} barang ke manajer?', 'sc.sent': 'Terkirim ke manajer untuk disetujui (pemilik diberi tahu)', 'sc.applied': 'Stok diperbarui',
-  'sc.confirm_mgr': 'Kirim hasil hitung {n} barang ke pemilik?', 'sc.sent_mgr': 'Terkirim ke pemilik untuk disetujui', 'sc.sent_merged': 'Ditambahkan ke daftar hitung yang masih menunggu persetujuan (satu persetujuan untuk semua)',
+  'sc.confirm_mgr': 'Stok {n} barang akan diganti dengan hasil hitung (pemilik diberi tahu). Lanjutkan?', 'sc.applied_mgr': 'Stok diperbarui — pemilik diberi tahu', 'sc.sent_merged': 'Ditambahkan ke daftar hitung yang masih menunggu persetujuan (satu persetujuan untuk semua)',
   'sc.offline': 'Butuh internet untuk mengirim. Hitungan tetap tersimpan di HP ini.', 'sc.none': 'Isi jumlah hitung minimal satu barang.', 'sc.bad': 'Jumlah tidak valid: {name}',
   'req.opname': 'Hitung stok {n} barang',
   'sc.apr_title': 'Stok opname: {n} barang, {d} selisih', 'sc.system': 'Sistem', 'sc.diff': 'Selisih', 'sc.apr_hint': 'Jika disetujui, selisih ditambahkan ke stok saat ini.'
@@ -4675,13 +4685,13 @@ Object.assign(I18N.id, {
 Object.assign(I18N.ar, {
   'more.count': 'عدّ المخزون', 'more.count_s': 'عُدّ البضاعة على الرف/في المخزن وأرسلها للموافقة', 'sc.title': 'عدّ المخزون',
   'sc.hint': 'اكتب الكمية الموجودة على الرف أو في المخزن في الجدول (Enter = السطر التالي) ثم أرسلها. يوافق المدير على الكل مرة واحدة، ويصل إشعار للمالك.',
-  'sc.hint_mgr': 'اكتب الكمية الموجودة على الرف أو في المخزن في الجدول (Enter = السطر التالي) ثم أرسلها. عدّ المدير يوافق عليه المالك.',
+  'sc.hint_mgr': 'اكتب الكمية الموجودة على الرف أو في المخزن في الجدول (Enter = السطر التالي) ثم احفظ. عدّ المدير يُطبَّق مباشرة ويصل إشعار للمالك.',
   'sc.search': 'ابحث / امسح الصنف', 'sc.counted': 'تم العدّ: {n} من {total} صنف', 'sc.qty': 'الكمية المعدودة', 'sc.empty': 'لم يُعدّ أي صنف بعد. اكتب العدد في الجدول.',
-  'sc.all': 'الكل', 'sc.done_chip': 'المعدودة ({n})', 'sc.col_item': 'الصنف', 'sc.col_count': 'العدد', 'sc.nomatch': 'لا يوجد صنف مطابق.',
+  'sc.all': 'كل البضائع', 'sc.by_cat': 'حسب الفئة', 'sc.pick_cat': 'اختر الفئة من الأعلى.', 'sc.done_chip': 'المعدودة ({n})', 'sc.col_item': 'الصنف', 'sc.col_count': 'العدد', 'sc.nomatch': 'لا يوجد صنف مطابق.',
   'sc.more': 'عرض {n} أخرى (المتبقي {left})', 'sc.part_sent': 'أُرسل {n} صنف، والباقي محفوظ',
   'sc.note': 'ملاحظة (اختياري)', 'sc.draft': 'يُحفظ العدّ تلقائيًا على هذا الجهاز حتى الإرسال.', 'sc.send': 'إرسال ({n})', 'sc.send_ok': 'إرسال',
   'sc.confirm': 'إرسال نتيجة عدّ {n} صنف إلى المدير؟', 'sc.sent': 'أُرسل إلى المدير للموافقة (ويصل إشعار للمالك)', 'sc.applied': 'تم تحديث المخزون',
-  'sc.confirm_mgr': 'إرسال نتيجة عدّ {n} صنف إلى المالك؟', 'sc.sent_mgr': 'أُرسل إلى المالك للموافقة', 'sc.sent_merged': 'أُضيف إلى قائمة العدّ التي تنتظر الموافقة (موافقة واحدة للكل)',
+  'sc.confirm_mgr': 'سيُستبدل مخزون {n} صنف بنتيجة العدّ (ويصل إشعار للمالك). متابعة؟', 'sc.applied_mgr': 'تم تحديث المخزون — وصل إشعار للمالك', 'sc.sent_merged': 'أُضيف إلى قائمة العدّ التي تنتظر الموافقة (موافقة واحدة للكل)',
   'sc.offline': 'يلزم الإنترنت للإرسال. العدّ محفوظ على هذا الجهاز.', 'sc.none': 'أدخل عدد صنف واحد على الأقل.', 'sc.bad': 'كمية غير صالحة: {name}',
   'req.opname': 'عدّ {n} صنف',
   'sc.apr_title': 'جرد المخزون: {n} صنف، {d} فروق', 'sc.system': 'النظام', 'sc.diff': 'الفرق', 'sc.apr_hint': 'عند الموافقة يُضاف الفرق إلى المخزون الحالي.'

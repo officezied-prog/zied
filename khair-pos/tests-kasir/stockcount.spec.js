@@ -31,20 +31,30 @@ test('blind stock count: draft survives reload and offline, submit creates an ow
   await page.press('#sc-q', 'Enter'); // barcode (SKU) + Enter
   await expect(page.locator(`[data-sc="${kha.id}"]`)).toBeFocused();
   await page.keyboard.type('79,5');
-  // a category chip shows only that category; "Sudah dihitung" shows what was counted
+  // owner 2026-10-12: right under the search, "Semua barang" (all in one table) and "Per kategori" (pick a category)
   await page.fill('#sc-q', '');
+  await expect(page.locator('#sc-all')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#sc-all')).toContainText(String(active.length));
+  await expect(page.locator('#sc-cats')).toBeHidden();
+  await page.click('#sc-bycat');
+  await expect(page.locator('#sc-cats')).toBeVisible();
+  await expect(page.locator('#sc-empty')).toContainText('Pilih kategori');
   await page.click(`#sc-cats [data-sc-cat="${kha.category}"]`);
   const inCat = active.filter(p => p.category === kha.category);
   await expect(page.locator('#sc-lines [data-line]')).toHaveCount(Math.min(60, inCat.length));
-  await page.click('#sc-cats [data-sc-cat="__done"]');
-  await expect(page.locator('#sc-cats [data-sc-cat="__done"]')).toHaveText('Sudah dihitung (2)');
+  await expect(page.locator(`#sc-lines [data-line="${kha.id}"] [data-sc]`)).toHaveValue('79,5');
+  await page.locator(`#sc-lines [data-line="${kha.id}"] [data-sc]`).fill('80'); // a fix right in the category table
+  await page.locator(`#sc-lines [data-line="${kha.id}"] [data-sc]`).fill('79,5');
+  await page.click('#sc-done');
+  await expect(page.locator('#sc-done')).toHaveText('Sudah dihitung (2)');
   await expect(page.locator('#sc-lines [data-line]')).toHaveCount(2);
   await expect(page.locator('#sc-lines .sc-row.done')).toHaveCount(2);
   await expect(page.locator('#sc-head')).toHaveText(`Sudah dihitung: 2 dari ${active.length} barang`);
   await expect(page.locator('#sc-send')).toContainText('Kirim (2)');
   // blind: no system stock, no difference
   for (const w of ['Sistem', 'Selisih', 'Stok']) await expect(m).not.toContainText(w);
-  await page.click('#sc-cats [data-sc-cat=""]');
+  await page.click('#sc-all');
+  await expect(page.locator('#sc-lines [data-line]')).toHaveCount(Math.min(60, active.length));
   await H.shot(page, 'phone-33-stock-count', false, { noToasts: true });
 
   // draft survives a reload
@@ -100,7 +110,7 @@ test('blind stock count: draft survives reload and offline, submit creates an ow
   await H.tab(page, 'more');
   await page.click('#m-count');
   await expect(page.locator('#sc-head')).toHaveText(`Sudah dihitung: 0 dari ${active.length} barang`);
-  await page.click('#sc-cats [data-sc-cat="__done"]');
+  await page.click('#sc-done');
   await expect(page.locator('#sc-empty')).toBeVisible();
   await expect(page.locator('#sc-send')).toBeDisabled();
 });
@@ -165,5 +175,25 @@ test('two counts by the cashier → one table; the manager approves everything i
   expect(db.products.find(p => p.id === p2.id).stock).toBe(Math.max(0, num(p2.stock) - 1));
   const last = db.activity.filter(a => a.kind === 'notifikasi' && a.ref === 'owner').slice(-1)[0];
   expect(last.summary).toContain('DISETUJUI oleh Jihan: 2 barang');
+});
+// owner 2026-10-12: «المدير هو من يقوم بالتغيير ويصل مجرد إعلام فقط للمالك» — the manager's own count is applied at once
+test('the manager\'s own count in the cashier app is applied at once; the owner only gets a notice', async ({ page }) => {
+  await H.login(page, 'Jihan', '2222');
+  const db0 = await H.getDb(page);
+  const p = db0.products.filter(x => x.active !== false)[0];
+  await H.tab(page, 'more');
+  await page.click('#m-count');
+  await expect(page.locator('#stock-count')).toContainText('langsung diterapkan');
+  await page.fill('#sc-q', p.sku);
+  await page.press('#sc-q', 'Enter');
+  await page.locator(`[data-sc="${p.id}"]`).fill(String(num(p.stock) + 2));
+  await page.click('#sc-send');
+  await expect(page.locator('.modal').last()).toContainText('pemilik diberi tahu');
+  await page.click('#cf-ok');
+  await expect(page.locator('#sc-sent')).toContainText('Stok diperbarui — pemilik diberi tahu');
+  const db = await H.getDb(page);
+  expect(db.products.find(x => x.id === p.id).stock).toBe(num(p.stock) + 2);
+  expect(db.approvals.filter(a => a.kind === 'opname')).toHaveLength(0);
+  expect(db.activity.filter(a => a.kind === 'notifikasi' && a.ref === 'owner').slice(-1)[0].summary).toContain('Stok opname oleh manajer Jihan langsung diterapkan: 1 barang, 1 selisih');
 });
 function num(v) { const x = Number(v); return isFinite(x) ? x : 0; }

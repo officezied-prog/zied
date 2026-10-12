@@ -180,7 +180,9 @@ function addMove(x, type, amount, note) {
   x.moves = JSON.stringify(mv.slice(-100));
 }
 // v36: profit_loss (the monthly profit & loss statement) needs purchase costs → owner only.
-const OWNER_ONLY = ['void_sale', 'import_products', 'stock_adjust', 'save_settings', 'list_devices', 'list_activity', 'profit_loss'];
+// v40 (owner 2026-10-12: «المدير هو من يقوم بالتغيير ويصل مجرد إعلام فقط للمالك»): stock_adjust is the owner's AND the manager's
+// (checked in the action); the owner is told of every change the manager makes.
+const OWNER_ONLY = ['void_sale', 'import_products', 'save_settings', 'list_devices', 'list_activity', 'profit_loss'];
 // v18 (owner's decision 07 Oct): save_user is the owner's, or a manager's for staff accounts only (checked in the action)
 const STAFF_ROLES = ['kasir', 'sales', 'akuntan'];
 // v19 (owner's decision): the manager creates/manages only cashier and sales accounts — never an accountant (akuntan) or a manager/owner.
@@ -361,6 +363,13 @@ function applyPrices(p, changes) {
 const PRICE_FIELDS = ['retail_price', 'wholesale_price', 'cost_price'];
 // Stock count (opname): each line's difference is counted against the stock at counting time, so sales made
 // while the count waited for approval are not lost. Every change is logged as a 'STOK OPNAME' purchase row.
+// v40: the cost value of a count's differences for the owner's notices, e.g. " (nilai modal -Rp 330.000)"; '' when nothing differs
+function rpDots(v) { return (v > 0 ? '+' : v < 0 ? '-' : '') + 'Rp ' + String(Math.round(Math.abs(v))).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+function countValueText(lines) {
+  const ch = (lines || []).filter(function (l) { return num(l.diff) !== 0; });
+  if (!ch.length) return '';
+  return ' (nilai modal ' + rpDots(ch.reduce(function (s1, l) { const p = productById[String(l.product_id)]; return s1 + num(l.diff) * money(p ? p.cost_price : 0); }, 0)) + ')';
+}
 function applyCount(lines, note, byName) {
   const out = [];
   lines.forEach(function (l) {
@@ -1515,12 +1524,20 @@ switch (req.action) {
     const note = str(data.note).slice(0, 300);
     const changed = lines.filter(function (l) { return l.diff !== 0; });
     const cnt = 'Stok opname ' + lines.length + ' barang, ' + changed.length + ' selisih: ' + changed.slice(0, 20).map(function (l) { return l.name + ' ' + l.system + '→' + l.counted; }).join('; ');
-    if (role === 'owner') { logAct('opname', cnt, '', 0, changed.length ? 'warn' : 'info'); const st0 = applyCount(lines, note, me.name); return done({ ok: true, applied: true, lines: lines, stock: st0, opname: opnameStatus() }); }
-    // v40 (owner 2026-10-12: «إصلاح عدد المخزون يقوم بها الكاشير أو العامل ويرسلها للموافقة من المدير ويصل إشعار المالك … جدول كامل
-    // يقوم المدير بموافقة مرة واحدة على الكل»): the cashier's (or accountant's) count goes to the MANAGER, who approves the whole
-    // table with one tap; the owner is told. A manager's own count still goes to the owner — nobody approves their own count.
-    // A new count by the same person while the earlier one still waits joins that same table (one approval, not several).
-    const apRole = role === 'manager' ? 'owner' : 'manager';
+    // v40 (owner 2026-10-12: «المدير هو من يقوم بالتغيير ويصل مجرد إعلام فقط للمالك»): the owner's AND the manager's own count is
+    // applied at once; for the manager's, the owner gets a notice only (no approval).
+    if (role === 'owner' || role === 'manager') {
+      logAct('opname', cnt, '', 0, changed.length ? 'warn' : 'info');
+      if (role === 'manager') notify(['owner'], 'Stok opname oleh manajer ' + me.name + ' langsung diterapkan: ' + lines.length + ' barang, ' + changed.length + ' selisih' + countValueText(lines) +
+        (changed.length ? ': ' + changed.slice(0, 10).map(function (l) { return l.name + ' ' + l.system + '→' + l.counted; }).join('; ') : ''), changed.length ? 'warn' : 'info');
+      const st0 = applyCount(lines, note, me.name);
+      return done({ ok: true, applied: true, lines: lines, stock: st0, opname: opnameStatus() });
+    }
+    // v40 (owner 2026-10-12: «إصلاح عدد المخزون يقوم بها الكاشير أو العامل ويرسلها للموافقة من المدير ويصل إشعار المالك …
+    // جدول كامل يقوم المدير بموافقة مرة واحدة على الكل»): the cashier's (or accountant's) count goes to the MANAGER, who approves
+    // the whole table with one tap; the owner is told. A new count by the same person while the earlier one still waits joins
+    // that same table (one approval, not several).
+    const apRole = 'manager';
     const opSummary = function (ls) { const ch = ls.filter(function (l) { return num(l.diff) !== 0; }); return ('Stok opname ' + ls.length + ' barang, ' + ch.length + ' selisih: ' + ch.slice(0, 20).map(function (l) { return l.name + ' ' + l.system + '→' + l.counted; }).join('; ')).slice(0, 1500); };
     const prev = approvalRows.find(function (x) { return x.kind === 'opname' && x.status === 'pending' && str(x.cashier).toLowerCase() === str(me.name).toLowerCase(); });
     let pl0 = {};
@@ -1543,7 +1560,7 @@ switch (req.action) {
       payload: JSON.stringify({ lines: lines, counted_at: new Date().toISOString(), by: me.name })
     });
     ops.approvals.push(forWrite(a, -1));
-    notify(['owner'], 'Stok opname dari ' + me.name + ': ' + lines.length + ' barang, ' + changed.length + ' selisih — menunggu ' + (apRole === 'manager' ? 'persetujuan manajer' : 'persetujuan Anda') + ' (' + a.request_id + ')', changed.length ? 'warn' : 'info');
+    notify(['owner'], 'Stok opname dari ' + me.name + ': ' + lines.length + ' barang, ' + changed.length + ' selisih — menunggu persetujuan manajer (' + a.request_id + ')', changed.length ? 'warn' : 'info');
     return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a), lines: lines });
   }
 
@@ -1949,9 +1966,8 @@ switch (req.action) {
       let plN = {};
       try { plN = JSON.parse(a.payload || '{}'); } catch (e) { plN = {}; }
       const lsN = Array.isArray(plN.lines) ? plN.lines : [], chN = lsN.filter(function (l) { return num(l.diff) !== 0; });
-      const valN = chN.reduce(function (s1, l) { const p = productById[String(l.product_id)]; return s1 + num(l.diff) * money(p ? p.cost_price : 0); }, 0);
       notify(['owner'], 'Stok opname ' + str(a.cashier) + ' ' + (decision === 'approved' ? 'DISETUJUI' : 'DITOLAK') + ' oleh ' + me.name + ': ' + lsN.length + ' barang, ' + chN.length +
-        ' selisih' + (chN.length ? ' (nilai modal ' + (valN > 0 ? '+' : valN < 0 ? '-' : '') + 'Rp ' + String(Math.round(Math.abs(valN))).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ')' : '') + ' — ' + a.request_id, decision === 'approved' && chN.length ? 'warn' : 'info');
+        ' selisih' + countValueText(lsN) + ' — ' + a.request_id, decision === 'approved' && chN.length ? 'warn' : 'info');
     }
     if (decision === 'approved' && a.kind === 'purchase_fix') {
       let pl = {};
@@ -2283,10 +2299,13 @@ switch (req.action) {
   }
 
   case 'stock_adjust': {
+    if (role !== 'owner' && role !== 'manager') return fail('FORBIDDEN', 'Hanya pemilik / manajer');
     const p = productById[String(data.product_id)];
     if (!p) return fail('NOT_FOUND', 'Produk tidak ditemukan');
     const newStock = num(data.new_stock);
     const diff = Math.round((newStock - num(p.stock)) * 1000) / 1000;
+    if (role === 'manager') notify(['owner'], 'Stok ' + str(p.name) + ' diubah oleh manajer ' + me.name + ': ' + fmtN(p.stock) + '→' + fmtN(newStock) +
+      (diff ? ' (nilai modal ' + rpDots(diff * money(p.cost_price)) + ')' : '') + (str(data.reason) ? ' | ' + str(data.reason) : ''), diff ? 'warn' : 'info');
     const np = Object.assign({}, p, { stock: newStock });
     ops.products.push(forWrite(np, p.id));
     ops.purchases.push(forWrite({

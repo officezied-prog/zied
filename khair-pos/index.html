@@ -146,7 +146,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.6.3';
+const APP_VERSION = '2.6.4';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -2169,7 +2169,7 @@ function drawApprovals() {
     return `<div class="card pad apr-card ${AP.fresh && AP.fresh.has(a.request_id) ? 'new' : ''}" data-req="${esc(a.request_id)}" data-kind="${esc(a.kind || 'credit')}">
       ${aprBodyHTML(a)}
       <input class="input" data-note placeholder="${esc(t('apr.note_ph'))}" aria-label="${esc(t('apr.note_ph'))}" ${can ? '' : 'disabled'}>
-      <div class="row" style="margin-top:10px;justify-content:flex-end">${can ? '' : `<span class="badge gold grow" style="justify-content:center" data-owner-only>${ic('lock')} ${esc(t(a.kind === 'opname' ? 'gd.needs_owner' : a.kind === 'void' && a.approver_role !== 'owner' && !voidOldDate(a, aprPayload(a)) && String(a.cashier).toLowerCase() === String(S.user).toLowerCase() ? 'apr.own_req' : 'apr.owner_only'))}</span>`}
+      <div class="row" style="margin-top:10px;justify-content:flex-end">${can ? '' : `<span class="badge gold grow" style="justify-content:center" data-owner-only>${ic('lock')} ${esc(t(a.kind === 'opname' ? (a.approver_role === 'owner' ? 'gd.needs_owner' : 'gd.needs_mgr') : a.kind === 'void' && a.approver_role !== 'owner' && !voidOldDate(a, aprPayload(a)) && String(a.cashier).toLowerCase() === String(S.user).toLowerCase() ? 'apr.own_req' : 'apr.owner_only'))}</span>`}
         <button class="btn danger" data-act="apr-decide" data-d="rejected" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t('apr.reject'))}</button><button class="btn primary" data-act="apr-decide" data-d="approved" data-id="${esc(a.request_id)}" ${can ? '' : 'disabled'}>${esc(t('apr.approve'))}</button></div>
     </div>`; }).join('') : `<div class="empty">${ic('check')}<div>${esc(t('apr.none'))}</div></div>`;
   $$('.apr-card', box).forEach(c => { if (notes[c.dataset.req]) $('[data-note]', c).value = notes[c.dataset.req]; });
@@ -3763,7 +3763,7 @@ function drawProducts() {
       <td class="r num">${fmtRp(p.retail_price)}</td>
       <td class="r num">${int(p.wholesale_price) ? fmtRp(p.wholesale_price) + `<div class="small muted">≥ ${fmtQty(p.wholesale_min_qty)}</div>` : '—'}</td>
       <td class="r num"><b class="${isLow(p) || prodExpState(p) === 'expired' || prodExpState(p) === 'soon' ? 'red' : ''}">${fmtQty(p.stock)}</b><div class="small muted">min ${fmtQty(p.min_stock)}</div>${prodExpBadge(p)}</td>
-      <td class="r" style="white-space:nowrap">${isApprover() ? `<button class="icon-btn sm" data-act="prod-photo" data-id="${esc(p.id)}" title="${esc(t('img.title'))}" aria-label="${esc(t('img.title'))}">${ic('camera')}</button> ` : ''}${own ? `<button class="btn xs" data-act="stock-adj" data-id="${esc(p.id)}">${esc(t('prod.adjust'))}</button>` : (isAudit() ? '' : `<button class="btn xs" data-act="price-change" data-id="${esc(p.id)}">${ic('tag')} ${esc(t('price.title'))}</button>`)}</td>
+      <td class="r" style="white-space:nowrap">${isApprover() ? `<button class="icon-btn sm" data-act="prod-photo" data-id="${esc(p.id)}" title="${esc(t('img.title'))}" aria-label="${esc(t('img.title'))}">${ic('camera')}</button> ` : ''}${own || S.role === 'manager' ? `<button class="btn xs" data-act="stock-adj" data-id="${esc(p.id)}">${esc(t('prod.adjust'))}</button>` : ''}${own || isAudit() ? '' : `${S.role === 'manager' ? ' ' : ''}<button class="btn xs" data-act="price-change" data-id="${esc(p.id)}">${ic('tag')} ${esc(t('price.title'))}</button>`}</td>
     </tr>`).join('') || `<tr><td colspan="7" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div>`;
 }
 function productForm(p, fromInvoice) {
@@ -5877,7 +5877,7 @@ function gdoUpdateRow(id) {
 }
 function gdDrawOpname(body) {
   if (!body) return;
-  const own = isOwner(), cats = categories(), active = S.products.filter(p => p.active !== false);
+  const own = canApplyCount(), cats = categories(), active = S.products.filter(p => p.active !== false);
   const pend = (AP.list || []).filter(a => a.kind === 'opname' && (!a.status || a.status === 'pending'));
   const s = gdoSummary();
   const lines = GDO.lines.map(l => ({ l, p: prodById(l.id) })).filter(x => x.p);
@@ -5927,14 +5927,17 @@ function gdDrawOpname(body) {
     inp.addEventListener('keydown', e => { if (e.key !== 'Enter') return; e.preventDefault(); const all = $$('#gdo-table [data-gdo]'); const nx = all[all.indexOf(inp) + 1]; if (nx) nx.focus(); else q.focus(); });
   });
 }
+/** v40 (owner 2026-10-12: «المدير هو من يقوم بالتغيير ويصل مجرد إعلام فقط للمالك»): the owner's and the manager's own count is
+    applied at once (the owner is told of the manager's); the accountant's count goes to the manager. */
+const canApplyCount = () => isOwner() || S.role === 'manager';
 async function gdoSubmit() {
-  const err = $('#gdo-err'), own = isOwner();
+  const err = $('#gdo-err'), own = canApplyCount();
   const filled = GDO.lines.filter(l => String(l.c || '').trim() !== '' && prodById(l.id));
   if (!filled.length) { err.textContent = t('gd.op_none_counted'); return; }
   const bad = filled.find(l => { const v = qtyVal(l.c); return !Number.isFinite(v) || v < 0 || !/\d/.test(String(l.c)); });
   if (bad) { err.textContent = t('gd.op_bad', { name: prodById(bad.id).name }); return; }
-  if (filled.length > 500) { err.textContent = t('gd.op_too_many'); return; }
-  const ok = await confirmBox(t(own ? 'gd.op_confirm_owner' : 'gd.op_confirm', { n: filled.length }));
+  if (filled.length > 2000) { err.textContent = t('gd.op_too_many'); return; }
+  const ok = await confirmBox(t(own ? (isOwner() ? 'gd.op_confirm_owner' : 'gd.op_confirm_mgr') : 'gd.op_confirm', { n: filled.length }));
   if (!ok.ok) return;
   const btn = $('#gdo-submit'); if (btn) btn.disabled = true;
   err.textContent = '';
@@ -6034,14 +6037,14 @@ Object.assign(I18N.id, {
   'gd.op_search': 'Cari / scan barcode lalu Enter', 'gd.op_pick_cat': 'Pilih kategori…', 'gd.op_add_cat': 'Tambah kategori', 'gd.op_add_all': 'Semua barang ({n})', 'gd.op_added': '{n} barang ditambahkan',
   'gd.op_count': 'Hitung', 'gd.op_system': 'Sistem', 'gd.op_diff': 'Selisih', 'gd.op_show': 'Tampilkan selisih', 'gd.op_hide': 'Sembunyikan selisih',
   'gd.op_progress': '{done} dari {n} barang sudah dihitung', 'gd.op_diffs': '{n} selisih', 'gd.op_note': 'Catatan (opsional)',
-  'gd.op_submit_owner': 'Simpan & terapkan stok', 'gd.op_submit': 'Kirim ke pemilik', 'gd.op_clear': 'Kosongkan', 'gd.op_clear_q': 'Hapus semua baris hitungan di perangkat ini?',
+  'gd.op_submit_owner': 'Simpan & terapkan stok', 'gd.op_submit': 'Kirim ke manajer', 'gd.op_clear': 'Kosongkan', 'gd.op_clear_q': 'Hapus semua baris hitungan di perangkat ini?',
   'gd.op_empty': 'Belum ada barang. Cari atau scan barang, pilih kategori, atau ambil semua barang.', 'gd.op_none_counted': 'Isi jumlah hitung minimal satu barang.',
-  'gd.op_bad': 'Jumlah hitung tidak valid: {name}', 'gd.op_too_many': 'Maksimal 500 barang sekali kirim.',
-  'gd.op_confirm_owner': 'Stok {n} barang akan diganti dengan hasil hitung. Lanjutkan?', 'gd.op_confirm': 'Kirim hasil hitung {n} barang ke pemilik untuk disetujui?',
-  'gd.op_applied': 'Stok opname diterapkan: {n} barang, {d} selisih', 'gd.op_waiting': 'Menunggu persetujuan pemilik', 'gd.op_sent': 'Terkirim: {id}',
+  'gd.op_bad': 'Jumlah hitung tidak valid: {name}', 'gd.op_too_many': 'Maksimal 2000 barang sekali kirim.',
+  'gd.op_confirm_owner': 'Stok {n} barang akan diganti dengan hasil hitung. Lanjutkan?', 'gd.op_confirm': 'Kirim hasil hitung {n} barang ke manajer untuk disetujui?', 'gd.op_confirm_mgr': 'Stok {n} barang akan diganti dengan hasil hitung (pemilik diberi tahu). Lanjutkan?',
+  'gd.op_applied': 'Stok opname diterapkan: {n} barang, {d} selisih', 'gd.op_waiting': 'Menunggu persetujuan manajer', 'gd.op_sent': 'Terkirim: {id}',
   'gd.op_offline': 'Butuh internet untuk mengirim. Hasil hitung tetap tersimpan di perangkat ini.', 'gd.op_draft': 'Hasil hitung tersimpan otomatis di perangkat ini.',
   'gd.op_pending': 'Opname menunggu persetujuan', 'gd.op_open_inbox': 'Buka persetujuan', 'gd.req_label': 'Stok opname {n} barang',
-  'gd.needs_owner': 'Butuh pemilik', 'gd.apr_title': 'Stok opname: {n} barang, {d} selisih', 'gd.apr_by': 'Dihitung oleh', 'gd.apr_val_retail': 'Nilai (eceran)', 'gd.apr_val_cost': 'Nilai (modal)',
+  'gd.needs_owner': 'Butuh pemilik', 'gd.needs_mgr': 'Butuh manajer', 'gd.apr_title': 'Stok opname: {n} barang, {d} selisih', 'gd.apr_by': 'Dihitung oleh', 'gd.apr_val_retail': 'Nilai (eceran)', 'gd.apr_val_cost': 'Nilai (modal)',
   'gd.apr_hint': 'Jika disetujui, selisih ditambahkan ke stok saat ini — penjualan sesudah penghitungan tetap terhitung.', 'gd.apr_same': '{n} barang sesuai (tanpa selisih)', 'gd.apr_nodiff': 'Tidak ada selisih.', 'gd.total': 'Total', 'gd.new_toast': 'Stok opname baru dari {cashier} →'
 });
 Object.assign(I18N.ar, {
@@ -6067,14 +6070,14 @@ Object.assign(I18N.ar, {
   'gd.op_search': 'ابحث / امسح الباركود ثم Enter', 'gd.op_pick_cat': 'اختر فئة…', 'gd.op_add_cat': 'إضافة الفئة', 'gd.op_add_all': 'كل الأصناف ({n})', 'gd.op_added': 'أضيف {n} صنف',
   'gd.op_count': 'العدد', 'gd.op_system': 'النظام', 'gd.op_diff': 'الفرق', 'gd.op_show': 'إظهار الفروق', 'gd.op_hide': 'إخفاء الفروق',
   'gd.op_progress': 'تم عدّ {done} من {n} صنف', 'gd.op_diffs': '{n} فروق', 'gd.op_note': 'ملاحظة (اختياري)',
-  'gd.op_submit_owner': 'حفظ وتطبيق المخزون', 'gd.op_submit': 'إرسال إلى المالك', 'gd.op_clear': 'تفريغ', 'gd.op_clear_q': 'حذف كل أسطر الجرد على هذا الجهاز؟',
+  'gd.op_submit_owner': 'حفظ وتطبيق المخزون', 'gd.op_submit': 'إرسال إلى المدير', 'gd.op_clear': 'تفريغ', 'gd.op_clear_q': 'حذف كل أسطر الجرد على هذا الجهاز؟',
   'gd.op_empty': 'لا توجد أصناف بعد. ابحث أو امسح الباركود أو اختر فئة أو أضف كل الأصناف.', 'gd.op_none_counted': 'أدخل عدد صنف واحد على الأقل.',
-  'gd.op_bad': 'عدد غير صالح: {name}', 'gd.op_too_many': 'الحد الأقصى 500 صنف في الإرسال الواحد.',
-  'gd.op_confirm_owner': 'سيُستبدل مخزون {n} صنف بنتيجة العدّ. متابعة؟', 'gd.op_confirm': 'إرسال نتيجة عدّ {n} صنف إلى المالك للموافقة؟',
-  'gd.op_applied': 'تم تطبيق الجرد: {n} صنف، {d} فروق', 'gd.op_waiting': 'بانتظار موافقة المالك', 'gd.op_sent': 'أُرسل: {id}',
+  'gd.op_bad': 'عدد غير صالح: {name}', 'gd.op_too_many': 'الحد الأقصى 2000 صنف في الإرسال الواحد.',
+  'gd.op_confirm_owner': 'سيُستبدل مخزون {n} صنف بنتيجة العدّ. متابعة؟', 'gd.op_confirm': 'إرسال نتيجة عدّ {n} صنف إلى المدير للموافقة؟', 'gd.op_confirm_mgr': 'سيُستبدل مخزون {n} صنف بنتيجة العدّ (ويصل إشعار للمالك). متابعة؟',
+  'gd.op_applied': 'تم تطبيق الجرد: {n} صنف، {d} فروق', 'gd.op_waiting': 'بانتظار موافقة المدير', 'gd.op_sent': 'أُرسل: {id}',
   'gd.op_offline': 'يلزم الإنترنت للإرسال. نتيجة العدّ محفوظة على هذا الجهاز.', 'gd.op_draft': 'نتيجة العدّ تُحفظ تلقائيًا على هذا الجهاز.',
   'gd.op_pending': 'جرد بانتظار الموافقة', 'gd.op_open_inbox': 'فتح الموافقات', 'gd.req_label': 'جرد {n} صنف',
-  'gd.needs_owner': 'يحتاج المالك', 'gd.apr_title': 'جرد المخزون: {n} صنف، {d} فروق', 'gd.apr_by': 'عدّه', 'gd.apr_val_retail': 'القيمة (تجزئة)', 'gd.apr_val_cost': 'القيمة (تكلفة)',
+  'gd.needs_owner': 'يحتاج المالك', 'gd.needs_mgr': 'يحتاج المدير', 'gd.apr_title': 'جرد المخزون: {n} صنف، {d} فروق', 'gd.apr_by': 'عدّه', 'gd.apr_val_retail': 'القيمة (تجزئة)', 'gd.apr_val_cost': 'القيمة (تكلفة)',
   'gd.apr_hint': 'عند الموافقة يُضاف الفرق إلى المخزون الحالي — وتبقى المبيعات التي تمت بعد العدّ محسوبة.', 'gd.apr_same': '{n} أصناف مطابقة (بلا فرق)', 'gd.apr_nodiff': 'لا توجد فروق.', 'gd.total': 'الإجمالي', 'gd.new_toast': 'جرد جديد من {cashier} ←'
 });
 
