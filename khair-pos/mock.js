@@ -1927,6 +1927,25 @@ const MockServer = (() => {
         rep.cash = { sales: byMethod.tunai, payments_in: rep.payments_in.tunai, payments_out: rep.payments_out.tunai, expenses_from_kas: rep.expenses.from_kas,
           expected_total: sum(shifts, x => x.expected_cash), counted_total: sum(shifts.filter(x => x.status === 'closed'), x => x.counted_cash), difference_total: sum(shifts.filter(x => x.status === 'closed'), x => x.difference) };
         if (owner) rep.profit = sum(okSales, x => int(x.profit));
+        // v37 every cashier's own day (mirrors backend/process.js daily_report)
+        const per = {}, invWho = {};
+        const who = n => { const k = strv(n) || '-'; if (!per[k]) per[k] = { name: k, sales: { count: 0, total: 0, discount: 0, items_qty: 0, by_method: { tunai: 0, transfer: 0, qris: 0 }, debt: 0 }, voids: { count: 0, total: 0 },
+          payments_in: { count: 0, total: 0, tunai: 0, transfer: 0, qris: 0 }, payments_out: { count: 0, total: 0, tunai: 0 }, expenses: { count: 0, total: 0, from_kas: 0 }, shifts: [] }; return per[k]; };
+        okSales.forEach(x => { const c = who(x.cashier), s1 = c.sales, paid = Math.min(int(x.paid_amount), int(x.total)); invWho[x.invoice_no] = c; s1.count++; s1.total += int(x.total); s1.discount += int(x.discount); s1.debt += int(x.debt_amount);
+          s1.by_method[s1.by_method[x.payment_method] !== undefined ? x.payment_method : 'tunai'] += paid; });
+        items.forEach(it => { const c = invWho[it.invoice_no]; if (c) c.sales.items_qty = roundQty(c.sales.items_qty + num(it.qty)); });
+        voids.forEach(x => { const c = who(x.cashier); c.voids.count++; c.voids.total += int(x.total); });
+        pin.forEach(p => { const c = who(p.cashier); c.payments_in.count++; c.payments_in.total += int(p.amount); if (c.payments_in[p.method] !== undefined) c.payments_in[p.method] += int(p.amount); });
+        pout.forEach(p => { const c = who(p.cashier); c.payments_out.count++; c.payments_out.total += int(p.amount); if (p.method === 'tunai') c.payments_out.tunai += int(p.amount); });
+        exps.forEach(e => { const c = who(e.user); c.expenses.count++; c.expenses.total += int(e.amount); if (e.paid_from === 'kas') c.expenses.from_kas += int(e.amount); });
+        shifts.forEach(x => who(x.cashier).shifts.push(x.shift_id));
+        rep.cashiers = Object.keys(per).map(k => {
+          const c = per[k], mine = shifts.filter(x => strv(x.cashier) === k || (k === '-' && !strv(x.cashier))), closed = mine.filter(x => x.status === 'closed');
+          c.drawer = mine.length ? { count: mine.length, open: mine.length - closed.length, opening_cash: sum(mine, x => x.opening_cash), cash_sales: sum(mine, x => x.cash_sales), cash_payments: sum(mine, x => x.cash_payments),
+            cash_in: sum(mine, x => x.cash_in), cash_out: sum(mine, x => x.cash_out), expected_cash: sum(mine, x => x.expected_cash),
+            counted_cash: closed.length ? sum(closed, x => x.counted_cash) : null, difference: closed.length ? sum(closed, x => x.difference) : null } : null;
+          return c;
+        }).sort((a, b) => b.sales.total - a.sales.total || String(a.name).localeCompare(String(b.name)));
         const wibDayOf = iso => iso ? new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(0, 10) : '';
         const corrDay = db.approvals.filter(a => a.kind === 'koreksi' && wibDayOf(a.decided_at) === day);
         const refPaid = db.approvals.filter(a => a.kind === 'refund' && a.status === 'approved' && wibDayOf(a.decided_at) === day);

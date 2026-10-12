@@ -145,7 +145,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.5.0';
+const APP_VERSION = '2.5.1';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -7458,7 +7458,7 @@ function drawDaily() {
   const row = (k, v, id, cls = '') => `<div class="dr-row"><span>${esc(k)}</span><b class="num ${cls}" ${id ? `data-dr="${id}"` : ''}>${v}</b></div>`;
   const to = DR.data.send_to || {}, own = isOwner();
   const nums = [['company', to.company], ['manager', to.manager], ['owner', to.owner]].map(([k, n]) => [k, normPhone(n) || String(n || '').replace(/\D/g, '')]).filter(x => x[1]);
-  box.innerHTML = `<div class="kpis">${kpi('dr-total', t('dr.sales_total'), fmtRp(s0.total), esc(t('dr.n_tx', { n: fmtNum(s0.count) })), 'hl')}${kpi('dr-items', t('dr.items'), fmtQty(s0.items_qty))}${kpi('dr-bank', t('dr.bank_in'), fmtRp(bank.in_total), '', 'gold')}${own && R.profit != null ? kpi('dr-profit', t('rep.profit'), fmtRp(R.profit)) : ''}</div>
+  box.innerHTML = `${drCashiersHTML(R)}<div class="kpis">${kpi('dr-total', t('dr.sales_total'), fmtRp(s0.total), esc(t('dr.n_tx', { n: fmtNum(s0.count) })), 'hl')}${kpi('dr-items', t('dr.items'), fmtQty(s0.items_qty))}${kpi('dr-bank', t('dr.bank_in'), fmtRp(bank.in_total), '', 'gold')}${own && R.profit != null ? kpi('dr-profit', t('rep.profit'), fmtRp(R.profit)) : ''}</div>
     <div class="dr-grid">
       <div class="panel" id="dr-methods"><h3>${esc(t('dr.by_method'))}</h3><div class="pb">${row(t('pm.tunai'), fmtRp(bm.tunai), 'tunai')}${row(t('pm.transfer'), fmtRp(bm.transfer), 'transfer')}${row(t('pm.qris'), fmtRp(bm.qris), 'qris')}${row(t('pm.hutang'), fmtRp(s0.debt), 'hutang', s0.debt ? 'amber' : '')}${row(t('dr.discount'), fmtRp(s0.discount), 'discount')}${DR.data.send_fees ? row(t('rs.fee_line'), `${fmtNum(DR.data.send_fees.count)} · ${fmtRp(DR.data.send_fees.total)}`, 'send-fee') : ''}${row(t('dr.voids'), `${fmtNum((s0.voids || {}).count)} · ${fmtRp((s0.voids || {}).total)}`, 'voids', (s0.voids || {}).count ? 'red' : '')}</div></div>
       <div class="panel" id="dr-bank"><h3>${ic('bank')} ${esc(t('dr.bank'))}</h3><div class="pb">${row(t('dr.b_sales_tf'), fmtRp(bank.sales_transfer), 'b-stf')}${row(t('dr.b_sales_qris'), fmtRp(bank.sales_qris), 'b-sqr')}${row(t('dr.b_pay_tf'), fmtRp(bank.payments_transfer), 'b-ptf')}${row(t('dr.b_pay_qris'), fmtRp(bank.payments_qris), 'b-pqr')}${row(t('dr.b_in_total'), fmtRp(bank.in_total), 'b-in', 'green')}${row(t('dr.b_out'), fmtRp(bank.out_transfer), 'b-out', bank.out_transfer ? 'red' : '')}</div></div>
@@ -7479,16 +7479,58 @@ function drawDaily() {
   const pc = $('#dr-profit'); if (pc) pc.onchange = () => { DR.withProfit = pc.checked; drawDaily(); };
   $$('#dr-wa [data-wa]').forEach(a => a.addEventListener('click', () => { if (DR.date === today()) { store.set('daily_sent', today()); refreshAttention(); } }));
 }
+/** v37 (owner 2026-10-12): ① every cashier's own day — sales per payment method, the debt he gave, voids, debt payments he
+ *  took in, money paid out, expenses and his drawer — then ② the whole store (the panels below). Empty with an old Worker. */
+function drCashiersHTML(R) {
+  if (!Array.isArray(R.cashiers)) return '';
+  const list = R.cashiers, s0 = R.sales || {};
+  const row = (k, v, id, cls = '') => `<div class="dr-row"><span>${esc(k)}</span><b class="num ${cls}" data-pc="${id}">${v}</b></div>`;
+  const cards = list.map(c => {
+    const s = c.sales || {}, m = s.by_method || {}, d = c.drawer, pin = c.payments_in || {}, pout = c.payments_out || {}, ex = c.expenses || {}, vd = c.voids || {};
+    const kas = d ? `<div class="small" style="font-weight:800;margin-top:8px">${esc(t('dr.pc_drawer'))}${d.count > 1 ? ' · ' + esc(t('dr.pc_n_drawers', { n: d.count })) : ''}</div>
+        ${row(t('shift.opening'), fmtRp(d.opening_cash), 'opening')}${row(t('shift.expected'), fmtRp(d.expected_cash), 'expected')}
+        ${row(t('shift.counted'), d.counted_cash == null ? '—' : fmtRp(d.counted_cash), 'counted')}${row(t('shift.difference'), d.difference == null ? '—' : (d.difference > 0 ? '+' : '') + fmtRp(d.difference), 'diff', d.difference ? 'red' : d.difference === 0 ? 'green' : '')}`
+      : `<div class="small muted" style="margin-top:8px" data-pc="no-drawer">${esc(t('dr.pc_no_drawer'))}</div>`;
+    return `<div class="panel dr-pc" data-cashier="${esc(c.name)}"><h3 class="row wrap"><span class="grow">${ic('user')} ${esc(c.name)}</span>${d && d.open ? `<span class="badge amber">${esc(t('shift.status_open'))}</span>` : ''}</h3><div class="pb">
+      <div class="small muted" data-pc="tx">${esc(t('dr.pc_tx', { n: fmtNum(s.count), q: fmtQty(s.items_qty) }))}</div>
+      ${row(t('dr.pc_sales'), fmtRp(s.total), 'total')}${row(t('pm.tunai'), fmtRp(m.tunai), 'tunai')}${row(t('pm.transfer'), fmtRp(m.transfer), 'transfer')}${row(t('pm.qris'), fmtRp(m.qris), 'qris')}${row(t('pm.hutang'), fmtRp(s.debt), 'hutang', s.debt ? 'amber' : '')}
+      ${vd.count ? row(t('dr.voids'), `${fmtNum(vd.count)} · ${fmtRp(vd.total)}`, 'voids', 'red') : ''}${pin.count ? row(t('dr.pc_pin'), fmtRp(pin.total), 'pin') : ''}${pout.count ? row(t('dr.pc_pout'), fmtRp(pout.total), 'pout') : ''}${ex.count ? row(t('dr.pc_exp'), fmtRp(ex.total), 'exp') : ''}
+      ${kas}</div></div>`;
+  }).join('');
+  const all = sum(list, c => int((c.sales || {}).total));
+  return `<h2 class="dr-sec" id="dr-sec-cashiers">${esc(t('dr.sec_cashiers'))}</h2>
+    ${list.length ? `<div class="dr-grid" id="dr-cashiers">${cards}</div><p class="small muted" id="dr-pc-check" style="margin:-4px 0 16px">${esc(t('dr.pc_check', { a: fmtRp(all), b: fmtRp(s0.total) }))} ${all === int(s0.total) ? '✓' : '⚠'}</p>` : `<div class="empty" id="dr-cashiers">${esc(t('dr.pc_none'))}</div>`}
+    <h2 class="dr-sec" id="dr-sec-store">${esc(t('dr.sec_store'))}</h2>`;
+}
+/** WhatsApp lines for ① per cashier (Indonesian, like the rest of the message). */
+function dailyCashierLines(R) {
+  const L = [];
+  (R.cashiers || []).forEach(c => {
+    const s = c.sales || {}, m = s.by_method || {}, d = c.drawer, pin = c.payments_in || {}, pout = c.payments_out || {}, ex = c.expenses || {}, vd = c.voids || {};
+    L.push('', `*${c.name}* — ${fmtNum(s.count)} transaksi · ${fmtQty(s.items_qty)} barang`, `Penjualan: *${fmtRp(s.total)}*`,
+      `• Tunai ${fmtRp(m.tunai)} · Transfer ${fmtRp(m.transfer)} · QRIS ${fmtRp(m.qris)} · Hutang ${fmtRp(s.debt)}`);
+    if (vd.count) L.push(`Batal: ${fmtNum(vd.count)} faktur (${fmtRp(vd.total)})`);
+    if (pin.count) L.push(`Bayar hutang diterima: ${fmtRp(pin.total)} (tunai ${fmtRp(pin.tunai)})`);
+    if (pout.count) L.push(`Uang keluar (bayar / retur): ${fmtRp(pout.total)} (tunai ${fmtRp(pout.tunai)})`);
+    if (ex.count) L.push(`Pengeluaran: ${fmtRp(ex.total)}${ex.from_kas ? ` (dari kas ${fmtRp(ex.from_kas)})` : ''}`);
+    L.push(d ? `Kas laci${d.count > 1 ? ` (${fmtNum(d.count)} laci)` : ''}: modal ${fmtRp(d.opening_cash)} · seharusnya ${fmtRp(d.expected_cash)}${d.counted_cash != null ? ` · dihitung ${fmtRp(d.counted_cash)} · selisih ${(d.difference > 0 ? '+' : '') + fmtRp(d.difference)}` : ''}${d.open ? ' · belum ditutup' : ''}` : 'Kas laci: tanpa laci kas');
+  });
+  if (!(R.cashiers || []).length) L.push('Belum ada transaksi.');
+  return L;
+}
 /** Compact plain-text message (Indonesian), numbers like Rp 1.250.000; profit only when asked. */
 function dailyText(R, withProfit) {
   const s0 = R.sales || {}, bm = s0.by_method || {}, bank = R.bank || {}, cash = R.cash || {}, pin = R.payments_in || {}, pout = R.payments_out || {}, ex = R.expenses || {};
-  const L = [`*Laporan harian ${settings().store_name || 'Khair Mart'} — ${fmtDate(R.date)}*`,
+  const per = Array.isArray(R.cashiers);
+  const L = [`*Laporan harian ${settings().store_name || 'Khair Mart'} — ${fmtDate(R.date)}*`];
+  if (per) L.push('', '*① PER KASIR*', ...dailyCashierLines(R), '', '*② TOTAL TOKO (semua kasir)*');
+  L.push(
     `Transaksi: ${fmtNum(s0.count)} · Barang terjual: ${fmtQty(s0.items_qty)}`, `Total penjualan: *${fmtRp(s0.total)}*`,
     `• Tunai: ${fmtRp(bm.tunai)}`, `• Transfer: ${fmtRp(bm.transfer)}`, `• QRIS: ${fmtRp(bm.qris)}`, `• Hutang: ${fmtRp(s0.debt)}`,
     `Masuk rekening bank: *${fmtRp(bank.in_total)}* (transfer ${fmtRp(bank.sales_transfer + bank.payments_transfer)}, QRIS ${fmtRp(bank.sales_qris + bank.payments_qris)})`,
     `Pembayaran hutang masuk: ${fmtRp(pin.total)} · Bayar pemasok: ${fmtRp(pout.total)}`, `Pengeluaran: ${fmtRp(ex.total)} (dari kas ${fmtRp(ex.from_kas)})` + (ex.flagged || ex.rejected ? ` — cek nota: ${fmtNum(ex.flagged || 0)} menunggu, ${fmtNum(ex.rejected || 0)} ditolak` : ''),
-    `Kas laci: seharusnya ${fmtRp(cash.expected_total)}, dihitung ${fmtRp(cash.counted_total)}, selisih ${fmtRp(cash.difference_total)}`];
-  (R.shifts || []).forEach(x => L.push(`- ${x.cashier}: modal ${fmtRp(x.opening_cash)}, seharusnya ${fmtRp(x.expected_cash)}, ${x.counted_cash == null ? 'belum ditutup' : `dihitung ${fmtRp(x.counted_cash)}, selisih ${fmtRp(x.difference)}`}`));
+    `Kas laci: seharusnya ${fmtRp(cash.expected_total)}, dihitung ${fmtRp(cash.counted_total)}, selisih ${fmtRp(cash.difference_total)}`);
+  if (!per) (R.shifts || []).forEach(x => L.push(`- ${x.cashier}: modal ${fmtRp(x.opening_cash)}, seharusnya ${fmtRp(x.expected_cash)}, ${x.counted_cash == null ? 'belum ditutup' : `dihitung ${fmtRp(x.counted_cash)}, selisih ${fmtRp(x.difference)}`}`));
   if ((s0.voids || {}).count) L.push(`Batal: ${fmtNum(s0.voids.count)} faktur (${fmtRp(s0.voids.total)})`);
   const rt = R.returns || {}, rc0 = rt.customer || {}, rs = rt.supplier || {};
   if (rc0.count) L.push(`Retur pelanggan: ${fmtNum(rc0.count)} (uang kembali ${fmtRp(rc0.refund)}, tunai ${fmtRp(rc0.tunai)})`);
@@ -7666,6 +7708,7 @@ Object.assign(I18N.id, {
   'dr.bank': 'Rekening bank', 'dr.b_sales_tf': 'Penjualan transfer', 'dr.b_sales_qris': 'Penjualan QRIS', 'dr.b_pay_tf': 'Bayar hutang (transfer)', 'dr.b_pay_qris': 'Bayar hutang (QRIS)', 'dr.b_in_total': 'Total masuk bank', 'dr.b_out': 'Keluar (bayar pemasok)',
   'dr.corrections': 'Koreksi harga', 'dr.cor_count': 'Jumlah koreksi', 'dr.cor_net': 'Selisih (rugi−/laba+)', 'dr.cor_refund': 'Refund dibayar', 'dr.cor_writeoff': 'Kurang bayar direlakan',
   'dr.cash': 'Uang tunai', 'dr.c_sales': 'Penjualan tunai', 'dr.c_pin': 'Bayar hutang tunai', 'dr.c_pout': 'Bayar pemasok tunai', 'dr.c_exp': 'Pengeluaran dari kas', 'dr.payments': 'Pembayaran & biaya', 'dr.pin': 'Pembayaran masuk', 'dr.pout': 'Bayar pemasok', 'dr.expenses': 'Pengeluaran',
+  'dr.sec_cashiers': '① Per kasir', 'dr.sec_store': '② Total toko (semua kasir)', 'dr.pc_tx': '{n} transaksi · {q} barang', 'dr.pc_sales': 'Penjualan', 'dr.pc_pin': 'Bayar hutang diterima', 'dr.pc_pout': 'Uang keluar (bayar / retur)', 'dr.pc_exp': 'Pengeluaran dibayar', 'dr.pc_drawer': 'Kas laci', 'dr.pc_no_drawer': 'Tanpa laci kas', 'dr.pc_n_drawers': '{n} laci', 'dr.pc_check': 'Jumlah semua kasir {a} = total toko {b}', 'dr.pc_none': 'Belum ada transaksi pada hari ini.',
   'dr.drawers': 'Kas laci', 'dr.send_title': 'Kirim ke WhatsApp', 'dr.with_profit': 'Sertakan laba', 'dr.send_company': 'Kirim ke WA Toko', 'dr.send_manager': 'Kirim ke WA Manajer', 'dr.send_owner': 'Kirim ke WA Pemilik', 'dr.set_numbers': 'Nomor WhatsApp yang kosong diatur di Pengaturan.', 'dr.preview': 'Lihat teks pesan',
   'set.key_show': 'Tampilkan', 'set.key_hide': 'Sembunyikan', 'set.loc_title': 'Lokasi toko', 'set.loc_hint': 'Dipakai untuk jarak perangkat ke toko. Tekan tombol di bawah saat berada di toko.', 'set.lat': 'Lintang (lat)', 'set.lng': 'Bujur (lng)', 'set.loc_here': 'Pakai lokasi saya sekarang', 'set.loc_got': 'Lokasi diambil (± {acc} m) — tekan Simpan',
   'set.loc_bad': 'Lintang / bujur tidak valid', 'set.req_loc': 'Wajibkan lokasi perangkat untuk kasir & manajer', 'set.req_loc_hint': 'Aplikasi kasir / manajer tidak bisa dipakai sebelum lokasi diizinkan.',
@@ -7735,6 +7778,7 @@ Object.assign(I18N.ar, {
   'dr.bank': 'الحساب البنكي', 'dr.b_sales_tf': 'مبيعات بالتحويل', 'dr.b_sales_qris': 'مبيعات QRIS', 'dr.b_pay_tf': 'سداد ديون (تحويل)', 'dr.b_pay_qris': 'سداد ديون (QRIS)', 'dr.b_in_total': 'إجمالي الداخل للبنك', 'dr.b_out': 'الخارج (دفع للموردين)',
   'dr.corrections': 'تصحيح الأسعار', 'dr.cor_count': 'عدد التصحيحات', 'dr.cor_net': 'الفرق (خسارة− / ربح+)', 'dr.cor_refund': 'إرجاع مدفوع', 'dr.cor_writeoff': 'نقص مُتنازَل عنه',
   'dr.cash': 'النقد', 'dr.c_sales': 'مبيعات نقدية', 'dr.c_pin': 'سداد ديون نقدًا', 'dr.c_pout': 'دفع للموردين نقدًا', 'dr.c_exp': 'مصاريف من الصندوق', 'dr.payments': 'المدفوعات والمصاريف', 'dr.pin': 'دفعات واردة', 'dr.pout': 'دفع للموردين', 'dr.expenses': 'المصاريف',
+  'dr.sec_cashiers': '① حصيلة كل كاشير', 'dr.sec_store': '② الحصيلة العامة للمتجر (كل الكاشيرات)', 'dr.pc_tx': '{n} عملية · {q} صنف', 'dr.pc_sales': 'المبيعات', 'dr.pc_pin': 'تسديد ديون استلمه', 'dr.pc_pout': 'أموال خرجت (دفع / مرتجع)', 'dr.pc_exp': 'مصروفات دفعها', 'dr.pc_drawer': 'صندوقه', 'dr.pc_no_drawer': 'بدون صندوق نقد', 'dr.pc_n_drawers': '{n} صناديق', 'dr.pc_check': 'مجموع كل الكاشيرات {a} = إجمالي المتجر {b}', 'dr.pc_none': 'لا توجد عمليات في هذا اليوم.',
   'dr.drawers': 'صناديق النقد', 'dr.send_title': 'إرسال إلى واتساب', 'dr.with_profit': 'تضمين الربح', 'dr.send_company': 'إرسال لواتساب المتجر', 'dr.send_manager': 'إرسال لواتساب المدير', 'dr.send_owner': 'إرسال لواتساب المالك', 'dr.set_numbers': 'أرقام واتساب الفارغة تُضبط في الإعدادات.', 'dr.preview': 'عرض نص الرسالة',
   'set.key_show': 'إظهار', 'set.key_hide': 'إخفاء', 'set.loc_title': 'موقع المتجر', 'set.loc_hint': 'يُستخدم لحساب مسافة الأجهزة عن المتجر. اضغط الزر أدناه وأنت في المتجر.', 'set.lat': 'خط العرض', 'set.lng': 'خط الطول', 'set.loc_here': 'استخدم موقعي الآن', 'set.loc_got': 'أُخذ الموقع (± {acc} م) — اضغط حفظ',
   'set.loc_bad': 'إحداثيات غير صالحة', 'set.req_loc': 'إلزام الكاشير والمدير بمشاركة موقع الجهاز', 'set.req_loc_hint': 'لا يُفتح تطبيق الكاشير / المدير قبل السماح بالموقع.',
