@@ -1,5 +1,5 @@
-// Gudang (warehouse): overview, stock list, stock card, expiry (FIFO estimate), stock count (opname) with owner
-// approval, Barang Masuk expiry date, Beranda attention items. Expected numbers are recomputed from the mock DB.
+// Gudang (warehouse): overview, stock list, stock card, expiry (FIFO estimate), stock count (opname) with manager
+// approval (v40; the owner is told), Barang Masuk expiry date, Beranda attention items. Expected numbers are recomputed from the mock DB.
 const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const path = require('path');
@@ -248,69 +248,77 @@ test('owner opname: blind count, draft survives reload, applies immediately and 
   await expect(page.locator('[data-kpi="purchases"] .s')).toContainText('2 penyesuaian stok');
 });
 
-test('manager opname → owner approval; approved diff is added to the CURRENT stock; manager never sees cost', async ({ page }) => {
+// v40 (owner 2026-10-12: «المدير هو من يقوم بالتغيير ويصل مجرد إعلام فقط للمالك»): a cashier's count goes to the MANAGER, who
+// approves the whole table; the manager's own count and single-product fixes apply at once — the owner only gets notices.
+test('cashier opname → the manager approves (no cost shown); approved diff is added to the CURRENT stock; the owner is only told', async ({ page }) => {
   await login(page, 'Jihan', '2222', '', { stay: true });
-  const kha = productByName(await getDb(page), /Kurma Khalas/);
+  const db0 = await getDb(page), kha = productByName(db0, /Kurma Khalas/), kis = productByName(db0, /Kismis/);
   await openGudang(page);
   await expect(page.locator('[data-kpi="gd-retail"]')).toBeVisible();
   await expect(page.locator('[data-kpi="gd-cost"]')).toHaveCount(0);
   await expect(page.locator('#view-gudang')).not.toContainText('Modal');
-  await page.click('[data-act="gd-tab"][data-tab="opname"]');
-  await page.fill('#gdo-q', 'khalas');
-  await page.press('#gdo-q', 'Enter');
-  await page.fill(`[data-gdo="${kha.id}"]`, String(kha.stock - 3));
-  await expect(page.locator('#gdo-submit')).toContainText('Kirim ke pemilik');
-  await page.click('#gdo-submit');
-  await page.click('#cf-ok');
-  await expect(page.locator('#gdo-res[data-applied="0"]')).toContainText('Menunggu persetujuan pemilik');
+  // the cashier counts (cashier app) → one request for the manager
+  const sent = await asUser(page, 'Siti', '1111', 'stock_count', { counts: [{ product_id: kha.id, counted: kha.stock - 3 }] });
+  expect(sent.applied).toBe(false);
   let db = await getDb(page);
   const ap = db.approvals.find(a => a.kind === 'opname');
-  expect(ap).toMatchObject({ status: 'pending', approver_role: 'owner', cashier: 'Jihan' });
-  expect(ap.summary).toBe(`Stok opname 1 barang, 1 selisih: ${kha.name} ${kha.stock}→${kha.stock - 3}`);
-  expect(JSON.parse(ap.payload)).toMatchObject({ by: 'Jihan', lines: [{ product_id: kha.id, system: kha.stock, counted: kha.stock - 3, diff: -3 }] });
-  expect(productByName(db, /Kurma Khalas/).stock).toBe(kha.stock); // nothing applied yet
-  await expect(page.locator(`#gdo-pending [data-req="${ap.request_id}"]`)).toBeVisible();
-  // manager: read-only card, "Butuh pemilik", retail value only; deciding is refused
+  expect(ap).toMatchObject({ status: 'pending', approver_role: 'manager', cashier: 'Siti' });
+  expect(db.activity.filter(a => a.kind === 'notifikasi' && a.ref === 'owner').pop().summary).toContain('Stok opname dari Siti: 1 barang, 1 selisih — menunggu persetujuan manajer');
+  // a sale happens between the count and the approval
+  await asUser(page, 'Pemilik', '1234', 'save_sale', saleData(kha, 2));
+  // the manager: the whole table, retail value only, and one tap decides it
   await nav(page, 'approvals');
   await page.click('[data-act="apr-refresh"]');
   const card = page.locator(`.apr-card[data-req="${ap.request_id}"]`);
   await expect(card).toHaveAttribute('data-kind', 'opname');
-  await expect(card.locator('[data-owner-only]')).toHaveText('Butuh pemilik');
-  await expect(card.locator('[data-d="approved"]')).toBeDisabled();
+  await expect(card).toContainText('Stok opname: 1 barang, 1 selisih');
   await expect(card.locator(`[data-opname-lines] tr[data-pid="${kha.id}"] [data-val="retail"]`)).toHaveText(rp(-3 * kha.retail_price));
   await expect(card.locator('[data-val="cost"]')).toHaveCount(0);
   await expect(card).not.toContainText('Modal');
-  expect((await asUser(page, 'Jihan', '2222', 'decide_approval', { request_id: ap.request_id, decision: 'approved' })).error).toBe('NEEDS_OWNER');
-  const g = await asUser(page, 'Jihan', '2222', 'get_sales', { from: addDays(jktToday(), -30), to: jktToday() });
-  expect(g.purchases.length).toBeGreaterThan(5);
-  expect(JSON.stringify(g.purchases)).not.toContain('cost_price');
-
-  // a sale happens between the count and the approval
-  await asUser(page, 'Pemilik', '1234', 'save_sale', saleData(kha, 2));
-  await relogin(page, 'Pemilik', '1234');
-  await expect.poll(() => page.evaluate(() => ATT.items.map(x => x.text).join(' | '))).toContain('Opname menunggu persetujuan (1)');
-  await page.click('#tb-bell');
-  await expect(page.locator('#bell-att [data-act="att-go"][data-tab="opname"]')).toContainText('Opname menunggu persetujuan (1)');
-  await closeModals(page);
-  await nav(page, 'approvals');
-  await page.click('[data-act="apr-refresh"]');
-  const oc = page.locator(`.apr-card[data-req="${ap.request_id}"]`);
-  await expect(oc).toContainText('Stok opname: 1 barang, 1 selisih');
-  await expect(oc.locator(`tr[data-pid="${kha.id}"] [data-val="cost"]`)).toHaveText(rp(-3 * kha.cost_price));
-  await expect(oc.locator('[data-total="retail"]')).toHaveText(rp(-3 * kha.retail_price));
   await page.screenshot({ path: path.join(SHOTS, 'desktop-approvals-opname.png') });
-  await oc.locator('[data-d="approved"]').click();
+  await card.locator('[data-d="approved"]').click();
   await expect(page.locator('.toast.ok').filter({ hasText: ap.request_id })).toBeVisible();
   db = await getDb(page);
   expect(productByName(db, /Kurma Khalas/).stock).toBe(kha.stock - 2 - 3);
   const log = db.purchases.filter(r => r.supplier === 'STOK OPNAME').pop();
-  expect(log).toMatchObject({ product_id: kha.id, qty: -3, total: 0, user: 'Jihan' });
-  expect(log.note).toContain('disetujui Pemilik');
-  expect(db.approvals.find(a => a.request_id === ap.request_id)).toMatchObject({ status: 'approved', decided_by: 'Pemilik' });
+  expect(log).toMatchObject({ product_id: kha.id, qty: -3, total: 0, user: 'Siti' });
+  expect(log.note).toContain('disetujui Jihan');
+  expect(db.approvals.find(a => a.request_id === ap.request_id)).toMatchObject({ status: 'approved', decided_by: 'Jihan' });
+  expect(db.activity.filter(a => a.kind === 'notifikasi' && a.ref === 'owner').pop().summary).toContain('Stok opname Siti DISETUJUI oleh Jihan: 1 barang, 1 selisih');
+  const g = await asUser(page, 'Jihan', '2222', 'get_sales', { from: addDays(jktToday(), -30), to: jktToday() });
+  expect(JSON.stringify(g.purchases)).not.toContain('cost_price');
+
+  // the manager's OWN count is applied at once — no approval, the owner is told
+  await openGudang(page);
+  await page.click('[data-act="gd-tab"][data-tab="opname"]');
+  await page.fill('#gdo-q', kis.sku);
+  await page.press('#gdo-q', 'Enter');
+  await page.fill(`[data-gdo="${kis.id}"]`, String(kis.stock + 4));
+  await expect(page.locator('#gdo-submit')).toContainText('Simpan & terapkan stok');
+  await page.click('#gdo-submit');
+  await expect(page.locator('#cf-msg, .modal').last()).toContainText('pemilik diberi tahu');
+  await page.click('#cf-ok');
+  await expect(page.locator('#gdo-res[data-applied="1"]')).toBeVisible();
+  db = await getDb(page);
+  expect(productByName(db, /Kismis/).stock).toBe(kis.stock + 4);
+  expect(db.approvals.filter(a => a.kind === 'opname' && a.status === 'pending')).toHaveLength(0);
+  expect(db.activity.filter(a => a.kind === 'notifikasi' && a.ref === 'owner').pop().summary).toContain('Stok opname oleh manajer Jihan langsung diterapkan: 1 barang, 1 selisih');
+
+  // a single product's stock: the manager fixes it himself (was owner only); the owner is told
+  await nav(page, 'products');
+  await page.fill('#pr-q', 'khalas');
+  await page.locator(`#prod-table [data-act="stock-adj"][data-id="${kha.id}"]`).click();
+  await page.fill('#sa-new', String(kha.stock));
+  await page.click('#sa-save');
+  await expect(page.locator('#sa-save')).toHaveCount(0);
+  db = await getDb(page);
+  expect(productByName(db, /Kurma Khalas/).stock).toBe(kha.stock);
+  expect(db.activity.filter(a => a.kind === 'notifikasi' && a.ref === 'owner').pop().summary).toContain(`Stok ${kha.name} diubah oleh manajer Jihan: ${kha.stock - 5}→${kha.stock}`);
+
   // the owner app shows the new stock right away
   await openGudang(page, 'list');
   await page.fill('#gd-q', 'khalas');
-  await expect(page.locator(`#gd-table tr[data-pid="${kha.id}"] [data-col="stock"]`)).toContainText(fq(kha.stock - 5));
+  await expect(page.locator(`#gd-table tr[data-pid="${kha.id}"] [data-col="stock"]`)).toContainText(fq(kha.stock));
 });
 
 test('Barang Masuk: optional expiry date per line is sent as exp_date and shows up in the expiry list', async ({ page }) => {
