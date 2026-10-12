@@ -180,6 +180,8 @@ export const TABLES = {
   pos_chat: {
     channel: 'string', cid: 'string', from_user: 'string', from_name: 'string',
     from_role: 'string', body: 'string', image: 'string', created_at: 'string', deleted: 'boolean',
+    // v38 (owner 2026-10-12: "For any notice come to me make for me I can reply"): the quoted notice (JSON) and the notice id
+    quote: 'string', ref: 'string',
   },
   pos_workers: {
     worker_id: 'string', name: 'string', phone: 'string', job: 'string', daily_wage: 'number',
