@@ -27,12 +27,13 @@
 <div id="app" hidden>
   <header class="top">
     <div class="mark" aria-hidden="true">K</div>
-    <div class="ttl grow"><b id="tb-store" class="ellipsis">Khair Mart</b><span id="tb-user" class="ellipsis"></span></div>
+    <div class="ttl grow"><b id="tb-store" class="ellipsis">Khair Mart</b><span class="ellipsis"><span id="tb-user"></span> · <span id="tb-ver"></span></span></div>
     <span class="demo" id="tb-demo" hidden>DEMO</span>
     <span class="pill loc" id="tb-loc" hidden role="status"></span>
     <span class="demo" id="tb-master" hidden></span>
     <button class="pill warn" id="tb-outbox" data-act="outbox-open" hidden></button>
     <button class="pill" id="tb-appr" data-act="apr-open" hidden></button>
+    <button class="icon-btn" id="tb-lang" data-act="toggle-lang" title="Bahasa / اللغة" aria-label="Bahasa / اللغة"><span class="tb-lang-l" id="tb-lang-l">ع</span></button>
     <button class="icon-btn" id="tb-lock" data-act="lock" data-i18n-title="lock"><svg class="i"><use href="#i-lock"/></svg></button>
   </header>
   <main id="main">
@@ -103,7 +104,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.5.0';
+const APP_VERSION = 'kasir-1.5.1';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -527,6 +528,7 @@ function t(key, vars) {
 function applyLangAttrs() {
   document.documentElement.lang = S.lang;
   document.documentElement.dir = S.lang === 'ar' ? 'rtl' : 'ltr';
+  const tl = document.getElementById('tb-lang-l'); if (tl) tl.textContent = S.lang === 'ar' ? 'ID' : 'ع'; // v41: one tap switches the language while working
   $$('[data-i18n-title]').forEach(el => { el.title = t(el.dataset.i18nTitle); el.setAttribute('aria-label', t(el.dataset.i18nTitle)); });
 }
 function setLang(l) {
@@ -713,6 +715,7 @@ function renderShell() {
   $('#tabs').innerHTML = TABS.map(v => `<button class="tab ${S.view === v.id ? 'on' : ''}" id="tab-${v.id}" data-act="tab" data-v="${v.id}" ${S.view === v.id ? 'aria-current="page"' : ''}>${ic(v.icon)}<span>${esc(t(v.label))}</span>${v.id === 'more' && myPendingCount() ? `<b class="dot">${myPendingCount()}</b>` : ''}</button>`).join('');
   $('#tb-store').textContent = settings().store_name || 'Khair Mart';
   $('#tb-user').textContent = S.user;
+  $('#tb-ver').textContent = APP_VERSION; // v41 (owner 2026-10-12): the version is always visible
   $('#tb-demo').hidden = !MOCK;
   $('#tb-master').hidden = !S.viaMaster; $('#tb-master').textContent = t('login.via_master');
   updateApprovalBadge();
@@ -762,7 +765,7 @@ function renderLogin() {
   const box = $('#login');
   const brand = `<div class="brand"><div class="mark" aria-hidden="true">K</div><div>Khair Kasir${MOCK ? ' <span class="demo">DEMO</span>' : ''}</div></div>`;
   const foot = `<div class="foot-links"><div class="langs"><button class="btn xs ${S.lang === 'id' ? 'primary' : ''}" data-act="set-lang" data-lang="id">ID</button><button class="btn xs ${S.lang === 'ar' ? 'primary' : ''}" data-act="set-lang" data-lang="ar">العربية</button></div>
-</div>`;
+<div class="small muted" id="login-ver">${esc(t('app.version'))}: <b>${esc(APP_VERSION)}</b></div></div>`;
   let inner = '';
   if (L.step === 'key') {
     inner = `<h2>${esc(t('login.key_title'))}</h2>
@@ -4170,6 +4173,7 @@ const ACT = {
   'lock': () => lock(),
   'logout': async () => { hideGate(); logout(); },
   'set-lang': el => setLang(el.dataset.lang),
+  'toggle-lang': () => setLang(S.lang === 'ar' ? 'id' : 'ar'),
   'voice-on': el => { VOICE.on = el.dataset.v === '1'; store.set('voice_on', VOICE.on); if (!VOICE.on) { try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) { } } RENDER.more(); toast(t('saved'), 'ok'); },
   'gate-open': () => showGate(),
   'ask-qty': el => { store.set('ask_qty', el.dataset.v === '1'); RENDER.more(); toast(t('saved'), 'ok'); },
@@ -4668,6 +4672,9 @@ function openStockCount() {
   setTimeout(() => { if (!isTouch()) q.focus(); }, 30);
 }
 Object.assign(ACT, { 'stock-count': () => openStockCount() });
+/* v41 (owner 2026-10-12): the app version is shown on the login screen and in the top bar */
+Object.assign(I18N.id, { 'app.version': 'Versi' });
+Object.assign(I18N.ar, { 'app.version': 'النسخة' });
 Object.assign(I18N.id, {
   'more.count': 'Hitung stok', 'more.count_s': 'Hitung barang di rak/gudang, dikirim untuk disetujui', 'sc.title': 'Hitung stok',
   'sc.hint': 'Isi jumlah yang ada di rak / gudang di tabel (Enter = baris berikutnya), lalu kirim. Manajer menyetujui semuanya sekaligus; pemilik diberi tahu.',
