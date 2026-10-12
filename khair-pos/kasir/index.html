@@ -103,7 +103,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.3.0';
+const APP_VERSION = 'kasir-1.4.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -974,6 +974,7 @@ function applyData(d) {
   if ('shift' in d) { S.shift = d.shift || null; S.shiftsSupported = true; }
   S.products.forEach(p => { noCost(p); p.id = isNaN(Number(p.id)) ? p.id : Number(p.id); ['retail_price', 'wholesale_price'].forEach(k => { p[k] = int(p[k]); }); p.stock = num(p.stock); p.min_stock = num(p.min_stock); p.wholesale_min_qty = num(p.wholesale_min_qty); p.active = !(p.active === false || p.active === 'false' || p.active === 0 || p.active === '0'); });
   S.customers.forEach(c => { c.id = isNaN(Number(c.id)) ? c.id : Number(c.id); c.debt_balance = int(c.debt_balance); });
+  updateOpnameBanner(); // v37
 }
 function saveCache() {
   KS.set('cache', Object.assign({ products: S.products, customers: S.customers, settings: S.settings, users: S.users, at: Date.now() }, S.shiftsSupported ? { shift: S.shift || null } : {}));
@@ -1401,6 +1402,7 @@ RENDER.sell = function () {
           <button class="icon-btn" id="cam" data-act="cam-scan" title="${esc(t('sell.camera'))}" aria-label="${esc(t('sell.camera'))}" ${'BarcodeDetector' in window ? '' : 'hidden'}>${ic('scan')}</button>
         </div>
         <div class="rep-banner" hidden></div>
+        <div class="op-banner" id="op-banner" hidden></div>
         <div class="tools"><button class="toggle" id="grosir" data-act="grosir-toggle" aria-pressed="false">${esc(t('grosir'))}</button>${VOICE.on ? `<button class="toggle mute-chip" id="mute-chip" data-act="sale-mute" aria-pressed="false">${muteChipHtml()}</button>` : ''}<button class="cust-chip" id="cust" data-act="pick-customer"></button><button class="held-chip" id="held-chip" data-act="held-open" hidden></button></div>
         <div class="grid" id="grid" aria-label="${esc(t('sell.products'))}"></div>
       </div>
@@ -1418,7 +1420,7 @@ RENDER.sell = function () {
     SELL.built = true;
   }
   $('#paybar').hidden = S.view !== 'sell';
-  renderGrid(); renderCart(); focusSearch(); updateReportBanner();
+  renderGrid(); renderCart(); focusSearch(); updateReportBanner(); updateOpnameBanner();
 };
 /** Barcode scanners type very fast (< 50 ms per char). */
 function isFastInput() { const k = SELL.keyTimes; if (k.length < 4) return false; return (k[k.length - 1] - k[0]) / (k.length - 1) < 50; }
@@ -2949,7 +2951,7 @@ function drawPuHist() {
   if (!PUH.groups) { box.innerHTML = PUH.err ? `<div class="small red">${esc(PUH.err)}</div>` : `<div class="spinner"></div>`; return; }
   box.innerHTML = PUH.groups.length ? PUH.groups.slice(0, 40).map(g => {
     const pend = pendingFix(g.no);
-    return `<div class="hist" data-no="${esc(g.no)}"><div class="h"><b class="num">${esc(g.no)}</b><span class="badge ${MATCH_BADGE[g.match] || 'gray'}">${esc(t('pu.m_' + (g.match || 'tanpa_foto')))}</span>${g.fixes ? `<span class="badge">${esc(t('pu.n_fixes', { n: g.fixes }))}</span>` : ''}${pend ? `<span class="badge warn" data-pending="${esc(pend.id)}">${esc(t('pu.fix_waiting'))}</span>` : ''}</div>
+    return `<div class="hist" data-no="${esc(g.no)}"><div class="h"><b class="num">${esc(g.no)}</b><span class="badge ${MATCH_BADGE[g.match] || 'gray'}">${esc(t('pu.m_' + (g.match || 'tanpa_foto')))}</span>${g.fixes ? `<span class="badge">${esc(t('pu.n_fixes', { n: g.fixes }))}</span>` : ''}${pend ? `<span class="badge warn" data-pending="${esc(pend.id)}">${esc(t(S.role === 'manager' ? 'pu.fix_waiting_owner' : 'pu.fix_waiting'))}</span>` : ''}</div>
       <div class="small muted">${esc(fmtDate(g.date))}${g.supplier ? ' · ' + esc(g.supplier) : ''}${g.user ? ' · ' + esc(g.user) : ''}</div>
       ${g.lines.map(l => { const p = prodById(l.product_id); return `<div class="hl"><span>${esc(p ? p.name : l.name)}</span><b class="num">${fmtQty(l.qty)} ${esc(p ? p.unit || '' : '')}</b></div>`; }).join('')}
       ${g.match === 'retur' ? '' : `<div class="row wrap" style="justify-content:space-between;margin-top:6px"><span class="lockline" style="margin:0">${ic('lock')} ${esc(t('pu.locked_short'))}</span><span class="row" style="gap:6px"><button class="btn xs" data-act="pu-doc" data-no="${esc(g.no)}">${ic('print')} ${esc(t('doc.goods_in'))}</button><button class="btn xs" data-act="pu-retur" data-no="${esc(g.no)}">${esc(t('sr.btn'))}</button><button class="btn xs" data-act="pu-fix" data-no="${esc(g.no)}" ${pend ? 'disabled' : ''}>${esc(t('pu.fix_btn'))}</button></span></div>`}</div>`;
@@ -2959,11 +2961,13 @@ async function openPuFix(no) {
   let g = (PUH.groups || []).find(x => x.no === no);
   if (!g) { await loadPuHistory(); g = (PUH.groups || []).find(x => x.no === no); }
   if (!g) { toast(PUH.err || t('err.NOT_FOUND'), 'err'); return; }
-  const direct = isApprover();
+  // v37 (owner 2026-10-12: «أي فاتورة يتم تنزيلها مصادَق عليها لا يمكن تغييرها إلا بموافقة»): as the server rules, only the owner
+  // corrects a saved goods-in directly; the manager's correction goes to the owner, the cashier's to the manager.
+  const direct = S.role === 'owner', mgr = S.role === 'manager';
   const el = openModal({
     title: t('pu.fix_title', { no }), id: 'pu-fix', focus: false,
     body: `<p style="margin-top:0"><b class="num">${esc(no)}</b> · ${esc(fmtDate(g.date))}${g.supplier ? ' · ' + esc(g.supplier) : ''}</p>
-      <p class="small muted">${esc(t(direct ? 'pu.fix_hint_mgr' : 'pu.fix_hint'))}</p>
+      <p class="small muted">${esc(t(mgr ? 'pu.fix_hint_mgr' : 'pu.fix_hint'))}</p>
       <div class="list" id="fx-lines">${g.lines.map(l => { const p = prodById(l.product_id); return `<div class="li" data-fix-line="${esc(l.product_id)}" style="min-height:0;padding:8px 10px"><div class="grow"><div class="t">${esc(p ? p.name : l.name)}</div><div class="s">${esc(t('pu.fix_now', { qty: fmtQty(l.qty), unit: p ? p.unit || '' : '' }))}</div></div>
         <label class="sr-only" for="fx-q-${esc(l.product_id)}">${esc(t('pu.fix_new'))}</label><input class="input num" id="fx-q-${esc(l.product_id)}" data-rule="num" data-fix-qty="${esc(l.product_id)}" inputmode="decimal" autocomplete="off" style="width:104px;font-weight:800;font-size:18px" value="${esc(fmtQtyInput(l.qty))}"></div>`; }).join('')}</div>
       <div class="field" style="margin-top:12px"><label class="f" for="fx-reason">${esc(t('reason'))} *</label><textarea class="input" id="fx-reason" rows="2" maxlength="300" placeholder="${esc(t('pu.fix_reason_ph'))}"></textarea></div>
@@ -2989,7 +2993,7 @@ async function openPuFix(no) {
       } else {
         const id = r.request_id || (r.approval || {}).request_id;
         trackMyRequest(id, 'purchase_fix', t('req.purchase_fix', { no }), no);
-        $('#fx-res', el).innerHTML = `<div class="status perlu_cek" id="fx-pending"><div class="st">${ic('lock')} ${esc(t('pu.fix_waiting'))}</div><div>${esc(t('apr.request_id'))}: <b>${esc(id)}</b></div><div class="small">${esc(t('pu.fix_owner_sees'))}</div></div>`;
+        $('#fx-res', el).innerHTML = `<div class="status perlu_cek" id="fx-pending"><div class="st">${ic('lock')} ${esc(t(mgr ? 'pu.fix_waiting_owner' : 'pu.fix_waiting'))}</div><div>${esc(t('apr.request_id'))}: <b>${esc(id)}</b></div><div class="small">${esc(t('pu.fix_owner_sees'))}</div></div>`;
         $('#fx-send', el).hidden = true;
         $$('[data-fix-qty], #fx-reason', el).forEach(x => { x.disabled = true; });
       }
@@ -3664,6 +3668,25 @@ function updateReportBanner() {
   });
 }
 setInterval(updateReportBanner, 60000);
+/* v37 (owner 2026-10-12: «والكميات التي يتم جردها آخر كل شهرين»): a FULL stock count every settings.opname_every_days (default 60).
+   Computed from the settings already loaded (opname_state: last full count / since) — no extra request. When ≤ 7 days are left
+   or it is overdue, a banner on the sell screen opens "Hitung stok" (this cashier can count here); "×" hides it for today. */
+function opnameInfo(st) {
+  st = st || {}; const s = st.opname_state && typeof st.opname_state === 'object' ? st.opname_state : {};
+  const ev = Math.round(num(st.opname_every_days)), every = ev >= 7 && ev <= 180 ? ev : 60, ymd = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+  const base = ymd(s.last_full) ? s.last_full : ymd(s.since) ? s.since : '';
+  if (!base) return null;
+  const next = addDays(base, every), left = Math.round((Date.parse(next + 'T00:00:00Z') - Date.parse(today() + 'T00:00:00Z')) / 86400000);
+  return { every, last: ymd(s.last_full) ? s.last_full : '', next, left, status: left < 0 ? 'overdue' : left <= 7 ? 'due' : 'ok' };
+}
+function updateOpnameBanner() {
+  const b = $('#op-banner'); if (!b) return;
+  const o = S.inApp ? opnameInfo(settings()) : null, show = !!(o && o.status !== 'ok' && KS.get('opname_snooze', '') !== today());
+  b.hidden = !show;
+  b.dataset.status = o ? o.status : '';
+  b.innerHTML = show ? `<span aria-hidden="true">📋</span><span class="grow">${esc(t(o.status === 'overdue' ? 'op.banner_late' : 'op.banner_due', { n: Math.abs(o.left), date: fmtDate(o.next), last: o.last ? fmtDate(o.last) : t('op.never') }))}</span><button class="btn xs" data-act="stock-count" id="op-banner-go">${esc(t('more.count'))}</button><button class="icon-btn ghost sm" data-act="opname-snooze" aria-label="${esc(t('close'))}">${ic('x')}</button>` : '';
+}
+setInterval(updateOpnameBanner, 600000);
 /** The opening count's approval (buka_kas) for the open shift, as tracked in "Permintaan saya". */
 const openingRequest = () => S.shift ? MYREQ.list.find(r => r.kind === 'buka_kas' && r.ref === S.shift.shift_id && r.user === S.user) : null;
 function openingStatusHTML() {
@@ -4237,6 +4260,7 @@ const ACT = {
   'expense': () => openExpense(),
   'shift-close': () => openCloseShift(),
   'report-snooze': () => { KS.set('report_snooze', Date.now() + 60 * 60000); updateReportBanner(); },
+  'opname-snooze': () => { KS.set('opname_snooze', today()); updateOpnameBanner(); },
 
   /* lainnya */
   'debt-pay': () => openCustomerPicker(c => { if (c) openPayment(c); }, { onlyDebt: true, noWalkin: true, noAdd: true, title: t('more.debt_pay') }),
@@ -4518,6 +4542,7 @@ function openStockCount() {
   const el = openModal({
     title: t('sc.title'), id: 'stock-count', focus: false,
     body: `<p class="small muted" style="margin-top:0">${esc(t('sc.hint'))}</p>
+      ${(() => { const o = opnameInfo(settings()); return o ? `<p class="small" id="sc-due" data-status="${o.status}" style="margin-top:0"><b>${esc(t('op.last_next', { last: o.last ? fmtDate(o.last) : t('op.never'), next: fmtDate(o.next) }))}</b>${o.status === 'overdue' ? ` <span class="badge red">${esc(t('op.late_n', { n: -o.left }))}</span>` : ''}</p>` : ''; })()}
       <div class="scanbar"><div class="search">${ic('search')}<input class="input" id="sc-q" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="${esc(t('sc.search'))}" aria-label="${esc(t('sc.search'))}"></div>
         ${'BarcodeDetector' in window ? `<button class="icon-btn" id="sc-cam" type="button" aria-label="${esc(t('sell.camera'))}">${ic('scan')}</button>` : ''}</div>
       <div class="list" id="sc-sug"></div>
@@ -4633,7 +4658,9 @@ Object.assign(I18N.id, {
   'pu.hist': 'Riwayat barang masuk', 'pu.hist_s': 'Hari ini dan 13 hari terakhir, per nota', 'pu.hist_offline': 'Riwayat butuh internet.', 'pu.hist_none': 'Belum ada barang masuk.',
   'pu.n_fixes': '{n} koreksi', 'pu.fix_btn': 'Minta koreksi', 'pu.fix_title': 'Minta koreksi {no}', 'pu.fix_waiting': 'Menunggu persetujuan manajer',
   'pu.fix_hint': 'Isi jumlah yang benar. Permintaan dikirim ke manajer/pemilik; stok baru berubah setelah disetujui. Pemilik melihat setiap perubahan.',
-  'pu.fix_hint_mgr': 'Isi jumlah yang benar. Sebagai manajer, koreksi langsung diterapkan dan tercatat untuk pemilik.',
+  'pu.fix_hint_mgr': 'Isi jumlah yang benar. Faktur yang sudah disimpan hanya berubah dengan persetujuan: koreksi manajer dikirim ke pemilik; stok berubah setelah disetujui.',
+  'pu.fix_waiting_owner': 'Menunggu persetujuan pemilik',
+  'op.banner_due': 'Stok opname penuh jatuh tempo {date} ({n} hari lagi) — terakhir: {last}', 'op.banner_late': 'Stok opname penuh TERLAMBAT {n} hari (jatuh tempo {date}) — terakhir: {last}', 'op.never': 'belum pernah', 'op.last_next': 'Opname penuh terakhir: {last} — berikutnya: {next}', 'op.late_n': 'terlambat {n} hari',
   'pu.fix_now': 'Tercatat: {qty} {unit}', 'pu.fix_new': 'Jumlah benar', 'pu.fix_reason_ph': 'mis. salah hitung, 2 pak rusak', 'pu.fix_send': 'Kirim permintaan', 'pu.fix_apply': 'Simpan koreksi',
   'pu.fix_nothing': 'Tidak ada jumlah yang berubah', 'pu.fix_applied': 'Koreksi diterapkan, stok diperbarui', 'pu.fix_owner_sees': 'Pemilik diberi tahu tentang perubahan ini.',
   'req.purchase_fix': 'Koreksi barang masuk {no}', 'apr.kind_pfix': 'Koreksi barang masuk {no}', 'apr.pfix_hint': 'Jika disetujui, selisih jumlah ditambahkan / dikurangi dari stok sekarang.',
@@ -4666,7 +4693,9 @@ Object.assign(I18N.ar, {
   'pu.hist': 'سجل البضاعة المستلمة', 'pu.hist_s': 'اليوم وآخر 13 يومًا، حسب الفاتورة', 'pu.hist_offline': 'السجل يحتاج إلى الإنترنت.', 'pu.hist_none': 'لا توجد بضاعة مستلمة بعد.',
   'pu.n_fixes': '{n} تصحيح', 'pu.fix_btn': 'طلب تصحيح', 'pu.fix_title': 'طلب تصحيح {no}', 'pu.fix_waiting': 'بانتظار موافقة المدير',
   'pu.fix_hint': 'أدخل الكمية الصحيحة. يُرسل الطلب إلى المدير/المالك ولا يتغير المخزون إلا بعد الموافقة. يرى المالك كل تغيير.',
-  'pu.fix_hint_mgr': 'أدخل الكمية الصحيحة. بصفتك مديرًا يُطبَّق التصحيح فورًا ويُسجَّل للمالك.',
+  'pu.fix_hint_mgr': 'أدخل الكمية الصحيحة. الفاتورة المحفوظة لا تتغير إلا بموافقة: تصحيح المدير يُرسل إلى المالك، ويتغير المخزون بعد الموافقة.',
+  'pu.fix_waiting_owner': 'بانتظار موافقة المالك',
+  'op.banner_due': 'موعد الجرد الكامل {date} (بعد {n} يوم) — آخر جرد: {last}', 'op.banner_late': 'الجرد الكامل متأخر {n} يوم (كان موعده {date}) — آخر جرد: {last}', 'op.never': 'لم يتم بعد', 'op.last_next': 'آخر جرد كامل: {last} — الجرد التالي: {next}', 'op.late_n': 'متأخر {n} يوم',
   'pu.fix_now': 'المسجَّل: {qty} {unit}', 'pu.fix_new': 'الكمية الصحيحة', 'pu.fix_reason_ph': 'مثل: خطأ في العدّ، عبوتان تالفتان', 'pu.fix_send': 'إرسال الطلب', 'pu.fix_apply': 'حفظ التصحيح',
   'pu.fix_nothing': 'لم تتغير أي كمية', 'pu.fix_applied': 'طُبّق التصحيح وحُدّث المخزون', 'pu.fix_owner_sees': 'يُبلَّغ المالك بهذا التغيير.',
   'req.purchase_fix': 'تصحيح استلام {no}', 'apr.kind_pfix': 'تصحيح استلام {no}', 'apr.pfix_hint': 'عند الموافقة يُضاف فرق الكمية إلى المخزون الحالي أو يُخصم منه.',

@@ -19,6 +19,10 @@ export const POS_MIGRATIONS = [
   'ALTER TABLE pos_products ADD COLUMN review TEXT',
   'CREATE TABLE IF NOT EXISTS pos_tamper_shots (id INTEGER PRIMARY KEY AUTOINCREMENT, shot_id TEXT, at TEXT, shot_date TEXT, user TEXT, role TEXT, place TEXT, kind TEXT, sample TEXT, photo TEXT, photo_status TEXT, device TEXT)',
   'CREATE INDEX IF NOT EXISTS idx_pos_tamper_shots_shot_id ON pos_tamper_shots (shot_id)',
+  // v37 (owner 2026-10-12: "تم تغيير فاتورة … ومن قام بتغييرها ومن طلب تغييرها"): the structured invoice-change record
+  // (kind 'ubah_faktur') rides on the activity row; the audit list reads activity by kind.
+  'ALTER TABLE pos_activity ADD COLUMN detail TEXT',
+  'CREATE INDEX IF NOT EXISTS idx_pos_activity_kind ON pos_activity (kind)',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;

@@ -63,6 +63,7 @@
     <section class="view" id="view-retur" hidden></section>
     <section class="view" id="view-activity" hidden></section>
     <section class="view" id="view-koreksi" hidden></section>
+    <section class="view" id="view-invchg" hidden></section>
     <section class="view" id="view-devices" hidden></section>
     <section class="view" id="view-settings" hidden></section>
   </main>
@@ -145,7 +146,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.5.0';
+const APP_VERSION = '2.6.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -436,7 +437,7 @@ const isApprover = () => S.role === 'owner' || S.role === 'manager';
 const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
 // v36 (owner 2026-10-11: "the visits table … a copy for the manager, the accountant and the owner"): + the field page, read-only
-const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'approvals', 'shoplist', 'field', 'settings'];
+const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'invchg', 'approvals', 'shoplist', 'field', 'settings'];
 const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
@@ -540,6 +541,7 @@ const VIEWS = [
   { id: 'field', icon: 'pin', label: 'nav.field', approver: true },
   { id: 'shoplist', icon: 'clip', label: 'nav.shoplist', approver: true }, // v33: shops of a street from Google Maps → a rep's plan (owner, manager, accountant)
   { id: 'koreksi', icon: 'tag', label: 'nav.koreksi', approver: true },
+  { id: 'invchg', icon: 'clip', label: 'nav.invchg', approver: true }, // v37: Perubahan faktur — every change to a saved invoice (owner, manager, accountant)
   { id: 'activity', icon: 'activity', label: 'nav.activity', owner: true },
   { id: 'devices', icon: 'device', label: 'nav.devices', owner: true },
   { id: 'settings', icon: 'gear', label: 'nav.settings' }
@@ -2185,6 +2187,7 @@ async function decideApproval(id, decision, btn) {
     toast(decision === 'approved' ? t('apr.done_ok', { id }) : t('apr.done_rej', { id }), decision === 'approved' ? 'ok' : 'warn');
     if (r.product) { upsertLocal(S.products, r.product); applyData({ products: S.products }); applyPendingStockFor(r.product.id); saveCache(); }
     if (r.stock) gdAfterStockChange(r.stock);
+    if (r.opname) applyOpnameResp(r.opname); // v37
     if (ap.kind === 'expense_check') Object.keys(salesCache).forEach(k => delete salesCache[k]); // v36: the expense list shows the result
     if (r.agreement) { await refreshData(true); }
     if (r.return_id) { RT.list = null; if (ap.kind === 'retur') { Object.keys(salesCache).forEach(k => delete salesCache[k]); } }
@@ -2799,6 +2802,11 @@ function laterAttention() {
   const aw = isOwner() ? actUnread().filter(a => a.level === 'warn').length : 0;
   if (aw) items.push({ key: 'act', level: 'warn', icon: 'activity', text: t('att.activity', { n: aw }), go: 'activity' });
   if (dailyReminderDue()) items.push({ key: 'daily', level: 'warn', icon: 'report', text: t('att.daily'), go: 'reports', daily: true });
+  // v37: the two-monthly full stock count (owner + manager) and invoice changes made by others (owner)
+  const op = isApprover() ? opnameInfo(settings()) : null;
+  if (op && op.status !== 'ok') items.push({ key: 'opname-due', level: op.status === 'overdue' ? 'err' : 'warn', icon: 'warehouse', text: t(op.status === 'overdue' ? 'att.opname_late' : 'att.opname_due', { n: Math.abs(op.left), date: fmtDate(op.next), last: op.last ? fmtDate(op.last) : t('op.never') }), go: 'gudang', tab: 'opname' });
+  const nC = isOwner() ? invChgUnread().length : 0;
+  if (nC) items.push({ key: 'invchg', level: 'err', icon: 'clip', text: t('att.invchg', { n: nC }), go: 'invchg' });
   return items;
 }
 function attentionHTML(items, limit) {
@@ -5834,6 +5842,7 @@ function gdDrawOpname(body) {
   const s = gdoSummary();
   const lines = GDO.lines.map(l => ({ l, p: prodById(l.id) })).filter(x => x.p);
   body.innerHTML = `<p class="muted small" style="margin-top:0">${esc(t('gd.op_hint'))}</p>
+    ${opnameDueHTML()}
     ${pend.length ? `<div class="panel" id="gdo-pending" style="margin-bottom:12px"><h3>${ic('clock')} ${esc(t('gd.op_pending'))} <span class="badge amber">${pend.length}</span><button class="btn xs" style="margin-inline-start:auto" data-act="go" data-view="approvals">${esc(t('gd.op_open_inbox'))}</button></h3><div class="pb list">${pend.map(a => `<div class="li" style="min-height:0;padding:8px 12px" data-req="${esc(a.request_id)}"><span class="badge blue">${esc(a.request_id)}</span><div class="grow"><div class="t" style="font-weight:600">${esc(a.summary || '')}</div><div class="s">${esc(a.cashier)} · ${esc(fmtDateTime(a.created_at))}</div></div></div>`).join('')}</div></div>` : ''}
     ${GD.result ? `<div id="gdo-result">${GD.result}</div>` : ''}
     <div class="card pad" style="margin-bottom:12px" id="gdo-pick">
@@ -5900,6 +5909,7 @@ async function gdoSubmit() {
         ${diffs.concat(lines.filter(l => !num(l.diff))).slice(0, 60).map(l => `<tr><td>${esc(l.name)}</td><td class="r num">${fmtQty(l.system)}</td><td class="r num">${fmtQty(l.counted)}</td><td class="r num gd-diff ${l.diff > 0 ? 'gd-plus' : l.diff < 0 ? 'gd-minus' : ''}"><b>${l.diff > 0 ? '+' : ''}${fmtQty(l.diff)}</b></td></tr>`).join('')}</tbody></table></div></div>`;
       toast(t('gd.op_applied', { n: lines.length, d: diffs.length }), 'ok', 4000);
       gdAfterStockChange(r.stock || []);
+      if (r.opname) applyOpnameResp(r.opname); // v37
     } else {
       const id = r.request_id || (r.approval || {}).request_id;
       trackMyRequest(id, 'opname', t('gd.req_label', { n: filled.length }));
@@ -6272,10 +6282,11 @@ function openDeviceDetail(id) {
 
 /* ========== Activity log (v12, owner) ========== */
 const ACTV = { recent: [], preset: '7d', from: '', to: '', group: '', user: '', q: '', data: null, err: '' };
-const ACT_GROUPS = { masuk: ['masuk', 'minta_koreksi', 'koreksi_masuk'], harga: ['harga', 'minta_harga'], stok: ['stok', 'opname', 'minta_opname', 'kemas_ulang', 'produk', 'produk_baru', 'impor', 'pindah_stok', 'jual_tanpa_rak'], retur: ['minta_retur', 'retur'],
+const ACT_GROUPS = { masuk: ['masuk', 'minta_koreksi', 'koreksi_masuk'], harga: ['harga', 'minta_harga'], stok: ['stok', 'opname', 'opname_penuh', 'minta_opname', 'kemas_ulang', 'produk', 'produk_baru', 'impor', 'pindah_stok', 'jual_tanpa_rak'], retur: ['minta_retur', 'retur'],
   kas: ['biaya', 'kas', 'tutup_kas', 'buka_kas'], jual: ['batal', 'minta_batal', 'hutang', 'minta_diskon', 'diskon', 'member_baru', 'member_berhenti'], bayar: ['bayar_masuk', 'bayar_keluar', 'alokasi', 'rekening', 'minta_bayar', 'setuju_bayar', 'tolak_bayar', 'minta_transfer', 'transfer_keluar'], pengguna: ['pengguna', 'pengaturan', 'masuk_master', 'ganti_pin', 'kode_pemilik', 'usul_kesepakatan', 'kesepakatan'], perangkat: ['perangkat_baru'] };
 const ACT_ICON = { retur: 'return', masuk: 'truck', harga: 'tag', stok: 'warehouse', kas: 'cash', jual: 'cart', bayar: 'wallet', pengguna: 'gear', perangkat: 'device', lain: 'activity' };
 function actGroup(a) {
+  if (a.kind === 'ubah_faktur') { let d = {}; try { d = JSON.parse(a.detail || '{}') || {}; } catch (e) { } return d.doc === 'masuk' || /Barang masuk/.test(a.summary || '') ? 'masuk' : d.what === 'retur' ? 'retur' : 'jual'; } // v37
   if (a.kind === 'keputusan') { const m = /\((\w+)/.exec(a.summary || ''); return { credit: 'jual', void: 'jual', discount: 'jual', retur: 'retur', kesepakatan: 'pengguna', price: 'harga', opname: 'stok', purchase_fix: 'masuk', buka_kas: 'kas', pay_plan: 'bayar', transfer: 'bayar' }[m ? m[1] : 'credit'] || 'jual'; }
   for (const [g, ks] of Object.entries(ACT_GROUPS)) if (ks.includes(a.kind)) return g;
   return 'lain';
@@ -7467,6 +7478,7 @@ function drawDaily() {
       ${(() => { const c = R.corrections || {}; return c.count ? `<div class="panel" id="dr-corrections"><h3>${ic('tag')} ${esc(t('dr.corrections'))}</h3><div class="pb">${row(t('dr.cor_count'), fmtNum(c.count), 'cor-count')}${row(t('dr.cor_net'), fmtRp(c.net), 'cor-net')}${row(t('dr.cor_refund'), fmtRp(c.refund_paid), 'cor-refund')}${row(t('dr.cor_writeoff'), fmtRp(c.writeoff), 'cor-writeoff')}</div></div>` : ''; })()}
       ${(() => { const rt = R.returns || {}, rc0 = rt.customer || {}, rs = rt.supplier || {}; return `<div class="panel" id="dr-returns"><h3>${ic('return')} ${esc(t('nav.retur'))}</h3><div class="pb">${row(t('dr.ret_cust'), `${fmtNum(rc0.count)} · ${fmtRp(rc0.refund)}`, 'ret-cust', rc0.count ? 'amber' : '')}${row(t('dr.ret_cash'), fmtRp(rc0.tunai), 'ret-cash', rc0.tunai ? 'red' : '')}${row(t('dr.ret_sup'), `${fmtNum(rs.count)}${own && rs.value != null ? ' · ' + fmtRp(rs.value) : ''}`, 'ret-sup')}</div></div>`; })()}
     </div>
+    ${drGoodsInHTML(R)}${drChangesHTML(R)}
     <div class="panel" style="margin-bottom:14px" id="dr-shifts"><h3>${ic('cash')} ${esc(t('dr.drawers'))}</h3><div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl"><thead><tr><th>${esc(t('rc.cashier'))}</th><th class="r">${esc(t('shift.opening'))}</th><th class="r">${esc(t('shift.expected'))}</th><th class="r">${esc(t('shift.counted'))}</th><th class="r">${esc(t('shift.difference'))}</th></tr></thead><tbody>
       ${(R.shifts || []).map(x => `<tr data-shift="${esc(x.shift_id || x.cashier)}"><td>${esc(x.cashier)} ${x.status === 'open' ? `<span class="badge amber">${esc(t('shift.status_open'))}</span>` : ''}</td><td class="r num">${fmtRp(x.opening_cash)}</td><td class="r num">${fmtRp(x.expected_cash)}</td><td class="r num">${x.counted_cash == null ? '—' : fmtRp(x.counted_cash)}</td><td class="r num ${x.difference ? 'red' : ''}">${x.difference == null ? '—' : (x.difference > 0 ? '+' : '') + fmtRp(x.difference)}</td></tr>`).join('') || `<tr><td colspan="5" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div></div>
     <div class="panel" style="margin-bottom:14px" id="dr-top"><h3>${esc(t('home.top'))}</h3><div class="pb">${homeTopRows((R.top_items || []).map(x => ({ name: x.name, qty: x.qty, omzet: x.total, unit: '' })), 10)}</div></div>
@@ -7495,6 +7507,7 @@ function dailyText(R, withProfit) {
   if (rs.count) L.push(`Retur ke pemasok: ${fmtNum(rs.count)}${withProfit && rs.value != null ? ` (nilai ${fmtRp(rs.value)})` : ''}`);
   if (DR.data && DR.data.report === R && DR.data.send_fees && DR.data.send_fees.total) L.push(`Biaya kirim struk: ${fmtNum(DR.data.send_fees.count)} × (${fmtRp(DR.data.send_fees.total)})`);
   if (withProfit && R.profit != null) L.push(`Laba kotor: ${fmtRp(R.profit)}`);
+  dailyGoodsText(R, withProfit).forEach(x => L.push(x)); // v37: goods in today (qty + stock now) and invoice changes
   return L.join('\n');
 }
 function dailyReminderDue() {
@@ -9036,6 +9049,183 @@ Object.assign(I18N.ar, {
   'newp.need_cat': 'الفئة مطلوبة', 'newp.need_size': 'الحجم أو الوزن مطلوب', 'newp.cost_from_note': 'سعر الشراء من الفاتورة',
   'newp.badge': 'جديد — قيد التدقيق', 'newp.badge_hint': 'أضافه الكاشير عند الاستلام؛ بانتظار المدير / المحاسب',
   'dr.exp_check': 'تدقيق فواتير المصاريف', 'dr.exp_check_v': '{f} بانتظار · {a} مقبول · {r} مرفوض'
+});
+
+/* ========== v37 (owner 2026-10-12) ==========
+   «… وأي فاتورة يتم تنزيلها مصادَق عليها لا يمكن تغييرها إلا بموافقة المدير، وإرسال إشعار إلى المالك: تم تغيير فاتورة، بالتاريخ والوقت،
+   بالتدقيق، ومن قام بتغييرها ومن طلب تغييرها» → "Perubahan faktur": every change to a saved invoice (goods-in correction, sale void,
+   price correction of sold goods, a return against an invoice) as the server recorded it (list_invoice_changes), per period, printable.
+   «والكميات التي يتم جردها آخر كل شهرين» → a FULL stock count every settings.opname_every_days (default 60), computed from the settings
+   already loaded (opname_state) — no extra request, no polling. */
+function opnameInfo(st) {
+  st = st || {}; const s = st.opname_state && typeof st.opname_state === 'object' ? st.opname_state : {};
+  const ev = Math.round(num(st.opname_every_days)), every = ev >= 7 && ev <= 180 ? ev : 60, ymd = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+  const base = ymd(s.last_full) ? s.last_full : ymd(s.since) ? s.since : '';
+  if (!base) return null;
+  const next = addDays(base, every), left = Math.round((Date.parse(next + 'T00:00:00Z') - Date.parse(today() + 'T00:00:00Z')) / 86400000);
+  return { every, last: ymd(s.last_full) ? s.last_full : '', lastBy: String(s.last_full_by || ''), next, left, status: left < 0 ? 'overdue' : left <= 7 ? 'due' : 'ok', counted: int(s.counted_n) };
+}
+/** The server's opname status after a count / an approval / a new interval → the local settings (and the reminder). */
+function applyOpnameResp(o) {
+  if (!o) return;
+  const cur = Object.assign({}, (S.settings || {}).opname_state || {});
+  S.settings = Object.assign({}, S.settings, { opname_every_days: int(o.every_days) || 60,
+    opname_state: Object.assign(cur, { last_full: o.last_full || '', last_full_by: o.last_full_by || '', since: o.since || cur.since || '', cycle_from: o.cycle_from || '', counted_n: int(o.counted_n) }) });
+  saveCache(); refreshAttention();
+}
+function opnameDueHTML() {
+  const o = opnameInfo(settings()); if (!o) return '';
+  const act = S.products.filter(p => p.active !== false).length;
+  const badge = o.status === 'overdue' ? `<span class="badge red" id="gdo-due-badge">${esc(t('op.late_n', { n: -o.left }))}</span>` : o.status === 'due' ? `<span class="badge amber" id="gdo-due-badge">${esc(t('op.left_n', { n: o.left }))}</span>` : `<span class="badge green" id="gdo-due-badge">${esc(t('op.left_n', { n: o.left }))}</span>`;
+  return `<div class="panel" id="gdo-due" data-status="${o.status}" style="margin-bottom:12px;${o.status === 'overdue' ? 'border-color:var(--red)' : o.status === 'due' ? 'border-color:var(--warn-b)' : ''}"><h3>${ic('clock')} ${esc(t('op.title'))}</h3><div class="pb">
+    <div id="gdo-due-line" style="font-weight:700">${esc(t('op.last_next', { last: o.last ? fmtDate(o.last) + (o.lastBy ? ' (' + o.lastBy + ')' : '') : t('op.never'), next: fmtDate(o.next) }))} ${badge}</div>
+    <div class="small muted" id="gdo-cycle" style="margin-top:4px">${esc(t('op.cycle', { n: o.counted, total: act, pct: 90 }))}</div>
+    ${isApprover() ? `<div class="row wrap" style="margin-top:10px;align-items:center;gap:8px"><label for="gdo-every">${esc(t('op.every'))}</label><input class="input num" id="gdo-every" inputmode="numeric" value="${o.every}" style="width:90px"><span>${esc(t('op.days'))}</span><button class="btn sm" data-act="op-every-save" id="gdo-every-save">${esc(t('save'))}</button><span class="red small" id="gdo-every-err" role="alert"></span></div>` : ''}
+  </div></div>`;
+}
+
+const IC = { preset: '30d', from: '', to: '', doc: '', q: '', data: null, err: '', seq: 0 };
+const invChgSeen = () => store.get('invchg_seen', '');
+/** Invoice changes made by someone else since the owner last opened "Perubahan faktur" (from the activity he already has). */
+function invChgUnread() { const seen = Date.parse(invChgSeen()) || 0; return (ACTV.recent || []).filter(a => a.kind === 'ubah_faktur' && (Date.parse(a.at) || 0) > seen && String(a.user).toLowerCase() !== String(S.user).toLowerCase()); }
+const IC_WHAT = ['koreksi_masuk', 'batal', 'koreksi_harga', 'retur'];
+function icChangeText(c) {
+  const parts = [];
+  if (c.qty_from !== undefined && c.qty_to !== undefined && num(c.qty_from) !== num(c.qty_to)) parts.push(t('ic.qty', { from: fmtQty(c.qty_from), to: fmtQty(c.qty_to) }));
+  if (c.qty_ret !== undefined) parts.push(t('ic.ret', { n: fmtQty(c.qty_ret) }) + (c.condition === 'rusak' ? ' (' + t('ic.damaged') + ')' : ''));
+  if (c.price_from !== undefined && c.price_to !== undefined) parts.push(int(c.price_from) === int(c.price_to) ? t('ic.price1', { p: fmtRp(c.price_to) }) : t('ic.price', { from: fmtRp(c.price_from), to: fmtRp(c.price_to) }));
+  if (c.invoices !== undefined) parts.push(t('ic.sold_in', { q: fmtQty(c.qty), n: c.invoices }));
+  return `${c.name || ''}${parts.length ? ': ' + parts.join(', ') : ''}`;
+}
+function icDocText(c) { const nos = Array.isArray(c.nos) && c.nos.length > 1 ? c.nos : [c.no]; return nos.filter(Boolean).join(', '); }
+function icWho(c) {
+  const same = String(c.requested_by || '').toLowerCase() === String(c.approved_by || '').toLowerCase();
+  return same ? t('ic.direct', { name: c.approved_by, at: fmtDateTime(c.approved_at || c.at) }) : t('ic.req_appr', { req: c.requested_by, req_at: fmtDateTime(c.requested_at), appr: c.approved_by, appr_at: fmtDateTime(c.approved_at || c.at) });
+}
+RENDER.invchg = function () {
+  if (!(isApprover() || isAudit())) { go('pos'); return; }
+  if (IC.preset !== 'custom' || !IC.from) [IC.from, IC.to] = actRange(IC.preset === 'custom' ? '30d' : IC.preset);
+  $('#view-invchg').innerHTML = `<div class="view-head"><h1>${esc(t('nav.invchg'))}</h1><button class="btn sm" data-act="ic-refresh">${ic('refresh')} ${esc(t('refresh'))}</button><button class="btn sm" data-act="ic-print" id="ic-print">${ic('print')} ${esc(t('print'))}</button></div>
+    <p class="muted small" style="margin-top:0">${esc(t('ic.hint'))}</p>
+    <div class="toolbar"><div class="chips" id="ic-presets">${['today', '7d', '30d', 'custom'].map(p => `<button class="chip ${IC.preset === p ? 'on' : ''}" data-act="ic-preset" data-p="${p}">${esc(t(p === 'custom' ? 'act.custom' : p === '30d' ? 'act.30d' : 'pr.' + p))}</button>`).join('')}</div>
+      <span id="ic-dates" ${IC.preset === 'custom' ? '' : 'hidden'}><label class="f" style="margin:0">${esc(t('from'))} <input class="input" type="date" id="ic-from" value="${esc(IC.from)}" style="width:auto"></label>
+      <label class="f" style="margin:0">${esc(t('to'))} <input class="input" type="date" id="ic-to" value="${esc(IC.to)}" style="width:auto"></label></span></div>
+    <div class="toolbar"><div class="chips" id="ic-docs">${['', 'masuk', 'jual'].map(d => `<button class="chip ${IC.doc === d ? 'on' : ''}" data-act="ic-doc" data-d="${d}">${esc(t(d ? 'ic.doc_' + d : 'all'))}</button>`).join('')}</div>
+      <input class="input" id="ic-q" type="search" placeholder="${esc(t('ic.search'))}" aria-label="${esc(t('ic.search'))}" value="${esc(IC.q)}" style="max-width:280px"></div>
+    <div id="ic-body"><div class="empty">${esc(t('loading'))}</div></div>`;
+  const v = $('#view-invchg');
+  $('#ic-from', v).onchange = e => { IC.from = e.target.value || today(); loadInvChg(); };
+  $('#ic-to', v).onchange = e => { IC.to = e.target.value || today(); loadInvChg(); };
+  $('#ic-q', v).addEventListener('input', debounce(() => { IC.q = $('#ic-q').value; drawInvChg(); }, 120));
+  if (isOwner()) { store.set('invchg_seen', new Date().toISOString()); ATT.items = ATT.items.filter(x => x.key !== 'invchg'); updateBell(); }
+  loadInvChg();
+};
+async function loadInvChg() {
+  const seq = ++IC.seq, b = $('#ic-body'); if (b) b.style.opacity = '.55';
+  if (IC.from > IC.to) [IC.from, IC.to] = [IC.to, IC.from];
+  try { const r = await api('list_invoice_changes', { from: IC.from, to: IC.to }); if (seq !== IC.seq) return; IC.data = r.changes || []; IC.err = ''; }
+  catch (e) { if (seq !== IC.seq) return; IC.data = null; IC.err = errMsg(e); }
+  drawInvChg();
+}
+function icFiltered() {
+  const q = norm(IC.q);
+  return (IC.data || []).filter(c => (!IC.doc || c.doc === IC.doc) && (!q || norm(`${icDocText(c)} ${c.party || ''} ${c.reason || ''} ${c.requested_by || ''} ${c.approved_by || ''} ${(c.changes || []).map(icChangeText).join(' ')}`).includes(q)));
+}
+function icTableHTML(list, printing) {
+  return `<table class="tbl" id="${printing ? 'ic-print-table' : 'ic-table'}"><thead><tr><th>${esc(t('ic.when'))}</th><th>${esc(t('ic.invoice'))}</th><th>${esc(t('ic.what'))}</th><th>${esc(t('ic.changes'))}</th><th>${esc(t('reason'))}</th><th>${esc(t('ic.who'))}</th>${printing ? '' : `<th class="r">${esc(t('total'))}</th>`}</tr></thead><tbody>
+    ${list.map(c => `<tr data-chg="${esc(c.act_id || '')}" data-doc="${esc(c.doc || '')}" data-what="${esc(c.what || '')}"><td class="num" style="white-space:nowrap">${esc(fmtDateTime(c.at))}</td>
+      <td><b class="num">${esc(icDocText(c))}</b><div class="small muted">${esc(t(c.doc === 'masuk' ? 'ic.doc_masuk' : 'ic.doc_jual'))}${c.doc_date ? ' · ' + esc(/^\d{4}-\d{2}-\d{2}$/.test(c.doc_date) ? fmtDate(c.doc_date) : c.doc_date) : ''}${c.party ? ' · ' + esc(c.party) : ''}</div></td>
+      <td>${esc(t(IC_WHAT.includes(c.what) ? 'ic.w_' + c.what : 'ic.w_other'))}</td>
+      <td>${(c.changes || []).map(x => `<div>${esc(icChangeText(x))}</div>`).join('') || '—'}</td>
+      <td>${esc(c.reason || '—')}</td>
+      <td class="small" data-who>${esc(icWho(c))}</td>${printing ? '' : `<td class="r num ${int(c.amount) < 0 ? 'red' : ''}">${c.amount != null && int(c.amount) ? fmtRp(c.amount) : '—'}</td>`}</tr>`).join('')}</tbody></table>`;
+}
+function drawInvChg() {
+  const box = $('#ic-body'); if (!box) return;
+  box.style.opacity = '';
+  if (!IC.data) { box.innerHTML = `<div class="empty red">${esc(IC.err || t('err.SERVER'))}</div>`; return; }
+  const list = icFiltered();
+  box.innerHTML = `<p class="muted small" id="ic-count">${esc(t('ic.count', { n: fmtNum(list.length), from: fmtDate(IC.from), to: fmtDate(IC.to) }))}</p>
+    ${list.length ? `<div class="tbl-wrap">${icTableHTML(list, false)}</div>` : `<div class="empty" id="ic-empty">${esc(t('ic.none'))}</div>`}`;
+}
+Object.assign(ACT, {
+  'ic-refresh': () => loadInvChg(),
+  'ic-preset': el => { IC.preset = el.dataset.p; if (IC.preset !== 'custom') [IC.from, IC.to] = actRange(IC.preset); $$('#ic-presets .chip').forEach(c => c.classList.toggle('on', c === el)); $('#ic-dates').hidden = IC.preset !== 'custom'; loadInvChg(); },
+  'ic-doc': el => { IC.doc = el.dataset.d; $$('#ic-docs .chip').forEach(c => c.classList.toggle('on', c === el)); drawInvChg(); },
+  'ic-print': () => {
+    const list = icFiltered();
+    printHTML(`<div style="font-family:system-ui,sans-serif;font-size:11px"><h2 style="margin:0 0 4px">${esc(settings().store_name || 'Khair Mart')} — ${esc(t('nav.invchg'))}</h2><div style="margin-bottom:8px">${esc(fmtDate(IC.from))} – ${esc(fmtDate(IC.to))} · ${esc(t('ic.count_short', { n: fmtNum(list.length) }))} · ${esc(t('ic.printed', { at: fmtDateTime(new Date().toISOString()), name: S.user }))}</div>
+      <style>#ic-print-table{border-collapse:collapse;width:100%}#ic-print-table th,#ic-print-table td{border:1px solid #999;padding:4px;vertical-align:top;text-align:start}</style>${icTableHTML(list, true)}</div>`, 'size:A4 landscape;margin:10mm');
+  },
+  'op-every-save': async () => {
+    const err = $('#gdo-every-err'), raw = String($('#gdo-every').value || '').trim(), d = int(raw);
+    if (!/^\d+$/.test(raw) || d < 7 || d > 180) { err.textContent = t('op.every_bad'); return; }
+    err.textContent = '';
+    try { const r = await api('set_opname_every', { days: d }); applyOpnameResp(r.opname); toast(t('saved'), 'ok'); if (S.view === 'gudang' && GD.tab === 'opname') gdDrawOpname($('#gd-body'), true); }
+    catch (e) { err.textContent = errMsg(e); }
+  }
+});
+/* Daily report (laporan harian): the day's goods-in notes (lines, qty received, stock now) and every invoice change made that day. */
+function drGoodsInHTML(R) {
+  const g = R.goods_in; if (!g) return '';
+  const own = g.total != null;
+  return `<div class="panel" style="margin-bottom:14px" id="dr-goods-in"><h3>${ic('truck')} ${esc(t('dr.goods_in', { n: fmtNum(g.count) }))}${g.mismatch ? ` <span class="badge red">${esc(t('dr.gi_mismatch', { n: g.mismatch }))}</span>` : ''}${own ? ` <span class="small muted" style="margin-inline-start:auto">${esc(t('dr.gi_total'))}: <b class="num">${fmtRp(g.total)}</b></span>` : ''}</h3><div class="pb">
+    ${(g.notes || []).map(n => `<div class="dr-gi" data-no="${esc(n.purchase_no)}" style="margin-bottom:12px"><div class="row wrap" style="gap:6px"><b class="num">${esc(n.purchase_no)}</b><span>${esc(n.supplier || '—')}</span><span class="muted small">${esc(n.at ? jktTime(n.at) : '—')} · ${esc(n.by)}</span><span class="badge ${n.match_status === 'cocok' ? 'green' : n.match_status === 'tidak_cocok' ? 'red' : 'amber'}" data-match="${esc(n.match_status)}">${esc(t('mt.' + (n.match_status || 'tanpa_foto')))}</span>${n.changes_today ? `<span class="badge red">${esc(t('dr.gi_changed', { n: n.changes_today }))}</span>` : ''}</div>
+      ${n.match_notes ? `<div class="small muted">${esc(n.match_notes)}</div>` : ''}
+      <div class="tbl-wrap" style="margin-top:4px"><table class="tbl"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('dr.gi_qty'))}</th><th class="r">${esc(t('dr.gi_stock'))}</th><th>${esc(t('pu.exp'))}</th>${own ? `<th class="r">${esc(t('pu.cost_unit'))}</th><th class="r">${esc(t('total'))}</th>` : ''}</tr></thead><tbody>
+        ${n.lines.map(l => `<tr data-pid="${esc(l.product_id)}"><td>${esc(l.name)}</td><td class="r num" data-gi-qty>${fmtQty(l.qty)} ${esc(l.unit || '')}</td><td class="r num" data-gi-stock>${l.stock_now == null ? '—' : fmtQty(l.stock_now)}</td><td class="small">${l.exp_date ? esc(fmtDate(l.exp_date)) : '—'}</td>${own ? `<td class="r num">${l.cost_price == null ? '—' : fmtRp(l.cost_price)}</td><td class="r num">${l.total == null ? '—' : fmtRp(l.total)}</td>` : ''}</tr>`).join('')}</tbody></table></div></div>`).join('') || `<div class="muted" id="dr-gi-none">${esc(t('dr.gi_none'))}</div>`}
+  </div></div>`;
+}
+function drChangesHTML(R) {
+  const c = R.invoice_changes; if (!c) return '';
+  return `<div class="panel" style="margin-bottom:14px" id="dr-invchg"><h3>${ic('clip')} ${esc(t('dr.invchg', { n: fmtNum(c.count) }))}${c.count ? ` <button class="btn xs" style="margin-inline-start:auto" data-act="go" data-view="invchg">${esc(t('nav.invchg'))}</button>` : ''}</h3><div class="pb">
+    ${c.count ? `<div class="tbl-wrap" style="border:0;border-radius:0">${icTableHTML(c.list || [], false)}</div>` : `<div class="muted">${esc(t('ic.none'))}</div>`}</div></div>`;
+}
+function dailyGoodsText(R, withCost) {
+  const L = [], g = R.goods_in, c = R.invoice_changes;
+  if (g) {
+    L.push(`Barang masuk hari ini: ${fmtNum(g.count)} nota${g.mismatch ? ` (${fmtNum(g.mismatch)} beda dengan nota)` : ''}${withCost && g.total != null ? ` · ${fmtRp(g.total)}` : ''}`);
+    (g.notes || []).forEach(n => L.push(`- ${n.purchase_no} ${n.supplier || ''} ${n.at ? jktTime(n.at) : ''} (${n.by}) nota: ${tid('mt.' + (n.match_status || 'tanpa_foto'))}${n.changes_today ? ' — dikoreksi' : ''}: ` + n.lines.map(l => `${l.name} ${fmtQty(l.qty)}${l.unit ? ' ' + l.unit : ''} (stok ${l.stock_now == null ? '-' : fmtQty(l.stock_now)})`).join('; ')));
+  }
+  if (c && c.count) {
+    L.push(`Perubahan faktur hari ini: ${fmtNum(c.count)}`);
+    (c.list || []).forEach(x => L.push(`- ${jktTime(x.at)} ${icDocText(x)} ${tid(IC_WHAT.includes(x.what) ? 'ic.w_' + x.what : 'ic.w_other')}: ${(x.changes || []).map(ch => { const p = []; if (ch.qty_from !== undefined && ch.qty_to !== undefined && num(ch.qty_from) !== num(ch.qty_to)) p.push(`qty ${fmtQty(ch.qty_from)}→${fmtQty(ch.qty_to)}`); if (ch.qty_ret !== undefined) p.push(`retur ${fmtQty(ch.qty_ret)}`); if (withCost && ch.price_from !== undefined && ch.price_to !== undefined && int(ch.price_from) !== int(ch.price_to)) p.push(`harga ${fmtRp(ch.price_from)}→${fmtRp(ch.price_to)}`); return `${ch.name}${p.length ? ' ' + p.join(', ') : ''}`; }).join('; ')}${x.reason ? ` | alasan: ${x.reason}` : ''} | ${String(x.requested_by || '').toLowerCase() === String(x.approved_by || '').toLowerCase() ? `oleh ${x.approved_by}` : `diminta ${x.requested_by}, disetujui ${x.approved_by}`}`));
+  }
+  return L;
+}
+Object.assign(I18N.id, {
+  'nav.invchg': 'Perubahan faktur', 'navs.invchg': 'Ubah faktur',
+  'ic.hint': 'Setiap perubahan faktur yang sudah disimpan: koreksi barang masuk, faktur dibatalkan, koreksi harga barang terjual, retur atas faktur — dengan tanggal & jam, apa yang berubah, alasan, siapa yang meminta dan siapa yang menyetujui.',
+  'ic.search': 'Cari nomor, barang, nama…', 'ic.doc_masuk': 'Barang masuk', 'ic.doc_jual': 'Faktur penjualan',
+  'ic.when': 'Tanggal & jam', 'ic.invoice': 'Faktur', 'ic.what': 'Jenis', 'ic.changes': 'Yang berubah', 'ic.who': 'Diminta / disetujui',
+  'ic.w_koreksi_masuk': 'Koreksi barang masuk', 'ic.w_batal': 'Dibatalkan', 'ic.w_koreksi_harga': 'Koreksi harga', 'ic.w_retur': 'Retur', 'ic.w_other': 'Perubahan',
+  'ic.qty': 'qty {from} → {to}', 'ic.ret': 'retur {n}', 'ic.damaged': 'rusak', 'ic.price': 'harga {from} → {to}', 'ic.price1': 'harga {p}', 'ic.sold_in': '{q} terjual di {n} faktur',
+  'ic.direct': 'Langsung oleh {name} · {at}', 'ic.req_appr': 'Diminta {req} ({req_at}) · disetujui {appr} ({appr_at})',
+  'ic.count': '{n} perubahan · {from} – {to}', 'ic.count_short': '{n} perubahan', 'ic.none': 'Tidak ada faktur yang diubah.', 'ic.printed': 'dicetak {at} oleh {name}',
+  'att.invchg': 'Faktur diubah ({n}) — lihat siapa meminta & menyetujui', 'att.opname_due': 'Stok opname penuh jatuh tempo {date} ({n} hari lagi) — terakhir: {last}',
+  'att.opname_late': 'Stok opname penuh TERLAMBAT {n} hari (jatuh tempo {date}) — terakhir: {last}',
+  'op.title': 'Stok opname penuh (berkala)', 'op.last_next': 'Terakhir: {last} — berikutnya: {next}', 'op.never': 'belum pernah', 'op.late_n': 'terlambat {n} hari', 'op.left_n': '{n} hari lagi',
+  'op.cycle': 'Siklus ini: {n} dari {total} barang aktif sudah dihitung (penuh = minimal {pct}%). Hitungan yang disetujui dijumlahkan.', 'op.every': 'Stok opname penuh setiap', 'op.days': 'hari', 'op.every_bad': 'Isi 7–180 hari',
+  'ak.ubah_faktur': 'Faktur diubah', 'ak.opname_penuh': 'Stok opname penuh',
+  'dr.goods_in': 'Barang masuk hari ini ({n} nota)', 'dr.gi_mismatch': '{n} beda dengan nota', 'dr.gi_total': 'Nilai beli', 'dr.gi_changed': 'dikoreksi {n}×', 'dr.gi_qty': 'Qty masuk', 'dr.gi_stock': 'Stok sekarang',
+  'dr.gi_none': 'Tidak ada barang masuk hari ini.', 'dr.invchg': 'Perubahan faktur hari ini ({n})'
+});
+Object.assign(I18N.ar, {
+  'nav.invchg': 'تغييرات الفواتير', 'navs.invchg': 'تغييرات الفواتير',
+  'ic.hint': 'كل تغيير على فاتورة محفوظة: تصحيح بضاعة واردة، إلغاء فاتورة، تصحيح سعر بضاعة مَبيعة، مرتجع على فاتورة — بالتاريخ والوقت، وما الذي تغيّر، والسبب، ومن طلب التغيير ومن وافق عليه.',
+  'ic.search': 'ابحث برقم أو صنف أو اسم…', 'ic.doc_masuk': 'بضاعة واردة', 'ic.doc_jual': 'فاتورة مبيعات',
+  'ic.when': 'التاريخ والوقت', 'ic.invoice': 'الفاتورة', 'ic.what': 'النوع', 'ic.changes': 'ما الذي تغيّر', 'ic.who': 'من طلب / من وافق',
+  'ic.w_koreksi_masuk': 'تصحيح بضاعة واردة', 'ic.w_batal': 'إلغاء', 'ic.w_koreksi_harga': 'تصحيح سعر', 'ic.w_retur': 'مرتجع', 'ic.w_other': 'تغيير',
+  'ic.qty': 'الكمية {from} ← {to}', 'ic.ret': 'مرتجع {n}', 'ic.damaged': 'تالف', 'ic.price': 'السعر {from} ← {to}', 'ic.price1': 'السعر {p}', 'ic.sold_in': '{q} بيعت في {n} فاتورة',
+  'ic.direct': 'مباشرة من {name} · {at}', 'ic.req_appr': 'طلبه {req} ({req_at}) · وافق {appr} ({appr_at})',
+  'ic.count': '{n} تغيير · {from} – {to}', 'ic.count_short': '{n} تغيير', 'ic.none': 'لا توجد فواتير معدّلة.', 'ic.printed': 'طُبع {at} بواسطة {name}',
+  'att.invchg': 'تم تغيير فاتورة ({n}) — انظر من طلب ومن وافق', 'att.opname_due': 'موعد الجرد الكامل {date} (بعد {n} يوم) — آخر جرد: {last}',
+  'att.opname_late': 'الجرد الكامل متأخر {n} يوم (كان موعده {date}) — آخر جرد: {last}',
+  'op.title': 'الجرد الكامل الدوري', 'op.last_next': 'آخر جرد: {last} — الجرد التالي: {next}', 'op.never': 'لم يتم بعد', 'op.late_n': 'متأخر {n} يوم', 'op.left_n': 'بعد {n} يوم',
+  'op.cycle': 'هذه الدورة: عُدّ {n} من {total} صنفًا نشطًا (الجرد الكامل = {pct}% على الأقل). تُجمع العدّات الموافق عليها.', 'op.every': 'الجرد الكامل كل', 'op.days': 'يوم', 'op.every_bad': 'أدخل من 7 إلى 180 يومًا',
+  'ak.ubah_faktur': 'تغيير فاتورة', 'ak.opname_penuh': 'جرد كامل',
+  'dr.goods_in': 'البضاعة الواردة اليوم ({n} فاتورة)', 'dr.gi_mismatch': '{n} تختلف عن الفاتورة', 'dr.gi_total': 'قيمة الشراء', 'dr.gi_changed': 'صُحّحت {n} مرة', 'dr.gi_qty': 'الكمية الواردة', 'dr.gi_stock': 'المخزون الآن',
+  'dr.gi_none': 'لا توجد بضاعة واردة اليوم.', 'dr.invchg': 'تغييرات الفواتير اليوم ({n})'
 });
 
 /* ========== Boot ========== */
