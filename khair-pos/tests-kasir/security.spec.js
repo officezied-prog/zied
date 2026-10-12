@@ -41,7 +41,10 @@ test('auto-lock after settings.auto_lock_minutes idle → PIN pad, cart kept', a
   await H.setDb(page, 'db.settings.auto_lock_minutes = 0.05;'); // 3 seconds
   await H.login(page, 'Siti', '1111', { noGoto: true });
   await H.addItem(page, 'ajwa');
-  await expect(page.locator('#pin-who')).toHaveText('Siti', { timeout: 15000 });
+  // the lock lands 3-8 s after the last tap (3 s idle + the 5 s check). The first login's #pin-who stays in the hidden
+  // login screen, so wait for the screen itself to come back, not for that stale text (slow CI runners missed the lock)
+  await expect(page.locator('#login')).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('#pin-who')).toHaveText('Siti');
   await expect(page.locator('#login')).toContainText('terkunci');
   await H.typePin(page, '1111');
   await expect(page.locator('#paybar-total')).toHaveText(H.rp(175000));
