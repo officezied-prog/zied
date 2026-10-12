@@ -177,7 +177,8 @@ const MockServer = (() => {
         p.stock = l.counted;
         return { product_id: p.id, stock: p.stock };
       });
-      return { applied: true, lines, stock };
+      opnameProgress(db, u, lines, u.name); // v37
+      return { applied: true, lines, stock, opname: opnameStatus(db) };
     }
     const diffs = lines.filter(l => l.diff);
     const summary = `Stok opname ${lines.length} barang, ${diffs.length} selisih` + (diffs.length ? ': ' + diffs.slice(0, 3).map(l => `${l.name} ${fmtQty(l.system)}→${fmtQty(l.counted)}`).join(', ') + (diffs.length > 3 ? ', …' : '') : '');
@@ -213,6 +214,86 @@ const MockServer = (() => {
     db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + rand(8), at: new Date().toISOString(), act_date: jktDate(), user: u.name, role: u.role, kind,
       summary: str(summary).slice(0, 1000), ref: str(ref).slice(0, 60), amount: money(amount), level: level || 'info' });
     dirty = true;
+  }
+  /* ---- v37 (owner 2026-10-12: «أي فاتورة … لا يمكن تغييرها إلا بموافقة المدير، وإرسال إشعار إلى المالك: تم تغيير فاتورة …»
+     «والكميات التي يتم جردها آخر كل شهرين»): mirror of the server's invoice-change audit (activity 'ubah_faktur' + detail) and of
+     the two-monthly full stock count (settings.opname_state / opname_every_days). Keep identical to backend/process.js. ---- */
+  const wibStamp = iso => { const t0 = Date.parse(iso); return isFinite(t0) ? new Date(t0 + 7 * 3600000).toISOString().slice(0, 16).replace('T', ' ') + ' WIB' : ''; };
+  const CHG_WHAT = { koreksi_masuk: 'Koreksi barang masuk', batal: 'Faktur dibatalkan', koreksi_harga: 'Koreksi harga faktur', retur: 'Retur atas faktur' };
+  function changeText(c) {
+    const parts = [];
+    if (c.qty_from !== undefined && c.qty_to !== undefined && num(c.qty_from) !== num(c.qty_to)) parts.push('qty ' + fmtN(c.qty_from) + '→' + fmtN(c.qty_to));
+    if (c.qty_ret !== undefined) parts.push('retur ' + fmtN(c.qty_ret) + (c.condition === 'rusak' ? ' (rusak)' : ''));
+    if (c.price_from !== undefined && c.price_to !== undefined) parts.push(money(c.price_from) === money(c.price_to) ? 'harga Rp ' + money(c.price_to) : 'harga Rp ' + money(c.price_from) + '→' + money(c.price_to));
+    return str(c.name) + (parts.length ? ' ' + parts.join(', ') : '');
+  }
+  function invoiceChange(db, u, o) {
+    const at = new Date().toISOString();
+    const d = { doc: o.doc === 'masuk' ? 'masuk' : 'jual', what: str(o.what), no: str(o.no), doc_date: str(o.doc_date), party: str(o.party), changes: (o.changes || []).slice(0, 100), reason: str(o.reason).slice(0, 300),
+      requested_by: str(o.requested_by) || u.name, requested_at: str(o.requested_at) || at, approved_by: str(o.approved_by) || u.name, approved_role: u.role, approved_at: at, request_id: str(o.request_id), amount: money(o.amount) };
+    const same = d.requested_by.toLowerCase() === d.approved_by.toLowerCase();
+    const summary = 'FAKTUR DIUBAH — ' + (CHG_WHAT[d.what] || d.what) + ': ' + (d.doc === 'masuk' ? 'Barang masuk ' : 'Faktur ') + d.no + (d.doc_date ? ' (' + d.doc_date + (d.party ? ', ' + d.party : '') + ')' : '') +
+      (d.changes.length ? ' — ' + d.changes.map(changeText).join('; ') : '') + (d.reason ? ' | alasan: ' + d.reason : '') +
+      (same ? ' | diubah langsung oleh ' + d.approved_by + ' ' + wibStamp(at) : ' | diminta ' + d.requested_by + ' ' + wibStamp(d.requested_at) + ', disetujui ' + d.approved_by + ' ' + wibStamp(at));
+    logAct(db, u, 'ubah_faktur', summary, d.no, d.amount, 'warn');
+    db.activity[db.activity.length - 1].detail = JSON.stringify(d);
+    return d;
+  }
+  function voidChange(db, u, sale, reason, requestedBy, requestedAt, requestId) {
+    return invoiceChange(db, u, { doc: 'jual', what: 'batal', no: sale.invoice_no, doc_date: str(sale.sale_date), party: str(sale.customer_name),
+      changes: db.items.filter(i => i.invoice_no === sale.invoice_no).map(i => ({ product_id: i.product_id, name: str(i.name), qty_from: num(i.qty), qty_to: 0, price_from: money(i.unit_price), price_to: money(i.unit_price), total_from: money(i.line_total), total_to: 0 })),
+      reason, requested_by: requestedBy, requested_at: requestedAt, request_id: requestId, amount: -money(sale.total) });
+  }
+  function purchaseFixChange(db, u, no, first, changes, reason, requestedBy, requestedAt, requestId) {
+    return invoiceChange(db, u, { doc: 'masuk', what: 'koreksi_masuk', no, doc_date: str(first.purchase_date), party: str(first.supplier),
+      changes: changes.map(c => ({ product_id: c.product_id, name: c.name, qty_from: c.from_qty, qty_to: c.to_qty, price_from: c.from_qty > 0 ? Math.round(c.from_total / c.from_qty) : c.cost_price, price_to: c.cost_price, total_from: c.from_total, total_to: c.to_total })),
+      reason, requested_by: requestedBy, requested_at: requestedAt, request_id: requestId, amount: sum(changes, c => c.d_total) });
+  }
+  const isoDay = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+  const dayN = d => Math.round(Date.parse(String(d).slice(0, 10) + 'T00:00:00Z') / 86400000);
+  const OPNAME_FULL_PCT = 90;
+  const opnameEvery = db => { const v = Math.round(num(db.settings.opname_every_days)); return v >= 7 && v <= 180 ? v : 60; };
+  const opnameState = db => db.settings.opname_state && typeof db.settings.opname_state === 'object' ? db.settings.opname_state : {};
+  function opnameStatus(db) {
+    const s = opnameState(db), every = opnameEvery(db), T = jktDate();
+    const base = isYmd(s.last_full) ? s.last_full : (isYmd(s.since) ? s.since : T);
+    const next = isoDay(base, every), left = dayN(next) - dayN(T);
+    const active = db.products.filter(p => p.active !== false), counted = new Set((s.counted || []).map(String));
+    return { every_days: every, last_full: isYmd(s.last_full) ? s.last_full : '', last_full_by: str(s.last_full_by), last_full_n: num(s.last_full_n), since: isYmd(s.since) ? s.since : '', base, next_due: next, days_left: left,
+      status: left < 0 ? 'overdue' : left <= 7 ? 'due' : 'ok', cycle_from: isYmd(s.cycle_from) ? s.cycle_from : '', counted_n: active.filter(p => counted.has(String(p.id))).length, active_n: active.length, full_pct: OPNAME_FULL_PCT };
+  }
+  function opnameProgress(db, u, lines, byName) {
+    const s = Object.assign({}, opnameState(db)), T = jktDate();
+    if (!isYmd(s.since)) s.since = T;
+    if (!isYmd(s.cycle_from) || dayN(T) - dayN(s.cycle_from) > opnameEvery(db)) { s.cycle_from = T; s.counted = []; }
+    const set = new Set((s.counted || []).map(String));
+    (lines || []).forEach(l => { if (db.products.some(p => String(p.id) === String(l.product_id))) set.add(String(l.product_id)); });
+    const active = db.products.filter(p => p.active !== false), covered = active.filter(p => set.has(String(p.id))).length;
+    s.last_count = T;
+    if (active.length && covered * 100 >= active.length * OPNAME_FULL_PCT) {
+      Object.assign(s, { last_full: T, last_full_at: new Date().toISOString(), last_full_by: str(byName), last_full_n: covered, cycle_from: '', counted: [], overdue_noted: '' });
+      logAct(db, u, 'opname_penuh', 'Stok opname PENUH selesai: ' + covered + ' dari ' + active.length + ' barang aktif (oleh ' + str(byName) + '). Berikutnya paling lambat ' + isoDay(T, opnameEvery(db)), '', 0, 'info');
+    } else s.counted = [...set].map(k => isFinite(Number(k)) ? Number(k) : k);
+    db.settings.opname_state = s;
+    dirty = true;
+  }
+  function opnameBoot(db) {
+    let s = opnameState(db);
+    if (!isYmd(s.since) && !isYmd(s.last_full)) { s = Object.assign({}, s, { since: jktDate() }); db.settings.opname_state = s; dirty = true; }
+    const st = opnameStatus(db);
+    if (st.status === 'overdue' && str(s.overdue_noted) !== st.next_due) {
+      db.settings.opname_state = Object.assign({}, opnameState(db), { overdue_noted: st.next_due });
+      db.activity = db.activity || [];
+      db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + rand(8), at: new Date().toISOString(), act_date: jktDate(), user: 'Sistem', role: 'system', kind: 'notifikasi',
+        summary: 'Stok opname penuh TERLAMBAT ' + (-st.days_left) + ' hari: jatuh tempo ' + st.next_due + ', terakhir ' + (st.last_full || 'belum pernah') + ' (setiap ' + st.every_days + ' hari). Mulai hitung di Gudang → Stok opname.', ref: 'owner,manager', amount: 0, level: 'warn' });
+      dirty = true;
+    }
+    return st;
+  }
+  function settingsOut(db) {
+    const st = Object.assign({}, V16_DEFAULTS, db.settings);
+    if (st.opname_state && typeof st.opname_state === 'object') { const o = Object.assign({}, st.opname_state); o.counted_n = Array.isArray(o.counted) ? o.counted.length : 0; delete o.counted; st.opname_state = o; }
+    return st;
   }
   const isCoord = (lat, lng) => isFinite(Number(lat)) && isFinite(Number(lng)) && Math.abs(Number(lat)) <= 90 && Math.abs(Number(lng)) <= 180 && !(Number(lat) === 0 && Number(lng) === 0) && lat !== null && lat !== '' && lng !== null && lng !== '' && lat !== undefined && lng !== undefined;
   function metres(aLat, aLng, bLat, bLng) {
@@ -619,7 +700,7 @@ const MockServer = (() => {
         if (!deviceTouch(db, u, data.device, true)) throw E('INVALID', 'device.id tidak valid');
         return { require_location: db.settings.require_device_location === true, server_time: new Date().toISOString() };
       }
-      case 'bootstrap': return { products: db.products.map(productOut), customers: db.customers, settings: Object.assign({}, V16_DEFAULTS, db.settings), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
+      case 'bootstrap': return { opname: opnameBoot(db), products: db.products.map(productOut), customers: db.customers, settings: settingsOut(db), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
         users: db.users.map(x => u.role === 'owner' ? { name: x.name, role: x.role, active: x.active !== false, must_change: x.must_change === true, locked: Date.parse(x.locked_until) > Date.now(), has_master: x.role === 'owner' && isHex64(x.master_hash) } : { name: x.name, role: x.role, active: x.active !== false }), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
         shift: blind(shiftSummary(db, openShiftOf(db, u.name)), u.role), open_shifts: ['owner', 'manager'].includes(u.role) ? db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)) : [] };
 
@@ -882,7 +963,9 @@ const MockServer = (() => {
         if (data.decision === 'approved' && ap.kind === 'void') {
           if (data.invoice_no !== ap.ref) throw E('INVALID', 'invoice_no must equal approval.ref');
           let reason = ''; try { reason = JSON.parse(ap.payload || '{}').reason || ''; } catch (e) { }
+          const wasVoid = (db.sales.find(x => x.invoice_no === ap.ref) || {}).status === 'void';
           out.sale = voidSaleNow(db, ap.ref, `${reason} (diminta ${ap.cashier}, disetujui ${u.name})`, u.name);
+          if (!wasVoid) voidChange(db, u, out.sale, reason, ap.cashier, ap.created_at, ap.request_id); // v37
         }
         if (data.decision === 'approved' && ap.kind === 'price') {
           const p = prodById(ap.ref); if (!p) throw E('NOT_FOUND', 'product');
@@ -890,14 +973,16 @@ const MockServer = (() => {
           for (const [f, ch] of Object.entries(pl.changes || {})) p[f] = int(ch.to);
           out.product = p;
         }
-        if (data.decision === 'approved' && ap.kind === 'opname') out.stock = applyOpname(db, ap, u.name);
+        if (data.decision === 'approved' && ap.kind === 'opname') { out.stock = applyOpname(db, ap, u.name); const opl = parseObj(ap.payload); opnameProgress(db, u, opl.lines || [], u.name + ' (dihitung ' + (opl.by || ap.cashier) + ')'); out.opname = opnameStatus(db); }
         if (data.decision === 'approved' && ap.kind === 'purchase_fix') {
           const pl = parseObj(ap.payload), no = str(pl.purchase_no);
           // as on the server: the rows are looked up by data.purchase_no, which must be approval.ref
           const rows = no && str(data.purchase_no) === no ? db.purchases.filter(r => str(r.purchase_no) === no) : [];
           const pf = purchaseFixChanges(rows, pl.lines);
           if (!pf.found) throw E('INVALID', 'Kirim purchase_no barang masuk yang dikoreksi');
+          const first = rows[0] || {};
           out.stock = applyPurchaseFix(db, u, no, pf.changes, str(pl.reason) + ' (diminta ' + str(ap.cashier) + ', disetujui ' + u.name + ')', u.name);
+          purchaseFixChange(db, u, no, first, pf.changes, str(pl.reason), str(ap.cashier), ap.created_at, ap.request_id); // v37: the owner is told
         }
         if (ap.kind === 'kesepakatan') {
           if (str(ap.cashier).toLowerCase() === u.name.toLowerCase()) throw E('FORBIDDEN', 'Kesepakatan harus dikonfirmasi pihak lain');
@@ -956,6 +1041,10 @@ const MockServer = (() => {
             }
           }
           db.returns.push(Object.assign({}, rec, { id: nextId(db, 'return'), lines: JSON.stringify(lines), status: data.decision, user: str(ap.cashier), approved_by: u.name, return_date: jktDate(), at: new Date().toISOString(), request_id: ap.request_id }));
+          if (data.decision === 'approved') invoiceChange(db, u, { doc: rec.kind === 'pemasok' ? 'masuk' : 'jual', what: 'retur', no: str(rec.ref), doc_date: str(rec.bought_date), party: str(rec.party_name), // v37
+            changes: lines.map(l => ({ product_id: l.product_id, name: str(l.name), qty_ret: num(l.qty), condition: str(l.condition), price_from: money(l.unit_price), price_to: money(l.unit_price), total: money(l.value) })),
+            reason: (RETURN_REASON_TEXT[rec.reason_code] || '') + (rec.reason_note ? ': ' + str(rec.reason_note) : '') + ' (' + str(rec.return_id) + ')', requested_by: str(ap.cashier), requested_at: ap.created_at, request_id: ap.request_id,
+            amount: rec.kind === 'pemasok' ? -money(rec.value) : -money(rec.refund) });
           logAct(db, u, 'retur', (data.decision === 'approved' ? 'Retur disetujui ' : 'Retur ditolak ') + u.name + ': ' + str(ap.summary).slice(0, 600), str(rec.return_id), money(ap.total), 'warn');
           out.return_id = str(rec.return_id);
         }
@@ -1057,8 +1146,11 @@ const MockServer = (() => {
         needOwner();
         if (!String(data.reason || '').trim()) throw E('INVALID', 'reason required');
         const vs = db.sales.find(x => x.invoice_no === data.invoice_no);
-        if (vs && vs.status !== 'void') logAct(db, u, 'batal', 'Faktur dibatalkan ' + vs.invoice_no + ' Rp ' + money(vs.total) + ': ' + str(data.reason), vs.invoice_no, money(vs.total), 'warn');
-        return { sale: voidSaleNow(db, data.invoice_no, String(data.reason), u.name) };
+        const wasOk = vs && vs.status !== 'void';
+        if (wasOk) logAct(db, u, 'batal', 'Faktur dibatalkan ' + vs.invoice_no + ' Rp ' + money(vs.total) + ': ' + str(data.reason), vs.invoice_no, money(vs.total), 'warn');
+        const vsale = voidSaleNow(db, data.invoice_no, String(data.reason), u.name);
+        if (wasOk) voidChange(db, u, vsale, String(data.reason), u.name, '', ''); // v37
+        return { sale: vsale };
       }
       case 'request_void': {
         const sale = db.sales.find(x => x.invoice_no === data.invoice_no);
@@ -1413,15 +1505,19 @@ const MockServer = (() => {
         if (!pf.found) throw E('NOT_FOUND', 'Barang masuk tidak ditemukan');
         if (!pf.changes.length) throw E('INVALID', 'Tidak ada perubahan');
         const summary = fixSummary(no, pf.changes);
-        if (['owner', 'manager'].includes(u.role)) {
+        // v37 (owner 2026-10-12): as on the server — only the OWNER corrects a saved goods-in directly; the manager's correction
+        // goes to the owner, the cashier's to the manager (it used to be applied at once for the manager here, unlike the server).
+        if (u.role === 'owner') {
+          const first = db.purchases.find(r => str(r.purchase_no) === no) || {};
           const stock = applyPurchaseFix(db, u, no, pf.changes, reason, u.name);
           logAct(db, u, 'koreksi_masuk', summary + ' | ' + reason, no, sum(pf.changes, c => c.d_total), 'warn');
-          return { applied: true, changes: u.role === 'owner' ? pf.changes : pf.changes.map(qtyOnly), stock };
+          purchaseFixChange(db, u, no, first, pf.changes, reason, u.name, '', '');
+          return { applied: true, changes: pf.changes, stock };
         }
-        const approval = newApproval(db, u, { kind: 'purchase_fix', approver_role: 'manager', ref: no, note: reason, summary: summary.slice(0, 1500), total: sum(pf.changes, c => c.to_total),
+        const approval = newApproval(db, u, { kind: 'purchase_fix', approver_role: u.role === 'manager' ? 'owner' : 'manager', ref: no, note: reason, summary: summary.slice(0, 1500), total: sum(pf.changes, c => c.to_total),
           payload: JSON.stringify({ purchase_no: no, lines: data.lines, reason, changes: pf.changes }) });
         logAct(db, u, 'minta_koreksi', 'Minta ' + summary + ' | ' + reason, no, 0, 'warn');
-        return { applied: false, request_id: approval.request_id, approval: approvalOut(approval, u.role), changes: u.role === 'owner' ? pf.changes : pf.changes.map(qtyOnly) };
+        return { applied: false, request_id: approval.request_id, approval: approvalOut(approval, u.role), approver_role: approval.approver_role, changes: u.role === 'owner' ? pf.changes : pf.changes.map(qtyOnly) };
       }
       case 'stock_count': return stockCount(db, u, data);
       case 'get_sales': {

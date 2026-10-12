@@ -23,7 +23,7 @@ const INDEXES = {
   pos_expenses: ['expense_date', 'request_id'],
   pos_shifts: ['status', 'shift_date'],
   pos_repacks: ['repack_date'],
-  pos_activity: ['act_date'],
+  pos_activity: ['act_date', 'kind'],
   pos_bank_lines: ['account_id', 'period'],
   pos_returns: ['return_date', 'ref'],
   pos_photos: ['photo_id'],

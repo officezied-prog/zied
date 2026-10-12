@@ -139,7 +139,7 @@ const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' 
 // v29 (owner 2026-10-10): the accountant also shares the "manager or accountant" approvals (goods-in mismatch,
 // void today's invoice, price change) — list_approvals + decide_approval, limited to approver_role 'mgr_akuntan'
 // by canDecide — and may register a member (save_customer); the cashier may no longer create members.
-const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product'];
+const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes'];
 if (role === 'akuntan' && AKUNTAN_READ.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
 // v36: report_tamper too — the field app reports a code attempt here (it was refused before, so the rep's account was never locked).
 if (role === 'sales' && ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
@@ -232,7 +232,9 @@ const DEFAULT_SETTINGS = {
   require_device_location: false,
   bank_accounts: [],
   invoice_due_days: 14,
-  akuntan_sees_cost: false
+  akuntan_sees_cost: false,
+  // v37 (owner 2026-10-12: «الكميات التي يتم جردها آخر كل شهرين»): a FULL stock count every N days (owner or manager sets 7–180).
+  opname_every_days: 60
 };
 const settingRows = rows('Get Settings');
 const approvalRows = rows('Get Approvals');
@@ -374,6 +376,7 @@ function applyCount(lines, note, byName) {
     const o = { product_id: p.id, stock: newStock };
     out.push(o);
   });
+  opnameProgress(lines, byName); // v37: every applied count moves the two-monthly full-count cycle on
   return out;
 }
 function computeSale(invoice, quote) {
@@ -532,6 +535,130 @@ function notify(toRoles, summary, level) {
   }, -1));
 }
 function fmtN(v) { return String(Math.round(num(v) * 1000) / 1000); }
+
+// ---- v37 invoice change audit (owner 2026-10-12: «أي فاتورة يتم تنزيلها مصادَق عليها لا يمكن تغييرها إلا بموافقة المدير، وإرسال إشعار إلى
+// المالك: تم تغيير فاتورة، بالتاريخ والوقت، بالتدقيق، ومن قام بتغييرها ومن طلب تغييرها») ----
+// Every change to an already-saved invoice (goods-in correction, sale void, price correction of sold goods, a return against an
+// invoice) leaves ONE activity row of kind 'ubah_faktur': the owner sees it at once (his activity feed + bell "Faktur diubah"),
+// and the "Perubahan faktur" audit list (list_invoice_changes) and the daily report read it back. `detail` holds the structured
+// record: what changed per item (qty / price from → to), the reason, who asked, who approved / applied, and when.
+function wibStamp(iso) { const t0 = Date.parse(iso); return isFinite(t0) ? new Date(t0 + 7 * 3600000).toISOString().slice(0, 16).replace('T', ' ') + ' WIB' : ''; }
+const CHG_WHAT = { koreksi_masuk: 'Koreksi barang masuk', batal: 'Faktur dibatalkan', koreksi_harga: 'Koreksi harga faktur', retur: 'Retur atas faktur' };
+function changeText(c, withCost) {
+  const parts = [];
+  if (c.qty_from !== undefined && c.qty_to !== undefined && num(c.qty_from) !== num(c.qty_to)) parts.push('qty ' + fmtN(c.qty_from) + '→' + fmtN(c.qty_to));
+  if (c.qty_ret !== undefined) parts.push('retur ' + fmtN(c.qty_ret) + (c.condition === 'rusak' ? ' (rusak)' : ''));
+  if (withCost && c.price_from !== undefined && c.price_to !== undefined) parts.push(money(c.price_from) === money(c.price_to) ? 'harga Rp ' + money(c.price_to) : 'harga Rp ' + money(c.price_from) + '→' + money(c.price_to));
+  if (c.invoices !== undefined) parts.push(fmtN(c.qty) + ' terjual di ' + c.invoices + ' faktur');
+  return str(c.name) + (parts.length ? ' ' + parts.join(', ') : '');
+}
+function invoiceChange(o) {
+  const at = new Date().toISOString();
+  const d = {
+    doc: o.doc === 'masuk' ? 'masuk' : 'jual', what: str(o.what), no: str(o.no), nos: Array.isArray(o.nos) ? o.nos.slice(0, 200) : undefined,
+    doc_date: str(o.doc_date), party: str(o.party), changes: (Array.isArray(o.changes) ? o.changes : []).slice(0, 100), reason: str(o.reason).slice(0, 300),
+    requested_by: str(o.requested_by) || me.name, requested_at: str(o.requested_at) || at, approved_by: str(o.approved_by) || me.name, approved_role: role, approved_at: at,
+    request_id: str(o.request_id), amount: money(o.amount), details: Array.isArray(o.details) ? o.details.slice(0, 200) : undefined
+  };
+  const docTxt = (d.doc === 'masuk' ? 'Barang masuk ' : 'Faktur ') + (d.nos && d.nos.length > 1 ? d.nos.slice(0, 8).join(', ') + (d.nos.length > 8 ? ' +' + (d.nos.length - 8) : '') : d.no);
+  const same = d.requested_by.toLowerCase() === d.approved_by.toLowerCase();
+  const summary = 'FAKTUR DIUBAH — ' + (CHG_WHAT[d.what] || d.what) + ': ' + docTxt + (d.doc_date ? ' (' + d.doc_date + (d.party ? ', ' + d.party : '') + ')' : (d.party ? ' (' + d.party + ')' : '')) +
+    (d.changes.length ? ' — ' + d.changes.map(function (c) { return changeText(c, true); }).join('; ') : '') + (d.reason ? ' | alasan: ' + d.reason : '') +
+    (same ? ' | diubah langsung oleh ' + d.approved_by + ' ' + wibStamp(at) : ' | diminta ' + d.requested_by + ' ' + wibStamp(d.requested_at) + ', disetujui ' + d.approved_by + ' ' + wibStamp(at));
+  ops.activity.push(forWrite({
+    act_id: 'AC' + rand(8), at: at, act_date: jkDate(), user: me.name, role: role, kind: 'ubah_faktur',
+    summary: summary.slice(0, 1000), ref: (d.no || (d.nos || [])[0] || '').slice(0, 60), amount: d.amount, level: 'warn', detail: JSON.stringify(d).slice(0, 20000)
+  }, -1));
+  return d;
+}
+// The audit record as each role may see it: purchase prices (goods-in costs) only for whoever may see costs.
+function changeOut(a) {
+  let d = {};
+  try { d = JSON.parse(a.detail || '{}') || {}; } catch (e) { d = {}; }
+  const o = Object.assign({}, d, { act_id: str(a.act_id), at: str(a.at), act_date: str(a.act_date), user: str(a.user), amount: money(a.amount) });
+  if (role === 'owner') o.summary = str(a.summary);
+  if (d.doc === 'masuk' && !costOk()) {
+    o.changes = (d.changes || []).map(function (c) { const x = Object.assign({}, c); ['price_from', 'price_to', 'total_from', 'total_to', 'total'].forEach(function (f) { delete x[f]; }); return x; });
+    delete o.amount;
+  }
+  return o;
+}
+
+function voidChange(sale, reason, requestedBy, requestedAt, requestId) {
+  const items = rows('Get Items By Invoice').filter(function (it) { return it.invoice_no === sale.invoice_no; });
+  return invoiceChange({ doc: 'jual', what: 'batal', no: sale.invoice_no, doc_date: str(sale.sale_date), party: str(sale.customer_name),
+    changes: items.map(function (it) { return { product_id: it.product_id, name: str(it.name), qty_from: num(it.qty), qty_to: 0, price_from: money(it.unit_price), price_to: money(it.unit_price), total_from: money(it.line_total), total_to: 0 }; })
+      .slice(0, 100),
+    reason: reason, requested_by: requestedBy, requested_at: requestedAt, request_id: requestId, amount: -money(sale.total) });
+}
+function purchaseFixChange(no, changes, reason, requestedBy, requestedAt, requestId) {
+  const first = purchaseRowsOf(no)[0] || {};
+  return invoiceChange({ doc: 'masuk', what: 'koreksi_masuk', no: no, doc_date: str(first.purchase_date), party: str(first.supplier),
+    changes: changes.map(function (c) { return { product_id: c.product_id, name: c.name, qty_from: c.from_qty, qty_to: c.to_qty, price_from: c.from_qty > 0 ? Math.round(c.from_total / c.from_qty) : c.cost_price, price_to: c.cost_price, total_from: c.from_total, total_to: c.to_total }; }),
+    reason: reason, requested_by: requestedBy, requested_at: requestedAt, request_id: requestId, amount: changes.reduce(function (a1, c) { return a1 + c.d_total; }, 0) });
+}
+
+// ---- v37 stock count every two months (owner 2026-10-12: «والكميات التي يتم جردها آخر كل شهرين») ----
+// Setting opname_state (no new table): since (when tracking began), last_full (date of the last FULL count), the current cycle
+// (cycle_from + the product ids counted so far). A count reaches "full" when the counts applied in one cycle cover at least
+// OPNAME_FULL_PCT % of the active products (the shop counts in batches: shelf by shelf, max 500 per send). Next due =
+// last full (or since) + opname_every_days. Computed on bootstrap from the settings already loaded — no extra read, no polling.
+const OPNAME_FULL_PCT = 90;
+var __opState = null;
+function opnameEvery() { const v = Math.round(num(readSettings().opname_every_days)); return v >= 7 && v <= 180 ? v : 60; }
+function opnameState() {
+  if (__opState) return __opState;
+  const r = settingRows.find(function (x) { return x.skey === 'opname_state'; });
+  let s = {};
+  try { s = JSON.parse(r ? r.svalue : '{}') || {}; } catch (e) { s = {}; }
+  return typeof s === 'object' && !Array.isArray(s) ? s : {};
+}
+function writeOpnameState(s) {
+  __opState = s;
+  const r = settingRows.find(function (x) { return x.skey === 'opname_state'; });
+  ops.settings = ops.settings.filter(function (x) { return x.skey !== 'opname_state'; });
+  ops.settings.push({ _id: r ? r.id : -1, skey: 'opname_state', svalue: JSON.stringify(s) });
+}
+function dayPlus(d, n) { return new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10); }
+function opnameStatus() {
+  const s = opnameState(), every = opnameEvery(), T = jkDate();
+  const base = isDate(s.last_full) ? s.last_full : (isDate(s.since) ? s.since : T);
+  const next = dayPlus(base, every), left = dayNum(next) - dayNum(T);
+  const active = products.filter(function (p) { return p.active !== false; });
+  const counted = {};
+  (Array.isArray(s.counted) ? s.counted : []).forEach(function (id) { counted[String(id)] = true; });
+  return { every_days: every, last_full: isDate(s.last_full) ? s.last_full : '', last_full_by: str(s.last_full_by), last_full_n: num(s.last_full_n),
+    since: isDate(s.since) ? s.since : '', base: base, next_due: next, days_left: left, status: left < 0 ? 'overdue' : (left <= 7 ? 'due' : 'ok'),
+    cycle_from: isDate(s.cycle_from) ? s.cycle_from : '', counted_n: active.filter(function (p) { return counted[String(p.id)]; }).length, active_n: active.length, full_pct: OPNAME_FULL_PCT };
+}
+// After a count is APPLIED (owner directly, or approved): add its products to the cycle; a full cycle sets last_full = today.
+function opnameProgress(lines, byName) {
+  const s = Object.assign({}, opnameState()), T = jkDate();
+  if (!isDate(s.since)) s.since = T;
+  if (!isDate(s.cycle_from) || dayNum(T) - dayNum(s.cycle_from) > opnameEvery()) { s.cycle_from = T; s.counted = []; }
+  const set = {};
+  (Array.isArray(s.counted) ? s.counted : []).forEach(function (id) { set[String(id)] = true; });
+  (Array.isArray(lines) ? lines : []).forEach(function (l) { if (productById[String(l.product_id)]) set[String(l.product_id)] = true; });
+  const active = products.filter(function (p) { return p.active !== false; });
+  const covered = active.filter(function (p) { return set[String(p.id)]; }).length;
+  s.last_count = T;
+  if (active.length && covered * 100 >= active.length * OPNAME_FULL_PCT) {
+    Object.assign(s, { last_full: T, last_full_at: new Date().toISOString(), last_full_by: str(byName), last_full_n: covered, cycle_from: '', counted: [], overdue_noted: '' });
+    logAct('opname_penuh', 'Stok opname PENUH selesai: ' + covered + ' dari ' + active.length + ' barang aktif (oleh ' + str(byName) + '). Berikutnya paling lambat ' + dayPlus(T, opnameEvery()), '', 0, 'info');
+  } else s.counted = Object.keys(set).map(function (k) { return isFinite(Number(k)) ? Number(k) : k; }).slice(0, 20000);
+  writeOpnameState(s);
+}
+// Settings for the apps: the cycle's product id list stays on the server (only its size goes out).
+function settingsOut() {
+  const st = readSettings(), os = opnameState();
+  if (Object.keys(os).length) {
+    const o = Object.assign({}, os);
+    o.counted_n = Array.isArray(o.counted) ? o.counted.length : 0;
+    delete o.counted;
+    st.opname_state = o;
+  }
+  return st;
+}
 
 // ---- Goods-in vs the photographed supplier note (extracted by the photo workflow) ----
 function normName(x) {
@@ -994,14 +1121,26 @@ switch (req.action) {
     });
   }
 
-  case 'bootstrap':
+  case 'bootstrap': {
+    // v37: the stock-count reminder. The first bootstrap starts the clock (since = today); once a full count is overdue the
+    // owner (and the manager) get ONE notice per due date — written here, on the next app start, so no timer or poll is needed.
+    let opS = opnameState();
+    if (!isDate(opS.since) && !isDate(opS.last_full)) { opS = Object.assign({}, opS, { since: jkDate() }); writeOpnameState(opS); }
+    const opn = opnameStatus();
+    if (opn.status === 'overdue' && str(opS.overdue_noted) !== opn.next_due) {
+      writeOpnameState(Object.assign({}, opnameState(), { overdue_noted: opn.next_due }));
+      ops.activity.push(forWrite({ act_id: 'AC' + rand(8), at: new Date().toISOString(), act_date: jkDate(), user: 'Sistem', role: 'system', kind: 'notifikasi',
+        summary: ('Stok opname penuh TERLAMBAT ' + (-opn.days_left) + ' hari: jatuh tempo ' + opn.next_due + ', terakhir ' + (opn.last_full || 'belum pernah') + ' (setiap ' + opn.every_days + ' hari). Mulai hitung di Gudang → Stok opname.').slice(0, 1000),
+        ref: 'owner,manager', amount: 0, level: 'warn' }, -1));
+    }
     return done({
       ok: true,
       user: { name: me.name, role: role },
       approvals_pending: (isApprover || role === 'akuntan') ? approvalRows.filter(function (a) { return a.status === 'pending' && canDecide(a); }).length : 0,
       products: products.map(productOut),
       customers: customers.map(clean),
-      settings: readSettings(),
+      settings: settingsOut(),
+      opname: opnameStatus(),
       users: users.map(function (u) { return role === 'owner' ? { name: u.name, role: u.role, active: u.active !== false, must_change: u.must_change === true, locked: Date.parse(u.locked_until) > Date.now(), tamper: isLocked(u.name), has_master: u.role === 'owner' && isHash(u.master_hash) } : { name: u.name, role: u.role, active: u.active !== false }; }),
       via_master: viaMaster, must_change: me.must_change === true && !viaMaster,
       shift: shiftOut(myShift),
@@ -1009,9 +1148,11 @@ switch (req.action) {
       activity_recent: role === 'owner' ? rows('Get Range Activity').map(clean).sort(function (a1, b1) { return String(b1.at).localeCompare(String(a1.at)); }).slice(0, 100) : [],
       // v29 (owner 2026-10-10): role-addressed notifications (kind 'notifikasi', target roles in ref) for the
       // owner / manager / accountant — e.g. "accountant approved a void", "price change by cashier".
-      notifications: (role === 'owner' || role === 'manager' || role === 'akuntan') ? rows('Get Range Activity').filter(function (a) { return a.kind === 'notifikasi' && String(a.ref || '').split(',').indexOf(role) >= 0; }).map(clean).sort(function (a1, b1) { return String(b1.at).localeCompare(String(a1.at)); }).slice(0, 40) : [],
+      // v37: every invoice change (kind 'ubah_faktur') made by someone else is a notice for the owner too.
+      notifications: (role === 'owner' || role === 'manager' || role === 'akuntan') ? rows('Get Range Activity').filter(function (a) { return (a.kind === 'notifikasi' && String(a.ref || '').split(',').indexOf(role) >= 0) || (role === 'owner' && a.kind === 'ubah_faktur' && str(a.user).toLowerCase() !== me.name.toLowerCase()); }).map(clean).sort(function (a1, b1) { return String(b1.at).localeCompare(String(a1.at)); }).slice(0, 40) : [],
       server_time: new Date().toISOString()
     });
+  }
 
   case 'save_sale': {
     const dup = rows('Get Sale By Client').filter(function (x) { return x.client_id === req.client_id; });
@@ -1304,6 +1445,11 @@ switch (req.action) {
         payload: JSON.stringify({ invoice_no: cs.invoice_no, customer_id: cs.customer_id, customer_name: cs.customer_name, phone: cs.phone, amount: cs.amount, correction: a.request_id, product_name: str(p.name) }) }), -1));
     });
     logAct('koreksi', summary.slice(0, 1000) + ' | ' + str(data.reason), String(p.id), netDiff, 'warn');
+    // v37: the re-priced sale invoices are changed invoices → one audit record (each invoice, its date, qty and difference).
+    invoiceChange({ doc: 'jual', what: 'koreksi_harga', no: details.length === 1 ? details[0].invoice_no : '', nos: details.map(function (x) { return x.invoice_no; }), doc_date: data.from === data.to ? data.from : data.from + ' s/d ' + data.to,
+      changes: [{ product_id: p.id, name: str(p.name), price_from: oldPrice, price_to: newPrice, qty: details.reduce(function (a1, x) { return a1 + x.qty; }, 0), invoices: details.length }],
+      details: details.map(function (x) { return { invoice_no: x.invoice_no, date: x.date, customer_name: x.customer_name, qty: x.qty, diff: x.diff }; }),
+      reason: str(data.reason), request_id: a.request_id, amount: netDiff });
     return done({ ok: true, correction: { request_id: a.request_id, product_name: str(p.name), old_price: oldPrice, new_price: newPrice, invoices: details.length, net_diff: netDiff, refund_total: refundTotal, under_total: underTotal, refunds: refunds, consults: consults, cashiers: Object.keys(cashiers), price_setters: setters }, product: catalog ? productOut(catalog) : undefined });
   }
 
@@ -1367,7 +1513,7 @@ switch (req.action) {
     const note = str(data.note).slice(0, 300);
     const changed = lines.filter(function (l) { return l.diff !== 0; });
     const cnt = 'Stok opname ' + lines.length + ' barang, ' + changed.length + ' selisih: ' + changed.slice(0, 20).map(function (l) { return l.name + ' ' + l.system + '→' + l.counted; }).join('; ');
-    if (role === 'owner') { logAct('opname', cnt, '', 0, changed.length ? 'warn' : 'info'); return done({ ok: true, applied: true, lines: lines, stock: applyCount(lines, note, me.name) }); }
+    if (role === 'owner') { logAct('opname', cnt, '', 0, changed.length ? 'warn' : 'info'); const st0 = applyCount(lines, note, me.name); return done({ ok: true, applied: true, lines: lines, stock: st0, opname: opnameStatus() }); }
     logAct('minta_opname', 'Minta ' + cnt, '', 0, 'info');
     const a = newApproval({
       kind: 'opname', approver_role: 'owner', ref: 'OP' + rand(5), note: note,
@@ -1756,13 +1902,17 @@ switch (req.action) {
     if (decision === 'approved' && a.kind === 'void') {
       const sale = rows('Get Sale By Invoice')[0];
       if (!sale || sale.invoice_no !== a.ref) return fail('INVALID', 'Kirim invoice_no faktur yang dibatalkan');
-      if (sale.status !== 'void') out.sale = strip(doVoid(sale, a.note, me.name + ' (diminta ' + str(a.cashier) + ')'), role);
+      if (sale.status !== 'void') {
+        out.sale = strip(doVoid(sale, a.note, me.name + ' (diminta ' + str(a.cashier) + ')'), role);
+        voidChange(sale, a.note, str(a.cashier), str(a.created_at), a.request_id); // v37 audit + owner notice
+      }
       finalStatus = 'used';
     }
     if (decision === 'approved' && a.kind === 'opname') {
       let pl = {};
       try { pl = JSON.parse(a.payload || '{}'); } catch (e) { pl = {}; }
       out.stock = applyCount(Array.isArray(pl.lines) ? pl.lines : [], a.note, me.name + ' (dihitung ' + str(a.cashier) + ')');
+      out.opname = opnameStatus();
       finalStatus = 'used';
     }
     if (decision === 'approved' && a.kind === 'purchase_fix') {
@@ -1772,6 +1922,9 @@ switch (req.action) {
       const pf = purchaseFixChanges(no, pl.lines);
       if (!pf.found) return fail('INVALID', 'Kirim purchase_no barang masuk yang dikoreksi');
       out.stock = applyPurchaseFix(no, pf.changes, str(pl.reason) + ' (diminta ' + str(a.cashier) + ', disetujui ' + me.name + ')', me.name);
+      // v37: the owner is told about EVERY goods-in correction (it used to be only in the log): date & time, each item
+      // from → to, the reason, who asked and who approved — one 'ubah_faktur' record.
+      purchaseFixChange(no, pf.changes, str(pl.reason), str(a.cashier), str(a.created_at), a.request_id);
       finalStatus = 'used';
     }
     if (a.kind === 'transfer_confirm') {
@@ -1864,6 +2017,11 @@ switch (req.action) {
       ops.returns.push(forWrite(Object.assign({}, rec, {
         lines: JSON.stringify(lines), status: decision, user: str(a.cashier), approved_by: me.name, return_date: jkDate(), at: new Date().toISOString(), request_id: a.request_id
       }), -1));
+      // v37: an approved return changes what is left of the invoice / goods-in note it belongs to → audit record + owner notice.
+      if (decision === 'approved') invoiceChange({ doc: rec.kind === 'pemasok' ? 'masuk' : 'jual', what: 'retur', no: str(rec.ref), doc_date: str(rec.bought_date), party: str(rec.party_name),
+        changes: lines.map(function (l) { return { product_id: l.product_id, name: str(l.name), qty_ret: num(l.qty), condition: str(l.condition), price_from: money(l.unit_price), price_to: money(l.unit_price), total: money(l.value) }; }),
+        reason: (RETURN_REASON_TEXT[rec.reason_code] || '') + (rec.reason_note ? ': ' + str(rec.reason_note) : '') + ' (' + str(rec.return_id) + ')',
+        requested_by: str(a.cashier), requested_at: str(a.created_at), request_id: a.request_id, amount: rec.kind === 'pemasok' ? -money(rec.value) : -money(rec.refund) });
       logAct('retur', (decision === 'approved' ? 'Retur disetujui ' : 'Retur ditolak ') + me.name + ': ' + str(a.summary).slice(0, 600), str(rec.return_id), money(a.total), 'warn');
       out.return_id = str(rec.return_id);
       finalStatus = decision === 'approved' ? 'used' : 'rejected';
@@ -1962,7 +2120,9 @@ switch (req.action) {
     if (!sale) return fail('NOT_FOUND', 'Transaksi tidak ditemukan');
     if (sale.status === 'void') return done({ ok: true, sale: strip(sale, role) });
     logAct('batal', 'Faktur dibatalkan ' + sale.invoice_no + ' Rp ' + money(sale.total) + ': ' + str(data.reason), sale.invoice_no, money(sale.total), 'warn');
-    return done({ ok: true, sale: strip(doVoid(sale, data.reason, me.name), role) });
+    const voided = doVoid(sale, data.reason, me.name);
+    voidChange(sale, data.reason, me.name, '', ''); // v37: the owner's own change — the audit log entry is enough
+    return done({ ok: true, sale: strip(voided, role) });
   }
 
   case 'save_product': {
@@ -2503,6 +2663,41 @@ switch (req.action) {
       supplier: { count: rets.length - custRets.length }
     };
     if (role === 'owner') rep.returns.supplier.value = rets.filter(function (x) { return x.kind === 'pemasok'; }).reduce(function (a1, x) { return a1 + money(x.value); }, 0);
+    // v37 (owner 2026-10-12: «المتابعة اليومية للفواتير التي تم تنزيلها مع الكميات الموجودة»): every goods-in note of the day —
+    // number, supplier, time, who entered it, match with the photographed note — its lines (qty received, the product's stock
+    // now), and every invoice change made that day. Purchase prices only for whoever may see costs.
+    const dayAct = rows('Get Invoice Changes').filter(function (a) { return str(a.act_date) === day; });
+    const inAt = {};
+    dayAct.forEach(function (a) { if (a.kind === 'masuk' && str(a.ref) && !inAt[str(a.ref)]) inAt[str(a.ref)] = str(a.at); });
+    const INTERNAL = ['STOK OPNAME', 'PENYESUAIAN STOK', 'KEMAS ULANG'];
+    const gin = {}, ginOrder = [];
+    rows('Get Range Purchases').filter(function (r) { return str(r.purchase_date) === day && str(r.purchase_no) && ['koreksi', 'retur'].indexOf(str(r.match_status)) < 0 && INTERNAL.indexOf(str(r.supplier).toUpperCase()) < 0 && num(r.qty) > 0; })
+      .forEach(function (r) {
+        const no = str(r.purchase_no);
+        if (!gin[no]) {
+          gin[no] = { purchase_no: no, supplier: str(r.supplier), at: inAt[no] || '', by: str(r.user), match_status: str(r.match_status) || 'tanpa_foto', match_notes: str(r.match_notes),
+            carrier_type: str(r.carrier_type), carrier_name: str(r.carrier_name), carrier_vehicle: str(r.carrier_vehicle), photo_id: str(r.photo_id), note: str(r.note), lines: [], qty: 0, total: 0 };
+          ginOrder.push(no);
+        }
+        const p = productById[String(r.product_id)];
+        const l = { product_id: Number(r.product_id), name: str(r.name) || (p ? str(p.name) : ''), unit: p ? str(p.unit) : '', qty: Math.round(num(r.qty) * 1000) / 1000, exp_date: str(r.exp_date),
+          stock_now: p ? Math.round(num(p.stock) * 1000) / 1000 : null, shop_now: p ? Math.round(shopOf(p) * 1000) / 1000 : null };
+        if (costOk()) { l.cost_price = money(r.cost_price); l.total = money(r.total); }
+        gin[no].lines.push(l);
+        gin[no].qty = Math.round((gin[no].qty + l.qty) * 1000) / 1000;
+        gin[no].total += money(r.total);
+      });
+    const changesDay = dayAct.filter(function (a) { return a.kind === 'ubah_faktur'; }).map(changeOut).sort(function (a1, b1) { return String(a1.at).localeCompare(String(b1.at)); });
+    const notes = ginOrder.map(function (no) {
+      const g = gin[no];
+      g.changes_today = changesDay.filter(function (c) { return c.no === no || (c.nos || []).indexOf(no) >= 0; }).length;
+      if (!costOk()) delete g.total;
+      return g;
+    }).sort(function (a1, b1) { return String(a1.at || '~').localeCompare(String(b1.at || '~')); });
+    rep.goods_in = { count: notes.length, lines: notes.reduce(function (a1, g) { return a1 + g.lines.length; }, 0), qty: Math.round(notes.reduce(function (a1, g) { return a1 + g.qty; }, 0) * 1000) / 1000,
+      mismatch: notes.filter(function (g) { return g.match_status === 'tidak_cocok' || g.match_status === 'perlu_cek'; }).length, notes: notes };
+    if (costOk()) rep.goods_in.total = notes.reduce(function (a1, g) { return a1 + money(g.total); }, 0);
+    rep.invoice_changes = { count: changesDay.length, list: changesDay };
     return done({ ok: true, report: rep, send_to: { company: str(st.wa_shop_number), manager: str(st.wa_manager_number), owner: str(st.wa_owner_number) } });
   }
 
@@ -2640,6 +2835,7 @@ switch (req.action) {
     if (role === 'owner') {
       const stock = applyPurchaseFix(no, pf.changes, reason, me.name);
       logAct('koreksi_masuk', summary + ' | ' + reason, no, pf.changes.reduce(function (a1, c) { return a1 + c.d_total; }, 0), 'warn');
+      purchaseFixChange(no, pf.changes, reason, me.name, '', ''); // v37 audit record (the owner's own change)
       return done({ ok: true, applied: true, changes: pf.changes, stock: stock });
     }
     const need = role === 'manager' ? 'owner' : 'manager';
@@ -2649,6 +2845,32 @@ switch (req.action) {
     ops.approvals.push(forWrite(a, -1));
     logAct('minta_koreksi', 'Minta ' + summary + ' | ' + reason, no, 0, 'warn');
     return done({ ok: true, applied: false, request_id: a.request_id, approval: approvalOut(a), approver_role: need, changes: isApprover ? pf.changes : pf.changes.map(qtyOnly) });
+  }
+
+  // v37: the "Perubahan faktur" audit list — every change to a saved invoice in a period (owner, manager, accountant;
+  // goods-in purchase prices only for whoever may see costs).
+  case 'list_invoice_changes': {
+    if (!canAudit) return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+    if (!isDate(data.from) || !isDate(data.to) || data.from > data.to) return fail('INVALID', 'Rentang tanggal tidak valid');
+    return done({ ok: true, changes: rows('Get Invoice Changes').filter(function (a) { return a.kind === 'ubah_faktur' && str(a.act_date) >= data.from && str(a.act_date) <= data.to; })
+      .map(changeOut).sort(function (a1, b1) { return String(b1.at).localeCompare(String(a1.at)); }) });
+  }
+
+  // v37: how often a FULL stock count is due (owner or manager, 7–180 days; default 60 = every two months).
+  case 'set_opname_every': {
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    const dd = Math.round(num(data.days));
+    if (!(dd >= 7 && dd <= 180) || String(data.days).trim() === '') return fail('INVALID', 'Stok opname setiap 7–180 hari');
+    const r0 = settingRows.find(function (x) { return x.skey === 'opname_every_days'; });
+    const before = opnameEvery();
+    ops.settings.push({ _id: r0 ? r0.id : -1, skey: 'opname_every_days', svalue: JSON.stringify(dd) });
+    settingRows.forEach(function (x) { if (x.skey === 'opname_every_days') x.svalue = JSON.stringify(dd); });
+    if (!r0) settingRows.push({ id: -1, skey: 'opname_every_days', svalue: JSON.stringify(dd) });
+    if (before !== dd) {
+      logAct('pengaturan', 'Stok opname penuh setiap ' + before + ' → ' + dd + ' hari (' + me.name + ')', '', 0, 'info');
+      if (role !== 'owner') notify(['owner'], 'Jadwal stok opname diubah oleh ' + me.name + ': setiap ' + before + ' → ' + dd + ' hari', 'info');
+    }
+    return done({ ok: true, opname_every_days: dd, opname: opnameStatus() });
   }
 
   case 'list_activity': {
@@ -2723,7 +2945,7 @@ switch (req.action) {
 
   case 'save_settings': {
     const incoming = data.settings && typeof data.settings === 'object' ? data.settings : {};
-    const allowed = ['store_name', 'address', 'phone', 'receipt_footer', 'paper', 'survey_questions', 'survey_auto', 'auto_lock_minutes', 'language', 'exit_photo_min_total', 'exit_photo_min_qty', 'require_purchase_photo', 'require_shift', 'wa_shop_number', 'wa_manager_number', 'wa_owner_number', 'report_time', 'max_discount_pct', 'receipt_send_fee', 'sell_from_shop_only', 'return_owner_min_value', 'return_owner_min_qty', 'return_fee_pct', 'require_return_photo', 'require_carrier', 'member_enabled', 'member_tiers', 'survey_voice', 'store_lat', 'store_lng', 'require_device_location', 'bank_accounts', 'invoice_due_days', 'akuntan_sees_cost'];
+    const allowed = ['store_name', 'address', 'phone', 'receipt_footer', 'paper', 'survey_questions', 'survey_auto', 'auto_lock_minutes', 'language', 'exit_photo_min_total', 'exit_photo_min_qty', 'require_purchase_photo', 'require_shift', 'wa_shop_number', 'wa_manager_number', 'wa_owner_number', 'report_time', 'max_discount_pct', 'receipt_send_fee', 'sell_from_shop_only', 'return_owner_min_value', 'return_owner_min_qty', 'return_fee_pct', 'require_return_photo', 'require_carrier', 'member_enabled', 'member_tiers', 'survey_voice', 'store_lat', 'store_lng', 'require_device_location', 'bank_accounts', 'invoice_due_days', 'akuntan_sees_cost', 'opname_every_days'];
     const byKey = {};
     settingRows.forEach(function (r) { byKey[r.skey] = r; });
     if (AGREED_KEYS.some(function (k) { return incoming[k] !== undefined && JSON.stringify(incoming[k]) !== JSON.stringify(readSettings()[k]); })) {
@@ -2735,6 +2957,11 @@ switch (req.action) {
       incoming.invoice_due_days = dd;
     }
     if (incoming.akuntan_sees_cost !== undefined) incoming.akuntan_sees_cost = incoming.akuntan_sees_cost === true;
+    if (incoming.opname_every_days !== undefined) {
+      const od = Math.round(num(incoming.opname_every_days));
+      if (!(od >= 7 && od <= 180)) return fail('INVALID', 'Stok opname setiap 7–180 hari');
+      incoming.opname_every_days = od;
+    }
     allowed.forEach(function (k) {
       if (incoming[k] === undefined) return;
       ops.settings.push({ _id: byKey[k] ? byKey[k].id : -1, skey: k, svalue: JSON.stringify(incoming[k]) });

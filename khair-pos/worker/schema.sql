@@ -293,9 +293,11 @@ CREATE TABLE IF NOT EXISTS pos_activity (
   summary TEXT,
   ref TEXT,
   amount REAL,
-  level TEXT
+  level TEXT,
+  detail TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pos_activity_act_date ON pos_activity (act_date);
+CREATE INDEX IF NOT EXISTS idx_pos_activity_kind ON pos_activity (kind);
 
 CREATE TABLE IF NOT EXISTS pos_bank_lines (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

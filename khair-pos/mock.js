@@ -4,7 +4,7 @@ const MockServer = (() => {
   const DBKEY = 'kmock.db';
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
-  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_transfers', 'list_photos', 'photo_file', 'field_bootstrap', 'list_field', 'product_images', 'orders_map', 'shop_photos', 'street_returns', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon', 'profit_loss'];
+  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_transfers', 'list_photos', 'photo_file', 'field_bootstrap', 'list_field', 'product_images', 'orders_map', 'shop_photos', 'street_returns', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon', 'profit_loss', 'list_invoice_changes'];
   class MockErr extends Error { constructor(code, message, extra) { super(message || code); this.code = code; this.extra = extra || null; } }
   const E = (code, msg, extra) => new MockErr(code, msg, extra);
   let ready = null;
@@ -189,7 +189,8 @@ const MockServer = (() => {
         p.stock = l.counted;
         return { product_id: p.id, stock: p.stock };
       });
-      return { applied: true, lines, stock };
+      opnameProgress(db, u, lines, u.name); // v37
+      return { applied: true, lines, stock, opname: opnameStatus(db) };
     }
     const diffs = lines.filter(l => l.diff);
     const summary = `Stok opname ${lines.length} barang, ${diffs.length} selisih` + (diffs.length ? ': ' + diffs.slice(0, 3).map(l => `${l.name} ${fmtQty(l.system)}→${fmtQty(l.counted)}`).join(', ') + (diffs.length > 3 ? ', …' : '') : '');
@@ -206,6 +207,12 @@ const MockServer = (() => {
       if (diff) { p.stock = roundQty(num(p.stock) + diff); opnameLog(db, p, diff, l.counted, l.system, [pl.note, `oleh ${by}, disetujui ${approver}`].filter(Boolean).join(' · '), by); }
       return { product_id: p.id, stock: p.stock };
     }).filter(Boolean);
+  }
+  function applyOpnameV37(db, u, ap, approver) { // v37: the approved count also moves the full-count cycle on
+    let pl = {}; try { pl = JSON.parse(ap.payload || '{}'); } catch (e) { }
+    const out = applyOpname(db, ap, approver);
+    opnameProgress(db, u, pl.lines || [], approver + ' (dihitung ' + (pl.by || ap.cashier) + ')');
+    return out;
   }
   const nameTokens = s => norm(s).replace(/(\d)([a-z])/g, '$1 $2').replace(/([a-z])(\d)/g, '$1 $2').replace(/[^a-z0-9 ]/g, ' ').split(' ').filter(Boolean).map(w => w === 'gr' ? 'g' : w);
   function nameScore(a, b) { const A = nameTokens(a), B = new Set(nameTokens(b)); return A.length ? A.filter(w => B.has(w)).length / A.length : 0; }
@@ -230,6 +237,87 @@ const MockServer = (() => {
     db.activity = db.activity || [];
     db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + randId(8), at: new Date().toISOString(), act_date: jktDate(), user: u.name, role: roleOf(u), kind,
       summary: strv(summary).slice(0, 1000), ref: strv(ref).slice(0, 60), amount: int(amount), level: level || 'info' });
+  }
+  /* ---- v37 (owner 2026-10-12: «أي فاتورة … لا يمكن تغييرها إلا بموافقة المدير، وإرسال إشعار إلى المالك: تم تغيير فاتورة، بالتاريخ والوقت،
+     بالتدقيق، ومن قام بتغييرها ومن طلب تغييرها»): mirror of the server's invoice-change audit (activity kind 'ubah_faktur' + detail)
+     and of the two-monthly full stock count (settings.opname_state / opname_every_days). Keep identical to backend/process.js. ---- */
+  const wibStamp = iso => { const t0 = Date.parse(iso); return isFinite(t0) ? new Date(t0 + 7 * 3600000).toISOString().slice(0, 16).replace('T', ' ') + ' WIB' : ''; };
+  const CHG_WHAT = { koreksi_masuk: 'Koreksi barang masuk', batal: 'Faktur dibatalkan', koreksi_harga: 'Koreksi harga faktur', retur: 'Retur atas faktur' };
+  function changeText(c) {
+    const parts = [];
+    if (c.qty_from !== undefined && c.qty_to !== undefined && num(c.qty_from) !== num(c.qty_to)) parts.push('qty ' + fmtN(c.qty_from) + '→' + fmtN(c.qty_to));
+    if (c.qty_ret !== undefined) parts.push('retur ' + fmtN(c.qty_ret) + (c.condition === 'rusak' ? ' (rusak)' : ''));
+    if (c.price_from !== undefined && c.price_to !== undefined) parts.push(int(c.price_from) === int(c.price_to) ? 'harga Rp ' + int(c.price_to) : 'harga Rp ' + int(c.price_from) + '→' + int(c.price_to));
+    if (c.invoices !== undefined) parts.push(fmtN(c.qty) + ' terjual di ' + c.invoices + ' faktur');
+    return strv(c.name) + (parts.length ? ' ' + parts.join(', ') : '');
+  }
+  function invoiceChange(db, u, o) {
+    const at = new Date().toISOString();
+    const d = { doc: o.doc === 'masuk' ? 'masuk' : 'jual', what: strv(o.what), no: strv(o.no), nos: Array.isArray(o.nos) ? o.nos.slice(0, 200) : undefined, doc_date: strv(o.doc_date), party: strv(o.party),
+      changes: (o.changes || []).slice(0, 100), reason: strv(o.reason).slice(0, 300), requested_by: strv(o.requested_by) || u.name, requested_at: strv(o.requested_at) || at, approved_by: strv(o.approved_by) || u.name,
+      approved_role: roleOf(u), approved_at: at, request_id: strv(o.request_id), amount: int(o.amount), details: Array.isArray(o.details) ? o.details.slice(0, 200) : undefined };
+    const docTxt = (d.doc === 'masuk' ? 'Barang masuk ' : 'Faktur ') + (d.nos && d.nos.length > 1 ? d.nos.slice(0, 8).join(', ') + (d.nos.length > 8 ? ' +' + (d.nos.length - 8) : '') : d.no);
+    const same = d.requested_by.toLowerCase() === d.approved_by.toLowerCase();
+    const summary = 'FAKTUR DIUBAH — ' + (CHG_WHAT[d.what] || d.what) + ': ' + docTxt + (d.doc_date ? ' (' + d.doc_date + (d.party ? ', ' + d.party : '') + ')' : (d.party ? ' (' + d.party + ')' : '')) +
+      (d.changes.length ? ' — ' + d.changes.map(changeText).join('; ') : '') + (d.reason ? ' | alasan: ' + d.reason : '') +
+      (same ? ' | diubah langsung oleh ' + d.approved_by + ' ' + wibStamp(at) : ' | diminta ' + d.requested_by + ' ' + wibStamp(d.requested_at) + ', disetujui ' + d.approved_by + ' ' + wibStamp(at));
+    logAct(db, u, 'ubah_faktur', summary, d.no || (d.nos || [])[0] || '', d.amount, 'warn');
+    db.activity[db.activity.length - 1].detail = JSON.stringify(d);
+    return d;
+  }
+  const mockCostOk = (db, u) => u.role === 'owner' || (['akuntan', 'manager'].includes(u.role) && db.settings.akuntan_sees_cost === true);
+  function changeOut(db, u, a) {
+    let d = {}; try { d = JSON.parse(a.detail || '{}') || {}; } catch (e) { d = {}; }
+    const o = Object.assign({}, d, { act_id: a.act_id, at: a.at, act_date: a.act_date, user: a.user, amount: int(a.amount) });
+    if (u.role === 'owner') o.summary = a.summary;
+    if (d.doc === 'masuk' && !mockCostOk(db, u)) { o.changes = (d.changes || []).map(c => { const x = Object.assign({}, c); ['price_from', 'price_to', 'total_from', 'total_to', 'total'].forEach(f => delete x[f]); return x; }); delete o.amount; }
+    return o;
+  }
+  const isoDay = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+  const dayN = d => Math.round(Date.parse(String(d).slice(0, 10) + 'T00:00:00Z') / 86400000);
+  const OPNAME_FULL_PCT = 90;
+  const opnameEvery = db => { const v = Math.round(num(db.settings.opname_every_days)); return v >= 7 && v <= 180 ? v : 60; };
+  const opnameState = db => db.settings.opname_state && typeof db.settings.opname_state === 'object' ? db.settings.opname_state : {};
+  function opnameStatus(db) {
+    const s = opnameState(db), every = opnameEvery(db), T = jktDate();
+    const base = isYmd(s.last_full) ? s.last_full : (isYmd(s.since) ? s.since : T);
+    const next = isoDay(base, every), left = dayN(next) - dayN(T);
+    const active = db.products.filter(p => p.active !== false), counted = new Set((s.counted || []).map(String));
+    return { every_days: every, last_full: isYmd(s.last_full) ? s.last_full : '', last_full_by: strv(s.last_full_by), last_full_n: num(s.last_full_n), since: isYmd(s.since) ? s.since : '', base, next_due: next, days_left: left,
+      status: left < 0 ? 'overdue' : left <= 7 ? 'due' : 'ok', cycle_from: isYmd(s.cycle_from) ? s.cycle_from : '', counted_n: active.filter(p => counted.has(String(p.id))).length, active_n: active.length, full_pct: OPNAME_FULL_PCT };
+  }
+  function opnameProgress(db, u, lines, byName) {
+    const s = Object.assign({}, opnameState(db)), T = jktDate();
+    if (!isYmd(s.since)) s.since = T;
+    if (!isYmd(s.cycle_from) || dayN(T) - dayN(s.cycle_from) > opnameEvery(db)) { s.cycle_from = T; s.counted = []; }
+    const set = new Set((s.counted || []).map(String));
+    (lines || []).forEach(l => { if (db.products.some(p => String(p.id) === String(l.product_id))) set.add(String(l.product_id)); });
+    const active = db.products.filter(p => p.active !== false), covered = active.filter(p => set.has(String(p.id))).length;
+    s.last_count = T;
+    if (active.length && covered * 100 >= active.length * OPNAME_FULL_PCT) {
+      Object.assign(s, { last_full: T, last_full_at: new Date().toISOString(), last_full_by: strv(byName), last_full_n: covered, cycle_from: '', counted: [], overdue_noted: '' });
+      logAct(db, u, 'opname_penuh', 'Stok opname PENUH selesai: ' + covered + ' dari ' + active.length + ' barang aktif (oleh ' + strv(byName) + '). Berikutnya paling lambat ' + isoDay(T, opnameEvery(db)), '', 0, 'info');
+    } else s.counted = [...set].map(k => isFinite(Number(k)) ? Number(k) : k);
+    db.settings.opname_state = s;
+  }
+  function settingsOut(db) {
+    const st = Object.assign({}, V16_DEFAULTS, db.settings);
+    if (st.opname_state && typeof st.opname_state === 'object') { const o = Object.assign({}, st.opname_state); o.counted_n = Array.isArray(o.counted) ? o.counted.length : 0; delete o.counted; st.opname_state = o; }
+    return st;
+  }
+  /** v37: the first bootstrap starts the clock; once overdue the owner and the manager get ONE notice per due date. */
+  function opnameBoot(db) {
+    let s = opnameState(db);
+    if (!isYmd(s.since) && !isYmd(s.last_full)) { s = Object.assign({}, s, { since: jktDate() }); db.settings.opname_state = s; db._dirty = true; }
+    const st = opnameStatus(db);
+    if (st.status === 'overdue' && strv(s.overdue_noted) !== st.next_due) {
+      db.settings.opname_state = Object.assign({}, opnameState(db), { overdue_noted: st.next_due });
+      db.activity = db.activity || [];
+      db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + randId(8), at: new Date().toISOString(), act_date: jktDate(), user: 'Sistem', role: 'system', kind: 'notifikasi',
+        summary: 'Stok opname penuh TERLAMBAT ' + (-st.days_left) + ' hari: jatuh tempo ' + st.next_due + ', terakhir ' + (st.last_full || 'belum pernah') + ' (setiap ' + st.every_days + ' hari). Mulai hitung di Gudang → Stok opname.', ref: 'owner,manager', amount: 0, level: 'warn' });
+      db._dirty = true;
+    }
+    return st;
   }
   /* ---- v16: shelf (toko) vs warehouse (gudang), discount limit, members, owner master code, own PINs ---- */
   const isHash = v => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
@@ -523,6 +611,16 @@ const MockServer = (() => {
       out.push({ product_id: p.id, stock: ns, cost_price: nc });
     });
     return out;
+  }
+  function voidChange(db, u, sale, reason, requestedBy, requestedAt, requestId) {
+    return invoiceChange(db, u, { doc: 'jual', what: 'batal', no: sale.invoice_no, doc_date: strv(sale.sale_date), party: strv(sale.customer_name),
+      changes: db.items.filter(i => i.invoice_no === sale.invoice_no).map(i => ({ product_id: i.product_id, name: strv(i.name), qty_from: num(i.qty), qty_to: 0, price_from: int(i.unit_price), price_to: int(i.unit_price), total_from: int(i.line_total), total_to: 0 })),
+      reason, requested_by: requestedBy, requested_at: requestedAt, request_id: requestId, amount: -int(sale.total) });
+  }
+  function purchaseFixChange(db, u, no, first, changes, reason, requestedBy, requestedAt, requestId) {
+    return invoiceChange(db, u, { doc: 'masuk', what: 'koreksi_masuk', no, doc_date: strv(first.purchase_date), party: strv(first.supplier),
+      changes: changes.map(c => ({ product_id: c.product_id, name: c.name, qty_from: c.from_qty, qty_to: c.to_qty, price_from: c.from_qty > 0 ? Math.round(c.from_total / c.from_qty) : c.cost_price, price_to: c.cost_price, total_from: c.from_total, total_to: c.to_total })),
+      reason, requested_by: requestedBy, requested_at: requestedAt, request_id: requestId, amount: sum(changes, c => c.d_total) });
   }
   const fixSummary = (no, changes) => 'Koreksi barang masuk ' + no + ': ' + changes.map(c => c.name + ' ' + fmtN(c.from_qty) + '→' + fmtN(c.to_qty) + (c.d_total ? ' (Rp ' + c.from_total + '→' + c.to_total + ')' : '')).join('; ');
   /* payments in / out (v13) */
@@ -877,7 +975,7 @@ const MockServer = (() => {
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
-    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
+    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval', 'list_invoice_changes'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
     if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'scan_expense', 'list_photos', 'photo_file'].includes(action)) deviceTouch(db, u, data.device, false);
 
@@ -930,7 +1028,7 @@ const MockServer = (() => {
         logAct(db, u, 'pindah_stok', (toShop ? 'Gudang → toko: ' : 'Toko → gudang: ') + mv.map(x => x.p.name + ' ' + fmtN(x.q) + ' ' + strv(x.p.unit)).join('; ') + (mnote ? ' | ' + mnote : ''), '', 0, 'info');
         return { stock: mv.map(x => ({ product_id: x.p.id, stock: num(x.p.stock), shop_stock: x.sh, gudang_stock: roundQty(num(x.p.stock) - x.sh) })) };
       }
-      case 'bootstrap': return { user: { name: u.name, role: roleOf(u) }, products: db.products.map(prodOut), customers: db.customers, settings: Object.assign({}, V16_DEFAULTS, db.settings), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
+      case 'bootstrap': return { opname: opnameBoot(db), user: { name: u.name, role: roleOf(u) }, products: db.products.map(prodOut), customers: db.customers, settings: settingsOut(db), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
         users: db.users.map(x => owner ? { name: x.name, role: x.role, active: x.active, must_change: x.must_change === true, locked: Date.parse(x.locked_until) > Date.now(), tamper: isLockedAcct(x.name), has_master: x.role === 'owner' && isHash(x.master_hash) } : { name: x.name, role: x.role, active: x.active }), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
         shift: blind(shiftSummary(db, openShiftOf(db, u.name)), u.role), open_shifts: ['owner', 'manager'].includes(u.role) ? db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)) : [],
         activity_recent: owner ? db.activity.filter(a => a.act_date >= addDays(jktDate(), -7) && a.act_date <= jktDate()).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 100) : [] };
@@ -1190,7 +1288,9 @@ const MockServer = (() => {
         if (data.decision === 'approved' && ap.kind === 'void') {
           if (data.invoice_no !== ap.ref) throw E('INVALID', 'invoice_no must equal approval.ref');
           let reason = ''; try { reason = JSON.parse(ap.payload || '{}').reason || ''; } catch (e) { }
+          const wasVoid = (db.sales.find(x => x.invoice_no === ap.ref) || {}).status === 'void';
           out.sale = voidSaleNow(db, ap.ref, `${reason} (diminta ${ap.cashier}, disetujui ${u.name})`, u.name);
+          if (!wasVoid) voidChange(db, u, out.sale, reason, ap.cashier, ap.created_at, ap.request_id); // v37
         }
         if (data.decision === 'approved' && ap.kind === 'price') {
           const p = prodById(ap.ref); if (!p) throw E('NOT_FOUND', 'product');
@@ -1198,14 +1298,16 @@ const MockServer = (() => {
           for (const [f, ch] of Object.entries(pl.changes || {})) p[f] = int(ch.to);
           out.product = p;
         }
-        if (data.decision === 'approved' && ap.kind === 'opname') out.stock = applyOpname(db, ap, u.name);
+        if (data.decision === 'approved' && ap.kind === 'opname') { out.stock = applyOpnameV37(db, u, ap, u.name); out.opname = opnameStatus(db); }
         if (data.decision === 'approved' && ap.kind === 'purchase_fix') {
           let pl = {}; try { pl = JSON.parse(ap.payload || '{}'); } catch (e) { }
           const no = strv(pl.purchase_no);
           if (strv(data.purchase_no) !== no) throw E('INVALID', 'Kirim purchase_no barang masuk yang dikoreksi');
           const pf = purchaseFixChanges(db, no, pl.lines);
           if (!pf.found) throw E('INVALID', 'Kirim purchase_no barang masuk yang dikoreksi');
+          const first = db.purchases.find(r => strv(r.purchase_no) === no) || {};
           out.stock = applyPurchaseFix(db, no, pf.changes, strv(pl.reason) + ' (diminta ' + ap.cashier + ', disetujui ' + u.name + ')', u.name);
+          purchaseFixChange(db, u, no, first, pf.changes, strv(pl.reason), ap.cashier, ap.created_at, ap.request_id); // v37: the owner is told
         }
         if (ap.kind === 'kesepakatan') {
           if (strv(ap.cashier).toLowerCase() === u.name.toLowerCase()) throw E('FORBIDDEN', 'Kesepakatan harus dikonfirmasi pihak lain');
@@ -1251,6 +1353,10 @@ const MockServer = (() => {
             }
           }
           db.returns.push(Object.assign({}, rec, { id: nextId(db, 'return'), lines: JSON.stringify(rl), status: data.decision, user: strv(ap.cashier), approved_by: u.name, return_date: jktDate(), at: new Date().toISOString(), request_id: ap.request_id }));
+          if (data.decision === 'approved') invoiceChange(db, u, { doc: rec.kind === 'pemasok' ? 'masuk' : 'jual', what: 'retur', no: strv(rec.ref), doc_date: strv(rec.bought_date), party: strv(rec.party_name), // v37
+            changes: rl.map(l => ({ product_id: l.product_id, name: strv(l.name), qty_ret: num(l.qty), condition: strv(l.condition), price_from: int(l.unit_price), price_to: int(l.unit_price), total: int(l.value) })),
+            reason: (RETURN_REASON_TEXT[rec.reason_code] || '') + (rec.reason_note ? ': ' + strv(rec.reason_note) : '') + ' (' + strv(rec.return_id) + ')', requested_by: ap.cashier, requested_at: ap.created_at, request_id: ap.request_id,
+            amount: rec.kind === 'pemasok' ? -int(rec.value) : -int(rec.refund) });
           logAct(db, u, 'retur', (data.decision === 'approved' ? 'Retur disetujui ' : 'Retur ditolak ') + u.name + ': ' + strv(ap.summary).slice(0, 600), strv(rec.return_id), int(ap.total), 'warn');
           out.return_id = strv(rec.return_id);
         }
@@ -1382,8 +1488,11 @@ const MockServer = (() => {
         needOwner();
         if (!String(data.reason || '').trim()) throw E('INVALID', 'reason required');
         const vs = db.sales.find(x => x.invoice_no === data.invoice_no);
-        if (vs && vs.status !== 'void') logAct(db, u, 'batal', 'Faktur dibatalkan ' + vs.invoice_no + ' Rp ' + vs.total + ': ' + strv(data.reason), vs.invoice_no, vs.total, 'warn');
-        return { sale: voidSaleNow(db, data.invoice_no, String(data.reason), u.name) };
+        const wasOk = vs && vs.status !== 'void';
+        if (wasOk) logAct(db, u, 'batal', 'Faktur dibatalkan ' + vs.invoice_no + ' Rp ' + vs.total + ': ' + strv(data.reason), vs.invoice_no, vs.total, 'warn');
+        const vsale = voidSaleNow(db, data.invoice_no, String(data.reason), u.name);
+        if (wasOk) voidChange(db, u, vsale, String(data.reason), u.name, '', ''); // v37: the owner's own change — logged
+        return { sale: vsale };
       }
       case 'request_void': {
         const sale = db.sales.find(x => x.invoice_no === data.invoice_no);
@@ -1935,6 +2044,25 @@ const MockServer = (() => {
         const rets = (db.returns || []).filter(x => x.status === 'approved' && x.return_date === day), custRets = rets.filter(x => x.kind !== 'pemasok');
         rep.returns = { customer: { count: custRets.length, refund: sum(custRets, x => int(x.refund)), tunai: sum(custRets.filter(x => x.refund_method === 'tunai'), x => int(x.refund)) }, supplier: { count: rets.length - custRets.length } };
         if (owner) rep.returns.supplier.value = sum(rets.filter(x => x.kind === 'pemasok'), x => int(x.value));
+        // v37 (owner: «المتابعة اليومية للفواتير التي تم تنزيلها مع الكميات الموجودة»): the day's goods-in notes and invoice changes
+        const dayAct = (db.activity || []).filter(a => a.act_date === day), inAt = {};
+        dayAct.forEach(a => { if (a.kind === 'masuk' && a.ref && !inAt[a.ref]) inAt[a.ref] = a.at; });
+        const gin = new Map(), cOk = mockCostOk(db, u);
+        db.purchases.filter(r => r.purchase_date === day && strv(r.purchase_no) && !['koreksi', 'retur'].includes(strv(r.match_status)) && !internalSup(r.supplier) && num(r.qty) > 0).forEach(r => {
+          const no = strv(r.purchase_no);
+          if (!gin.has(no)) gin.set(no, { purchase_no: no, supplier: strv(r.supplier), at: inAt[no] || '', by: strv(r.user), match_status: strv(r.match_status) || 'tanpa_foto', match_notes: strv(r.match_notes),
+            carrier_type: strv(r.carrier_type), carrier_name: strv(r.carrier_name), carrier_vehicle: strv(r.carrier_vehicle), photo_id: strv(r.photo_id), note: strv(r.note), lines: [], qty: 0, total: 0 });
+          const g = gin.get(no), p = prodById(r.product_id);
+          const l = { product_id: Number(r.product_id), name: strv(r.name) || (p ? p.name : ''), unit: p ? strv(p.unit) : '', qty: roundQty(r.qty), exp_date: strv(r.exp_date), stock_now: p ? roundQty(p.stock) : null, shop_now: p ? roundQty(shopOf(p)) : null };
+          if (cOk) { l.cost_price = int(r.cost_price); l.total = int(r.total); }
+          g.lines.push(l); g.qty = roundQty(g.qty + l.qty); g.total += int(r.total);
+        });
+        const changesDay = dayAct.filter(a => a.kind === 'ubah_faktur').map(a => changeOut(db, u, a)).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+        const notes = [...gin.values()].map(g => { g.changes_today = changesDay.filter(c => c.no === g.purchase_no || (c.nos || []).includes(g.purchase_no)).length; if (!cOk) delete g.total; return g; })
+          .sort((a, b) => String(a.at || '~').localeCompare(String(b.at || '~')));
+        rep.goods_in = { count: notes.length, lines: sum(notes, g => g.lines.length), qty: roundQty(sum(notes, g => g.qty)), mismatch: notes.filter(g => ['tidak_cocok', 'perlu_cek'].includes(g.match_status)).length, notes };
+        if (cOk) rep.goods_in.total = sum(notes, g => int(g.total));
+        rep.invoice_changes = { count: changesDay.length, list: changesDay };
         const st = db.settings;
         return { report: rep, send_to: { company: strv(st.wa_shop_number), manager: strv(st.wa_manager_number), owner: strv(st.wa_owner_number) } };
       }
@@ -1994,8 +2122,10 @@ const MockServer = (() => {
         // Owner monitoring: only the owner applies a goods-in correction directly.
         // The manager REQUESTS it (owner approves); the cashier requests it (manager approves).
         if (u.role === 'owner') {
+          const first = db.purchases.find(r => strv(r.purchase_no) === no) || {};
           const stock = applyPurchaseFix(db, no, pf.changes, reason, u.name);
           logAct(db, u, 'koreksi_masuk', summary + ' | ' + reason, no, sum(pf.changes, c => c.d_total), 'warn');
+          purchaseFixChange(db, u, no, first, pf.changes, reason, u.name, '', ''); // v37
           return { applied: true, changes: pf.changes, stock };
         }
         const need = u.role === 'manager' ? 'owner' : 'manager';
@@ -2003,6 +2133,20 @@ const MockServer = (() => {
           payload: JSON.stringify({ purchase_no: no, lines: data.lines, reason, changes: pf.changes }) });
         logAct(db, u, 'minta_koreksi', 'Minta ' + summary + ' | ' + reason, no, 0, 'warn');
         return { applied: false, request_id: approval.request_id, approval, approver_role: need, changes: isAppr(u) ? pf.changes : pf.changes.map(qtyOnly) };
+      }
+      case 'list_invoice_changes': { // v37: the "Perubahan faktur" audit list
+        if (!(isAppr(u) || u.role === 'akuntan')) throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+        if (!isYmd(data.from) || !isYmd(data.to) || data.from > data.to) throw E('INVALID', 'Rentang tanggal tidak valid');
+        return { changes: (db.activity || []).filter(a => a.kind === 'ubah_faktur' && a.act_date >= data.from && a.act_date <= data.to).map(a => changeOut(db, u, a)).sort((a, b) => String(b.at).localeCompare(String(a.at))) };
+      }
+      case 'set_opname_every': { // v37: owner or manager, 7–180 days
+        if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
+        const dd = Math.round(num(data.days));
+        if (!(dd >= 7 && dd <= 180) || String(data.days == null ? '' : data.days).trim() === '') throw E('INVALID', 'Stok opname setiap 7–180 hari');
+        const before = opnameEvery(db);
+        db.settings.opname_every_days = dd;
+        if (before !== dd) logAct(db, u, 'pengaturan', 'Stok opname penuh setiap ' + before + ' → ' + dd + ' hari (' + u.name + ')', '', 0, 'info');
+        return { opname_every_days: dd, opname: opnameStatus(db) };
       }
       case 'list_corrections': {
         if (!(isAppr(u) || u.role === 'akuntan')) throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
@@ -2099,6 +2243,9 @@ const MockServer = (() => {
         refunds.forEach(rf => newApproval(db, u, { kind: 'refund', approver_role: 'manager', ref: rf.invoice_no, total: rf.amount, customer_id: rf.customer_id, customer_name: rf.customer_name, summary: ('Refund ' + rf.customer_name + ' Rp ' + rf.amount + ' (' + (rf.channel === 'cadangan' ? 'cadangan 3 bln' : 'hubungi') + ') — faktur ' + rf.invoice_no).slice(0, 1500), payload: JSON.stringify({ invoice_no: rf.invoice_no, customer_id: rf.customer_id, customer_name: rf.customer_name, phone: rf.phone, amount: rf.amount, channel: rf.channel, has_account: rf.has_account, expiry: rf.channel === 'cadangan' ? expiry90 : '', correction: ap.request_id, product_name: p.name }) }));
         consults.forEach(cs => newApproval(db, u, { kind: 'konsultasi', approver_role: 'owner', ref: cs.invoice_no, total: cs.amount, customer_id: cs.customer_id, customer_name: cs.customer_name, summary: ('Musyawarah (kurang bayar) ' + cs.customer_name + ' Rp ' + cs.amount + ' — faktur ' + cs.invoice_no).slice(0, 1500), payload: JSON.stringify({ invoice_no: cs.invoice_no, customer_id: cs.customer_id, customer_name: cs.customer_name, phone: cs.phone, amount: cs.amount, correction: ap.request_id, product_name: p.name }) }));
         logAct(db, u, 'koreksi', summary.slice(0, 1000) + ' | ' + String(data.reason).trim(), String(p.id), netDiff, 'warn');
+        invoiceChange(db, u, { doc: 'jual', what: 'koreksi_harga', no: details.length === 1 ? details[0].invoice_no : '', nos: details.map(x => x.invoice_no), doc_date: data.from === data.to ? data.from : data.from + ' s/d ' + data.to, // v37
+          changes: [{ product_id: p.id, name: p.name, price_from: oldPrice, price_to: newPrice, qty: details.reduce((a1, x) => a1 + x.qty, 0), invoices: details.length }],
+          details: details.map(x => ({ invoice_no: x.invoice_no, date: x.date, customer_name: x.customer_name, qty: x.qty, diff: x.diff })), reason: String(data.reason).trim(), request_id: ap.request_id, amount: netDiff });
         return { correction: { request_id: ap.request_id, product_name: p.name, old_price: oldPrice, new_price: newPrice, invoices: details.length, net_diff: netDiff, refund_total: refundTotal, under_total: underTotal, refunds, consults, cashiers: Object.keys(cashiers), price_setters: setters }, product: catalog ? prodOut(catalog) : undefined };
       }
       case 'repack': {
@@ -2180,6 +2327,7 @@ const MockServer = (() => {
         if (s.report_time !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(s.report_time))) throw E('INVALID', 'report_time HH:MM');
         if (s.invoice_due_days !== undefined) { const dd = Math.round(num(s.invoice_due_days)); if (!(dd >= 0 && dd <= 120)) throw E('INVALID', 'Jatuh tempo faktur 0–120 hari'); s.invoice_due_days = dd; }
         if (s.akuntan_sees_cost !== undefined) s.akuntan_sees_cost = s.akuntan_sees_cost === true;
+        if (s.opname_every_days !== undefined) { const od = Math.round(num(s.opname_every_days)); if (!(od >= 7 && od <= 180)) throw E('INVALID', 'Stok opname setiap 7–180 hari'); s.opname_every_days = od; }
         ['store_lat', 'store_lng'].forEach(k => { if (s[k] !== undefined) s[k] = num(s[k]); });
         if (s.require_device_location !== undefined) s.require_device_location = s.require_device_location === true;
         if (s.bank_accounts !== undefined) s.bank_accounts = (Array.isArray(s.bank_accounts) ? s.bank_accounts : []).map(a => ({ id: strv(a.id), bank: strv(a.bank).slice(0, 40), account_no: strv(a.account_no).slice(0, 40), holder: strv(a.holder).slice(0, 80), active: a.active !== false })).filter(a => a.id);
