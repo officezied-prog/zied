@@ -681,6 +681,17 @@ read or post in it; nobody else (the owner included) receives it. Bootstrap/poll
 fixed rooms plus the private rooms named in `cursors`, `unread` covers every room of the user (from `seen`). No extra calls: the
 existing poll (4 s open / 20 s closed, paused with the tab) carries it all. The apps show names only, never a role word.
 
+v38 notice replies (owner 2026-10-12: "For any notice come to me make for me I can reply" + «نعم زر رد او اغلق مباشر ما في مشكل»):
+- `chat_send` takes optional `quote {text ≤ 400, at, no ≤ 60, by}` (the notice answered — shown as a compact block above the
+  message in every app) and `ref` (the notice id: `a:<act_id>` activity / server notice / invoice change, `r:<request_id>` result
+  of my request, `att:<key>:<numbers>:<date>` a "Perlu perhatian" item). Stored on the message (`pos_chat.quote` JSON, `pos_chat.ref`,
+  columns added by the Worker itself); messages return `quote` / `ref` only when present (old clients and old messages unchanged).
+- `notice_close {ids: [...≤ 50]}` ("Tutup", any user, his own notices): one append-only row per id in the user's hidden channel
+  `nt:<id>.<name>` (no room: never readable or postable). Answer `{closed, notices}`.
+- `notices = {v, closed: {id: at}, replied: {id: {at, to}}}` (the last 60 days, ≤ 500): always on `chat_bootstrap`, on `chat_send` with
+  a `ref` and on `notice_close`; on `chat_poll` only when `data.notice_v` is sent and differs from `v` — so other devices learn a
+  close / reply on their normal poll, and old clients (no `notice_v`) get nothing extra.
+
 
 ## Expense invoice check and new products at goods-in (v36, owner 2026-10-11)
 

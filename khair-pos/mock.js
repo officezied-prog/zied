@@ -1173,7 +1173,9 @@ const MockServer = (() => {
       case 'bootstrap': return { opname: opnameBoot(db), user: { name: u.name, role: roleOf(u) }, products: db.products.map(prodOut), customers: db.customers, settings: settingsOut(db), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
         users: db.users.map(x => owner ? { name: x.name, role: x.role, active: x.active, must_change: x.must_change === true, locked: Date.parse(x.locked_until) > Date.now(), tamper: isLockedAcct(x.name), has_master: x.role === 'owner' && isHash(x.master_hash) } : { name: x.name, role: x.role, active: x.active }), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
         shift: blind(shiftSummary(db, openShiftOf(db, u.name)), u.role), open_shifts: ['owner', 'manager'].includes(u.role) ? db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)) : [],
-        activity_recent: owner ? db.activity.filter(a => a.act_date >= addDays(jktDate(), -7) && a.act_date <= jktDate()).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 100) : [] };
+        activity_recent: owner ? db.activity.filter(a => a.act_date >= addDays(jktDate(), -7) && a.act_date <= jktDate()).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 100) : [],
+        // v38 (owner 2026-10-12: "For any notice come to me make for me I can reply"): the role-addressed notices, as the server returns them
+        notifications: ['owner', 'manager', 'akuntan'].includes(u.role) ? db.activity.filter(a => a.act_date >= addDays(jktDate(), -7) && ((a.kind === 'notifikasi' && String(a.ref || '').split(',').includes(u.role)) || (owner && a.kind === 'ubah_faktur' && String(a.user).toLowerCase() !== String(u.name).toLowerCase()))).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 40) : [] };
       case 'device_ping': {
         if (!deviceTouch(db, u, data.device, true)) throw E('INVALID', 'device.id tidak valid');
         return { require_location: db.settings.require_device_location === true, server_time: new Date().toISOString() };
@@ -2608,7 +2610,7 @@ const MockServer = (() => {
     return attLoad || (attLoad = one('backend/attendance/att-core.js').then(() => one('shared/att-mock.js')));
   }
   // Phase 3 chat: the same core as the server (backend/chat/chat-core.js) + demo handler (shared/chat-mock.js)
-  const CHAT_ACTIONS = ['chat_bootstrap', 'chat_poll', 'chat_send', 'chat_set_retention'];
+  const CHAT_ACTIONS = ['chat_bootstrap', 'chat_poll', 'chat_send', 'chat_set_retention', 'notice_close']; // v38: + notice_close (Tutup)
   let chatLoad = null;
   function loadChatMock() {
     if (window.KChat && window.KChatMock) return Promise.resolve();

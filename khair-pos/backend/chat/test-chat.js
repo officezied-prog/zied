@@ -162,6 +162,53 @@ apply(st, KChat.core(st, req('chat_send', WHO.owner, { channel: 'general', body:
 eq('general unread after seen', KChat.core(st, req('chat_poll', WHO.siti, { cursors: {}, seen: { general: '2026-10-07T09:00:00.000Z' } }), NOW).response.unread.general, 1);
 eq('general unread with no seen', KChat.core(st, req('chat_poll', WHO.siti, { cursors: {} }), NOW).response.unread.general, 2);
 
+// v38 (owner 2026-10-12: "For any notice come to me make for me I can reply" + «نعم زر رد او اغلق مباشر ما في مشكل»)
+console.log('— v38 notice reply (quote + ref) and close —');
+st = state();
+const dmOS = KChat.dmChannel(baseUsers()[0], baseUsers()[2]);
+const q38 = { text: 'Permintaan batal faktur INV-1 oleh Siti', at: '2026-10-07T08:00:00.000Z', no: 'INV-1', by: 'Siti', junk: 'x' };
+r = KChat.core(st, req('chat_send', WHO.owner, { channel: dmOS, body: 'Kenapa dibatalkan?', cid: 'q1', quote: q38, ref: 'a:ACXYZ<>1' }), '2026-10-07T09:00:00.000Z');
+eq('reply ok', r.response.ok, true);
+eq('quote kept (text)', r.response.message.quote.text, q38.text);
+eq('quote kept (no)', r.response.message.quote.no, 'INV-1');
+ok('quote: unknown fields dropped', r.response.message.quote.junk === undefined);
+eq('ref cleaned', r.response.message.ref, 'a:ACXYZ1');
+eq('stored quote is JSON text', typeof r.writes[0].row.quote, 'string');
+eq('send returns the notice state: replied to Siti', r.response.notices.replied['a:ACXYZ1'].to, 'Siti');
+apply(st, r.writes);
+let sp = KChat.core(st, req('chat_poll', WHO.siti, { cursors: { [dmOS]: '' }, seen: {} }), NOW).response;
+eq('recipient gets the quote', sp.messages[dmOS][0].quote.text, q38.text);
+eq('recipient unread', sp.unread[dmOS], 1);
+ok('recipient: no notice state on a poll without notice_v (old clients)', sp.notices === undefined);
+eq('recipient: own notice state is empty', KChat.core(st, req('chat_bootstrap', WHO.siti), NOW).response.notices.v, '0|');
+r = KChat.core(st, req('chat_send', WHO.siti, { channel: dmOS, body: 'Pelanggan salah beli, Pak.', cid: 'q2' }), NOW);
+ok('the answer is a plain message (no quote/ref keys)', r.response.ok && r.response.message.quote === undefined && r.response.message.ref === undefined && r.response.notices === undefined);
+apply(st, r.writes);
+let ob = KChat.core(st, req('chat_bootstrap', WHO.owner), NOW).response;
+eq('owner bootstrap: replied mark', ob.notices.replied['a:ACXYZ1'].at, '2026-10-07T09:00:00.000Z');
+const v1 = ob.notices.v;
+ok('poll with the same notice_v: nothing', KChat.core(st, req('chat_poll', WHO.owner, { cursors: {}, notice_v: v1 }), NOW).response.notices === undefined);
+r = KChat.core(st, req('notice_close', WHO.owner, { ids: ['att:low:3:2026-10-07', 'att:low:3:2026-10-07', 'a:AC2'] }), NOW);
+eq('close ok', r.response.ok, true);
+eq('close: one row per distinct id', r.writes.length, 2);
+ok('close rows go to the hidden channel', r.writes.every(w => w.row.channel === KChat.noticeChannel(baseUsers()[0]) && w.row.ref));
+ok('close returns the state', r.response.notices.closed['a:AC2'] === NOW && r.response.notices.replied['a:ACXYZ1']);
+apply(st, r.writes);
+let op = KChat.core(st, req('chat_poll', WHO.owner, { cursors: {}, notice_v: v1 }), NOW).response;
+ok('another device (old notice_v) gets the new state on its normal poll', op.notices && op.notices.closed['att:low:3:2026-10-07'] === NOW);
+ok('close rows never count as unread or as a room', JSON.stringify(op.unread).indexOf('nt:') < 0 && Object.keys(op.messages).every(k => k.indexOf('nt:') < 0));
+const bs = KChat.core(st, req('chat_bootstrap', WHO.budi), NOW).response;
+ok('another user never sees my closed notices', Object.keys(bs.notices.closed).length === 0 && JSON.stringify(bs).indexOf('a:AC2') < 0);
+eq('nobody can post into a notice channel', KChat.core(st, req('chat_send', WHO.owner, { channel: KChat.noticeChannel(baseUsers()[0]), body: 'x' }), NOW).response.error, 'INVALID');
+eq('close with no id', KChat.core(st, req('notice_close', WHO.owner, { ids: ['<>'] }), NOW).response.error, 'INVALID');
+eq('close caps at 50', KChat.core(st, req('notice_close', WHO.owner, { ids: Array.from({ length: 80 }, (_, i) => 'a:' + i) }), NOW).writes.length, 50);
+eq('kasir may close his own notices too', KChat.core(st, req('notice_close', WHO.siti, { id: 'r:REQ1' }), NOW).response.ok, true);
+// old rows (no quote/ref columns) still render
+st = state({ chat: [{ id: 1, channel: 'general', cid: 'old', from_user: 'Siti', from_name: 'Siti', body: 'lama', image: '', created_at: '2026-10-01T00:00:00.000Z' }] });
+const om = KChat.core(st, req('chat_bootstrap', WHO.owner), NOW).response.messages.general[0];
+ok('old message: same shape as before', om.body === 'lama' && om.quote === undefined && om.ref === undefined);
+ok('broken quote JSON ignored', KChat.core(state({ chat: [{ id: 1, channel: 'general', cid: 'b', from_user: 'Siti', body: 'x', quote: '{bad', created_at: NOW }] }), req('chat_bootstrap', WHO.owner), NOW).response.messages.general[0].quote === undefined);
+
 console.log('— unknown action —');
 eq('unknown action', KChat.core(state(), req('chat_nope', WHO.owner), NOW).response.error, 'UNKNOWN');
 

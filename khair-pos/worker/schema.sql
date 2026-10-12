@@ -568,7 +568,9 @@ CREATE TABLE IF NOT EXISTS pos_chat (
   body TEXT,
   image TEXT,
   created_at TEXT,
-  deleted INTEGER
+  deleted INTEGER,
+  quote TEXT,
+  ref TEXT
 );
 
 CREATE TABLE IF NOT EXISTS pos_workers (
