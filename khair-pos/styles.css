@@ -544,6 +544,8 @@ tr.miss td{background:var(--danger-l)}
 .dr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:14px;margin-bottom:14px}
 .dr-row{display:flex;justify-content:space-between;gap:8px;padding:4px 0;font-size:14px;border-bottom:1px dashed var(--border)}
 .dr-row:last-child{border-bottom:0}
+.dr-sec{font-size:17px;margin:6px 0 10px}
+.dr-pc [data-pc="total"]{font-size:16px}
 .dr-row b{font-variant-numeric:tabular-nums}
 .wa-btns{display:flex;gap:8px;flex-wrap:wrap}
 .br-grp{margin-bottom:12px}

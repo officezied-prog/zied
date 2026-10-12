@@ -118,3 +118,57 @@ test('morning drawer opening (kasir) → buka_kas card with last count and diffe
   expect(db.approvals.find(a => a.kind === 'buka_kas')).toMatchObject({ status: 'approved', decided_by: 'Jihan', ref: o.shift.shift_id });
   expect(db.activity.filter(a => a.kind === 'buka_kas').slice(-1)[0]).toMatchObject({ user: 'Siti', level: 'warn' });
 });
+
+// v37 (owner 2026-10-12): ① each cashier's own day, then ② the whole store — on the page and in the WhatsApp text.
+test('daily report: ① per cashier (sales per method, debt, drawer) then ② the store total; the cashiers add up', async ({ page }) => {
+  await login(page, 'Pemilik', '1234', '', { stay: true });
+  const db = await getDb(page), day = jktToday(-1);
+  const ok = db.sales.filter(s => s.sale_date === day && s.status !== 'void');
+  const names = [...new Set(ok.map(s => s.cashier))];
+  expect(names.length).toBeGreaterThan(1);
+  await nav(page, 'home');
+  await page.click('#home-daily');
+  await page.fill('#dr-date', day);
+  await page.locator('#dr-date').dispatchEvent('change');
+  await expect(page.locator('#dr-sec-cashiers')).toHaveText('① Per kasir');
+  // everyone who sold, voided, took or paid money, paid an expense or had a drawer that day gets a card
+  const people = new Set([...db.sales.filter(s => s.sale_date === day).map(s => s.cashier), ...db.payments.filter(p => p.pay_date === day).map(p => p.cashier),
+    ...db.expenses.filter(e => e.expense_date === day).map(e => e.user), ...db.shifts.filter(x => x.shift_date === day).map(x => x.cashier)].map(x => String(x || '').trim() || '-'));
+  await expect(page.locator('#dr-cashiers .dr-pc')).toHaveCount(people.size);
+  for (const n of names) {
+    const mine = ok.filter(s => s.cashier === n), card = page.locator(`.dr-pc[data-cashier="${n}"]`);
+    const by = { tunai: 0, transfer: 0, qris: 0 };
+    mine.forEach(s => { by[by[s.payment_method] !== undefined ? s.payment_method : 'tunai'] += Math.min(s.paid_amount, s.total); });
+    await expect(card.locator('[data-pc="total"]')).toHaveText(rp(mine.reduce((a, s) => a + s.total, 0)));
+    await expect(card.locator('[data-pc="tunai"]')).toHaveText(rp(by.tunai));
+    await expect(card.locator('[data-pc="qris"]')).toHaveText(rp(by.qris));
+    await expect(card.locator('[data-pc="hutang"]')).toHaveText(rp(mine.reduce((a, s) => a + s.debt_amount, 0)));
+    await expect(card.locator('[data-pc="tx"]')).toContainText(`${mine.length} transaksi`);
+    const sh = db.shifts.filter(x => x.shift_date === day && x.cashier === n);
+    if (sh.length) await expect(card.locator('[data-pc="opening"]')).toHaveText(rp(sh.reduce((a, x) => a + x.opening_cash, 0)));
+    else await expect(card.locator('[data-pc="no-drawer"]')).toBeVisible();
+  }
+  await expect(page.locator('#dr-pc-check')).toContainText('✓');
+  // the store section follows, unchanged
+  await expect(page.locator('#dr-sec-store')).toBeVisible();
+  await expect(page.locator('[data-kpi="dr-total"] .v')).toHaveText(rp(ok.reduce((a, s) => a + s.total, 0)));
+  const msg = await page.locator('#dr-text').textContent();
+  const iPer = msg.indexOf('*① PER KASIR*'), iStore = msg.indexOf('*② TOTAL TOKO (semua kasir)*');
+  expect(iPer).toBeGreaterThan(0);
+  expect(iStore).toBeGreaterThan(iPer);
+  for (const n of names) {
+    const mine = ok.filter(s => s.cashier === n), at = msg.indexOf(`*${n}* — ${mine.length} transaksi`);
+    expect(at).toBeGreaterThan(iPer);
+    expect(at).toBeLessThan(iStore);
+  }
+  expect(msg.slice(iPer, iStore)).toContain('Kas laci');
+  expect(msg.slice(iStore)).toContain(`Total penjualan: *${rp(ok.reduce((a, s) => a + s.total, 0))}*`);
+  // phone + Arabic
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.click('#tb-lang');
+  await expect(page.locator('#dr-sec-cashiers')).toHaveText('① حصيلة كل كاشير');
+  await expect(page.locator('#dr-sec-store')).toHaveText('② الحصيلة العامة للمتجر (كل الكاشيرات)');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.locator('#dr-cashiers').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(SHOTS, 'phone-daily-cashiers-ar.png') });
+});

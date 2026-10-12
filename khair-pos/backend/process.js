@@ -2648,6 +2648,35 @@ switch (req.action) {
       expected_total: sumOf(shifts, function (x) { return x.expected_cash; }), counted_total: sumOf(shifts.filter(function (x) { return x.status === 'closed'; }), function (x) { return x.counted_cash; }),
       difference_total: sumOf(shifts.filter(function (x) { return x.status === 'closed'; }), function (x) { return x.difference; }) };
     if (role === 'owner') rep.profit = sumOf(okSales, function (x) { return money(x.profit); });
+    // v37 (owner 2026-10-12: "طريقة لكل كاشير خاص به … ثم الحصيلة العامة للمتجر"): every cashier's own day next to the store
+    // totals — what he sold per payment method, the debt he gave, voids, debt payments he took in, money he paid out, his
+    // expenses and his drawer(s). Same rows and rules as the totals above, so the cashiers always add up to the store.
+    const per = {}, invWho = {};
+    const who = function (n) {
+      const k = str(n) || '-';
+      if (!per[k]) per[k] = { name: k, sales: { count: 0, total: 0, discount: 0, items_qty: 0, by_method: { tunai: 0, transfer: 0, qris: 0 }, debt: 0 }, voids: { count: 0, total: 0 },
+        payments_in: { count: 0, total: 0, tunai: 0, transfer: 0, qris: 0 }, payments_out: { count: 0, total: 0, tunai: 0 }, expenses: { count: 0, total: 0, from_kas: 0 }, shifts: [] };
+      return per[k];
+    };
+    okSales.forEach(function (x) {
+      const c = who(x.cashier), s1 = c.sales, paid = Math.min(money(x.paid_amount), money(x.total));
+      invWho[x.invoice_no] = c; s1.count++; s1.total += money(x.total); s1.discount += money(x.discount); s1.debt += money(x.debt_amount);
+      s1.by_method[s1.by_method[x.payment_method] !== undefined ? x.payment_method : 'tunai'] += paid;
+    });
+    items.forEach(function (it) { const c = invWho[it.invoice_no]; if (c) c.sales.items_qty = Math.round((c.sales.items_qty + num(it.qty)) * 1000) / 1000; });
+    voids.forEach(function (x) { const c = who(x.cashier); c.voids.count++; c.voids.total += money(x.total); });
+    pin.forEach(function (p) { const c = who(p.cashier); c.payments_in.count++; c.payments_in.total += money(p.amount); if (c.payments_in[p.method] !== undefined) c.payments_in[p.method] += money(p.amount); });
+    pout.forEach(function (p) { const c = who(p.cashier); c.payments_out.count++; c.payments_out.total += money(p.amount); if (p.method === 'tunai') c.payments_out.tunai += money(p.amount); });
+    exps.forEach(function (e) { const c = who(e.user); c.expenses.count++; c.expenses.total += money(e.amount); if (e.paid_from === 'kas') c.expenses.from_kas += money(e.amount); });
+    shifts.forEach(function (x) { who(x.cashier).shifts.push(x.shift_id); });
+    rep.cashiers = Object.keys(per).map(function (k) {
+      const c = per[k], mine = shifts.filter(function (x) { return str(x.cashier) === k || (k === '-' && !str(x.cashier)); }), closed = mine.filter(function (x) { return x.status === 'closed'; });
+      c.drawer = mine.length ? { count: mine.length, open: mine.length - closed.length, opening_cash: sumOf(mine, function (x) { return x.opening_cash; }), cash_sales: sumOf(mine, function (x) { return x.cash_sales; }),
+        cash_payments: sumOf(mine, function (x) { return x.cash_payments; }), cash_in: sumOf(mine, function (x) { return x.cash_in; }), cash_out: sumOf(mine, function (x) { return x.cash_out; }),
+        expected_cash: sumOf(mine, function (x) { return x.expected_cash; }), counted_cash: closed.length ? sumOf(closed, function (x) { return x.counted_cash; }) : null,
+        difference: closed.length ? sumOf(closed, function (x) { return x.difference; }) : null } : null;
+      return c;
+    }).sort(function (a1, b1) { return b1.sales.total - a1.sales.total || String(a1.name).localeCompare(String(b1.name)); });
     // v20 price corrections impact on this day (loss/gain): net re-pricing, refunds paid out, and undercharges written off.
     var wibDayOf = function (iso) { return iso ? new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(0, 10) : ''; };
     var corrDay = approvalRows.filter(function (a) { return a.kind === 'koreksi' && wibDayOf(a.decided_at) === day; });
