@@ -980,8 +980,12 @@ function fixSummary(no, changes) { return 'Koreksi barang masuk ' + no + ': ' + 
 // يجب التأكد: ممكن 2 كاشير يقوم بنفس الطلب والتعليب، انتبه منها»): in-shop repacking. The cashier REQUESTS (request_repack, nothing moves),
 // the manager OR the accountant approves (approval kind 'repack', mgr_akuntan, first decision wins, may correct the quantities), the owner
 // only gets notices. One pending request per BULK product at a time (the lock); each request carries a client id (a double tap / retry
-// / resend returns the same request); the bulk stock is re-checked at approval; a request pending 24 h or more can be cancelled. ----
+// / resend returns the same request); the bulk stock is re-checked at approval; a request pending 24 h or more can be cancelled.
+// v39 (owner 2026-10-12: «طلب التعليب لا يحتاج إلى موافقات»): no more requests — the cashier repacks directly (case 'repack') and the
+// owner, manager and accountant are told. The approval path below only finishes v38 requests still pending. ----
 const REPACK_STALE_MS = 24 * 3600000;
+// v39: the same bulk repacked again within this window asks the cashier first: "is this another repack, not the same one?"
+const REPACK_RECENT_MS = 2 * 3600000;
 /** The pack product, its bulk product and the quantities (packs made; bulk used = packs × size unless typed). */
 function repackPlan(toId, toQtyIn, fromQtyIn) {
   const to = productById[String(toId)];
@@ -1018,7 +1022,8 @@ function applyRepack(P, o) {
     expected_qty: P.expected, yield_pct: P.yield_pct, loss_qty: P.loss_qty, packaging_cost: packCost, unit_cost: unitCost,
     exp_date: isDate(o.exp_date) ? o.exp_date : '', note: str(o.note).slice(0, 300),
     // v38: who asked (a cashier's request) and who approved it; empty for a direct repack by the owner / manager
-    requested_by: str(o.requested_by), approved_by: str(o.approved_by), request_id: str(o.request_id)
+    requested_by: str(o.requested_by), approved_by: str(o.approved_by), request_id: str(o.request_id),
+    client_id: str(o.client_id) // v39: the form's id (a resend is recorded once)
   };
   ops.repacks.push(forWrite(rp, -1));
   const tag = rp.repack_id + (rp.requested_by ? ', diminta ' + rp.requested_by + ', disetujui ' + rp.approved_by : '');
@@ -1534,49 +1539,50 @@ switch (req.action) {
     return done({ ok: true, correction: { request_id: a.request_id, product_name: str(p.name), old_price: oldPrice, new_price: newPrice, invoices: details.length, net_diff: netDiff, refund_total: refundTotal, under_total: underTotal, refunds: refunds, consults: consults, cashiers: Object.keys(cashiers), price_setters: setters }, product: catalog ? productOut(catalog) : undefined });
   }
 
-  case 'repack': {
-    // Bulk → small packs made in the shop: how much bulk went in, how many packs came out, the loss and the pack cost.
-    // The owner and the manager repack directly (a cashier sends request_repack instead — v38).
-    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
-    const P = repackPlan(data.to_product_id, data.to_qty, data.from_qty);
-    if (P.error) return P.error;
-    if (P.fromQty > num(P.from.stock) + 1e-9) return fail('INVALID', 'Stok ' + str(P.from.name) + ' tidak cukup (' + num(P.from.stock) + ' ' + str(P.from.unit) + ')');
-    // v38: no double repack — while a cashier's request for the same bulk waits, it is decided first (Persetujuan), not repacked twice.
-    const pend = pendingRepackFor(P.from.id);
-    if (pend) return repackBusy(pend);
-    const R = applyRepack(P, { packaging_cost: data.packaging_cost, date: data.date, exp_date: data.exp_date, note: data.note });
-    // v38 (owner 2026-10-12: «المالك يصله إشعار فقط»): the manager's own repack is told to the owner (his own needs no notice).
-    if (role === 'manager') notify(['owner'], 'Kemas ulang oleh manajer ' + me.name + ': ' + repackText(R.rp) + (R.rp.yield_pct < 95 ? ' — PERHATIAN: hasil di bawah 95%' : ''), R.rp.yield_pct < 95 ? 'warn' : 'info');
-    return done({ ok: true, repack: R.out, stock: R.stock });
-  }
-
+  case 'repack':
   case 'request_repack': {
-    // v38: the cashier asks; nothing moves in stock until the manager or the accountant approves.
-    if (role !== 'kasir') return fail('FORBIDDEN', 'Pemilik dan manajer langsung kemas ulang (Gudang → Kemas ulang)');
+    // Bulk → small packs made in the shop: how much bulk went in, how many packs came out, the loss and the pack cost.
+    // v39 (owner 2026-10-12: «طلب التعليب لا يحتاج إلى موافقات، إن شاهد العمال نقص في البضائع فعليهم أن يقوموا بالتعليب، بس يقوم
+    // بإرسال معلومات للمدير ولي أنا وللمحاسب حتى يتم إدخال كل المعلومات في المخزون ومراقبة المخزون»): no approval any more — the
+    // cashier (and the owner / manager) repacks directly, the stock moves at once, and the owner, the manager and the
+    // accountant each get the full record (who, when, bulk used, packs made, yield, loss, the stock before → after).
+    // Two cashiers, one repack (owner, v38: «ممكن 2 كاشير يقوم بنفس الطلب والتعليب، انتبه منها»):
+    //  - the form's client id: a double tap / retry / offline resend is recorded once (the same repack comes back);
+    //  - the same bulk repacked by anyone in the last REPACK_RECENT_MS → REPACK_RECENT names who, when and how much, and the repack
+    //    is recorded only when the cashier confirms it is another one (confirm_recent);
+    //  - two at the same second: the Worker's 'stock_claim' guard lets only the first move the bulk stock (core.js).
+    // request_repack (v38 kasir-1.6.0 clients) is the same thing now.
+    if (['owner', 'manager', 'kasir'].indexOf(role) < 0) return fail('FORBIDDEN', 'Tidak diizinkan');
     const cid = str(data.client_id).slice(0, 60);
-    if (!cid) return fail('INVALID', 'client_id wajib');
-    // idempotent: a double tap, a retry or an offline resend of the same request returns the request already made
-    const same = approvalRows.find(function (a) { return a.kind === 'repack' && str(a.client_id) === cid; });
-    if (same) return done({ ok: true, duplicate: true, request_id: same.request_id, approval: approvalOut(same) });
+    const recent = rows('Get Recent Repacks');
+    if (cid) {
+      const same = recent.find(function (r) { return str(r.client_id) === cid; });
+      if (same) { const o = Object.assign({}, same); if (role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; } return done({ ok: true, duplicate: true, repack: o }); }
+    }
     const P = repackPlan(data.to_product_id, data.to_qty, data.from_qty);
     if (P.error) return P.error;
     if (P.fromQty > num(P.from.stock) + 1e-9) return fail('INVALID', 'Stok ' + str(P.from.name) + ' tidak cukup (' + num(P.from.stock) + ' ' + str(P.from.unit) + ')');
-    // the lock: one pending request per bulk product — a second cashier (or the same one) is told who asked and when
+    // a cashier's request from v38 still waiting for this bulk: it is decided (or cancelled) first, never repacked twice
     const pend = pendingRepackFor(P.from.id);
     if (pend) return repackBusy(pend);
-    const pl = {
-      to_product_id: P.to.id, to_name: str(P.to.name), to_unit: str(P.to.unit), from_product_id: P.from.id, from_name: str(P.from.name), from_unit: str(P.from.unit),
-      pack_size: P.size, to_qty: P.toQty, from_qty: P.fromQty, from_typed: !(data.from_qty === undefined || data.from_qty === null || data.from_qty === ''),
-      expected_qty: P.expected, yield_pct: P.yield_pct, loss_qty: P.loss_qty, bulk_stock: num(P.from.stock),
-      packaging_cost: Math.max(0, money(data.packaging_cost)), exp_date: isDate(data.exp_date) ? data.exp_date : '', note: str(data.note).slice(0, 300)
-    };
-    const a = newApproval({ kind: 'repack', approver_role: 'mgr_akuntan', ref: String(P.from.id), client_id: cid, note: pl.note,
-      summary: ('Minta kemas ulang ' + repackText(pl)).slice(0, 1500), payload: JSON.stringify(pl) });
-    ops.approvals.push(forWrite(a, -1));
-    ops.guard.push({ type: 'repack_lock', ref: String(P.from.id), request_id: a.request_id, from_name: str(P.from.name) });
-    // one notice: the owner (only told), the manager and the accountant (they decide)
-    notify(['owner', 'manager', 'akuntan'], 'Permintaan kemas ulang oleh ' + me.name + ' (' + wibStamp(a.created_at) + '): ' + repackText(pl) + ' — menunggu persetujuan manajer/akuntan', pl.yield_pct < 95 ? 'warn' : 'info');
-    return done({ ok: true, request_id: a.request_id, approval: approvalOut(a) });
+    if (data.confirm_recent !== true) {
+      const last = recent.filter(function (r) { return Number(r.from_product_id) === Number(P.from.id) && Date.now() - Date.parse(r.repack_time) < REPACK_RECENT_MS; }).pop();
+      if (last) Object.keys(ops).forEach(function (k) { ops[k] = []; }); // a refusal writes nothing (as fail())
+      if (last) return done({ ok: false, error: 'REPACK_RECENT',
+        message: str(last.user) + ' sudah mengemas ulang ' + str(last.from_name) + ' ' + fmtN(last.from_qty) + ' ' + str(last.from_unit) + ' → ' + str(last.to_name) + ' x' + fmtN(last.to_qty) + ' pada ' + wibStamp(last.repack_time) + ' (' + str(last.repack_id) + '). Kalau ini kemas ulang lain (bukan yang sama), tekan "Ya, ini kemas ulang baru".',
+        recent: { repack_id: str(last.repack_id), user: str(last.user), at: str(last.repack_time), from_name: str(last.from_name), from_qty: num(last.from_qty), from_unit: str(last.from_unit), to_name: str(last.to_name), to_qty: num(last.to_qty) } });
+    }
+    const fromOld = num(P.from.stock), toOld = num(P.to.stock);
+    const R = applyRepack(P, { packaging_cost: data.packaging_cost, date: data.date, exp_date: data.exp_date, note: data.note, client_id: cid });
+    ops.guard.push({ type: 'stock_claim', product_id: P.from.id, from: fromOld, to: Math.round((fromOld - P.fromQty) * 1000) / 1000, from_name: str(P.from.name) });
+    const who = { owner: 'pemilik', manager: 'manajer', kasir: 'kasir' }[role] || role;
+    const told = ['owner', 'manager', 'akuntan'].filter(function (r) { return r !== role; });
+    notify(told, 'Kemas ulang oleh ' + who + ' ' + me.name + ' (' + wibStamp(R.rp.repack_time) + '): ' + repackText(R.rp) +
+      ' | stok ' + str(P.from.name) + ' ' + fmtN(fromOld) + ' → ' + fmtN(R.stock[0].stock) + ' ' + str(P.from.unit) +
+      ', stok ' + str(P.to.name) + ' ' + fmtN(toOld) + ' → ' + fmtN(R.stock[1].stock) + ' ' + str(P.to.unit) +
+      (R.rp.yield_pct < 95 ? ' — PERHATIAN: hasil di bawah 95%' : '') + (data.confirm_recent === true ? ' — dikonfirmasi bukan kemas ulang ganda' : ''),
+      R.rp.yield_pct < 95 ? 'warn' : 'info');
+    return done({ ok: true, repack: R.out, stock: R.stock });
   }
 
   case 'cancel_repack': {

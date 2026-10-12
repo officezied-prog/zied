@@ -93,6 +93,7 @@ export const TABLES = {
     packaging_cost: 'number', unit_cost: 'number', exp_date: 'string', note: 'string',
     // v38: a repack made on a cashier's request — who asked, who approved, which request
     requested_by: 'string', approved_by: 'string', request_id: 'string',
+    client_id: 'string', // v39: the form's id — a double tap / retry / resend of the same repack is recorded once
   },
   pos_activity: {
     act_id: 'string', at: 'string', act_date: 'string', user: 'string', role: 'string',

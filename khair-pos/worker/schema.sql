@@ -282,7 +282,8 @@ CREATE TABLE IF NOT EXISTS pos_repacks (
   note TEXT,
   requested_by TEXT,
   approved_by TEXT,
-  request_id TEXT
+  request_id TEXT,
+  client_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pos_repacks_repack_date ON pos_repacks (repack_date);
 
