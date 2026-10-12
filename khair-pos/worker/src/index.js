@@ -26,22 +26,49 @@ function json(obj, status = 200) {
 
 // D1 adapter matching the db.js contract (all/run). D1 bind takes primitives only — db.js
 // already coerces booleans to 0/1.
+// v38: `use` counts the rows this request read / wrote, from D1's own meta (rows_read / rows_written).
 function d1Adapter(DB) {
+  const use = { read: 0, write: 0 };
   return {
+    use,
     async all(sql, params) {
       const r = await DB.prepare(sql).bind(...params).all();
+      const m = r.meta || {};
+      use.read += Number(m.rows_read) || (r.results || []).length; use.write += Number(m.rows_written) || 0;
       return r.results || [];
     },
     async run(sql, params) {
       const r = await DB.prepare(sql).bind(...params).run();
       const meta = r.meta || {};
+      use.read += Number(meta.rows_read) || 0; use.write += Number(meta.rows_written) || Number(meta.changes) || 0;
       return { lastInsertRowid: meta.last_row_id, changes: meta.changes };
     },
   };
 }
 
+// v38 (owner 2026-10-12: "we start free, and pay the $5 only when the work needs it"): the D1 rows read / written today,
+// kept in pos_api_usage (api 'd1_read' / 'd1_write', month = the UTC day, because the free limits — 5,000,000 reads and
+// 100,000 writes a day — reset at 00:00 UTC). Written after the answer has gone out (ctx.waitUntil), never in its way;
+// the owner app shows it and warns long before the limit. A failure here never touches the request.
+let usageTableEnsured = false;
+export async function recordUsage(DB, use, now = new Date()) {
+  const day = now.toISOString().slice(0, 10), at = now.toISOString();
+  const add = async (api, n) => {
+    const u = await DB.prepare('UPDATE pos_api_usage SET n = n + ?, updated_at = ? WHERE api = ? AND month = ?').bind(n, at, api, day).run();
+    if (!(u && u.meta && u.meta.changes > 0)) await DB.prepare('INSERT INTO pos_api_usage (api, month, n, updated_at) VALUES (?, ?, ?, ?)').bind(api, day, n, at).run();
+  };
+  try {
+    if (!usageTableEnsured) {
+      await DB.prepare('CREATE TABLE IF NOT EXISTS pos_api_usage (id INTEGER PRIMARY KEY AUTOINCREMENT, api TEXT, month TEXT, n INTEGER NOT NULL DEFAULT 0, updated_at TEXT)').bind().run();
+      usageTableEnsured = true;
+    }
+    if (use.read > 0) await add('d1_read', use.read);
+    if (use.write > 0) await add('d1_write', use.write);
+  } catch (e) { /* a lost count is better than a failed request */ }
+}
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     const url = new URL(request.url);
     // v36 (owner 2026-10-08: "فعّل حفظ الصور عبر Google Drive"): GET .../khair-pos-photo/file/<photo_id> streams a photo
@@ -102,6 +129,8 @@ export default {
                 : handleRequest;
         response = await handler(adapter, text, headers, env.STORE_KEY, { env }); // env: the Google Places key (field search), when set
       }
+      const counted = recordUsage(env.DB, adapter.use);
+      if (ctx && ctx.waitUntil) ctx.waitUntil(counted); else await counted; // tests (no ctx) wait for it
       return json(response, 200); // business errors (ok:false) are 200, as n8n returned them
     } catch (e) {
       // Only true server faults reach here. Keep the message generic (the apps map it to
