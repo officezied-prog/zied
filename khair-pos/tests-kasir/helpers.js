@@ -129,6 +129,7 @@ async function tab(page, v) {
 }
 /** v21: every goods-in line needs a shelf life. Fill all visible expiry inputs with a far-off date before saving. */
 async function fillPuExp(page, date = '2027-06-01') {
+  await page.locator('[data-pu-exp]').first().waitFor(); // the note's lines appear once the photo is read — count them only then
   const n = await page.locator('[data-pu-exp]').count();
   for (let i = 0; i < n; i++) await page.locator(`[data-pu-exp="${i}"]`).fill(date);
 }
