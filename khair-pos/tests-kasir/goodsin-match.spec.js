@@ -130,6 +130,13 @@ test('MISMATCH → reason; saved goods-in is read-only; correction request → m
   expect(fix[0]).toMatchObject({ product_id: gula.id, qty: -2, total: -30000, user: 'Jihan' });
   expect(fix[0].note).toContain(`KOREKSI ${no}: 50→48`);
   expect(fix[0].match_notes).toContain('diminta Siti, disetujui Jihan');
+  // v37: the owner is told — one invoice-change record with what changed, who asked and who approved
+  const chg = db.activity.find(a => a.kind === 'ubah_faktur' && a.ref === no);
+  expect(chg).toBeTruthy();
+  expect(chg.level).toBe('warn');
+  expect(chg.summary).toContain('qty 50→48');
+  expect(chg.summary).toMatch(/diminta Siti .* WIB, disetujui Jihan .* WIB/);
+  expect(JSON.parse(chg.detail)).toMatchObject({ doc: 'masuk', what: 'koreksi_masuk', no, requested_by: 'Siti', approved_by: 'Jihan' });
   expect(db.approvals.find(a => a.request_id === ap.request_id)).toMatchObject({ status: 'approved', decided_by: 'Jihan' });
   expect(db.activity.find(a => a.kind === 'keputusan' && a.ref === ap.request_id)).toMatchObject({ user: 'Jihan', role: 'manager', level: 'info' });
 
@@ -145,7 +152,9 @@ test('MISMATCH → reason; saved goods-in is read-only; correction request → m
   await expect(h2).toContainText('1 koreksi');
 });
 
-test('a manager corrects directly (no request), the owner sees it as koreksi_masuk; the server rules for unclear notes', async ({ page }) => {
+// v37 (owner 2026-10-12: a saved invoice changes only with approval): the manager's correction goes to the OWNER (as the server rules);
+// the owner's approval (and its ubah_faktur record) is covered by the worker tests (worker/test/v37.test.js).
+test('a manager\'s correction is a request to the owner (not applied at once); the server rules for unclear notes', async ({ page }) => {
   await H.login(page, 'Jihan', '2222');
   const db0 = await H.getDb(page);
   const gula = H.productByName(db0, /Gula Pasir/);
@@ -158,13 +167,14 @@ test('a manager corrects directly (no request), the owner sees it as koreksi_mas
   await page.click('#pu-res-fix');
   await page.locator(`#pu-fix [data-fix-qty="${gula.id}"]`).fill('21');
   await page.fill('#fx-reason', 'Satu pak terselip');
-  await expect(page.locator('#fx-send')).toContainText('Simpan koreksi');
+  await expect(page.locator('#fx-send')).toContainText('Kirim permintaan');
   await page.click('#fx-send');
-  await expect(page.locator('#pu-fix')).toHaveCount(0);
+  await expect(page.locator('#fx-pending')).toContainText('Menunggu persetujuan pemilik');
   const db = await H.getDb(page);
-  expect(H.productByName(db, /Gula Pasir/).stock).toBe(gula.stock + 21);
-  expect(db.approvals.some(a => a.kind === 'purchase_fix' && a.ref === no)).toBe(false);
-  expect(db.activity.find(a => a.kind === 'koreksi_masuk' && a.ref === no)).toMatchObject({ user: 'Jihan', level: 'warn', amount: 15000 });
+  expect(H.productByName(db, /Gula Pasir/).stock).toBe(gula.stock + 20); // unchanged until the owner approves
+  const ap = db.approvals.find(a => a.kind === 'purchase_fix' && a.ref === no);
+  expect(ap).toMatchObject({ approver_role: 'owner', status: 'pending', cashier: 'Jihan' });
+  expect(db.activity.some(a => a.kind === 'koreksi_masuk' && a.ref === no)).toBe(false);
   expect(db.activity.find(a => a.kind === 'masuk' && a.ref === no).level).toBe('info');
   // server matching rules (shared with the live check): name match without photo_index, missing qty → perlu_cek
   const r = await page.evaluate(() => {
