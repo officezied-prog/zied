@@ -187,6 +187,8 @@ test('CSV import (majoo style): BOM, semicolons, quotes, Rupiah formats, upsert 
   await expect(page.locator('#im-m-sku')).toHaveValue('1');
   await expect(page.locator('#im-prev tbody tr').first()).toContainText('Kurma Sagai; Premium 1 kg');
   await expect(page.locator('#im-prev tbody tr').first()).toContainText(rp(125000));
+  await expect(page.locator('#im-only-new')).toBeChecked(); // v44: the safe choice is the default
+  await page.uncheck('#im-only-new'); // this test is about updating existing products
   await page.click('#im-go');
   await expect(page.locator('.toast.ok')).toContainText('2 baru, 1 diperbarui');
 
