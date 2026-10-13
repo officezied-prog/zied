@@ -82,7 +82,7 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.9.4';
+const APP_VERSION = 'sales-1.9.5';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1270,6 +1270,10 @@ function pointBox(id, icon, label, pt, acts) {
 }
 function drawPlanner() {
   const w = PL.el && $('#pl-wrap', PL.el); if (!w) return;
+  // a redraw while the rep is typing (a background load finishing: GPS, streets worked, Google) keeps the field focused with
+  // its text and cursor — before, the keyboard closed and the next letters went nowhere
+  const fa = document.activeElement, keep = fa && fa.id && w.contains(fa) && (fa.tagName === 'TEXTAREA' || (fa.tagName === 'INPUT' && /^(text|search|tel|url|email|number)$/.test(fa.type)))
+    ? { id: fa.id, v: fa.value, s: fa.selectionStart, e: fa.selectionEnd } : null;
   $('#pl-startbox', w).innerHTML = pointBox('pl-start', '🚩', t('plan.start'), PL.start, `<button class="btn xs" data-act="pl-mypos" id="pl-mypos">${ic('locate')} ${esc(t('plan.my_pos'))}</button>`)
     + pointBox('pl-end', '🏁', t('plan.end'), PL.end, `<button class="btn xs" data-act="pl-end-mypos" id="pl-end-mypos">${ic('locate')} ${esc(t('plan.my_pos'))}</button><button class="btn xs" data-act="pl-end-same" id="pl-end-same" ${PL.start ? '' : 'disabled'}>${esc(t('plan.end_same'))}</button>${PL.end ? `<button class="btn xs ghost" data-act="pl-end-clear" id="pl-end-clear" aria-label="${esc(t('plan.remove'))}">✕</button>` : ''}`)
     + `<div class="small muted" style="margin-top:4px">${esc(t('plan.tap_hint'))}</div>`;
@@ -1282,6 +1286,8 @@ function drawPlanner() {
   const q = $('#pl-q', w); if (q) { q.oninput = e => { PL.q = e.target.value; }; q.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); plSearch(); } }; }
   const nt = $('#pl-note', w); if (nt) nt.oninput = e => { PL.note = e.target.value; };
   if (PL.seg === 'routes') routesBind(w);
+  const kf = keep && w.querySelector('#' + CSS.escape(keep.id));
+  if (kf && kf !== fa) { kf.value = keep.v; try { kf.focus({ preventScroll: true }); if (keep.s != null) kf.setSelectionRange(keep.s, keep.e); } catch (e) { } }
   drawPlanLayers();
 }
 function planSearchHTML() {
