@@ -34,6 +34,7 @@ function twaFor(app) {
   twa.signingKey = { path: process.env.KEYSTORE || path.join(HERE, 'khair-release.p12'), alias: 'khair' };
   twa.appVersionCode = Number(process.env.VERSION_CODE || 1);
   twa.appVersionName = process.env.VERSION_NAME || String(twa.appVersionCode);
+  twa.minSdkVersion = 24; // Android 7.0+: the Chrome helper library (androidbrowserhelper 2.7) needs it; Bubblewrap still defaults to 21
   twa.enableNotifications = false;
   twa.fallbackType = 'customtabs'; // a phone without a recent Chrome still opens the app (in a Chrome tab)
   twa.features = { locationDelegation: { enabled: true } }; // GPS for the field reps and the device-location rules
