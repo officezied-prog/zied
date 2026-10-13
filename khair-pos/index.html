@@ -146,7 +146,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.7.3';
+const APP_VERSION = '2.7.4';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -3978,6 +3978,8 @@ function openImport() {
     title: t('imp.title'), cls: 'wide',
     body: `<p class="muted" style="margin-top:0">${esc(t('imp.hint'))}</p>
       <input type="file" id="im-file" accept=".csv,text/csv,text/plain" class="input">
+      <label class="row" style="gap:10px;align-items:flex-start;margin:12px 0 0;cursor:pointer" id="im-only-new-l"><input type="checkbox" id="im-only-new" checked style="width:20px;height:20px;flex:none;margin-top:2px">
+        <span><b>${esc(t('imp.only_new'))}</b><br><span class="small muted">${esc(t('imp.only_new_s'))}</span></span></label>
       <div id="im-body"></div><div class="red" id="im-err" role="alert"></div>`,
     foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="im-go" disabled>${esc(t('imp.go'))}</button>`
   });
@@ -4006,7 +4008,8 @@ function openImport() {
   $('#im-go', el).onclick = async () => {
     const rows = IM.data.map(r => mapRow(r, IM.map)).filter(r => r.name || r.sku);
     const btn = $('#im-go', el); btn.disabled = true;
-    let created = 0, updated = 0, done = 0;
+    let created = 0, updated = 0, skipped = 0, done = 0;
+    const onlyNew = $('#im-only-new', el).checked; // v44: add only the products the app does not have yet
     // v39: 200 rows per call; if the server cannot take that many in one request (the free plan's 50-query limit, a slow
     // line), the same rows are sent again 15 at a time and the rest continues in small parts — never twice the same row
     // (a resent row updates, it is not added again).
@@ -4016,12 +4019,12 @@ function openImport() {
         const batch = rows.slice(i, i + size);
         btn.textContent = t('imp.progress', { done, total: rows.length });
         let r;
-        try { r = await api('import_products', { rows: batch }); }
+        try { r = await api('import_products', { rows: batch, only_new: onlyNew }); }
         catch (e) { if (size > 15 && (e instanceof NetError || e.code === 'SERVER')) { size = 15; continue; } throw e; }
-        created += int(r.created); updated += int(r.updated); done += batch.length; i += batch.length;
+        created += int(r.created); updated += int(r.updated); skipped += int(r.skipped); done += batch.length; i += batch.length;
       }
       closeModal();
-      toast(t('imp.done', { c: created, u: updated }), 'ok', 5000);
+      toast(t(onlyNew ? 'imp.done_new' : 'imp.done', { c: created, u: updated, s: skipped }), 'ok', 6000);
       await refreshData();
     } catch (e) {
       $('#im-err', el).textContent = `${errMsg(e)} — ${t('imp.partial', { done, total: rows.length })}`;
@@ -4821,9 +4824,10 @@ const I18N = {
     'prod.new': 'Produk baru', 'prod.edit': 'Ubah produk', 'prod.search_ph': 'Cari nama / SKU / kategori', 'prod.low_only': 'Stok menipis', 'prod.show_inactive': 'Tampilkan nonaktif',
     'prod.adjust': 'Stock opname', 'prod.active': 'Produk aktif (tampil di kasir)', 'prod.sku_used': 'SKU sudah dipakai produk lain',
     'adj.opname': 'Stock opname (hitung ulang)', 'adj.damaged': 'Rusak', 'adj.lost': 'Hilang', 'adj.expired': 'Kedaluwarsa', 'adj.other': 'Lainnya',
-    'imp.button': 'Impor CSV', 'imp.title': 'Impor produk dari CSV (majoo, Excel)', 'imp.hint': 'Pilih file CSV (pemisah koma atau titik koma). Kolom dicocokkan otomatis — periksa lalu impor. Produk dengan SKU / nama sama akan diperbarui.',
+    'imp.button': 'Impor CSV', 'imp.title': 'Impor produk dari CSV (majoo, Excel)', 'imp.hint': 'Pilih file CSV (pemisah koma atau titik koma). Kolom dicocokkan otomatis — periksa lalu impor.',
     'imp.mapping': 'Pencocokan kolom', 'imp.skip': 'lewati', 'imp.preview': 'Pratinjau', 'imp.rows': '{n} baris valid dari {total}', 'imp.go': 'Impor', 'imp.go_n': 'Impor {n} produk',
-    'imp.progress': 'Mengimpor {done}/{total}…', 'imp.done': 'Impor selesai: {c} baru, {u} diperbarui', 'imp.empty': 'File kosong atau tidak terbaca', 'imp.partial': '{done} dari {total} sudah terkirim', 'imp.retry_rest': 'Coba lagi sisanya',
+    'imp.progress': 'Mengimpor {done}/{total}…', 'imp.done': 'Impor selesai: {c} baru, {u} diperbarui', 'imp.done_new': 'Impor selesai: {c} produk baru ditambahkan, {s} dilewati (sudah ada, tidak diubah)',
+    'imp.only_new': 'Hanya tambah produk yang belum ada', 'imp.only_new_s': 'Produk yang sudah ada (barcode atau nama sama) tidak diubah sama sekali — harga, stok dan nama tetap. Matikan untuk memperbarui produk yang ada.', 'imp.empty': 'File kosong atau tidak terbaca', 'imp.partial': '{done} dari {total} sudah terkirim', 'imp.retry_rest': 'Coba lagi sisanya',
     'fld.name': 'Nama', 'fld.sku': 'SKU', 'fld.category': 'Kategori', 'fld.unit': 'Satuan', 'fld.cost_price': 'Harga modal', 'fld.retail_price': 'Harga eceran', 'fld.wholesale_price': 'Harga grosir', 'fld.wholesale_min_qty': 'Min grosir', 'fld.stock': 'Stok', 'fld.min_stock': 'Stok min',
     'pu.supplier': 'Pemasok / supplier', 'pu.add_product': 'Tambah produk (cari / scan)', 'pu.cost_unit': 'Harga beli / satuan', 'pu.empty': 'Belum ada barang', 'pu.save': 'Simpan barang masuk',
     'pu.saved': 'Barang masuk tersimpan', 'pu.new_cost': 'HPP rata-rata baru', 'pu.recent': 'Barang masuk 30 hari terakhir', 'pu.bad_qty': 'Qty harus lebih dari 0', 'pu.zero_cost': 'Ada barang dengan harga beli 0. Tetap simpan?',
@@ -4898,9 +4902,10 @@ const I18N = {
     'prod.new': 'منتج جديد', 'prod.edit': 'تعديل منتج', 'prod.search_ph': 'ابحث بالاسم أو الرمز أو الفئة', 'prod.low_only': 'مخزون منخفض', 'prod.show_inactive': 'إظهار غير النشط',
     'prod.adjust': 'جرد المخزون', 'prod.active': 'منتج نشط (يظهر في الكاشير)', 'prod.sku_used': 'الرمز مستخدم لمنتج آخر',
     'adj.opname': 'جرد (إعادة عدّ)', 'adj.damaged': 'تالف', 'adj.lost': 'مفقود', 'adj.expired': 'منتهي الصلاحية', 'adj.other': 'أخرى',
-    'imp.button': 'استيراد CSV', 'imp.title': 'استيراد المنتجات من CSV (majoo، Excel)', 'imp.hint': 'اختر ملف CSV (فاصلة أو فاصلة منقوطة). تتم مطابقة الأعمدة تلقائيًا — راجعها ثم استورد. المنتجات بنفس الرمز أو الاسم تُحدَّث.',
+    'imp.button': 'استيراد CSV', 'imp.title': 'استيراد المنتجات من CSV (majoo، Excel)', 'imp.hint': 'اختر ملف CSV (فاصلة أو فاصلة منقوطة). تتم مطابقة الأعمدة تلقائيًا — راجعها ثم استورد.',
     'imp.mapping': 'مطابقة الأعمدة', 'imp.skip': 'تجاهل', 'imp.preview': 'معاينة', 'imp.rows': '{n} صف صالح من {total}', 'imp.go': 'استيراد', 'imp.go_n': 'استيراد {n} منتج',
-    'imp.progress': 'جارٍ الاستيراد {done}/{total}…', 'imp.done': 'اكتمل الاستيراد: {c} جديد، {u} محدَّث', 'imp.empty': 'الملف فارغ أو غير مقروء', 'imp.partial': 'أُرسل {done} من {total}', 'imp.retry_rest': 'أعد محاولة الباقي',
+    'imp.progress': 'جارٍ الاستيراد {done}/{total}…', 'imp.done': 'اكتمل الاستيراد: {c} جديد، {u} محدَّث', 'imp.done_new': 'اكتمل الاستيراد: أُضيف {c} صنف جديد، وتُرك {s} (موجود مسبقًا ولم يتغيّر)',
+    'imp.only_new': 'أضف الأصناف غير الموجودة فقط', 'imp.only_new_s': 'الأصناف الموجودة (نفس الباركود أو الاسم) لا تتغيّر أبدًا — يبقى السعر والمخزون والاسم كما هي. ألغِ التحديد لتحديث الأصناف الموجودة.', 'imp.empty': 'الملف فارغ أو غير مقروء', 'imp.partial': 'أُرسل {done} من {total}', 'imp.retry_rest': 'أعد محاولة الباقي',
     'fld.name': 'الاسم', 'fld.sku': 'الرمز', 'fld.category': 'الفئة', 'fld.unit': 'الوحدة', 'fld.cost_price': 'التكلفة', 'fld.retail_price': 'سعر التجزئة', 'fld.wholesale_price': 'سعر الجملة', 'fld.wholesale_min_qty': 'أقل كمية جملة', 'fld.stock': 'المخزون', 'fld.min_stock': 'الحد الأدنى',
     'pu.supplier': 'المورّد', 'pu.add_product': 'أضف منتجًا (بحث / مسح)', 'pu.cost_unit': 'سعر الشراء للوحدة', 'pu.empty': 'لا توجد بضاعة بعد', 'pu.save': 'حفظ البضاعة الواردة',
     'pu.saved': 'تم حفظ البضاعة الواردة', 'pu.new_cost': 'متوسط التكلفة الجديد', 'pu.recent': 'الوارد في آخر 30 يومًا', 'pu.bad_qty': 'الكمية يجب أن تكون أكبر من 0', 'pu.zero_cost': 'يوجد صنف بسعر شراء 0. هل تريد الحفظ؟',

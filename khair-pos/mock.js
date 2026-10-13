@@ -1823,6 +1823,7 @@ const MockServer = (() => {
           let p = sku ? db.products.find(x => x.sku === sku) : null;
           if (!p && name) p = db.products.find(x => x.name.trim().toLowerCase() === name.toLowerCase());
           const clean = {}; for (const k in r) if (r[k] !== '' && r[k] != null) clean[k] = r[k];
+          if (p && data.only_new === true) { skipped++; continue; } // v44: existing products stay exactly as they are (as on the server)
           if (p) {
             Object.assign(p, productFields(clean, {}));
             if (r.stock !== undefined && r.stock !== '') {
@@ -1836,7 +1837,7 @@ const MockServer = (() => {
             created++;
           } else skipped++;
         }
-        logAct(db, u, 'impor', 'Impor produk: ' + created + ' baru, ' + updated + ' diubah', '', 0, 'info');
+        logAct(db, u, 'impor', 'Impor produk: ' + created + ' baru, ' + updated + ' diubah' + (skipped ? ', ' + skipped + ' dilewati (sudah ada)' : ''), '', 0, 'info');
         return { created, updated, skipped };
       }
       case 'set_repack': { // v43: the manager (or owner) chooses the pack product, its bulk source and the size; the others are told (as on the server)

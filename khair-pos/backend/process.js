@@ -2392,7 +2392,10 @@ switch (req.action) {
   case 'import_products': {
     const list = Array.isArray(data.rows) ? data.rows.slice(0, 500) : [];
     if (!list.length) return fail('INVALID', 'Tidak ada baris');
-    let created = 0, updated = 0;
+    let created = 0, updated = 0, skipped = 0;
+    // v44 (owner 2026-10-13: «خيار إضافة الأصناف غير الموجودة فقط»): only_new adds the products the app does not have yet and
+    // leaves every existing one exactly as it is (same barcode or same name = existing: no price, stock or name change).
+    const onlyNew = data.only_new === true;
     const bySku = {}, byName = {};
     products.forEach(function (p) { if (str(p.sku)) bySku[str(p.sku)] = p; byName[str(p.name).toLowerCase()] = p; });
     const fields = ['category', 'unit', 'cost_price', 'retail_price', 'wholesale_price', 'wholesale_min_qty', 'min_stock', 'notes', 'supplier'];
@@ -2401,6 +2404,7 @@ switch (req.action) {
       const sku = str(r.sku);
       if (!name && !sku) return;
       const ex = (sku && bySku[sku]) || (name && byName[name.toLowerCase()]) || null;
+      if (ex && onlyNew) { skipped++; return; }
       const base = ex ? Object.assign({}, ex) : { sku: sku, name: name, category: '', unit: 'pcs', cost_price: 0, retail_price: 0, wholesale_price: 0, wholesale_min_qty: 0, stock: 0, min_stock: 0, active: true, notes: '', supplier: '', size: '', weight: '', exp_date: '', exp_none: false, repack_from: 0, repack_qty: 0 };
       if (name) base.name = name;
       if (sku) base.sku = sku;
@@ -2420,8 +2424,8 @@ switch (req.action) {
       ops.products.push(forWrite(base, ex ? ex.id : -1));
       if (ex) updated++; else { created++; if (sku) bySku[sku] = base; byName[base.name.toLowerCase()] = base; }
     });
-    logAct('impor', 'Impor produk: ' + created + ' baru, ' + updated + ' diubah', '', 0, 'info');
-    return done({ ok: true, created: created, updated: updated });
+    logAct('impor', 'Impor produk: ' + created + ' baru, ' + updated + ' diubah' + (skipped ? ', ' + skipped + ' dilewati (sudah ada)' : ''), '', 0, 'info');
+    return done({ ok: true, created: created, updated: updated, skipped: skipped });
   }
 
   case 'set_repack': {
