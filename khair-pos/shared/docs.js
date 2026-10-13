@@ -9,9 +9,11 @@
    ctx (every builder): { store: settings, customer?: {name, phone, address}, by: user name, now: Date } */
 (function (root) {
   var PAGE = 'size:A4;margin:12mm';
+  // v42: the store logo (khair-pos/logo.png), found from this script's own address so it works from every app folder
+  var LOGO = (function () { try { var s = document.currentScript && document.currentScript.src; return s ? new URL('../logo.png', s).href : ''; } catch (e) { return ''; } })();
   var CSS = '<style>.kdoc{font:12px/1.45 Arial,Helvetica,sans-serif;color:#000;background:#fff;max-width:186mm;margin:0 auto}' +
     '.kdoc h1{font-size:18px;margin:0 0 2px;letter-spacing:.5px}.kdoc .hd{display:flex;justify-content:space-between;gap:16px;border-bottom:2px solid #000;padding-bottom:8px;margin-bottom:10px}' +
-    '.kdoc .st b{font-size:16px}.kdoc .meta{text-align:right}.kdoc .meta div{white-space:nowrap}.kdoc .to{border:1px solid #000;padding:6px 8px;margin-bottom:10px;min-height:44px}' +
+    '.kdoc .st b{font-size:16px}.kdoc .st .lg{display:block;height:60px;width:auto;margin-bottom:4px}.kdoc .meta{text-align:right}.kdoc .meta div{white-space:nowrap}.kdoc .to{border:1px solid #000;padding:6px 8px;margin-bottom:10px;min-height:44px}' +
     '.kdoc table{width:100%;border-collapse:collapse;margin-bottom:8px}.kdoc th,.kdoc td{border:1px solid #000;padding:4px 6px;vertical-align:top}.kdoc th{background:#eee;text-align:left}' +
     '.kdoc td.n,.kdoc th.n{text-align:right;white-space:nowrap}.kdoc .tot{width:60%;margin-left:auto}.kdoc .tot td{border:none;padding:2px 6px}.kdoc .tot tr.b td{font-weight:bold;border-top:1px solid #000}' +
     '.kdoc .words{font-style:italic;margin:4px 0 10px}.kdoc .note{margin:6px 0;font-size:11px}.kdoc .sig{display:flex;gap:12px;margin-top:22px}' +
@@ -64,7 +66,7 @@
   function header(ctx, title, metaRows) {
     var st = ctx.store || {};
     var contact = [st.phone ? 'Telp ' + st.phone : '', st.wa_shop_number ? 'WA ' + phoneLocal(st.wa_shop_number) : ''].filter(Boolean).join(' · ');
-    return '<div class="hd"><div class="st"><b>' + esc(st.store_name || 'Khair Mart') + '</b>' +
+    return '<div class="hd"><div class="st">' + (LOGO ? '<img class="lg" src="' + esc(LOGO) + '" alt="">' : '') + '<b>' + esc(st.store_name || 'Khair Mart') + '</b>' +
       (st.address ? '<div>' + esc(st.address) + '</div>' : '') + (contact ? '<div>' + esc(contact) + '</div>' : '') + '</div>' +
       '<div class="meta"><h1>' + esc(title) + '</h1>' + metaRows.filter(function (r) { return r && r[1]; }).map(function (r) { return '<div>' + esc(r[0]) + ': <b>' + esc(r[1]) + '</b></div>'; }).join('') + '</div></div>';
   }

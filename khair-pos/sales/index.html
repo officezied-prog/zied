@@ -24,8 +24,8 @@
 <div id="login" class="screen" hidden></div>
 <div id="app" hidden>
   <header class="top">
-    <div class="mark" aria-hidden="true">S</div>
-    <div class="ttl grow"><b class="ellipsis" id="tb-name"></b><span class="ellipsis">Khair Sales · <span id="tb-user"></span></span></div>
+    <img class="mark-img" src="../logo.png" alt="Khair Mart" width="61" height="36">
+    <div class="ttl grow"><b class="ellipsis" id="tb-name"></b><span class="ellipsis"><span id="tb-user"></span></span></div>
     <span class="demo" id="tb-demo" hidden>DEMO</span>
     <span class="gps" id="tb-gps" hidden role="status"><i></i><span id="tb-gps-l"></span></span>
     <span class="gps" id="tb-loc" hidden role="status">📍</span>
@@ -82,7 +82,7 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.9.3';
+const APP_VERSION = 'sales-1.9.4';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -811,7 +811,7 @@ async function loadUsers() {
 }
 const ownerHref = () => '../index.html' + (DEMO ? '?demo=1' : (MOCK ? '?mock=1' : ''));
 function renderLogin() {
-  const brand = `<div class="brand"><div class="mark" aria-hidden="true">S</div><div>Khair Sales${MOCK ? ' <span class="demo">DEMO</span>' : ''}</div></div>`;
+  const brand = `<div class="brand"><img class="brand-logo" src="../logo.png" alt="Khair Mart"><div>Khair Sales${MOCK ? ' <span class="demo">DEMO</span>' : ''}</div></div>`;
   const foot = `<div class="foot-links"><div class="langs"><button class="btn xs ${S.lang === 'id' ? 'primary' : ''}" data-act="set-lang" data-lang="id">ID</button><button class="btn xs ${S.lang === 'ar' ? 'primary' : ''}" data-act="set-lang" data-lang="ar">العربية</button></div><a class="owner-link" href="${esc(ownerHref())}">${esc(t('login.owner_app'))}</a><div class="small muted" id="login-ver">${esc(t('app.version'))}: <b>${esc(APP_VERSION)}</b></div></div>`;
   let inner;
   if (L.step === 'key') {
