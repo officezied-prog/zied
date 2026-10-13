@@ -97,6 +97,7 @@ export function loaderSpecs(req, opts = {}) {
     'Get Expense By Request': eq('pos_expenses', 'request_id', req.action === 'decide_approval' ? req.approval_id : SENTINEL_NONE),
     'Get Range Shifts': range('pos_shifts', 'shift_date', req.shift_from, req.shift_to),
     'Get Range Repacks': range('pos_repacks', 'repack_date', req.from, req.to),
+    'Get Recent Repacks': { table: 'pos_repacks', sql: 'SELECT * FROM pos_repacks WHERE repack_date >= ? ORDER BY id', params: [req.rp_from || '9999-12-31'] },
     'Get Range Activity': range('pos_activity', 'act_date', req.act_from, req.act_to),
     'Get Invoice Changes': { table: 'pos_activity', sql: "SELECT * FROM pos_activity WHERE kind IN ('ubah_faktur', ?) AND act_date >= ? AND act_date <= ? ORDER BY id", params: [req.chg_kind2 || '__none__', req.chg_from || '9999-12-31', req.chg_to || '0000-01-01'] },
     'Get Range Returns': range('pos_returns', 'return_date', retFrom, retTo),
@@ -105,8 +106,9 @@ export function loaderSpecs(req, opts = {}) {
     // needed), and party payments for this customer OR this supplier.
     'Get Approvals': {
       table: 'pos_approvals',
-      sql: "SELECT * FROM pos_approvals WHERE status = ? OR request_id = ? OR request_id = ? OR (? = 1 AND kind IN ('koreksi', 'refund', 'konsultasi')) ORDER BY id",
-      params: ['pending', req.approval_id, discApproval, corrHistory],
+      // v38: + the repack request with this client id (a resend returns it even after it was decided)
+      sql: "SELECT * FROM pos_approvals WHERE status = ? OR request_id = ? OR request_id = ? OR (? = 1 AND kind IN ('koreksi', 'refund', 'konsultasi')) OR (kind = 'repack' AND client_id = ?) ORDER BY id",
+      params: ['pending', req.approval_id, discApproval, corrHistory, req.approval_client || SENTINEL_NONE],
     },
     'Get Party Payments': {
       table: 'pos_payments',

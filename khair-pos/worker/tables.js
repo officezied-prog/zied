@@ -91,6 +91,9 @@ export const TABLES = {
     to_product_id: 'number', to_name: 'string', to_unit: 'string', to_qty: 'number',
     pack_size: 'number', expected_qty: 'number', yield_pct: 'number', loss_qty: 'number',
     packaging_cost: 'number', unit_cost: 'number', exp_date: 'string', note: 'string',
+    // v38: a repack made on a cashier's request — who asked, who approved, which request
+    requested_by: 'string', approved_by: 'string', request_id: 'string',
+    client_id: 'string', // v39: the form's id — a double tap / retry / resend of the same repack is recorded once
   },
   pos_activity: {
     act_id: 'string', at: 'string', act_date: 'string', user: 'string', role: 'string',
@@ -180,6 +183,8 @@ export const TABLES = {
   pos_chat: {
     channel: 'string', cid: 'string', from_user: 'string', from_name: 'string',
     from_role: 'string', body: 'string', image: 'string', created_at: 'string', deleted: 'boolean',
+    // v38 (owner 2026-10-12: "For any notice come to me make for me I can reply"): the quoted notice (JSON) and the notice id
+    quote: 'string', ref: 'string',
   },
   pos_workers: {
     worker_id: 'string', name: 'string', phone: 'string', job: 'string', daily_wage: 'number',
