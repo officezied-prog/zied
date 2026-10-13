@@ -60,3 +60,25 @@ test('Google results next to the free search: by name, and along a drawn line pe
   db = await H.getDb(page);
   expect(db.google_log.length).toBe(4);
 });
+
+test('typing in the planner search survives a redraw (a GPS fix or a background load landing mid-word)', async ({ page, context }) => {
+  await context.route(/nominatim\.openstreetmap\.org/, r => r.fulfill({ json: [], headers: CORS }));
+  await context.route(/overpass/, r => r.fulfill({ json: { elements: [] }, headers: CORS }));
+  await context.grantPermissions(['geolocation']);
+  await H.setPos(context, -6.2735, 106.8580);
+  await H.openSales(page);
+  await H.setDb(page, `db.google_enabled = true; db.google_results = arg;`.replace('arg', JSON.stringify({ 'Toko Barokah': [G('g0', 'Toko Barokah Sembako', -6.2741, 106.8582, ['grocery_store'])] })));
+  await H.login(page, 'Ahmad', '4444', { noGoto: true });
+  if (await page.locator('#consent').isVisible().catch(() => false)) await page.click('#consent-ok');
+  await page.click('#pl-open-today');
+  await expect(page.locator('#pl-google')).toHaveAttribute('data-n', '0');
+  await page.click('#pl-q');
+  await page.keyboard.type('Toko');
+  await page.evaluate(() => drawPlanner()); // what a late GPS fix / "streets worked" / Google status does
+  await page.keyboard.type(' Barokah');
+  await expect(page.locator('#pl-q')).toBeFocused();
+  await expect(page.locator('#pl-q')).toHaveValue('Toko Barokah');
+  expect(await page.evaluate(() => PL.q)).toBe('Toko Barokah');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#pl-results .pl-res[data-src="gp"]')).toHaveCount(1);
+});
