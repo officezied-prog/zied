@@ -1,0 +1,8 @@
+{
+  "name": "khair-android",
+  "private": true,
+  "type": "module",
+  "description": "Builds the Khair Mart Android apps (Trusted Web Activities) from the web manifests",
+  "scripts": { "generate": "node build.mjs --generate-only", "build": "node build.mjs" },
+  "dependencies": { "@bubblewrap/core": "1.27.0" }
+}

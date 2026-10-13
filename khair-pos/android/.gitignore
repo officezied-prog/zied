@@ -1,0 +1,5 @@
+node_modules/
+work/
+out/
+*.p12
+*.jks
