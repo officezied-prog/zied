@@ -188,3 +188,19 @@ test('a manager\'s correction is a request to the owner (not applied at once); t
   });
   expect(r).toEqual(['cocok', 'perlu_cek', 'perlu_cek', 2]);
 });
+
+// v42: "Koreksi" tapped while the list is still reloading after the save (slow line) opens the window once the list is in
+test('Koreksi right after saving, while the list still reloads on a slow line, still opens the correction window', async ({ page }) => {
+  await H.login(page, 'Jihan', '2222');
+  const db0 = await H.getDb(page);
+  const gula = H.productByName(db0, /Gula Pasir/);
+  await scanNote(page, [{ name: 'GULA PASIR 1 KG', qty: 20, unit: 'pak', unit_price: 15000, total: 300000 }]);
+  await H.pickCarrier(page);
+  await H.fillPuExp(page);
+  await page.evaluate(() => { const o = window.api; window.api = (a, d, x) => a === 'get_sales' ? new Promise(r => setTimeout(r, 1500)).then(() => o(a, d, x)) : o(a, d, x); });
+  await page.click('#pu-save');
+  await expect(page.locator('#pu-res-match')).toHaveText('Cocok dengan nota');
+  await page.click('#pu-res-fix');
+  await expect(page.locator(`#pu-fix [data-fix-qty="${gula.id}"]`)).toBeVisible();
+  await expect(page.locator('.toast.err')).toHaveCount(0);
+});

@@ -2646,7 +2646,7 @@ function drawOutbox(el) {
 const PU = Object.assign({ supplier: '', date: '', note: '', lines: [], photo_id: '', thumb: '', scan: null, carrier: { type: '' } }, KS.get('purchase_draft', null) || {});
 if (!PU.carrier || typeof PU.carrier !== 'object') PU.carrier = { type: '' };
 PU.result = null; PU.q = ''; PU.scanning = false; PU.scanErr = '';
-const PUH = { groups: null, loading: false, err: '' };
+const PUH = { groups: null, loading: false, err: '', wait: null };
 const savePuDraft = () => KS.set('purchase_draft', { supplier: PU.supplier, date: PU.date, note: PU.note, lines: PU.lines, photo_id: PU.photo_id, thumb: PU.thumb, scan: PU.scan, carrier: PU.carrier });
 const purchasePhotoRequired = () => settings().require_purchase_photo !== false;
 const MATCH_BADGE = { cocok: 'ok', tidak_cocok: 'red', perlu_cek: 'warn', tanpa_foto: 'gray', koreksi: '', retur: 'red' };
@@ -2950,14 +2950,19 @@ function groupPurchases(rows) {
   return [...g.values()].filter(x => x.base).map(x => Object.assign(x, { lines: [...x.lines.values()] }))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.order - a.order || String(b.no).localeCompare(String(a.no)));
 }
-async function loadPuHistory() {
-  if (PUH.loading) return;
+function loadPuHistory() {
+  // v42: a second caller waits for the load already in flight (e.g. "Koreksi" tapped right after saving, while the list
+  // reloads on a slow line — it used to find nothing and show "not found")
+  if (PUH.loading) return PUH.wait;
   PUH.loading = true; drawPuHist();
-  try {
-    const r = await api('get_sales', { from: addDays(today(), -13), to: today() });
-    PUH.groups = groupPurchases(r.purchases || []); PUH.err = '';
-  } catch (e) { PUH.err = e instanceof NetError ? t('pu.hist_offline') : errMsg(e); }
-  PUH.loading = false; drawPuHist();
+  PUH.wait = (async () => {
+    try {
+      const r = await api('get_sales', { from: addDays(today(), -13), to: today() });
+      PUH.groups = groupPurchases(r.purchases || []); PUH.err = '';
+    } catch (e) { PUH.err = e instanceof NetError ? t('pu.hist_offline') : errMsg(e); }
+    PUH.loading = false; drawPuHist();
+  })();
+  return PUH.wait;
 }
 const pendingFix = no => MYREQ.list.find(r => r.kind === 'purchase_fix' && r.ref === no && r.user === S.user && r.status === 'pending');
 function drawPuHist() {
