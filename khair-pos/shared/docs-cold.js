@@ -21,9 +21,11 @@
   function rp(v) { return 'Rp ' + n0(v); }
   function date(d) { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? m[3] + ' ' + MON[Number(m[2]) - 1] + ' ' + m[1] : ''; }
   function wib(iso) { if (!iso) return ''; var d = new Date(Date.parse(iso) + 7 * 3600000).toISOString(); return date(d) + ' ' + d.slice(11, 16) + ' WIB'; }
+  // v42: the store logo (khair-pos/logo.png), found from this script's own address
+  var LOGO = (function () { try { var s = document.currentScript && document.currentScript.src; return s ? new URL('../logo.png', s).href : ''; } catch (e) { return ''; } })();
   function head(title, no, ctx, extra) {
     var c = ctx.company || {};
-    return CSS + '<div class="kdoc"><div class="hd"><div><b style="font-size:16px">' + esc(c.name || 'Khair Mart') + '</b><div>' + esc(c.store || '') + '</div><div>' + esc(c.address || '') + '</div>' +
+    return CSS + '<div class="kdoc"><div class="hd"><div>' + (LOGO ? '<img src="' + esc(LOGO) + '" alt="" style="display:block;height:56px;width:auto;margin-bottom:4px">' : '') + '<b style="font-size:16px">' + esc(c.name || 'Khair Mart') + '</b><div>' + esc(c.store || '') + '</div><div>' + esc(c.address || '') + '</div>' +
       (c.phone ? '<div>' + esc(c.phone) + '</div>' : '') + '</div><div class="meta"><h1>' + esc(title) + '</h1>' + (no ? '<div><b>' + esc(no) + '</b></div>' : '') + (extra || '') + '</div></div>';
   }
   function foot(ctx) { return '<div class="ft">Dicetak ' + esc(wib((ctx.now || new Date()).toISOString())) + ' · Khair Gudang Dingin</div></div>'; }

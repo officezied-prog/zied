@@ -235,7 +235,9 @@ test('tap a street on the map → the whole street goes into the plan with its s
   expect(await page.locator('#pl-map path.leaflet-interactive').evaluateAll(ps => ps.some(p => p.getAttribute('stroke') === '#F59E0B'))).toBe(true);
   // … then the WHOLE street (every piece with that name, not only the piece under the finger) is lit
   await expect.poll(() => seen.some(q => /way\["highway"\]\["name"="Jalan Raya Condet"\]\([^)]*\);out geom;/.test(q))).toBe(true);
-  await expect.poll(() => page.locator('#pl-map path.leaflet-interactive').evaluateAll(ps => ps.filter(p => p.getAttribute('stroke') === '#F59E0B').map(p => p.getAttribute('d')).join('|'))).toContain('L');
+  // (read from the lit layer itself: the map's first view depends on what loaded first — the GPS fix, the shops or the
+  // store — so the whole street may run outside the visible part of the map, where Leaflet draws it as an empty path)
+  await expect.poll(() => page.evaluate(() => { let n = 0; PL.prev.eachLayer(l => { n = Math.max(n, l.getLatLngs().length); }); return n; })).toBeGreaterThan(2);
   await page.click('#pl-sel-street');
   await expect(page.locator('#pl-found .pl-res')).toHaveCount(2); // the chosen kinds along the WHOLE street
   expect(seen[0]).toMatch(/way\(around:40,-6\.\d{6},106\.\d{6}\)\["highway"\]\["name"\]/); // only the streets under the finger
