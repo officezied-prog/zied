@@ -1839,6 +1839,25 @@ const MockServer = (() => {
         logAct(db, u, 'impor', 'Impor produk: ' + created + ' baru, ' + updated + ' diubah', '', 0, 'info');
         return { created, updated, skipped };
       }
+      case 'set_repack': { // v43: the manager (or owner) chooses the pack product, its bulk source and the size; the others are told (as on the server)
+        if (!owner && u.role !== 'manager') throw E('FORBIDDEN', 'Hanya pemilik / manajer');
+        const pk = prodById(data.product_id); if (!pk) throw E('NOT_FOUND', 'Produk tidak ditemukan');
+        const bid = num(data.repack_from) > 0 ? num(data.repack_from) : 0, bulk = bid ? prodById(bid) : null;
+        if (bid && (!bulk || bulk.id === pk.id)) throw E('INVALID', 'Produk curah (asal kemasan) tidak valid');
+        if (bulk && num(bulk.repack_from) === num(pk.id)) throw E('INVALID', 'Produk curah itu sendiri dibuat dari produk ini');
+        if (bulk && !(num(data.repack_qty) > 0)) throw E('INVALID', 'Isi per kemasan wajib diisi');
+        const qty = bulk ? roundQty(data.repack_qty) : 0, was = num(pk.repack_from) > 0 ? prodById(pk.repack_from) : null, wasQty = num(pk.repack_qty);
+        if ((was ? was.id : 0) === (bulk ? bulk.id : 0) && wasQty === qty) return { unchanged: true, product: pk };
+        const desc = (b, q) => b ? `${b.name}, ${fmtN(q)} ${b.unit || ''} per ${pk.unit || 'pcs'}` : 'tidak dikemas ulang';
+        const txt = (bulk ? `Kemas ulang diatur: ${pk.name} dibuat dari ${desc(bulk, qty)}` : `Kemas ulang dihapus: ${pk.name} tidak lagi dibuat dari ${was ? was.name : '—'}`) +
+          (was && bulk ? ` (sebelumnya ${desc(was, wasQty)})` : '') + ` — oleh ${u.role === 'manager' ? 'manajer' : 'pemilik'} ${u.name}`;
+        pk.repack_from = bulk ? bulk.id : 0; pk.repack_qty = qty;
+        logAct(db, u, 'atur_kemas', txt, String(pk.id), 0, 'info');
+        db.activity = db.activity || [];
+        db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + Math.random().toString(36).slice(2, 10).toUpperCase(), at: new Date().toISOString(), act_date: jktDate(), user: u.name, role: u.role, kind: 'notifikasi',
+          summary: txt, ref: ['owner', 'manager', 'akuntan'].filter(r => r !== u.role).join(','), amount: 0, level: 'info' });
+        return { product: pk };
+      }
       case 'stock_adjust': {
         if (!owner && u.role !== 'manager') throw E('FORBIDDEN', 'Owner / manager only'); // v40: the manager too; the owner is told
         const p = prodById(data.product_id); if (!p) throw E('NOT_FOUND', 'product');
@@ -2652,7 +2671,7 @@ const MockServer = (() => {
       if (res && res._img) { const src = await photoImg(res._img); if (!src) throw E('NOT_FOUND', 'Foto tidak ditemukan'); res = { photo_id: res.photo_id, mime: (src.match(/^data:([^;,]+)/) || [])[1] || 'image/jpeg', data_url: src }; }
       const role = db._role || (db.users.find(x => x.name.toLowerCase() === String(body.user || '').toLowerCase() && x.pin_hash === body.pin_hash) || {}).role;
       normShop(db, snap);
-      if (res && res.product && res.product.id != null && ['change_price', 'stock_adjust', 'decide_approval'].includes(body.action)) res.product = prodOut(res.product);
+      if (res && res.product && res.product.id != null && ['change_price', 'stock_adjust', 'set_repack', 'decide_approval'].includes(body.action)) res.product = prodOut(res.product);
       const dirty = db._dirty; ['_dirty', '_role', '_shopSet', '_saveErr'].forEach(k => delete db[k]);
       if (!READ_ONLY.includes(body.action) || dirty) save(db);
       stripRole = role || '';

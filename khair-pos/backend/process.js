@@ -2424,6 +2424,31 @@ switch (req.action) {
     return done({ ok: true, created: created, updated: updated });
   }
 
+  case 'set_repack': {
+    // v43 (owner 2026-10-13: «اختيار البضائع لاعادة التعبئة للمواد يقوم بها المدير ليس المالك و يصل اشعار للمالك و المحاسب»):
+    // the manager (and the owner) chooses which product is packed in the shop from which bulk product and how much goes in one
+    // pack; nothing else of the product changes. The owner and the accountant are told (the other roles of the three).
+    if (role !== 'owner' && role !== 'manager') return fail('FORBIDDEN', 'Hanya pemilik / manajer');
+    const pk = productById[String(data.product_id)];
+    if (!pk) return fail('NOT_FOUND', 'Produk tidak ditemukan');
+    const bulkId = num(data.repack_from) > 0 ? num(data.repack_from) : 0;
+    const bulk = bulkId ? productById[String(bulkId)] : null;
+    if (bulkId && (!bulk || bulk.id === pk.id)) return fail('INVALID', 'Produk curah (asal kemasan) tidak valid');
+    if (bulk && num(bulk.repack_from) === num(pk.id)) return fail('INVALID', 'Produk curah itu sendiri dibuat dari produk ini');
+    if (bulk && !(num(data.repack_qty) > 0)) return fail('INVALID', 'Isi per kemasan wajib diisi');
+    const qty = bulk ? Math.round(num(data.repack_qty) * 1000) / 1000 : 0;
+    const was = num(pk.repack_from) > 0 ? productById[String(pk.repack_from)] : null, wasQty = num(pk.repack_qty);
+    if ((was ? was.id : 0) === (bulk ? bulk.id : 0) && wasQty === qty) return done({ ok: true, unchanged: true, product: productOut(pk) });
+    const np = Object.assign({}, pk, { repack_from: bulk ? bulk.id : 0, repack_qty: qty });
+    ops.products.push(forWrite(np, pk.id));
+    const desc = function (b, q) { return b ? str(b.name) + ', ' + fmtN(q) + ' ' + str(b.unit) + ' per ' + str(pk.unit || 'pcs') : 'tidak dikemas ulang'; };
+    const txt = (bulk ? 'Kemas ulang diatur: ' + str(pk.name) + ' dibuat dari ' + desc(bulk, qty) : 'Kemas ulang dihapus: ' + str(pk.name) + ' tidak lagi dibuat dari ' + (was ? str(was.name) : '—')) +
+      (was && bulk ? ' (sebelumnya ' + desc(was, wasQty) + ')' : '') + ' — oleh ' + (role === 'manager' ? 'manajer ' : 'pemilik ') + me.name;
+    logAct('atur_kemas', txt, String(pk.id), 0, 'info');
+    notify(['owner', 'manager', 'akuntan'].filter(function (r) { return r !== role; }), txt, 'info');
+    return done({ ok: true, product: productOut(np) });
+  }
+
   case 'stock_adjust': {
     if (role !== 'owner' && role !== 'manager') return fail('FORBIDDEN', 'Hanya pemilik / manajer');
     const p = productById[String(data.product_id)];
