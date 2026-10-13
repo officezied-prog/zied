@@ -105,7 +105,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.6.2';
+const APP_VERSION = 'kasir-1.6.3';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -5155,7 +5155,7 @@ Object.assign(I18N.id, {
   'rk.title': 'Kemas ulang', 'rk.more_s': 'Curah → kemasan kecil (stok langsung berubah)', 'rk.more_s_mgr': 'Curah → kemasan kecil',
   'rk.hint': 'Barang curah yang sudah dikemas kecil: pilih kemasannya, isi berapa kemasan jadi lalu simpan. Stok langsung berubah; pemilik, manajer dan akuntan diberi tahu.',
   'rk.hint_mgr': 'Barang curah yang dikemas kecil di toko: stok curah berkurang, stok kemasan bertambah. Pemilik dan akuntan diberi tahu.',
-  'rk.none': 'Belum ada produk kemas ulang. Pemilik mengaturnya di form produk.', 'rk.pack_product': 'Produk kemasan', 'rk.pick': 'pilih',
+  'rk.none': 'Belum ada produk kemas ulang. Manajer mengaturnya di aplikasi pemilik: Gudang → Kemas ulang → "Atur barang kemas ulang".', 'rk.pack_product': 'Produk kemasan', 'rk.pick': 'pilih',
   'rk.pieces': 'Jumlah kemasan jadi', 'rk.bulk_used': 'Curah dipakai', 'rk.auto': 'otomatis', 'rk.pack_cost': 'Biaya kemasan', 'rk.exp': 'Kedaluwarsa',
   'rk.from_bulk': 'Dari', 'rk.size': 'Isi per kemasan', 'rk.preview_empty': 'Pilih produk kemasan dan isi jumlah kemasan jadi.',
   'rk.pv_used': 'Curah dipakai {q} {u} → seharusnya {e} kemasan', 'rk.pv_yield': 'Jadi {n} = hasil {p}%', 'rk.pv_loss': 'susut {q} {u}',
@@ -5179,7 +5179,7 @@ Object.assign(I18N.ar, {
   'rk.title': 'إعادة التعبئة', 'rk.more_s': 'سائب ← عبوات صغيرة (يتغير المخزون فورًا)', 'rk.more_s_mgr': 'سائب ← عبوات صغيرة',
   'rk.hint': 'بضاعة سائبة عُبّئت في عبوات صغيرة: اختر العبوة واكتب عدد العبوات الناتجة ثم احفظ. يتغير المخزون فورًا ويصل إشعار إلى المالك والمدير والمحاسب.',
   'rk.hint_mgr': 'بضاعة سائبة تُعبّأ صغيرة في المتجر: ينقص مخزون السائب ويزيد مخزون العبوات. يصل إشعار إلى المالك والمحاسب.',
-  'rk.none': 'لا توجد منتجات معاد تعبئتها. يضبطها المالك في نموذج المنتج.', 'rk.pack_product': 'منتج العبوة', 'rk.pick': 'اختر',
+  'rk.none': 'لا توجد منتجات معاد تعبئتها. يضبطها المدير في تطبيق الإدارة: المخزن ← إعادة التعبئة ← «ضبط بضائع إعادة التعبئة».', 'rk.pack_product': 'منتج العبوة', 'rk.pick': 'اختر',
   'rk.pieces': 'عدد العبوات الناتجة', 'rk.bulk_used': 'السائب المستخدم', 'rk.auto': 'تلقائي', 'rk.pack_cost': 'تكلفة التغليف', 'rk.exp': 'تاريخ الانتهاء',
   'rk.from_bulk': 'من', 'rk.size': 'محتوى العبوة', 'rk.preview_empty': 'اختر منتج العبوة واكتب عدد العبوات الناتجة.',
   'rk.pv_used': 'السائب المستخدم {q} {u} ← المتوقع {e} عبوة', 'rk.pv_yield': 'الناتج {n} = نسبة {p}%', 'rk.pv_loss': 'الفاقد {q} {u}',
