@@ -361,9 +361,12 @@ const isRetryable = e => e instanceof NetError;
 
 let inflight = 0;
 function setBusy(d) { inflight = Math.max(0, inflight + d); document.body.classList.toggle('busy', inflight > 0); }
+const API_PENDING = new Set(); // requests on the way (a location change is re-sent after them — see devicePingAfter)
 async function apiRaw(action, data, cred, opts = {}) {
   setBusy(1);
-  try { return await apiRawInner(action, data, cred, opts); } finally { setBusy(-1); }
+  const p = apiRawInner(action, data, cred, opts);
+  API_PENDING.add(p);
+  try { return await p; } finally { setBusy(-1); API_PENDING.delete(p); }
 }
 async function apiRawInner(action, data, cred, opts) {
   const body = { action, key: cred.key };
@@ -6177,13 +6180,13 @@ function devStartWatch() {
       const changed = DEV.status !== 'granted';
       DEV.status = 'granted'; DEV.err = '';
       devBlockCheck();
-      if ((first || changed) && S.inApp && S.pin_hash) devicePing();
+      if ((first || changed) && S.inApp && S.pin_hash) devicePingAfter();
     }, err => {
       const before = DEV.status;
       if (err && err.code === 1) { DEV.status = 'denied'; devStopWatch(); } else if (!DEV.fix) DEV.status = 'unavailable';
       DEV.err = err && err.code === 1 ? t('dev.err_denied') : t('dev.err_unavailable');
       devBlockCheck();
-      if (before !== DEV.status && S.inApp && S.pin_hash) devicePing();
+      if (before !== DEV.status && S.inApp && S.pin_hash) devicePingAfter();
     }, { enableHighAccuracy: true, maximumAge: 60000, timeout: 30000 });
   } catch (e) { DEV.status = 'unavailable'; }
 }
@@ -6193,6 +6196,12 @@ function devBattery() {
 async function devicePing() {
   if (!S.inApp || !S.pin_hash) return null;
   try { const r = await api('device_ping', {}); DEV.requireLoc = r.require_location === true; devBlockCheck(); return r; } catch (e) { return null; }
+}
+/** A location change is sent once the requests already on the way are answered: a slower older request (still carrying
+ *  "prompt") would otherwise reach the server last and put the old status back. */
+function devicePingAfter() {
+  const before = [...API_PENDING];
+  return before.length ? Promise.all(before.map(p => p.catch(() => null))).then(() => devicePing()) : devicePing();
 }
 /** Every minute: ping when the tab is visible and nothing was sent for 60 minutes (any request carries the device anyway). */
 function devicePingTick(now = Date.now()) {
@@ -6224,7 +6233,7 @@ function devConsentDraw() {
 function devSetConsent(v) {
   lsSet(DEV_CONSENT_KEY, v === 'yes' ? 'yes' : 'no');
   if (v === 'yes') { DEV.status = 'prompt'; devStartWatch(); }
-  else { devStopWatch(); DEV.fix = null; DEV.status = 'denied'; devicePing(); }
+  else { devStopWatch(); DEV.fix = null; DEV.status = 'denied'; devicePingAfter(); }
   devConsentDraw(); devBlockCheck();
 }
 function devBlockCheck() {

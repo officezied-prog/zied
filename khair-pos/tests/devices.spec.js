@@ -123,6 +123,22 @@ test('"Tidak" sends loc_status denied and never asks the browser; the manager ca
   await ctx.close();
 });
 
+test('a slow request sent just before "Tidak" (still "prompt") does not bring the old status back', async ({ browser }) => {
+  const ctx = await browser.newContext(CTX);
+  const page = await ctx.newPage();
+  await login(page, 'Jihan', '2222', '', { consent: null, stay: true });
+  await expect(page.locator('#dev-consent')).toBeVisible();
+  const id = await page.evaluate(() => localStorage.getItem('kpos.device_id'));
+  // one request leaves right before the tap and takes 1.5 s to arrive
+  await page.evaluate(() => { const orig = MockServer.request; let slow = true; window.__slowDone = false; MockServer.request = (b, o) => { if (!slow) return orig(b, o); slow = false; return new Promise(r => setTimeout(r, 1500)).then(() => orig(b, o)).finally(() => { window.__slowDone = true; }); }; api('bootstrap', {}).catch(() => { }); });
+  await page.click('#dev-consent-no');
+  await expect.poll(() => page.evaluate(() => window.__slowDone)).toBe(true);
+  await expect.poll(async () => (await deviceRow(page, id) || {}).loc_status, { timeout: 3000 }).toBe('denied');
+  await page.waitForTimeout(500);
+  expect((await deviceRow(page, id)).loc_status).toBe('denied');
+  await ctx.close();
+});
+
 test('Pengaturan: shop location + "Wajibkan lokasi" → the manager sees a blocking screen until location is allowed', async ({ browser }) => {
   const ctx = await browser.newContext(CTX);
   const page = await ctx.newPage();
