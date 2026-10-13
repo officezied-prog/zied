@@ -26,7 +26,7 @@
 <div id="app" hidden>
   <header class="topbar">
     <div class="brand grow">
-      <div class="logo" aria-hidden="true">خ</div>
+      <img class="logo-img" src="logo.png" alt="Khair Mart" width="58" height="34">
       <div class="ellipsis"><span id="tb-store">Khair Mart</span><small id="tb-sub">POS</small></div>
     </div>
     <button class="btn outbox-badge" id="tb-outbox" data-act="go" data-view="settings" hidden></button>
@@ -146,7 +146,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.6.5';
+const APP_VERSION = '2.6.6';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -611,7 +611,7 @@ async function loadUsersForLogin() {
 }
 function renderLogin() {
   const box = $('#login');
-  const brand = `<div class="brand"><div class="logo">خ</div><div>${esc(settings().store_name || 'Khair Mart')}${MOCK ? ' <span class="badge amber">DEMO</span>' : ''}</div></div>`;
+  const brand = `<div class="brand"><img class="logo-img" src="logo.png" alt="Khair Mart"><div>${esc(settings().store_name || 'Khair Mart')}${MOCK ? ' <span class="badge amber">DEMO</span>' : ''}</div></div>`;
   const langs = `<div class="lang-sw"><button class="btn xs ${S.lang === 'id' ? 'primary' : ''}" data-act="set-lang" data-lang="id">Indonesia</button><button class="btn xs ${S.lang === 'ar' ? 'primary' : ''}" data-act="set-lang" data-lang="ar">العربية</button></div>`;
   let inner = '';
   if (L.step === 'key') {
@@ -696,7 +696,7 @@ function showKasirRedirect(user, role = 'kasir') {
   S.pin_hash = ''; S.inApp = false; sessDel();
   closeModal(true);
   $('#app').hidden = true; $('#login').hidden = false;
-  $('#login').innerHTML = `<div class="login-card center" id="kasir-redirect"><div class="brand"><div class="logo">خ</div><div>${esc(settings().store_name || 'Khair Mart')}</div></div>
+  $('#login').innerHTML = `<div class="login-card center" id="kasir-redirect"><div class="brand"><img class="logo-img" src="logo.png" alt="Khair Mart"><div>${esc(settings().store_name || 'Khair Mart')}</div></div>
     <h2>${esc(t('kasirapp.title'))}</h2><p class="muted">${esc(t(A.k + '.hint', { name: user || '' }))}</p>
     <a class="btn primary big block" id="kasir-go" href="${esc(A.url)}">${esc(t(A.k + '.open'))} →</a>
     <p class="small muted" style="margin-bottom:0">${esc(t('kasirapp.auto'))}</p></div>`;
@@ -1720,7 +1720,7 @@ window.addEventListener('online', () => { if (S.inApp) { syncOutbox(); refreshDa
 function receiptLinesHTML(rc) {
   const st = settings();
   const rows = rc.lines.map(l => `<div class="it"><div>${esc(l.name)}${l.price_type === 'grosir' ? ' <i>(G)</i>' : ''}</div><div class="r2"><span>${esc(fmtQty(l.qty))} x ${esc(NF.format(l.unit_price))}</span><span>${esc(NF.format(l.line_total))}</span></div></div>`).join('');
-  return `<div class="c b big rc-name">${esc(st.store_name)}</div><div class="rc-rule"></div>
+  return `<div class="c"><img class="rc-logo" src="logo.png" alt=""></div><div class="c b big rc-name">${esc(st.store_name)}</div><div class="rc-rule"></div>
     ${st.address ? `<div class="c">${esc(st.address)}</div>` : ''}${st.phone ? `<div class="c">${esc(t('rc.phone'))} ${esc(st.phone)}</div>` : ''}
     <div class="ln"></div>
     ${rc.status === 'void' ? `<div class="stamp">${esc(t('rc.void'))}</div>` : ''}
@@ -1769,7 +1769,17 @@ function receiptText(rc) {
 function printHTML(html, page) {
   $('#page-style').textContent = `@media print{@page{${page}}}`;
   $('#print-area').innerHTML = html;
-  setTimeout(() => { try { window.print(); } catch (e) { } }, 50);
+  printWhenReady();
+}
+/** v42: print once the store logo (any image in the print area) has loaded — at most 1.5 s, then print anyway. */
+function printWhenReady() {
+  const go = () => { try { window.print(); } catch (e) { } };
+  const imgs = $$('#print-area img').filter(i => !i.complete);
+  if (!imgs.length) { setTimeout(go, 50); return; }
+  let left = imgs.length, done = false;
+  const fin = () => { if (!done) { done = true; go(); } };
+  imgs.forEach(i => { const f = () => { if (--left <= 0) fin(); }; i.addEventListener('load', f, { once: true }); i.addEventListener('error', f, { once: true }); });
+  setTimeout(fin, 1500);
 }
 /* ---- v17 A4 documents (shared/docs.js): faktur, surat jalan, penawaran, tanda terima barang, rekap tagihan ---- */
 const docCtx = (extra = {}) => Object.assign({ store: settings(), by: S.user, now: new Date() }, extra);
@@ -6177,7 +6187,7 @@ function devBlockCheck() {
   const el = $('#dev-block'); if (!el) return;
   const on = devBlocked();
   el.hidden = !on;
-  el.innerHTML = on ? `<div class="login-card center" id="dev-block-card"><div class="brand"><div class="logo">خ</div><div>${esc(settings().store_name || 'Khair Mart')}</div></div>
+  el.innerHTML = on ? `<div class="login-card center" id="dev-block-card"><div class="brand"><img class="logo-img" src="logo.png" alt="Khair Mart"><div>${esc(settings().store_name || 'Khair Mart')}</div></div>
       <div style="font-size:40px;line-height:1">${ic('pin')}</div><h2>${esc(t('dev.block_title'))}</h2><p class="muted">${esc(t('dev.block_hint'))}</p>
       <p class="small" style="background:var(--brand-ll);border-radius:8px;padding:8px 10px">${esc(t('dev.consent'))}</p>
       ${DEV.err ? `<p class="small red" id="dev-block-err">${esc(DEV.err)}</p>` : ''}
@@ -7934,7 +7944,7 @@ function renderPinChange() {
   const box = $('#pin-change'); if (!box || box.hidden) return;
   const n = ownPinLen();
   const dots = Array.from({ length: n }, (_, i) => `<i class="${i < PC.pin.length ? 'f' : ''}"></i>`).join('');
-  box.innerHTML = `<div class="login-card"><div class="brand"><div class="logo">خ</div><div>${esc(settings().store_name || 'Khair Mart')}</div></div>
+  box.innerHTML = `<div class="login-card"><div class="brand"><img class="logo-img" src="logo.png" alt="Khair Mart"><div>${esc(settings().store_name || 'Khair Mart')}</div></div>
     <h2 id="pc-title">${esc(t('pc.title'))}</h2>
     <p class="muted small center" style="margin-top:0">${esc(t('pc.hint', { name: S.user, n }))}</p>
     <div class="center" style="font-weight:700;margin-bottom:6px" id="pc-step" data-step="${PC.first ? 2 : 1}">${esc(t(PC.first ? 'pc.step2' : 'pc.step1', { n }))}</div>

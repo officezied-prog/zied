@@ -26,7 +26,7 @@
 
 <div id="app" hidden>
   <header class="top">
-    <div class="mark" aria-hidden="true">K</div>
+    <img class="mark-img" src="../logo.png" alt="Khair Mart" width="61" height="36">
     <div class="ttl grow"><b id="tb-store" class="ellipsis">Khair Mart</b><span class="ellipsis"><span id="tb-user"></span> · <span id="tb-ver"></span></span></div>
     <span class="demo" id="tb-demo" hidden>DEMO</span>
     <span class="pill loc" id="tb-loc" hidden role="status"></span>
@@ -104,7 +104,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.5.1';
+const APP_VERSION = 'kasir-1.5.2';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -763,7 +763,7 @@ async function loadUsersForLogin() {
 const ownerHref = () => '../index.html' + (DEMO ? '?demo=1' : (MOCK ? '?mock=1' : ''));
 function renderLogin() {
   const box = $('#login');
-  const brand = `<div class="brand"><div class="mark" aria-hidden="true">K</div><div>Khair Kasir${MOCK ? ' <span class="demo">DEMO</span>' : ''}</div></div>`;
+  const brand = `<div class="brand"><img class="brand-logo" src="../logo.png" alt="Khair Mart"><div>Khair Kasir${MOCK ? ' <span class="demo">DEMO</span>' : ''}</div></div>`;
   const foot = `<div class="foot-links"><div class="langs"><button class="btn xs ${S.lang === 'id' ? 'primary' : ''}" data-act="set-lang" data-lang="id">ID</button><button class="btn xs ${S.lang === 'ar' ? 'primary' : ''}" data-act="set-lang" data-lang="ar">العربية</button></div>
 <div class="small muted" id="login-ver">${esc(t('app.version'))}: <b>${esc(APP_VERSION)}</b></div></div>`;
   let inner = '';
@@ -1019,7 +1019,7 @@ function hideGate() { $('#gate').hidden = true; }
 function renderGate() {
   const g = $('#gate');
   g.innerHTML = `<div class="screen-card" id="shift-open">
-    <div class="brand"><div class="mark" aria-hidden="true">K</div><div>${esc(t(S.role === 'kasir' ? 'gate.title' : 'gate.title_mgr'))}</div></div>
+    <div class="brand"><img class="brand-logo" src="../logo.png" alt="Khair Mart"><div>${esc(t(S.role === 'kasir' ? 'gate.title' : 'gate.title_mgr'))}</div></div>
     <p class="center" style="margin-top:0"><b>${esc(S.user)}</b> · ${esc(t(S.role === 'kasir' ? 'gate.hint' : 'gate.hint_mgr'))}</p>
     <div class="field"><label class="f" for="so-cash">${esc(t('gate.opening'))} (Rp)</label><input class="input money" data-rule="num" id="so-cash" inputmode="numeric" autocomplete="off"></div>
     <div class="quick">${[0, 200000, 300000, 500000, 1000000].map(v => `<button type="button" class="btn xs num" data-v="${v}">${v ? fmtShort(v) : '0'}</button>`).join('')}</div>
@@ -2277,7 +2277,7 @@ function openDiscWait(info) {
 function receiptLinesHTML(rc) {
   const st = settings();
   const rows = rc.lines.map(l => `<div class="it"><div>${esc(l.name)}${l.price_type === 'grosir' ? ' <i>(G)</i>' : ''}</div><div class="r2"><span>${esc(fmtQty(l.qty))} x ${esc(NF.format(l.unit_price))}</span><span>${esc(NF.format(l.line_total))}</span></div></div>`).join('');
-  return `<div class="c b big">${esc(st.store_name)}</div>
+  return `<div class="c"><img class="rc-logo" src="../logo.png" alt=""></div><div class="c b big">${esc(st.store_name)}</div>
     ${st.address ? `<div class="c">${esc(st.address)}</div>` : ''}${st.phone ? `<div class="c">${esc(t('rc.phone'))} ${esc(st.phone)}</div>` : ''}
     <div class="ln"></div>
     ${rc.pending ? `<div class="stamp">${esc(t('rc.pending'))}</div>` : ''}
@@ -2323,14 +2323,24 @@ function receiptText(rc) {
 function printHTML(html) {
   $('#page-style').textContent = `@media print{@page{size:${paperW()}mm auto;margin:2mm}}`;
   $('#print-area').innerHTML = html;
-  setTimeout(() => { try { window.print(); } catch (e) { } }, 50);
+  printWhenReady();
+}
+/** v42: print once the store logo (any image in the print area) has loaded — at most 1.5 s, then print anyway. */
+function printWhenReady() {
+  const go = () => { try { window.print(); } catch (e) { } };
+  const imgs = $$('#print-area img').filter(i => !i.complete);
+  if (!imgs.length) { setTimeout(go, 50); return; }
+  let left = imgs.length, done = false;
+  const fin = () => { if (!done) { done = true; go(); } };
+  imgs.forEach(i => { const f = () => { if (--left <= 0) fin(); }; i.addEventListener('load', f, { once: true }); i.addEventListener('error', f, { once: true }); });
+  setTimeout(fin, 1500);
 }
 /* ---- v17 A4 documents (shared/docs.js): faktur, surat jalan, penawaran, tanda terima barang ---- */
 function printA4(html) {
   if (!window.KDocs) { toast(t('doc.not_loaded'), 'err'); return; }
   $('#page-style').textContent = `@media print{@page{${KDocs.PAGE}}}`;
   $('#print-area').innerHTML = html;
-  setTimeout(() => { try { window.print(); } catch (e) { } }, 50);
+  printWhenReady();
 }
 const docCtx = (extra = {}) => Object.assign({ store: settings(), by: S.user, now: new Date() }, extra);
 function docCustomer(rc) { const c = custById(rc.customer_id); return c ? { name: c.name, phone: c.phone, address: c.address, type: c.type } : { name: rc.customer_name, phone: rc.customer_phone }; }
