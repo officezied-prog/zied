@@ -1,7 +1,7 @@
 /* Khair Mart POS — offline shell cache. Network-first for the app page, cache fallback when offline.
    API calls (POST to n8n) are never cached or intercepted. */
-const CACHE = 'khair-pos-v31';
-const SHELL = ['./', './index.html', './styles.css', './mock.js', './manifest.webmanifest', './icon.svg', './logo.png', './shared/shop-types.js', './shared/gmaps-import.js', './shared/docs.js', './shared/face.js', './shared/att-kiosk.js', './shared/chat-ui.js', './shared/tamper-guard.js', './shared/install-btn.js'];
+const CACHE = 'khair-pos-v32';
+const SHELL = ['./', './index.html', './styles.css', './mock.js', './manifest.webmanifest', './icon.svg', './logo.png', './shared/shop-types.js', './shared/gmaps-import.js', './shared/docs.js', './shared/face.js', './shared/att-kiosk.js', './shared/chat-ui.js', './shared/tamper-guard.js', './shared/install-btn.js', './shared/barcode-cam.js', './vendor/zxing/zxing.min.js'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(() => {}));
   self.skipWaiting();
