@@ -10,6 +10,14 @@ Tests: Playwright under `khair-pos/tests*`.
 - Field sales rep (المندوب): https://officezied-prog.github.io/zied/khair-pos/sales/
 - Cold storage (البرادات): https://officezied-prog.github.io/zied/khair-pos/gudang/
 
+**Installing on phones (v45–v46):** recommended = Chrome install (a WebAPK Google signs: no warning). Each login card
+shows a green "Pasang / تثبيت" card from `shared/install-btn.js` (Chrome's `beforeinstallprompt`; iPhone: Share → Add to
+Home Screen hint). Alternative = APKs (Trusted Web Activities) on the release `android`
+(`…/releases/download/android/khair-<owner|kasir|sales|gudang>.apk`), built by `.github/workflows/android.yml`
+from `khair-pos/android/`; the signing key is `khair-pos/android/khair-release.p12.enc`, encrypted with the repo secret
+`ANDROID_KEY_PASSWORD` (never lose it: a new key means everyone reinstalls). Digital Asset Links live in the repo
+`officezied-prog/officezied-prog.github.io` (`.well-known/assetlinks.json`, copied from `khair-pos/android/assetlinks.json`).
+
 **Backend = "Khair Mart Jumla" (الخير مارت جملة) — LIVE since 2026-10-10.** The owner, cashier
 and field-sales apps point at the Cloudflare Worker `https://khair-mart-jumla.officezied.workers.dev`
 (D1 database `khair_mart_jumla`, account `c82e2561b81c97de7c59166d7a915924`). Source under
