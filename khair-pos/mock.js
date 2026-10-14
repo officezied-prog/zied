@@ -351,6 +351,11 @@ const MockServer = (() => {
   /** stock = total, shop_stock = on the shelf; a row without shop_stock (before v16) counts all its stock as on the shelf */
   const shopOf = p => p.shop_stock === undefined || p.shop_stock === null || p.shop_stock === '' ? num(p.stock) : num(p.shop_stock);
   const prodOut = p => Object.assign({}, p, { shop_stock: shopOf(p), gudang_stock: roundQty(num(p.stock) - shopOf(p)) });
+  // v48 (owner 2026-10-14): a pack's materials (sticker, lid, jar …) with their cost per pack — mirrors the server's repackCostsOf;
+  // the cashier / rep see the names only (productOut on the server).
+  const repackCostsOf = p => { let a = []; try { a = JSON.parse(String((p && p.repack_costs) || '') || '[]'); } catch (e) { a = []; } return (Array.isArray(a) ? a : []).map(x => ({ name: String((x && x.n) || '').trim().slice(0, 40), cost: Math.max(0, Math.round(Number((x && x.c) || 0))) })).filter(x => x.name).slice(0, 12); };
+  const repackCostPer = p => repackCostsOf(p).reduce((t, x) => t + x.cost, 0);
+  const costNamesFor = (p, role) => p.repack_costs && !['owner', 'manager', 'akuntan'].includes(role) ? Object.assign({}, p, { repack_costs: JSON.stringify(repackCostsOf(p).map(x => ({ n: x.name }))) }) : p;
   /** After every request (like the server's normShop): sales / voids / move_stock set the shelf; any other stock change
    *  keeps the shelf as it was, capped at the total; a new product's opening stock is on the shelf. */
   function normShop(db, snap) {
@@ -795,7 +800,8 @@ const MockServer = (() => {
   const repackText = pl => strv(pl.from_name) + ' ' + fmtN(pl.from_qty) + ' ' + strv(pl.from_unit) + ' → ' + strv(pl.to_name) + ' x' + fmtN(pl.to_qty) + ' (hasil ' + pl.yield_pct + '%, susut ' + fmtN(pl.loss_qty) + ' ' + strv(pl.from_unit) + ')';
   function applyRepack(db, u, P, o) {
     const { from, to, toQty, fromQty } = P;
-    const packCost = Math.max(0, int(o.packaging_cost));
+    const matCost = Math.round(repackCostPer(to) * toQty); // v48: the pack's materials × packs made
+    const packCost = Math.max(0, int(o.packaging_cost)) + matCost;
     const unitCost = Math.round((fromQty * int(from.cost_price) + packCost) / toQty);
     const date = isYmd(o.date) ? o.date : jktDate();
     const oldTo = Math.max(0, num(to.stock));
@@ -804,7 +810,7 @@ const MockServer = (() => {
     to.stock = roundQty(num(to.stock) + toQty); to.cost_price = toCost;
     const user = strv(o.user) || u.name;
     const rp = { repack_id: 'RP' + randId(6), repack_date: date, repack_time: new Date().toISOString(), user, from_product_id: from.id, from_name: from.name, from_unit: from.unit, from_qty: fromQty,
-      to_product_id: to.id, to_name: to.name, to_unit: to.unit, to_qty: toQty, pack_size: P.size, expected_qty: P.expected, yield_pct: P.yield_pct, loss_qty: P.loss_qty, packaging_cost: packCost, unit_cost: unitCost,
+      to_product_id: to.id, to_name: to.name, to_unit: to.unit, to_qty: toQty, pack_size: P.size, expected_qty: P.expected, yield_pct: P.yield_pct, loss_qty: P.loss_qty, packaging_cost: packCost, unit_cost: unitCost, materials_cost: matCost,
       exp_date: isYmd(o.exp_date) ? o.exp_date : '', note: strv(o.note).slice(0, 300), requested_by: strv(o.requested_by), approved_by: strv(o.approved_by), request_id: strv(o.request_id), client_id: strv(o.client_id) };
     db.repacks.push(Object.assign({ id: nextId(db, 'repack') }, rp));
     const tag = rp.repack_id + (rp.requested_by ? ', diminta ' + rp.requested_by + ', disetujui ' + rp.approved_by : '');
@@ -812,7 +818,7 @@ const MockServer = (() => {
     db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: date, supplier: REPACK_SUP, product_id: to.id, name: to.name, qty: toQty, cost_price: unitCost, total: 0, note: ('dari ' + from.name + ' ' + fromQty + ' ' + from.unit + ' (' + tag + ') ' + rp.note).trim(), user, photo_id: '', exp_date: rp.exp_date });
     logAct(db, u, 'kemas_ulang', 'Kemas ulang ' + repackText(rp) + (rp.requested_by ? ' — diminta ' + rp.requested_by + ', disetujui ' + rp.approved_by : ''), rp.repack_id, 0, o.level || (rp.yield_pct < 95 ? 'warn' : 'info'));
     const out = Object.assign({}, rp);
-    if (u.role !== 'owner') { delete out.unit_cost; delete out.packaging_cost; }
+    if (u.role !== 'owner') { delete out.unit_cost; delete out.packaging_cost; delete out.materials_cost; }
     return { rp, out, stock: [{ product_id: from.id, stock: from.stock }, Object.assign({ product_id: to.id, stock: to.stock }, u.role === 'owner' ? { cost_price: toCost } : {})] };
   }
   const pendingRepackFor = (db, fromId) => db.approvals.find(a => a.kind === 'repack' && a.status === 'pending' && strv(a.ref) === String(fromId)) || null;
@@ -834,7 +840,7 @@ const MockServer = (() => {
       db.repacks = db.repacks || [];
       if (cid) {
         const same = db.repacks.find(r => strv(r.client_id) === cid);
-        if (same) { const o = Object.assign({}, same); if (u.role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; } return { duplicate: true, repack: o }; }
+        if (same) { const o = Object.assign({}, same); if (u.role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; delete o.materials_cost; } return { duplicate: true, repack: o }; }
       }
       const P = repackPlan(db, data.to_product_id, data.to_qty, data.from_qty);
       if (P.fromQty > num(P.from.stock) + 1e-9) throw E('INVALID', 'Stok ' + P.from.name + ' tidak cukup (' + num(P.from.stock) + ' ' + P.from.unit + ')');
@@ -1168,7 +1174,7 @@ const MockServer = (() => {
         logAct(db, u, 'pindah_stok', (toShop ? 'Gudang → toko: ' : 'Toko → gudang: ') + mv.map(x => x.p.name + ' ' + fmtN(x.q) + ' ' + strv(x.p.unit)).join('; ') + (mnote ? ' | ' + mnote : ''), '', 0, 'info');
         return { stock: mv.map(x => ({ product_id: x.p.id, stock: num(x.p.stock), shop_stock: x.sh, gudang_stock: roundQty(num(x.p.stock) - x.sh) })) };
       }
-      case 'bootstrap': return { opname: opnameBoot(db), user: { name: u.name, role: roleOf(u) }, products: db.products.map(prodOut), customers: db.customers, settings: settingsOut(db), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
+      case 'bootstrap': return { opname: opnameBoot(db), user: { name: u.name, role: roleOf(u) }, products: db.products.map(p => costNamesFor(prodOut(p), u.role)), customers: db.customers, settings: settingsOut(db), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
         users: db.users.map(x => owner ? { name: x.name, role: x.role, active: x.active, must_change: x.must_change === true, locked: Date.parse(x.locked_until) > Date.now(), tamper: isLockedAcct(x.name), has_master: x.role === 'owner' && isHash(x.master_hash) } : { name: x.name, role: x.role, active: x.active }), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
         shift: blind(shiftSummary(db, openShiftOf(db, u.name)), u.role), open_shifts: ['owner', 'manager'].includes(u.role) ? db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)) : [],
         activity_recent: owner ? db.activity.filter(a => a.act_date >= addDays(jktDate(), -7) && a.act_date <= jktDate()).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 100) : [],
@@ -1840,23 +1846,61 @@ const MockServer = (() => {
         logAct(db, u, 'impor', 'Impor produk: ' + created + ' baru, ' + updated + ' diubah' + (skipped ? ', ' + skipped + ' dilewati (sudah ada)' : ''), '', 0, 'info');
         return { created, updated, skipped };
       }
-      case 'set_repack': { // v43: the manager (or owner) chooses the pack product, its bulk source and the size; the others are told (as on the server)
+      case 'set_repack': { // v43 + v48: the manager (or owner) chooses the pack product (or makes a NEW one), its bulk source, the size and the pack's materials; the others are told (as on the server)
         if (!owner && u.role !== 'manager') throw E('FORBIDDEN', 'Hanya pemilik / manajer');
-        const pk = prodById(data.product_id); if (!pk) throw E('NOT_FOUND', 'Produk tidak ditemukan');
+        const nw = data.new_product && typeof data.new_product === 'object' ? data.new_product : null;
+        const pk = nw ? null : prodById(data.product_id); if (!nw && !pk) throw E('NOT_FOUND', 'Produk tidak ditemukan');
         const bid = num(data.repack_from) > 0 ? num(data.repack_from) : 0, bulk = bid ? prodById(bid) : null;
-        if (bid && (!bulk || bulk.id === pk.id)) throw E('INVALID', 'Produk curah (asal kemasan) tidak valid');
-        if (bulk && num(bulk.repack_from) === num(pk.id)) throw E('INVALID', 'Produk curah itu sendiri dibuat dari produk ini');
+        if (bid && (!bulk || (pk && bulk.id === pk.id))) throw E('INVALID', 'Produk curah (asal kemasan) tidak valid');
+        if (nw && !bulk) throw E('INVALID', 'Pilih produk curah untuk kemasan baru');
+        if (pk && bulk && num(bulk.repack_from) === num(pk.id)) throw E('INVALID', 'Produk curah itu sendiri dibuat dari produk ini');
         if (bulk && !(num(data.repack_qty) > 0)) throw E('INVALID', 'Isi per kemasan wajib diisi');
-        const qty = bulk ? roundQty(data.repack_qty) : 0, was = num(pk.repack_from) > 0 ? prodById(pk.repack_from) : null, wasQty = num(pk.repack_qty);
-        if ((was ? was.id : 0) === (bulk ? bulk.id : 0) && wasQty === qty) return { unchanged: true, product: pk };
-        const desc = (b, q) => b ? `${b.name}, ${fmtN(q)} ${b.unit || ''} per ${pk.unit || 'pcs'}` : 'tidak dikemas ulang';
-        const txt = (bulk ? `Kemas ulang diatur: ${pk.name} dibuat dari ${desc(bulk, qty)}` : `Kemas ulang dihapus: ${pk.name} tidak lagi dibuat dari ${was ? was.name : '—'}`) +
-          (was && bulk ? ` (sebelumnya ${desc(was, wasQty)})` : '') + ` — oleh ${u.role === 'manager' ? 'manajer' : 'pemilik'} ${u.name}`;
-        pk.repack_from = bulk ? bulk.id : 0; pk.repack_qty = qty;
-        logAct(db, u, 'atur_kemas', txt, String(pk.id), 0, 'info');
-        db.activity = db.activity || [];
-        db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + Math.random().toString(36).slice(2, 10).toUpperCase(), at: new Date().toISOString(), act_date: jktDate(), user: u.name, role: u.role, kind: 'notifikasi',
-          summary: txt, ref: ['owner', 'manager', 'akuntan'].filter(r => r !== u.role).join(','), amount: 0, level: 'info' });
+        const qty = bulk ? roundQty(data.repack_qty) : 0;
+        let cIn = null;
+        if (data.costs !== undefined) {
+          if (!Array.isArray(data.costs)) throw E('INVALID', 'Daftar bahan kemasan tidak valid');
+          const list = [];
+          for (const x0 of data.costs) {
+            const x = x0 || {}, raw = strv(x.name), c = Number(x.cost === '' || x.cost == null ? 0 : x.cost);
+            if (!raw && !c) continue;
+            const nm = safeName(raw, 40); if (!nm) throw E('INVALID', raw ? 'Nama bahan kemasan hanya boleh huruf dan angka (maks. 40)' : 'Nama bahan kemasan wajib diisi');
+            if (!Number.isFinite(c) || c < 0 || c > 10000000) throw E('INVALID', 'Biaya ' + nm + ' tidak valid');
+            list.push({ n: nm, c: Math.round(c) });
+          }
+          if (list.length > 12) throw E('INVALID', 'Paling banyak 12 bahan kemasan');
+          cIn = { json: list.length ? JSON.stringify(list) : '', list };
+        }
+        const rpT = v => 'Rp ' + String(Math.round(Math.abs(num(v)))).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+        const costsText = (list, unit) => list.length ? `bahan kemasan per ${unit || 'pcs'}: ${list.map(x => strv(x.n) + ' ' + rpT(x.c)).join(' + ')} = ${rpT(list.reduce((t, x) => t + num(x.c), 0))}` : 'tanpa bahan kemasan';
+        const desc = (b, q, unit) => b ? `${b.name}, ${fmtN(q)} ${b.unit || ''} per ${unit || 'pcs'}` : 'tidak dikemas ulang';
+        const who = ` — oleh ${u.role === 'manager' ? 'manajer' : 'pemilik'} ${u.name}`;
+        const tell = txt => { db.activity = db.activity || []; db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + Math.random().toString(36).slice(2, 10).toUpperCase(), at: new Date().toISOString(), act_date: jktDate(), user: u.name, role: u.role, kind: 'notifikasi', summary: txt, ref: ['owner', 'manager', 'akuntan'].filter(r => r !== u.role).join(','), amount: 0, level: 'info' }); };
+        if (nw) {
+          const name = safeName(nw.name, 80);
+          if (!name) throw E('INVALID', strv(nw.name) ? 'Nama kemasan hanya boleh huruf, angka dan . , \' & ( ) / % + # -' : 'Nama kemasan baru wajib diisi');
+          if (db.products.some(x => strv(x.name).toLowerCase() === name.toLowerCase())) throw E('INVALID', 'Produk dengan nama ini sudah ada — pilih dari daftar');
+          const sku = strv(nw.sku);
+          if (sku && !/^[A-Za-z0-9._-]{1,40}$/.test(sku)) throw E('INVALID', 'SKU / barcode hanya boleh huruf, angka, titik, garis');
+          if (sku && db.products.some(x => strv(x.sku) === sku)) throw E('INVALID', 'SKU/barcode sudah dipakai');
+          const unit = strv(nw.unit) || 'pcs';
+          if (!/^[\p{L}\p{N} .\/-]{1,15}$/u.test(unit)) throw E('INVALID', 'Satuan tidak valid');
+          const price = int(nw.retail_price); if (!(price > 0)) throw E('INVALID', 'Harga jual kemasan baru wajib diisi');
+          const np = { id: nextId(db, 'product'), sku, name, category: strv(bulk.category), unit, cost_price: 0, retail_price: price, wholesale_price: 0, wholesale_min_qty: 0, stock: 0, min_stock: 0, active: true, notes: '', supplier: '', size: strv(nw.size).slice(0, 40), weight: '', exp_date: '', exp_none: bulk.exp_none === true, repack_from: bulk.id, repack_qty: qty, repack_costs: cIn ? cIn.json : '' };
+          db.products.push(np);
+          const txt = `Kemasan baru dibuat: ${name} (${unit}${sku ? ', barcode ' + sku : ''}, harga jual ${rpT(price)}) dibuat dari ${desc(bulk, qty, unit)}; ${costsText(cIn ? cIn.list : [], unit)}${who}`;
+          logAct(db, u, 'atur_kemas', txt, sku || name.slice(0, 40), 0, 'info'); tell(txt);
+          return { created: true, product: np };
+        }
+        const was = num(pk.repack_from) > 0 ? prodById(pk.repack_from) : null, wasQty = num(pk.repack_qty);
+        const wasCosts = strv(pk.repack_costs), costs = !bulk ? '' : (cIn ? cIn.json : wasCosts);
+        if ((was ? was.id : 0) === (bulk ? bulk.id : 0) && wasQty === qty && wasCosts === costs) return { unchanged: true, product: pk };
+        const sameSetup = (was ? was.id : 0) === (bulk ? bulk.id : 0) && wasQty === qty;
+        let txt = bulk ? (sameSetup ? `Biaya kemasan diubah: ${pk.name}` : `Kemas ulang diatur: ${pk.name} dibuat dari ${desc(bulk, qty, pk.unit)}` + (was ? ` (sebelumnya ${desc(was, wasQty, pk.unit)})` : ''))
+          : `Kemas ulang dihapus: ${pk.name} tidak lagi dibuat dari ${was ? was.name : '—'}`;
+        if (bulk && costs !== wasCosts) txt += '; ' + costsText(cIn ? cIn.list : [], pk.unit) + (wasCosts ? ` (sebelumnya ${costsText(repackCostsOf(pk).map(x => ({ n: x.name, c: x.cost })), pk.unit)})` : '');
+        txt += who;
+        pk.repack_from = bulk ? bulk.id : 0; pk.repack_qty = qty; pk.repack_costs = costs;
+        logAct(db, u, 'atur_kemas', txt, String(pk.id), 0, 'info'); tell(txt);
         return { product: pk };
       }
       case 'stock_adjust': {
@@ -2479,7 +2523,7 @@ const MockServer = (() => {
         const sales = db.sales.filter(s => inR(s.sale_date));
         const inv = new Set(sales.map(s => s.invoice_no));
         return { sales, items: db.items.filter(i => inv.has(i.invoice_no)), payments: db.payments.filter(p => inR(p.pay_date)), purchases: db.purchases.filter(p => inR(p.purchase_date)).map(p => { if (owner) return p; const o = Object.assign({}, p); delete o.total; return o; }), expenses: db.expenses.filter(x => inR(x.expense_date)), shifts: db.shifts.filter(x => inR(x.shift_date)).map(x => blind(shiftSummary(db, x), u.role)),
-          repacks: (db.repacks || []).filter(r => inR(r.repack_date)).map(r => { const o = Object.assign({}, r); delete o.id; if (!owner) { delete o.unit_cost; delete o.packaging_cost; } return o; }) };
+          repacks: (db.repacks || []).filter(r => inR(r.repack_date)).map(r => { const o = Object.assign({}, r); delete o.id; if (!owner) { delete o.unit_cost; delete o.packaging_cost; delete o.materials_cost; } return o; }) };
       }
       case 'save_settings': {
         needOwner();

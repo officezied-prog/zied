@@ -264,7 +264,8 @@ const MockServer = (() => {
   const repackText = pl => str(pl.from_name) + ' ' + fmtN(pl.from_qty) + ' ' + str(pl.from_unit) + ' → ' + str(pl.to_name) + ' x' + fmtN(pl.to_qty) + ' (hasil ' + pl.yield_pct + '%, susut ' + fmtN(pl.loss_qty) + ' ' + str(pl.from_unit) + ')';
   function applyRepack(db, u, P, o) {
     const { from, to, toQty, fromQty } = P;
-    const packCost = Math.max(0, int(o.packaging_cost));
+    const matCost = Math.round(repackCostPer(to) * toQty); // v48: the pack's materials × packs made
+    const packCost = Math.max(0, int(o.packaging_cost)) + matCost;
     const unitCost = Math.round((fromQty * int(from.cost_price) + packCost) / toQty);
     const date = isYmd(o.date) ? o.date : jktDate();
     const oldTo = Math.max(0, num(to.stock));
@@ -273,7 +274,7 @@ const MockServer = (() => {
     to.stock = roundQty(num(to.stock) + toQty); to.cost_price = toCost;
     const user = str(o.user) || u.name;
     const rp = { repack_id: 'RP' + rand(6), repack_date: date, repack_time: new Date().toISOString(), user, from_product_id: from.id, from_name: from.name, from_unit: from.unit, from_qty: fromQty,
-      to_product_id: to.id, to_name: to.name, to_unit: to.unit, to_qty: toQty, pack_size: P.size, expected_qty: P.expected, yield_pct: P.yield_pct, loss_qty: P.loss_qty, packaging_cost: packCost, unit_cost: unitCost,
+      to_product_id: to.id, to_name: to.name, to_unit: to.unit, to_qty: toQty, pack_size: P.size, expected_qty: P.expected, yield_pct: P.yield_pct, loss_qty: P.loss_qty, packaging_cost: packCost, unit_cost: unitCost, materials_cost: matCost,
       exp_date: isYmd(o.exp_date) ? o.exp_date : '', note: str(o.note).slice(0, 300), requested_by: str(o.requested_by), approved_by: str(o.approved_by), request_id: str(o.request_id), client_id: str(o.client_id) };
     db.repacks = db.repacks || [];
     db.repacks.push(Object.assign({ id: nextId(db, 'repack') }, rp));
@@ -282,7 +283,7 @@ const MockServer = (() => {
     db.purchases.push({ id: nextId(db, 'purchase'), purchase_date: date, supplier: REPACK_SUP, product_id: to.id, name: to.name, qty: toQty, cost_price: unitCost, total: 0, note: ('dari ' + from.name + ' ' + fromQty + ' ' + from.unit + ' (' + tag + ') ' + rp.note).trim(), user, photo_id: '', exp_date: rp.exp_date });
     logAct(db, u, 'kemas_ulang', 'Kemas ulang ' + repackText(rp) + (rp.requested_by ? ' — diminta ' + rp.requested_by + ', disetujui ' + rp.approved_by : ''), rp.repack_id, 0, o.level || (rp.yield_pct < 95 ? 'warn' : 'info'));
     const out = Object.assign({}, rp);
-    if (u.role !== 'owner') { delete out.unit_cost; delete out.packaging_cost; }
+    if (u.role !== 'owner') { delete out.unit_cost; delete out.packaging_cost; delete out.materials_cost; }
     return { rp, out, stock: [{ product_id: from.id, stock: from.stock }, Object.assign({ product_id: to.id, stock: to.stock }, u.role === 'owner' ? { cost_price: toCost } : {})] };
   }
   const pendingRepackFor = (db, fromId) => db.approvals.find(a => a.kind === 'repack' && a.status === 'pending' && str(a.ref) === String(fromId)) || null;
@@ -304,7 +305,7 @@ const MockServer = (() => {
       db.repacks = db.repacks || [];
       if (cid) {
         const same = db.repacks.find(r => str(r.client_id) === cid);
-        if (same) { const o = Object.assign({}, same); if (u.role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; } return { duplicate: true, repack: o }; }
+        if (same) { const o = Object.assign({}, same); if (u.role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; delete o.materials_cost; } return { duplicate: true, repack: o }; }
       }
       const P = repackPlan(db, data.to_product_id, data.to_qty, data.from_qty);
       if (P.fromQty > num(P.from.stock) + 1e-9) throw E('INVALID', 'Stok ' + P.from.name + ' tidak cukup (' + num(P.from.stock) + ' ' + P.from.unit + ')');
@@ -633,6 +634,11 @@ const MockServer = (() => {
   const shopOf = p => p.shop_stock === undefined || p.shop_stock === null || p.shop_stock === '' ? num(p.stock) : num(p.shop_stock);
   const r3 = v => Math.round(num(v) * 1000) / 1000;
   const productOut = p => Object.assign({}, p, { shop_stock: shopOf(p), gudang_stock: r3(num(p.stock) - shopOf(p)) });
+  // v48 (owner 2026-10-14): a pack's materials (sticker, lid, jar …) with their cost per pack — mirrors the server's repackCostsOf;
+  // the cashier / rep see the names only (productOut on the server).
+  const repackCostsOf = p => { let a = []; try { a = JSON.parse(String((p && p.repack_costs) || '') || '[]'); } catch (e) { a = []; } return (Array.isArray(a) ? a : []).map(x => ({ name: String((x && x.n) || '').trim().slice(0, 40), cost: Math.max(0, Math.round(Number((x && x.c) || 0))) })).filter(x => x.name).slice(0, 12); };
+  const repackCostPer = p => repackCostsOf(p).reduce((t, x) => t + x.cost, 0);
+  const costNamesFor = (p, role) => p.repack_costs && !['owner', 'manager', 'akuntan'].includes(role) ? Object.assign({}, p, { repack_costs: JSON.stringify(repackCostsOf(p).map(x => ({ n: x.name }))) }) : p;
   const shopSet = new Map();
   function normShop(db, snap) {
     db.products.forEach(p => {
@@ -840,7 +846,7 @@ const MockServer = (() => {
         if (!deviceTouch(db, u, data.device, true)) throw E('INVALID', 'device.id tidak valid');
         return { require_location: db.settings.require_device_location === true, server_time: new Date().toISOString() };
       }
-      case 'bootstrap': return { opname: opnameBoot(db), products: db.products.map(productOut), customers: db.customers, settings: settingsOut(db), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
+      case 'bootstrap': return { opname: opnameBoot(db), products: db.products.map(p => costNamesFor(productOut(p), u.role)), customers: db.customers, settings: settingsOut(db), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
         users: db.users.map(x => u.role === 'owner' ? { name: x.name, role: x.role, active: x.active !== false, must_change: x.must_change === true, locked: Date.parse(x.locked_until) > Date.now(), has_master: x.role === 'owner' && isHex64(x.master_hash) } : { name: x.name, role: x.role, active: x.active !== false }), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
         shift: blind(shiftSummary(db, openShiftOf(db, u.name)), u.role), open_shifts: ['owner', 'manager'].includes(u.role) ? db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)) : [] };
 

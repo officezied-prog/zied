@@ -23,6 +23,8 @@ export const TABLES = {
     shop_stock: 'number', size: 'string', weight: 'string', exp_date: 'string', exp_none: 'boolean',
     // v36: a product the cashier added at goods-in waits for the manager / accountant: review = that approval's id
     review: 'string',
+    // v48: a pack product's materials (sticker, lid, jar …) with their cost per pack, JSON [{n, c}] — set in the repack setup
+    repack_costs: 'string',
   },
   pos_customers: {
     name: 'string', phone: 'string', type: 'string', address: 'string', notes: 'string',
@@ -94,6 +96,7 @@ export const TABLES = {
     // v38: a repack made on a cashier's request — who asked, who approved, which request
     requested_by: 'string', approved_by: 'string', request_id: 'string',
     client_id: 'string', // v39: the form's id — a double tap / retry / resend of the same repack is recorded once
+    materials_cost: 'number', // v48: the pack's materials × packs made (part of packaging_cost)
   },
   pos_activity: {
     act_id: 'string', at: 'string', act_date: 'string', user: 'string', role: 'string',
