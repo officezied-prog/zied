@@ -77,13 +77,14 @@
 <script src="../shared/chat-ui.js"></script>
 <script src="../shared/tamper-guard.js"></script>
 <script src="../shared/install-btn.js" data-host="#login:not([hidden]) > .screen-card"></script>
+<script src="../shared/app-update.js"></script>
 <script src="mock.js"></script>
 <script>
 'use strict';
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.9.6';
+const APP_VERSION = 'sales-1.9.7';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -3390,6 +3391,7 @@ async function init() {
   if ('serviceWorker' in navigator && /^https:|^http:\/\/(localhost|127\.0\.0\.1)/.test(location.href) && !/[?&]nosw\b/.test(location.search)) {
     navigator.serviceWorker.register('sw.js', { scope: './' }).catch(() => { });
   }
+  try { if (window.KUpdate) KUpdate.start({ version: APP_VERSION, idle: () => !$('#login').hidden }); } catch (e) { } // v49: a new version reaches every phone by itself
   try { const n = captureShare(); if (n) setTimeout(() => toast('📥 ' + t('plan.gm_shared', { n }), 'ok', 5000), 1200); } catch (e) { console.warn('share', e); } // v33 Google Maps → Share → Khair Sales
   if (MOCK) { try { await MockServer.ensure(); } catch (e) { console.error(e); } }
   try { await migrateSecrets(); } catch (e) { console.error(e); }
