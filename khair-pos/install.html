@@ -30,6 +30,8 @@
   .btn{display:flex;align-items:center;justify-content:center;gap:8px;background:var(--p);color:#fff;text-decoration:none;font-weight:800;font-size:16px;border-radius:12px;padding:12px;margin-top:auto}
   .btn:active{background:var(--pd)}
   .btn.gudang{background:#0E7490}
+  .btn.apk{background:#15803d;font-size:15px;padding:10px;margin-top:0}
+  .btn.apk:active{background:#166534}
   details{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px 16px;margin:12px 0}
   summary{font-weight:800;cursor:pointer;padding:12px 0;font-size:16px}
   details ol{margin:6px 0 14px;padding-inline-start:22px}
@@ -58,6 +60,7 @@
       <p class="desc">لوحة الإدارة: المبيعات، المخزون، الأسعار، الموافقات والتقارير. كل واحد يدخل بحسابه فتظهر له صلاحياته.</p>
       <div class="qr"><img src="install-assets/qr-owner.png" alt="QR"><span>امسح الرمز بكاميرا الهاتف لفتح التطبيق</span></div>
       <a class="btn" href="./">فتح تطبيق الإدارة</a>
+      <a class="btn apk" href="https://github.com/officezied-prog/zied/releases/download/android/khair-owner.apk" data-apk="owner">⬇️ تنزيل تطبيق أندرويد (<span class="en">APK</span>)</a>
     </div>
 
     <div class="card">
@@ -65,6 +68,7 @@
       <p class="desc">البيع، استلام البضائع، الصندوق، والإيصالات — تطبيق بسيط وسريع لجهاز الكاشير.</p>
       <div class="qr"><img src="install-assets/qr-kasir.png" alt="QR"><span>امسح الرمز بكاميرا الهاتف لفتح التطبيق</span></div>
       <a class="btn" href="kasir/">فتح تطبيق الكاشير</a>
+      <a class="btn apk" href="https://github.com/officezied-prog/zied/releases/download/android/khair-kasir.apk" data-apk="kasir">⬇️ تنزيل تطبيق أندرويد (<span class="en">APK</span>)</a>
     </div>
 
     <div class="card">
@@ -72,6 +76,7 @@
       <p class="desc">زيارات المحلات على الخريطة، تسجيل محل جديد، الكتالوج، والطلبات — مع تتبّع المسار.</p>
       <div class="qr"><img src="install-assets/qr-sales.png" alt="QR"><span>امسح الرمز بكاميرا الهاتف لفتح التطبيق</span></div>
       <a class="btn" href="sales/">فتح تطبيق المندوب</a>
+      <a class="btn apk" href="https://github.com/officezied-prog/zied/releases/download/android/khair-sales.apk" data-apk="sales">⬇️ تنزيل تطبيق أندرويد (<span class="en">APK</span>)</a>
     </div>
 
     <div class="card">
@@ -79,6 +84,7 @@
       <p class="desc">مخازن التبريد: البرادات، أنواع التمر، الكميات (بالت/كرتون/كيلو) وحركة البضاعة.</p>
       <div class="qr"><img src="install-assets/qr-gudang.png" alt="QR"><span>امسح الرمز بكاميرا الهاتف لفتح التطبيق</span></div>
       <a class="btn gudang" href="gudang/">فتح تطبيق البرادات</a>
+      <a class="btn apk" href="https://github.com/officezied-prog/zied/releases/download/android/khair-gudang.apk" data-apk="gudang">⬇️ تنزيل تطبيق أندرويد (<span class="en">APK</span>)</a>
     </div>
   </div>
 
@@ -95,8 +101,20 @@
     <div class="note">ملاحظة: على الآيفون يجب أن يكون المتصفح <span class="en">Safari</span> (ليس Chrome) لتظهر «أضف إلى الشاشة الرئيسية».</div>
   </details>
 
+  <details open>
+    <summary>⬇️ أندرويد: تنزيل التطبيق كملف (<span class="en">APK</span>)</summary>
+    <ol>
+      <li>اضغط الزر الأخضر <b>«تنزيل تطبيق أندرويد»</b> تحت تطبيقك، ثم <b>«تنزيل»</b>.</li>
+      <li>افتح الملف من الإشعار أو من مجلد التنزيلات.</li>
+      <li>أول مرة فقط يسأل الهاتف: اسمح بالتثبيت من هذا المصدر (<span class="en">Install unknown apps</span> ← سماح)، ثم ارجع واضغط <b>«تثبيت»</b>.</li>
+      <li>إذا ظهرت رسالة حماية <span class="en">Play Protect</span> فاضغط <b>«مزيد من التفاصيل»</b> ثم <b>«التثبيت على أي حال»</b> — الرسالة تظهر لأن التطبيق ليس من متجر <span class="en">Play</span>، وهو تطبيق المحل نفسه.</li>
+      <li>يظهر التطبيق مع بقية تطبيقاتك. يتحدّث وحده من الخادم — لا حاجة لتنزيله مرة أخرى بعد كل تعديل.</li>
+    </ol>
+    <div class="note">يحتاج الهاتف متصفح <span class="en">Chrome</span> محدّثًا (موجود في كل هواتف أندرويد). نفس الدخول: الاسم والرمز السري.</div>
+  </details>
+
   <details>
-    <summary>🤖 أندرويد (Android)</summary>
+    <summary>🤖 أندرويد (Android) — بدون تنزيل ملف</summary>
     <ol>
       <li>افتح التطبيق من الزر بالأعلى بمتصفح <span class="en">Chrome</span>.</li>
       <li>سيظهر شريط <b>«تثبيت التطبيق»</b> <span class="en">Install app</span> — اضغطه. (أو من قائمة ⋮ أعلى اليمين اختر <b>«تثبيت التطبيق»</b> / <b>«إضافة إلى الشاشة الرئيسية»</b>.)</li>
