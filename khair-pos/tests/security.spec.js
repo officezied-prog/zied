@@ -58,6 +58,9 @@ test('store key never shown in full; pin hashes not kept at rest; offline login 
   expect(pins.pemilik).toEqual({ o: await page.evaluate(h => sha256Hex('offline:' + h), hash), role: 'owner' });
   expect(JSON.parse(await page.evaluate(() => sessionStorage.getItem('kpos.mock.session')))).toMatchObject({ user: 'Pemilik', pin_hash: hash });
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('kpos.mock.session')))).toEqual({ user: 'Pemilik', role: 'owner' });
+  // the offline login below needs this device's copy of the shop data: wait for the first download after login (on a slow
+  // runner it can still be on its way, and going offline then left nothing to log in with)
+  await page.waitForFunction(() => !!localStorage.getItem('kpos.mock.cache'));
   // lock wipes the live hash of this tab
   await page.click('#tb-lock');
   expect(await page.evaluate(() => sessionStorage.getItem('kpos.mock.session'))).toBeNull();

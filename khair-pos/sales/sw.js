@@ -2,11 +2,17 @@
    Network-first for the app files (+ the shared shop-type list, the shared mock script and Leaflet from ../vendor/leaflet),
    cache fallback when offline. API calls (POST to n8n) and map tiles are never cached here.
    Only old "khair-sales-*" caches are removed on activate. */
-const CACHE = 'khair-sales-v23';
-const SHELL = ['./', './index.html', './styles.css', './mock.js', './manifest.webmanifest', './icon.svg', '../logo.png', '../shared/shop-types.js', '../shared/gmaps-import.js', '../shared/field-mock.js', '../shared/chat-ui.js', '../shared/tamper-guard.js', '../shared/install-btn.js', '../vendor/leaflet/leaflet.js', '../vendor/leaflet/leaflet.css'];
+const CACHE = 'khair-sales-v24';
+const SHELL = ['./', './index.html', './styles.css', './mock.js', './manifest.webmanifest', './icon.svg', '../logo.png', '../shared/shop-types.js', '../shared/gmaps-import.js', '../shared/field-mock.js', '../shared/chat-ui.js', '../shared/tamper-guard.js', '../shared/install-btn.js', '../shared/app-update.js', '../vendor/leaflet/leaflet.js', '../vendor/leaflet/leaflet.css'];
+// v49 (owner 2026-10-14: «لم تظهرت النسخة الجديدة»): pages and code are checked with the site on every fetch ("no-cache":
+// a few bytes, "304", when unchanged), so the phone's 10-minute copy (GitHub Pages) never hides a new version. Images as before.
+const fresh = (req, url) => {
+  if (req.mode !== 'navigate' && !/(\/|\.(html|js|css|webmanifest|json))$/.test(url.pathname)) return req;
+  try { return new Request(req, { cache: 'no-cache' }); } catch (e) { return req; } // a browser that refuses: as before
+};
 self.addEventListener('install', e => {
   // one file at a time: a file that cannot be fetched (e.g. the map library) must not leave the whole shell uncached
-  e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(u).catch(() => {})))).catch(() => {}));
+  e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(new Request(u, { cache: 'no-cache' })).catch(() => {})))).catch(() => {}));
   self.skipWaiting();
 });
 self.addEventListener('activate', e => {
@@ -17,10 +23,10 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   const scope = new URL('./', self.registration.scope).pathname;
-  const mine = url.origin === self.location.origin && (url.pathname.startsWith(scope) || /\/shared\/(field-mock|shop-types|chat-ui|gmaps-import|tamper-guard|install-btn)\.js$/.test(url.pathname) || /\/vendor\/leaflet\//.test(url.pathname));
+  const mine = url.origin === self.location.origin && (url.pathname.startsWith(scope) || /\/shared\/(field-mock|shop-types|chat-ui|gmaps-import|tamper-guard|install-btn|app-update)\.js$/.test(url.pathname) || /\/vendor\/leaflet\//.test(url.pathname));
   if (!mine) return;
   e.respondWith(
-    fetch(req).then(res => {
+    fetch(fresh(req, url)).then(res => {
       if (res && (res.ok || res.type === 'opaque')) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {}); }
       return res;
     }).catch(() => caches.open(CACHE).then(c => c.match(req, { ignoreSearch: true }).then(r => r || (mine ? c.match('./index.html') : Response.error()))))

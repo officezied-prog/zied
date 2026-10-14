@@ -18,6 +18,12 @@ from `khair-pos/android/`; the signing key is `khair-pos/android/khair-release.p
 `ANDROID_KEY_PASSWORD` (never lose it: a new key means everyone reinstalls). Digital Asset Links live in the repo
 `officezied-prog/officezied-prog.github.io` (`.well-known/assetlinks.json`, copied from `khair-pos/android/assetlinks.json`).
 
+**New versions reach phones by themselves (v49):** `shared/app-update.js` (KUpdate) re-reads the app's own page
+(`cache:'no-cache'`, a 304 when unchanged) on open, on return to the screen (≥5 min) and every 30 min; another
+`APP_VERSION` there → it reloads itself on the login screen / when untouched since it opened, otherwise a green
+"Perbarui / تحديث" bar (one tap, the session stays); never twice for the same version. The service workers fetch pages
+and code with `cache:'no-cache'` too. So **always bump `APP_VERSION`** with every app change: it is the update signal.
+
 **Backend = "Khair Mart Jumla" (الخير مارت جملة) — LIVE since 2026-10-10.** The owner, cashier
 and field-sales apps point at the Cloudflare Worker `https://khair-mart-jumla.officezied.workers.dev`
 (D1 database `khair_mart_jumla`, account `c82e2561b81c97de7c59166d7a915924`). Source under

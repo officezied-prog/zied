@@ -138,6 +138,7 @@
 <script src="shared/tamper-guard.js"></script>
 <script src="shared/barcode-cam.js"></script>
 <script src="shared/install-btn.js" data-host="#login:not([hidden]) .login-card"></script>
+<script src="shared/app-update.js"></script>
 <script src="mock.js"></script>
 <script>
 'use strict';
@@ -148,7 +149,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.7.7';
+const APP_VERSION = '2.7.8';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -9745,6 +9746,7 @@ async function init() {
   if ('serviceWorker' in navigator && /^https:|^http:\/\/(localhost|127\.0\.0\.1)/.test(location.href) && !/[?&]nosw\b/.test(location.search)) {
     navigator.serviceWorker.register('sw.js').catch(() => { });
   }
+  try { if (window.KUpdate) KUpdate.start({ version: APP_VERSION, idle: () => !$('#login').hidden }); } catch (e) { } // v49: a new version reaches every phone by itself
   if (MOCK) { try { await MockServer.ensure(); } catch (e) { console.error(e); } }
   try { await migratePins(); } catch (e) { }
   const sess = sessGet();
