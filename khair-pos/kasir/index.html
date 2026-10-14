@@ -94,6 +94,7 @@
 <script src="../shared/att-kiosk.js"></script>
 <script src="../shared/chat-ui.js"></script>
 <script src="../shared/tamper-guard.js"></script>
+<script src="../shared/barcode-cam.js"></script>
 <script src="../shared/install-btn.js" data-host="#login:not([hidden]) > .screen-card"></script>
 <script src="../shared/field-mock.js"></script>
 <script src="../shared/gmaps-import.js"></script>
@@ -106,7 +107,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.6.4';
+const APP_VERSION = 'kasir-1.6.5';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1404,7 +1405,7 @@ RENDER.sell = function () {
       <div class="sell-main">
         <div class="scanbar">
           <div class="search">${ic('search')}<input id="q" class="input" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="${esc(t('sell.search_ph'))}" aria-label="${esc(t('sell.search_ph'))}" value="${esc(SELL.q)}"></div>
-          <button class="icon-btn" id="cam" data-act="cam-scan" title="${esc(t('sell.camera'))}" aria-label="${esc(t('sell.camera'))}" ${'BarcodeDetector' in window ? '' : 'hidden'}>${ic('scan')}</button>
+          <button class="icon-btn" id="cam" data-act="cam-scan" title="${esc(t('sell.camera'))}" aria-label="${esc(t('sell.camera'))}" ${camOk() ? '' : 'hidden'}>${ic('scan')}</button>
         </div>
         <div class="rep-banner" hidden></div>
         <div class="op-banner" id="op-banner" hidden></div>
@@ -2556,20 +2557,27 @@ async function uploadExitPhoto(el, rc, file) {
   drawExitBox(el, rc);
 }
 
-/* ========== Camera barcode scanning (BarcodeDetector) ========== */
+/* ========== Camera barcode scanning (v47: every device — the phone's own reader or ZXing, see shared/barcode-cam.js) ========== */
+const camOk = () => !!(window.KScan && KScan.available());
 async function cameraScan(onCode) {
-  if (!('BarcodeDetector' in window)) return;
-  let stream, stop = false;
+  if (!camOk()) { toast(t('scan.none'), 'err', 6000); return; }
+  let stream = null, stop = false;
   const el = openModal({ title: t('sell.camera'), cls: 'cam', body: `<video id="cam-v" playsinline muted></video><p class="small muted center">${esc(t('sell.camera_hint'))}</p>`, onClose: () => { stop = true; if (stream) stream.getTracks().forEach(tr => tr.stop()); } });
+  const dp = KScan.detector(); dp.catch(() => { });
   try {
-    const det = new BarcodeDetector();
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-    const v = $('#cam-v', el); v.srcObject = stream; await v.play();
+    const v = $('#cam-v', el);
+    stream = await KScan.open(v);
+    if (stop) { stream.getTracks().forEach(tr => tr.stop()); return; } // closed while the phone asked for the camera
+    const det = await dp; v.dataset.reader = det.kind;
     while (!stop) {
-      try { const codes = await det.detect(v); if (codes.length) { const c = codes[0].rawValue; dropModal(el); onCode(c); return; } } catch (e) { }
+      try { const codes = await det.detect(v); if (codes.length) { dropModal(el); onCode(codes[0]); return; } } catch (e) { }
       await sleep(180);
     }
-  } catch (e) { toast(t('sell.camera_fail'), 'err'); dropModal(el); }
+  } catch (e) {
+    if (stream) stream.getTracks().forEach(tr => tr.stop());
+    const k = KScan.errorKind(e);
+    if (!stop) { toast(t(k === 'denied' ? 'scan.denied' : k === 'none' ? 'scan.none' : k === 'busy' ? 'scan.busy' : 'sell.camera_fail'), 'err', 8000); dropModal(el); }
+  }
 }
 
 /* ========== Outbox (offline queue: sales, debt payments, expenses, cash moves, customer numbers) ========== */
@@ -2814,7 +2822,7 @@ function openNewProduct(init, after) {
       <div class="field"><label class="f" for="np-cat">${esc(t('newp.category'))} *</label><input class="input" data-rule="pname" id="np-cat" maxlength="40" list="np-cats" autocomplete="off"><datalist id="np-cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
       <div class="field"><label class="f" for="np-size">${esc(t('newp.size'))} *</label><div class="row" style="gap:6px"><input class="input num grow" data-rule="num" inputmode="decimal" id="np-size" placeholder="500" style="min-width:0"><select class="input" id="np-measure" style="width:auto;flex:0 0 auto" aria-label="${esc(t('newp.measure'))}">${NP_MEASURES.map(m => `<option value="${m}">${esc(m === 'isi' ? t('newp.m_isi') : m)}</option>`).join('')}</select></div><div class="small muted">${esc(t('newp.size_hint'))}</div></div>
       <div class="grid2"><div class="field"><label class="f" for="np-unit">${esc(t('newp.unit'))}</label><select class="input" id="np-unit">${NP_UNITS.map(u => `<option value="${u}" ${u === (NP_UNITS.includes(unit0) ? unit0 : 'pcs') ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></div>
-      <div class="field"><label class="f" for="np-sku">${esc(t('newp.barcode'))}</label><div class="row" style="gap:6px"><input class="input grow" id="np-sku" maxlength="40" inputmode="text" autocomplete="off" style="min-width:0">${'BarcodeDetector' in window ? `<button type="button" class="icon-btn" id="np-sku-cam" aria-label="${esc(t('sell.camera'))}" style="flex:0 0 auto">${ic('scan')}</button>` : ''}</div></div></div>
+      <div class="field"><label class="f" for="np-sku">${esc(t('newp.barcode'))}</label><div class="row" style="gap:6px"><input class="input grow" id="np-sku" maxlength="40" inputmode="text" autocomplete="off" style="min-width:0">${camOk() ? `<button type="button" class="icon-btn" id="np-sku-cam" aria-label="${esc(t('sell.camera'))}" style="flex:0 0 auto">${ic('scan')}</button>` : ''}</div></div></div>
       <div class="grid2"><div class="field"><label class="f" for="np-retail">${esc(t('newp.retail'))} *</label><input class="input num" data-rule="num" inputmode="numeric" id="np-retail"></div>
       <div class="field"><label class="f" for="np-whole">${esc(t('newp.wholesale'))}</label><input class="input num" data-rule="num" inputmode="numeric" id="np-whole"></div></div>
       <div class="field"><label class="f" for="np-wmin">${esc(t('newp.wmin'))}</label><input class="input num" data-rule="num" inputmode="decimal" id="np-wmin"></div>
@@ -3102,7 +3110,7 @@ function openReturn(pre = {}) {
     title: t('rt.title'), id: 'retur', focus: false,
     body: `<p class="small muted" style="margin-top:0">${esc(t('rt.hint'))}</p>
       <div class="row" style="align-items:flex-end"><div class="field grow" style="margin:0"><label class="f" for="rt-inv">${esc(t('rt.inv'))} *</label><input class="input" id="rt-inv" data-rule="doc" autocomplete="off" placeholder="${esc(t('rt.inv_ph'))}" value="${esc(pre.invoice || '')}"></div>
-      ${'BarcodeDetector' in window ? `<button class="icon-btn" id="rt-scan" type="button" aria-label="${esc(t('rt.scan'))}">${ic('camera')}</button>` : ''}<button class="btn primary" id="rt-find" type="button">${ic('search')} ${esc(t('rt.find'))}</button></div>
+      ${camOk() ? `<button class="icon-btn" id="rt-scan" type="button" aria-label="${esc(t('rt.scan'))}">${ic('camera')}</button>` : ''}<button class="btn primary" id="rt-find" type="button">${ic('search')} ${esc(t('rt.find'))}</button></div>
       <div class="err" id="rt-find-err" role="alert"></div><div id="rt-body"></div>`,
     foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button><button class="btn primary" id="rt-send" hidden>${ic('send')} ${esc(t('rt.send'))}</button>`
   });
@@ -4485,7 +4493,7 @@ const I18N = {
     'err.NOT_FOUND': 'Data tidak ditemukan', 'err.APPROVAL_REQUIRED': 'Perlu persetujuan pemilik/manajer', 'err.SHIFT_REQUIRED': 'Buka kasir dulu', 'err.NEEDS_OWNER': 'Hanya pemilik yang boleh memutuskan ini',
     'gate.title': 'Buka Kasir', 'gate.hint': 'hitung uang awal di laci sebelum mulai jualan', 'gate.opening': 'Uang awal di laci', 'gate.open': 'Buka Kasir',
     'gate.already': 'Kasir sudah terbuka', 'gate.opened': 'Kasir dibuka dengan {amount}', 'gate.need_online': 'Buka kasir perlu koneksi internet',
-    'sell.search_ph': 'Cari nama barang / scan barcode', 'sell.camera': 'Scan dengan kamera', 'sell.camera_hint': 'Arahkan kamera ke barcode', 'sell.camera_fail': 'Kamera tidak bisa dibuka',
+    'sell.search_ph': 'Cari nama barang / scan barcode', 'sell.camera': 'Scan dengan kamera', 'sell.camera_hint': 'Arahkan kamera ke barcode', 'sell.camera_fail': 'Kamera tidak bisa dibuka', 'scan.denied': 'Izin kamera ditolak. Ketuk ikon 🔒 di sebelah alamat (atau ⋮ → Setelan situs) → Kamera → Izinkan, lalu coba lagi.', 'scan.none': 'Kamera tidak ditemukan di perangkat ini — pakai pemindai barcode atau ketik kodenya di kotak cari.', 'scan.busy': 'Kamera sedang dipakai aplikasi lain — tutup aplikasi itu lalu coba lagi.',
     'sell.products': 'Daftar barang', 'sell.cart': 'Keranjang', 'sell.pay': 'BAYAR', 'sell.n_lines': '{n} barang', 'sell.walkin': 'Pembeli umum',
     'sell.cart_empty': 'Keranjang kosong', 'sell.cart_empty_hint': 'Scan barcode atau ketuk barang', 'sell.clear': 'Kosongkan', 'sell.clear_confirm': 'Kosongkan keranjang?',
     'sell.no_match': 'Barang tidak ditemukan', 'sell.no_products': 'Belum ada barang', 'sell.inactive': 'Barang ini tidak aktif', 'sell.stock_low': 'Stok {name} kurang',
@@ -4595,7 +4603,7 @@ const I18N = {
     'err.NOT_FOUND': 'غير موجود', 'err.APPROVAL_REQUIRED': 'يلزم موافقة المالك/المدير', 'err.SHIFT_REQUIRED': 'افتح الصندوق أولًا', 'err.NEEDS_OWNER': 'المالك فقط يقرر هذا',
     'gate.title': 'فتح الصندوق', 'gate.hint': 'عُدّ النقد الابتدائي في الدرج قبل البيع', 'gate.opening': 'النقد الابتدائي في الدرج', 'gate.open': 'فتح الصندوق',
     'gate.already': 'الصندوق مفتوح بالفعل', 'gate.opened': 'فُتح الصندوق بمبلغ {amount}', 'gate.need_online': 'فتح الصندوق يحتاج اتصالًا بالإنترنت',
-    'sell.search_ph': 'ابحث بالاسم / امسح الباركود', 'sell.camera': 'مسح بالكاميرا', 'sell.camera_hint': 'وجّه الكاميرا إلى الباركود', 'sell.camera_fail': 'تعذّر فتح الكاميرا',
+    'sell.search_ph': 'ابحث بالاسم / امسح الباركود', 'sell.camera': 'مسح بالكاميرا', 'sell.camera_hint': 'وجّه الكاميرا إلى الباركود', 'sell.camera_fail': 'تعذّر فتح الكاميرا', 'scan.denied': 'تم رفض إذن الكاميرا. اضغط رمز القفل 🔒 بجانب العنوان (أو ⋮ ← إعدادات الموقع) ← الكاميرا ← سماح، ثم أعد المحاولة.', 'scan.none': 'لا توجد كاميرا في هذا الجهاز — استعمل قارئ الباركود أو اكتب الرقم في خانة البحث.', 'scan.busy': 'الكاميرا مستعملة في تطبيق آخر — أغلقه ثم أعد المحاولة.',
     'sell.products': 'الأصناف', 'sell.cart': 'السلة', 'sell.pay': 'ادفع', 'sell.n_lines': '{n} أصناف', 'sell.walkin': 'زبون عام',
     'sell.cart_empty': 'السلة فارغة', 'sell.cart_empty_hint': 'امسح الباركود أو اضغط على صنف', 'sell.clear': 'إفراغ', 'sell.clear_confirm': 'إفراغ السلة؟',
     'sell.no_match': 'لا يوجد صنف مطابق', 'sell.no_products': 'لا توجد أصناف', 'sell.inactive': 'هذا الصنف غير نشط', 'sell.stock_low': 'مخزون {name} غير كافٍ',
@@ -4708,7 +4716,7 @@ function openStockCount() {
     body: `<p class="small muted" style="margin-top:0">${esc(t(scK('sc.hint')))}</p>
       ${(() => { const o = opnameInfo(settings()); return o ? `<p class="small" id="sc-due" data-status="${o.status}" style="margin-top:0"><b>${esc(t('op.last_next', { last: o.last ? fmtDate(o.last) : t('op.never'), next: fmtDate(o.next) }))}</b>${o.status === 'overdue' ? ` <span class="badge red">${esc(t('op.late_n', { n: -o.left }))}</span>` : ''}</p>` : ''; })()}
       <div class="scanbar"><div class="search">${ic('search')}<input class="input" id="sc-q" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="${esc(t('sc.search'))}" aria-label="${esc(t('sc.search'))}"></div>
-        ${'BarcodeDetector' in window ? `<button class="icon-btn" id="sc-cam" type="button" aria-label="${esc(t('sell.camera'))}">${ic('scan')}</button>` : ''}</div>
+        ${camOk() ? `<button class="icon-btn" id="sc-cam" type="button" aria-label="${esc(t('sell.camera'))}">${ic('scan')}</button>` : ''}</div>
       <div class="sc-modes" role="group">
         <button type="button" class="btn sc-mode" id="sc-all" data-sc-mode="all" aria-pressed="false">${ic('list')}<span>${esc(t('sc.all'))}</span><b class="sc-n">${ALL.length}</b></button>
         <button type="button" class="btn sc-mode" id="sc-bycat" data-sc-mode="cat" aria-pressed="false">${ic('tag')}<span>${esc(t('sc.by_cat'))}</span></button></div>
