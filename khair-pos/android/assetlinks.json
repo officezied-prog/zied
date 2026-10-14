@@ -1,0 +1,50 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.khairmart.owner",
+      "sha256_cert_fingerprints": [
+        "F7:09:71:7E:4E:AE:5B:83:36:4D:D7:CE:BB:EF:B0:5B:6C:D5:69:29:4D:28:47:A4:F0:2D:24:54:63:EE:DF:A4"
+      ]
+    }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.khairmart.kasir",
+      "sha256_cert_fingerprints": [
+        "F7:09:71:7E:4E:AE:5B:83:36:4D:D7:CE:BB:EF:B0:5B:6C:D5:69:29:4D:28:47:A4:F0:2D:24:54:63:EE:DF:A4"
+      ]
+    }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.khairmart.sales",
+      "sha256_cert_fingerprints": [
+        "F7:09:71:7E:4E:AE:5B:83:36:4D:D7:CE:BB:EF:B0:5B:6C:D5:69:29:4D:28:47:A4:F0:2D:24:54:63:EE:DF:A4"
+      ]
+    }
+  },
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.khairmart.gudang",
+      "sha256_cert_fingerprints": [
+        "F7:09:71:7E:4E:AE:5B:83:36:4D:D7:CE:BB:EF:B0:5B:6C:D5:69:29:4D:28:47:A4:F0:2D:24:54:63:EE:DF:A4"
+      ]
+    }
+  }
+]
