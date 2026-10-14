@@ -136,6 +136,7 @@
 <script src="shared/att-kiosk.js"></script>
 <script src="shared/chat-ui.js"></script>
 <script src="shared/tamper-guard.js"></script>
+<script src="shared/barcode-cam.js"></script>
 <script src="shared/install-btn.js" data-host="#login:not([hidden]) .login-card"></script>
 <script src="mock.js"></script>
 <script>
@@ -147,7 +148,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.7.5';
+const APP_VERSION = '2.7.6';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1078,7 +1079,7 @@ function renderPosSkeleton() {
       ${cashierTabs('sell')}
       <div class="search-row">
         <div class="search-box">${ic('search')}<input id="pos-search" class="input" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="${esc(t('pos.search_ph'))}" aria-label="${esc(t('pos.search_ph'))}" value="${esc(POS.q)}"></div>
-        <button class="icon-btn" style="width:50px;height:50px" id="pos-cam" data-act="cam-scan" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}" ${'BarcodeDetector' in window ? '' : 'hidden'}>${ic('scan')}</button>
+        <button class="icon-btn" style="width:50px;height:50px" id="pos-cam" data-act="cam-scan" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}" ${camOk() ? '' : 'hidden'}>${ic('scan')}</button>
       </div>
       <div class="cats-row"><button class="held-chip" id="held-chip" data-act="held-open" hidden></button><div class="chips" id="pos-cats"></div></div>
       <div class="prod-grid" id="pos-grid" aria-label="${esc(t('nav.products'))}"></div>
@@ -1913,20 +1914,27 @@ async function syncContacts() {
   } finally { syncingContacts = false; }
 }
 
-/* ========== Camera barcode scanning (BarcodeDetector) ========== */
+/* ========== Camera barcode scanning (v47: every device — the phone's own reader or ZXing, see shared/barcode-cam.js) ========== */
+const camOk = () => !!(window.KScan && KScan.available());
 async function cameraScan(onCode) {
-  if (!('BarcodeDetector' in window)) return;
-  let stream, stop = false;
-  const el = openModal({ title: t('pos.camera'), cls: 'narrow cam', body: `<video id="cam-v" playsinline muted></video><p class="small muted center">${esc(t('pos.camera_hint'))}</p>`, onClose: () => { stop = true; if (stream) stream.getTracks().forEach(tr => tr.stop()); } });
+  if (!camOk()) { toast(t('scan.none'), 'err', 6000); return; }
+  let stream = null, stop = false;
+  openModal({ title: t('pos.camera'), cls: 'narrow cam', body: `<video id="cam-v" playsinline muted></video><p class="small muted center">${esc(t('pos.camera_hint'))}</p>`, onClose: () => { stop = true; if (stream) stream.getTracks().forEach(tr => tr.stop()); } });
+  const dp = KScan.detector(); dp.catch(() => { });
   try {
-    const det = new BarcodeDetector();
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-    const v = $('#cam-v', el); v.srcObject = stream; await v.play();
+    const v = $('#cam-v');
+    stream = await KScan.open(v);
+    if (stop) { stream.getTracks().forEach(tr => tr.stop()); return; } // closed while the phone asked for the camera
+    const det = await dp; v.dataset.reader = det.kind;
     while (!stop) {
-      try { const codes = await det.detect(v); if (codes.length) { const c = codes[0].rawValue; closeModal(); onCode(c); return; } } catch (e) { }
+      try { const codes = await det.detect(v); if (codes.length) { closeModal(); onCode(codes[0]); return; } } catch (e) { }
       await sleep(180);
     }
-  } catch (e) { toast(t('pos.camera_fail'), 'err'); closeModal(); }
+  } catch (e) {
+    if (stream) stream.getTracks().forEach(tr => tr.stop());
+    const k = KScan.errorKind(e);
+    if (!stop) { toast(t(k === 'denied' ? 'scan.denied' : k === 'none' ? 'scan.none' : k === 'busy' ? 'scan.busy' : 'pos.camera_fail'), 'err', 8000); closeModal(); }
+  }
 }
 
 /* ========== Credit approval (kasir hutang → owner/manager) ========== */
@@ -3826,7 +3834,7 @@ function productForm(p, fromInvoice) {
   const f = (k, label, attrs = '', val) => `<div class="field"><label class="f" for="pf-${k}">${esc(label)}</label><input class="input" id="pf-${k}" name="${k}" value="${esc(val !== undefined ? val : (p[k] ?? ''))}" ${attrs}></div>`;
   return `<form id="pf" autocomplete="off" onsubmit="return false">
     ${f('name', t('name') + ' *', 'required autofocus')}
-    <div class="grid2"><div class="field"><label class="f" for="pf-sku">${esc(t('sku'))}</label><div class="row" style="gap:6px;align-items:center"><input class="input" id="pf-sku" name="sku" value="${esc(p.sku ?? '')}" inputmode="text" style="flex:1 1 auto;min-width:0">${'BarcodeDetector' in window ? `<button type="button" class="icon-btn" id="pf-sku-cam" style="flex:0 0 auto;width:42px;height:42px" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}">${ic('scan')}</button>` : ''}</div></div>${f('category', t('category') + req, 'list="dl-cats"')}</div>
+    <div class="grid2"><div class="field"><label class="f" for="pf-sku">${esc(t('sku'))}</label><div class="row" style="gap:6px;align-items:center"><input class="input" id="pf-sku" name="sku" value="${esc(p.sku ?? '')}" inputmode="text" style="flex:1 1 auto;min-width:0">${camOk() ? `<button type="button" class="icon-btn" id="pf-sku-cam" style="flex:0 0 auto;width:42px;height:42px" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}">${ic('scan')}</button>` : ''}</div></div>${f('category', t('category') + req, 'list="dl-cats"')}</div>
     <datalist id="dl-cats">${categories().map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     ${f('supplier', t('prod.supplier'), 'list="dl-psup" autocomplete="off"')}<datalist id="dl-psup">${knownSuppliers().map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     <div class="grid2">${f('size', t('prod.size') + req, 'placeholder="500 g / 1 L"')}${f('weight', t('prod.weight') + req, 'placeholder="1000 g"')}</div>${fromInvoice ? `<div class="small muted" style="margin:-6px 0 10px">${esc(t('newp.size_or_weight'))}</div>` : ''}
@@ -4801,7 +4809,7 @@ const I18N = {
     'login.pick_user': 'Siapa yang bertugas?', 'login.locked': 'Aplikasi terkunci — masukkan PIN', 'login.pick_user_first': 'Pilih nama dulu', 'login.pin_len': 'PIN harus 4–6 angka',
     'login.enter': 'Masuk', 'login.change_key': 'Ganti kode toko', 'login.staff': 'Kasir & sales: masuk lewat Khair Kasir', 'login.store': 'Toko',
     'setup.title': 'Selamat datang! Buat akun pemilik', 'setup.hint': 'Toko ini belum punya pengguna. Akun pertama adalah pemilik (owner).', 'setup.owner_name': 'Nama pemilik', 'setup.create': 'Buat akun & masuk', 'setup.done': 'Akun pemilik dibuat',
-    'pos.search_ph': 'Cari produk atau scan barcode…', 'pos.camera': 'Scan dengan kamera', 'pos.camera_hint': 'Arahkan kamera ke barcode', 'pos.camera_fail': 'Kamera tidak bisa dibuka',
+    'pos.search_ph': 'Cari produk atau scan barcode…', 'pos.camera': 'Scan dengan kamera', 'pos.camera_hint': 'Arahkan kamera ke barcode', 'pos.camera_fail': 'Kamera tidak bisa dibuka', 'scan.denied': 'Izin kamera ditolak. Ketuk ikon 🔒 di sebelah alamat (atau ⋮ → Setelan situs) → Kamera → Izinkan, lalu coba lagi.', 'scan.none': 'Kamera tidak ditemukan di perangkat ini — pakai pemindai barcode atau ketik kodenya di kotak cari.', 'scan.busy': 'Kamera sedang dipakai aplikasi lain — tutup aplikasi itu lalu coba lagi.',
     'pos.cart': 'Keranjang', 'pos.cart_empty': 'Keranjang kosong', 'pos.cart_empty_hint': 'Ketuk produk atau scan barcode', 'pos.walkin': 'Umum', 'pos.walkin_hint': 'Pembeli tanpa nama',
     'pos.pick_customer': 'Pilih pelanggan', 'pos.method': 'Pembayaran', 'pos.paid': 'Dibayar (Rp)', 'pos.exact': 'Uang pas', 'pos.change': 'Kembalian', 'pos.debt_new': 'Jadi hutang',
     'pos.debt_needs_customer': 'Hutang wajib memilih pelanggan', 'pos.partial_needs_customer': 'Bayar kurang? Pilih pelanggan agar sisa dicatat sebagai hutang',
@@ -4879,7 +4887,7 @@ const I18N = {
     'login.pick_user': 'من المناوب الآن؟', 'login.locked': 'التطبيق مقفل — أدخل الرقم السري', 'login.pick_user_first': 'اختر الاسم أولًا', 'login.pin_len': 'الرقم السري من 4 إلى 6 أرقام',
     'login.enter': 'دخول', 'login.change_key': 'تغيير رمز المتجر', 'login.staff': 'الكاشير والمندوب: الدخول من Khair Kasir', 'login.store': 'المتجر',
     'setup.title': 'أهلًا بك! أنشئ حساب المالك', 'setup.hint': 'لا يوجد مستخدمون لهذا المتجر بعد. الحساب الأول هو المالك.', 'setup.owner_name': 'اسم المالك', 'setup.create': 'إنشاء الحساب والدخول', 'setup.done': 'تم إنشاء حساب المالك',
-    'pos.search_ph': 'ابحث عن منتج أو امسح الباركود…', 'pos.camera': 'المسح بالكاميرا', 'pos.camera_hint': 'وجّه الكاميرا نحو الباركود', 'pos.camera_fail': 'تعذّر فتح الكاميرا',
+    'pos.search_ph': 'ابحث عن منتج أو امسح الباركود…', 'pos.camera': 'المسح بالكاميرا', 'pos.camera_hint': 'وجّه الكاميرا نحو الباركود', 'pos.camera_fail': 'تعذّر فتح الكاميرا', 'scan.denied': 'تم رفض إذن الكاميرا. اضغط رمز القفل 🔒 بجانب العنوان (أو ⋮ ← إعدادات الموقع) ← الكاميرا ← سماح، ثم أعد المحاولة.', 'scan.none': 'لا توجد كاميرا في هذا الجهاز — استعمل قارئ الباركود أو اكتب الرقم في خانة البحث.', 'scan.busy': 'الكاميرا مستعملة في تطبيق آخر — أغلقه ثم أعد المحاولة.',
     'pos.cart': 'السلة', 'pos.cart_empty': 'السلة فارغة', 'pos.cart_empty_hint': 'اضغط على منتج أو امسح الباركود', 'pos.walkin': 'عميل عام', 'pos.walkin_hint': 'مشترٍ بدون اسم',
     'pos.pick_customer': 'اختر العميل', 'pos.method': 'طريقة الدفع', 'pos.paid': 'المدفوع (روبية)', 'pos.exact': 'المبلغ بالضبط', 'pos.change': 'الباقي', 'pos.debt_new': 'يُسجَّل دَينًا',
     'pos.debt_needs_customer': 'البيع بالدَّين يتطلب اختيار عميل', 'pos.partial_needs_customer': 'دفع ناقص؟ اختر عميلًا ليُسجَّل الباقي دَينًا',
@@ -5946,7 +5954,7 @@ function gdDrawOpname(body) {
     ${GD.result ? `<div id="gdo-result">${GD.result}</div>` : ''}
     <div class="card pad" style="margin-bottom:12px" id="gdo-pick">
       <div class="search-row" style="margin-bottom:6px"><div class="search-box">${ic('search')}<input class="input" id="gdo-q" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="${esc(t('gd.op_search'))}" aria-label="${esc(t('gd.op_search'))}"></div>
-        ${'BarcodeDetector' in window ? `<button class="icon-btn" style="width:50px;height:50px" data-act="gdo-cam" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}">${ic('scan')}</button>` : ''}</div>
+        ${camOk() ? `<button class="icon-btn" style="width:50px;height:50px" data-act="gdo-cam" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}">${ic('scan')}</button>` : ''}</div>
       <div class="list" id="gdo-sug"></div>
       <div class="row wrap" style="margin-top:8px"><select class="input" id="gdo-cat" style="width:auto;flex:1;min-width:160px" aria-label="${esc(t('category'))}"><option value="">${esc(t('gd.op_pick_cat'))}</option>${cats.map(c => `<option>${esc(c)}</option>`).join('')}</select>
         <button class="btn" data-act="gdo-add-cat">${ic('plus')} ${esc(t('gd.op_add_cat'))}</button><button class="btn" data-act="gdo-add-all">${ic('plus')} ${esc(t('gd.op_add_all', { n: active.length }))}</button></div>
