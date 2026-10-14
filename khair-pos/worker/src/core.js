@@ -33,6 +33,10 @@ export const POS_MIGRATIONS = [
   // v39 (owner 2026-10-12: «طلب التعليب لا يحتاج إلى موافقات»): the cashier repacks directly; the form's client id makes a resend
   // record nothing twice.
   'ALTER TABLE pos_repacks ADD COLUMN client_id TEXT',
+  // v48 (owner 2026-10-14: «اجعل للمدير له خانات يمكن ان يضيفها للتكلفة التعبية»): a pack's materials with their cost per pack,
+  // and how much of a repack's packaging cost they were.
+  'ALTER TABLE pos_products ADD COLUMN repack_costs TEXT',
+  'ALTER TABLE pos_repacks ADD COLUMN materials_cost REAL',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;

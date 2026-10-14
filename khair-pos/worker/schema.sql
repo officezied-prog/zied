@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS pos_products (
   weight TEXT,
   exp_date TEXT,
   exp_none INTEGER,
-  review TEXT
+  review TEXT,
+  repack_costs TEXT
 );
 
 CREATE TABLE IF NOT EXISTS pos_customers (
@@ -283,7 +284,8 @@ CREATE TABLE IF NOT EXISTS pos_repacks (
   requested_by TEXT,
   approved_by TEXT,
   request_id TEXT,
-  client_id TEXT
+  client_id TEXT,
+  materials_cost REAL
 );
 CREATE INDEX IF NOT EXISTS idx_pos_repacks_repack_date ON pos_repacks (repack_date);
 

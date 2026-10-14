@@ -526,7 +526,12 @@ function readSettings() {
   });
   return s;
 }
-function productOut(p) { const sh = shopOf(p); return Object.assign(strip(p, role), { shop_stock: sh, gudang_stock: Math.round((num(p.stock) - sh) * 1000) / 1000 }); }
+function productOut(p) {
+  const sh = shopOf(p), o = Object.assign(strip(p, role), { shop_stock: sh, gudang_stock: Math.round((num(p.stock) - sh) * 1000) / 1000 });
+  // v48: the pack's materials with their prices go to the owner, manager and accountant; the cashier / rep see the names only
+  if (str(o.repack_costs) && ['owner', 'manager', 'akuntan'].indexOf(role) < 0) o.repack_costs = JSON.stringify(repackCostsOf(p).map(function (x) { return { n: x.name }; }));
+  return o;
+}
 
 // ---- Activity log for the owner: every change, correction or decision, with date and time ----
 function logAct(kind, summary, ref, amount, level) {
@@ -986,6 +991,39 @@ function fixSummary(no, changes) { return 'Koreksi barang masuk ' + no + ': ' + 
 const REPACK_STALE_MS = 24 * 3600000;
 // v39: the same bulk repacked again within this window asks the cashier first: "is this another repack, not the same one?"
 const REPACK_RECENT_MS = 2 * 3600000;
+// v48 (owner 2026-10-14: «اجعل ايضا هناك مصاريف للتعبية مثلا اختيار الستيكر الغطاء كثير اشياء فاجعل للمدير له خانات يمكن ان يضيفها
+// للتكلفة التعبية»): the pack's materials (sticker, lid, jar, …) with their cost PER PACK, set by the manager / owner in the repack
+// setup and stored on the pack product (repack_costs, JSON [{n, c}]). Every repack adds them × packs made to the packaging cost,
+// so the pack's cost price carries them; anything else (a one-off cost) is still typed in the repack form.
+const REPACK_COSTS_MAX = 12;
+function repackCostsOf(p) {
+  let a = [];
+  try { a = JSON.parse(str(p && p.repack_costs) || '[]'); } catch (e) { a = []; }
+  return (Array.isArray(a) ? a : []).map(function (x) { return { name: str(x && x.n).slice(0, 40), cost: Math.max(0, money(x && x.c)) }; })
+    .filter(function (x) { return x.name; }).slice(0, REPACK_COSTS_MAX);
+}
+function repackCostPer(p) { return repackCostsOf(p).reduce(function (t, x) { return t + x.cost; }, 0); }
+/** The manager's list → the stored JSON ('' = none), or {error}. Empty rows are skipped. */
+function repackCostsIn(list) {
+  if (!Array.isArray(list)) return { error: 'Daftar bahan kemasan tidak valid' };
+  const out = [];
+  for (let i = 0; i < list.length; i++) {
+    const x = list[i] || {}, raw = str(x.name), c = Number(x.cost === '' || x.cost === undefined || x.cost === null ? 0 : x.cost);
+    if (!raw && !c) continue;
+    const name = safeName(raw, 40);
+    if (!name) return { error: raw ? 'Nama bahan kemasan hanya boleh huruf dan angka (maks. 40)' : 'Nama bahan kemasan wajib diisi' };
+    if (!isFinite(c) || c < 0 || c > 10000000) return { error: 'Biaya ' + name + ' tidak valid' };
+    out.push({ n: name, c: Math.round(c) });
+  }
+  if (out.length > REPACK_COSTS_MAX) return { error: 'Paling banyak ' + REPACK_COSTS_MAX + ' bahan kemasan' };
+  return { json: out.length ? JSON.stringify(out) : '', list: out };
+}
+function rpTxt(v) { return 'Rp ' + String(Math.round(Math.abs(num(v)))).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+function repackCostsText(list, unit) {
+  if (!list.length) return 'tanpa bahan kemasan';
+  const tot = list.reduce(function (t, x) { return t + num(x.c !== undefined ? x.c : x.cost); }, 0);
+  return 'bahan kemasan per ' + (unit || 'pcs') + ': ' + list.map(function (x) { return str(x.n || x.name) + ' ' + rpTxt(x.c !== undefined ? x.c : x.cost); }).join(' + ') + ' = ' + rpTxt(tot);
+}
 /** The pack product, its bulk product and the quantities (packs made; bulk used = packs × size unless typed). */
 function repackPlan(toId, toQtyIn, fromQtyIn) {
   const to = productById[String(toId)];
@@ -1005,7 +1043,8 @@ function repackText(pl) { return str(pl.from_name) + ' ' + fmtN(pl.from_qty) + '
 /** Moves the stock bulk → packs and records it (pos_repacks + two KEMAS ULANG goods rows + the activity line). */
 function applyRepack(P, o) {
   const from = P.from, to = P.to, toQty = P.toQty, fromQty = P.fromQty;
-  const packCost = Math.max(0, money(o.packaging_cost));
+  const matCost = Math.round(repackCostPer(to) * toQty); // v48: the pack's materials (sticker, lid …) × packs made
+  const packCost = Math.max(0, money(o.packaging_cost)) + matCost;
   const unitCost = Math.round((fromQty * money(from.cost_price) + packCost) / toQty);
   const date = isDate(o.date) ? o.date : jkDate();
   const fromNew = Math.round((num(from.stock) - fromQty) * 1000) / 1000;
@@ -1019,7 +1058,7 @@ function applyRepack(P, o) {
     repack_id: 'RP' + rand(6), repack_date: date, repack_time: new Date().toISOString(), user: user,
     from_product_id: from.id, from_name: str(from.name), from_unit: str(from.unit), from_qty: fromQty,
     to_product_id: to.id, to_name: str(to.name), to_unit: str(to.unit), to_qty: toQty, pack_size: P.size,
-    expected_qty: P.expected, yield_pct: P.yield_pct, loss_qty: P.loss_qty, packaging_cost: packCost, unit_cost: unitCost,
+    expected_qty: P.expected, yield_pct: P.yield_pct, loss_qty: P.loss_qty, packaging_cost: packCost, unit_cost: unitCost, materials_cost: matCost,
     exp_date: isDate(o.exp_date) ? o.exp_date : '', note: str(o.note).slice(0, 300),
     // v38: who asked (a cashier's request) and who approved it; empty for a direct repack by the owner / manager
     requested_by: str(o.requested_by), approved_by: str(o.approved_by), request_id: str(o.request_id),
@@ -1035,7 +1074,7 @@ function applyRepack(P, o) {
   if (role === 'owner') stock[1].cost_price = toCost;
   logAct('kemas_ulang', 'Kemas ulang ' + repackText(rp) + (rp.requested_by ? ' — diminta ' + rp.requested_by + ', disetujui ' + rp.approved_by : ''), rp.repack_id, 0, o.level || (rp.yield_pct < 95 ? 'warn' : 'info'));
   const out = Object.assign({}, rp);
-  if (role !== 'owner') { delete out.unit_cost; delete out.packaging_cost; }
+  if (role !== 'owner') { delete out.unit_cost; delete out.packaging_cost; delete out.materials_cost; }
   return { rp: rp, out: out, stock: stock };
 }
 /** The pending repack request that holds the lock on this bulk product (one at a time). */
@@ -1557,7 +1596,7 @@ switch (req.action) {
     const recent = rows('Get Recent Repacks');
     if (cid) {
       const same = recent.find(function (r) { return str(r.client_id) === cid; });
-      if (same) { const o = Object.assign({}, same); if (role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; } return done({ ok: true, duplicate: true, repack: o }); }
+      if (same) { const o = Object.assign({}, same); if (role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; delete o.materials_cost; } return done({ ok: true, duplicate: true, repack: o }); }
     }
     const P = repackPlan(data.to_product_id, data.to_qty, data.from_qty);
     if (P.error) return P.error;
@@ -2432,24 +2471,61 @@ switch (req.action) {
     // v43 (owner 2026-10-13: «اختيار البضائع لاعادة التعبئة للمواد يقوم بها المدير ليس المالك و يصل اشعار للمالك و المحاسب»):
     // the manager (and the owner) chooses which product is packed in the shop from which bulk product and how much goes in one
     // pack; nothing else of the product changes. The owner and the accountant are told (the other roles of the three).
+    // v48 (owner 2026-10-14: «في بعض الأحيان نقوم بتعبية منتج جديد مثلا نختار عبوة جديدة و ستيكر جديد»): the pack can be a NEW
+    // product made right here (new_product: name, unit, barcode, selling price — stock 0, its category from the bulk), and the
+    // pack's materials with their cost per pack (costs: [{name, cost}], see repackCostsOf) are set here too.
     if (role !== 'owner' && role !== 'manager') return fail('FORBIDDEN', 'Hanya pemilik / manajer');
-    const pk = productById[String(data.product_id)];
-    if (!pk) return fail('NOT_FOUND', 'Produk tidak ditemukan');
+    const nw = data.new_product && typeof data.new_product === 'object' ? data.new_product : null;
+    const pk = nw ? null : productById[String(data.product_id)];
+    if (!nw && !pk) return fail('NOT_FOUND', 'Produk tidak ditemukan');
     const bulkId = num(data.repack_from) > 0 ? num(data.repack_from) : 0;
     const bulk = bulkId ? productById[String(bulkId)] : null;
-    if (bulkId && (!bulk || bulk.id === pk.id)) return fail('INVALID', 'Produk curah (asal kemasan) tidak valid');
-    if (bulk && num(bulk.repack_from) === num(pk.id)) return fail('INVALID', 'Produk curah itu sendiri dibuat dari produk ini');
+    if (bulkId && (!bulk || (pk && bulk.id === pk.id))) return fail('INVALID', 'Produk curah (asal kemasan) tidak valid');
+    if (nw && !bulk) return fail('INVALID', 'Pilih produk curah untuk kemasan baru');
+    if (pk && bulk && num(bulk.repack_from) === num(pk.id)) return fail('INVALID', 'Produk curah itu sendiri dibuat dari produk ini');
     if (bulk && !(num(data.repack_qty) > 0)) return fail('INVALID', 'Isi per kemasan wajib diisi');
     const qty = bulk ? Math.round(num(data.repack_qty) * 1000) / 1000 : 0;
+    const cIn = data.costs === undefined ? null : repackCostsIn(data.costs);
+    if (cIn && cIn.error) return fail('INVALID', cIn.error);
+    const who = ' — oleh ' + (role === 'manager' ? 'manajer ' : 'pemilik ') + me.name;
+    const told = ['owner', 'manager', 'akuntan'].filter(function (r) { return r !== role; });
+    const desc = function (b, q, unit) { return b ? str(b.name) + ', ' + fmtN(q) + ' ' + str(b.unit) + ' per ' + str(unit || 'pcs') : 'tidak dikemas ulang'; };
+    if (nw) {
+      const name = safeName(nw.name, 80);
+      if (!name) return fail('INVALID', str(nw.name) ? 'Nama kemasan hanya boleh huruf, angka dan . , \' & ( ) / % + # -' : 'Nama kemasan baru wajib diisi');
+      if (products.some(function (x) { return str(x.name).toLowerCase() === name.toLowerCase(); })) return fail('INVALID', 'Produk dengan nama ini sudah ada — pilih dari daftar');
+      const sku = str(nw.sku);
+      if (sku && !/^[A-Za-z0-9._-]{1,40}$/.test(sku)) return fail('INVALID', 'SKU / barcode hanya boleh huruf, angka, titik, garis');
+      if (sku && products.some(function (x) { return str(x.sku) === sku; })) return fail('INVALID', 'SKU/barcode sudah dipakai');
+      const unit = str(nw.unit) || 'pcs';
+      if (!/^[\p{L}\p{N} .\/-]{1,15}$/u.test(unit)) return fail('INVALID', 'Satuan tidak valid');
+      const price = money(nw.retail_price);
+      if (!(price > 0)) return fail('INVALID', 'Harga jual kemasan baru wajib diisi');
+      if (str(nw.size).length > 40) return fail('INVALID', 'Ukuran terlalu panjang');
+      const np = {
+        sku: sku, name: name, category: str(bulk.category), unit: unit, cost_price: 0, retail_price: price, wholesale_price: 0,
+        wholesale_min_qty: 0, stock: 0, min_stock: 0, active: true, notes: '', supplier: '', size: str(nw.size).slice(0, 40), weight: '',
+        exp_date: '', exp_none: bulk.exp_none === true, repack_from: bulk.id, repack_qty: qty, repack_costs: cIn ? cIn.json : ''
+      };
+      ops.products.push(forWrite(np, -1));
+      const txt = 'Kemasan baru dibuat: ' + name + ' (' + unit + (sku ? ', barcode ' + sku : '') + ', harga jual ' + rpTxt(price) + ') dibuat dari ' + desc(bulk, qty, unit) +
+        '; ' + repackCostsText(cIn ? cIn.list : [], unit) + who;
+      logAct('atur_kemas', txt, sku || name.slice(0, 40), 0, 'info');
+      notify(told, txt, 'info');
+      return done({ ok: true, created: true, product: Object.assign({ id: null }, productOut(np)) });
+    }
     const was = num(pk.repack_from) > 0 ? productById[String(pk.repack_from)] : null, wasQty = num(pk.repack_qty);
-    if ((was ? was.id : 0) === (bulk ? bulk.id : 0) && wasQty === qty) return done({ ok: true, unchanged: true, product: productOut(pk) });
-    const np = Object.assign({}, pk, { repack_from: bulk ? bulk.id : 0, repack_qty: qty });
+    const wasCosts = str(pk.repack_costs), costs = !bulk ? '' : (cIn ? cIn.json : wasCosts);
+    if ((was ? was.id : 0) === (bulk ? bulk.id : 0) && wasQty === qty && wasCosts === costs) return done({ ok: true, unchanged: true, product: productOut(pk) });
+    const np = Object.assign({}, pk, { repack_from: bulk ? bulk.id : 0, repack_qty: qty, repack_costs: costs });
     ops.products.push(forWrite(np, pk.id));
-    const desc = function (b, q) { return b ? str(b.name) + ', ' + fmtN(q) + ' ' + str(b.unit) + ' per ' + str(pk.unit || 'pcs') : 'tidak dikemas ulang'; };
-    const txt = (bulk ? 'Kemas ulang diatur: ' + str(pk.name) + ' dibuat dari ' + desc(bulk, qty) : 'Kemas ulang dihapus: ' + str(pk.name) + ' tidak lagi dibuat dari ' + (was ? str(was.name) : '—')) +
-      (was && bulk ? ' (sebelumnya ' + desc(was, wasQty) + ')' : '') + ' — oleh ' + (role === 'manager' ? 'manajer ' : 'pemilik ') + me.name;
+    const sameSetup = (was ? was.id : 0) === (bulk ? bulk.id : 0) && wasQty === qty;
+    let txt = bulk ? (sameSetup ? 'Biaya kemasan diubah: ' + str(pk.name) : 'Kemas ulang diatur: ' + str(pk.name) + ' dibuat dari ' + desc(bulk, qty, pk.unit) + (was ? ' (sebelumnya ' + desc(was, wasQty, pk.unit) + ')' : ''))
+      : 'Kemas ulang dihapus: ' + str(pk.name) + ' tidak lagi dibuat dari ' + (was ? str(was.name) : '—');
+    if (bulk && costs !== wasCosts) txt += '; ' + repackCostsText(cIn ? cIn.list : [], pk.unit) + (wasCosts ? ' (sebelumnya ' + repackCostsText(repackCostsOf(pk).map(function (x) { return { n: x.name, c: x.cost }; }), pk.unit) + ')' : '');
+    txt += who;
     logAct('atur_kemas', txt, String(pk.id), 0, 'info');
-    notify(['owner', 'manager', 'akuntan'].filter(function (r) { return r !== role; }), txt, 'info');
+    notify(told, txt, 'info');
     return done({ ok: true, product: productOut(np) });
   }
 
@@ -3186,7 +3262,7 @@ switch (req.action) {
       purchases: rows('Get Range Purchases').map(function (r) { const o = strip(r, role); if (role !== 'owner') delete o.total; return o; }),
       expenses: rows('Get Range Expenses').map(clean),
       shifts: rows('Get Range Shifts').map(clean),
-      repacks: rows('Get Range Repacks').map(function (r) { const o = clean(r); if (role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; } return o; })
+      repacks: rows('Get Range Repacks').map(function (r) { const o = clean(r); if (role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; delete o.materials_cost; } return o; })
     });
   }
 
