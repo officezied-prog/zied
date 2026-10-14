@@ -96,6 +96,7 @@
 <script src="../shared/tamper-guard.js"></script>
 <script src="../shared/barcode-cam.js"></script>
 <script src="../shared/install-btn.js" data-host="#login:not([hidden]) > .screen-card"></script>
+<script src="../shared/app-update.js"></script>
 <script src="../shared/field-mock.js"></script>
 <script src="../shared/gmaps-import.js"></script>
 <script src="mock.js"></script>
@@ -107,7 +108,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.6.6';
+const APP_VERSION = 'kasir-1.6.7';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -5247,6 +5248,7 @@ async function init() {
   if ('serviceWorker' in navigator && /^https:|^http:\/\/(localhost|127\.0\.0\.1)/.test(location.href) && !/[?&]nosw\b/.test(location.search)) {
     navigator.serviceWorker.register('sw.js', { scope: './' }).catch(() => { });
   }
+  try { if (window.KUpdate) KUpdate.start({ version: APP_VERSION, idle: () => !$('#login').hidden }); } catch (e) { } // v49: a new version reaches every phone by itself
   if (MOCK) { try { await MockServer.ensure(); } catch (e) { console.error(e); } }
   try { await migrateSecrets(); } catch (e) { console.error(e); }
   const sess = KS.get('session'), live = SESS.get();
