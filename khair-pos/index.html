@@ -148,7 +148,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.7.6';
+const APP_VERSION = '2.7.7';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -6676,7 +6676,7 @@ function gdDrawRepack(body) {
         <div id="rp-info" class="small muted" style="margin:-4px 0 10px"></div>
         <div class="grid2"><div class="field"><label class="f" for="rp-qty">${esc(t('rp.pieces'))}</label><input class="input num" id="rp-qty" inputmode="decimal" autocomplete="off"></div>
           <div class="field"><label class="f" for="rp-from">${esc(t('rp.bulk_used'))} (<span id="rp-unit">—</span>)</label><input class="input num" id="rp-from" inputmode="decimal" autocomplete="off" placeholder="${esc(t('rp.auto'))}"></div></div>
-        <div class="grid2"><div class="field"><label class="f" for="rp-cost">${esc(t('rp.pack_cost'))} (Rp)</label><input class="input num" id="rp-cost" inputmode="numeric"></div>
+        <div class="grid2"><div class="field"><label class="f" for="rp-cost">${esc(t('rp.extra_cost'))} (Rp)</label><input class="input num" id="rp-cost" inputmode="numeric" placeholder="${esc(t('rp.extra_ph'))}"></div>
           <div class="field"><label class="f" for="rp-exp">${esc(t('pu.exp'))}</label><input class="input" type="date" id="rp-exp"></div></div>
         <div class="field"><label class="f" for="rp-note">${esc(t('notes'))}</label><input class="input" id="rp-note"></div>
         <div class="rp-preview" id="rp-preview"></div><div class="red" id="rp-err" role="alert"></div>
@@ -6696,27 +6696,76 @@ function gdDrawRepack(body) {
    the manager (and the owner) chooses which product is packed in the shop, from which bulk product and how much goes in one
    pack — here in Gudang → Kemas ulang, no product form needed. The server tells the owner and the accountant. */
 const canSetRepack = () => isOwner() || S.role === 'manager';
+/* v48 (owner 2026-10-14: «في بعض الأحيان نقوم بتعبية منتج جديد مثلا نختار عبوة جديدة و ستيكر جديد … واجعل ايضا هناك مصاريف للتعبية
+   مثلا اختيار الستيكر الغطاء كثير اشياء فاجعل للمدير له خانات يمكن ان يضيفها للتكلفة التعبية»): the pack can be a NEW product made
+   right here (new jar + new sticker), and the pack's materials (sticker, lid, jar …) with their cost per pack are set here; every
+   repack adds them × packs made to the pack's cost (server: repackCostsOf). */
+const rpCostsOf = p => { let a = []; try { a = JSON.parse(String((p && p.repack_costs) || '') || '[]'); } catch (e) { a = []; } return (Array.isArray(a) ? a : []).map(x => ({ name: String((x && x.n) || '').trim(), cost: int(x && x.c) })).filter(x => x.name); };
+const rpCostPer = p => rpCostsOf(p).reduce((t, x) => t + x.cost, 0);
+const RS = { rows: [] };
+const RS_NAMES = ['Stiker', 'Label', 'Tutup', 'Toples', 'Botol', 'Plastik', 'Kotak', 'Box', 'Pita', 'Segel', 'Kardus'];
+function rsCostsLine(p) {
+  const c = rpCostsOf(p); if (!c.length) return '';
+  return t('rps.costs_line', { list: c.map(x => `${x.name} ${fmtRp(x.cost)}`).join(' + '), rp: fmtRp(rpCostPer(p)), u: p.unit || 'pcs' });
+}
 function rsPanelHTML(packs) {
   const prods = S.products.filter(p => p.active !== false).slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
   const opt = p => `<option value="${esc(p.id)}" data-unit="${esc(p.unit || '')}">${esc(p.name)}</option>`;
   return `<div class="panel" id="rp-setup"><h3>${ic('gear')} ${esc(t('rps.title'))}</h3><div class="pb">
     <p class="small muted" style="margin-top:0">${esc(t(isOwner() ? 'rps.hint_owner' : 'rps.hint'))}</p>
     <div class="grid3">
-      <div class="field"><label class="f" for="rs-pack">${esc(t('rps.pack'))}</label><select class="input" id="rs-pack"><option value="">— ${esc(t('rp.pick'))} —</option>${prods.map(opt).join('')}</select></div>
+      <div class="field"><label class="f" for="rs-pack">${esc(t('rps.pack'))}</label><select class="input" id="rs-pack"><option value="">— ${esc(t('rp.pick'))} —</option><option value="__new">＋ ${esc(t('rps.new_pack'))}</option>${prods.map(opt).join('')}</select></div>
       <div class="field"><label class="f" for="rs-bulk">${esc(t('rps.bulk'))}</label><select class="input" id="rs-bulk"><option value="">— ${esc(t('rp.pick'))} —</option>${prods.map(opt).join('')}</select></div>
       <div class="field"><label class="f" for="rs-qty">${esc(t('rps.qty'))} (<span id="rs-unit">—</span>)</label><input class="input num" id="rs-qty" inputmode="decimal" autocomplete="off"></div>
     </div>
+    <div id="rs-new" class="rs-new" hidden style="border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin:0 0 10px">
+      <div class="small muted" style="margin-bottom:6px">${esc(t('rps.new_hint'))}</div>
+      <div class="grid2"><div class="field"><label class="f" for="rs-n-name">${esc(t('rps.new_name'))}</label><input class="input" id="rs-n-name" maxlength="80" autocomplete="off"></div>
+        <div class="field"><label class="f" for="rs-n-price">${esc(t('rps.new_price'))}</label><input class="input num" id="rs-n-price" inputmode="numeric" autocomplete="off"></div></div>
+      <div class="grid2"><div class="field"><label class="f" for="rs-n-unit">${esc(t('rps.new_unit'))}</label><input class="input" id="rs-n-unit" maxlength="15" placeholder="pcs" autocomplete="off"></div>
+        <div class="field"><label class="f" for="rs-n-sku">${esc(t('rps.new_sku'))}</label><div class="row" style="gap:6px"><input class="input grow" id="rs-n-sku" maxlength="40" autocomplete="off" style="min-width:0">${camOk() ? `<button type="button" class="icon-btn" id="rs-n-sku-cam" style="flex:0 0 auto;width:42px;height:42px" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}">${ic('scan')}</button>` : ''}</div></div></div>
+    </div>
+    <div class="field" id="rs-costs-box"><label class="f">${esc(t('rps.costs'))} <span class="small muted">— ${esc(t('rps.costs_hint'))}</span></label>
+      <div id="rs-costs"></div>
+      <div class="row wrap" style="gap:8px;margin-top:6px"><button type="button" class="btn xs" data-act="rs-cost-add" id="rs-cost-add">＋ ${esc(t('rps.cost_add'))}</button><span class="grow"></span><b class="small" id="rs-cost-total"></b></div>
+      <datalist id="rs-cost-names">${RS_NAMES.map(n => `<option value="${esc(n)}">`).join('')}</datalist></div>
     <div class="red" id="rs-err" role="alert"></div>
     <div class="row" style="justify-content:flex-end"><button class="btn primary" id="rs-save" data-act="rs-save">${ic('check')} ${esc(t('rps.save'))}</button></div>
-    ${packs.length ? `<h4 style="margin:12px 0 6px">${esc(t('rps.list'))}</h4><table class="tbl" id="rs-list"><tbody>${packs.map(p => { const b = prodById(p.repack_from) || {}; return `<tr data-rs="${esc(p.id)}"><td><b>${esc(p.name)}</b><div class="small muted">← ${esc(b.name || '')} · ${fmtQty(p.repack_qty)} ${esc(b.unit || '')} / ${esc(p.unit || 'pcs')}</div></td>
+    ${packs.length ? `<h4 style="margin:12px 0 6px">${esc(t('rps.list'))}</h4><table class="tbl" id="rs-list"><tbody>${packs.map(p => { const b = prodById(p.repack_from) || {}, cl = rsCostsLine(p); return `<tr data-rs="${esc(p.id)}"><td><b>${esc(p.name)}</b><div class="small muted">← ${esc(b.name || '')} · ${fmtQty(p.repack_qty)} ${esc(b.unit || '')} / ${esc(p.unit || 'pcs')}</div>${cl ? `<div class="small" data-rs-costs>${esc(cl)}</div>` : ''}</td>
       <td class="r" style="white-space:nowrap"><button class="btn xs" data-act="rs-edit" data-id="${esc(p.id)}">${ic('edit')} ${esc(t('rps.edit'))}</button> <button class="btn xs danger" data-act="rs-del" data-id="${esc(p.id)}">${ic('trash')} ${esc(t('rps.del'))}</button></td></tr>`; }).join('')}</tbody></table>` : ''}
   </div></div>`;
 }
+function rsUnit(v) { const pk = $('#rs-pack', v).value; return pk === '__new' ? (String($('#rs-n-unit', v).value || '').trim() || 'pcs') : ((prodById(pk) || {}).unit || 'pcs'); }
+function rsCostsRead(v) { return [...v.querySelectorAll('.rs-c-row')].map(r => ({ name: String(r.querySelector('.rs-c-name').value || '').trim(), cost: moneyVal(r.querySelector('.rs-c-cost').value) })); }
+function rsCostsTotal(v) {
+  const tot = rsCostsRead(v).reduce((a, x) => a + (x.cost || 0), 0), el = $('#rs-cost-total', v);
+  if (el) el.textContent = tot ? t('rps.cost_total', { u: rsUnit(v), rp: fmtRp(tot) }) : '';
+}
+function rsCostsDraw(v) {
+  const box = $('#rs-costs', v); if (!box) return;
+  box.innerHTML = RS.rows.map((r, i) => `<div class="row rs-c-row" data-i="${i}" style="gap:6px;margin-bottom:6px"><input class="input grow rs-c-name" list="rs-cost-names" maxlength="40" placeholder="${esc(t('rps.cost_name'))}" value="${esc(r.name || '')}" aria-label="${esc(t('rps.cost_name'))}" style="min-width:0">
+    <input class="input num rs-c-cost" inputmode="numeric" placeholder="Rp" value="${r.cost ? esc(fmtNum(r.cost)) : ''}" aria-label="Rp" style="width:120px;flex:0 0 auto"><button type="button" class="btn xs ghost" data-act="rs-cost-del" data-i="${i}" aria-label="${esc(t('rps.del'))}">✕</button></div>`).join('');
+  box.querySelectorAll('.rs-c-cost').forEach(inp => inp.addEventListener('change', () => { const x = moneyVal(inp.value); inp.value = x ? fmtNum(x) : ''; rsCostsTotal(v); }));
+  box.querySelectorAll('input').forEach(inp => inp.addEventListener('input', () => { RS.rows = rsCostsRead(v); $('#rs-err', v).textContent = ''; rsCostsTotal(v); }));
+  rsCostsTotal(v);
+}
 function bindRsPanel(v) {
   const pack = $('#rs-pack', v), bulk = $('#rs-bulk', v), unit = () => { const o = bulk.selectedOptions[0]; $('#rs-unit', v).textContent = (o && o.value && o.dataset.unit) || '—'; };
-  pack.addEventListener('change', () => { const p = prodById(pack.value); if (p && num(p.repack_from) > 0) { bulk.value = String(p.repack_from); $('#rs-qty', v).value = fmtQtyInput(p.repack_qty); } $('#rs-err', v).textContent = ''; unit(); });
+  RS.rows = [];
+  pack.addEventListener('change', () => {
+    const isNew = pack.value === '__new', p = isNew ? null : prodById(pack.value);
+    $('#rs-new', v).hidden = !isNew;
+    if (p && num(p.repack_from) > 0) { bulk.value = String(p.repack_from); $('#rs-qty', v).value = fmtQtyInput(p.repack_qty); }
+    RS.rows = p ? rpCostsOf(p).map(x => ({ name: x.name, cost: x.cost })) : isNew ? RS.rows : [];
+    if (isNew) { const nm = $('#rs-n-name', v); if (nm) nm.focus(); }
+    $('#rs-err', v).textContent = ''; unit(); rsCostsDraw(v);
+  });
   bulk.addEventListener('change', () => { $('#rs-err', v).textContent = ''; unit(); });
   $('#rs-qty', v).addEventListener('input', () => { $('#rs-err', v).textContent = ''; });
+  $('#rs-n-unit', v).addEventListener('input', () => rsCostsTotal(v));
+  $('#rs-n-price', v).addEventListener('change', e => { const x = moneyVal(e.target.value); e.target.value = x ? fmtNum(x) : ''; });
+  const cam = $('#rs-n-sku-cam', v); if (cam) cam.onclick = () => cameraScan(code => { $('#rs-n-sku', v).value = String(code || '').trim().slice(0, 40); });
+  rsCostsDraw(v);
 }
 async function rsSend(data, okMsg) {
   const r = await api('set_repack', data);
@@ -6730,13 +6779,24 @@ Object.assign(ACT, {
     if (!(await confirmBox(t('rps.del_q', { name: p.name }), { danger: true })).ok) return;
     try { await rsSend({ product_id: p.id, repack_from: 0, repack_qty: 0 }, 'rps.deleted'); } catch (e) { toast(errMsg(e), 'err'); }
   },
+  'rs-cost-add': () => { const v = $('#rp-setup'); if (!v) return; RS.rows = rsCostsRead(v).concat([{ name: '', cost: 0 }]); rsCostsDraw(v); const ins = v.querySelectorAll('.rs-c-name'); if (ins.length) ins[ins.length - 1].focus(); },
+  'rs-cost-del': el => { const v = $('#rp-setup'); if (!v) return; const rows = rsCostsRead(v); rows.splice(int(el.dataset.i), 1); RS.rows = rows; $('#rs-err', v).textContent = ''; rsCostsDraw(v); },
   'rs-save': async () => {
     const v = $('#rp-setup'); if (!v) return;
     const err = $('#rs-err', v), pid = $('#rs-pack', v).value, bid = $('#rs-bulk', v).value, q = qtyVal($('#rs-qty', v).value || '');
     if (!pid || !bid || !(q > 0)) { err.textContent = t('rps.need'); return; }
     if (pid === bid) { err.textContent = t('rps.same'); return; }
+    const costs = rsCostsRead(v).filter(x => x.name || x.cost);
+    if (costs.some(x => !x.name)) { err.textContent = t('rps.cost_need_name'); return; }
+    const isNew = pid === '__new';
+    let data;
+    if (isNew) {
+      const name = String($('#rs-n-name', v).value || '').trim(), price = moneyVal($('#rs-n-price', v).value);
+      if (!name || !(price > 0)) { err.textContent = t('rps.new_need'); (name ? $('#rs-n-price', v) : $('#rs-n-name', v)).focus(); return; }
+      data = { new_product: { name, unit: String($('#rs-n-unit', v).value || '').trim() || 'pcs', sku: String($('#rs-n-sku', v).value || '').trim(), retail_price: price }, repack_from: Number(bid), repack_qty: q, costs };
+    } else data = { product_id: Number(pid), repack_from: Number(bid), repack_qty: q, costs };
     const btn = $('#rs-save', v); btn.disabled = true; err.textContent = '';
-    try { await rsSend({ product_id: Number(pid), repack_from: Number(bid), repack_qty: q }, 'rps.saved'); } catch (e) { err.textContent = errMsg(e); btn.disabled = false; }
+    try { await rsSend(data, isNew ? 'rps.created' : 'rps.saved'); } catch (e) { err.textContent = errMsg(e); btn.disabled = false; }
   }
 });
 function rpRead() {
@@ -6754,9 +6814,10 @@ function rpPreview() {
   if (!R.from || !(R.qty > 0)) { pv.className = 'rp-preview'; pv.innerHTML = `<span class="muted">${esc(t('rp.preview_empty'))}</span>`; return; }
   const over = R.fromQty > num(R.from.stock) + 1e-9, low = R.yieldPct < 95;
   pv.className = 'rp-preview' + (over ? ' bad' : low ? ' low' : '');
+  const per = rpCostPer(R.to), mat = per > 0 ? `<div data-mat>${esc(t('rp.pv_mat', { per: fmtRp(per), u: R.to.unit || 'pcs', n: fmtQty(R.qty), tot: fmtRp(Math.round(per * R.qty)) }))}</div>` : '';
   pv.innerHTML = `<div>${esc(t('rp.pv_used', { q: fmtQty(R.fromQty), u: R.from.unit || '', e: fmtQty(R.expected) }))}</div>
     <div><b data-yield>${esc(t('rp.pv_yield', { n: fmtQty(R.qty), p: NF1.format(R.yieldPct) }))}</b> · <span data-loss>${esc(t('rp.pv_loss', { q: fmtQty(R.loss), u: R.from.unit || '' }))}</span></div>
-    ${over ? `<div><b>${esc(t('rp.not_enough', { q: fmtQty(R.from.stock), u: R.from.unit || '' }))}</b></div>` : ''}`;
+    ${mat}${over ? `<div><b>${esc(t('rp.not_enough', { q: fmtQty(R.from.stock), u: R.from.unit || '' }))}</b></div>` : ''}`;
 }
 async function saveRepack(confirmRecent) {
   const R = rpRead(), err = $('#rp-err'), btn = $('#rp-save');
@@ -7864,7 +7925,11 @@ Object.assign(I18N.id, {
   'rps.title': 'Atur barang kemas ulang', 'rps.hint': 'Pilih barang kemasan kecil, barang curah asalnya dan isi per kemasan. Pemilik dan akuntan diberi tahu.',
   'rps.hint_owner': 'Pilih barang kemasan kecil, barang curah asalnya dan isi per kemasan. Manajer dan akuntan diberi tahu.', 'rps.pack': 'Barang kemasan (hasil)', 'rps.bulk': 'Dibuat dari (curah)',
   'rps.qty': 'Isi per kemasan', 'rps.save': 'Simpan pengaturan', 'rps.list': 'Sudah diatur', 'rps.edit': 'Ubah', 'rps.del': 'Hapus', 'rps.del_q': 'Hapus pengaturan kemas ulang {name}?',
-  'rps.saved': 'Pengaturan kemas ulang disimpan', 'rps.deleted': 'Pengaturan kemas ulang dihapus', 'rps.need': 'Pilih barang kemasan, barang curah dan isi per kemasan', 'rps.same': 'Barang curah tidak boleh sama dengan barang kemasan',
+  'rps.saved': 'Pengaturan kemas ulang disimpan', 'rps.deleted': 'Pengaturan kemas ulang dihapus',
+  'rps.new_pack': 'Kemasan baru (produk baru)', 'rps.new_hint': 'Kemasan baru = produk baru (toples / stiker baru). Stok mulai 0; kategorinya ikut curahnya.', 'rps.new_name': 'Nama kemasan baru', 'rps.new_price': 'Harga jual (Rp)', 'rps.new_unit': 'Satuan', 'rps.new_sku': 'Barcode (opsional)',
+  'rps.new_need': 'Isi nama dan harga jual kemasan baru', 'rps.created': 'Kemasan baru dibuat dan diatur', 'rps.costs': 'Bahan kemasan per kemasan', 'rps.costs_hint': 'stiker, tutup, toples… ditambahkan ke modal setiap kemas ulang', 'rps.cost_name': 'Nama bahan (mis. Stiker)',
+  'rps.cost_add': 'Tambah bahan', 'rps.cost_total': 'Total per {u}: {rp}', 'rps.cost_need_name': 'Isi nama bahan untuk setiap biaya', 'rps.costs_line': 'Bahan: {list} = {rp} / {u}',
+  'rp.extra_cost': 'Biaya lain', 'rp.extra_ph': 'opsional', 'rp.pv_mat': 'Bahan kemasan {per} / {u} × {n} = {tot} (otomatis)', 'rps.need': 'Pilih barang kemasan, barang curah dan isi per kemasan', 'rps.same': 'Barang curah tidak boleh sama dengan barang kemasan',
   'rp.form_title': 'Kemas ulang sekarang', 'rp.pack_product': 'Produk kemasan', 'rp.pick': 'pilih', 'rp.pieces': 'Jumlah kemasan jadi', 'rp.bulk_used': 'Curah dipakai', 'rp.auto': 'otomatis', 'rp.pack_cost': 'Biaya kemasan', 'rp.save': 'Simpan kemas ulang',
   'rp.from_bulk': 'Dari', 'rp.size': 'Isi per kemasan', 'rp.preview_empty': 'Pilih produk kemasan dan isi jumlah kemasan jadi.', 'rp.pv_used': 'Curah dipakai {q} {u} → seharusnya {e} kemasan', 'rp.pv_yield': 'Jadi {n} = hasil {p}%', 'rp.pv_loss': 'susut {q} {u}',
   'rp.not_enough': 'Stok curah tidak cukup ({q} {u})', 'rp.pick_first': 'Pilih produk kemasan dulu', 'rp.qty_invalid': 'Jumlah tidak valid', 'rp.saved': 'Kemas ulang tersimpan: {from} → {name} × {n}', 'rp.saved_toast': 'Kemas ulang tersimpan', 'rp.unit_cost': 'Modal per kemasan',
@@ -7939,7 +8004,11 @@ Object.assign(I18N.ar, {
   'rps.title': 'ضبط بضائع إعادة التعبئة', 'rps.hint': 'اختر صنف العبوة الصغيرة، والصنف السائب الذي يُعبّأ منه، وكمية كل عبوة. يصل إشعار للمالك والمحاسب.',
   'rps.hint_owner': 'اختر صنف العبوة الصغيرة، والصنف السائب الذي يُعبّأ منه، وكمية كل عبوة. يصل إشعار للمدير والمحاسب.', 'rps.pack': 'صنف العبوة (الناتج)', 'rps.bulk': 'يُعبّأ من (السائب)',
   'rps.qty': 'كمية كل عبوة', 'rps.save': 'حفظ الضبط', 'rps.list': 'المضبوط حاليًا', 'rps.edit': 'تعديل', 'rps.del': 'حذف', 'rps.del_q': 'حذف ضبط إعادة تعبئة {name}؟',
-  'rps.saved': 'تم حفظ ضبط إعادة التعبئة', 'rps.deleted': 'تم حذف ضبط إعادة التعبئة', 'rps.need': 'اختر صنف العبوة والصنف السائب وكمية كل عبوة', 'rps.same': 'لا يمكن أن يكون السائب هو نفس صنف العبوة',
+  'rps.saved': 'تم حفظ ضبط إعادة التعبئة', 'rps.deleted': 'تم حذف ضبط إعادة التعبئة',
+  'rps.new_pack': 'عبوة جديدة (منتج جديد)', 'rps.new_hint': 'العبوة الجديدة = منتج جديد (علبة / ستيكر جديد). المخزون يبدأ من 0، وفئته نفس فئة السائب.', 'rps.new_name': 'اسم العبوة الجديدة', 'rps.new_price': 'سعر البيع (روبية)', 'rps.new_unit': 'الوحدة', 'rps.new_sku': 'الباركود (اختياري)',
+  'rps.new_need': 'اكتب اسم العبوة الجديدة وسعر بيعها', 'rps.created': 'تم إنشاء العبوة الجديدة وضبطها', 'rps.costs': 'مواد التعبئة لكل عبوة', 'rps.costs_hint': 'ستيكر، غطاء، علبة… تُضاف إلى تكلفة كل تعبئة', 'rps.cost_name': 'اسم المادة (مثلًا ستيكر)',
+  'rps.cost_add': 'إضافة مادة', 'rps.cost_total': 'المجموع لكل {u}: {rp}', 'rps.cost_need_name': 'اكتب اسم المادة لكل تكلفة', 'rps.costs_line': 'المواد: {list} = {rp} / {u}',
+  'rp.extra_cost': 'تكاليف أخرى', 'rp.extra_ph': 'اختياري', 'rp.pv_mat': 'مواد التعبئة {per} / {u} × {n} = {tot} (تلقائيًا)', 'rps.need': 'اختر صنف العبوة والصنف السائب وكمية كل عبوة', 'rps.same': 'لا يمكن أن يكون السائب هو نفس صنف العبوة',
   'rp.form_title': 'إعادة التعبئة الآن', 'rp.pack_product': 'منتج العبوة', 'rp.pick': 'اختر', 'rp.pieces': 'عدد العبوات الناتجة', 'rp.bulk_used': 'السائب المستخدم', 'rp.auto': 'تلقائي', 'rp.pack_cost': 'تكلفة التغليف', 'rp.save': 'حفظ إعادة التعبئة',
   'rp.from_bulk': 'من', 'rp.size': 'محتوى العبوة', 'rp.preview_empty': 'اختر منتج العبوة وأدخل عدد العبوات الناتجة.', 'rp.pv_used': 'السائب المستخدم {q} {u} ← المتوقع {e} عبوة', 'rp.pv_yield': 'الناتج {n} = نسبة {p}%', 'rp.pv_loss': 'فاقد {q} {u}',
   'rp.not_enough': 'مخزون السائب غير كافٍ ({q} {u})', 'rp.pick_first': 'اختر منتج العبوة أولًا', 'rp.qty_invalid': 'كمية غير صالحة', 'rp.saved': 'حُفظت إعادة التعبئة: {from} ← {name} × {n}', 'rp.saved_toast': 'حُفظت إعادة التعبئة', 'rp.unit_cost': 'تكلفة العبوة',

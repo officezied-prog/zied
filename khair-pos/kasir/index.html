@@ -107,7 +107,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.6.5';
+const APP_VERSION = 'kasir-1.6.6';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -4000,6 +4000,8 @@ const rkPacks = () => S.products.filter(p => p.active !== false && num(p.repack_
 /** Same formulas as the server: packs expected from the bulk used, the yield and the loss. */
 function rkCalc(size, qty, fromQty) { const expected = size > 0 ? roundQty(fromQty / size) : 0; return { expected, yieldPct: expected > 0 ? Math.round(qty / expected * 1000) / 10 : 0, loss: roundQty(fromQty - qty * size) }; }
 /** The preview line: bulk used → expected packs, made = yield %, loss; too little bulk in stock → red. */
+/** v48: the names of a pack's materials (the manager sets them with their cost in the owner app; the cashier sees the names only). */
+function rkMaterials(p) { let a = []; try { a = JSON.parse(String((p && p.repack_costs) || '') || '[]'); } catch (e) { a = []; } return (Array.isArray(a) ? a : []).map(x => String((x && x.n) || '').trim()).filter(Boolean); }
 function rkPreview(box, size, unit, stock, qty, fromQty) {
   if (!box) return;
   if (!(qty > 0) || !(fromQty > 0) || !(size > 0)) { box.className = 'rp-preview'; box.innerHTML = `<span class="muted">${esc(t('rk.preview_empty'))}</span>`; return; }
@@ -4020,7 +4022,7 @@ function openRepack() {
       <div id="rk-info" class="small muted" style="margin:-4px 0 10px"></div>
       <div class="grid2"><div class="field"><label class="f" for="rk-qty">${esc(t('rk.pieces'))}</label><input class="input num" id="rk-qty" data-rule="num" inputmode="decimal" autocomplete="off"></div>
         <div class="field"><label class="f" for="rk-from">${esc(t('rk.bulk_used'))} (<span id="rk-unit">—</span>)</label><input class="input num" id="rk-from" data-rule="num" inputmode="decimal" autocomplete="off" placeholder="${esc(t('rk.auto'))}"></div></div>
-      <div class="grid2"><div class="field"><label class="f" for="rk-cost">${esc(t('rk.pack_cost'))} (Rp)</label><input class="input num" id="rk-cost" data-rule="num" inputmode="numeric" autocomplete="off"></div>
+      <div class="grid2"><div class="field"><label class="f" for="rk-cost">${esc(t('rk.extra_cost'))} (Rp)</label><input class="input num" id="rk-cost" data-rule="num" inputmode="numeric" autocomplete="off" placeholder="${esc(t('rk.extra_ph'))}"></div>
         <div class="field"><label class="f" for="rk-exp">${esc(t('rk.exp'))}</label><input class="input" type="date" id="rk-exp"></div></div>
       <div class="field"><label class="f" for="rk-note">${esc(t('notes'))}</label><input class="input" id="rk-note" maxlength="300" autocomplete="off"></div>
       <div class="rp-preview" id="rk-preview"></div><div class="err" id="rk-err" role="alert"></div><div id="rk-res"></div>`,
@@ -4035,7 +4037,10 @@ function openRepack() {
   const draw = () => {
     const r = read();
     $('#rk-unit', el).textContent = r.from ? (r.from.unit || '') : '—';
-    $('#rk-info', el).innerHTML = r.from ? `${esc(t('rk.from_bulk'))}: <b>${esc(r.from.name)}</b> · ${esc(t('stock'))} <b class="num" id="rk-bulk-stock">${fmtQty(r.from.stock)} ${esc(r.from.unit || '')}</b> · ${esc(t('rk.size'))}: <b>${fmtQty(r.size)} ${esc(r.from.unit || '')}</b>` : '';
+    // v48: the pack's materials (sticker, lid …) set by the manager — the cashier sees their names; their cost is added by the server
+    const mats = r.to ? rkMaterials(r.to) : [];
+    $('#rk-info', el).innerHTML = r.from ? `${esc(t('rk.from_bulk'))}: <b>${esc(r.from.name)}</b> · ${esc(t('stock'))} <b class="num" id="rk-bulk-stock">${fmtQty(r.from.stock)} ${esc(r.from.unit || '')}</b> · ${esc(t('rk.size'))}: <b>${fmtQty(r.size)} ${esc(r.from.unit || '')}</b>` +
+      (mats.length ? `<div id="rk-mats">${esc(t('rk.mats', { list: mats.join(', ') }))}</div>` : '') : '';
     rkPreview($('#rk-preview', el), r.size, r.from ? r.from.unit : '', r.from ? r.from.stock : null, r.qty, r.fromQty);
   };
   ['#rk-to', '#rk-qty', '#rk-from'].forEach(s => $(s, el).addEventListener('input', draw));
@@ -5165,7 +5170,7 @@ Object.assign(I18N.id, {
   'rk.hint': 'Barang curah yang sudah dikemas kecil: pilih kemasannya, isi berapa kemasan jadi lalu simpan. Stok langsung berubah; pemilik, manajer dan akuntan diberi tahu.',
   'rk.hint_mgr': 'Barang curah yang dikemas kecil di toko: stok curah berkurang, stok kemasan bertambah. Pemilik dan akuntan diberi tahu.',
   'rk.none': 'Belum ada produk kemas ulang. Manajer mengaturnya di aplikasi pemilik: Gudang → Kemas ulang → "Atur barang kemas ulang".', 'rk.pack_product': 'Produk kemasan', 'rk.pick': 'pilih',
-  'rk.pieces': 'Jumlah kemasan jadi', 'rk.bulk_used': 'Curah dipakai', 'rk.auto': 'otomatis', 'rk.pack_cost': 'Biaya kemasan', 'rk.exp': 'Kedaluwarsa',
+  'rk.pieces': 'Jumlah kemasan jadi', 'rk.bulk_used': 'Curah dipakai', 'rk.auto': 'otomatis', 'rk.pack_cost': 'Biaya kemasan', 'rk.extra_cost': 'Biaya lain', 'rk.extra_ph': 'opsional', 'rk.mats': 'Bahan kemasan: {list} (biayanya dihitung otomatis)', 'rk.exp': 'Kedaluwarsa',
   'rk.from_bulk': 'Dari', 'rk.size': 'Isi per kemasan', 'rk.preview_empty': 'Pilih produk kemasan dan isi jumlah kemasan jadi.',
   'rk.pv_used': 'Curah dipakai {q} {u} → seharusnya {e} kemasan', 'rk.pv_yield': 'Jadi {n} = hasil {p}%', 'rk.pv_loss': 'susut {q} {u}',
   'rk.not_enough': 'Stok curah tidak cukup ({q} {u})', 'rk.pick_first': 'Pilih produk kemasan dulu', 'rk.qty_invalid': 'Jumlah tidak valid',
@@ -5189,7 +5194,7 @@ Object.assign(I18N.ar, {
   'rk.hint': 'بضاعة سائبة عُبّئت في عبوات صغيرة: اختر العبوة واكتب عدد العبوات الناتجة ثم احفظ. يتغير المخزون فورًا ويصل إشعار إلى المالك والمدير والمحاسب.',
   'rk.hint_mgr': 'بضاعة سائبة تُعبّأ صغيرة في المتجر: ينقص مخزون السائب ويزيد مخزون العبوات. يصل إشعار إلى المالك والمحاسب.',
   'rk.none': 'لا توجد منتجات معاد تعبئتها. يضبطها المدير في تطبيق الإدارة: المخزن ← إعادة التعبئة ← «ضبط بضائع إعادة التعبئة».', 'rk.pack_product': 'منتج العبوة', 'rk.pick': 'اختر',
-  'rk.pieces': 'عدد العبوات الناتجة', 'rk.bulk_used': 'السائب المستخدم', 'rk.auto': 'تلقائي', 'rk.pack_cost': 'تكلفة التغليف', 'rk.exp': 'تاريخ الانتهاء',
+  'rk.pieces': 'عدد العبوات الناتجة', 'rk.bulk_used': 'السائب المستخدم', 'rk.auto': 'تلقائي', 'rk.pack_cost': 'تكلفة التغليف', 'rk.extra_cost': 'تكاليف أخرى', 'rk.extra_ph': 'اختياري', 'rk.mats': 'مواد التعبئة: {list} (تُحسب تكلفتها تلقائيًا)', 'rk.exp': 'تاريخ الانتهاء',
   'rk.from_bulk': 'من', 'rk.size': 'محتوى العبوة', 'rk.preview_empty': 'اختر منتج العبوة واكتب عدد العبوات الناتجة.',
   'rk.pv_used': 'السائب المستخدم {q} {u} ← المتوقع {e} عبوة', 'rk.pv_yield': 'الناتج {n} = نسبة {p}%', 'rk.pv_loss': 'الفاقد {q} {u}',
   'rk.not_enough': 'مخزون السائب لا يكفي ({q} {u})', 'rk.pick_first': 'اختر منتج العبوة أولًا', 'rk.qty_invalid': 'الكمية غير صحيحة',
