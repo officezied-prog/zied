@@ -3259,7 +3259,8 @@ switch (req.action) {
       sales: rows('Get Range Sales').map(function (r) { return strip(r, role); }),
       items: rows('Get Range Items').map(function (r) { return strip(r, role); }),
       payments: rows('Get Range Payments').map(clean),
-      purchases: rows('Get Range Purchases').map(function (r) { const o = strip(r, role); if (role !== 'owner') delete o.total; return o; }),
+      // v50: the note totals go with the purchase prices: the owner, and the accountant / manager when the owner allows it
+      purchases: rows('Get Range Purchases').map(function (r) { const o = strip(r, role); if (!costOk()) delete o.total; return o; }),
       expenses: rows('Get Range Expenses').map(clean),
       shifts: rows('Get Range Shifts').map(clean),
       repacks: rows('Get Range Repacks').map(function (r) { const o = clean(r); if (role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; delete o.materials_cost; } return o; })
