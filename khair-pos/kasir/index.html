@@ -97,6 +97,7 @@
 <script src="../shared/barcode-cam.js"></script>
 <script src="../shared/pick.js"></script>
 <script src="../shared/pay-split.js"></script>
+<script src="../shared/printer.js"></script>
 <script src="../shared/install-btn.js" data-host="#login:not([hidden]) > .screen-card"></script>
 <script src="../shared/app-update.js"></script>
 <script src="../shared/field-mock.js"></script>
@@ -110,7 +111,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.7.2';
+const APP_VERSION = 'kasir-1.7.3';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -2417,6 +2418,20 @@ function receiptText(rc) {
   if (rc.recorded) out.push(t('rc.recorded'));
   return out.join('\n');
 }
+/* v54 (owner 2026-10-15: «أحاول أن أربط التطبيق بهذه المطبعة الصغيرة ولكن لا يعمل. أريد من التطبيق أن يرتبط بكثير من أنواع من المطابع»):
+   the receipt goes to the printer chosen on this device (Lainnya → Printer struk, shared/printer.js): the print window as before, or
+   straight as ESC/POS — RawBT (Android), Bluetooth (BLE), USB, or a COM port. */
+async function printReceipt(rc, btn) {
+  if (KPrint.cfg().mode === 'system') { printHTML(receiptHTML(rc)); return; }
+  if (btn) btn.disabled = true;
+  try { await KPrint.send(KPrint.receipt(rc, settings())); toast(KPrint.text(S.lang, 'sent'), 'ok', 2500); }
+  catch (e) { toast(KPrint.errText(S.lang, e), 'err', 8000); }
+  finally { if (btn) btn.disabled = false; }
+}
+function openPrinter() {
+  const el = openModal({ title: KPrint.text(S.lang, 'title'), id: 'printer', body: '<div id="prn-panel"></div>', foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button>` });
+  KPrint.panel($('#prn-panel', el), S.lang, { store: settings(), printHTML });
+}
 function printHTML(html) {
   $('#page-style').textContent = `@media print{@page{size:${paperW()}mm auto;margin:2mm}}`;
   $('#print-area').innerHTML = html;
@@ -2479,7 +2494,7 @@ function showReceipt(rc, opts = {}) {
       ${!rc.pending && rc.invoice_no && !opts.fromSale ? `<button class="btn sm" id="rc-retur">${ic('undo')} ${esc(t('rt.from_receipt'))}</button>` : ''}
       <button class="btn primary sm grow" data-act="modal-close" id="rc-new">${esc(opts.fromSale ? t('rc.new_sale') : t('close'))}</button>`
   });
-  $('#rc-print', el).onclick = () => printHTML(receiptHTML(rc));
+  $('#rc-print', el).onclick = e => printReceipt(rc, e.currentTarget); // v54: the printer chosen on this device
   $('#rc-share', el).onclick = () => shareText(receiptText(rc), rc.customer_phone);
   $('#rc-copy', el).onclick = async () => { const ok = await copyText(receiptText(rc)); toast(ok ? t('copied') : t('copy_failed'), ok ? 'ok' : 'err'); };
   const rb = $('#rc-retur', el); if (rb) rb.onclick = () => { dropModal(el); openReturn({ invoice: rc.invoice_no }); };
@@ -3850,6 +3865,7 @@ RENDER.more = function () {
       <div class="li">${ic('globe')}<div class="grow t">${esc(t('more.lang'))}</div><div class="seg" style="min-width:170px"><button class="${S.lang === 'id' ? 'on' : ''}" data-act="set-lang" data-lang="id" id="lang-id">ID</button><button class="${S.lang === 'ar' ? 'on' : ''}" data-act="set-lang" data-lang="ar" id="lang-ar">العربية</button></div></div>
       <div class="li">${ic('speaker')}<div class="grow"><div class="t">${esc(t('more.voice'))}</div><div class="s">${esc(t('more.voice_s'))}</div></div><div class="seg" style="min-width:150px"><button class="${VOICE.on ? 'on' : ''}" data-act="voice-on" data-v="1" id="voice-on">${esc(t('on'))}</button><button class="${VOICE.on ? '' : 'on'}" data-act="voice-on" data-v="0" id="voice-off">${esc(t('off'))}</button></div></div>
       <div class="li">${ic('hash')}<div class="grow"><div class="t">${esc(t('more.ask_qty'))}</div><div class="s">${esc(t('more.ask_qty_s'))}</div></div><div class="seg" style="min-width:150px"><button class="${askQty() ? 'on' : ''}" data-act="ask-qty" data-v="1" id="askqty-on">${esc(t('on'))}</button><button class="${askQty() ? '' : 'on'}" data-act="ask-qty" data-v="0" id="askqty-off">${esc(t('off'))}</button></div></div>
+      <button class="li" data-act="printer-open" id="m-printer">${ic('print')}<div class="grow"><div class="t">${esc(KPrint.text(S.lang, 'title'))}</div><div class="s">${esc(KPrint.text(S.lang, 'mode_' + KPrint.cfg().mode))} · ${KPrint.cfg().width} mm</div></div></button>
       <button class="li" data-act="lock" id="m-lock">${ic('lock')}<div class="grow t">${esc(t('more.lock'))}</div></button>
       <button class="li" data-act="logout" id="m-logout">${ic('logout')}<div class="grow t">${esc(t('more.logout'))}</div></button>
     </div>
@@ -4515,6 +4531,7 @@ const ACT = {
   'toggle-lang': () => setLang(S.lang === 'ar' ? 'id' : 'ar'),
   'voice-on': el => { VOICE.on = el.dataset.v === '1'; store.set('voice_on', VOICE.on); if (!VOICE.on) { try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) { } } RENDER.more(); toast(t('saved'), 'ok'); },
   'gate-open': () => showGate(),
+  'printer-open': () => openPrinter(),
   'ask-qty': el => { store.set('ask_qty', el.dataset.v === '1'); RENDER.more(); toast(t('saved'), 'ok'); },
 
   /* login */
