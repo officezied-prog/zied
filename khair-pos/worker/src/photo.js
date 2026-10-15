@@ -18,7 +18,11 @@ import { runPhotoAuth } from './generated/photo-auth.gen.js';
 import { runPhotoMatch } from './generated/photo-match.gen.js';
 
 const AI_MODEL = 'claude-sonnet-5'; // same model id the n8n "Read Photo AI" node used
-const AI_MAX_TOKENS = 3000;
+// v50 (owner 2026-10-15: «التطبيق لم يستطع قراءة ولا دراسة الفاتورة»): the model thinks before it answers, and that counts in
+// max_tokens — 3000 could cut a long note's answer off (nothing read). Room for both; effort 'medium' keeps a note well inside
+// the apps' 60-second wait (only the tokens used are paid).
+const AI_MAX_TOKENS = 16000;
+const AI_EFFORT = 'medium';
 
 // Port of the live "Parse Photo" code node.
 export function parsePhoto(body) {
@@ -69,6 +73,7 @@ async function callAI(env, auth) {
       body: JSON.stringify({
         model: AI_MODEL,
         max_tokens: AI_MAX_TOKENS,
+        output_config: { effort: AI_EFFORT },
         messages: [{
           role: 'user',
           content: [
@@ -79,7 +84,10 @@ async function callAI(env, auth) {
       }),
     });
     if (!r.ok) return { error: 'AI HTTP ' + r.status };
-    return await r.json();
+    const j = await r.json();
+    if (j && j.stop_reason === 'max_tokens') return { error: 'AI_CUT_OFF' }; // the answer did not fit: say so, never half a list
+    if (j && j.stop_reason === 'refusal') return { error: 'AI_REFUSED' };
+    return j;
   } catch (e) {
     return { error: String(e && e.message ? e.message : e) };
   }
@@ -129,6 +137,12 @@ export async function handlePhoto(adapter, body, headers, STORE_KEY, env, opts =
   const $2 = makeAccessor(nodes);
   const $input = { first: () => ({ json: aiOut }) };
   const m = runPhotoMatch($2, $input)[0].json; // { photo, sale_update, has_sale_update, response }
+  // v50: say WHY nothing was read — 'off' = no AI key in the Worker (the owner adds ANTHROPIC_API_KEY), 'error' = the AI call failed
+  // (ai_error: HTTP status / cut off) — instead of an empty result nobody can explain.
+  if (m.response && typeof m.response === 'object') {
+    m.response.ai = !aiOut || !aiOut.error ? 'ok' : aiOut.error === 'AI_DISABLED' ? 'off' : 'error';
+    if (aiOut && aiOut.error && aiOut.error !== 'AI_DISABLED') m.response.ai_error = String(aiOut.error).slice(0, 80);
+  }
   const stored = await storeOriginal(env, m.photo, auth, opts.base); // v36: keep the image (R2), when the bucket is bound
   if (stored) {
     m.photo.drive_file_id = 'r2:' + stored.key;

@@ -108,7 +108,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.6.7';
+const APP_VERSION = 'kasir-1.6.8';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -2708,7 +2708,7 @@ RENDER.masuk = function (force) {
   let status;
   if (PU.scanning) status = `<div class="row"><div class="spinner" style="width:24px;height:24px;border-width:3px;margin:0"></div><b>${esc(t('pu.ai_reading'))}</b></div>`;
   else if (PU.scanErr) status = `<span class="red">${esc(PU.scanErr)}</span>`;
-  else if (PU.photo_id) status = `<b class="okc" id="pu-photo-ok">${esc(t('pu.photo_ok', { n: sc ? sc.n : 0 }))}</b>${sc && (sc.supplier || sc.invoice_no) ? `<div class="small muted">${esc([sc.supplier, sc.invoice_no].filter(Boolean).join(' · '))}</div>` : ''}`;
+  else if (PU.photo_id) status = `<b class="okc" id="pu-photo-ok">${esc(t('pu.photo_ok', { n: sc ? sc.n : 0 }))}</b>${sc && (sc.supplier || sc.invoice_no) ? `<div class="small muted">${esc([sc.supplier, sc.invoice_no].filter(Boolean).join(' · '))}</div>` : ''}${aiScanNote(sc)}`;
   else status = `<span class="muted">${esc(req ? t('pu.photo_hint_req') : t('pu.photo_hint_opt'))}</span>`;
   const prodOptions = sel => `<option value="">— ${esc(t('pu.pick_product'))} —</option>` + S.products.filter(p => p.active !== false).slice().sort((a, b) => a.name.localeCompare(b.name)).map(p => `<option value="${esc(p.id)}" ${p.id == sel ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
   const inGudang = S.products.filter(p => p.active !== false && gudangOf(p) > 0).length;
@@ -2772,6 +2772,13 @@ RENDER.masuk = function (force) {
   drawPuHist();
   if (force || (!PUH.groups && !PUH.loading && !PUH.err)) loadPuHistory();
 };
+/* v50 (owner 2026-10-15: «التطبيق لم يستطع قراءة ولا دراسة الفاتورة فاضطررنا إلى تعمير كل شيء بأنفسنا»): when nothing was read, say why —
+   the reader is off (no AI key in the Worker: tell the owner), the AI failed, or the note could not be read. */
+function aiScanNote(sc) {
+  if (!sc) return '';
+  const k = sc.ai === 'off' ? 'pu.ai_off' : sc.ai === 'error' ? 'pu.ai_err' : !sc.n ? 'pu.ai_unreadable' : '';
+  return k ? `<div class="small" id="pu-ai-note" data-ai="${esc(sc.ai || 'ok')}" style="color:var(--warn,#b45309);margin-top:4px">${esc(t(k, { e: sc.ai_error || '' }))}</div>` : '';
+}
 async function scanPurchasePhoto(file) {
   PU.scanning = true; PU.scanErr = ''; PU.result = null;
   RENDER.masuk();
@@ -2781,7 +2788,7 @@ async function scanPurchasePhoto(file) {
     const r = await apiPhoto('scan_purchase', { image_base64: img.base64, mime: img.mime });
     const ex = r.extracted || {}, items = Array.isArray(ex.items) ? ex.items : [];
     PU.photo_id = r.photo_id || '';
-    PU.scan = { n: items.length, supplier: ex.supplier || '', invoice_no: ex.invoice_no || '', readable: ex.readable !== false,
+    PU.scan = { n: items.length, supplier: ex.supplier || '', invoice_no: ex.invoice_no || '', readable: ex.readable !== false, ai: r.ai || 'ok', ai_error: r.ai_error || '',
       items: items.map(it => ({ name: String(it.name || ''), qty: it.qty === null || it.qty === undefined || it.qty === '' ? null : num(it.qty), unit: it.unit || '' })) };
     if (ex.supplier && !PU.supplier.trim()) PU.supplier = ex.supplier;
     const d = parseAnyDate(ex.date); if (d) PU.date = d;
@@ -4546,7 +4553,7 @@ const I18N = {
     'outbox.hint': 'Dikirim otomatis saat online.', 'outbox.k_sale': 'Penjualan', 'outbox.k_payment': 'Bayar hutang', 'outbox.k_expense': 'Pengeluaran', 'outbox.k_cash': 'Kas masuk/keluar', 'outbox.k_contact': 'Nomor pelanggan',
     'outbox.drop_confirm': 'Hapus data yang gagal ini?',
     'pu.photo_title': 'Foto nota supplier', 'pu.photo_take': 'Foto nota', 'pu.photo_retake': 'Foto ulang', 'pu.photo_hint_req': 'Wajib: foto nota/barang datang. AI membaca isinya.',
-    'pu.photo_hint_opt': 'Foto nota agar AI mengisi barangnya.', 'pu.ai_reading': 'AI membaca nota… (5–20 detik)', 'pu.photo_ok': 'Foto tersimpan · {n} baris terbaca', 'pu.demo_scan': 'Mode DEMO: pembacaan foto hanya contoh tetap — tidak membaca foto asli Anda. Pakai aplikasi asli (tanpa ?mock=1) untuk membaca nota sungguhan.',
+    'pu.photo_hint_opt': 'Foto nota agar AI mengisi barangnya.', 'pu.ai_reading': 'AI membaca nota… (5–20 detik)', 'pu.photo_ok': 'Foto tersimpan · {n} baris terbaca', 'pu.ai_off': 'Pembaca nota otomatis (AI) belum aktif, jadi barang tidak terisi sendiri. Isi manual dulu dan beri tahu pemilik.', 'pu.ai_err': 'AI tidak bisa membaca foto ini ({e}). Foto ulang: nota lurus, terang, seluruhnya terlihat.', 'pu.ai_unreadable': 'Nota tidak terbaca. Foto ulang: nota lurus, terang, seluruhnya terlihat, tidak buram.', 'pu.demo_scan': 'Mode DEMO: pembacaan foto hanya contoh tetap — tidak membaca foto asli Anda. Pakai aplikasi asli (tanpa ?mock=1) untuk membaca nota sungguhan.',
     'pu.check_lines': 'Cek barang & jumlah', 'pu.supplier': 'Supplier', 'pu.on_note': 'Di nota', 'pu.unmatched': 'Pilih barangnya', 'pu.pick_product': 'pilih barang',
     'pu.price_note': 'Harga di nota', 'pu.empty_hint': 'Foto nota dulu, atau tambah barang manual.', 'pu.add_product': 'Tambah barang manual', 'pu.total_note': 'Total nota',
     'pu.exp': 'Kedaluwarsa', 'pu.exp_hint': 'Wajib: tanggal kedaluwarsa, atau centang "tak ada"', 'pu.exp_none': 'Tak ada', 'pu.exp_required': 'Isi tanggal kedaluwarsa tiap baris, atau centang "tak ada"',
@@ -4656,7 +4663,7 @@ const I18N = {
     'outbox.hint': 'تُرسل تلقائيًا عند الاتصال.', 'outbox.k_sale': 'بيع', 'outbox.k_payment': 'سداد دَين', 'outbox.k_expense': 'مصروف', 'outbox.k_cash': 'إدخال/إخراج نقد', 'outbox.k_contact': 'رقم عميل',
     'outbox.drop_confirm': 'حذف هذا السجل الفاشل؟',
     'pu.photo_title': 'صورة فاتورة المورد', 'pu.photo_take': 'صوّر الفاتورة', 'pu.photo_retake': 'إعادة التصوير', 'pu.photo_hint_req': 'إلزامي: صورة الفاتورة/البضاعة. الذكاء الاصطناعي يقرأها.',
-    'pu.photo_hint_opt': 'صوّر الفاتورة ليملأ الذكاء الاصطناعي الأصناف.', 'pu.ai_reading': 'جارٍ قراءة الفاتورة… (5–20 ثانية)', 'pu.photo_ok': 'حُفظت الصورة · {n} سطور', 'pu.demo_scan': 'وضع تجريبي: قراءة الصورة مثال ثابت ولا تقرأ صورتك الحقيقية. استعمل التطبيق الحقيقي (بدون ?mock=1) لقراءة فاتورتك.',
+    'pu.photo_hint_opt': 'صوّر الفاتورة ليملأ الذكاء الاصطناعي الأصناف.', 'pu.ai_reading': 'جارٍ قراءة الفاتورة… (5–20 ثانية)', 'pu.photo_ok': 'حُفظت الصورة · {n} سطور', 'pu.ai_off': 'قارئ الفواتير الآلي (الذكاء الاصطناعي) غير مفعّل، لذلك لم تُملأ الأصناف تلقائيًا. املأها يدويًا الآن وأبلغ المالك.', 'pu.ai_err': 'تعذّر على الذكاء الاصطناعي قراءة هذه الصورة ({e}). صوّر مجددًا: الفاتورة مستقيمة، مضيئة، وكاملة.', 'pu.ai_unreadable': 'الفاتورة غير مقروءة. صوّر مجددًا: مستقيمة، مضيئة، كاملة وغير مهتزة.', 'pu.demo_scan': 'وضع تجريبي: قراءة الصورة مثال ثابت ولا تقرأ صورتك الحقيقية. استعمل التطبيق الحقيقي (بدون ?mock=1) لقراءة فاتورتك.',
     'pu.check_lines': 'راجع الأصناف والكميات', 'pu.supplier': 'المورد', 'pu.on_note': 'في الفاتورة', 'pu.unmatched': 'اختر الصنف', 'pu.pick_product': 'اختر صنفًا',
     'pu.price_note': 'السعر في الفاتورة', 'pu.empty_hint': 'صوّر الفاتورة أولًا أو أضف صنفًا يدويًا.', 'pu.add_product': 'إضافة صنف يدويًا', 'pu.total_note': 'إجمالي الفاتورة',
     'pu.exp': 'تاريخ الانتهاء', 'pu.exp_hint': 'إلزامي: تاريخ الانتهاء، أو ضع علامة "غير موجود"', 'pu.exp_none': 'غير موجود', 'pu.exp_required': 'املأ تاريخ الانتهاء لكل سطر، أو ضع علامة "غير موجود"',
