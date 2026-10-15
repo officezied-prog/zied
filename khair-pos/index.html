@@ -152,7 +152,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.8.6';
+const APP_VERSION = '2.8.7';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -447,7 +447,7 @@ const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
 // v36 (owner 2026-10-11: "the visits table … a copy for the manager, the accountant and the owner"): + the field page, read-only
 const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'invchg', 'approvals', 'shoplist', 'field', 'settings'];
-const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
+const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
@@ -6673,6 +6673,7 @@ function knownSuppliers() {
   S.products.forEach(p => add(p.supplier));
   [GD.year, GD.d30].concat(Object.values(salesCache).map(c => c.data)).filter(Boolean).forEach(d => d.purchases.forEach(r => { if (!isInternalRow(r)) add(r.supplier); }));
   (store.get('suppliers', []) || []).forEach(add);
+  supDirList().forEach(x => add(x.n)); // v56: the supplier directory
   return [...seen.values()].sort((a, b) => a.localeCompare(b));
 }
 function lastSupplierOf(pid) {
@@ -7550,7 +7551,7 @@ RENDER.suppliers = function () {
   if (!canAudit()) { go('pos'); return; }
   // The owner only monitors (sp-pay-new hidden by omon). The manager pays via owner-approved plans, so he proposes here.
   const headBtn = canPropose() ? `<button class="btn primary" data-act="sp-propose">${ic('send')} ${esc(t('pp.propose'))}</button>` : `<button class="btn primary" data-act="sp-pay-new">${ic('wallet')} ${esc(t('sp.pay'))}</button>`;
-  $('#view-suppliers').innerHTML = `<div class="view-head"><h1>${esc(t('nav.suppliers'))}</h1><button class="btn sm" data-act="sp-refresh">${ic('refresh')} ${esc(t('refresh'))}</button>${headBtn}</div>
+  $('#view-suppliers').innerHTML = `<div class="view-head"><h1>${esc(t('nav.suppliers'))}</h1><button class="btn sm" data-act="sp-refresh">${ic('refresh')} ${esc(t('refresh'))}</button>${canEditSupDir() ? `<button class="btn" data-act="sd-new" id="sd-new">${ic('plus')} ${esc(t('sd.new'))}</button>` : ''}${headBtn}</div>
     <p class="muted small" style="margin-top:0">${esc(t('sp.hint'))}</p>
     <div id="sp-plans"></div>
     <div id="sp-kpis"></div>
@@ -7598,10 +7599,12 @@ function drawSuppliers() {
   kp.innerHTML = `<div class="kpis"><div class="kpi gold" data-kpi="sp-debt"><div class="k">${esc(t('sp.total_debt'))}</div><div class="v num red">${fmtRp(sum(all, r => r.remaining))}</div><div class="s">${esc(t('sp.open_notes', { n: sum(all, r => r.open.length) }))}</div></div>
     <div class="kpi" data-kpi="sp-count"><div class="k">${esc(t('nav.suppliers'))}</div><div class="v num">${fmtNum(all.length)}</div></div></div>`;
   const q = norm(SUP.q);
-  const list = rows.filter(r => !q || norm(r.name).includes(q)).sort((a, b) => b.remaining - a.remaining || a.name.localeCompare(b.name));
-  box.innerHTML = `<div class="list" id="sp-rows">${list.map(r => `<button class="li" data-act="sp-open" data-name="${esc(r.name)}" data-sup="${esc(r.name)}"><span class="act-ic">${ic('supplier')}</span><div class="grow"><div class="t">${esc(r.name)}</div>
+  // v56: the search also reads the directory (company, place, trade, the goods it sells): "kurma" finds who sells dates
+  const list = rows.filter(r => { if (!q) return true; const d = supDirOf(r.name); return norm([r.name].concat(d ? [d.co, d.pl, d.tr, d.gd] : []).join(' ')).includes(q); }).sort((a, b) => b.remaining - a.remaining || a.name.localeCompare(b.name));
+  box.innerHTML = `<div class="list" id="sp-rows">${list.map(r => { const d = supDirOf(r.name); return `<button class="li" data-act="sp-open" data-name="${esc(r.name)}" data-sup="${esc(r.name)}"><span class="act-ic">${ic('supplier')}</span><div class="grow"><div class="t">${esc(r.name)}${d ? ` <span class="badge blue" data-dir>${esc(d.tr || t('sd.in_dir'))}</span>` : ''}</div>
+      ${d ? `<div class="s" data-dir-line>${esc([d.co, d.pl].filter(Boolean).join(' · '))}${d.gd ? `${d.co || d.pl ? ' · ' : ''}${esc(t('sd.sells'))} ${esc(d.gd)}` : ''}</div>` : ''}
       <div class="s">${r.err ? `<span class="red">${esc(r.err)}</span>` : esc(r.open.length ? t('sp.open_notes', { n: r.open.length }) : t('sp.all_paid'))}${r.last ? ' · ' + esc(t('sp.last_in', { d: fmtDate(r.last) })) : ''}</div></div>
-      <div class="right"><div class="num ${r.remaining ? 'red' : 'muted'}" style="font-weight:800" data-remaining>${fmtRp(r.remaining)}</div>${r.remaining ? '' : `<span class="badge green">${esc(t('ps.lunas'))}</span>`}</div></button>`).join('') || `<div class="empty">${esc(t('no_data'))}</div>`}</div>`;
+      <div class="right"><div class="num ${r.remaining ? 'red' : 'muted'}" style="font-weight:800" data-remaining>${fmtRp(r.remaining)}</div>${r.remaining ? '' : `<span class="badge green">${esc(t('ps.lunas'))}</span>`}</div></button>`; }).join('') || `<div class="empty">${esc(t('no_data'))}</div>`}</div>`;
 }
 async function openSupplierDetail(name) {
   const party = { name };
@@ -7609,7 +7612,7 @@ async function openSupplierDetail(name) {
   const btn = canPropose() ? `<button class="btn primary" data-act="sp-propose" data-name="${esc(name)}">${ic('send')} ${esc(t('pp.propose'))}</button>` : `<button class="btn primary" data-act="sp-pay" data-name="${esc(name)}">${ic('wallet')} ${esc(t('sp.pay'))}</button>`;
   openModal({
     title: name, cls: 'wide', id: 'sd-modal',
-    body: `<div class="row wrap" style="margin-bottom:12px">${btn}</div>
+    body: `<div id="sd-dir">${supDirCardHTML(name)}</div><div class="row wrap" style="margin-bottom:12px">${btn}</div>
       <div id="sd-ledger" class="muted">${esc(t('loading'))}</div>`
   });
   drawLedgerInto($('#sd-ledger'), 'supplier', party);
@@ -10154,6 +10157,82 @@ Object.assign(I18N.ar, {
   'gs.none': 'لا توجد مبيعات مطابقة في هذه الفترة.', 'gs.none_one': 'لم يُبع في هذه الفترة.', 'gs.deleted': 'صنف محذوف',
   'gs.l_when': 'الوقت', 'gs.l_inv': 'الفاتورة', 'gs.l_qty': 'الكمية', 'gs.l_price': 'السعر', 'gs.l_total': 'المجموع', 'gs.l_who': 'الكاشير · العميل',
   'gs.split': 'تجزئة {e} · جملة {g}', 'gs.more': '+{n} سطر آخر — ضيّق الفترة.', 'gs.max_year': 'أطول فترة سنة واحدة: عُدّل التاريخ الآخر.'
+});
+
+/* v56 Pemasok → the supplier directory (owner 2026-10-15: «الموردون يمكن للمحاسب والمدير إضافة المورد جديد مع الاسم اسم الشركة اسم المكان المهنة
+   المواد التي يقدمها التي يبيعها»): the accountant or the manager adds a supplier — name, company, place, trade, the goods it sells, phone,
+   note — or completes / edits one already known from goods-in notes (the name stays: notes and payments are filed under it). The owner
+   sees the directory and is told of every change. It rides on the bootstrap settings (no extra call). */
+const supDirList = () => (Array.isArray(settings().supplier_dir) ? settings().supplier_dir : []).filter(x => x && x.n);
+const supDirOf = name => { const k = String(name || '').trim().toLowerCase(); return supDirList().find(x => String(x.n).toLowerCase() === k) || null; };
+const canEditSupDir = () => S.role === 'manager' || S.role === 'akuntan';
+const SD_TRADES = ['Importir', 'Distributor', 'Grosir', 'Pabrik', 'Petani / kebun', 'Toko', 'Perorangan'];
+function supDirCardHTML(name) {
+  const d = supDirOf(name);
+  if (!d) return canEditSupDir() ? `<div class="notice" id="sd-dir-none" style="margin:0 0 12px">${ic('supplier')} <span class="grow">${esc(t('sd.not_in_dir'))}</span><button class="btn xs" data-act="sd-edit" data-name="${esc(name)}" id="sd-complete">${ic('plus')} ${esc(t('sd.complete'))}</button></div>` : '';
+  const row = (k, v) => v ? `<div class="row" style="gap:8px;align-items:flex-start" data-f="${k}"><span class="small muted" style="min-width:96px">${esc(t('sd.f_' + k))}</span><span class="grow">${v}</span></div>` : '';
+  const wa = d.ph ? ` <a class="btn xs" target="_blank" rel="noopener" href="${esc(waLink(d.ph, ''))}">${ic('wa')} WA</a>` : '';
+  return `<div class="card pad" id="sd-card" style="margin-bottom:12px"><div class="row wrap" style="gap:8px;margin-bottom:6px"><b class="grow">${ic('supplier')} ${esc(t('sd.card'))}</b>${canEditSupDir() ? `<button class="btn xs" data-act="sd-edit" data-name="${esc(d.n)}" id="sd-edit">${ic('edit')} ${esc(t('edit'))}</button>` : ''}</div>
+    <div style="display:grid;gap:4px">${row('company', esc(d.co))}${row('place', esc(d.pl))}${row('trade', esc(d.tr))}${row('goods', `<b>${esc(d.gd)}</b>`)}${row('phone', d.ph ? `<span class="num">+${esc(d.ph)}</span>${wa}` : '')}${row('note', esc(d.nt))}</div>
+    <div class="small muted" style="margin-top:6px" data-who>${esc(t('sd.added', { by: d.by || '—', at: d.at ? fmtDateTime(d.at) : '—' }))}${d.ub ? ' · ' + esc(t('sd.edited', { by: d.ub, at: d.ua ? fmtDateTime(d.ua) : '' })) : ''}</div></div>`;
+}
+function openSupplierForm(name) {
+  if (!canEditSupDir()) return;
+  const d = name ? supDirOf(name) : null, edit = !!d;
+  const f = (id, k, v, extra = '') => `<div class="field"><label class="f" for="${id}">${esc(t('sd.f_' + k))}</label><input class="input" id="${id}" value="${esc(v || '')}" ${extra}></div>`;
+  const el = openModal({
+    title: t(edit ? 'sd.edit_title' : 'sd.new_title'), id: 'sd-form',
+    body: `<p class="muted small" style="margin-top:0">${esc(t('sd.form_hint'))}</p>
+      ${f('sdf-name', 'name', d ? d.n : name || '', `maxlength="60" autocomplete="off" ${edit ? 'readonly' : ''}`)}${edit ? `<div class="small muted" style="margin:-6px 0 8px">${esc(t('sd.name_fixed'))}</div>` : ''}
+      <div class="grid2">${f('sdf-company', 'company', d && d.co, 'maxlength="80"')}${f('sdf-place', 'place', d && d.pl, 'maxlength="120"')}</div>
+      <div class="grid2">${f('sdf-trade', 'trade', d && d.tr, 'maxlength="60" list="dl-sd-trade" autocomplete="off"')}${f('sdf-phone', 'phone', d && d.ph ? '+' + d.ph : '', 'inputmode="tel" maxlength="20"')}</div>
+      <datalist id="dl-sd-trade">${[...new Set(SD_TRADES.concat(supDirList().map(x => x.tr).filter(Boolean)))].map(v => `<option value="${esc(v)}">`).join('')}</datalist>
+      <div class="field"><label class="f" for="sdf-goods">${esc(t('sd.f_goods'))} *</label><textarea class="input" id="sdf-goods" rows="3" maxlength="400" placeholder="${esc(t('sd.goods_ph'))}">${esc(d ? d.gd : '')}</textarea></div>
+      ${f('sdf-note', 'note', d && d.nt, 'maxlength="300"')}
+      <div class="red" id="sdf-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="sdf-save">${ic('check')} ${esc(t('save'))}</button>`
+  });
+  $(edit ? '#sdf-company' : '#sdf-name', el).focus();
+  $('#sdf-save', el).onclick = async () => {
+    const v = id => $(id, el).value.trim(), err = $('#sdf-err', el);
+    const sup = { name: v('#sdf-name'), company: v('#sdf-company'), place: v('#sdf-place'), trade: v('#sdf-trade'), goods: v('#sdf-goods'), phone: v('#sdf-phone'), note: v('#sdf-note') };
+    if (!sup.name) { err.textContent = t('sd.need_name'); $('#sdf-name', el).focus(); return; }
+    if (!sup.goods) { err.textContent = t('sd.need_goods'); $('#sdf-goods', el).focus(); return; }
+    $('#sdf-save', el).disabled = true; err.textContent = '';
+    try {
+      const r = await api('save_supplier', { supplier: sup, edit });
+      const e = r.supplier, list = supDirList().filter(x => String(x.n).toLowerCase() !== String(e.n).toLowerCase()).concat([e]);
+      S.settings = Object.assign({}, S.settings || {}, { supplier_dir: list }); saveCache();
+      closeModal(); // the form only: a supplier's sheet under it stays open and shows the new data
+      toast(t(r.unchanged ? 'sd.unchanged' : edit ? 'sd.saved' : 'sd.added_ok', { name: e.n }), 'ok', 3500);
+      if (S.view === 'suppliers') { if (SUP.list && !SUP.list.some(x => String(x.name).toLowerCase() === String(e.n).toLowerCase())) loadSuppliers(); else drawSuppliers(); }
+      const card = $('#sd-dir'); if (card) card.innerHTML = supDirCardHTML(e.n);
+    } catch (e) { $('#sdf-save', el).disabled = false; err.textContent = errMsg(e); }
+  };
+}
+Object.assign(ACT, {
+  'sd-new': () => openSupplierForm(''),
+  'sd-edit': el => openSupplierForm(el.dataset.name)
+});
+Object.assign(I18N.id, {
+  'sd.new': 'Pemasok baru', 'sd.new_title': 'Pemasok baru', 'sd.edit_title': 'Data pemasok', 'sd.card': 'Data pemasok', 'sd.in_dir': 'Terdaftar', 'sd.sells': 'Menjual:',
+  'sd.form_hint': 'Akuntan atau manajer mengisi data pemasok. Pemilik melihatnya dan diberi tahu setiap perubahan.',
+  'sd.f_name': 'Nama pemasok *', 'sd.f_company': 'Perusahaan', 'sd.f_place': 'Tempat / alamat', 'sd.f_trade': 'Jenis usaha', 'sd.f_goods': 'Barang yang dijual', 'sd.f_phone': 'Telepon / WA', 'sd.f_note': 'Catatan',
+  'sd.goods_ph': 'mis. Kurma Ajwa, Kurma Sukkari, Kismis', 'sd.name_fixed': 'Nama tetap: nota barang masuk dan pembayaran tercatat dengan nama ini.',
+  'sd.need_name': 'Isi nama pemasok.', 'sd.need_goods': 'Isi barang yang dijual pemasok ini.',
+  'sd.added_ok': 'Pemasok {name} ditambahkan', 'sd.saved': 'Data {name} disimpan', 'sd.unchanged': 'Tidak ada yang berubah',
+  'sd.not_in_dir': 'Pemasok ini belum punya data (perusahaan, tempat, barang).', 'sd.complete': 'Lengkapi data',
+  'sd.added': 'Ditambahkan oleh {by}, {at}', 'sd.edited': 'diubah oleh {by}, {at}'
+});
+Object.assign(I18N.ar, {
+  'sd.new': 'مورد جديد', 'sd.new_title': 'مورد جديد', 'sd.edit_title': 'بيانات المورد', 'sd.card': 'بيانات المورد', 'sd.in_dir': 'مسجَّل', 'sd.sells': 'يبيع:',
+  'sd.form_hint': 'المحاسب أو المدير يُدخل بيانات المورد. المالك يراها ويصله إشعار بكل تغيير.',
+  'sd.f_name': 'اسم المورد *', 'sd.f_company': 'اسم الشركة', 'sd.f_place': 'المكان / العنوان', 'sd.f_trade': 'المهنة / النشاط', 'sd.f_goods': 'المواد التي يبيعها', 'sd.f_phone': 'الهاتف / واتساب', 'sd.f_note': 'ملاحظة',
+  'sd.goods_ph': 'مثل: تمر عجوة، تمر سكري، زبيب', 'sd.name_fixed': 'الاسم ثابت: فواتير الوارد والمدفوعات مسجلة بهذا الاسم.',
+  'sd.need_name': 'اكتب اسم المورد.', 'sd.need_goods': 'اكتب المواد التي يبيعها هذا المورد.',
+  'sd.added_ok': 'أُضيف المورد {name}', 'sd.saved': 'حُفظت بيانات {name}', 'sd.unchanged': 'لم يتغير شيء',
+  'sd.not_in_dir': 'هذا المورد ليس له بيانات بعد (الشركة، المكان، المواد).', 'sd.complete': 'أكمل البيانات',
+  'sd.added': 'أضافه {by}، {at}', 'sd.edited': 'عدّله {by}، {at}'
 });
 
 /* ========== Boot ========== */

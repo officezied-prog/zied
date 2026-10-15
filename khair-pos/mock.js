@@ -332,6 +332,7 @@ const MockServer = (() => {
   function settingsOut(db, role) {
     const st = Object.assign({}, V16_DEFAULTS, db.settings);
     st.repack_materials = window.KRepackMock ? window.KRepackMock.catalogOut(db, role) : []; // v50: names only for the cashier / rep
+    st.supplier_dir = (Array.isArray(db.settings.supplier_dir) ? db.settings.supplier_dir : []).map(x => ['owner', 'manager', 'akuntan'].includes(role) ? x : { n: x.n }); // v56
     if (st.opname_state && typeof st.opname_state === 'object') { const o = Object.assign({}, st.opname_state); o.counted_n = Array.isArray(o.counted) ? o.counted.length : 0; delete o.counted; st.opname_state = o; }
     return st;
   }
@@ -1136,7 +1137,7 @@ const MockServer = (() => {
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
-    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval', 'list_invoice_changes', 'cancel_repack'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
+    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval', 'list_invoice_changes', 'cancel_repack', 'save_supplier'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
     if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'scan_expense', 'list_photos', 'photo_file'].includes(action)) deviceTouch(db, u, data.device, false);
 
@@ -1864,6 +1865,39 @@ const MockServer = (() => {
         }
         logAct(db, u, 'impor', 'Impor produk: ' + created + ' baru, ' + updated + ' diubah' + (skipped ? ', ' + skipped + ' dilewati (sudah ada)' : ''), '', 0, 'info');
         return { created, updated, skipped };
+      }
+      case 'save_supplier': { // v56 (as backend/process.js): the accountant / manager adds a supplier to the directory, or edits one (the name stays)
+        if (!['owner', 'manager', 'akuntan'].includes(u.role)) throw E('FORBIDDEN', 'Hanya akuntan / manajer / pemilik');
+        const x = data.supplier && typeof data.supplier === 'object' ? data.supplier : {};
+        const name = safeName(x.name, 60);
+        if (!name) throw E('INVALID', 'Nama pemasok wajib (huruf / angka, maks. 60)');
+        const field = (v, max) => strv(v).replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, max);
+        const co = field(x.company, 80), pl = field(x.place, 120), tr = field(x.trade, 60), gd = field(x.goods, 400), nt = field(x.note, 300);
+        const ph = strv(x.phone) ? normPhone(x.phone) : '';
+        if (strv(x.phone) && !ph) throw E('INVALID', 'Nomor telepon pemasok tidak valid');
+        if (!gd) throw E('INVALID', 'Isi barang yang dijual pemasok ini');
+        const list = Array.isArray(db.settings.supplier_dir) ? db.settings.supplier_dir : [], at = list.findIndex(y => strv(y.n).toLowerCase() === name.toLowerCase());
+        const now = new Date().toISOString(), who = (u.role === 'manager' ? 'manajer ' : u.role === 'akuntan' ? 'akuntan ' : 'pemilik ') + u.name;
+        let entry, txt;
+        if (data.edit) {
+          if (at < 0) throw E('NOT_FOUND', 'Pemasok ' + name + ' tidak ada di daftar');
+          const b = list[at], ch = [];
+          [['co', co, 'perusahaan'], ['pl', pl, 'tempat'], ['tr', tr, 'usaha'], ['gd', gd, 'barang'], ['ph', ph, 'telepon'], ['nt', nt, 'catatan']].forEach(f => { if (strv(b[f[0]]) !== f[1]) ch.push(f[2] + ': ' + (f[1] || '—')); });
+          if (!ch.length) return { unchanged: true, supplier: b };
+          entry = Object.assign({}, b, { co, pl, tr, gd, ph, nt, ub: u.name, ua: now });
+          list[at] = entry;
+          txt = 'Data pemasok ' + b.n + ' diubah — ' + ch.join('; ') + ' — oleh ' + who;
+        } else {
+          if (at >= 0) throw E('DUPLICATE', 'Pemasok ' + list[at].n + ' sudah ada di daftar');
+          if (list.length >= 500) throw E('INVALID', 'Paling banyak 500 pemasok');
+          entry = { n: name, co, pl, tr, gd, ph, nt, by: u.name, at: now };
+          list.push(entry);
+          txt = 'Pemasok baru: ' + name + [co, pl, tr].filter(Boolean).map(v => ' · ' + v).join('') + ' — menjual: ' + gd + ' — oleh ' + who;
+        }
+        db.settings.supplier_dir = list;
+        logAct(db, u, 'pemasok', txt.slice(0, 1000), name, 0, 'info');
+        notifyR(db, u, ['owner', 'manager', 'akuntan'].filter(r => r !== u.role), txt, 'info');
+        return { supplier: entry };
       }
       case 'set_loose': { // v52 (as backend/process.js): the owner / manager marks a product as shown loose, sold by weight
         if (!['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik / manajer');

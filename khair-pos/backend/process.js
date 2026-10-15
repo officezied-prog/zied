@@ -141,7 +141,7 @@ const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' 
 // v29 (owner 2026-10-10): the accountant also shares the "manager or accountant" approvals (goods-in mismatch,
 // void today's invoice, price change) — list_approvals + decide_approval, limited to approver_role 'mgr_akuntan'
 // by canDecide — and may register a member (save_customer); the cashier may no longer create members.
-const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes', 'cancel_repack'];
+const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes', 'cancel_repack', 'save_supplier'];
 if (role === 'akuntan' && AKUNTAN_READ.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
 // v36: report_tamper too — the field app reports a code attempt here (it was refused before, so the rep's account was never locked).
 if (role === 'sales' && ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
@@ -239,6 +239,9 @@ const DEFAULT_SETTINGS = {
   akuntan_sees_cost: false,
   // v50: the packaging materials list (name + price per piece) the manager keeps; a pack's materials are chosen from it
   repack_materials: [],
+  // v56 (owner 2026-10-15: «الموردون يمكن للمحاسب والمدير إضافة المورد جديد مع الاسم اسم الشركة اسم المكان المهنة المواد التي يقدمها»): the
+  // supplier directory [{n, co, pl, tr, gd, ph, nt, by, at, ub, ua}] kept by the accountant and the manager (save_supplier)
+  supplier_dir: [],
   // v37 (owner 2026-10-12: «الكميات التي يتم جردها آخر كل شهرين»): a FULL stock count every N days (owner or manager sets 7–180).
   opname_every_days: 60
 };
@@ -713,6 +716,8 @@ function settingsOut() {
   const st = readSettings(), os = opnameState();
   // v50: the materials list carries prices (costs): the cashier / rep get the names only
   st.repack_materials = matCatalog().map(function (x) { return ['owner', 'manager', 'akuntan'].indexOf(role) >= 0 ? { n: x.name, c: x.cost } : { n: x.name }; });
+  // v56: the supplier directory in full for the owner, manager and accountant; the names only for the others (goods-in pickers)
+  st.supplier_dir = supDir().map(function (x) { return ['owner', 'manager', 'akuntan'].indexOf(role) >= 0 ? x : { n: x.n }; });
   if (Object.keys(os).length) {
     const o = Object.assign({}, os);
     o.counted_n = Array.isArray(o.counted) ? o.counted.length : 0;
@@ -1054,6 +1059,12 @@ function matCatalog() {
   matCache = (Array.isArray(a) ? a : []).map(function (x) { return { name: str(x && x.n).slice(0, 40), cost: Math.max(0, money(x && x.c)) }; })
     .filter(function (x) { return x.name; }).slice(0, REPACK_MAT_MAX);
   return matCache;
+}
+// v56 the supplier directory: one entry per supplier name (the name is the key the goods-in notes and payments already use)
+const SUP_DIR_MAX = 500;
+function supDir() {
+  const a = readSettings().supplier_dir;
+  return (Array.isArray(a) ? a : []).filter(function (x) { return x && str(x.n); }).slice(0, SUP_DIR_MAX);
 }
 function matPrice(name) { const k = str(name).toLowerCase(); const m = matCatalog().find(function (x) { return x.name.toLowerCase() === k; }); return m ? m.cost : null; }
 function repackCostsOf(p) {
@@ -1733,6 +1744,44 @@ switch (req.action) {
     logAct('atur_kemas', txt.slice(0, 1000), 'bahan', 0, 'info');
     notify(['owner', 'manager', 'akuntan'].filter(function (r) { return r !== role; }), txt, 'info');
     return done({ ok: true, materials: out });
+  }
+
+  case 'save_supplier': {
+    // v56 (owner 2026-10-15: «الموردون يمكن للمحاسب والمدير إضافة المورد جديد مع الاسم اسم الشركة اسم المكان المهنة المواد التي يقدمها التي
+    // يبيعها»): the accountant or the manager adds a supplier to the directory — name, company, place, trade, the goods it sells — or
+    // edits one (data.edit: the name stays, it is what the goods-in notes and payments are filed under). The owner is told.
+    if (['owner', 'manager', 'akuntan'].indexOf(role) < 0) return fail('FORBIDDEN', 'Hanya akuntan / manajer / pemilik');
+    const x = data.supplier && typeof data.supplier === 'object' ? data.supplier : {};
+    const name = safeName(x.name, 60);
+    if (!name) return fail('INVALID', 'Nama pemasok wajib (huruf / angka, maks. 60)');
+    const field = function (v, max) { return str(v).replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, max); };
+    const co = field(x.company, 80), pl = field(x.place, 120), tr = field(x.trade, 60), gd = field(x.goods, 400), nt = field(x.note, 300);
+    const ph = str(x.phone) ? normPhone(x.phone) : '';
+    if (str(x.phone) && !ph) return fail('INVALID', 'Nomor telepon pemasok tidak valid');
+    if (!gd) return fail('INVALID', 'Isi barang yang dijual pemasok ini');
+    const list = supDir(), at = list.findIndex(function (y) { return str(y.n).toLowerCase() === name.toLowerCase(); });
+    const now = new Date().toISOString(), who = (role === 'manager' ? 'manajer ' : role === 'akuntan' ? 'akuntan ' : 'pemilik ') + me.name;
+    let entry, txt;
+    if (data.edit) {
+      if (at < 0) return fail('NOT_FOUND', 'Pemasok ' + name + ' tidak ada di daftar');
+      const b = list[at], ch = [];
+      [['co', co, 'perusahaan'], ['pl', pl, 'tempat'], ['tr', tr, 'usaha'], ['gd', gd, 'barang'], ['ph', ph, 'telepon'], ['nt', nt, 'catatan']].forEach(function (f) { if (str(b[f[0]]) !== f[1]) ch.push(f[2] + ': ' + (f[1] || '—')); });
+      if (!ch.length) return done({ ok: true, unchanged: true, supplier: b });
+      entry = Object.assign({}, b, { co: co, pl: pl, tr: tr, gd: gd, ph: ph, nt: nt, ub: me.name, ua: now });
+      list[at] = entry;
+      txt = 'Data pemasok ' + b.n + ' diubah — ' + ch.join('; ') + ' — oleh ' + who;
+    } else {
+      if (at >= 0) return fail('DUPLICATE', 'Pemasok ' + list[at].n + ' sudah ada di daftar');
+      if (list.length >= SUP_DIR_MAX) return fail('INVALID', 'Paling banyak ' + SUP_DIR_MAX + ' pemasok');
+      entry = { n: name, co: co, pl: pl, tr: tr, gd: gd, ph: ph, nt: nt, by: me.name, at: now };
+      list.push(entry);
+      txt = 'Pemasok baru: ' + name + [co, pl, tr].filter(Boolean).map(function (v) { return ' · ' + v; }).join('') + ' — menjual: ' + gd + ' — oleh ' + who;
+    }
+    const r0 = settingRows.find(function (r) { return r.skey === 'supplier_dir'; });
+    ops.settings.push({ _id: r0 ? r0.id : -1, skey: 'supplier_dir', svalue: JSON.stringify(list) });
+    logAct('pemasok', txt.slice(0, 1000), name, 0, 'info');
+    notify(['owner', 'manager', 'akuntan'].filter(function (r) { return r !== role; }), txt, 'info');
+    return done({ ok: true, supplier: entry });
   }
 
   case 'repack_start': {
