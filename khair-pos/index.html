@@ -139,6 +139,7 @@
 <script src="shared/barcode-cam.js"></script>
 <script src="shared/pick.js"></script>
 <script src="shared/pay-split.js"></script>
+<script src="shared/bank-slip.js"></script>
 <script src="shared/printer.js"></script>
 <script src="shared/install-btn.js" data-host="#login:not([hidden]) .login-card"></script>
 <script src="shared/app-update.js"></script>
@@ -152,7 +153,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.8.7';
+const APP_VERSION = '2.8.8';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -447,7 +448,7 @@ const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
 // v36 (owner 2026-10-11: "the visits table … a copy for the manager, the accountant and the owner"): + the field page, read-only
 const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'invchg', 'approvals', 'shoplist', 'field', 'settings'];
-const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
+const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
@@ -5291,7 +5292,7 @@ RENDER.settings = function () {
     ${settingsReturHTML()}
     ${settingsReceiptHTML()}
     ${usersPanelHTML()}` : ''}
-    ${!own && S.role === 'manager' ? usersPanelHTML() : ''}
+    ${!own && S.role === 'manager' ? usersPanelHTML() + bankPanelHTML() : ''}
 
     ${!own && isApprover() ? `<div class="panel" id="st-retur"><h3>${ic('return')} ${esc(t('set.rt_title'))}</h3><div class="pb">${agreementCardHTML()}</div></div>` : ''}
     <div class="panel"><h3>${esc(t('set.app'))}</h3><div class="pb">
@@ -7463,9 +7464,12 @@ async function openPayForm(kind, party, opts = {}) {
       if (ex.transfer_ref) $('#py-ref', el).value = ex.transfer_ref;
       if (/^\d{4}-\d{2}-\d{2}$/.test(ex.date || '')) $('#py-date', el).value = ex.date;
       if (P.method === 'tunai') setMethod(/qris/i.test(String(ex.bank || '') + String(ex.description || '')) ? 'qris' : 'transfer');
+      // v57: the store account the slip shows (money in: the receiver's, money out: the sender's) is chosen by itself
+      const acc0 = window.KBank ? KBank.slipAccount(bankAccountsList(), ex, isCust ? 'in' : 'out') : '', accSel = $('#py-acc', el);
+      if (acc0 && accSel && [...accSel.options].some(o => o.value === acc0)) accSel.value = acc0;
       const who = isCust ? ex.sender_name : ex.receiver_name;
       st.innerHTML = `<span class="green"><b>${esc(t('pay.slip_ok_read'))}</b></span> <span id="py-slip-info">${esc([ex.amount != null ? fmtRp(ex.amount) : '', ex.bank, ex.transfer_ref ? 'ref ' + ex.transfer_ref : '', ex.date ? fmtDate(ex.date) : ''].filter(Boolean).join(' · '))}</span>
-        ${who ? `<div>${esc(t(isCust ? 'pay.sender' : 'pay.receiver'))}: <b id="py-slip-name">${esc(who)}</b></div>` : ''}${ex.readable === false || ex.amount == null ? `<div class="red">${esc(t('pay.slip_unclear'))}</div>` : ''}`;
+        ${who ? `<div>${esc(t(isCust ? 'pay.sender' : 'pay.receiver'))}: <b id="py-slip-name">${esc(who)}</b></div>` : ''}${acc0 ? `<div id="py-slip-acc">${esc(t('bt.slip_acc'))}: <b>${esc(accLabel(accById(acc0)))}</b></div>` : ''}${ex.readable === false || ex.amount == null ? `<div class="red">${esc(t('pay.slip_unclear'))}</div>` : ''}`;
       $('#py-slip-btn', el).innerHTML = `${ic('camera')} ${esc(t('pu.photo_retake'))}`;
       check();
     } catch (e) { st.innerHTML = `<span class="red">${esc(e instanceof NetError ? t('pu.scan_net') : errMsg(e))}</span>`; }
@@ -7747,7 +7751,7 @@ async function openRecordTransfer(req) {
 }
 
 /* ---- Rekening Bank Toko: the month's bank payments + reconciliation with the bank statement (v14) ---- */
-const BK = { acc: '', period: '', data: null, pays: null, photos: {}, err: '', seq: 0 };
+const BK = { acc: '', period: '', data: null, pays: null, photos: {}, err: '', seq: 0, tab: 'recon' };
 const BR_ORDER = ['tidak_tercatat', 'beda_jumlah', 'missing', 'beda_tanggal', 'manual', 'cocok', 'diabaikan'];
 const BR_CLS = { cocok: 'green', manual: 'green', beda_tanggal: 'amber', beda_jumlah: 'red', tidak_tercatat: 'red', missing: 'red', diabaikan: 'gray' };
 const prevMonth = () => addDays(today().slice(0, 8) + '01', -1).slice(0, 7);
@@ -7757,11 +7761,13 @@ RENDER.bank = function () {
   if (!BK.acc || !accById(BK.acc)) BK.acc = (accs.find(a => a.active !== false) || accs[0] || {}).id || '';
   if (!BK.period) BK.period = +today().slice(8, 10) <= 10 ? prevMonth() : today().slice(0, 7);
   const v = $('#view-bank');
+  if (accs.length && BK.tab === 'transfers') { renderBankTransfers(v); return; } // v57
   if (!accs.length) {
     v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.bank'))}</h1></div><div class="card pad center" id="bk-noacc"><p>${esc(t('bk.no_account'))}</p>${isOwner() ? `<button class="btn primary" data-act="go" data-view="settings">${ic('gear')} ${esc(t('nav.settings'))}</button>` : `<p class="muted small">${esc(t('bk.ask_owner'))}</p>`}</div>`;
     return;
   }
   v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.bank'))}</h1>${canPropose() ? `<button class="btn primary" data-act="tf-request">${ic('send')} ${esc(t('tf.request'))}</button>` : ''}<button class="btn" data-act="bk-csv" id="bk-csv">${ic('download')} ${esc(t('bk.export'))}</button><button class="btn primary" data-act="bk-import" id="bk-import-btn">${ic('upload')} ${esc(t('bk.import'))}</button></div>
+    ${bkTabsHTML()}
     <p class="muted small" style="margin-top:0">${esc(t('bk.hint'))}</p>
     <div id="bk-transfers"></div>
     <div class="toolbar"><select class="input" id="bk-acc" aria-label="${esc(t('pay.account'))}">${accs.map(a => `<option value="${esc(a.id)}" ${String(a.id) === String(BK.acc) ? 'selected' : ''}>${esc(accLabel(a))}${a.active === false ? ' (' + esc(t('inactive')) + ')' : ''}</option>`).join('')}</select>
@@ -8098,7 +8104,7 @@ function dailyReminderDue() {
 
 /* ========== Settings additions (owner): shop location, bank accounts, report numbers ========== */
 function settingsExtraHTML() {
-  const st = settings(), accs = bankAccountsList();
+  const st = settings();
   return `<div class="panel" id="st-loc"><h3>${ic('pin')} ${esc(t('set.loc_title'))}</h3><div class="pb">
       <p class="small muted" style="margin-top:0">${esc(t('set.loc_hint'))}</p>
       <div class="grid2"><div class="field"><label class="f" for="st-lat">${esc(t('set.lat'))}</label><input class="input num" id="st-lat" inputmode="decimal" value="${num(st.store_lat) ? esc(String(st.store_lat)) : ''}" placeholder="-6.2763"></div>
@@ -8106,11 +8112,7 @@ function settingsExtraHTML() {
       <div class="row wrap" style="margin-bottom:8px"><button class="btn" data-act="st-loc-here" id="st-loc-here">${ic('pin')} ${esc(t('set.loc_here'))}</button><span class="small muted" id="st-loc-msg"></span></div>
       <label class="check"><input type="checkbox" id="st-req-loc" ${st.require_device_location === true ? 'checked' : ''}> <span>${esc(t('set.req_loc'))}<br><span class="small muted">${esc(t('set.req_loc_hint'))}</span></span></label>
       <div class="red" id="st-loc-err"></div><button class="btn primary" data-act="set-save-loc">${esc(t('save'))}</button></div></div>
-    <div class="panel" id="st-bank"><h3>${ic('bank')} ${esc(t('set.bank_title'))}</h3><div class="pb">
-      <p class="small muted" style="margin-top:0">${esc(t('set.bank_hint'))}</p>
-      <div id="st-bank-rows">${accs.map(a => bankAccRowHTML(a)).join('')}</div>
-      <button class="btn sm" data-act="st-bank-add" id="st-bank-add">${ic('plus')} ${esc(t('set.bank_add'))}</button>
-      <div class="red" id="st-bank-err"></div><div style="margin-top:10px"><button class="btn primary" data-act="set-save-bank">${esc(t('save'))}</button></div></div></div>
+    ${bankPanelHTML()}
     <div class="panel" id="st-report"><h3>${ic('report')} ${esc(t('set.report_title'))}</h3><div class="pb">
       <div class="field"><label class="f" for="st-wa-company">${esc(t('set.wa_company'))}</label><input class="input" id="st-wa-company" type="tel" inputmode="tel" value="${esc(st.wa_shop_number || '')}" placeholder="08xx xxxx xxxx"></div>
       <div class="field"><label class="f" for="st-wa-manager">${esc(t('set.wa_manager'))}</label><input class="input" id="st-wa-manager" type="tel" inputmode="tel" value="${esc(st.wa_manager_number || '')}" placeholder="08xx xxxx xxxx"></div>
@@ -8121,6 +8123,14 @@ function settingsExtraHTML() {
       <div class="field"><label class="f" for="st-due-days">${esc(t('set.due_days'))}</label><input class="input num" id="st-due-days" inputmode="numeric" value="${esc(String(st.invoice_due_days ?? 14))}" style="max-width:140px"></div>
       <label class="check"><input type="checkbox" id="st-ak-cost" ${st.akuntan_sees_cost === true ? 'checked' : ''}> ${esc(t('set.ak_cost'))}</label><div class="small muted">${esc(t('set.ak_cost_hint'))}</div>
       <div class="red" id="st-inv-err"></div><button class="btn primary" data-act="set-save-inv" id="st-save-inv">${esc(t('save'))}</button></div></div>`;
+}
+/** v57: the store's bank accounts — the owner's settings and the manager's (save_bank_accounts). */
+function bankPanelHTML() {
+  return `<div class="panel" id="st-bank"><h3>${ic('bank')} ${esc(t('set.bank_title'))}</h3><div class="pb">
+      <p class="small muted" style="margin-top:0">${esc(t('set.bank_hint'))}</p>
+      <div id="st-bank-rows">${bankAccountsList().map(a => bankAccRowHTML(a)).join('')}</div>
+      <button class="btn sm" data-act="st-bank-add" id="st-bank-add">${ic('plus')} ${esc(t('set.bank_add'))}</button>
+      <div class="red" id="st-bank-err"></div><div style="margin-top:10px"><button class="btn primary" data-act="set-save-bank">${esc(t('save'))}</button></div></div></div>`;
 }
 function bankAccRowHTML(a) {
   return `<div class="grid2 st-bank-row" data-acc="${esc(a.id)}" style="grid-template-columns:1fr 1.3fr;border-bottom:1px solid var(--border);padding:6px 0 10px;margin-bottom:6px">
@@ -8180,7 +8190,9 @@ Object.assign(ACT, {
     const bad = list.find(a => !a.bank || !/^\d{5,20}$/.test(a.account_no));
     if (bad) { err.textContent = t('set.bank_bad'); return; }
     err.textContent = '';
-    saveSettings({ bank_accounts: list }, err);
+    // v57: the manager keeps the bank list too (save_bank_accounts); an account removed stays, inactive
+    api('save_bank_accounts', { accounts: list }).then(r => { S.settings = Object.assign({}, S.settings, { bank_accounts: r.bank_accounts || list }); saveCache(); toast(t(r.unchanged ? 'sd.unchanged' : 'saved'), 'ok'); if (S.view === 'settings') RENDER.settings(); })
+      .catch(e => { err.textContent = errMsg(e); });
   },
   'set-save-report': () => {
     const err = $('#st-report-err'), out = {};
@@ -10233,6 +10245,122 @@ Object.assign(I18N.ar, {
   'sd.added_ok': 'أُضيف المورد {name}', 'sd.saved': 'حُفظت بيانات {name}', 'sd.unchanged': 'لم يتغير شيء',
   'sd.not_in_dir': 'هذا المورد ليس له بيانات بعد (الشركة، المكان، المواد).', 'sd.complete': 'أكمل البيانات',
   'sd.added': 'أضافه {by}، {at}', 'sd.edited': 'عدّله {by}، {at}'
+});
+
+/* v57 Rekening → "Transfer per rekening" (owner 2026-10-15: «في عملية التحويلات إمكانية اختيار كتابة التحويل لأي بنك تمت … وعند المحاسب عندما
+   يقوم بعملية المراجعة أو تصنيف التحويلات فتتم حسب بنك»): every bank transfer of a period — sales paid (partly) by transfer, debt
+   payments in, payments out — filed by the store account it went to or came from: a card per account (in, out, count) and one for
+   the transfers not filed yet; the accountant / manager files one with a tap (set_transfer_bank). Read from get_sales (cached). */
+const BT = { preset: '30d', from: '', to: '', acc: '', dir: '', q: '', data: null, err: '', seq: 0 };
+const canFileTransfer = () => S.role === 'akuntan' || S.role === 'manager';
+function bkTabsHTML() {
+  return `<div class="chips" id="bk-tabs" style="margin-bottom:8px">${['recon', 'transfers'].map(k => `<button class="chip ${BK.tab === k ? 'on' : ''}" data-act="bk-tab" data-tab="${k}">${esc(t('bt.tab_' + k))}</button>`).join('')}</div>`;
+}
+function renderBankTransfers(v) {
+  if (BT.preset !== 'custom' || !BT.from || !BT.to) [BT.from, BT.to] = gsRange(BT.preset === 'custom' ? '30d' : BT.preset);
+  v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.bank'))}</h1><button class="btn sm" data-act="bt-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
+    ${bkTabsHTML()}
+    <p class="muted small" style="margin-top:0" id="bt-hint">${esc(t('bt.hint'))}</p>
+    <div class="toolbar"><div class="chips" id="bt-presets">${GS_PRESETS.map(p => `<button class="chip ${BT.preset === p ? 'on' : ''}" data-act="bt-preset" data-p="${p}">${esc(t(p === 'custom' ? 'act.custom' : p === '30d' ? 'act.30d' : 'pr.' + p))}</button>`).join('')}</div>
+      <span id="bt-dates" ${BT.preset === 'custom' ? '' : 'hidden'}><label class="f" style="margin:0">${esc(t('from'))} <input class="input" type="date" id="bt-from" value="${esc(BT.from)}" style="width:auto"></label>
+      <label class="f" style="margin:0">${esc(t('to'))} <input class="input" type="date" id="bt-to" value="${esc(BT.to)}" style="width:auto"></label></span></div>
+    <div class="toolbar"><input class="input" id="bt-q" type="search" placeholder="${esc(t('bt.search'))}" aria-label="${esc(t('bt.search'))}" value="${esc(BT.q)}">
+      <div class="chips" id="bt-dirs">${['', 'in', 'out'].map(d => `<button class="chip ${BT.dir === d ? 'on' : ''}" data-act="bt-dir" data-d="${d}">${esc(t(d ? 'bt.dir_' + d : 'all'))}</button>`).join('')}</div></div>
+    <div id="bt-cards"></div><div id="bt-list"><div class="empty">${esc(t('loading'))}</div></div>`;
+  $('#bt-q', v).addEventListener('input', debounce(() => { BT.q = $('#bt-q').value; btDraw(); }, 120));
+  const setDate = (k, el) => { BT[k] = el.value || today(); if (BT.from > BT.to) [BT.from, BT.to] = [BT.to, BT.from]; btLoad(); };
+  $('#bt-from', v).onchange = e => setDate('from', e.target);
+  $('#bt-to', v).onchange = e => setDate('to', e.target);
+  if (BT.data) btDraw();
+  btLoad();
+}
+async function btLoad(force) {
+  const seq = ++BT.seq, box = $('#bt-list'); if (box) box.style.opacity = '.55';
+  try { const d = await loadSales(BT.from, BT.to, !force); if (seq !== BT.seq) return; BT.data = d; BT.err = ''; }
+  catch (e) { if (seq !== BT.seq) return; BT.err = errMsg(e); }
+  btDraw();
+}
+/** Every transfer of the loaded period, newest first: { kind sale|payment, ref, date, at, who, by, amount, dir in|out, acc, bank, tref, photo, src }. */
+function btRows() {
+  const d = BT.data; if (!d) return [];
+  const out = [], one = (x, f) => out.push(Object.assign({ acc: String(x.account_id || ''), bank: x.bank || '', tref: x.transfer_ref || '', photo: x.proof_photo_id || '', src: x }, f));
+  d.sales.forEach(s => {
+    if (s.status === 'void') return;
+    const tr = window.KPay ? int(KPay.of(s).transfer) : (s.payment_method === 'transfer' ? Math.min(int(s.paid_amount), int(s.total)) : 0);
+    if (tr > 0) one(s, { kind: 'sale', ref: s.invoice_no, date: s.sale_date, at: s.sale_time || '', who: s.customer_name || '', by: s.cashier || '', amount: tr, dir: 'in', what: t(s.payment_method === 'campur' ? 'bt.k_sale_part' : 'bt.k_sale') });
+  });
+  d.payments.forEach(p => { if (p.method === 'transfer') one(p, { kind: 'payment', ref: p.pay_id, date: p.pay_date, at: p.pay_time || '', who: p.customer_name || '', by: p.cashier || '', amount: int(p.amount), dir: 'in', what: t('bt.k_debt') }); });
+  d.supplierPayments.forEach(p => { if (p.method === 'transfer') one(p, { kind: 'payment', ref: p.pay_id, date: p.pay_date, at: p.pay_time || '', who: p.supplier || p.payee || '', by: p.cashier || '', amount: int(p.amount), dir: 'out', what: t(p.supplier ? 'bt.k_supplier' : 'bt.k_out') }); });
+  return out.filter(r => String(r.date || '') >= BT.from && String(r.date || '') <= BT.to).sort((a, b) => String(b.at || b.date).localeCompare(String(a.at || a.date)));
+}
+function btDraw() {
+  const cards = $('#bt-cards'), box = $('#bt-list'); if (!box || S.view !== 'bank' || BK.tab !== 'transfers') return;
+  box.style.opacity = '';
+  $$('#bt-presets .chip').forEach(c => c.classList.toggle('on', c.dataset.p === BT.preset));
+  $$('#bt-dirs .chip').forEach(c => c.classList.toggle('on', c.dataset.d === BT.dir));
+  const dates = $('#bt-dates'); if (dates) dates.hidden = BT.preset !== 'custom';
+  if (!BT.data) { box.innerHTML = `<div class="empty ${BT.err ? 'red' : ''}">${esc(BT.err || t('loading'))}</div>`; return; }
+  const all = btRows(), accs = bankAccountsList(), known = new Set(accs.map(a => String(a.id)));
+  // with one active store account an unfiled transfer is that account's (as the server files a new one): no open card then
+  const act = accs.filter(a => a.active !== false), only = act.length === 1 ? String(act[0].id) : '';
+  const accOf = r => (known.has(r.acc) ? r.acc : only || '_none');
+  const sumOf = (list, dir) => sum(list.filter(r => r.dir === dir), r => r.amount);
+  const shown = accs.filter(a => a.active !== false || all.some(r => r.acc === String(a.id)));
+  const none = all.filter(r => accOf(r) === '_none');
+  const card = (id, label, list, cls = '') => `<button class="kpi ${cls} ${BT.acc === id ? 'on' : ''}" data-act="bt-acc" data-acc="${esc(id)}" data-kpi="bt-${esc(id)}" style="text-align:start">
+      <div class="k">${esc(label)}</div><div class="v num" style="font-size:18px"><span class="green">+${fmtRp(sumOf(list, 'in'))}</span></div>
+      <div class="s"><span class="red num">−${fmtRp(sumOf(list, 'out'))}</span> · ${esc(t('bt.n', { n: fmtNum(list.length) }))}</div></button>`;
+  cards.innerHTML = `<div class="kpis" id="bt-kpis" style="margin-bottom:10px">${shown.map(a => card(String(a.id), accLabel(a) + (a.active === false ? ' (' + t('inactive') + ')' : ''), all.filter(r => accOf(r) === String(a.id)))).join('')}
+    ${only ? '' : card('_none', t('bt.none'), none, none.length ? 'gold' : '')}</div>`;
+  const q = norm(BT.q);
+  const list = all.filter(r => (!BT.acc || accOf(r) === BT.acc) && (!BT.dir || r.dir === BT.dir) && (!q || norm(`${r.who} ${r.ref} ${r.bank} ${r.tref} ${r.by}`).includes(q)));
+  const can = canFileTransfer();
+  const accCell = r => can ? `<select class="input sm" data-bt-file="${esc(r.kind + ':' + r.ref)}" aria-label="${esc(t('pay.account'))}" style="max-width:260px">${accOf(r) === '_none' ? `<option value="">${esc(t('bt.pick'))}</option>` : ''}${accs.filter(a => a.active !== false || String(a.id) === r.acc).map(a => `<option value="${esc(a.id)}" ${String(a.id) === r.acc ? 'selected' : ''}>${esc(accLabel(a))}</option>`).join('')}</select>`
+    : `<span class="${accOf(r) === '_none' ? 'amber' : ''}">${esc(accOf(r) === '_none' ? t('bt.none') : accLabel(accById(r.acc)))}</span>`;
+  box.innerHTML = `<p class="small muted" id="bt-count">${esc(t('bt.count', { n: fmtNum(list.length), from: fmtDate(BT.from), to: fmtDate(BT.to) }))}</p>
+    ${list.length ? `<div class="list" id="bt-rows">${list.slice(0, 500).map(r => `<div class="li" data-bt="${esc(r.kind + ':' + r.ref)}" data-dir="${r.dir}" data-acc="${esc(accOf(r))}" style="flex-wrap:wrap;gap:6px 12px">
+      <div class="grow" style="min-width:200px"><div class="t">${esc(r.who || '—')} <span class="badge ${r.dir === 'in' ? 'green' : 'red'}">${esc(t('bt.dir_' + r.dir))}</span></div>
+        <div class="s"><span class="num">${esc(r.at ? fmtDateTime(r.at, r.date) : fmtDate(r.date))}</span> · ${esc(r.what)} <b class="num">${esc(r.ref)}</b>${r.bank ? ' · ' + esc(t('bt.from_bank', { b: r.bank })) : ''}${r.tref ? ' · ref ' + esc(r.tref) : ''}${r.by ? ' · ' + esc(r.by) : ''}
+        ${r.photo ? ` · <button type="button" class="linkbtn" data-act="photo-view" data-photo="${esc(r.photo)}">📷 ${esc(t('bt.slip'))}</button>` : ''}</div></div>
+      <div class="right" style="display:flex;flex-direction:column;align-items:flex-end;gap:4px"><div class="num ${r.dir === 'in' ? 'green' : 'red'}" style="font-weight:800" data-amt>${r.dir === 'in' ? '+' : '−'}${fmtRp(r.amount)}</div>${accCell(r)}</div></div>`).join('')}</div>`
+      : `<div class="empty" id="bt-empty">${esc(t('bt.empty'))}</div>`}`;
+  $$('[data-bt-file]', box).forEach(sel => sel.onchange = () => btFile(sel));
+}
+async function btFile(sel) {
+  const [kind, ref] = sel.dataset.btFile.split(/:(.*)/s), r = btRows().find(x => x.kind === kind && x.ref === ref), acc = sel.value;
+  if (!r || !acc) return;
+  sel.disabled = true;
+  try {
+    await api('set_transfer_bank', kind === 'sale' ? { kind, invoice_no: ref, account_id: acc } : { kind, pay_id: ref, pay_date: r.date, account_id: acc });
+    r.src.account_id = acc; // the cached get_sales rows: the change stays when the list is drawn again
+    toast(t('bt.filed', { acc: accLabel(accById(acc)) }), 'ok');
+  } catch (e) { toast(errMsg(e), 'err'); }
+  btDraw();
+}
+Object.assign(ACT, {
+  'bk-tab': el => { BK.tab = el.dataset.tab; RENDER.bank(); },
+  'bt-refresh': () => btLoad(true),
+  'bt-preset': el => { BT.preset = el.dataset.p; if (BT.preset !== 'custom') [BT.from, BT.to] = gsRange(BT.preset); const f = $('#bt-from'), to = $('#bt-to'); if (f) { f.value = BT.from; to.value = BT.to; } btLoad(); btDraw(); },
+  'bt-dir': el => { BT.dir = el.dataset.d; btDraw(); },
+  'bt-acc': el => { BT.acc = BT.acc === el.dataset.acc ? '' : el.dataset.acc; btDraw(); }
+});
+Object.assign(I18N.id, {
+  'bt.tab_recon': 'Mutasi & rekonsiliasi', 'bt.tab_transfers': 'Transfer per rekening',
+  'bt.hint': 'Semua transfer di periode ini — penjualan dibayar transfer, pembayaran hutang, pembayaran keluar — per rekening toko tujuan / asal. Ketuk kartu rekening untuk menyaring. Akuntan / manajer memilih rekeningnya untuk transfer yang belum jelas.',
+  'bt.search': 'Cari: nama, nota, bank, no. transfer…', 'bt.dir_in': 'Masuk', 'bt.dir_out': 'Keluar', 'bt.none': 'Belum dipilih rekeningnya', 'bt.n': '{n} transfer',
+  'bt.count': '{n} transfer · {from} – {to}', 'bt.empty': 'Tidak ada transfer yang cocok di periode ini.', 'bt.pick': '— pilih rekening —', 'bt.slip': 'Bukti',
+  'bt.from_bank': 'dari {b}', 'bt.k_sale': 'Penjualan', 'bt.k_sale_part': 'Penjualan (campur)', 'bt.k_debt': 'Bayar hutang', 'bt.k_supplier': 'Bayar pemasok', 'bt.k_out': 'Transfer keluar',
+  'bt.filed': 'Dicatat ke {acc}', 'bt.slip_acc': 'Rekening toko dikenali dari bukti',
+  'set.bank_hint': 'Rekening bank toko, diisi manajer (atau pemilik). Setiap transfer dicatat ke salah satunya; yang pertama aktif menjadi pilihan awal. Rekening yang dihapus disimpan sebagai nonaktif, supaya transfer lamanya tetap tercatat.'
+});
+Object.assign(I18N.ar, {
+  'bt.tab_recon': 'كشف الحساب والمطابقة', 'bt.tab_transfers': 'التحويلات حسب الحساب',
+  'bt.hint': 'كل التحويلات في هذه الفترة — مبيعات دُفعت بالتحويل، تسديد ديون، مدفوعات خارجة — حسب حساب المتجر الذي دخلت إليه أو خرجت منه. اضغط بطاقة الحساب للتصفية. المحاسب / المدير يختار الحساب للتحويل غير المحدد.',
+  'bt.search': 'ابحث: الاسم، الفاتورة، البنك، رقم التحويل…', 'bt.dir_in': 'داخل', 'bt.dir_out': 'خارج', 'bt.none': 'لم يُحدَّد الحساب بعد', 'bt.n': '{n} تحويل',
+  'bt.count': '{n} تحويل · {from} – {to}', 'bt.empty': 'لا توجد تحويلات مطابقة في هذه الفترة.', 'bt.pick': '— اختر الحساب —', 'bt.slip': 'الإيصال',
+  'bt.from_bank': 'من {b}', 'bt.k_sale': 'بيع', 'bt.k_sale_part': 'بيع (مختلط)', 'bt.k_debt': 'تسديد دين', 'bt.k_supplier': 'دفع لمورد', 'bt.k_out': 'تحويل خارج',
+  'bt.filed': 'سُجّل في {acc}', 'bt.slip_acc': 'حساب المتجر المعروف من الإيصال',
+  'set.bank_hint': 'حسابات المتجر البنكية، يُدخلها المدير (أو المالك). كل تحويل يُسجَّل في أحدها؛ أول حساب نشط هو الاختيار الافتراضي. الحساب المحذوف يبقى غير نشط حتى تبقى تحويلاته القديمة مسجلة.'
 });
 
 /* ========== Boot ========== */

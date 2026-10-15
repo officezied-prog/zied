@@ -33,11 +33,13 @@ export function parseRequest(body, headers) {
     pin_hash: String(body.pin_hash || ''),
     data: data,
     client_id: action === 'save_sale' && data.client_id ? String(data.client_id) : '__none__',
-    invoice_no: ['void_sale', 'request_void', 'decide_approval'].indexOf(action) >= 0 && data.invoice_no ? String(data.invoice_no) : '__none__',
+    // v57: set_transfer_bank on a sale reads that sale
+    invoice_no: (['void_sale', 'request_void', 'decide_approval'].indexOf(action) >= 0 || (action === 'set_transfer_bank' && data.kind === 'sale')) && data.invoice_no ? String(data.invoice_no) : '__none__',
     from: salesFrom,
     to: salesTo,
-    pay_from: period ? shift(period + '-01', -3) : salesFrom,
-    pay_to: period ? shift(periodEnd, 3) : salesTo,
+    // v57: set_transfer_bank on a payment reads the payments of its day
+    pay_from: period ? shift(period + '-01', -3) : (action === 'set_transfer_bank' && data.kind === 'payment' && isDate(data.pay_date) ? data.pay_date : salesFrom),
+    pay_to: period ? shift(periodEnd, 3) : (action === 'set_transfer_bank' && data.kind === 'payment' && isDate(data.pay_date) ? data.pay_date : salesTo),
     shift_from: action === 'open_shift' ? twoWeeksAgo : salesFrom,
     shift_to: action === 'open_shift' ? today : salesTo,
     bank_account: bankAction && data.account_id ? String(data.account_id) : '__none__',
@@ -47,7 +49,7 @@ export function parseRequest(body, headers) {
     // v39: a direct repack reads the repacks of yesterday + today (a resend by its client id; "someone just repacked this bulk").
     rp_from: action === 'repack' || action === 'request_repack' || action === 'repack_start' ? new Date(Date.now() + 7 * 3600000 - 86400000).toISOString().slice(0, 10) : '9999-12-31',
     approval_client: action === 'request_repack' && data.client_id ? String(data.client_id).slice(0, 60) : '__none__',
-    photo_id: ['save_purchase', 'receive_payment', 'pay_supplier', 'save_expense'].indexOf(action) >= 0 && data.photo_id ? String(data.photo_id) : '__none__',
+    photo_id: ['save_purchase', 'receive_payment', 'pay_supplier', 'save_expense', 'save_sale', 'record_transfer'].indexOf(action) >= 0 && data.photo_id ? String(data.photo_id) : '__none__', // v57: + a sale's / transfer's slip
     ip: String(headers['x-forwarded-for'] || headers['x-real-ip'] || '').split(',')[0].trim(),
     ua: String(headers['user-agent'] || '').slice(0, 300),
     purchase_no: ['request_purchase_fix', 'decide_approval'].indexOf(action) >= 0 && data.purchase_no ? String(data.purchase_no) : '__none__',

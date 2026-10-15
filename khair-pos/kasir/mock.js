@@ -141,9 +141,10 @@ const MockServer = (() => {
     if (c) c.visits = Math.max(0, num(c.visits) - 1); // v16: a voided purchase does not count
     return s;
   }
-  function addTransferConfirm(db, u, refType, ref, amount, who, bank, transferRef) {
+  function addTransferConfirm(db, u, refType, ref, amount, who, bank, transferRef, extra) {
     if (money(amount) <= 0) return null;
-    return newApproval(db, u, { kind: 'transfer_confirm', approver_role: 'manager', ref: String(ref), total: money(amount), customer_name: String(who || ''), note: (String(bank || '') ? 'Bank ' + bank : '') + (String(transferRef || '') ? ' ref ' + transferRef : ''), summary: ('Konfirmasi transfer masuk ' + String(who || '') + ' Rp ' + money(amount) + ' (' + refType + ' ' + ref + ') — pastikan dana sudah masuk').slice(0, 1500), payload: JSON.stringify({ ref_type: refType, ref: String(ref), amount: money(amount), bank: String(bank || ''), transfer_ref: String(transferRef || ''), who: String(who || '') }) });
+    const accs = Array.isArray(db.settings.bank_accounts) ? db.settings.bank_accounts : [], acc = extra && str(extra.account_id) ? accs.find(x => x && str(x.id) === str(extra.account_id)) : null; // v57
+    return newApproval(db, u, { kind: 'transfer_confirm', approver_role: 'manager', ref: String(ref), total: money(amount), customer_name: String(who || ''), note: (String(bank || '') ? 'Bank ' + bank : '') + (String(transferRef || '') ? ' ref ' + transferRef : ''), summary: ('Konfirmasi transfer masuk ' + String(who || '') + ' Rp ' + money(amount) + ' (' + refType + ' ' + ref + ')' + (acc ? ' ke ' + acc.bank + ' ' + acc.account_no : '') + ' — pastikan dana sudah masuk').slice(0, 1500), payload: JSON.stringify(Object.assign({ ref_type: refType, ref: String(ref), amount: money(amount), bank: String(bank || ''), transfer_ref: String(transferRef || ''), who: String(who || '') }, extra || {})) });
   }
   function newApproval(db, u, f) {
     const ap = Object.assign({ request_id: 'APR-' + String(nextId(db, 'approval')).padStart(4, '0'), client_id: '', created_at: jktISO(), cashier: u.name, customer_id: null, customer_name: '', customer_debt_before: 0, total: 0, debt_amount: 0, summary: '', status: 'pending', decided_by: '', decided_at: '', note: '', kind: 'credit', ref: '', payload: '', approver_role: 'manager' }, f);
@@ -578,10 +579,12 @@ const MockServer = (() => {
   }
   const dupRef = (db, ref) => !!str(ref) && db.payments.some(p => str(p.transfer_ref) && str(p.transfer_ref).toLowerCase() === str(ref).toLowerCase());
   const payOut = p => Object.assign({}, p, { alloc: parseAlloc(p.alloc) });
-  function payAccount(db, method, want) {
+  function payAccount(db, method, want, ex, dir) {
     if (method !== 'transfer' && method !== 'qris') return '';
     const accs = (Array.isArray(db.settings.bank_accounts) ? db.settings.bank_accounts : []).filter(x => x && str(x.id));
     if (str(want) && accs.some(x => str(x.id) === str(want))) return str(want);
+    const fromSlip = ex && window.KBank ? KBank.slipAccount(accs, ex, dir || 'in') : ''; // v57: the account the slip shows
+    if (fromSlip) return fromSlip;
     const act = accs.filter(x => x.active !== false);
     return act.length ? str(act[0].id) : '';
   }
@@ -922,9 +925,19 @@ const MockServer = (() => {
         };
         if (usedApproval) usedApproval.status = 'used';
         if (usedDisc) usedDisc.status = 'used';
-        db.sales.push(sale);
         const trPart = window.KPay.of(sale).transfer; // v51: a split sale's transfer part is checked too
-        if (trPart > 0) addTransferConfirm(db, u, 'faktur', sale.invoice_no, trPart, sale.customer_name, str(data.bank), str(data.transfer_ref));
+        let slipAmt = null;
+        if (trPart > 0) { // v57 (as on the server): the store account — chosen, else from the slip, else the only active one
+          const ph = data.photo_id ? (db.photos || []).find(x => x.photo_id === data.photo_id && x.kind === 'bayar') : null, ex = ph ? ph.extracted || {} : null;
+          const accs = (Array.isArray(db.settings.bank_accounts) ? db.settings.bank_accounts : []).filter(x => x && str(x.id)), act = accs.filter(x => x.active !== false), want = str(data.account_id);
+          sale.account_id = want && accs.some(x => str(x.id) === want) ? want : ((ex && window.KBank ? KBank.slipAccount(accs, ex, 'in') : '') || (act.length === 1 ? str(act[0].id) : ''));
+          sale.bank = (str(data.bank) || (ex ? str(ex.sender_bank) || str(ex.bank) : '')).slice(0, 60);
+          sale.transfer_ref = (str(data.transfer_ref) || (ex ? str(ex.transfer_ref) : '')).slice(0, 80);
+          sale.proof_photo_id = ex ? str(data.photo_id) : '';
+          slipAmt = ex && ex.amount != null && isFinite(Number(ex.amount)) ? money(ex.amount) : null;
+        }
+        db.sales.push(sale);
+        if (trPart > 0) addTransferConfirm(db, u, 'faktur', sale.invoice_no, trPart, sale.customer_name, sale.bank, sale.transfer_ref, { account_id: sale.account_id, photo_id: sale.proof_photo_id, slip_amount: slipAmt });
         const touched = new Map();
         qtyBy.forEach((q, pid) => { const p = prodById(pid); shopSet.set(pid, r3(shopOf(p) - q)); });
         for (const l of lines) {
@@ -1579,7 +1592,7 @@ const MockServer = (() => {
           id: nextId(db, 'payment'), pay_id: 'PY' + rand(7), pay_date: isYmd(data.pay_date) ? data.pay_date : jktDate(), pay_time: new Date().toISOString(),
           direction: 'in', party_type: 'customer', customer_id: c.id, customer_name: str(c.name), supplier: '', amount,
           method: ['tunai', 'transfer', 'qris'].includes(data.method) ? data.method : 'tunai',
-          account_id: payAccount(db, data.method, data.account_id), slip_date: sc && sc.ex && sc.ex.date ? str(sc.ex.date) : '',
+          account_id: payAccount(db, data.method, data.account_id, sc && sc.ex, 'in'), slip_date: sc && sc.ex && sc.ex.date ? str(sc.ex.date) : '',
           bank: str(data.bank).slice(0, 60), transfer_ref: str(data.transfer_ref).slice(0, 80), proof_photo_id: str(data.photo_id).slice(0, 40),
           alloc: JSON.stringify(chk.alloc), match_status: allocStatus(amount, chk, docs),
           note: (str(data.note) + (str(data.mismatch_reason) ? ' | beda dengan bukti: ' + str(data.mismatch_reason) : '')).slice(0, 500), cashier: u.name,
