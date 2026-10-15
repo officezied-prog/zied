@@ -56,8 +56,8 @@ test('half cash, half transfer: one sale, the parts kept, each in its own drawer
   // the daily report counts each part by its method (store and cashier)
   const d = await call(db, 'Pemilik', 'daily_report', { date: DAY });
   assert.equal(d.ok, true, JSON.stringify(d));
-  assert.deepEqual(d.report.sales.by_method, { tunai: 150000, transfer: 90000, qris: 60000 });
-  assert.deepEqual(d.report.cashiers.find((c) => c.name === 'Siti').sales.by_method, { tunai: 150000, transfer: 90000, qris: 60000 });
+  assert.deepEqual(d.report.sales.by_method, { tunai: 150000, transfer: 90000, qris: 60000, kartu: 0 });
+  assert.deepEqual(d.report.cashiers.find((c) => c.name === 'Siti').sales.by_method, { tunai: 150000, transfer: 90000, qris: 60000, kartu: 0 });
   assert.equal(d.report.cash.sales, 150000);
   // a resend of the same sale is one sale
   const again = await sell(db, 'Siti', 's1', [{ method: 'tunai', amount: 100000 }, { method: 'transfer', amount: 50000 }]);
@@ -68,7 +68,7 @@ test('half cash, half transfer: one sale, the parts kept, each in its own drawer
 test('wrong parts are refused: more than the total, an unknown method, a negative amount', async () => {
   const db = seed();
   assert.equal((await sell(db, 'Siti', 'w1', [{ method: 'tunai', amount: 100000 }, { method: 'transfer', amount: 60000 }])).error, 'INVALID');
-  assert.equal((await sell(db, 'Siti', 'w2', [{ method: 'tunai', amount: 100000 }, { method: 'kartu', amount: 50000 }])).error, 'INVALID');
+  assert.equal((await sell(db, 'Siti', 'w2', [{ method: 'tunai', amount: 100000 }, { method: 'voucher', amount: 50000 }])).error, 'INVALID');
   assert.equal((await sell(db, 'Siti', 'w3', [{ method: 'tunai', amount: 200000 }, { method: 'transfer', amount: -50000 }])).error, 'INVALID');
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pos_sales').get().n, 0);
   assert.equal(shift(db, 'SHS').cash_sales, 0);
@@ -99,4 +99,22 @@ test('part paid, the rest on credit: needs a customer and the credit approval li
   assert.equal(saleRow(db, one.invoice_no).payment_method, 'qris');
   assert.equal(saleRow(db, one.invoice_no).pay_parts, '');
   assert.equal(shift(db, 'SHJ').qris_sales, 180000);
+});
+
+test('v53 card (EDC): its own method and a part of a split — bank money, never in the drawer; the daily report shows it', async () => {
+  const db = seed();
+  const one = await call(db, 'Siti', 'save_sale', { client_id: 'k1', sale_date: DAY, items: [{ product_id: 1, qty: 1, unit_price: 150000 }], discount: 0, payment_method: 'kartu', paid_amount: 150000 });
+  assert.equal(one.ok, true, JSON.stringify(one));
+  assert.equal(saleRow(db, one.invoice_no).payment_method, 'kartu');
+  const mix = await sell(db, 'Siti', 'k2', [{ method: 'tunai', amount: 50000 }, { method: 'kartu', amount: 100000 }]);
+  assert.equal(mix.ok, true, JSON.stringify(mix));
+  assert.deepEqual(JSON.parse(saleRow(db, mix.invoice_no).pay_parts), [{ m: 'tunai', a: 50000 }, { m: 'kartu', a: 100000 }]);
+  const sh = shift(db, 'SHS');
+  assert.equal(sh.card_sales, 250000);
+  assert.equal(sh.cash_sales, 50000); // only the cash part is expected in the drawer
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM pos_approvals WHERE kind = 'transfer_confirm'").get().n, 0); // the EDC slip is the proof
+  const d = await call(db, 'Pemilik', 'daily_report', { date: DAY });
+  assert.deepEqual(d.report.sales.by_method, { tunai: 50000, transfer: 0, qris: 0, kartu: 250000 });
+  assert.equal(d.report.bank.sales_card, 250000);
+  assert.equal(d.report.cashiers.find((c) => c.name === 'Siti').sales.by_method.kartu, 250000);
 });

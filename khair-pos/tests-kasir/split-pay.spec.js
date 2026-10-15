@@ -17,7 +17,7 @@ test('half cash, half transfer: the rest is worked out, change from the cash, th
   const T = await total(page), half = Math.floor(T / 2 / 1000) * 1000, need = T - half;
   await page.click('#pm-campur');
   await expect(page.locator('#pm-campur')).toHaveAttribute('aria-checked', 'true');
-  await expect(page.locator('#pay-result')).toContainText('Isi jumlah transfer atau QRIS');
+  await expect(page.locator('#pay-result')).toContainText('Isi jumlah transfer, QRIS atau kartu');
   await expect(page.locator('#pay-ok')).toBeDisabled();
   await page.fill('#pay-sp-transfer', String(half));
   await expect(page.locator('#pay-sp-tunai')).toHaveAttribute('placeholder', fmt(need)); // the cash still to pay
@@ -74,7 +74,7 @@ test('three ways (transfer + QRIS + cash exact); Arabic texts', async ({ page })
   await page.click('#pm-campur');
   await expect(page.locator('#pay-detail')).toContainText('الدفع بعدة طرق');
   await expect(page.locator('label[for="pay-sp-tunai"]')).toHaveText('النقد المستلم (روبية)');
-  await expect(page.locator('#pay-result')).toContainText('اكتب مبلغ التحويل أو QRIS');
+  await expect(page.locator('#pay-result')).toContainText('اكتب مبلغ التحويل أو QRIS أو البطاقة');
   await H.shot(page, 'phone-pay-split-ar', false, { noToasts: true });
 });
 
@@ -108,4 +108,31 @@ test('part paid, the rest on credit: needs a customer, then the manager approves
   const db = await H.getDb(page);
   const sale = db.sales[db.sales.length - 1];
   expect(sale).toMatchObject({ payment_method: 'campur', paid_amount: 30000, debt_amount: T - 30000, approved_by: 'Jihan' });
+});
+
+test('v53 card (EDC): its own button, and a part of Campur; the receipt and the drawer total show it (never as cash)', async ({ page }) => {
+  await H.login(page);
+  await H.addItem(page, 'tunisia');
+  await H.pay(page);
+  await expect(page.locator('#pay-m button')).toHaveCount(6);
+  await page.click('#pm-kartu');
+  await expect(page.locator('#pay-detail')).toContainText('mesin EDC');
+  await H.shot(page, 'phone-pay-card', false, { noToasts: true });
+  await page.click('#pay-ok');
+  await expect(page.locator('#rc-modal #receipt')).toContainText('Bayar (Kartu)');
+  const T1 = (await H.getDb(page)).sales.slice(-1)[0];
+  expect(T1.payment_method).toBe('kartu');
+  await page.click('#rc-new');
+  await H.addItem(page, 'tunisia');
+  await H.pay(page);
+  const T = await total(page), kr = Math.floor(T / 2 / 1000) * 1000;
+  await page.click('#pm-campur');
+  await page.fill('#pay-sp-kartu', String(kr));
+  await expect(page.locator('#pay-sp-sum')).toHaveText(`Tunai ${H.rp(T - kr)} + Kartu ${H.rp(kr)} = ${H.rp(T)}`);
+  await page.click('#pay-ok');
+  await expect(page.locator('#rc-modal .rc-part[data-part="kartu"]')).toContainText(fmt(kr));
+  const sale = (await H.getDb(page)).sales.slice(-1)[0];
+  expect(JSON.parse(sale.pay_parts)).toEqual([{ m: 'tunai', a: T - kr }, { m: 'kartu', a: kr }]);
+  const boot = await page.evaluate(() => api('bootstrap', {}));
+  expect(boot.shift.card_sales).toBe(T1.total + kr);
 });

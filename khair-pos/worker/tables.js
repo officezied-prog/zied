@@ -82,6 +82,7 @@ export const TABLES = {
     sales_total: 'number', expected_cash: 'number', counted_cash: 'number',
     difference: 'number', moves: 'string', note: 'string', transfer_sales: 'number',
     qris_sales: 'number', debt_sales: 'number', items_qty: 'number',
+    card_sales: 'number', // v53: debit / credit card (EDC) sales — bank money, not in the drawer
   },
   pos_devices: {
     device_id: 'string', user: 'string', role: 'string', app: 'string', label: 'string',

@@ -54,6 +54,8 @@ export const POS_MIGRATIONS = [
   'ALTER TABLE pos_sales ADD COLUMN pay_parts TEXT',
   // v52 (owner 2026-10-15: «الشوكولاتة الزبيب اللوز بعض التمور … تختار الزبون 250 غرام»): a product shown loose, sold by weight.
   'ALTER TABLE pos_products ADD COLUMN loose INTEGER',
+  // v53 (owner 2026-10-15: «اضف امكانية الدفع بالبطاقة»): a shift's card (EDC) sales.
+  'ALTER TABLE pos_shifts ADD COLUMN card_sales REAL',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;

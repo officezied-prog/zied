@@ -92,7 +92,7 @@ const MockServer = (() => {
   function priceSale(db, data, quote) {
     if (!Array.isArray(data.items) || !data.items.length) throw E('INVALID', 'items required');
     const split = Array.isArray(data.payments) && data.payments.length; // v51: one sale paid by several methods (shared/pay-split.js)
-    if (!quote && !split && !['tunai', 'transfer', 'qris', 'hutang'].includes(data.payment_method)) throw E('INVALID', 'payment_method');
+    if (!quote && !split && !['tunai', 'transfer', 'qris', 'kartu', 'hutang'].includes(data.payment_method)) throw E('INVALID', 'payment_method');
     const cust = data.customer_id ? db.customers.find(c => c.id === Number(data.customer_id)) : null;
     if (data.customer_id && !cust) throw E('NOT_FOUND', 'customer');
     const lines = data.items.map(it => {
@@ -138,7 +138,7 @@ const MockServer = (() => {
     const cash_out = sum(moves.filter(x => x.type === 'out'), x => int(x.amount)) + sum(kasExp, x => int(x.amount)) + sum(supKas, x => int(x.amount));
     const list = moves.map(m => ({ type: m.type, amount: m.amount, note: m.note, time: m.time })).concat(kasExp.map(x => ({ type: 'out', amount: x.amount, note: 'Pengeluaran: ' + x.category + (x.note ? ' — ' + x.note : ''), time: x.expense_date })), supKas.map(x => ({ type: 'out', amount: x.amount, note: 'Bayar pemasok ' + x.supplier, time: x.pay_time })));
     return Object.assign({}, sh, { sales_count: sales.length, sales_total: sum(sales, x => int(x.total)), cash_sales, cash_payments, cash_in, cash_out, moves: JSON.stringify(list),
-      transfer_sales: paidOf('transfer'), qris_sales: paidOf('qris'), debt_sales: sum(sales, x => int(x.debt_amount)), items_qty: roundQty(sum(db.items.filter(i => inv.has(i.invoice_no)), i => num(i.qty))),
+      transfer_sales: paidOf('transfer'), qris_sales: paidOf('qris'), card_sales: paidOf('kartu'), debt_sales: sum(sales, x => int(x.debt_amount)), items_qty: roundQty(sum(db.items.filter(i => inv.has(i.invoice_no)), i => num(i.qty))),
       expected_cash: int(sh.opening_cash) + cash_sales + cash_payments + cash_in - cash_out });
   }
   const BLIND = ['cash_sales', 'cash_payments', 'sales_total', 'expected_cash'];
@@ -2257,8 +2257,8 @@ const MockServer = (() => {
         const allSales = db.sales.filter(x => x.sale_date === day), okSales = allSales.filter(x => x.status !== 'void'), voids = allSales.filter(x => x.status === 'void');
         const okInv = new Set(okSales.map(x => x.invoice_no));
         const items = db.items.filter(x => okInv.has(x.invoice_no));
-        const byMethod = { tunai: 0, transfer: 0, qris: 0 };
-        okSales.forEach(x => { const sp = window.KPay.of(x); byMethod.tunai += sp.tunai; byMethod.transfer += sp.transfer; byMethod.qris += sp.qris; });
+        const byMethod = { tunai: 0, transfer: 0, qris: 0, kartu: 0 };
+        okSales.forEach(x => { const sp = window.KPay.of(x); byMethod.tunai += sp.tunai; byMethod.transfer += sp.transfer; byMethod.qris += sp.qris; byMethod.kartu += sp.kartu; });
         const prod = {};
         items.forEach(it => { const k = String(it.product_id); if (!prod[k]) prod[k] = { name: strv(it.name), qty: 0, total: 0 }; prod[k].qty = roundQty(prod[k].qty + num(it.qty)); prod[k].total += int(it.line_total); });
         const pays = db.payments.filter(p => p.pay_date === day), pin = pays.filter(p => payDir(p) === 'in'), pout = pays.filter(p => payDir(p) === 'out');
@@ -2282,17 +2282,17 @@ const MockServer = (() => {
             rejected: exps.filter(e => e.check_status === 'ditolak').length, flagged_total: sum(exps.filter(e => ['selisih', 'cek_manual', 'ditolak'].includes(e.check_status)), e => int(e.amount)) },
           shifts
         };
-        rep.bank = { sales_transfer: byMethod.transfer, sales_qris: byMethod.qris, payments_transfer: rep.payments_in.transfer, payments_qris: rep.payments_in.qris, out_transfer: rep.payments_out.transfer + rep.payments_out.qris };
-        rep.bank.in_total = rep.bank.sales_transfer + rep.bank.sales_qris + rep.bank.payments_transfer + rep.bank.payments_qris;
+        rep.bank = { sales_transfer: byMethod.transfer, sales_qris: byMethod.qris, sales_card: byMethod.kartu, payments_transfer: rep.payments_in.transfer, payments_qris: rep.payments_in.qris, out_transfer: rep.payments_out.transfer + rep.payments_out.qris };
+        rep.bank.in_total = rep.bank.sales_transfer + rep.bank.sales_qris + rep.bank.sales_card + rep.bank.payments_transfer + rep.bank.payments_qris;
         rep.cash = { sales: byMethod.tunai, payments_in: rep.payments_in.tunai, payments_out: rep.payments_out.tunai, expenses_from_kas: rep.expenses.from_kas,
           expected_total: sum(shifts, x => x.expected_cash), counted_total: sum(shifts.filter(x => x.status === 'closed'), x => x.counted_cash), difference_total: sum(shifts.filter(x => x.status === 'closed'), x => x.difference) };
         if (owner) rep.profit = sum(okSales, x => int(x.profit));
         // v37 every cashier's own day (mirrors backend/process.js daily_report)
         const per = {}, invWho = {};
-        const who = n => { const k = strv(n) || '-'; if (!per[k]) per[k] = { name: k, sales: { count: 0, total: 0, discount: 0, items_qty: 0, by_method: { tunai: 0, transfer: 0, qris: 0 }, debt: 0 }, voids: { count: 0, total: 0 },
+        const who = n => { const k = strv(n) || '-'; if (!per[k]) per[k] = { name: k, sales: { count: 0, total: 0, discount: 0, items_qty: 0, by_method: { tunai: 0, transfer: 0, qris: 0, kartu: 0 }, debt: 0 }, voids: { count: 0, total: 0 },
           payments_in: { count: 0, total: 0, tunai: 0, transfer: 0, qris: 0 }, payments_out: { count: 0, total: 0, tunai: 0 }, expenses: { count: 0, total: 0, from_kas: 0 }, shifts: [] }; return per[k]; };
         okSales.forEach(x => { const c = who(x.cashier), s1 = c.sales, sp = window.KPay.of(x); invWho[x.invoice_no] = c; s1.count++; s1.total += int(x.total); s1.discount += int(x.discount); s1.debt += int(x.debt_amount);
-          s1.by_method.tunai += sp.tunai; s1.by_method.transfer += sp.transfer; s1.by_method.qris += sp.qris; });
+          s1.by_method.tunai += sp.tunai; s1.by_method.transfer += sp.transfer; s1.by_method.qris += sp.qris; s1.by_method.kartu += sp.kartu; });
         items.forEach(it => { const c = invWho[it.invoice_no]; if (c) c.sales.items_qty = roundQty(c.sales.items_qty + num(it.qty)); });
         voids.forEach(x => { const c = who(x.cashier); c.voids.count++; c.voids.total += int(x.total); });
         pin.forEach(p => { const c = who(p.cashier); c.payments_in.count++; c.payments_in.total += int(p.amount); if (c.payments_in[p.method] !== undefined) c.payments_in[p.method] += int(p.amount); });
