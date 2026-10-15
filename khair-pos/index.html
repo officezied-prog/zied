@@ -149,7 +149,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.7.9';
+const APP_VERSION = '2.8.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -779,6 +779,7 @@ function applyData(d) {
   if ('shift' in d) { S.shift = d.shift || null; S.shiftsSupported = true; }
   if (Array.isArray(d.users) && S.inApp && S.user) { const me = d.users.find(u => u.name.toLowerCase() === S.user.toLowerCase()); if (me && (me.role === 'kasir' || me.role === 'sales') && S.role !== me.role) setTimeout(() => showKasirRedirect(S.user, me.role), 0); }
   if (Array.isArray(d.open_shifts)) S.openShifts = d.open_shifts;
+  if (typeof d.ai_reader === 'boolean') S.aiReader = d.ai_reader; // v50: the photo reader (AI key in the Worker) on / off
   if (Array.isArray(d.activity_recent)) { ACTV.recent = d.activity_recent; if (S.inApp) updateActBadge(); }
   if (Array.isArray(d.notifications)) { S.notices = d.notifications; if (S.inApp) updateBell(); } // v38: role-addressed notices (bell)
   if (d.must_change === true && S.inApp && typeof showPinChange === 'function') setTimeout(() => showPinChange(), 0);
@@ -4108,12 +4109,19 @@ function parseAnyDate(v) {
   m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/.exec(s); if (m) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`; }
   return '';
 }
+/* v50 (owner 2026-10-15: «التطبيق لم يستطع قراءة ولا دراسة الفاتورة فاضطررنا إلى تعمير كل شيء بأنفسنا»): when nothing was read, say why —
+   the reader is off (no AI key in the Worker), the AI failed, or the note could not be read — instead of a silent "0 lines". */
+function aiScanNote(sc) {
+  if (!sc) return '';
+  const k = sc.ai === 'off' ? (isOwner() ? 'pu.ai_off_owner' : 'pu.ai_off') : sc.ai === 'error' ? 'pu.ai_err' : !sc.n ? 'pu.ai_unreadable' : '';
+  return k ? `<div class="small" id="pu-ai-note" data-ai="${esc(sc.ai || 'ok')}" style="color:var(--warn);margin-top:4px">${esc(t(k, { e: sc.ai_error || '' }))}</div>` : '';
+}
 function photoStepHTML() {
   const req = purchasePhotoRequired(), sc = PU.scan;
   let status;
   if (PU.scanning) status = `<div class="row"><div class="spinner" style="width:22px;height:22px;border-width:3px;margin:0"></div><b>${esc(t('pu.ai_reading'))}</b></div>`;
   else if (PU.scanErr) status = `<span class="red">${esc(PU.scanErr)}</span>`;
-  else if (PU.photo_id) status = `<span class="green"><b>${esc(t('pu.photo_ok', { n: sc ? sc.n : 0 }))}</b></span>${sc && (sc.supplier || sc.invoice_no) ? `<div class="small muted">${esc([sc.supplier, sc.invoice_no, sc.total ? fmtRp(sc.total) : ''].filter(Boolean).join(' · '))}</div>` : ''}${sc ? photoLinkHtml(sc.drive_url, { cls: 'small' }) : ''}`;
+  else if (PU.photo_id) status = `<span class="green"><b>${esc(t('pu.photo_ok', { n: sc ? sc.n : 0 }))}</b></span>${sc && (sc.supplier || sc.invoice_no) ? `<div class="small muted">${esc([sc.supplier, sc.invoice_no, sc.total ? fmtRp(sc.total) : ''].filter(Boolean).join(' · '))}</div>` : ''}${sc ? photoLinkHtml(sc.drive_url, { cls: 'small' }) : ''}${aiScanNote(sc)}`;
   else status = `<span class="muted">${esc(req ? t('pu.photo_hint_req') : t('pu.photo_hint_opt'))}</span>`;
   return `<div class="card pad photo-step ${PU.photo_id ? 'done' : ''}" id="pu-photo-card" style="margin-bottom:12px">
     ${PU.thumb ? `<img class="thumb" id="pu-thumb" src="${esc(PU.thumb)}" alt="${esc(t('pu.photo_title'))}">` : `<div class="thumb">${ic('camera')}</div>`}
@@ -4204,7 +4212,7 @@ async function scanPurchasePhoto(file) {
     const r = await apiPhoto('scan_purchase', { image_base64: img.base64, mime: img.mime });
     const ex = r.extracted || {}, items = Array.isArray(ex.items) ? ex.items : [];
     PU.photo_id = r.photo_id || '';
-    PU.scan = { n: items.length, supplier: ex.supplier || '', invoice_no: ex.invoice_no || '', total: int(ex.total), drive_url: r.drive_url || '', readable: ex.readable !== false, items: items.map(it => ({ name: String(it.name || ''), qty: it.qty == null || it.qty === '' ? null : num(it.qty), unit: it.unit || '' })) };
+    PU.scan = { n: items.length, supplier: ex.supplier || '', invoice_no: ex.invoice_no || '', total: int(ex.total), drive_url: r.drive_url || '', readable: ex.readable !== false, ai: r.ai || 'ok', ai_error: r.ai_error || '', items: items.map(it => ({ name: String(it.name || ''), qty: it.qty == null || it.qty === '' ? null : num(it.qty), unit: it.unit || '' })) };
     PU.mismatch = null;
     if (ex.supplier && !PU.supplier.trim()) PU.supplier = ex.supplier;
     const d = parseAnyDate(ex.date); if (d) PU.date = d;
@@ -4965,7 +4973,7 @@ Object.assign(I18N.id, {
   'exit.checking': 'AI sedang memeriksa foto…', 'exit.cocok': 'Cocok', 'exit.tidak_cocok': 'Tidak cocok', 'exit.perlu_cek': 'Perlu dicek',
   'exit.recorded': 'Di nota', 'exit.in_photo': 'Di foto', 'exit.missing_title': 'Foto keluar belum ada', 'photo.open': 'Lihat foto', 'photo.title': 'Foto tersimpan',
   'pu.photo_title': 'Foto nota / barang masuk', 'pu.photo_take': 'Ambil foto', 'pu.photo_retake': 'Ganti foto', 'pu.ai_reading': 'AI sedang membaca nota…',
-  'pu.photo_ok': 'Nota terbaca: {n} baris', 'pu.photo_hint_req': 'Wajib: foto nota supplier / barang datang dulu. AI mengisi barangnya.', 'pu.photo_hint_opt': 'Disarankan: foto nota supplier, AI mengisi barangnya.',
+  'pu.photo_ok': 'Nota terbaca: {n} baris', 'set.ai_title': 'Pembaca foto nota (AI)', 'set.ai_on': 'aktif — foto nota mengisi pemasok, barang, jumlah dan harga sendiri', 'set.ai_off': 'BELUM AKTIF — foto nota disimpan, tapi barang harus diketik manual', 'set.ai_how_t': 'Cara mengaktifkan (sekali saja, oleh pemilik)', 'set.ai_how1': 'Buka console.anthropic.com, masuk / daftar, isi saldo (Billing) mis. US$10.', 'set.ai_how2': 'API Keys → Create Key → salin kuncinya (jangan dikirim lewat chat).', 'set.ai_how3': 'Cloudflare → Workers & Pages → khair-mart-jumla → Settings → Variables and Secrets → Add: tipe Secret, nama ANTHROPIC_API_KEY, tempel kuncinya → Deploy.', 'set.ai_how4': 'Buka ulang aplikasi: di sini tertulis "aktif". Biaya kira-kira Rp 300 per foto nota.', 'pu.ai_off': 'Pembaca nota otomatis (AI) belum aktif, jadi barang tidak terisi sendiri. Isi manual dulu dan beri tahu pemilik.', 'pu.ai_off_owner': 'Pembaca nota otomatis (AI) belum aktif: pasang kunci AI di Cloudflare — lihat Pengaturan → "Pembaca foto nota".', 'pu.ai_err': 'AI tidak bisa membaca foto ini ({e}). Foto ulang: nota lurus, terang, seluruhnya terlihat.', 'pu.ai_unreadable': 'Nota tidak terbaca. Foto ulang: nota lurus, terang, seluruhnya terlihat, tidak buram.', 'pu.photo_hint_req': 'Wajib: foto nota supplier / barang datang dulu. AI mengisi barangnya.', 'pu.photo_hint_opt': 'Disarankan: foto nota supplier, AI mengisi barangnya.',
   'pu.need_photo': 'Ambil foto nota dulu', 'pu.need_match': 'Cocokkan semua baris dengan produk', 'pu.pick_product': 'pilih produk', 'pu.on_note': 'Di nota',
   'pu.unmatched': 'Belum cocok', 'pu.note_invoice': 'Nota {no}', 'pu.scan_net': 'Gagal mengirim foto (internet).', 'pu.scan_retry': 'Coba ambil foto lagi.',
   'photoc.title': 'Kontrol foto', 'pc.pur_with': 'Barang masuk + foto', 'pc.pur_without': 'Masuk tanpa foto', 'pc.exit_with': 'Keluar besar + foto', 'pc.exit_missing': 'Foto keluar belum ada',
@@ -4991,7 +4999,7 @@ Object.assign(I18N.ar, {
   'exit.checking': 'الذكاء الاصطناعي يفحص الصورة…', 'exit.cocok': 'مطابق', 'exit.tidak_cocok': 'غير مطابق', 'exit.perlu_cek': 'يحتاج مراجعة',
   'exit.recorded': 'في الفاتورة', 'exit.in_photo': 'في الصورة', 'exit.missing_title': 'صور خروج ناقصة', 'photo.open': 'عرض الصورة', 'photo.title': 'الصورة المحفوظة',
   'pu.photo_title': 'صورة فاتورة المورّد / البضاعة', 'pu.photo_take': 'التقاط صورة', 'pu.photo_retake': 'تغيير الصورة', 'pu.ai_reading': 'الذكاء الاصطناعي يقرأ الفاتورة…',
-  'pu.photo_ok': 'تمت قراءة الفاتورة: {n} سطر', 'pu.photo_hint_req': 'إلزامي: صوّر فاتورة المورّد أولًا، ويملأ الذكاء الاصطناعي الأصناف.', 'pu.photo_hint_opt': 'يُنصح بتصوير فاتورة المورّد.',
+  'pu.photo_ok': 'تمت قراءة الفاتورة: {n} سطر', 'pu.ai_off': 'قارئ الفواتير الآلي (الذكاء الاصطناعي) غير مفعّل، لذلك لم تُملأ الأصناف تلقائيًا. املأها يدويًا الآن وأبلغ المالك.', 'pu.ai_off_owner': 'قارئ الفواتير الآلي غير مفعّل: أضف مفتاح الذكاء الاصطناعي في Cloudflare — انظر الإعدادات ← «قارئ صور الفواتير».', 'pu.ai_err': 'تعذّر على الذكاء الاصطناعي قراءة هذه الصورة ({e}). صوّر مجددًا: الفاتورة مستقيمة، مضيئة، وكاملة.', 'pu.ai_unreadable': 'الفاتورة غير مقروءة. صوّر مجددًا: مستقيمة، مضيئة، كاملة وغير مهتزة.', 'set.ai_title': 'قارئ صور الفواتير (الذكاء الاصطناعي)', 'set.ai_on': 'مفعّل — صورة الفاتورة تملأ المورّد والأصناف والكميات والأسعار تلقائيًا', 'set.ai_off': 'غير مفعّل — تُحفظ صورة الفاتورة لكن يجب كتابة الأصناف يدويًا', 'set.ai_how_t': 'طريقة التفعيل (مرة واحدة، يقوم بها المالك)', 'set.ai_how1': 'افتح console.anthropic.com، سجّل الدخول، واشحن الرصيد (Billing) مثلًا 10 دولار.', 'set.ai_how2': 'API Keys ← Create Key ← انسخ المفتاح (لا ترسله في المحادثة).', 'set.ai_how3': 'Cloudflare ← Workers & Pages ← khair-mart-jumla ← Settings ← Variables and Secrets ← Add: النوع Secret، الاسم ANTHROPIC_API_KEY، الصق المفتاح ← Deploy.', 'set.ai_how4': 'أعد فتح التطبيق: سيظهر هنا «مفعّل». التكلفة تقريبًا 300 روبية لكل صورة فاتورة.', 'pu.photo_hint_req': 'إلزامي: صوّر فاتورة المورّد أولًا، ويملأ الذكاء الاصطناعي الأصناف.', 'pu.photo_hint_opt': 'يُنصح بتصوير فاتورة المورّد.',
   'pu.need_photo': 'صوّر الفاتورة أولًا', 'pu.need_match': 'طابِق كل الأسطر مع المنتجات', 'pu.pick_product': 'اختر منتجًا', 'pu.on_note': 'في الفاتورة',
   'pu.unmatched': 'غير مطابق', 'pu.note_invoice': 'فاتورة {no}', 'pu.scan_net': 'تعذّر إرسال الصورة (الإنترنت).', 'pu.scan_retry': 'حاول التصوير مجددًا.',
   'photoc.title': 'مراقبة الصور', 'pc.pur_with': 'وارد مع صورة', 'pc.pur_without': 'وارد بلا صورة', 'pc.exit_with': 'بيع كبير مع صورة', 'pc.exit_missing': 'صور خروج ناقصة',
@@ -5266,7 +5274,8 @@ RENDER.settings = function () {
       <p style="margin:0 0 10px"><a href="${esc(KASIR_APP_URL)}" id="st-kasir-app">${esc(t('kasirapp.link'))}</a> <span class="small muted">${esc(t('kasirapp.link_hint'))}</span></p>
       <div class="row wrap"><button class="btn" data-act="lock">${ic('lock')} ${esc(t('lock'))}</button><button class="btn" data-act="refresh-data">${ic('refresh')} ${esc(t('set.reload_data'))}</button><button class="btn danger" data-act="logout-store">${esc(t('set.logout_store'))}</button></div>
       ${MOCK ? `<div class="hr"></div><p class="small muted">${esc(t('set.mock_hint'))}</p><button class="btn danger sm" data-act="mock-reset">${esc(t('set.mock_reset'))}</button>` : ''}
-      <p class="small muted">v${APP_VERSION} · ${esc(S.user)} · ${esc(t('login.store'))}: <b id="st-key">${esc(MOCK ? 'demo' : maskKey(S.key))}</b>${isOwner() && !MOCK ? ` <button class="btn xs" data-act="st-key-show" id="st-key-show">${esc(t('set.key_show'))}</button>` : ''}</p></div></div>
+      <p class="small muted">v${APP_VERSION} · ${esc(S.user)} · ${esc(t('login.store'))}: <b id="st-key">${esc(MOCK ? 'demo' : maskKey(S.key))}</b>${isOwner() && !MOCK ? ` <button class="btn xs" data-act="st-key-show" id="st-key-show">${esc(t('set.key_show'))}</button>` : ''}</p>
+      ${S.aiReader === undefined ? '' : `<div id="st-ai" data-ai="${S.aiReader ? 'on' : 'off'}" class="small" style="margin-top:6px"><b>${esc(t('set.ai_title'))}:</b> ${S.aiReader ? `<span class="green">✓ ${esc(t('set.ai_on'))}</span>` : `<span style="color:var(--danger)">✗ ${esc(t('set.ai_off'))}</span>${isOwner() ? `<details style="margin-top:4px"><summary>${esc(t('set.ai_how_t'))}</summary><ol style="margin:6px 0;padding-inline-start:20px">${['set.ai_how1', 'set.ai_how2', 'set.ai_how3', 'set.ai_how4'].map(k => `<li>${esc(t(k))}</li>`).join('')}</ol></details>` : ''}`}</div>`}</div></div>
 
     <div class="panel" id="st-outbox"><h3>${esc(t('set.outbox'))} <span class="badge ${S.outbox.length ? 'amber' : ''}">${S.outbox.length}</span></h3><div class="pb">
       ${S.outbox.length ? `<div class="list">${S.outbox.map(e => `<div class="li" style="min-height:0"><div class="grow"><div class="t num">${fmtRp(e.rc.total)} · ${esc(e.rc.customer_name)}</div><div class="s">${esc(fmtDateTime(e.req.sale_time, e.req.sale_date))} · ${esc(e.user)} · ${esc(t('outbox.tries', { n: e.tries }))}${e.error ? ` · <span class="red">${esc(e.error === 'NETWORK' ? t('err.NETWORK') : e.error + (e.message ? ': ' + e.message : ''))}</span>` : ''}</div></div></div>`).join('')}</div>` : `<p class="muted">${esc(t('outbox.none'))}</p>`}

@@ -82,6 +82,7 @@ test('photo: scan with no AI key saves the photo as perlu_cek (graceful degrade)
   assert.equal(photos[0].kind, 'masuk');
   assert.equal(photos[0].match_status, 'perlu_cek'); // AI unavailable → manual check
   assert.ok(photos[0].photo_id.startsWith('PH'));
+  assert.equal(r.ai, 'off'); // v50: the app says why nothing was read (the Worker has no AI key)
 });
 
 test('photo: list_photos returns saved photos; bad date range rejected', async () => {
