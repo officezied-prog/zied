@@ -139,6 +139,7 @@
 <script src="shared/barcode-cam.js"></script>
 <script src="shared/pick.js"></script>
 <script src="shared/pay-split.js"></script>
+<script src="shared/printer.js"></script>
 <script src="shared/install-btn.js" data-host="#login:not([hidden]) .login-card"></script>
 <script src="shared/app-update.js"></script>
 <script src="mock.js"></script>
@@ -151,7 +152,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.8.4';
+const APP_VERSION = '2.8.5';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1819,7 +1820,17 @@ function openQuotation() {
   $('#q-print', el).onclick = () => printDoc(KDocs.quotation(q, docCtx({ customer: cust })));
   $('#q-copy', el).onclick = async () => { const ok = await copyText(text); toast(ok ? t('copied') : t('copy_failed'), ok ? 'ok' : 'err'); };
 }
-function printReceipt(rc) { const w = settings().paper === '80' ? '80mm' : '58mm'; printHTML(receiptHTML(rc), `size:${w} auto;margin:2mm`); }
+// v54: the receipt goes to the printer chosen on this device (Pengaturan → Printer struk, shared/printer.js) — the print window as
+// before, or straight as ESC/POS (RawBT on Android, Bluetooth BLE, USB, a COM port).
+const printReceiptWindow = html => printHTML(html, `size:${settings().paper === '80' ? '80mm' : '58mm'} auto;margin:2mm`);
+function printReceipt(rc) {
+  if (window.KPrint && KPrint.cfg().mode !== 'system') { KPrint.send(KPrint.receipt(rc, settings())).then(() => toast(KPrint.text(S.lang, 'sent'), 'ok', 2500), e => toast(KPrint.errText(S.lang, e), 'err', 8000)); return; }
+  printReceiptWindow(receiptHTML(rc));
+}
+function openPrinter() {
+  const el = openModal({ title: KPrint.text(S.lang, 'title'), body: '<div id="prn-panel"></div>', foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button>` });
+  KPrint.panel($('#prn-panel', el), S.lang, { store: settings(), printHTML: printReceiptWindow });
+}
 function showReceipt(rc, opts = {}) {
   const canVoid = opts.sale && isOwner() && rc.status !== 'void' && !rc.pending;
   const el = openModal({
@@ -5290,6 +5301,7 @@ RENDER.settings = function () {
         <div class="small muted" style="margin-top:4px">${esc(t('voice.hint'))}</div></div>
       <div class="field"><label class="f">${esc(t('set.ask_qty'))}</label><div class="seg" style="max-width:360px">${[['1', 'voice.on'], ['0', 'voice.off']].map(([v, k]) => `<button type="button" data-act="ask-qty" data-v="${v}" id="askqty-${v === '1' ? 'on' : 'off'}" class="${(askQty() ? '1' : '0') === v ? 'on' : ''}">${esc(t(k))}</button>`).join('')}</div>
         <div class="small muted" style="margin-top:4px">${esc(t('set.ask_qty_hint'))}</div></div>
+      <div class="field"><label class="f">${esc(KPrint.text(S.lang, 'title'))}</label><button type="button" class="btn" data-act="printer-open" id="st-printer" style="max-width:360px">${ic('print')} ${esc(KPrint.text(S.lang, 'mode_' + KPrint.cfg().mode))} · ${KPrint.cfg().width} mm</button></div>
       <div class="field"><label class="f" for="st-theme">${esc(t('set.theme'))}</label><select class="input" id="st-theme" style="max-width:360px">${['auto', 'light', 'dark'].map(m => `<option value="${m}" ${store.get('theme', 'auto') === m ? 'selected' : ''}>${esc(t('theme.' + m))}</option>`).join('')}</select></div>
       <div class="field"><label class="f" for="st-lock">${esc(t('set.autolock'))}</label><select class="input" id="st-lock">${[5, 10, 15, 30, 60, 120, 0].map(m => `<option value="${m}" ${S.lockMinutes === m || (!S.lockMinutes && !m) ? 'selected' : ''}>${m ? esc(t('minutes', { n: m })) : esc(t('never'))}</option>`).join('')}</select></div>
       <p style="margin:0 0 10px"><a href="${esc(KASIR_APP_URL)}" id="st-kasir-app">${esc(t('kasirapp.link'))}</a> <span class="small muted">${esc(t('kasirapp.link_hint'))}</span></p>
@@ -5447,6 +5459,7 @@ const ACT = {
   'held-open': () => openHeld(),
   'held-resume': el => resumeHeld(el.dataset.id),
   'held-del': el => deleteHeld(el.dataset.id),
+  'printer-open': () => openPrinter(),
   'ask-qty': el => { store.set('ask_qty', el.dataset.v === '1'); $$('[data-act="ask-qty"]').forEach(b => b.classList.toggle('on', b === el)); toast(t('saved'), 'ok'); },
   'pos-cat': el => { POS.cat = el.dataset.cat; POS.limit = 60; renderGrid(); focusSearch(); },
   'pos-more': () => { POS.limit += 120; renderGrid(); },
