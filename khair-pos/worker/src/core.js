@@ -56,6 +56,13 @@ export const POS_MIGRATIONS = [
   'ALTER TABLE pos_products ADD COLUMN loose INTEGER',
   // v53 (owner 2026-10-15: «اضف امكانية الدفع بالبطاقة»): a shift's card (EDC) sales.
   'ALTER TABLE pos_shifts ADD COLUMN card_sales REAL',
+  // v57 (owner 2026-10-15: «إمكانية اختيار كتابة التحويل لأي بنك تمت … والتطبيق مباشرة يتعرف على أي نوع البنك ويصنفها حسب الصورة»): a sale
+  // paid by transfer names the store account it went to (+ the sender's bank, transfer no., slip photo); a transfer out keeps its payee.
+  'ALTER TABLE pos_sales ADD COLUMN account_id TEXT',
+  'ALTER TABLE pos_sales ADD COLUMN bank TEXT',
+  'ALTER TABLE pos_sales ADD COLUMN transfer_ref TEXT',
+  'ALTER TABLE pos_sales ADD COLUMN proof_photo_id TEXT',
+  'ALTER TABLE pos_payments ADD COLUMN payee TEXT',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;

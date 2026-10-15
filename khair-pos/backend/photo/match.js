@@ -90,7 +90,7 @@ let saleUpdate = null;
 if (a.kind === 'bayar') {
   const amt = Number(ex.amount);
   ex.amount = ex.amount !== null && ex.amount !== undefined && isFinite(amt) ? Math.round(amt) : null;
-  ['date', 'time', 'sender_name', 'sender_bank', 'receiver_name', 'receiver_bank', 'bank', 'transfer_ref', 'description'].forEach(function (k) { ex[k] = ex[k] === null || ex[k] === undefined ? null : str(ex[k]).slice(0, 120); });
+  ['date', 'time', 'sender_name', 'sender_bank', 'sender_account', 'receiver_name', 'receiver_bank', 'receiver_account', 'bank', 'transfer_ref', 'description'].forEach(function (k) { ex[k] = ex[k] === null || ex[k] === undefined ? null : str(ex[k]).slice(0, 120); });
   if (ex.date && !/^\d{4}-\d{2}-\d{2}$/.test(ex.date)) ex.date = null;
   matchStatus = ex.readable === false || ex.amount === null || ex.status === 'gagal' ? 'perlu_cek' : '';
   matchNotes = str(ex.notes).slice(0, 500);

@@ -141,7 +141,7 @@ const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' 
 // v29 (owner 2026-10-10): the accountant also shares the "manager or accountant" approvals (goods-in mismatch,
 // void today's invoice, price change) — list_approvals + decide_approval, limited to approver_role 'mgr_akuntan'
 // by canDecide — and may register a member (save_customer); the cashier may no longer create members.
-const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes', 'cancel_repack'];
+const AKUNTAN_READ = ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank'];
 if (role === 'akuntan' && AKUNTAN_READ.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
 // v36: report_tamper too — the field app reports a code attempt here (it was refused before, so the rep's account was never locked).
 if (role === 'sales' && ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
@@ -239,6 +239,9 @@ const DEFAULT_SETTINGS = {
   akuntan_sees_cost: false,
   // v50: the packaging materials list (name + price per piece) the manager keeps; a pack's materials are chosen from it
   repack_materials: [],
+  // v56 (owner 2026-10-15: «الموردون يمكن للمحاسب والمدير إضافة المورد جديد مع الاسم اسم الشركة اسم المكان المهنة المواد التي يقدمها»): the
+  // supplier directory [{n, co, pl, tr, gd, ph, nt, by, at, ub, ua}] kept by the accountant and the manager (save_supplier)
+  supplier_dir: [],
   // v37 (owner 2026-10-12: «الكميات التي يتم جردها آخر كل شهرين»): a FULL stock count every N days (owner or manager sets 7–180).
   opname_every_days: 60
 };
@@ -321,12 +324,14 @@ function approvalOut(a) {
   return o;
 }
 // v20 P2d: every incoming transfer payment must be confirmed by the account holder (the manager) that the money really arrived.
-function addTransferConfirm(refType, ref, amount, who, bank, transferRef) {
+function addTransferConfirm(refType, ref, amount, who, bank, transferRef, extra) {
   if (money(amount) <= 0) return null;
+  // v57: + the store account it went to and the slip (photo, amount read) when there is one
+  const acc = extra && str(extra.account_id) ? bankAccounts().find(function (x) { return str(x.id) === str(extra.account_id); }) : null;
   var a = newApproval({ kind: 'transfer_confirm', approver_role: 'manager', ref: str(ref), total: money(amount),
     customer_name: str(who), note: (str(bank) ? 'Bank ' + str(bank) : '') + (str(transferRef) ? ' ref ' + str(transferRef) : ''),
-    summary: ('Konfirmasi transfer masuk ' + str(who) + ' Rp ' + money(amount) + ' (' + refType + ' ' + str(ref) + ') — pastikan dana sudah masuk').slice(0, 1500),
-    payload: JSON.stringify({ ref_type: refType, ref: str(ref), amount: money(amount), bank: str(bank), transfer_ref: str(transferRef), who: str(who) }) });
+    summary: ('Konfirmasi transfer masuk ' + str(who) + ' Rp ' + money(amount) + ' (' + refType + ' ' + str(ref) + ')' + (acc ? ' ke ' + str(acc.bank) + ' ' + str(acc.account_no) : '') + ' — pastikan dana sudah masuk').slice(0, 1500),
+    payload: JSON.stringify(Object.assign({ ref_type: refType, ref: str(ref), amount: money(amount), bank: str(bank), transfer_ref: str(transferRef), who: str(who) }, extra || {})) });
   ops.approvals.push(forWrite(a, -1));
   return a;
 }
@@ -713,6 +718,8 @@ function settingsOut() {
   const st = readSettings(), os = opnameState();
   // v50: the materials list carries prices (costs): the cashier / rep get the names only
   st.repack_materials = matCatalog().map(function (x) { return ['owner', 'manager', 'akuntan'].indexOf(role) >= 0 ? { n: x.name, c: x.cost } : { n: x.name }; });
+  // v56: the supplier directory in full for the owner, manager and accountant; the names only for the others (goods-in pickers)
+  st.supplier_dir = supDir().map(function (x) { return ['owner', 'manager', 'akuntan'].indexOf(role) >= 0 ? x : { n: x.n }; });
   if (Object.keys(os).length) {
     const o = Object.assign({}, os);
     o.counted_n = Array.isArray(o.counted) ? o.counted.length : 0;
@@ -967,8 +974,42 @@ function payAccount(method) {
   const accs = bankAccounts();
   const want = str(data.account_id);
   if (want && accs.some(function (x) { return str(x.id) === want; })) return want;
+  const fromSlip = slipAccount(slipEx(), ['pay_supplier', 'record_transfer'].indexOf(req.action) >= 0 ? 'out' : 'in'); // v57
+  if (fromSlip) return fromSlip;
   const act = accs.filter(function (x) { return x.active !== false; });
   return act.length ? str(act[0].id) : '';
+}
+// v57 (owner 2026-10-15: «عندما يتم عملية التحويل البنكي يقع التقاط الصورة للتحويل البنكي والتطبيق مباشرة يتعرف على أي نوع البنك ويصنفها
+// حسب الصورة»): the store account a transfer slip shows — money in: the receiver's account, money out: the sender's. First by the
+// account number (a slip often hides all but the last digits), then by the bank's name when only one active store account is at that
+// bank; '' when the slip does not tell.
+const BANK_ALIASES = [['bca', 'mybca', 'klikbca', 'bank central asia'], ['bri', 'brimo', 'bank rakyat indonesia'], ['mandiri', 'livin'], ['bni', 'bank negara indonesia'],
+  ['bsi', 'bank syariah indonesia'], ['cimb', 'octo'], ['permata'], ['danamon'], ['btn', 'bank tabungan negara'], ['jago'], ['seabank'], ['dana'], ['ovo'], ['gopay'], ['shopeepay']];
+function bankKey(name) {
+  const n = ' ' + str(name).toLowerCase().replace(/[^a-z0-9]+/g, ' ') + ' ';
+  if (!n.trim()) return '';
+  for (let i = 0; i < BANK_ALIASES.length; i++) if (BANK_ALIASES[i].some(function (al) { return n.indexOf(' ' + al + ' ') >= 0; })) return BANK_ALIASES[i][0];
+  return n.replace(/\s+/g, '');
+}
+function slipAccount(ex, dir) {
+  if (!ex || typeof ex !== 'object') return '';
+  const accs = bankAccounts().filter(function (x) { return x.active !== false; });
+  const no = str(dir === 'out' ? ex.sender_account : ex.receiver_account), bank = dir === 'out' ? str(ex.sender_bank) || str(ex.bank) : str(ex.receiver_bank);
+  const all = no.replace(/\D/g, ''), tail = (no.match(/(\d+)\D*$/) || [])[1] || '';
+  if (all.length >= 3) {
+    const hit = accs.filter(function (x) { const a = str(x.account_no).replace(/\D/g, ''); return a && (a === all || (tail.length >= 3 && /[^\d\s.-]/.test(no) && a.slice(-tail.length) === tail)); });
+    if (hit.length === 1) return str(hit[0].id);
+  }
+  const k = bankKey(bank);
+  if (k) { const hb = accs.filter(function (x) { return bankKey(x.bank) === k; }); if (hb.length === 1) return str(hb[0].id); }
+  return '';
+}
+/** The slip read for this request's photo (data.photo_id, kind 'bayar'), or null. */
+function slipEx() {
+  if (!str(data.photo_id)) return null;
+  const ph = rows('Get Photo').find(function (x) { return x.photo_id === str(data.photo_id); });
+  if (!ph || ph.kind !== 'bayar') return null;
+  try { return JSON.parse(ph.extracted || '{}'); } catch (e) { return null; }
 }
 function dayNum(d) { return Math.round(Date.parse(String(d).slice(0, 10) + 'T00:00:00Z') / 86400000); }
 
@@ -1054,6 +1095,12 @@ function matCatalog() {
   matCache = (Array.isArray(a) ? a : []).map(function (x) { return { name: str(x && x.n).slice(0, 40), cost: Math.max(0, money(x && x.c)) }; })
     .filter(function (x) { return x.name; }).slice(0, REPACK_MAT_MAX);
   return matCache;
+}
+// v56 the supplier directory: one entry per supplier name (the name is the key the goods-in notes and payments already use)
+const SUP_DIR_MAX = 500;
+function supDir() {
+  const a = readSettings().supplier_dir;
+  return (Array.isArray(a) ? a : []).filter(function (x) { return x && str(x.n); }).slice(0, SUP_DIR_MAX);
 }
 function matPrice(name) { const k = str(name).toLowerCase(); const m = matCatalog().find(function (x) { return x.name.toLowerCase() === k; }); return m ? m.cost : null; }
 function repackCostsOf(p) {
@@ -1440,6 +1487,17 @@ switch (req.action) {
       shift_id: myShift ? str(myShift.shift_id) : ''
     };
     const sp = saleParts(sale); // each part of a split sale goes to its own drawer total
+    let slipAmt = null;
+    if (sp.transfer > 0) {
+      // v57: the store account the transfer went to — the cashier's choice, else what the slip photo shows, else the only active account
+      // (with several and no slip it stays open: the accountant files it); the sender's bank, the transfer no. and the slip photo.
+      const ex = slipEx(), want = str(data.account_id), act = bankAccounts().filter(function (x) { return x.active !== false; });
+      sale.account_id = want && bankAccounts().some(function (x) { return str(x.id) === want; }) ? want : (slipAccount(ex, 'in') || (act.length === 1 ? str(act[0].id) : ''));
+      sale.bank = (str(data.bank) || (ex ? str(ex.sender_bank) || str(ex.bank) : '')).slice(0, 60);
+      sale.transfer_ref = (str(data.transfer_ref) || (ex ? str(ex.transfer_ref) : '')).slice(0, 80);
+      sale.proof_photo_id = ex ? str(data.photo_id).slice(0, 40) : '';
+      slipAmt = ex && ex.amount !== null && ex.amount !== undefined && isFinite(Number(ex.amount)) ? money(ex.amount) : null;
+    }
     if (myShift) {
       ops.shifts.push(forWrite(Object.assign({}, myShift, {
         sales_count: num(myShift.sales_count) + 1, sales_total: money(myShift.sales_total) + c.total, cash_sales: money(myShift.cash_sales) + sp.tunai,
@@ -1449,7 +1507,7 @@ switch (req.action) {
       }), myShift.id));
     }
     ops.sales.push(forWrite(sale, -1));
-    if (sp.transfer > 0) addTransferConfirm('faktur', invoice, sp.transfer, sale.customer_name, str(data.bank), str(data.transfer_ref));
+    if (sp.transfer > 0) addTransferConfirm('faktur', invoice, sp.transfer, sale.customer_name, sale.bank, sale.transfer_ref, { account_id: sale.account_id, photo_id: sale.proof_photo_id, slip_amount: slipAmt });
     c.lines.forEach(function (l) { ops.sale_items.push(forWrite(l, -1)); });
     const stockOut = [];
     Object.keys(c.qtyByProduct).forEach(function (pid) {
@@ -1733,6 +1791,44 @@ switch (req.action) {
     logAct('atur_kemas', txt.slice(0, 1000), 'bahan', 0, 'info');
     notify(['owner', 'manager', 'akuntan'].filter(function (r) { return r !== role; }), txt, 'info');
     return done({ ok: true, materials: out });
+  }
+
+  case 'save_supplier': {
+    // v56 (owner 2026-10-15: «الموردون يمكن للمحاسب والمدير إضافة المورد جديد مع الاسم اسم الشركة اسم المكان المهنة المواد التي يقدمها التي
+    // يبيعها»): the accountant or the manager adds a supplier to the directory — name, company, place, trade, the goods it sells — or
+    // edits one (data.edit: the name stays, it is what the goods-in notes and payments are filed under). The owner is told.
+    if (['owner', 'manager', 'akuntan'].indexOf(role) < 0) return fail('FORBIDDEN', 'Hanya akuntan / manajer / pemilik');
+    const x = data.supplier && typeof data.supplier === 'object' ? data.supplier : {};
+    const name = safeName(x.name, 60);
+    if (!name) return fail('INVALID', 'Nama pemasok wajib (huruf / angka, maks. 60)');
+    const field = function (v, max) { return str(v).replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, max); };
+    const co = field(x.company, 80), pl = field(x.place, 120), tr = field(x.trade, 60), gd = field(x.goods, 400), nt = field(x.note, 300);
+    const ph = str(x.phone) ? normPhone(x.phone) : '';
+    if (str(x.phone) && !ph) return fail('INVALID', 'Nomor telepon pemasok tidak valid');
+    if (!gd) return fail('INVALID', 'Isi barang yang dijual pemasok ini');
+    const list = supDir(), at = list.findIndex(function (y) { return str(y.n).toLowerCase() === name.toLowerCase(); });
+    const now = new Date().toISOString(), who = (role === 'manager' ? 'manajer ' : role === 'akuntan' ? 'akuntan ' : 'pemilik ') + me.name;
+    let entry, txt;
+    if (data.edit) {
+      if (at < 0) return fail('NOT_FOUND', 'Pemasok ' + name + ' tidak ada di daftar');
+      const b = list[at], ch = [];
+      [['co', co, 'perusahaan'], ['pl', pl, 'tempat'], ['tr', tr, 'usaha'], ['gd', gd, 'barang'], ['ph', ph, 'telepon'], ['nt', nt, 'catatan']].forEach(function (f) { if (str(b[f[0]]) !== f[1]) ch.push(f[2] + ': ' + (f[1] || '—')); });
+      if (!ch.length) return done({ ok: true, unchanged: true, supplier: b });
+      entry = Object.assign({}, b, { co: co, pl: pl, tr: tr, gd: gd, ph: ph, nt: nt, ub: me.name, ua: now });
+      list[at] = entry;
+      txt = 'Data pemasok ' + b.n + ' diubah — ' + ch.join('; ') + ' — oleh ' + who;
+    } else {
+      if (at >= 0) return fail('DUPLICATE', 'Pemasok ' + list[at].n + ' sudah ada di daftar');
+      if (list.length >= SUP_DIR_MAX) return fail('INVALID', 'Paling banyak ' + SUP_DIR_MAX + ' pemasok');
+      entry = { n: name, co: co, pl: pl, tr: tr, gd: gd, ph: ph, nt: nt, by: me.name, at: now };
+      list.push(entry);
+      txt = 'Pemasok baru: ' + name + [co, pl, tr].filter(Boolean).map(function (v) { return ' · ' + v; }).join('') + ' — menjual: ' + gd + ' — oleh ' + who;
+    }
+    const r0 = settingRows.find(function (r) { return r.skey === 'supplier_dir'; });
+    ops.settings.push({ _id: r0 ? r0.id : -1, skey: 'supplier_dir', svalue: JSON.stringify(list) });
+    logAct('pemasok', txt.slice(0, 1000), name, 0, 'info');
+    notify(['owner', 'manager', 'akuntan'].filter(function (r) { return r !== role; }), txt, 'info');
+    return done({ ok: true, supplier: entry });
   }
 
   case 'repack_start': {
@@ -2887,7 +2983,7 @@ switch (req.action) {
     };
     ops.payments.push(forWrite(pay, -1));
     ops.customers.push(forWrite(nc, c.id));
-    if (pay.method === 'transfer') addTransferConfirm('pembayaran', pay.pay_id, amount, str(c.name), pay.bank, pay.transfer_ref);
+    if (pay.method === 'transfer') addTransferConfirm('pembayaran', pay.pay_id, amount, str(c.name), pay.bank, pay.transfer_ref, { account_id: pay.account_id, photo_id: pay.proof_photo_id });
     if (myShift && pay.method === 'tunai') {
       ops.shifts.push(forWrite(Object.assign({}, myShift, { cash_payments: money(myShift.cash_payments) + amount }), myShift.id));
     }
@@ -3050,6 +3146,75 @@ switch (req.action) {
       return done({ ok: true, payment: Object.assign({ id: null }, payOut(pay)), transfer: { request_id: reqAp.request_id, status: 'done' } });
     }
     return done({ ok: true, payment: Object.assign({ id: null }, payOut(pay)) });
+  }
+
+  case 'save_bank_accounts': {
+    // v57 (owner 2026-10-15: «المدير يقوم بإدخال بيانات كل بنك»): the store's bank accounts, kept by the manager (or the owner). Every
+    // transfer names one of them. An account left out is kept as inactive: the transfers already filed under it keep their bank.
+    if (role !== 'owner' && role !== 'manager') return fail('FORBIDDEN', 'Hanya pemilik / manajer');
+    if (!Array.isArray(data.accounts)) return fail('INVALID', 'Daftar rekening tidak valid');
+    const before = bankAccounts(), out = [], seen = {};
+    before.forEach(function (b) { seen['#' + str(b.id)] = false; });
+    for (let i = 0; i < data.accounts.length; i++) {
+      const x = data.accounts[i] || {}, bank = safeName(x.bank, 40), no = str(x.account_no).replace(/[\s.-]/g, '');
+      if (!bank && !no) continue;
+      if (!bank) return fail('INVALID', 'Isi nama bank tiap rekening');
+      if (!/^\d{5,20}$/.test(no)) return fail('INVALID', 'Nomor rekening ' + bank + ' harus 5–20 angka');
+      let id = str(x.id).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 20);
+      if (!id) { let n = 1; while (seen['#BA' + n] !== undefined) n++; id = 'BA' + n; }
+      if (seen['#' + id] === true) return fail('INVALID', 'Rekening ganda');
+      if (out.some(function (o) { return o.account_no === no && bankKey(o.bank) === bankKey(bank); })) return fail('INVALID', bank + ' ' + no + ' ada dua kali');
+      seen['#' + id] = true;
+      out.push({ id: id, bank: bank, account_no: no, holder: safeName(x.holder, 80) || '', active: x.active !== false });
+    }
+    before.forEach(function (b) { if (seen['#' + str(b.id)] !== true) out.push(Object.assign({}, b, { active: false })); });
+    if (out.length > 30) return fail('INVALID', 'Paling banyak 30 rekening');
+    const label = function (a) { return a.bank + ' ' + a.account_no + (a.holder ? ' a.n. ' + a.holder : ''); }, ch = [];
+    out.forEach(function (a) {
+      const b = before.find(function (y) { return str(y.id) === a.id; });
+      if (!b) ch.push('+ ' + label(a) + (a.active ? '' : ' (nonaktif)'));
+      else if (label(b) !== label(a)) ch.push(label(b) + ' → ' + label(a));
+      if (b && (b.active !== false) !== a.active) ch.push(label(a) + (a.active ? ' aktif lagi' : ' nonaktif'));
+    });
+    if (!ch.length) return done({ ok: true, unchanged: true, bank_accounts: out });
+    const r0 = settingRows.find(function (r) { return r.skey === 'bank_accounts'; });
+    ops.settings.push({ _id: r0 ? r0.id : -1, skey: 'bank_accounts', svalue: JSON.stringify(out) });
+    const txt = 'Rekening bank toko diubah: ' + ch.join('; ') + ' — oleh ' + (role === 'manager' ? 'manajer ' : 'pemilik ') + me.name;
+    logAct('atur_bank', txt.slice(0, 1000), 'rekening', 0, 'info');
+    notify(['owner', 'manager', 'akuntan'].filter(function (r) { return r !== role; }), txt, 'info');
+    return done({ ok: true, bank_accounts: out });
+  }
+
+  case 'set_transfer_bank': {
+    // v57 (owner 2026-10-15: «وعند المحاسب عندما يقوم بعملية المراجعة أو تصنيف التحويلات فتتم حسب بنك»): the accountant (or the manager /
+    // owner) files a transfer under the store account it really went to (or came from): a sale paid by transfer, or a payment.
+    if (['owner', 'manager', 'akuntan'].indexOf(role) < 0) return fail('FORBIDDEN', 'Hanya akuntan / manajer / pemilik');
+    const accId = str(data.account_id), acc = bankAccounts().find(function (x) { return str(x.id) === accId; });
+    if (!acc) return fail('INVALID', 'Pilih rekening toko');
+    const who = (role === 'manager' ? 'manajer ' : role === 'akuntan' ? 'akuntan ' : 'pemilik ') + me.name;
+    const accTxt = function (a) { return a ? str(a.bank) + ' ' + str(a.account_no) : ''; };
+    if (data.kind === 'sale') {
+      const s0 = rows('Get Sale By Invoice').find(function (x) { return x.invoice_no === str(data.invoice_no); });
+      if (!s0) return fail('NOT_FOUND', 'Faktur tidak ditemukan');
+      const tr = saleParts(s0).transfer;
+      if (!(tr > 0) || s0.status === 'void') return fail('INVALID', 'Faktur ini tidak dibayar dengan transfer');
+      if (str(s0.account_id) === accId) return done({ ok: true, unchanged: true, account_id: accId });
+      const prev = bankAccounts().find(function (x) { return str(x.id) === str(s0.account_id); });
+      ops.sales.push(forWrite(Object.assign({}, s0, { account_id: accId }), s0.id));
+      logAct('atur_bank', 'Transfer faktur ' + s0.invoice_no + ' (' + str(s0.customer_name) + ') Rp ' + tr + ' masuk ke ' + accTxt(acc) + (prev ? ' (sebelumnya ' + accTxt(prev) + ')' : '') + ' — oleh ' + who, s0.invoice_no, tr, 'info');
+      return done({ ok: true, invoice_no: s0.invoice_no, account_id: accId });
+    }
+    if (data.kind === 'payment') {
+      const p0 = rows('Get Range Payments').find(function (x) { return x.pay_id === str(data.pay_id); });
+      if (!p0) return fail('NOT_FOUND', 'Pembayaran tidak ditemukan (kirim pay_id + pay_date)');
+      if (['transfer', 'qris'].indexOf(p0.method) < 0) return fail('INVALID', 'Pembayaran ini bukan transfer');
+      if (str(p0.account_id) === accId) return done({ ok: true, unchanged: true, account_id: accId });
+      const prev = bankAccounts().find(function (x) { return str(x.id) === str(p0.account_id); }), out = payDir(p0) === 'out';
+      ops.payments.push(forWrite(Object.assign({}, p0, { account_id: accId }), p0.id));
+      logAct('atur_bank', 'Transfer ' + (out ? 'keluar ' : 'masuk ') + p0.pay_id + ' (' + (str(p0.customer_name) || str(p0.supplier) || str(p0.payee)) + ') Rp ' + money(p0.amount) + (out ? ' dari ' : ' ke ') + accTxt(acc) + (prev ? ' (sebelumnya ' + accTxt(prev) + ')' : '') + ' — oleh ' + who, p0.pay_id, money(p0.amount), 'info');
+      return done({ ok: true, pay_id: p0.pay_id, account_id: accId });
+    }
+    return fail('INVALID', 'Jenis tidak dikenal (sale / payment)');
   }
 
   case 'list_transfers': {

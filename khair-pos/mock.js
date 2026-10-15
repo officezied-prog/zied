@@ -155,9 +155,10 @@ const MockServer = (() => {
     if (c) c.visits = Math.max(0, Math.round(num(c.visits)) - 1);
     return s;
   }
-  function addTransferConfirm(db, u, refType, ref, amount, who, bank, transferRef) {
+  function addTransferConfirm(db, u, refType, ref, amount, who, bank, transferRef, extra) {
     if (int(amount) <= 0) return null;
-    return newApproval(db, u, { kind: 'transfer_confirm', approver_role: 'manager', ref: String(ref), total: int(amount), customer_name: String(who || ''), note: (String(bank || '') ? 'Bank ' + bank : '') + (String(transferRef || '') ? ' ref ' + transferRef : ''), summary: ('Konfirmasi transfer masuk ' + String(who || '') + ' Rp ' + int(amount) + ' (' + refType + ' ' + ref + ') — pastikan dana sudah masuk').slice(0, 1500), payload: JSON.stringify({ ref_type: refType, ref: String(ref), amount: int(amount), bank: String(bank || ''), transfer_ref: String(transferRef || ''), who: String(who || '') }) });
+    const acc = extra && strv(extra.account_id) ? bankAccounts(db).find(x => strv(x.id) === strv(extra.account_id)) : null; // v57
+    return newApproval(db, u, { kind: 'transfer_confirm', approver_role: 'manager', ref: String(ref), total: int(amount), customer_name: String(who || ''), note: (String(bank || '') ? 'Bank ' + bank : '') + (String(transferRef || '') ? ' ref ' + transferRef : ''), summary: ('Konfirmasi transfer masuk ' + String(who || '') + ' Rp ' + int(amount) + ' (' + refType + ' ' + ref + ')' + (acc ? ' ke ' + acc.bank + ' ' + acc.account_no : '') + ' — pastikan dana sudah masuk').slice(0, 1500), payload: JSON.stringify(Object.assign({ ref_type: refType, ref: String(ref), amount: int(amount), bank: String(bank || ''), transfer_ref: String(transferRef || ''), who: String(who || '') }, extra || {})) });
   }
   function newApproval(db, u, f) {
     const ap = Object.assign({ request_id: 'APR-' + String(nextId(db, 'approval')).padStart(4, '0'), client_id: '', created_at: jktISO(), cashier: u.name, customer_id: null, customer_name: '', customer_debt_before: 0, total: 0, debt_amount: 0, summary: '', status: 'pending', decided_by: '', decided_at: '', note: '', kind: 'credit', ref: '', payload: '', approver_role: 'manager' }, f);
@@ -332,6 +333,7 @@ const MockServer = (() => {
   function settingsOut(db, role) {
     const st = Object.assign({}, V16_DEFAULTS, db.settings);
     st.repack_materials = window.KRepackMock ? window.KRepackMock.catalogOut(db, role) : []; // v50: names only for the cashier / rep
+    st.supplier_dir = (Array.isArray(db.settings.supplier_dir) ? db.settings.supplier_dir : []).map(x => ['owner', 'manager', 'akuntan'].includes(role) ? x : { n: x.n }); // v56
     if (st.opname_state && typeof st.opname_state === 'object') { const o = Object.assign({}, st.opname_state); o.counted_n = Array.isArray(o.counted) ? o.counted.length : 0; delete o.counted; st.opname_state = o; }
     return st;
   }
@@ -722,10 +724,12 @@ const MockServer = (() => {
   const dupRef = (pays, ref) => !!strv(ref) && pays.some(p => strv(p.transfer_ref) && strv(p.transfer_ref).toLowerCase() === strv(ref).toLowerCase());
   /* company bank accounts + monthly statement (v14) */
   const bankAccounts = db => { const a = (db.settings || {}).bank_accounts; return Array.isArray(a) ? a.filter(x => x && strv(x.id)) : []; };
-  function payAccount(db, data, method) {
+  function payAccount(db, data, method, ex, dir) {
     if (method !== 'transfer' && method !== 'qris') return '';
     const accs = bankAccounts(db), want = strv(data.account_id);
     if (want && accs.some(x => strv(x.id) === want)) return want;
+    const fromSlip = ex && window.KBank ? KBank.slipAccount(accs, ex, dir || 'in') : ''; // v57: the account the slip shows
+    if (fromSlip) return fromSlip;
     const act = accs.filter(x => x.active !== false);
     return act.length ? strv(act[0].id) : '';
   }
@@ -1136,7 +1140,7 @@ const MockServer = (() => {
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
-    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval', 'list_invoice_changes', 'cancel_repack'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
+    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
     if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'scan_expense', 'list_photos', 'photo_file'].includes(action)) deviceTouch(db, u, data.device, false);
 
@@ -1261,9 +1265,19 @@ const MockServer = (() => {
         };
         if (usedApproval) usedApproval.status = 'used';
         if (usedDisc) usedDisc.status = 'used';
-        db.sales.push(sale);
         const trPart = window.KPay.of(sale).transfer; // v51: a split sale's transfer part is checked too
-        if (trPart > 0) addTransferConfirm(db, u, 'faktur', sale.invoice_no, trPart, sale.customer_name, strv(data.bank), strv(data.transfer_ref));
+        let slipAmt = null;
+        if (trPart > 0) { // v57 (as on the server): the store account — chosen, else from the slip, else the only active one
+          const ph = data.photo_id ? (db.photos || []).find(x => x.photo_id === data.photo_id && x.kind === 'bayar') : null, ex = ph ? ph.extracted || {} : null;
+          const accs = bankAccounts(db), act = accs.filter(x => x.active !== false), want = strv(data.account_id);
+          sale.account_id = want && accs.some(x => strv(x.id) === want) ? want : ((ex && window.KBank ? KBank.slipAccount(accs, ex, 'in') : '') || (act.length === 1 ? strv(act[0].id) : ''));
+          sale.bank = (strv(data.bank) || (ex ? strv(ex.sender_bank) || strv(ex.bank) : '')).slice(0, 60);
+          sale.transfer_ref = (strv(data.transfer_ref) || (ex ? strv(ex.transfer_ref) : '')).slice(0, 80);
+          sale.proof_photo_id = ex ? strv(data.photo_id) : '';
+          slipAmt = ex && ex.amount != null && isFinite(Number(ex.amount)) ? int(ex.amount) : null;
+        }
+        db.sales.push(sale);
+        if (trPart > 0) addTransferConfirm(db, u, 'faktur', sale.invoice_no, trPart, sale.customer_name, sale.bank, sale.transfer_ref, { account_id: sale.account_id, photo_id: sale.proof_photo_id, slip_amount: slipAmt });
         for (const l of lines) {
           db.items.push({ invoice_no: sale.invoice_no, sale_date, product_id: l.p.id, sku: l.p.sku, name: l.p.name, qty: l.qty, unit_price: l.unit_price, price_type: l.price_type, cost_price: l.p.cost_price, line_total: l.line_total, line_profit: l.line_total - l.line_cost, customer_name: sale.customer_name });
         }
@@ -1865,6 +1879,39 @@ const MockServer = (() => {
         logAct(db, u, 'impor', 'Impor produk: ' + created + ' baru, ' + updated + ' diubah' + (skipped ? ', ' + skipped + ' dilewati (sudah ada)' : ''), '', 0, 'info');
         return { created, updated, skipped };
       }
+      case 'save_supplier': { // v56 (as backend/process.js): the accountant / manager adds a supplier to the directory, or edits one (the name stays)
+        if (!['owner', 'manager', 'akuntan'].includes(u.role)) throw E('FORBIDDEN', 'Hanya akuntan / manajer / pemilik');
+        const x = data.supplier && typeof data.supplier === 'object' ? data.supplier : {};
+        const name = safeName(x.name, 60);
+        if (!name) throw E('INVALID', 'Nama pemasok wajib (huruf / angka, maks. 60)');
+        const field = (v, max) => strv(v).replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, max);
+        const co = field(x.company, 80), pl = field(x.place, 120), tr = field(x.trade, 60), gd = field(x.goods, 400), nt = field(x.note, 300);
+        const ph = strv(x.phone) ? normPhone(x.phone) : '';
+        if (strv(x.phone) && !ph) throw E('INVALID', 'Nomor telepon pemasok tidak valid');
+        if (!gd) throw E('INVALID', 'Isi barang yang dijual pemasok ini');
+        const list = Array.isArray(db.settings.supplier_dir) ? db.settings.supplier_dir : [], at = list.findIndex(y => strv(y.n).toLowerCase() === name.toLowerCase());
+        const now = new Date().toISOString(), who = (u.role === 'manager' ? 'manajer ' : u.role === 'akuntan' ? 'akuntan ' : 'pemilik ') + u.name;
+        let entry, txt;
+        if (data.edit) {
+          if (at < 0) throw E('NOT_FOUND', 'Pemasok ' + name + ' tidak ada di daftar');
+          const b = list[at], ch = [];
+          [['co', co, 'perusahaan'], ['pl', pl, 'tempat'], ['tr', tr, 'usaha'], ['gd', gd, 'barang'], ['ph', ph, 'telepon'], ['nt', nt, 'catatan']].forEach(f => { if (strv(b[f[0]]) !== f[1]) ch.push(f[2] + ': ' + (f[1] || '—')); });
+          if (!ch.length) return { unchanged: true, supplier: b };
+          entry = Object.assign({}, b, { co, pl, tr, gd, ph, nt, ub: u.name, ua: now });
+          list[at] = entry;
+          txt = 'Data pemasok ' + b.n + ' diubah — ' + ch.join('; ') + ' — oleh ' + who;
+        } else {
+          if (at >= 0) throw E('DUPLICATE', 'Pemasok ' + list[at].n + ' sudah ada di daftar');
+          if (list.length >= 500) throw E('INVALID', 'Paling banyak 500 pemasok');
+          entry = { n: name, co, pl, tr, gd, ph, nt, by: u.name, at: now };
+          list.push(entry);
+          txt = 'Pemasok baru: ' + name + [co, pl, tr].filter(Boolean).map(v => ' · ' + v).join('') + ' — menjual: ' + gd + ' — oleh ' + who;
+        }
+        db.settings.supplier_dir = list;
+        logAct(db, u, 'pemasok', txt.slice(0, 1000), name, 0, 'info');
+        notifyR(db, u, ['owner', 'manager', 'akuntan'].filter(r => r !== u.role), txt, 'info');
+        return { supplier: entry };
+      }
       case 'set_loose': { // v52 (as backend/process.js): the owner / manager marks a product as shown loose, sold by weight
         if (!['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik / manajer');
         const lp = db.products.find(x => x.id === Number(data.product_id));
@@ -2012,7 +2059,7 @@ const MockServer = (() => {
         const method = ['tunai', 'transfer', 'qris'].includes(data.method) ? data.method : 'tunai';
         const payment = { id: nextId(db, 'payment'), pay_id: 'PY' + randId(7), pay_date: isYmd(data.pay_date) ? data.pay_date : jktDate(), pay_time: new Date().toISOString(),
           direction: 'in', party_type: 'customer', customer_id: c.id, customer_name: c.name, supplier: '', amount, method,
-          account_id: payAccount(db, data, data.method), slip_date: sc && sc.ex && sc.ex.date ? strv(sc.ex.date) : '',
+          account_id: payAccount(db, data, data.method, sc && sc.ex, 'in'), slip_date: sc && sc.ex && sc.ex.date ? strv(sc.ex.date) : '',
           bank: strv(data.bank).slice(0, 60), transfer_ref: strv(data.transfer_ref).slice(0, 80), proof_photo_id: strv(data.photo_id).slice(0, 40),
           alloc: JSON.stringify(chk.alloc), match_status: allocStatus(amount, chk, docs),
           note: (strv(data.note) + (strv(data.mismatch_reason) ? ' | beda dengan bukti: ' + strv(data.mismatch_reason) : '')).slice(0, 500), cashier: u.name, shift_id: psh ? psh.shift_id : '' };
@@ -2054,7 +2101,7 @@ const MockServer = (() => {
         const chk = checkAlloc(data.alloc, docs, amount);
         const pay = { id: nextId(db, 'payment'), pay_id: 'PY' + randId(7), pay_date: isYmd(data.pay_date) ? data.pay_date : jktDate(), pay_time: new Date().toISOString(),
           direction: 'out', party_type: 'supplier', customer_id: 0, customer_name: '', supplier: sup, amount, method,
-          account_id: payAccount(db, data, method), slip_date: sc && sc.ex && sc.ex.date ? strv(sc.ex.date) : '',
+          account_id: payAccount(db, data, method, sc && sc.ex, 'out'), slip_date: sc && sc.ex && sc.ex.date ? strv(sc.ex.date) : '',
           bank: strv(data.bank).slice(0, 60), transfer_ref: strv(data.transfer_ref).slice(0, 80), proof_photo_id: strv(data.photo_id).slice(0, 40),
           alloc: JSON.stringify(chk.alloc), match_status: allocStatus(amount, chk, docs),
           note: (strv(data.note) + (fromKas ? ' [dari kas]' : '') + (strv(data.mismatch_reason) ? ' | beda dengan bukti: ' + strv(data.mismatch_reason) : '')).slice(0, 500), cashier: u.name,
@@ -2121,6 +2168,67 @@ const MockServer = (() => {
         logAct(db, u, 'minta_transfer', summary, approval.request_id, amount, 'warn');
         return { applied: false, request_id: approval.request_id, approval };
       }
+      case 'save_bank_accounts': { // v57 (as on the server): the store's bank accounts, kept by the manager (or the owner); one left out stays, inactive
+        if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik / manajer');
+        if (!Array.isArray(data.accounts)) throw E('INVALID', 'Daftar rekening tidak valid');
+        const before = bankAccounts(db), out = [], seen = {};
+        before.forEach(b => { seen['#' + strv(b.id)] = false; });
+        for (const x0 of data.accounts) {
+          const x = x0 || {}, bank = safeName(x.bank, 40), no = strv(x.account_no).replace(/[\s.-]/g, '');
+          if (!bank && !no) continue;
+          if (!bank) throw E('INVALID', 'Isi nama bank tiap rekening');
+          if (!/^\d{5,20}$/.test(no)) throw E('INVALID', 'Nomor rekening ' + bank + ' harus 5–20 angka');
+          let id = strv(x.id).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 20);
+          if (!id) { let n = 1; while (seen['#BA' + n] !== undefined) n++; id = 'BA' + n; }
+          if (seen['#' + id] === true) throw E('INVALID', 'Rekening ganda');
+          if (out.some(o => o.account_no === no && KBank.key(o.bank) === KBank.key(bank))) throw E('INVALID', bank + ' ' + no + ' ada dua kali');
+          seen['#' + id] = true;
+          out.push({ id, bank, account_no: no, holder: safeName(x.holder, 80) || '', active: x.active !== false });
+        }
+        before.forEach(b => { if (seen['#' + strv(b.id)] !== true) out.push(Object.assign({}, b, { active: false })); });
+        if (out.length > 30) throw E('INVALID', 'Paling banyak 30 rekening');
+        const label = a => a.bank + ' ' + a.account_no + (a.holder ? ' a.n. ' + a.holder : ''), ch = [];
+        out.forEach(a => {
+          const b = before.find(y => strv(y.id) === a.id);
+          if (!b) ch.push('+ ' + label(a) + (a.active ? '' : ' (nonaktif)'));
+          else if (label(b) !== label(a)) ch.push(label(b) + ' → ' + label(a));
+          if (b && (b.active !== false) !== a.active) ch.push(label(a) + (a.active ? ' aktif lagi' : ' nonaktif'));
+        });
+        if (!ch.length) return { unchanged: true, bank_accounts: out };
+        db.settings.bank_accounts = out;
+        const txt = 'Rekening bank toko diubah: ' + ch.join('; ') + ' — oleh ' + (u.role === 'manager' ? 'manajer ' : 'pemilik ') + u.name;
+        logAct(db, u, 'atur_bank', txt.slice(0, 1000), 'rekening', 0, 'info');
+        notifyR(db, u, ['owner', 'manager', 'akuntan'].filter(r => r !== u.role), txt, 'info');
+        return { bank_accounts: out };
+      }
+      case 'set_transfer_bank': { // v57 (as on the server): the accountant / manager / owner files a transfer under the store account it went to (or came from)
+        if (!['owner', 'manager', 'akuntan'].includes(u.role)) throw E('FORBIDDEN', 'Hanya akuntan / manajer / pemilik');
+        const accId = strv(data.account_id), acc = bankAccounts(db).find(x => strv(x.id) === accId);
+        if (!acc) throw E('INVALID', 'Pilih rekening toko');
+        const who = (u.role === 'manager' ? 'manajer ' : u.role === 'akuntan' ? 'akuntan ' : 'pemilik ') + u.name, accTxt = a => a ? a.bank + ' ' + a.account_no : '';
+        if (data.kind === 'sale') {
+          const s0 = db.sales.find(x => x.invoice_no === strv(data.invoice_no));
+          if (!s0) throw E('NOT_FOUND', 'Faktur tidak ditemukan');
+          const tr = window.KPay.of(s0).transfer;
+          if (!(tr > 0) || s0.status === 'void') throw E('INVALID', 'Faktur ini tidak dibayar dengan transfer');
+          if (strv(s0.account_id) === accId) return { unchanged: true, account_id: accId };
+          const prev = bankAccounts(db).find(x => strv(x.id) === strv(s0.account_id));
+          s0.account_id = accId;
+          logAct(db, u, 'atur_bank', 'Transfer faktur ' + s0.invoice_no + ' (' + strv(s0.customer_name) + ') Rp ' + tr + ' masuk ke ' + accTxt(acc) + (prev ? ' (sebelumnya ' + accTxt(prev) + ')' : '') + ' — oleh ' + who, s0.invoice_no, tr, 'info');
+          return { invoice_no: s0.invoice_no, account_id: accId };
+        }
+        if (data.kind === 'payment') {
+          const p0 = db.payments.find(x => x.pay_id === strv(data.pay_id) && (!isYmd(data.pay_date) || x.pay_date === data.pay_date));
+          if (!p0) throw E('NOT_FOUND', 'Pembayaran tidak ditemukan (kirim pay_id + pay_date)');
+          if (!['transfer', 'qris'].includes(p0.method)) throw E('INVALID', 'Pembayaran ini bukan transfer');
+          if (strv(p0.account_id) === accId) return { unchanged: true, account_id: accId };
+          const prev = bankAccounts(db).find(x => strv(x.id) === strv(p0.account_id)), out = payDir(p0) === 'out';
+          p0.account_id = accId;
+          logAct(db, u, 'atur_bank', 'Transfer ' + (out ? 'keluar ' : 'masuk ') + p0.pay_id + ' (' + (strv(p0.customer_name) || strv(p0.supplier) || strv(p0.payee)) + ') Rp ' + int(p0.amount) + (out ? ' dari ' : ' ke ') + accTxt(acc) + (prev ? ' (sebelumnya ' + accTxt(prev) + ')' : '') + ' — oleh ' + who, p0.pay_id, int(p0.amount), 'info');
+          return { pay_id: p0.pay_id, account_id: accId };
+        }
+        throw E('INVALID', 'Jenis tidak dikenal (sale / payment)');
+      }
       case 'record_transfer': {
         // The manager records a bank transfer once the owner approved the request; the owner may record directly.
         if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
@@ -2141,7 +2249,7 @@ const MockServer = (() => {
         const reason = (reqAp ? strv(reqPl.reason) : strv(data.reason)).slice(0, 300);
         const pay = { id: nextId(db, 'payment'), pay_id: 'PY' + randId(7), pay_date: isYmd(data.pay_date) ? data.pay_date : jktDate(), pay_time: new Date().toISOString(),
           direction: 'out', party_type: 'other', customer_id: 0, customer_name: '', supplier: '', payee, amount, method: 'transfer',
-          account_id: strv(data.account_id) || payAccount(db, data, 'transfer'), bank: strv(data.bank).slice(0, 60), transfer_ref: strv(data.transfer_ref).slice(0, 80),
+          account_id: strv(data.account_id) || payAccount(db, data, 'transfer', ((db.photos || []).find(x => x.photo_id === strv(data.photo_id) && x.kind === 'bayar') || {}).extracted, 'out'), bank: strv(data.bank).slice(0, 60), transfer_ref: strv(data.transfer_ref).slice(0, 80),
           proof_photo_id: strv(data.photo_id).slice(0, 40), alloc: '[]', match_status: '',
           note: (reason + (strv(data.note) ? ' | ' + strv(data.note) : '')).slice(0, 500), cashier: u.name };
         db.payments.push(pay);

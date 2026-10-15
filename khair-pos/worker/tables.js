@@ -42,6 +42,8 @@ export const TABLES = {
     survey: 'string', notes: 'string', client_id: 'string', approved_by: 'string',
     exit_photo: 'string', exit_match: 'string', channel: 'string', promo_code: 'string',
     shift_id: 'string', survey_transcript: 'string', send_fee: 'number',
+    // v57: a sale paid (partly) by transfer — the store account it went to, the sender's bank, the transfer no. and the slip photo
+    account_id: 'string', bank: 'string', transfer_ref: 'string', proof_photo_id: 'string',
   },
   pos_sale_items: {
     invoice_no: 'string', sale_date: 'string', product_id: 'number', sku: 'string',
@@ -54,6 +56,8 @@ export const TABLES = {
     party_type: 'string', supplier: 'string', bank: 'string', transfer_ref: 'string',
     proof_photo_id: 'string', alloc: 'string', match_status: 'string', pay_time: 'string',
     account_id: 'string', slip_date: 'string',
+    // v57: who a bank transfer out went to (record_transfer) — it was sent but never stored before
+    payee: 'string',
   },
   pos_purchases: {
     purchase_date: 'string', supplier: 'string', product_id: 'number', name: 'string',
