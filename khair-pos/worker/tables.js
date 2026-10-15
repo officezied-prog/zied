@@ -21,6 +21,8 @@ export const TABLES = {
     stock: 'number', min_stock: 'number', active: 'boolean', notes: 'string',
     image_updated: 'string', supplier: 'string', repack_from: 'number', repack_qty: 'number',
     shop_stock: 'number', size: 'string', weight: 'string', exp_date: 'string', exp_none: 'boolean',
+    // v52: shown loose, sold by weight (grams typed at the till)
+    loose: 'boolean',
     // v36: a product the cashier added at goods-in waits for the manager / accountant: review = that approval's id
     review: 'string',
     // v48: a pack product's materials (sticker, lid, jar …) with their cost per pack, JSON [{n, c}] — set in the repack setup
@@ -36,7 +38,7 @@ export const TABLES = {
     invoice_no: 'string', sale_date: 'string', sale_time: 'string', cashier: 'string',
     customer_id: 'number', customer_name: 'string', customer_type: 'string', subtotal: 'number',
     discount: 'number', total: 'number', total_cost: 'number', profit: 'number',
-    payment_method: 'string', paid_amount: 'number', debt_amount: 'number', status: 'string',
+    payment_method: 'string', pay_parts: 'string', paid_amount: 'number', debt_amount: 'number', status: 'string',
     survey: 'string', notes: 'string', client_id: 'string', approved_by: 'string',
     exit_photo: 'string', exit_match: 'string', channel: 'string', promo_code: 'string',
     shift_id: 'string', survey_transcript: 'string', send_fee: 'number',

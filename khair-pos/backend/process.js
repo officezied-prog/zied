@@ -365,6 +365,10 @@ function applyPrices(p, changes) {
   return np;
 }
 const PRICE_FIELDS = ['retail_price', 'wholesale_price', 'cost_price'];
+// v52 (owner 2026-10-15: «بعض البضائع المعروضة بالجملة ويأخذ الزبون كما يشاء الكمية … الشوكولاتة الزبيب اللوز بعض التمور»): goods shown
+// loose (an open sack of raisins, a tray of chocolate) are sold by weight, typed in grams at the till; the price is per kg / gram / ons.
+const LOOSE_UNITS = ['kg', 'kilo', 'g', 'gr', 'gram', 'ons'];
+function looseUnitOk(unit) { return LOOSE_UNITS.indexOf(str(unit).trim().toLowerCase()) >= 0; }
 // Stock count (opname): each line's difference is counted against the stock at counting time, so sales made
 // while the count waited for approval are not lost. Every change is logged as a 'STOK OPNAME' purchase row.
 // v40: the cost value of a count's differences for the owner's notices, e.g. " (nilai modal -Rp 330.000)"; '' when nothing differs
@@ -391,6 +395,33 @@ function applyCount(lines, note, byName) {
   });
   opnameProgress(lines, byName); // v37: every applied count moves the two-monthly full-count cycle on
   return out;
+}
+// v51 (owner 2026-10-15: «إمكانية البيع كل فاتورة مثلا نصف نقدا والنصف الآخر عن طريق الجوال أو التحويل أو أي شيء فإمكانية تجزئة الدفع
+// حسب عدة أنواع طرق للدفع»): one sale paid by several methods. data.payments = [{method: tunai | transfer | qris, amount}]; two or
+// more methods → payment_method 'campur' and the parts in pay_parts (JSON [{m, a}]); one method is stored as before. What is not
+// paid stays debt (debt_amount) with the same rules as hutang (a customer, the credit approval).
+const PAY_PARTS = ['tunai', 'transfer', 'qris'];
+function payPartsIn(list) {
+  if (!Array.isArray(list) || !list.length) return null;
+  if (list.length > 6) return { error: 'Paling banyak 6 bagian pembayaran' };
+  const acc = { tunai: 0, transfer: 0, qris: 0 };
+  for (let i = 0; i < list.length; i++) {
+    const x = list[i] || {}, m = str(x.method), a = Number(x.amount);
+    if (PAY_PARTS.indexOf(m) < 0) return { error: 'Cara bayar tidak valid: ' + m.slice(0, 20) };
+    if (!isFinite(a) || a < 0 || a > 1e12) return { error: 'Jumlah ' + m + ' tidak valid' };
+    acc[m] += Math.round(a);
+  }
+  return { parts: PAY_PARTS.filter(function (m) { return acc[m] > 0; }).map(function (m) { return { m: m, a: acc[m] }; }) };
+}
+/** A sale's money by method — what was paid, never more than the total: a split sale from its parts, any other from its one
+ *  method (a hutang down payment is cash). The shift, the transfer check and every report use this. */
+function saleParts(x) {
+  const o = { tunai: 0, transfer: 0, qris: 0 };
+  let parts = null;
+  if (str(x.payment_method) === 'campur') { try { parts = JSON.parse(str(x.pay_parts) || '[]'); } catch (e) { parts = null; } }
+  if (Array.isArray(parts) && parts.length) { parts.forEach(function (p) { if (p && o[p.m] !== undefined) o[p.m] += money(p.a); }); return o; }
+  o[o[x.payment_method] !== undefined ? x.payment_method : 'tunai'] += Math.min(money(x.paid_amount), money(x.total));
+  return o;
 }
 function computeSale(invoice, quote) {
   const items = Array.isArray(data.items) ? data.items : [];
@@ -432,14 +463,23 @@ function computeSale(invoice, quote) {
   const sendFee = data.send_receipt === true ? receiptFee(customer) : 0;
   const total = subtotal - discount + sendFee;
   const totalCost = lines.reduce(function (a, l) { return a + Math.round(l.qty * l.cost_price); }, 0);
-  const method = ['tunai', 'transfer', 'qris', 'hutang'].indexOf(data.payment_method) >= 0 ? data.payment_method : 'tunai';
-  let paid = Math.max(money(data.paid_amount), 0);
-  if (method === 'hutang' && data.paid_amount === undefined) paid = 0;
+  const pp = payPartsIn(data.payments);
+  if (pp && pp.error) return { error: fail('INVALID', pp.error) };
+  let method, paid, parts = null;
+  if (pp) {
+    paid = pp.parts.reduce(function (a, p) { return a + p.a; }, 0);
+    if (paid > total) return { error: fail('INVALID', 'Jumlah pembayaran ' + rpTxt(paid) + ' lebih dari total ' + rpTxt(total)) };
+    if (pp.parts.length > 1) { method = 'campur'; parts = pp.parts; } else method = pp.parts.length ? pp.parts[0].m : 'hutang';
+  } else {
+    method = ['tunai', 'transfer', 'qris', 'hutang'].indexOf(data.payment_method) >= 0 ? data.payment_method : 'tunai';
+    paid = Math.max(money(data.paid_amount), 0);
+    if (method === 'hutang' && data.paid_amount === undefined) paid = 0;
+  }
   const debt = Math.max(0, total - paid);
   if (debt > 0 && !customer && !quote) return { error: fail('INVALID', 'Hutang / bayar kurang wajib pilih pelanggan') };
   const listTotal = lines.reduce(function (a, l) { return a + l.list_total; }, 0);
   lines.forEach(function (l) { delete l.list_total; });
-  return { lines: lines, qtyByProduct: qtyByProduct, customer: customer, subtotal: subtotal, discount: discount, total: total, totalCost: totalCost, method: method, paid: paid, debt: debt, listTotal: listTotal, sendFee: sendFee };
+  return { lines: lines, qtyByProduct: qtyByProduct, customer: customer, subtotal: subtotal, discount: discount, total: total, totalCost: totalCost, method: method, paid: paid, parts: parts, debt: debt, listTotal: listTotal, sendFee: sendFee };
 }
 // Discount = list value − what the customer pays (a typed discount and lowered prices both count).
 function discountOf(c) {
@@ -1389,7 +1429,7 @@ switch (req.action) {
       customer_name: c.customer ? str(c.customer.name) : (str(data.customer_name) || 'Umum'),
       customer_type: c.customer ? str(c.customer.type) : (data.customer_type === 'grosir' ? 'grosir' : 'eceran'),
       subtotal: c.subtotal, discount: c.discount, send_fee: c.sendFee, total: c.total, total_cost: c.totalCost, profit: c.total - c.totalCost,
-      payment_method: c.method, paid_amount: c.paid, debt_amount: c.debt, status: 'ok',
+      payment_method: c.method, pay_parts: c.parts ? JSON.stringify(c.parts) : '', paid_amount: c.paid, debt_amount: c.debt, status: 'ok',
       survey: JSON.stringify(survey), survey_transcript: data.survey_consent === true ? str(data.survey_transcript).slice(0, 4000) : '',
       notes: (str(data.notes) + (mem && mem.pct > 0 ? ' [member ' + mem.pct + '% · pembelian ke-' + mem.purchase_no + ']' : '') + (discApprovedBy ? ' [diskon ' + disc.pct + '% disetujui ' + discApprovedBy + ']' : '')).trim(), client_id: req.client_id, approved_by: approvedBy,
       exit_photo: exitRequired ? 'required' : '', exit_match: '',
@@ -1397,18 +1437,17 @@ switch (req.action) {
       promo_code: str(data.promo_code).toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 30),
       shift_id: myShift ? str(myShift.shift_id) : ''
     };
+    const sp = saleParts(sale); // each part of a split sale goes to its own drawer total
     if (myShift) {
-      const cashPart = (c.method === 'tunai' || c.method === 'hutang') ? Math.min(c.paid, c.total) : 0;
-      const paidPart = Math.min(c.paid, c.total);
       ops.shifts.push(forWrite(Object.assign({}, myShift, {
-        sales_count: num(myShift.sales_count) + 1, sales_total: money(myShift.sales_total) + c.total, cash_sales: money(myShift.cash_sales) + cashPart,
-        transfer_sales: money(myShift.transfer_sales) + (c.method === 'transfer' ? paidPart : 0), qris_sales: money(myShift.qris_sales) + (c.method === 'qris' ? paidPart : 0),
+        sales_count: num(myShift.sales_count) + 1, sales_total: money(myShift.sales_total) + c.total, cash_sales: money(myShift.cash_sales) + sp.tunai,
+        transfer_sales: money(myShift.transfer_sales) + sp.transfer, qris_sales: money(myShift.qris_sales) + sp.qris,
         debt_sales: money(myShift.debt_sales) + c.debt,
         items_qty: Math.round((num(myShift.items_qty) + c.lines.reduce(function (a1, l) { return a1 + l.qty; }, 0)) * 1000) / 1000
       }), myShift.id));
     }
     ops.sales.push(forWrite(sale, -1));
-    if (c.method === 'transfer' && money(c.paid) > 0) addTransferConfirm('faktur', invoice, c.paid, sale.customer_name, str(data.bank), str(data.transfer_ref));
+    if (sp.transfer > 0) addTransferConfirm('faktur', invoice, sp.transfer, sale.customer_name, str(data.bank), str(data.transfer_ref));
     c.lines.forEach(function (l) { ops.sale_items.push(forWrite(l, -1)); });
     const stockOut = [];
     Object.keys(c.qtyByProduct).forEach(function (pid) {
@@ -2587,6 +2626,8 @@ switch (req.action) {
     // Shelf life (v21): a product is either dated or explicitly "no expiry" (cups, honey, …); only dated ones can go red.
     p.exp_none = data.exp_none !== undefined ? data.exp_none === true : (existing ? existing.exp_none === true : false);
     p.exp_date = p.exp_none ? '' : (isDate(data.exp_date) ? data.exp_date : (data.exp_date === undefined && existing ? str(existing.exp_date) : ''));
+    p.loose = data.loose !== undefined ? data.loose === true : (existing ? existing.loose === true : false);
+    if (p.loose && !looseUnitOk(p.unit)) return fail('INVALID', 'Barang curah dijual per kg / gram / ons — ubah satuannya dulu');
     // Repacked in the shop: this product is made from a bulk product (repack_from), repack_qty of its unit per piece.
     if (num(data.repack_from) > 0) {
       const bulk = productById[String(data.repack_from)];
@@ -2665,6 +2706,20 @@ switch (req.action) {
     });
     logAct('impor', 'Impor produk: ' + created + ' baru, ' + updated + ' diubah' + (skipped ? ', ' + skipped + ' dilewati (sudah ada)' : ''), '', 0, 'info');
     return done({ ok: true, created: created, updated: updated, skipped: skipped });
+  }
+
+  case 'set_loose': {
+    // v52: the owner or the manager marks a product as shown loose (sold by weight at the till) or not — no price changes here.
+    if (role !== 'owner' && role !== 'manager') return fail('FORBIDDEN', 'Hanya pemilik / manajer');
+    const lp = productById[String(data.product_id)];
+    if (!lp) return fail('NOT_FOUND', 'Produk tidak ditemukan');
+    const on = data.loose === true;
+    if (on && !looseUnitOk(lp.unit)) return fail('INVALID', str(lp.name) + ': barang curah dijual per kg / gram / ons — satuannya sekarang ' + (str(lp.unit) || 'pcs'));
+    if ((lp.loose === true) === on) return done({ ok: true, unchanged: true, product: clean(lp) });
+    const np = Object.assign({}, lp, { loose: on });
+    ops.products.push(forWrite(np, lp.id));
+    logAct('atur_curah', (on ? 'Dijual curah (timbang di kasir): ' : 'Tidak lagi dijual curah: ') + str(lp.name) + ' — oleh ' + (role === 'manager' ? 'manajer ' : 'pemilik ') + me.name, String(lp.id), 0, 'info');
+    return done({ ok: true, product: clean(np) });
   }
 
   case 'set_repack': {
@@ -3107,7 +3162,7 @@ switch (req.action) {
     const items = rows('Get Range Items').filter(function (x) { return okInv[x.invoice_no]; });
     const sumOf = function (arr, f) { return arr.reduce(function (a1, x) { return a1 + f(x); }, 0); };
     const byMethod = { tunai: 0, transfer: 0, qris: 0 };
-    okSales.forEach(function (x) { const paid = Math.min(money(x.paid_amount), money(x.total)); if (byMethod[x.payment_method] !== undefined) byMethod[x.payment_method] += paid; else byMethod.tunai += paid; });
+    okSales.forEach(function (x) { const sp = saleParts(x); byMethod.tunai += sp.tunai; byMethod.transfer += sp.transfer; byMethod.qris += sp.qris; });
     const prod = {};
     items.forEach(function (it) { const k = String(it.product_id); if (!prod[k]) prod[k] = { name: str(it.name), qty: 0, total: 0 }; prod[k].qty = Math.round((prod[k].qty + num(it.qty)) * 1000) / 1000; prod[k].total += money(it.line_total); });
     const pays = rows('Get Range Payments').filter(function (p) { return p.pay_date === day; });
@@ -3154,9 +3209,9 @@ switch (req.action) {
       return per[k];
     };
     okSales.forEach(function (x) {
-      const c = who(x.cashier), s1 = c.sales, paid = Math.min(money(x.paid_amount), money(x.total));
+      const c = who(x.cashier), s1 = c.sales, sp = saleParts(x);
       invWho[x.invoice_no] = c; s1.count++; s1.total += money(x.total); s1.discount += money(x.discount); s1.debt += money(x.debt_amount);
-      s1.by_method[s1.by_method[x.payment_method] !== undefined ? x.payment_method : 'tunai'] += paid;
+      s1.by_method.tunai += sp.tunai; s1.by_method.transfer += sp.transfer; s1.by_method.qris += sp.qris;
     });
     items.forEach(function (it) { const c = invWho[it.invoice_no]; if (c) c.sales.items_qty = Math.round((c.sales.items_qty + num(it.qty)) * 1000) / 1000; });
     voids.forEach(function (x) { const c = who(x.cashier); c.voids.count++; c.voids.total += money(x.total); });

@@ -96,6 +96,7 @@
 <script src="../shared/tamper-guard.js"></script>
 <script src="../shared/barcode-cam.js"></script>
 <script src="../shared/pick.js"></script>
+<script src="../shared/pay-split.js"></script>
 <script src="../shared/install-btn.js" data-host="#login:not([hidden]) > .screen-card"></script>
 <script src="../shared/app-update.js"></script>
 <script src="../shared/field-mock.js"></script>
@@ -109,7 +110,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.6.9';
+const APP_VERSION = 'kasir-1.7.1';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1313,7 +1314,7 @@ function speak(text) {
     ss.speak(u);
   } catch (e) { }
 }
-function speakAdded(p, qty) { clearTimeout(VOICE.timer); speak(`${speakableName(p.name)}, ${spokenQty(qty)}`); }
+function speakAdded(p, qty) { clearTimeout(VOICE.timer); speak(`${speakableName(p.name)}, ${isLoose(p) ? toGrams(p, qty) + (VOICE.lang === 'ar-SA' ? ' غرام' : ' gram') : spokenQty(qty)}`); }
 function speakQtyLater(pid) {
   clearTimeout(VOICE.timer);
   VOICE.timer = setTimeout(() => { const l = S.cart.lines.find(x => x.product_id == pid); if (l) speak(`${VOICE.lang === 'ar-SA' ? 'الكمية' : 'jumlah'} ${spokenQty(l.qty)}`); }, 500);
@@ -1336,9 +1337,60 @@ const askQty = () => store.get('ask_qty', true) !== false;
 const WEIGHT_UNITS = ['kg', 'kilo', 'g', 'gr', 'gram', 'ons', 'l', 'lt', 'ltr', 'liter', 'litre', 'ml'];
 const isWeightUnit = u => WEIGHT_UNITS.includes(String(u || '').trim().toLowerCase());
 const QTY_CHIPS = [1, 2, 3, 5, 10], QTY_MAX = 100000;
-/** Product tap / single search result → quantity sheet, or straight +1 when the setting is off. */
+/* v52 (owner 2026-10-15: «بعض البضائع المعروضة بالجملة ويأخذ الزبون كما يشاء الكمية … الشوكولاتة المعروضة بالكمية الكبيرة بدون ميزان تختار
+   الزبون 250 غرام يدخل الموظف للتطبيق فيطلب نوع الشوكولاتة … فيخرج له مباشرة طلب الكمية كم فيكتب الكمية ويضغط مواصلة يحسب التطبيق كل شيء»):
+   goods shown loose (marked by the owner / manager, priced per kg / gram / ons) always open the weight sheet: grams typed or chosen,
+   the price worked out, the stock in the product's own unit (250 g of a per-kg product = 0.25). */
+const isLoose = p => !!(p && p.loose === true);
+const GRAMS_PER = { kg: 1000, kilo: 1000, g: 1, gr: 1, gram: 1, ons: 100 };
+const gPer = p => GRAMS_PER[String((p && p.unit) || '').trim().toLowerCase()] || 1000;
+const toGrams = (p, q) => Math.round(num(q) * gPer(p));
+const fromGrams = (p, g) => roundQty(num(g) / gPer(p));
+const fmtGrams = g => g >= 1000 && g % 100 === 0 ? fmtQty(g / 1000) + ' kg' : fmtNum(g) + ' g';
+const WS_CHIPS = [100, 250, 500, 1000];
+function openWeightSheet(p) {
+  if (p.active === false) { toast(t('sell.inactive'), 'warn'); return; }
+  const ex = S.cart.lines.find(l => l.product_id == p.id);
+  let g = ex ? toGrams(p, ex.qty) : 0;
+  const el = openModal({
+    title: p.name, id: 'weight-sheet', focus: false,
+    body: `<div class="qs-info"><span class="pr num"><bdi>${fmtRp(p.retail_price)}</bdi><span class="muted small">/${esc(p.unit || 'kg')}</span></span><span class="badge" id="ws-badge">⚖ ${esc(t('loose.badge'))}</span><span class="muted small" id="ws-stock">${esc(t('shelf.rak'))} <bdi class="num">${fmtQty(shelfOf(p))} ${esc(p.unit || '')}</bdi></span></div>
+      <label class="f" for="ws-g" style="margin-top:8px">${esc(t('ws.label'))}</label>
+      <div class="qs-row"><input data-rule="num" id="ws-g" type="text" inputmode="numeric" autocomplete="off" enterkeyhint="done" aria-label="${esc(t('ws.label'))}" placeholder="250" value="${g ? esc(String(g)) : ''}"><span class="ws-unit">g</span></div>
+      <div class="qs-chips" id="ws-chips">${WS_CHIPS.map(n => `<button type="button" data-g="${n}">${esc(fmtGrams(n))}</button>`).join('')}</div>
+      <div class="qs-total"><span class="muted small num" id="ws-up"></span><b class="num" id="ws-total"></b></div>
+      <div class="qs-warn" id="ws-warn" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary qs-ok" id="ws-ok">${esc(ex ? t('qty.change') : t('qty.add'))}</button>`
+  });
+  const inp = $('#ws-g', el);
+  const draw = () => {
+    const q = fromGrams(p, g), c = lineCalc({ product_id: p.id, qty: q }, custById(S.cart.customer_id));
+    $('#ws-up', el).textContent = g > 0 ? t('ws.per', { g: fmtGrams(g), price: fmtRp(c.unit_price), unit: p.unit || 'kg' }) : t('ws.need');
+    $('#ws-total', el).textContent = g > 0 ? fmtRp(c.total) : '';
+    $$('#ws-chips [data-g]', el).forEach(b => b.classList.toggle('on', num(b.dataset.g) === g));
+    const sb = g > 0 ? shelfBlock(p, q) : '';
+    $('#ws-warn', el).textContent = sb || (g > 0 && q > num(p.stock) ? t('sell.stock_low', { name: p.name }) : '');
+    $('#ws-ok', el).disabled = !(g > 0 && q < QTY_MAX) || !!sb;
+  };
+  inp.addEventListener('input', () => { g = Math.max(0, Math.round(qtyVal(inp.value))); draw(); });
+  inp.addEventListener('focus', () => inp.select());
+  $('#ws-chips', el).onclick = e => { const b = e.target.closest('[data-g]'); if (!b) return; g = num(b.dataset.g); inp.value = String(g); draw(); };
+  const ok = () => {
+    if (!(g > 0)) { $('#ws-warn', el).textContent = t('ws.need'); inp.focus(); return; }
+    const q = fromGrams(p, g), sb = shelfBlock(p, q); if (sb) { $('#ws-warn', el).textContent = sb; return; }
+    dropModal(el);
+    addToCart(p, q, true); // speaks the name + the grams
+    focusSearch();
+  };
+  $('#ws-ok', el).onclick = ok;
+  el.addEventListener('keydown', e => { if (e.key !== 'Enter' || e.isComposing) return; const b = e.target.closest && e.target.closest('button'); if (b && b.id !== 'ws-ok') return; e.preventDefault(); ok(); });
+  draw();
+  setTimeout(() => { if (el.isConnected) { inp.focus(); inp.select(); } }, 30); // the weight is always typed (also on phones)
+}
+/** Product tap / single search result → quantity sheet, or straight +1 when the setting is off; loose goods → the weight sheet. */
 function pickProduct(p) {
   if (!p) return;
+  if (isLoose(p)) { openWeightSheet(p); return; }
   if (!askQty()) { addToCart(p); focusSearch(); return; }
   openQtySheet(p);
 }
@@ -1412,7 +1464,7 @@ RENDER.sell = function () {
         </div>
         <div class="rep-banner" hidden></div>
         <div class="op-banner" id="op-banner" hidden></div>
-        <div class="tools"><button class="toggle" id="grosir" data-act="grosir-toggle" aria-pressed="false">${esc(t('grosir'))}</button>${VOICE.on ? `<button class="toggle mute-chip" id="mute-chip" data-act="sale-mute" aria-pressed="false">${muteChipHtml()}</button>` : ''}<button class="cust-chip" id="cust" data-act="pick-customer"></button><button class="held-chip" id="held-chip" data-act="held-open" hidden></button></div>
+        <div class="tools"><button class="toggle" id="grosir" data-act="grosir-toggle" aria-pressed="false">${esc(t('grosir'))}</button><button class="toggle" id="loose-chip" data-act="loose-filter" aria-pressed="false" hidden>⚖ ${esc(t('loose.chip'))}</button>${VOICE.on ? `<button class="toggle mute-chip" id="mute-chip" data-act="sale-mute" aria-pressed="false">${muteChipHtml()}</button>` : ''}<button class="cust-chip" id="cust" data-act="pick-customer"></button><button class="held-chip" id="held-chip" data-act="held-open" hidden></button></div>
         <div class="grid" id="grid" aria-label="${esc(t('sell.products'))}"></div>
       </div>
       <aside class="cart" id="cart" aria-label="${esc(t('sell.cart'))}"></aside>
@@ -1437,7 +1489,7 @@ function onSearchEnter(raw, fast) {
   const v = raw.trim(); if (!v) return;
   const clear = () => { const inp = $('#q'); if (inp) inp.value = ''; SELL.q = ''; renderGrid(); };
   const p = findBySku(v);
-  if (p) { clear(); addToCart(p); return; }
+  if (p) { clear(); if (isLoose(p)) openWeightSheet(p); else addToCart(p); return; }
   if (fast) { beep(); toast(t('sell.barcode_nf', { code: v }), 'err'); clear(); return; }
   const list = filterProducts(v);
   if (list.length === 1) { clear(); pickProduct(list[0]); }
@@ -1447,15 +1499,21 @@ function focusSearch() {
   if (S.view !== 'sell' || modalOpen() || !S.inApp || $('#app').hidden || !$('#gate').hidden || isTouch()) return;
   const el = $('#q'); if (el && document.activeElement !== el) el.focus({ preventScroll: true });
 }
+function syncLooseChip() {
+  const b = $('#loose-chip'); if (!b) return;
+  b.hidden = !S.products.some(p => isLoose(p) && p.active !== false) && !SELL.loose;
+  b.setAttribute('aria-pressed', SELL.loose ? 'true' : 'false'); b.classList.toggle('on', !!SELL.loose);
+}
 function renderGrid() {
   const g = $('#grid'); if (!g) return;
-  const list = filterProducts(SELL.q), shown = list.slice(0, SELL.limit);
+  syncLooseChip();
+  const list = filterProducts(SELL.q).filter(p => !SELL.loose || isLoose(p)), shown = list.slice(0, SELL.limit);
   const inCart = new Map(S.cart.lines.map(l => [String(l.product_id), l.qty]));
   g.innerHTML = shown.length ? shown.map(p => {
     const low = isLow(p), q = inCart.get(String(p.id));
     const gr = int(p.wholesale_price) > 0 && num(p.wholesale_min_qty) > 0 ? `<div class="gr">${esc(t('grosir'))} <bdi class="num">${fmtRp(p.wholesale_price)}</bdi> · <bdi>≥${fmtQty(p.wholesale_min_qty)}</bdi></div>` : '';
-    return `<button class="pc" data-act="add" data-id="${esc(p.id)}" data-sku="${esc(p.sku)}">${q ? `<span class="incart num">${fmtQty(q)}</span>` : ''}
-      <div class="nm">${esc(p.name)}</div>
+    return `<button class="pc ${isLoose(p) ? 'loose' : ''}" data-act="add" data-id="${esc(p.id)}" data-sku="${esc(p.sku)}">${q ? `<span class="incart num">${isLoose(p) ? esc(fmtGrams(toGrams(p, q))) : fmtQty(q)}</span>` : ''}
+      <div class="nm">${isLoose(p) ? `<span class="loose-b" data-loose>⚖ ${esc(t('loose.badge'))}</span> ` : ''}${esc(p.name)}</div>
       <div class="st ${low ? 'low' : ''}" data-shelf="${esc(shelfOf(p))}">${esc(t('shelf.rak'))} <bdi class="num">${fmtQty(shelfOf(p))} ${esc(p.unit || '')}</bdi>${gudangOf(p) > 0 ? ` · ${esc(t('shelf.gudang'))} <bdi class="num">${fmtQty(gudangOf(p))}</bdi>` : ''}</div>
       <div class="pr num"><bdi>${fmtRp(p.retail_price)}</bdi><span class="muted small" style="font-weight:700">/${esc(p.unit || 'pcs')}</span></div>${gr}</button>`;
   }).join('') + (list.length > shown.length ? `<button class="btn block" style="grid-column:1/-1" data-act="sell-more">${esc(t('show_more', { n: list.length - shown.length }))}</button>` : '')
@@ -1475,7 +1533,8 @@ function renderCart(flashId) {
       <div class="cl" data-line="${i}" data-pid="${esc(l.p.id)}">
         <div class="a"><div class="nm">${esc(l.p.name)}</div><div class="lt num" data-ref="lt">${fmtRp(l.total)}</div><button class="icon-btn ghost sm" data-act="line-del" data-i="${i}" aria-label="${esc(t('delete'))}" style="margin-top:-8px;color:var(--muted)">${ic('trash')}</button></div>
         <div class="b">
-          <div class="qty"><button data-act="qty-dec" data-i="${i}" aria-label="−">−</button><input type="text" inputmode="decimal" data-rule="num" data-qty="${i}" value="${esc(fmtQtyInput(l.line.qty))}" aria-label="${esc(t('qty'))} ${esc(l.p.name)}"><button data-act="qty-inc" data-i="${i}" aria-label="+">+</button></div>
+          ${isLoose(l.p) ? `<button class="btn sm ws-edit" data-act="ws-edit" data-pid="${esc(l.p.id)}" data-i="${i}" aria-label="${esc(t('ws.label'))} ${esc(l.p.name)}">⚖ <b class="num">${esc(fmtGrams(toGrams(l.p, l.line.qty)))}</b></button>`
+            : `<div class="qty"><button data-act="qty-dec" data-i="${i}" aria-label="−">−</button><input type="text" inputmode="decimal" data-rule="num" data-qty="${i}" value="${esc(fmtQtyInput(l.line.qty))}" aria-label="${esc(t('qty'))} ${esc(l.p.name)}"><button data-act="qty-inc" data-i="${i}" aria-label="+">+</button></div>`}
           <span class="muted small num" data-ref="up">× ${fmtRp(l.unit_price)}</span>
           <span class="pt ${l.type}" data-ref="pt">${esc(t(l.type))}</span>
         </div></div>`).join('') : `<div class="empty">${ic('cart')}<div>${esc(t('sell.cart_empty'))}</div><div class="small">${esc(t('sell.cart_empty_hint'))}</div></div>`}
@@ -1864,7 +1923,20 @@ function payCalc(v) {
   let paid = v.total, change = 0, debt = 0, error = '';
   if (m === 'tunai') { paid = typed ? moneyVal(c.paid) : v.total; if (paid < v.total) error = t('pay.short', { amount: fmtRp(v.total - paid) }); change = Math.max(0, paid - v.total); }
   else if (m === 'hutang') { paid = Math.min(v.total, typed ? moneyVal(c.paid) : 0); debt = v.total - paid; if (!v.cust) error = t('pay.need_customer'); else if (debt <= 0) error = t('pay.no_debt'); }
-  return { method: m, paid, change, debt, error };
+  let parts = null;
+  if (m === 'campur') {
+    // v51 (owner 2026-10-15: «نصف نقدا والنصف الآخر عن طريق الجوال أو التحويل»): transfer + QRIS as typed, the rest in cash — the
+    // change comes from the cash only; what is still missing is debt (a customer + the manager's approval, like hutang)
+    const sp = c.split || {}, tr = moneyVal(sp.transfer || ''), qr = moneyVal(sp.qris || ''), nonCash = tr + qr, need = Math.max(0, v.total - nonCash);
+    const cashIn = String(sp.tunai || '').trim() !== '' ? moneyVal(sp.tunai) : need, cash = Math.min(cashIn, need);
+    change = Math.max(0, cashIn - need); paid = cash + Math.min(nonCash, v.total); debt = Math.max(0, v.total - paid);
+    parts = [['tunai', cash], ['transfer', tr], ['qris', qr]].filter(x => x[1] > 0).map(x => ({ method: x[0], amount: x[1] }));
+    if (!(nonCash > 0)) error = t('pay.split_need');
+    else if (nonCash > v.total) error = t('pay.split_over', { amount: fmtRp(nonCash - v.total) });
+    else if (debt > 0 && !v.cust) error = t('pay.split_short', { amount: fmtRp(debt) });
+    return { method: m, paid, change, debt, error, parts, need };
+  }
+  return { method: m, paid, change, debt, error, parts };
 }
 function quickAmounts(total) {
   if (total <= 0) return [];
@@ -1900,18 +1972,28 @@ function drawPay(bg) {
       <input class="input num" data-rule="num" id="pay-disc" inputmode="numeric" autocomplete="off" placeholder="0" value="${c.discount ? esc(fmtNum(moneyVal(c.discount))) : ''}">
       <div class="small" id="pay-disc-warn" role="status"></div>
     </div>
-    <div class="seg" id="pay-m" role="radiogroup" aria-label="${esc(t('pay.method'))}" style="margin-top:12px">${['tunai', 'transfer', 'qris', 'hutang'].map(x => `<button role="radio" id="pm-${x}" aria-checked="${m === x}" class="${m === x ? 'on' : ''}" data-act="pay-method" data-m="${x}">${esc(t('pm.' + x))}</button>`).join('')}</div>
+    <div class="seg" id="pay-m" role="radiogroup" aria-label="${esc(t('pay.method'))}" style="margin-top:12px">${['tunai', 'transfer', 'qris', 'hutang', 'campur'].map(x => `<button role="radio" id="pm-${x}" aria-checked="${m === x}" class="${m === x ? 'on' : ''}" data-act="pay-method" data-m="${x}">${esc(t('pm.' + x))}</button>`).join('')}</div>
     <div id="pay-detail" style="margin-top:12px">${m === 'tunai' ? `<div class="field"><label class="f" for="pay-cash">${esc(t('pay.cash_in'))}</label><input class="input money" data-rule="num" id="pay-cash" inputmode="numeric" autocomplete="off" placeholder="${esc(t('pay.exact'))}" value="${c.paid === '' ? '' : esc(fmtNum(moneyVal(c.paid)))}"></div>
         <div class="quick" id="pay-quick"><button class="btn xs" data-act="paid-set" data-v="">${esc(t('pay.exact'))}</button>${quickAmounts(v.total).map(a => `<button class="btn xs num" data-act="paid-set" data-v="${a}">${fmtShort(a)}</button>`).join('')}</div>`
       : m === 'hutang' ? `${cust ? '' : `<button class="btn block" data-act="pick-customer" id="pay-pick">${ic('user')} ${esc(t('pay.pick_customer'))}</button>`}
         <div class="field" style="margin-top:8px"><label class="f" for="pay-dp">${esc(t('pay.dp'))}</label><input class="input money" data-rule="num" id="pay-dp" inputmode="numeric" autocomplete="off" placeholder="0" value="${c.paid === '' ? '' : esc(fmtNum(moneyVal(c.paid)))}"></div>
         <p class="small muted" style="margin:0">${esc(S.role === 'kasir' ? t('pay.debt_hint_kasir') : t('pay.debt_hint'))}</p>`
+      : m === 'campur' ? `<p class="small muted" style="margin:0 0 8px">${esc(t('pay.split_hint'))}</p>
+        <div class="grid2">${['transfer', 'qris'].map(k => `<div class="field"><label class="f" for="pay-sp-${k}">${esc(t('pm.' + k))} (Rp)</label><input class="input money" data-rule="num" id="pay-sp-${k}" data-sp="${k}" inputmode="numeric" autocomplete="off" placeholder="0" value="${(c.split || {})[k] ? esc(fmtNum(moneyVal(c.split[k]))) : ''}"></div>`).join('')}</div>
+        <div class="field"><label class="f" for="pay-sp-tunai">${esc(t('pay.split_cash'))}</label><input class="input money" data-rule="num" id="pay-sp-tunai" data-sp="tunai" inputmode="numeric" autocomplete="off" value="${(c.split || {}).tunai ? esc(fmtNum(moneyVal(c.split.tunai))) : ''}"></div>
+        <div class="small" id="pay-sp-sum" role="status"></div>
+        ${cust ? '' : `<p class="small muted" style="margin:6px 0 0">${esc(t('pay.split_debt_hint'))}</p>`}`
       : `<p class="muted" style="margin:4px 0">${esc(t('pay.check_' + m))}</p>`}</div>
     <div class="result" id="pay-result"></div>
     <details class="more" id="pay-more" ${c.channel !== 'toko' || c.promo ? 'open' : ''}><summary>${esc(t('pay.more'))}: ${esc(t('ch.' + (c.channel || 'toko')))}${c.promo ? ' · ' + esc(c.promo) : ''}</summary>
       <div class="chips" style="margin-top:6px">${CHANNELS.map(ch => `<button type="button" class="chip ${(c.channel || 'toko') === ch ? 'on' : ''}" data-act="channel" data-c="${ch}">${esc(t('ch.' + ch))}</button>`).join('')}</div>
       <div class="field" style="margin-top:6px"><label class="f" for="pay-promo">${esc(t('pay.promo'))}</label><input class="input" data-rule="doc" id="pay-promo" style="text-transform:uppercase" placeholder="KHAIR1111" value="${esc(c.promo || '')}"></div></details>`;
   const cash = $('#pay-cash', body), dp = $('#pay-dp', body);
+  $$('[data-sp]', body).forEach(inp => { // v51 split payment: each part as typed
+    inp.addEventListener('input', () => { S.cart.split = Object.assign({}, S.cart.split, { [inp.dataset.sp]: inp.value.trim() === '' ? '' : String(moneyVal(inp.value)) }); saveCart(); payResult(bg); });
+    inp.addEventListener('change', () => { const x = (S.cart.split || {})[inp.dataset.sp]; inp.value = x ? fmtNum(moneyVal(x)) : ''; });
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') payOk(); });
+  });
   [cash, dp].filter(Boolean).forEach(inp => {
     inp.addEventListener('input', () => { S.cart.paid = inp.value.trim() === '' ? '' : String(moneyVal(inp.value)); saveCart(); payResult(bg); });
     inp.addEventListener('change', () => { inp.value = S.cart.paid === '' ? '' : fmtNum(moneyVal(S.cart.paid)); });
@@ -1925,7 +2007,8 @@ function drawPay(bg) {
   vsShowText(); vsTick();
   bindRsBox(bg);
   payResult(bg);
-  if (cash && !isTouch()) setTimeout(() => cash.focus(), 30);
+  const spFirst = $('#pay-sp-transfer', body);
+  if ((cash || spFirst) && !isTouch()) setTimeout(() => (cash || spFirst).focus(), 30);
 }
 /* (07 Oct) "Kirim struk": a new customer gives a phone number (first receipt free → saved as a customer); a known customer
    who already got one pays receipt_send_fee when the toggle is on (a visible line on the bill). Without it: printed / screen receipt. */
@@ -1966,7 +2049,11 @@ function payResult(bg) {
   const v = cartView(), p = payCalc(v), res = $('#pay-result', bg); if (!res) return;
   res.className = 'result' + (p.error ? ' err' : p.debt > 0 ? ' debt' : '');
   res.innerHTML = p.error ? esc(p.error) : p.debt > 0 ? `<span>${esc(t('pay.new_debt'))}</span><span class="num" id="pay-debt">${fmtRp(p.debt)}</span>`
-    : p.method === 'tunai' ? `<span>${esc(t('pay.change'))}</span><span class="num" id="pay-change">${fmtRp(p.change)}</span>` : `<span>${esc(t('pm.' + p.method))}</span><span class="num">${fmtRp(v.total)}</span>`;
+    : p.method === 'tunai' || (p.method === 'campur' && p.change > 0) ? `<span>${esc(t('pay.change'))}</span><span class="num" id="pay-change">${fmtRp(p.change)}</span>` : `<span>${esc(t('pm.' + p.method))}</span><span class="num">${fmtRp(v.total)}</span>`;
+  if (p.method === 'campur') {
+    const ci = $('#pay-sp-tunai', bg); if (ci) ci.placeholder = fmtNum(p.need);
+    const sm = $('#pay-sp-sum', bg); if (sm) sm.textContent = p.parts.length ? p.parts.map(x => t('pm.' + x.method) + ' ' + fmtRp(x.amount)).join(' + ') + (p.debt > 0 ? ' + ' + t('pm.hutang') + ' ' + fmtRp(p.debt) : '') + ' = ' + fmtRp(v.total) : '';
+  }
   const ok = $('#pay-ok', bg); if (ok) { ok.disabled = !!p.error; if (!saving) ok.textContent = needDiscApproval(v) ? t('disc.ask') : t('pay.finish'); }
   // v16: live discount % against the limit
   const tot = $('#pay-total', bg); if (tot) tot.textContent = fmtRp(v.total);
@@ -1987,6 +2074,7 @@ function buildSaleRequest(v, pay) {
     customer_id: v.cust ? v.cust.id : null, customer_name: v.cust ? v.cust.name : 'Umum', customer_type: v.cust ? v.cust.type : 'eceran',
     items: v.lines.map(l => ({ product_id: l.p.id, qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type })),
     discount: v.discount, payment_method: pay.method, paid_amount: Math.min(pay.paid, v.total),
+    payments: pay.method === 'campur' ? pay.parts : undefined, // v51: the parts of a split payment (the server keeps them)
     survey: manual ? sv.answers : [], survey_consent: manual || !!vo, survey_transcript: vo ? vsClean(vo.text) : '', // transcript only when a recording ran (v36: it starts by itself on Bayar)
     channel: c.channel || 'toko', promo_code: cleanPromo(c.promo), notes: '', send_receipt: v.send
   };
@@ -1998,6 +2086,7 @@ function receiptFromCart(v, pay, req) {
     lines: v.lines.map(l => ({ name: l.p.name, unit: l.p.unit || '', qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type, line_total: l.total })),
     subtotal: v.subtotal, discount: v.discount, member_disc: v.memberDisc, member: v.mem ? { pct: v.mem.pct, purchase_no: v.mem.n, member_no: v.mem.no } : null,
     customer_email: v.cust ? v.cust.email || '' : '', total: v.total, method: pay.method, paid: pay.paid, change: pay.change, debt: pay.debt, status: 'ok',
+    parts: pay.method === 'campur' && pay.parts.length > 1 ? pay.parts.map(x => ({ m: x.method, a: x.amount })) : null,
     promo_code: req.promo_code, channel: req.channel, debt_after: v.cust ? int(v.cust.debt_balance) + pay.debt : 0, send_fee: v.sendFee, send_receipt: v.send,
     recorded: !!(S.cart.voice && S.cart.voice.consent) // v36: the printed notice "Transaksi direkam untuk layanan & keamanan"
   };
@@ -2299,6 +2388,7 @@ function receiptLinesHTML(rc) {
     ${rc.promo_code ? `<div class="r2"><span>${esc(t('pay.promo'))}</span><span>${esc(rc.promo_code)}</span></div>` : ''}
     <div class="r2 big"><span>${esc(t('total'))}</span><span>${esc(fmtRp(rc.total))}</span></div>
     <div class="r2"><span>${esc(t('rc.paid'))} (${esc(t('pm.' + rc.method))})</span><span>${esc(NF.format(rc.paid))}</span></div>
+    ${(rc.parts || []).map(x => `<div class="r2 rc-part" data-part="${esc(x.m)}"><span>&nbsp;&nbsp;${esc(t('pm.' + x.m))}</span><span>${esc(NF.format(x.a))}</span></div>`).join('')}
     ${rc.change ? `<div class="r2 b"><span>${esc(t('pay.change'))}</span><span>${esc(NF.format(rc.change))}</span></div>` : ''}
     ${rc.debt ? `<div class="r2 b"><span>${esc(t('rc.debt'))}</span><span>${esc(NF.format(rc.debt))}</span></div>` : ''}
     ${rc.debt && rc.debt_after ? `<div class="r2"><span>${esc(t('rc.debt_total'))}</span><span>${esc(NF.format(rc.debt_after))}</span></div>` : ''}
@@ -2319,6 +2409,7 @@ function receiptText(rc) {
   rc.lines.forEach(l => out.push(`${l.name}${l.price_type === 'grosir' ? ' (grosir)' : ''}`, `  ${fmtQty(l.qty)} x ${fmtRp(l.unit_price)} = ${fmtRp(l.line_total)}`));
   if (int(rc.send_fee)) out.push(`${t('rs.fee_line')}: ${fmtRp(rc.send_fee)}`);
   out.push(L2, `*${t('total')}: ${fmtRp(rc.total)}*`, `${t('rc.paid')} (${t('pm.' + rc.method)}): ${fmtRp(rc.paid)}`);
+  (rc.parts || []).forEach(x => out.push(`  ${t('pm.' + x.m)}: ${fmtRp(x.a)}`));
   if (rc.change) out.push(`${t('pay.change')}: ${fmtRp(rc.change)}`);
   if (rc.debt) out.push(`${t('rc.debt')}: ${fmtRp(rc.debt)}`);
   out.push(L2);
@@ -2422,6 +2513,7 @@ function receiptPlain(rc) {
   if (int(rc.discount) - int(rc.member_disc) > 0) out.push(`${tid('disc.label')}: -${fmtRp(int(rc.discount) - int(rc.member_disc))}`);
   if (int(rc.send_fee)) out.push(`${tid('rs.fee_line')}: ${fmtRp(rc.send_fee)}`);
   out.push(`${tid('total')}: ${fmtRp(rc.total)}`, `${tid('rc.paid')} (${tid('pm.' + rc.method)}): ${fmtRp(rc.paid)}`);
+  (rc.parts || []).forEach(x => out.push(`  ${tid('pm.' + x.m)}: ${fmtRp(x.a)}`));
   if (rc.change) out.push(`${tid('pay.change')}: ${fmtRp(rc.change)}`);
   if (rc.debt) out.push(`${tid('rc.debt')}: ${fmtRp(rc.debt)}`);
   if (rc.member) out.push(tid('mem.rc_line', { no: rc.member.member_no || '', n: rc.member.purchase_no }));
@@ -4462,6 +4554,8 @@ const ACT = {
   'sell-more': () => { SELL.limit += 120; renderGrid(); },
   'cart-open': () => openCartSheet(),
   'cart-close': () => closeCartSheet(),
+  'loose-filter': () => { SELL.loose = !SELL.loose; renderGrid(); syncLooseChip(); focusSearch(); }, // v52: only the goods shown loose
+  'ws-edit': el => { const p = prodById(el.dataset.pid); if (p) openWeightSheet(p); },
   'grosir-toggle': () => { S.cart.grosir = !S.cart.grosir; saveCart(); refreshCartNumbers(); toast(S.cart.grosir ? t('sell.grosir_on') : t('sell.grosir_off'), '', 1600); focusSearch(); },
   'pick-customer': () => openCustomerPicker(c => setCustomer(c)),
   'line-del': el => { S.cart.lines.splice(+el.dataset.i, 1); saveCart(); renderCart(); renderGrid(); focusSearch(); },
@@ -4475,10 +4569,10 @@ const ACT = {
   'vs-skip': () => skipVoice(),
   'vs-ask': () => { S.cart.voice = null; VS.ask = S.cart.client_id; saveCart(); drawVoice(); },
   'survey-open': () => openSurvey(),
-  'pay-method': el => { S.cart.method = el.dataset.m; S.cart.paid = ''; saveCart(); const bg = el.closest('.modal-bg'); drawPay(bg); if (el.dataset.m === 'hutang' && !S.cart.customer_id) openCustomerPicker(c => { if (c) setCustomer(c); }, { noWalkin: true, title: t('pay.pick_customer') }); },
+  'pay-method': el => { S.cart.method = el.dataset.m; S.cart.paid = ''; S.cart.split = {}; saveCart(); const bg = el.closest('.modal-bg'); drawPay(bg); if (el.dataset.m === 'hutang' && !S.cart.customer_id) openCustomerPicker(c => { if (c) setCustomer(c); }, { noWalkin: true, title: t('pay.pick_customer') }); },
   'paid-set': el => { S.cart.paid = el.dataset.v === '' ? '' : String(int(el.dataset.v)); saveCart(); drawPay(el.closest('.modal-bg')); },
   'channel': el => { S.cart.channel = el.dataset.c; saveCart(); const bg = el.closest('.modal-bg'); if (bg) drawPay(bg); },
-  'cam-scan': () => cameraScan(code => { const p = findBySku(code); if (p) addToCart(p); else toast(t('sell.barcode_nf', { code }), 'err'); }),
+  'cam-scan': () => cameraScan(code => { const p = findBySku(code); if (p) { if (isLoose(p)) openWeightSheet(p); else addToCart(p); } else toast(t('sell.barcode_nf', { code }), 'err'); }),
 
   /* masuk */
   'pu-add': el => puAdd(prodById(el.dataset.id)),
@@ -4607,7 +4701,11 @@ const I18N = {
     'pay.dp': 'Dibayar sekarang (DP)', 'pay.new_debt': 'Hutang baru', 'pay.debt_hint_kasir': 'Hutang perlu persetujuan pemilik atau manajer.', 'pay.debt_hint': 'Hutang dicatat atas nama pelanggan.',
     'pay.check_transfer': 'Pastikan transfer sudah masuk sebelum menekan SELESAI.', 'pay.check_qris': 'Pastikan pembayaran QRIS berhasil sebelum menekan SELESAI.',
     'pay.more': 'Kanal & kode promo', 'pay.promo': 'Kode promo',
-    'pm.tunai': 'Tunai', 'pm.transfer': 'Transfer', 'pm.qris': 'QRIS', 'pm.hutang': 'Hutang',
+    'pm.tunai': 'Tunai', 'pm.transfer': 'Transfer', 'pm.qris': 'QRIS', 'pm.hutang': 'Hutang', 'pm.campur': 'Campur',
+    'loose.chip': 'Curah', 'loose.badge': 'Curah', 'ws.label': 'Berat yang diambil (gram)', 'ws.need': 'Ketik beratnya dalam gram, mis. 250', 'ws.per': '{g} × {price}/{unit}',
+    'pay.split_hint': 'Bayar dengan beberapa cara: isi bagian transfer / QRIS, sisanya tunai (kembalian dari tunai).', 'pay.split_cash': 'Tunai diterima (Rp)',
+    'pay.split_need': 'Isi jumlah transfer atau QRIS', 'pay.split_over': 'Transfer + QRIS lebih {amount} dari total', 'pay.split_short': 'Kurang {amount} — tambah tunai, atau pilih pelanggan untuk hutang',
+    'pay.split_debt_hint': 'Kalau sebagian belum dibayar: pilih pelanggan dulu (jadi hutang, perlu persetujuan seperti hutang).',
     'ch.toko': 'Toko', 'ch.whatsapp': 'WhatsApp', 'ch.shopee': 'Shopee', 'ch.tiktok': 'TikTok', 'ch.tokopedia': 'Tokopedia', 'ch.web': 'Web', 'ch.lainnya': 'Lainnya',
     'apr.title': 'Hutang perlu persetujuan', 'apr.hint': 'Pilih salah satu cara:', 'apr.remote': 'Minta persetujuan', 'apr.here': 'PIN Pemilik/Manajer di sini',
     'apr.resume': 'Lanjut tunggu permintaan {id}', 'apr.choose': 'Siapa yang menyetujui?', 'apr.no_approver': 'Tidak ada pemilik/manajer aktif', 'apr.pin_of': 'PIN penyetuju',
@@ -4717,7 +4815,11 @@ const I18N = {
     'pay.dp': 'المدفوع الآن (عربون)', 'pay.new_debt': 'دَين جديد', 'pay.debt_hint_kasir': 'الدَّين يحتاج موافقة المالك أو المدير.', 'pay.debt_hint': 'يُسجَّل الدَّين باسم العميل.',
     'pay.check_transfer': 'تأكد من وصول التحويل قبل الإتمام.', 'pay.check_qris': 'تأكد من نجاح دفع QRIS قبل الإتمام.',
     'pay.more': 'القناة ورمز العرض', 'pay.promo': 'رمز العرض',
-    'pm.tunai': 'نقدًا', 'pm.transfer': 'تحويل', 'pm.qris': 'QRIS', 'pm.hutang': 'دَين',
+    'pm.tunai': 'نقدًا', 'pm.transfer': 'تحويل', 'pm.qris': 'QRIS', 'pm.hutang': 'دَين', 'pm.campur': 'مختلط',
+    'loose.chip': 'سائب', 'loose.badge': 'سائب', 'ws.label': 'الوزن المأخوذ (غرام)', 'ws.need': 'اكتب الوزن بالغرام، مثلًا 250', 'ws.per': '{g} × {price}/{unit}',
+    'pay.split_hint': 'الدفع بعدة طرق: اكتب جزء التحويل / QRIS، والباقي نقدًا (الباقي للزبون من النقد).', 'pay.split_cash': 'النقد المستلم (روبية)',
+    'pay.split_need': 'اكتب مبلغ التحويل أو QRIS', 'pay.split_over': 'التحويل + QRIS أكثر من الإجمالي بـ {amount}', 'pay.split_short': 'ناقص {amount} — أضف نقدًا، أو اختر عميلًا ليصبح دَينًا',
+    'pay.split_debt_hint': 'إذا بقي جزء غير مدفوع: اختر العميل أولًا (يصبح دَينًا ويحتاج موافقة مثل الدَّين).',
     'ch.toko': 'المتجر', 'ch.whatsapp': 'واتساب', 'ch.shopee': 'Shopee', 'ch.tiktok': 'تيك توك', 'ch.tokopedia': 'Tokopedia', 'ch.web': 'الموقع', 'ch.lainnya': 'أخرى',
     'apr.title': 'الدَّين يحتاج موافقة', 'apr.hint': 'اختر طريقة:', 'apr.remote': 'طلب موافقة', 'apr.here': 'رمز المالك/المدير هنا',
     'apr.resume': 'متابعة انتظار الطلب {id}', 'apr.choose': 'من يوافق؟', 'apr.no_approver': 'لا يوجد مالك/مدير نشط', 'apr.pin_of': 'رمز الموافِق',

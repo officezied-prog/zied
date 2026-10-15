@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS pos_products (
   weight TEXT,
   exp_date TEXT,
   exp_none INTEGER,
+  loose INTEGER,
   review TEXT,
   repack_costs TEXT
 );
@@ -80,6 +81,7 @@ CREATE TABLE IF NOT EXISTS pos_sales (
   total_cost REAL,
   profit REAL,
   payment_method TEXT,
+  pay_parts TEXT,
   paid_amount REAL,
   debt_amount REAL,
   status TEXT,

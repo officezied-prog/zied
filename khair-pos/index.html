@@ -138,6 +138,7 @@
 <script src="shared/tamper-guard.js"></script>
 <script src="shared/barcode-cam.js"></script>
 <script src="shared/pick.js"></script>
+<script src="shared/pay-split.js"></script>
 <script src="shared/install-btn.js" data-host="#login:not([hidden]) .login-card"></script>
 <script src="shared/app-update.js"></script>
 <script src="mock.js"></script>
@@ -150,7 +151,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.8.1';
+const APP_VERSION = '2.8.3';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1068,7 +1069,7 @@ function drawOwnerSales() {
   if (!OM.data) { b.innerHTML = `<div class="empty ${OM.err ? 'red' : ''}">${esc(OM.err || t('loading'))}</div>`; return; }
   const sales = OM.data.sales.slice().sort((a, b2) => String(b2.sale_time).localeCompare(String(a.sale_time)));
   const ok = sales.filter(s => s.status !== 'void');
-  const by = m => sum(ok.filter(s => s.payment_method === m), s => int(s.total));
+  const byM = ok.reduce(addMethods, {}), by = m => byM[m] || 0; // v51: a split sale counts by its parts
   b.innerHTML = `${OM.err ? `<div class="notice red small">${esc(OM.err)}</div>` : ''}<div class="kpis">${kpi('om-omzet', t('rep.omzet'), fmtRp(sum(ok, s => int(s.total))), '', 'hl')}${kpi('om-count', t('rep.tx_count'), fmtNum(ok.length))}
       ${['tunai', 'transfer', 'qris', 'hutang'].map(m => kpi('om-' + m, t('pm.' + m), fmtRp(by(m)))).join('')}${sales.length - ok.length ? kpi('om-void', t('void'), fmtNum(sales.length - ok.length)) : ''}</div>
     <div class="tbl-wrap"><table class="tbl" id="om-table"><thead><tr><th>${esc(t('rc.no'))}</th><th>${esc(t('time'))}</th><th class="hide-phone">${esc(t('rc.cashier'))}</th><th>${esc(t('rc.customer'))}</th><th class="hide-phone">${esc(t('pos.method'))}</th><th class="r">${esc(t('total'))}</th><th>${esc(t('status'))}</th></tr></thead><tbody>
@@ -1746,6 +1747,7 @@ function receiptLinesHTML(rc) {
     ${rc.promo_code ? `<div class="r2"><span>${esc(t('promo.title'))}</span><span>${esc(rc.promo_code)}</span></div>` : ''}
     <div class="r2 big"><span>${esc(t('total'))}</span><span>${esc(fmtRp(rc.total))}</span></div>
     <div class="r2"><span>${esc(t('rc.paid'))} (${esc(t('pm.' + rc.method))})</span><span>${esc(NF.format(rc.paid))}</span></div>
+    ${(rc.parts || []).map(x => `<div class="r2 rc-part" data-part="${esc(x.m)}"><span>&nbsp;&nbsp;${esc(t('pm.' + x.m))}</span><span>${esc(NF.format(x.a))}</span></div>`).join('')}
     ${rc.change ? `<div class="r2 b"><span>${esc(t('pos.change'))}</span><span>${esc(NF.format(rc.change))}</span></div>` : ''}
     ${rc.debt ? `<div class="r2 b"><span>${esc(t('rc.debt'))}</span><span>${esc(NF.format(rc.debt))}</span></div>` : ''}
     ${rc.debt && rc.debt_after ? `<div class="r2"><span>${esc(t('rc.debt_total'))}</span><span>${esc(NF.format(rc.debt_after))}</span></div>` : ''}
@@ -1768,6 +1770,7 @@ function receiptText(rc) {
   if (rc.discount) out.push(`${t('discount')}: -${fmtRp(rc.discount)}`);
   if (rc.send_fee) out.push(`${t('rs.fee_line')}: ${fmtRp(rc.send_fee)}`);
   out.push(`*${t('total')}: ${fmtRp(rc.total)}*`, `${t('rc.paid')} (${t('pm.' + rc.method)}): ${fmtRp(rc.paid)}`);
+  (rc.parts || []).forEach(x => out.push(`  ${t('pm.' + x.m)}: ${fmtRp(x.a)}`));
   if (rc.change) out.push(`${t('pos.change')}: ${fmtRp(rc.change)}`);
   if (rc.debt) out.push(`${t('rc.debt')}: ${fmtRp(rc.debt)}`);
   if (rc.debt && rc.approved_by) out.push(`${t('rc.approved_by')}: ${rc.approved_by}`);
@@ -2562,7 +2565,7 @@ async function remakeSale(inv, saleDate) {
   const cust = custById(sale.customer_id);
   cart.customer_id = cust ? cust.id : null;
   cart.discount = int(sale.discount);
-  cart.method = sale.payment_method === 'hutang' && !cust ? 'tunai' : sale.payment_method;
+  cart.method = (sale.payment_method === 'hutang' && !cust) || sale.payment_method === 'campur' ? 'tunai' : sale.payment_method; // v51: a split sale is paid again here (no split in this cart)
   cart.notes = t('void.remake_note', { inv });
   for (const it of items) {
     const p = prodById(it.product_id); if (!p) continue;
@@ -2976,7 +2979,7 @@ function computeHome(d, brand) {
   const prod = new Map();
   d.items.filter(i => inv.has(i.invoice_no)).forEach(i => { const a = prod.get(String(i.product_id)) || { name: i.name, qty: 0, omzet: 0, unit: (prodById(i.product_id) || {}).unit || '' }; a.qty += num(i.qty); a.omzet += int(i.line_total); prod.set(String(i.product_id), a); });
   const top = [...prod.values()].map(a => Object.assign(a, { qty: roundQty(a.qty) })).sort((a, b) => b.qty - a.qty || b.omzet - a.omzet).slice(0, 10);
-  const methods = { tunai: 0, transfer: 0, qris: 0, hutang: 0 }; ok.forEach(s => methods[s.payment_method] = (methods[s.payment_method] || 0) + int(s.total));
+  const methods = { tunai: 0, transfer: 0, qris: 0, hutang: 0 }; ok.forEach(s => addMethods(methods, s));
   const channels = {}; ok.forEach(s => { const c = s.channel || 'toko'; channels[c] = (channels[c] || 0) + int(s.total); });
   const hours = Array.from({ length: 24 }, (_, h) => ({ h, n: 0, omzet: 0 })); ok.forEach(s => { const x = hours[jktHour(s.sale_time)]; x.n++; x.omzet += int(s.total); });
   const used = hours.filter(x => x.n); const lo = Math.min(8, ...used.map(x => x.h)), hi = Math.max(21, ...used.map(x => x.h));
@@ -3812,6 +3815,8 @@ RENDER.products = function () {
   drawProducts();
   loadProductImages(S.products).then(ch => { if (ch && S.view === 'products') drawProducts(); });
 };
+/** v52: goods shown loose are sold by weight — priced per kg / gram / ons (as the server). */
+const looseUnit = u => ['kg', 'kilo', 'g', 'gr', 'gram', 'ons'].includes(String(u || '').trim().toLowerCase());
 function drawProducts() {
   const own = isOwner();
   let list = filterProducts(PR.q, PR.cat, { includeInactive: own && PR.inactive });
@@ -3829,7 +3834,7 @@ function drawProducts() {
       <td class="r num">${fmtRp(p.retail_price)}</td>
       <td class="r num">${int(p.wholesale_price) ? fmtRp(p.wholesale_price) + `<div class="small muted">≥ ${fmtQty(p.wholesale_min_qty)}</div>` : '—'}</td>
       <td class="r num"><b class="${isLow(p) || prodExpState(p) === 'expired' || prodExpState(p) === 'soon' ? 'red' : ''}">${fmtQty(p.stock)}</b><div class="small muted">min ${fmtQty(p.min_stock)}</div>${prodExpBadge(p)}</td>
-      <td class="r" style="white-space:nowrap">${isApprover() ? `<button class="icon-btn sm" data-act="prod-photo" data-id="${esc(p.id)}" title="${esc(t('img.title'))}" aria-label="${esc(t('img.title'))}">${ic('camera')}</button> ` : ''}${own || S.role === 'manager' ? `<button class="btn xs" data-act="stock-adj" data-id="${esc(p.id)}">${esc(t('prod.adjust'))}</button>` : ''}${own || isAudit() ? '' : `${S.role === 'manager' ? ' ' : ''}<button class="btn xs" data-act="price-change" data-id="${esc(p.id)}">${ic('tag')} ${esc(t('price.title'))}</button>`}</td>
+      <td class="r" style="white-space:nowrap">${(own || S.role === 'manager') && looseUnit(p.unit) ? `<button class="btn xs ${p.loose === true ? 'primary' : ''}" data-act="loose-toggle" data-id="${esc(p.id)}" aria-pressed="${p.loose === true}" title="${esc(t('loose.title'))}">⚖ ${esc(t('loose.btn'))}</button> ` : ''}${isApprover() ? `<button class="icon-btn sm" data-act="prod-photo" data-id="${esc(p.id)}" title="${esc(t('img.title'))}" aria-label="${esc(t('img.title'))}">${ic('camera')}</button> ` : ''}${own || S.role === 'manager' ? `<button class="btn xs" data-act="stock-adj" data-id="${esc(p.id)}">${esc(t('prod.adjust'))}</button>` : ''}${own || isAudit() ? '' : `${S.role === 'manager' ? ' ' : ''}<button class="btn xs" data-act="price-change" data-id="${esc(p.id)}">${ic('tag')} ${esc(t('price.title'))}</button>`}</td>
     </tr>`).join('') || `<tr><td colspan="7" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div>`;
 }
 function productForm(p, fromInvoice) {
@@ -3849,6 +3854,7 @@ function productForm(p, fromInvoice) {
       </div>
       <div class="small muted">${esc(t('prod.expiry_hint'))}</div></div>
     <datalist id="dl-units">${units.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
+    <label class="check" style="margin:0 0 10px"><input type="checkbox" id="pf-loose" ${p.loose === true ? 'checked' : ''}> ⚖ ${esc(t('loose.form'))}</label>
     <div class="grid2">${f('unit', t('unit'), 'list="dl-units"', p.unit || 'pcs')}${f('cost_price', t('cost_price'), 'inputmode="numeric" class="input num"', p.cost_price ? fmtNum(p.cost_price) : '')}</div>
     <div class="grid2">${f('retail_price', t('retail_price'), 'inputmode="numeric"', p.retail_price ? fmtNum(p.retail_price) : '')}${f('wholesale_price', t('wholesale_price'), 'inputmode="numeric"', p.wholesale_price ? fmtNum(p.wholesale_price) : '')}</div>
     <div class="grid2">${f('wholesale_min_qty', t('wholesale_min_qty'), 'inputmode="decimal"', p.wholesale_min_qty ? fmtQtyInput(p.wholesale_min_qty) : '')}${f('min_stock', t('min_stock'), 'inputmode="decimal"', p.min_stock ? fmtQtyInput(p.min_stock) : '')}</div>
@@ -3881,7 +3887,7 @@ function openProductEditor(p, after, opts = {}) {
       cost_price: moneyVal(val('cost_price')), retail_price: moneyVal(val('retail_price')), wholesale_price: moneyVal(val('wholesale_price')),
       wholesale_min_qty: qtyVal(val('wholesale_min_qty')), min_stock: qtyVal(val('min_stock')), notes: val('notes'), active: $('#pf-active', el).checked,
       supplier: val('supplier').trim(), size: val('size').trim(), weight: val('weight').trim(),
-      exp_none: expNone, exp_date: expNone ? '' : val('exp_date').trim(),
+      exp_none: expNone, exp_date: expNone ? '' : val('exp_date').trim(), loose: $('#pf-loose', el) ? $('#pf-loose', el).checked : undefined,
       repack_from: Number(val('repack_from')) || 0, repack_qty: Number(val('repack_from')) ? qtyVal(val('repack_qty')) : 0
     };
     if (fromInvoice) {
@@ -3889,6 +3895,7 @@ function openProductEditor(p, after, opts = {}) {
       if (!data.category) { $('#pf-err', el).textContent = t('newp.need_cat'); $('#pf-category', el).focus(); return; }
       if (!data.size && !data.weight) { $('#pf-err', el).textContent = t('newp.need_size'); $('#pf-size', el).focus(); return; }
     }
+    if (data.loose && !looseUnit(data.unit)) { $('#pf-err', el).textContent = t('loose.unit'); $('#pf-unit', el).focus(); return; }
     if (data.repack_from && !(data.repack_qty > 0)) { $('#pf-err', el).textContent = t('required') + ': ' + t('prod.repack_qty'); $('#pf-repack_qty', el).focus(); return; }
     if (p.id) data.id = p.id; else data.stock = qtyVal(val('stock'));
     const err = $('#pf-err', el);
@@ -4069,6 +4076,13 @@ async function loadSales(from, to, useCache, ttl = 120000) {
   return data;
 }
 function parseSurvey(s) { if (Array.isArray(s)) return s; try { const v = JSON.parse(s || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+/** v51: a sale's total by method for the lists and reports — a split sale (campur) by its parts plus its debt; any other sale
+ *  wholly under its one method (as before). */
+function methodSplit(s) {
+  if (s && s.payment_method === 'campur' && window.KPay) { const o = KPay.of(s); o.hutang = int(s.debt_amount); return o; }
+  return { [s.payment_method || 'tunai']: int(s.total) };
+}
+function addMethods(acc, s) { const x = methodSplit(s); Object.keys(x).forEach(k => { acc[k] = (acc[k] || 0) + x[k]; }); return acc; }
 function rcFromSale(sale, items) {
   const local = store.get('receipts', []).find(r => r.invoice_no === sale.invoice_no);
   const cust = custById(sale.customer_id);
@@ -4077,7 +4091,8 @@ function rcFromSale(sale, items) {
     invoice_no: sale.invoice_no, client_id: sale.client_id, pending: false, sale_date: sale.sale_date, sale_time: sale.sale_time, cashier: sale.cashier,
     customer_name: sale.customer_name || t('pos.walkin'), customer_phone: cust ? cust.phone : '', customer_id: sale.customer_id,
     lines: lines.length ? lines : (local ? local.lines : []), subtotal: int(sale.subtotal), discount: int(sale.discount), send_fee: int(sale.send_fee), total: int(sale.total),
-    method: sale.payment_method, paid: local ? local.paid : int(sale.paid_amount), change: local ? local.change : 0, debt: int(sale.debt_amount), status: sale.status || 'ok', debt_after: 0, void_reason: sale.void_reason,
+    method: sale.payment_method, parts: sale.payment_method === 'campur' && window.KPay ? KPay.lines(sale) : null,
+    paid: local ? local.paid : int(sale.paid_amount), change: local ? local.change : 0, debt: int(sale.debt_amount), status: sale.status || 'ok', debt_after: 0, void_reason: sale.void_reason,
     approved_by: sale.approved_by || '', exit_required: !!sale.exit_photo, exit_photo: sale.exit_photo && sale.exit_photo !== 'required' ? sale.exit_photo : '', exit_match: sale.exit_match || (local && local.exit_match) || '', exit_result: local && local.exit_result
   };
 }
@@ -4490,7 +4505,7 @@ function computeReport(d, from, to) {
   const split = { eceran: 0, grosir: 0 };
   items.forEach(i => { split[i.price_type === 'grosir' ? 'grosir' : 'eceran'] += int(i.line_total); });
   const methods = { tunai: 0, transfer: 0, qris: 0, hutang: 0 };
-  ok.forEach(s => { methods[s.payment_method] = (methods[s.payment_method] || 0) + int(s.total); });
+  ok.forEach(s => addMethods(methods, s)); // v51: a split sale counts by its parts
   const purchases = d.purchases.filter(p => !isInternalRow(p));
   const agg = new Map();
   items.forEach(i => {
@@ -4801,7 +4816,9 @@ const I18N = {
     'navs.pos': 'Kasir', 'navs.products': 'Produk', 'navs.purchases': 'Masuk', 'navs.customers': 'Pelanggan', 'navs.history': 'Riwayat', 'navs.reports': 'Laporan', 'navs.settings': 'Setelan',
     'nav.pos': 'Kasir', 'nav.products': 'Produk', 'nav.purchases': 'Barang Masuk', 'nav.customers': 'Pelanggan', 'nav.history': 'Riwayat', 'nav.reports': 'Laporan', 'nav.settings': 'Pengaturan',
     'role.owner': 'Pemilik', 'role.kasir': 'Kasir', 'type.grosir': 'Grosir', 'type.eceran': 'Eceran', 'type': 'Jenis',
-    'pm.tunai': 'Tunai', 'pm.transfer': 'Transfer', 'pm.qris': 'QRIS', 'pm.hutang': 'Hutang',
+    'pm.tunai': 'Tunai', 'pm.transfer': 'Transfer', 'pm.qris': 'QRIS', 'pm.hutang': 'Hutang', 'pm.campur': 'Campur',
+    'loose.btn': 'Curah', 'loose.title': 'Barang curah: pelanggan ambil sesukanya, kasir mengetik beratnya (gram)', 'loose.form': 'Dijual curah — kasir mengetik beratnya (gram); harga per kg',
+    'loose.on': '{name}: dijual curah (kasir mengetik gram)', 'loose.off': '{name}: tidak lagi curah', 'loose.unit': 'Barang curah: satuannya harus kg / gram / ons',
     'pr.today': 'Hari ini', 'pr.yesterday': 'Kemarin', 'pr.7d': '7 hari', 'pr.month': 'Bulan ini', 'pr.lastmonth': 'Bulan lalu',
     'err.BAD_KEY': 'Kode toko tidak dikenal.', 'err.BAD_PIN': 'PIN salah. Coba lagi.', 'err.BAD_PIN_SESSION': 'Sesi berakhir atau PIN berubah. Masukkan PIN lagi.',
     'err.NO_USERS': 'Belum ada pengguna. Buat akun pemilik dulu.', 'err.FORBIDDEN': 'Hanya pemilik yang boleh melakukan ini.', 'err.INVALID': 'Data tidak valid.',
@@ -4879,7 +4896,9 @@ const I18N = {
     'navs.pos': 'الكاشير', 'navs.products': 'المنتجات', 'navs.purchases': 'الوارد', 'navs.customers': 'العملاء', 'navs.history': 'السجل', 'navs.reports': 'التقارير', 'navs.settings': 'الإعدادات',
     'nav.pos': 'الكاشير', 'nav.products': 'المنتجات', 'nav.purchases': 'الوارد', 'nav.customers': 'العملاء', 'nav.history': 'السجل', 'nav.reports': 'التقارير', 'nav.settings': 'الإعدادات',
     'role.owner': 'المالك', 'role.kasir': 'كاشير', 'type.grosir': 'جملة', 'type.eceran': 'تجزئة', 'type': 'النوع',
-    'pm.tunai': 'نقدًا', 'pm.transfer': 'تحويل', 'pm.qris': 'QRIS', 'pm.hutang': 'دَين',
+    'pm.tunai': 'نقدًا', 'pm.transfer': 'تحويل', 'pm.qris': 'QRIS', 'pm.hutang': 'دَين', 'pm.campur': 'مختلط',
+    'loose.btn': 'سائب', 'loose.title': 'بضاعة سائبة: يأخذ الزبون ما يشاء، والكاشير يكتب الوزن (غرام)', 'loose.form': 'يُباع سائبًا — الكاشير يكتب الوزن (غرام)؛ السعر لكل كغ',
+    'loose.on': '{name}: يُباع سائبًا (الكاشير يكتب الغرام)', 'loose.off': '{name}: لم يعد سائبًا', 'loose.unit': 'البضاعة السائبة: الوحدة يجب أن تكون كغ / غرام / أونصة',
     'pr.today': 'اليوم', 'pr.yesterday': 'أمس', 'pr.7d': '7 أيام', 'pr.month': 'هذا الشهر', 'pr.lastmonth': 'الشهر الماضي',
     'err.BAD_KEY': 'رمز المتجر غير معروف.', 'err.BAD_PIN': 'الرقم السري خاطئ.', 'err.BAD_PIN_SESSION': 'انتهت الجلسة أو تغيّر الرقم السري. أدخله مرة أخرى.',
     'err.NO_USERS': 'لا يوجد مستخدمون. أنشئ حساب المالك أولًا.', 'err.FORBIDDEN': 'هذا الإجراء للمالك فقط.', 'err.INVALID': 'البيانات غير صحيحة.',
@@ -5479,7 +5498,17 @@ const ACT = {
   /* products */
   'import-csv': () => openImport(),
   'prod-new': () => openProductEditor(null),
-  'prod-edit': (el, e) => { if (e.target.closest('[data-act="stock-adj"],[data-act="prod-photo"]')) return; openProductEditor(prodById(el.dataset.id)); },
+  'loose-toggle': async el => { // v52: the owner / manager marks goods shown loose (the cashier types the grams)
+    const p = prodById(el.dataset.id); if (!p) return;
+    el.disabled = true;
+    try {
+      const r = await api('set_loose', { product_id: p.id, loose: p.loose !== true });
+      if (r.product) { upsertLocal(S.products, r.product); applyData({ products: S.products }); saveCache(); }
+      toast(t(r.product && r.product.loose === true ? 'loose.on' : 'loose.off', { name: p.name }), 'ok', 3500);
+      if (S.view === 'products') drawProducts();
+    } catch (e) { toast(errMsg(e), 'err'); el.disabled = false; }
+  },
+  'prod-edit': (el, e) => { if (e.target.closest('[data-act="stock-adj"],[data-act="prod-photo"],[data-act="loose-toggle"]')) return; openProductEditor(prodById(el.dataset.id)); },
   'stock-adj': el => openStockAdjust(prodById(el.dataset.id)),
 
   /* purchases */

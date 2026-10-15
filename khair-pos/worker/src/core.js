@@ -50,6 +50,10 @@ export const POS_MIGRATIONS = [
   'ALTER TABLE pos_repacks ADD COLUMN confirmed_at TEXT',
   'CREATE INDEX IF NOT EXISTS idx_pos_repacks_status ON pos_repacks (status)',
   'CREATE INDEX IF NOT EXISTS idx_pos_repacks_repack_id ON pos_repacks (repack_id)',
+  // v51 (owner 2026-10-15: «تجزئة الدفع حسب عدة أنواع طرق للدفع»): a sale paid by several methods keeps its parts.
+  'ALTER TABLE pos_sales ADD COLUMN pay_parts TEXT',
+  // v52 (owner 2026-10-15: «الشوكولاتة الزبيب اللوز بعض التمور … تختار الزبون 250 غرام»): a product shown loose, sold by weight.
+  'ALTER TABLE pos_products ADD COLUMN loose INTEGER',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;
