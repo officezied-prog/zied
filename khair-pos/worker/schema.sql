@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS pos_products (
   weight TEXT,
   exp_date TEXT,
   exp_none INTEGER,
+  loose INTEGER,
   review TEXT,
   repack_costs TEXT
 );

@@ -110,7 +110,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.7.0';
+const APP_VERSION = 'kasir-1.7.1';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1314,7 +1314,7 @@ function speak(text) {
     ss.speak(u);
   } catch (e) { }
 }
-function speakAdded(p, qty) { clearTimeout(VOICE.timer); speak(`${speakableName(p.name)}, ${spokenQty(qty)}`); }
+function speakAdded(p, qty) { clearTimeout(VOICE.timer); speak(`${speakableName(p.name)}, ${isLoose(p) ? toGrams(p, qty) + (VOICE.lang === 'ar-SA' ? ' غرام' : ' gram') : spokenQty(qty)}`); }
 function speakQtyLater(pid) {
   clearTimeout(VOICE.timer);
   VOICE.timer = setTimeout(() => { const l = S.cart.lines.find(x => x.product_id == pid); if (l) speak(`${VOICE.lang === 'ar-SA' ? 'الكمية' : 'jumlah'} ${spokenQty(l.qty)}`); }, 500);
@@ -1337,9 +1337,60 @@ const askQty = () => store.get('ask_qty', true) !== false;
 const WEIGHT_UNITS = ['kg', 'kilo', 'g', 'gr', 'gram', 'ons', 'l', 'lt', 'ltr', 'liter', 'litre', 'ml'];
 const isWeightUnit = u => WEIGHT_UNITS.includes(String(u || '').trim().toLowerCase());
 const QTY_CHIPS = [1, 2, 3, 5, 10], QTY_MAX = 100000;
-/** Product tap / single search result → quantity sheet, or straight +1 when the setting is off. */
+/* v52 (owner 2026-10-15: «بعض البضائع المعروضة بالجملة ويأخذ الزبون كما يشاء الكمية … الشوكولاتة المعروضة بالكمية الكبيرة بدون ميزان تختار
+   الزبون 250 غرام يدخل الموظف للتطبيق فيطلب نوع الشوكولاتة … فيخرج له مباشرة طلب الكمية كم فيكتب الكمية ويضغط مواصلة يحسب التطبيق كل شيء»):
+   goods shown loose (marked by the owner / manager, priced per kg / gram / ons) always open the weight sheet: grams typed or chosen,
+   the price worked out, the stock in the product's own unit (250 g of a per-kg product = 0.25). */
+const isLoose = p => !!(p && p.loose === true);
+const GRAMS_PER = { kg: 1000, kilo: 1000, g: 1, gr: 1, gram: 1, ons: 100 };
+const gPer = p => GRAMS_PER[String((p && p.unit) || '').trim().toLowerCase()] || 1000;
+const toGrams = (p, q) => Math.round(num(q) * gPer(p));
+const fromGrams = (p, g) => roundQty(num(g) / gPer(p));
+const fmtGrams = g => g >= 1000 && g % 100 === 0 ? fmtQty(g / 1000) + ' kg' : fmtNum(g) + ' g';
+const WS_CHIPS = [100, 250, 500, 1000];
+function openWeightSheet(p) {
+  if (p.active === false) { toast(t('sell.inactive'), 'warn'); return; }
+  const ex = S.cart.lines.find(l => l.product_id == p.id);
+  let g = ex ? toGrams(p, ex.qty) : 0;
+  const el = openModal({
+    title: p.name, id: 'weight-sheet', focus: false,
+    body: `<div class="qs-info"><span class="pr num"><bdi>${fmtRp(p.retail_price)}</bdi><span class="muted small">/${esc(p.unit || 'kg')}</span></span><span class="badge" id="ws-badge">⚖ ${esc(t('loose.badge'))}</span><span class="muted small" id="ws-stock">${esc(t('shelf.rak'))} <bdi class="num">${fmtQty(shelfOf(p))} ${esc(p.unit || '')}</bdi></span></div>
+      <label class="f" for="ws-g" style="margin-top:8px">${esc(t('ws.label'))}</label>
+      <div class="qs-row"><input data-rule="num" id="ws-g" type="text" inputmode="numeric" autocomplete="off" enterkeyhint="done" aria-label="${esc(t('ws.label'))}" placeholder="250" value="${g ? esc(String(g)) : ''}"><span class="ws-unit">g</span></div>
+      <div class="qs-chips" id="ws-chips">${WS_CHIPS.map(n => `<button type="button" data-g="${n}">${esc(fmtGrams(n))}</button>`).join('')}</div>
+      <div class="qs-total"><span class="muted small num" id="ws-up"></span><b class="num" id="ws-total"></b></div>
+      <div class="qs-warn" id="ws-warn" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary qs-ok" id="ws-ok">${esc(ex ? t('qty.change') : t('qty.add'))}</button>`
+  });
+  const inp = $('#ws-g', el);
+  const draw = () => {
+    const q = fromGrams(p, g), c = lineCalc({ product_id: p.id, qty: q }, custById(S.cart.customer_id));
+    $('#ws-up', el).textContent = g > 0 ? t('ws.per', { g: fmtGrams(g), price: fmtRp(c.unit_price), unit: p.unit || 'kg' }) : t('ws.need');
+    $('#ws-total', el).textContent = g > 0 ? fmtRp(c.total) : '';
+    $$('#ws-chips [data-g]', el).forEach(b => b.classList.toggle('on', num(b.dataset.g) === g));
+    const sb = g > 0 ? shelfBlock(p, q) : '';
+    $('#ws-warn', el).textContent = sb || (g > 0 && q > num(p.stock) ? t('sell.stock_low', { name: p.name }) : '');
+    $('#ws-ok', el).disabled = !(g > 0 && q < QTY_MAX) || !!sb;
+  };
+  inp.addEventListener('input', () => { g = Math.max(0, Math.round(qtyVal(inp.value))); draw(); });
+  inp.addEventListener('focus', () => inp.select());
+  $('#ws-chips', el).onclick = e => { const b = e.target.closest('[data-g]'); if (!b) return; g = num(b.dataset.g); inp.value = String(g); draw(); };
+  const ok = () => {
+    if (!(g > 0)) { $('#ws-warn', el).textContent = t('ws.need'); inp.focus(); return; }
+    const q = fromGrams(p, g), sb = shelfBlock(p, q); if (sb) { $('#ws-warn', el).textContent = sb; return; }
+    dropModal(el);
+    addToCart(p, q, true); // speaks the name + the grams
+    focusSearch();
+  };
+  $('#ws-ok', el).onclick = ok;
+  el.addEventListener('keydown', e => { if (e.key !== 'Enter' || e.isComposing) return; const b = e.target.closest && e.target.closest('button'); if (b && b.id !== 'ws-ok') return; e.preventDefault(); ok(); });
+  draw();
+  setTimeout(() => { if (el.isConnected) { inp.focus(); inp.select(); } }, 30); // the weight is always typed (also on phones)
+}
+/** Product tap / single search result → quantity sheet, or straight +1 when the setting is off; loose goods → the weight sheet. */
 function pickProduct(p) {
   if (!p) return;
+  if (isLoose(p)) { openWeightSheet(p); return; }
   if (!askQty()) { addToCart(p); focusSearch(); return; }
   openQtySheet(p);
 }
@@ -1413,7 +1464,7 @@ RENDER.sell = function () {
         </div>
         <div class="rep-banner" hidden></div>
         <div class="op-banner" id="op-banner" hidden></div>
-        <div class="tools"><button class="toggle" id="grosir" data-act="grosir-toggle" aria-pressed="false">${esc(t('grosir'))}</button>${VOICE.on ? `<button class="toggle mute-chip" id="mute-chip" data-act="sale-mute" aria-pressed="false">${muteChipHtml()}</button>` : ''}<button class="cust-chip" id="cust" data-act="pick-customer"></button><button class="held-chip" id="held-chip" data-act="held-open" hidden></button></div>
+        <div class="tools"><button class="toggle" id="grosir" data-act="grosir-toggle" aria-pressed="false">${esc(t('grosir'))}</button><button class="toggle" id="loose-chip" data-act="loose-filter" aria-pressed="false" hidden>⚖ ${esc(t('loose.chip'))}</button>${VOICE.on ? `<button class="toggle mute-chip" id="mute-chip" data-act="sale-mute" aria-pressed="false">${muteChipHtml()}</button>` : ''}<button class="cust-chip" id="cust" data-act="pick-customer"></button><button class="held-chip" id="held-chip" data-act="held-open" hidden></button></div>
         <div class="grid" id="grid" aria-label="${esc(t('sell.products'))}"></div>
       </div>
       <aside class="cart" id="cart" aria-label="${esc(t('sell.cart'))}"></aside>
@@ -1438,7 +1489,7 @@ function onSearchEnter(raw, fast) {
   const v = raw.trim(); if (!v) return;
   const clear = () => { const inp = $('#q'); if (inp) inp.value = ''; SELL.q = ''; renderGrid(); };
   const p = findBySku(v);
-  if (p) { clear(); addToCart(p); return; }
+  if (p) { clear(); if (isLoose(p)) openWeightSheet(p); else addToCart(p); return; }
   if (fast) { beep(); toast(t('sell.barcode_nf', { code: v }), 'err'); clear(); return; }
   const list = filterProducts(v);
   if (list.length === 1) { clear(); pickProduct(list[0]); }
@@ -1448,15 +1499,21 @@ function focusSearch() {
   if (S.view !== 'sell' || modalOpen() || !S.inApp || $('#app').hidden || !$('#gate').hidden || isTouch()) return;
   const el = $('#q'); if (el && document.activeElement !== el) el.focus({ preventScroll: true });
 }
+function syncLooseChip() {
+  const b = $('#loose-chip'); if (!b) return;
+  b.hidden = !S.products.some(p => isLoose(p) && p.active !== false) && !SELL.loose;
+  b.setAttribute('aria-pressed', SELL.loose ? 'true' : 'false'); b.classList.toggle('on', !!SELL.loose);
+}
 function renderGrid() {
   const g = $('#grid'); if (!g) return;
-  const list = filterProducts(SELL.q), shown = list.slice(0, SELL.limit);
+  syncLooseChip();
+  const list = filterProducts(SELL.q).filter(p => !SELL.loose || isLoose(p)), shown = list.slice(0, SELL.limit);
   const inCart = new Map(S.cart.lines.map(l => [String(l.product_id), l.qty]));
   g.innerHTML = shown.length ? shown.map(p => {
     const low = isLow(p), q = inCart.get(String(p.id));
     const gr = int(p.wholesale_price) > 0 && num(p.wholesale_min_qty) > 0 ? `<div class="gr">${esc(t('grosir'))} <bdi class="num">${fmtRp(p.wholesale_price)}</bdi> · <bdi>≥${fmtQty(p.wholesale_min_qty)}</bdi></div>` : '';
-    return `<button class="pc" data-act="add" data-id="${esc(p.id)}" data-sku="${esc(p.sku)}">${q ? `<span class="incart num">${fmtQty(q)}</span>` : ''}
-      <div class="nm">${esc(p.name)}</div>
+    return `<button class="pc ${isLoose(p) ? 'loose' : ''}" data-act="add" data-id="${esc(p.id)}" data-sku="${esc(p.sku)}">${q ? `<span class="incart num">${isLoose(p) ? esc(fmtGrams(toGrams(p, q))) : fmtQty(q)}</span>` : ''}
+      <div class="nm">${isLoose(p) ? `<span class="loose-b" data-loose>⚖ ${esc(t('loose.badge'))}</span> ` : ''}${esc(p.name)}</div>
       <div class="st ${low ? 'low' : ''}" data-shelf="${esc(shelfOf(p))}">${esc(t('shelf.rak'))} <bdi class="num">${fmtQty(shelfOf(p))} ${esc(p.unit || '')}</bdi>${gudangOf(p) > 0 ? ` · ${esc(t('shelf.gudang'))} <bdi class="num">${fmtQty(gudangOf(p))}</bdi>` : ''}</div>
       <div class="pr num"><bdi>${fmtRp(p.retail_price)}</bdi><span class="muted small" style="font-weight:700">/${esc(p.unit || 'pcs')}</span></div>${gr}</button>`;
   }).join('') + (list.length > shown.length ? `<button class="btn block" style="grid-column:1/-1" data-act="sell-more">${esc(t('show_more', { n: list.length - shown.length }))}</button>` : '')
@@ -1476,7 +1533,8 @@ function renderCart(flashId) {
       <div class="cl" data-line="${i}" data-pid="${esc(l.p.id)}">
         <div class="a"><div class="nm">${esc(l.p.name)}</div><div class="lt num" data-ref="lt">${fmtRp(l.total)}</div><button class="icon-btn ghost sm" data-act="line-del" data-i="${i}" aria-label="${esc(t('delete'))}" style="margin-top:-8px;color:var(--muted)">${ic('trash')}</button></div>
         <div class="b">
-          <div class="qty"><button data-act="qty-dec" data-i="${i}" aria-label="−">−</button><input type="text" inputmode="decimal" data-rule="num" data-qty="${i}" value="${esc(fmtQtyInput(l.line.qty))}" aria-label="${esc(t('qty'))} ${esc(l.p.name)}"><button data-act="qty-inc" data-i="${i}" aria-label="+">+</button></div>
+          ${isLoose(l.p) ? `<button class="btn sm ws-edit" data-act="ws-edit" data-pid="${esc(l.p.id)}" data-i="${i}" aria-label="${esc(t('ws.label'))} ${esc(l.p.name)}">⚖ <b class="num">${esc(fmtGrams(toGrams(l.p, l.line.qty)))}</b></button>`
+            : `<div class="qty"><button data-act="qty-dec" data-i="${i}" aria-label="−">−</button><input type="text" inputmode="decimal" data-rule="num" data-qty="${i}" value="${esc(fmtQtyInput(l.line.qty))}" aria-label="${esc(t('qty'))} ${esc(l.p.name)}"><button data-act="qty-inc" data-i="${i}" aria-label="+">+</button></div>`}
           <span class="muted small num" data-ref="up">× ${fmtRp(l.unit_price)}</span>
           <span class="pt ${l.type}" data-ref="pt">${esc(t(l.type))}</span>
         </div></div>`).join('') : `<div class="empty">${ic('cart')}<div>${esc(t('sell.cart_empty'))}</div><div class="small">${esc(t('sell.cart_empty_hint'))}</div></div>`}
@@ -4496,6 +4554,8 @@ const ACT = {
   'sell-more': () => { SELL.limit += 120; renderGrid(); },
   'cart-open': () => openCartSheet(),
   'cart-close': () => closeCartSheet(),
+  'loose-filter': () => { SELL.loose = !SELL.loose; renderGrid(); syncLooseChip(); focusSearch(); }, // v52: only the goods shown loose
+  'ws-edit': el => { const p = prodById(el.dataset.pid); if (p) openWeightSheet(p); },
   'grosir-toggle': () => { S.cart.grosir = !S.cart.grosir; saveCart(); refreshCartNumbers(); toast(S.cart.grosir ? t('sell.grosir_on') : t('sell.grosir_off'), '', 1600); focusSearch(); },
   'pick-customer': () => openCustomerPicker(c => setCustomer(c)),
   'line-del': el => { S.cart.lines.splice(+el.dataset.i, 1); saveCart(); renderCart(); renderGrid(); focusSearch(); },
@@ -4512,7 +4572,7 @@ const ACT = {
   'pay-method': el => { S.cart.method = el.dataset.m; S.cart.paid = ''; S.cart.split = {}; saveCart(); const bg = el.closest('.modal-bg'); drawPay(bg); if (el.dataset.m === 'hutang' && !S.cart.customer_id) openCustomerPicker(c => { if (c) setCustomer(c); }, { noWalkin: true, title: t('pay.pick_customer') }); },
   'paid-set': el => { S.cart.paid = el.dataset.v === '' ? '' : String(int(el.dataset.v)); saveCart(); drawPay(el.closest('.modal-bg')); },
   'channel': el => { S.cart.channel = el.dataset.c; saveCart(); const bg = el.closest('.modal-bg'); if (bg) drawPay(bg); },
-  'cam-scan': () => cameraScan(code => { const p = findBySku(code); if (p) addToCart(p); else toast(t('sell.barcode_nf', { code }), 'err'); }),
+  'cam-scan': () => cameraScan(code => { const p = findBySku(code); if (p) { if (isLoose(p)) openWeightSheet(p); else addToCart(p); } else toast(t('sell.barcode_nf', { code }), 'err'); }),
 
   /* masuk */
   'pu-add': el => puAdd(prodById(el.dataset.id)),
@@ -4642,6 +4702,7 @@ const I18N = {
     'pay.check_transfer': 'Pastikan transfer sudah masuk sebelum menekan SELESAI.', 'pay.check_qris': 'Pastikan pembayaran QRIS berhasil sebelum menekan SELESAI.',
     'pay.more': 'Kanal & kode promo', 'pay.promo': 'Kode promo',
     'pm.tunai': 'Tunai', 'pm.transfer': 'Transfer', 'pm.qris': 'QRIS', 'pm.hutang': 'Hutang', 'pm.campur': 'Campur',
+    'loose.chip': 'Curah', 'loose.badge': 'Curah', 'ws.label': 'Berat yang diambil (gram)', 'ws.need': 'Ketik beratnya dalam gram, mis. 250', 'ws.per': '{g} × {price}/{unit}',
     'pay.split_hint': 'Bayar dengan beberapa cara: isi bagian transfer / QRIS, sisanya tunai (kembalian dari tunai).', 'pay.split_cash': 'Tunai diterima (Rp)',
     'pay.split_need': 'Isi jumlah transfer atau QRIS', 'pay.split_over': 'Transfer + QRIS lebih {amount} dari total', 'pay.split_short': 'Kurang {amount} — tambah tunai, atau pilih pelanggan untuk hutang',
     'pay.split_debt_hint': 'Kalau sebagian belum dibayar: pilih pelanggan dulu (jadi hutang, perlu persetujuan seperti hutang).',
@@ -4755,6 +4816,7 @@ const I18N = {
     'pay.check_transfer': 'تأكد من وصول التحويل قبل الإتمام.', 'pay.check_qris': 'تأكد من نجاح دفع QRIS قبل الإتمام.',
     'pay.more': 'القناة ورمز العرض', 'pay.promo': 'رمز العرض',
     'pm.tunai': 'نقدًا', 'pm.transfer': 'تحويل', 'pm.qris': 'QRIS', 'pm.hutang': 'دَين', 'pm.campur': 'مختلط',
+    'loose.chip': 'سائب', 'loose.badge': 'سائب', 'ws.label': 'الوزن المأخوذ (غرام)', 'ws.need': 'اكتب الوزن بالغرام، مثلًا 250', 'ws.per': '{g} × {price}/{unit}',
     'pay.split_hint': 'الدفع بعدة طرق: اكتب جزء التحويل / QRIS، والباقي نقدًا (الباقي للزبون من النقد).', 'pay.split_cash': 'النقد المستلم (روبية)',
     'pay.split_need': 'اكتب مبلغ التحويل أو QRIS', 'pay.split_over': 'التحويل + QRIS أكثر من الإجمالي بـ {amount}', 'pay.split_short': 'ناقص {amount} — أضف نقدًا، أو اختر عميلًا ليصبح دَينًا',
     'pay.split_debt_hint': 'إذا بقي جزء غير مدفوع: اختر العميل أولًا (يصبح دَينًا ويحتاج موافقة مثل الدَّين).',

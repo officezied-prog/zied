@@ -365,6 +365,10 @@ function applyPrices(p, changes) {
   return np;
 }
 const PRICE_FIELDS = ['retail_price', 'wholesale_price', 'cost_price'];
+// v52 (owner 2026-10-15: «بعض البضائع المعروضة بالجملة ويأخذ الزبون كما يشاء الكمية … الشوكولاتة الزبيب اللوز بعض التمور»): goods shown
+// loose (an open sack of raisins, a tray of chocolate) are sold by weight, typed in grams at the till; the price is per kg / gram / ons.
+const LOOSE_UNITS = ['kg', 'kilo', 'g', 'gr', 'gram', 'ons'];
+function looseUnitOk(unit) { return LOOSE_UNITS.indexOf(str(unit).trim().toLowerCase()) >= 0; }
 // Stock count (opname): each line's difference is counted against the stock at counting time, so sales made
 // while the count waited for approval are not lost. Every change is logged as a 'STOK OPNAME' purchase row.
 // v40: the cost value of a count's differences for the owner's notices, e.g. " (nilai modal -Rp 330.000)"; '' when nothing differs
@@ -2622,6 +2626,8 @@ switch (req.action) {
     // Shelf life (v21): a product is either dated or explicitly "no expiry" (cups, honey, …); only dated ones can go red.
     p.exp_none = data.exp_none !== undefined ? data.exp_none === true : (existing ? existing.exp_none === true : false);
     p.exp_date = p.exp_none ? '' : (isDate(data.exp_date) ? data.exp_date : (data.exp_date === undefined && existing ? str(existing.exp_date) : ''));
+    p.loose = data.loose !== undefined ? data.loose === true : (existing ? existing.loose === true : false);
+    if (p.loose && !looseUnitOk(p.unit)) return fail('INVALID', 'Barang curah dijual per kg / gram / ons — ubah satuannya dulu');
     // Repacked in the shop: this product is made from a bulk product (repack_from), repack_qty of its unit per piece.
     if (num(data.repack_from) > 0) {
       const bulk = productById[String(data.repack_from)];
@@ -2700,6 +2706,20 @@ switch (req.action) {
     });
     logAct('impor', 'Impor produk: ' + created + ' baru, ' + updated + ' diubah' + (skipped ? ', ' + skipped + ' dilewati (sudah ada)' : ''), '', 0, 'info');
     return done({ ok: true, created: created, updated: updated, skipped: skipped });
+  }
+
+  case 'set_loose': {
+    // v52: the owner or the manager marks a product as shown loose (sold by weight at the till) or not — no price changes here.
+    if (role !== 'owner' && role !== 'manager') return fail('FORBIDDEN', 'Hanya pemilik / manajer');
+    const lp = productById[String(data.product_id)];
+    if (!lp) return fail('NOT_FOUND', 'Produk tidak ditemukan');
+    const on = data.loose === true;
+    if (on && !looseUnitOk(lp.unit)) return fail('INVALID', str(lp.name) + ': barang curah dijual per kg / gram / ons — satuannya sekarang ' + (str(lp.unit) || 'pcs'));
+    if ((lp.loose === true) === on) return done({ ok: true, unchanged: true, product: clean(lp) });
+    const np = Object.assign({}, lp, { loose: on });
+    ops.products.push(forWrite(np, lp.id));
+    logAct('atur_curah', (on ? 'Dijual curah (timbang di kasir): ' : 'Tidak lagi dijual curah: ') + str(lp.name) + ' — oleh ' + (role === 'manager' ? 'manajer ' : 'pemilik ') + me.name, String(lp.id), 0, 'info');
+    return done({ ok: true, product: clean(np) });
   }
 
   case 'set_repack': {

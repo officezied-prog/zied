@@ -81,6 +81,9 @@ const MockServer = (() => {
     if (src.wholesale_min_qty !== undefined && src.wholesale_min_qty !== '') p.wholesale_min_qty = Math.max(0, roundQty(src.wholesale_min_qty));
     if (src.min_stock !== undefined && src.min_stock !== '') p.min_stock = Math.max(0, roundQty(src.min_stock));
     if (src.active !== undefined) p.active = !(src.active === false || src.active === 'false' || src.active === 0);
+    // v52: shown loose, sold by weight at the till — only per kg / gram / ons (as the server)
+    if (src.loose !== undefined) p.loose = src.loose === true;
+    if (p.loose && !['kg', 'kilo', 'g', 'gr', 'gram', 'ons'].includes(String(p.unit !== undefined ? p.unit : '').trim().toLowerCase())) throw E('INVALID', 'Barang curah dijual per kg / gram / ons — ubah satuannya dulu');
     if (src.exp_none !== undefined) p.exp_none = src.exp_none === true || src.exp_none === 'true';
     if (src.exp_date !== undefined) p.exp_date = /^\d{4}-\d{2}-\d{2}$/.test(String(src.exp_date)) ? String(src.exp_date) : '';
     if (p.exp_none) p.exp_date = '';
@@ -1861,6 +1864,17 @@ const MockServer = (() => {
         }
         logAct(db, u, 'impor', 'Impor produk: ' + created + ' baru, ' + updated + ' diubah' + (skipped ? ', ' + skipped + ' dilewati (sudah ada)' : ''), '', 0, 'info');
         return { created, updated, skipped };
+      }
+      case 'set_loose': { // v52 (as backend/process.js): the owner / manager marks a product as shown loose, sold by weight
+        if (!['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik / manajer');
+        const lp = db.products.find(x => x.id === Number(data.product_id));
+        if (!lp) throw E('NOT_FOUND', 'Produk tidak ditemukan');
+        const on = data.loose === true;
+        if (on && !['kg', 'kilo', 'g', 'gr', 'gram', 'ons'].includes(String(lp.unit || '').trim().toLowerCase())) throw E('INVALID', lp.name + ': barang curah dijual per kg / gram / ons — satuannya sekarang ' + (lp.unit || 'pcs'));
+        if ((lp.loose === true) === on) return { unchanged: true, product: lp };
+        lp.loose = on;
+        logAct(db, u, 'atur_curah', (on ? 'Dijual curah (timbang di kasir): ' : 'Tidak lagi dijual curah: ') + lp.name + ' — oleh ' + (u.role === 'manager' ? 'manajer ' : 'pemilik ') + u.name, String(lp.id), 0, 'info');
+        return { product: lp };
       }
       case 'set_repack': { // v43 + v48: the manager (or owner) chooses the pack product (or makes a NEW one), its bulk source, the size and the pack's materials; the others are told (as on the server)
         if (!owner && u.role !== 'manager') throw E('FORBIDDEN', 'Hanya pemilik / manajer');

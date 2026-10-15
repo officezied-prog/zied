@@ -66,6 +66,9 @@ const MockServer = (() => {
     if (src.wholesale_min_qty !== undefined && src.wholesale_min_qty !== '') p.wholesale_min_qty = Math.max(0, roundQty(src.wholesale_min_qty));
     if (src.min_stock !== undefined && src.min_stock !== '') p.min_stock = Math.max(0, roundQty(src.min_stock));
     if (src.active !== undefined) p.active = !(src.active === false || src.active === 'false' || src.active === 0);
+    // v52: shown loose, sold by weight at the till — only per kg / gram / ons (as the server)
+    if (src.loose !== undefined) p.loose = src.loose === true;
+    if (p.loose && !['kg', 'kilo', 'g', 'gr', 'gram', 'ons'].includes(String(p.unit !== undefined ? p.unit : '').trim().toLowerCase())) throw E('INVALID', 'Barang curah dijual per kg / gram / ons — ubah satuannya dulu');
     return p;
   }
   function priceSale(db, data, quote) {
