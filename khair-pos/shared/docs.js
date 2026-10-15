@@ -87,7 +87,7 @@
     }).join('');
   }
   var PRICE_HEAD = '<tr><th class="n">No</th><th>Nama barang</th><th class="n">Qty</th><th>Satuan</th><th class="n">Harga</th><th class="n">Jumlah</th></tr>';
-  var METHOD = { tunai: 'Tunai', transfer: 'Transfer bank', qris: 'QRIS', hutang: 'Tempo (hutang)', campur: 'Campuran' };
+  var METHOD = { tunai: 'Tunai', transfer: 'Transfer bank', qris: 'QRIS', kartu: 'Kartu debit/kredit', hutang: 'Tempo (hutang)', campur: 'Campuran' };
   function banksHTML(st) {
     var b = (Array.isArray(st.bank_accounts) ? st.bank_accounts : []).filter(function (x) { return x && x.active !== false && x.account_no; });
     return b.length ? '<div class="note">Pembayaran transfer ke: ' + b.map(function (x) { return esc(x.bank + ' ' + x.account_no + ' a.n. ' + x.holder); }).join('; ') + '</div>' : '';

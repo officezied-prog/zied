@@ -400,11 +400,13 @@ function applyCount(lines, note, byName) {
 // حسب عدة أنواع طرق للدفع»): one sale paid by several methods. data.payments = [{method: tunai | transfer | qris, amount}]; two or
 // more methods → payment_method 'campur' and the parts in pay_parts (JSON [{m, a}]); one method is stored as before. What is not
 // paid stays debt (debt_amount) with the same rules as hutang (a customer, the credit approval).
-const PAY_PARTS = ['tunai', 'transfer', 'qris'];
+// v53 (owner 2026-10-15: «اضف امكانية الدفع بالبطاقة»): 'kartu' = a debit / credit card on the bank's EDC machine — bank money,
+// never in the drawer; it can also be one part of a split payment.
+const PAY_PARTS = ['tunai', 'transfer', 'qris', 'kartu'];
 function payPartsIn(list) {
   if (!Array.isArray(list) || !list.length) return null;
   if (list.length > 6) return { error: 'Paling banyak 6 bagian pembayaran' };
-  const acc = { tunai: 0, transfer: 0, qris: 0 };
+  const acc = { tunai: 0, transfer: 0, qris: 0, kartu: 0 };
   for (let i = 0; i < list.length; i++) {
     const x = list[i] || {}, m = str(x.method), a = Number(x.amount);
     if (PAY_PARTS.indexOf(m) < 0) return { error: 'Cara bayar tidak valid: ' + m.slice(0, 20) };
@@ -416,7 +418,7 @@ function payPartsIn(list) {
 /** A sale's money by method — what was paid, never more than the total: a split sale from its parts, any other from its one
  *  method (a hutang down payment is cash). The shift, the transfer check and every report use this. */
 function saleParts(x) {
-  const o = { tunai: 0, transfer: 0, qris: 0 };
+  const o = { tunai: 0, transfer: 0, qris: 0, kartu: 0 };
   let parts = null;
   if (str(x.payment_method) === 'campur') { try { parts = JSON.parse(str(x.pay_parts) || '[]'); } catch (e) { parts = null; } }
   if (Array.isArray(parts) && parts.length) { parts.forEach(function (p) { if (p && o[p.m] !== undefined) o[p.m] += money(p.a); }); return o; }
@@ -471,7 +473,7 @@ function computeSale(invoice, quote) {
     if (paid > total) return { error: fail('INVALID', 'Jumlah pembayaran ' + rpTxt(paid) + ' lebih dari total ' + rpTxt(total)) };
     if (pp.parts.length > 1) { method = 'campur'; parts = pp.parts; } else method = pp.parts.length ? pp.parts[0].m : 'hutang';
   } else {
-    method = ['tunai', 'transfer', 'qris', 'hutang'].indexOf(data.payment_method) >= 0 ? data.payment_method : 'tunai';
+    method = ['tunai', 'transfer', 'qris', 'kartu', 'hutang'].indexOf(data.payment_method) >= 0 ? data.payment_method : 'tunai';
     paid = Math.max(money(data.paid_amount), 0);
     if (method === 'hutang' && data.paid_amount === undefined) paid = 0;
   }
@@ -1441,7 +1443,7 @@ switch (req.action) {
     if (myShift) {
       ops.shifts.push(forWrite(Object.assign({}, myShift, {
         sales_count: num(myShift.sales_count) + 1, sales_total: money(myShift.sales_total) + c.total, cash_sales: money(myShift.cash_sales) + sp.tunai,
-        transfer_sales: money(myShift.transfer_sales) + sp.transfer, qris_sales: money(myShift.qris_sales) + sp.qris,
+        transfer_sales: money(myShift.transfer_sales) + sp.transfer, qris_sales: money(myShift.qris_sales) + sp.qris, card_sales: money(myShift.card_sales) + sp.kartu,
         debt_sales: money(myShift.debt_sales) + c.debt,
         items_qty: Math.round((num(myShift.items_qty) + c.lines.reduce(function (a1, l) { return a1 + l.qty; }, 0)) * 1000) / 1000
       }), myShift.id));
@@ -2014,7 +2016,7 @@ switch (req.action) {
       opened_at: new Date().toISOString(), closed_at: '', status: 'open', opening_cash: opening,
       cash_sales: 0, cash_payments: 0, cash_in: 0, cash_out: 0, sales_count: 0, sales_total: 0,
       expected_cash: 0, counted_cash: 0, difference: 0, moves: '[]', note: str(data.note),
-      transfer_sales: 0, qris_sales: 0, debt_sales: 0, items_qty: 0
+      transfer_sales: 0, qris_sales: 0, card_sales: 0, debt_sales: 0, items_qty: 0
     };
     ops.shifts.push(forWrite(sh, -1));
     // Every morning's opening count goes to the manager / owner to check and approve (selling is not blocked).
@@ -3161,8 +3163,8 @@ switch (req.action) {
     okSales.forEach(function (x) { okInv[x.invoice_no] = true; });
     const items = rows('Get Range Items').filter(function (x) { return okInv[x.invoice_no]; });
     const sumOf = function (arr, f) { return arr.reduce(function (a1, x) { return a1 + f(x); }, 0); };
-    const byMethod = { tunai: 0, transfer: 0, qris: 0 };
-    okSales.forEach(function (x) { const sp = saleParts(x); byMethod.tunai += sp.tunai; byMethod.transfer += sp.transfer; byMethod.qris += sp.qris; });
+    const byMethod = { tunai: 0, transfer: 0, qris: 0, kartu: 0 };
+    okSales.forEach(function (x) { const sp = saleParts(x); byMethod.tunai += sp.tunai; byMethod.transfer += sp.transfer; byMethod.qris += sp.qris; byMethod.kartu += sp.kartu; });
     const prod = {};
     items.forEach(function (it) { const k = String(it.product_id); if (!prod[k]) prod[k] = { name: str(it.name), qty: 0, total: 0 }; prod[k].qty = Math.round((prod[k].qty + num(it.qty)) * 1000) / 1000; prod[k].total += money(it.line_total); });
     const pays = rows('Get Range Payments').filter(function (p) { return p.pay_date === day; });
@@ -3191,9 +3193,9 @@ switch (req.action) {
         flagged_total: sumOf(exps.filter(function (e) { return ['selisih', 'cek_manual', 'ditolak'].indexOf(e.check_status) >= 0; }), function (e) { return money(e.amount); }) },
       shifts: shifts
     };
-    rep.bank = { sales_transfer: byMethod.transfer, sales_qris: byMethod.qris, payments_transfer: rep.payments_in.transfer, payments_qris: rep.payments_in.qris,
+    rep.bank = { sales_transfer: byMethod.transfer, sales_qris: byMethod.qris, sales_card: byMethod.kartu, payments_transfer: rep.payments_in.transfer, payments_qris: rep.payments_in.qris,
       out_transfer: rep.payments_out.transfer + rep.payments_out.qris };
-    rep.bank.in_total = rep.bank.sales_transfer + rep.bank.sales_qris + rep.bank.payments_transfer + rep.bank.payments_qris;
+    rep.bank.in_total = rep.bank.sales_transfer + rep.bank.sales_qris + rep.bank.sales_card + rep.bank.payments_transfer + rep.bank.payments_qris;
     rep.cash = { sales: byMethod.tunai, payments_in: rep.payments_in.tunai, payments_out: rep.payments_out.tunai, expenses_from_kas: rep.expenses.from_kas,
       expected_total: sumOf(shifts, function (x) { return x.expected_cash; }), counted_total: sumOf(shifts.filter(function (x) { return x.status === 'closed'; }), function (x) { return x.counted_cash; }),
       difference_total: sumOf(shifts.filter(function (x) { return x.status === 'closed'; }), function (x) { return x.difference; }) };
@@ -3204,14 +3206,14 @@ switch (req.action) {
     const per = {}, invWho = {};
     const who = function (n) {
       const k = str(n) || '-';
-      if (!per[k]) per[k] = { name: k, sales: { count: 0, total: 0, discount: 0, items_qty: 0, by_method: { tunai: 0, transfer: 0, qris: 0 }, debt: 0 }, voids: { count: 0, total: 0 },
+      if (!per[k]) per[k] = { name: k, sales: { count: 0, total: 0, discount: 0, items_qty: 0, by_method: { tunai: 0, transfer: 0, qris: 0, kartu: 0 }, debt: 0 }, voids: { count: 0, total: 0 },
         payments_in: { count: 0, total: 0, tunai: 0, transfer: 0, qris: 0 }, payments_out: { count: 0, total: 0, tunai: 0 }, expenses: { count: 0, total: 0, from_kas: 0 }, shifts: [] };
       return per[k];
     };
     okSales.forEach(function (x) {
       const c = who(x.cashier), s1 = c.sales, sp = saleParts(x);
       invWho[x.invoice_no] = c; s1.count++; s1.total += money(x.total); s1.discount += money(x.discount); s1.debt += money(x.debt_amount);
-      s1.by_method.tunai += sp.tunai; s1.by_method.transfer += sp.transfer; s1.by_method.qris += sp.qris;
+      s1.by_method.tunai += sp.tunai; s1.by_method.transfer += sp.transfer; s1.by_method.qris += sp.qris; s1.by_method.kartu += sp.kartu;
     });
     items.forEach(function (it) { const c = invWho[it.invoice_no]; if (c) c.sales.items_qty = Math.round((c.sales.items_qty + num(it.qty)) * 1000) / 1000; });
     voids.forEach(function (x) { const c = who(x.cashier); c.voids.count++; c.voids.total += money(x.total); });

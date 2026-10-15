@@ -3,13 +3,13 @@
    payPartsIn / saleParts), used by the apps' screens and their demo backends:
      KPay.partsIn([{method, amount}], total) → { parts: [{m, a}], paid, method } | { error }
        two or more methods → method 'campur' with its parts; one method → that method, no parts; nothing paid → 'hutang'.
-     KPay.of(sale) → { tunai, transfer, qris }: what the sale brought in by method (never more than its total; a hutang down
+     KPay.of(sale) → { tunai, transfer, qris, kartu }: what the sale brought in by method (never more than its total; a hutang down
        payment is cash).
      KPay.lines(sale) → [{ m, a }]: the paid parts to show on a receipt / list (a single method → one line). */
 (function () {
   'use strict';
   if (window.KPay) return;
-  var M = ['tunai', 'transfer', 'qris'];
+  var M = ['tunai', 'transfer', 'qris', 'kartu']; // v53: + a debit / credit card on the EDC machine
   function n(v) { v = Number(v); return isFinite(v) ? v : 0; }
   function partsOfSale(s) {
     if (!s || String(s.payment_method) !== 'campur') return null;
@@ -21,7 +21,7 @@
     METHODS: M,
     partsIn: function (list, total) {
       if (!Array.isArray(list) || !list.length) return { error: 'Tidak ada pembayaran' };
-      var acc = { tunai: 0, transfer: 0, qris: 0 };
+      var acc = { tunai: 0, transfer: 0, qris: 0, kartu: 0 };
       for (var i = 0; i < list.length; i++) {
         var x = list[i] || {}, m = String(x.method || ''), a = Number(x.amount);
         if (M.indexOf(m) < 0) return { error: 'Cara bayar tidak valid: ' + m.slice(0, 20) };
@@ -34,7 +34,7 @@
       return { parts: parts.length > 1 ? parts : [], paid: paid, method: parts.length > 1 ? 'campur' : parts.length ? parts[0].m : 'hutang' };
     },
     of: function (s) {
-      var o = { tunai: 0, transfer: 0, qris: 0 }, p = partsOfSale(s);
+      var o = { tunai: 0, transfer: 0, qris: 0, kartu: 0 }, p = partsOfSale(s);
       if (p) { p.forEach(function (x) { o[x.m] += n(x.a); }); return o; }
       var m = s && o[s.payment_method] !== undefined ? s.payment_method : 'tunai';
       o[m] += Math.min(n(s && s.paid_amount), n(s && s.total));
