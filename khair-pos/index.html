@@ -152,7 +152,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.8.5';
+const APP_VERSION = '2.8.6';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -5668,7 +5668,7 @@ let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); re
    computed backwards from the current stock. Expiry uses purchase rows with exp_date (last 12 months) and assumes
    the current stock consists of the most recent purchases (FIFO). */
 const GD = { group: store.get('gd_group', '') || '', tab: 'overview', q: '', cat: '', status: '', sort: 'name', expMax: 60, d30: null, d30At: 0, year: null, yearAt: 0, yearP: null, gen: 0, bootAt: 0, err: '', result: '' };
-const GD_TTL = 5 * 60000, GD_TABS = ['overview', 'list', 'expiry', 'repack', 'opname'], GD_STATUS = ['', 'menipis', 'habis', 'lebih', 'kedaluwarsa', 'rak_kosong'];
+const GD_TTL = 5 * 60000, GD_TABS = ['overview', 'list', 'sold', 'expiry', 'repack', 'opname'], GD_STATUS = ['', 'menipis', 'habis', 'lebih', 'kedaluwarsa', 'rak_kosong'];
 const GDO = Object.assign({ lines: [], note: '', show: false }, store.get('gd_opname', null) || {});
 const saveGdo = () => store.set('gd_opname', { lines: GDO.lines, note: GDO.note, show: GDO.show });
 const isYmdStr = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
@@ -5782,6 +5782,7 @@ function gdDraw(full) {
   if (GD.tab === 'opname') { if (full || !$('#gdo-panel', body)) gdDrawOpname(body, true); else GDO.lines.forEach(l => gdoUpdateRow(l.id)); return; }
   const err = GD.err ? `<div class="red small" style="margin-bottom:8px" role="alert">${esc(GD.err)}</div>` : '';
   if (GD.tab === 'list') { gdDrawList(body, err); return; }
+  if (GD.tab === 'sold') { gdDrawSold(body, err); return; }
   if (GD.tab === 'expiry') { body.innerHTML = err + gdExpiryHTML(); return; }
   if (GD.tab === 'repack') { if (full || !$('#rp-form', body)) gdDrawRepack(body); else rpRefresh(); return; }
   body.innerHTML = err + gdOverviewHTML();
@@ -10000,6 +10001,159 @@ Object.assign(I18N.ar, {
   'nt.reply_title': 'الرد على الإشعار', 'nt.about': 'إشعار', 'nt.to': 'إلى', 'nt.to_actor': 'الشخص صاحب هذا الإشعار — رسالة خاصة بينكما فقط.',
   'nt.to_pick': 'إشعار من النظام — اختر الشخص (رسالة خاصة بينكما فقط).', 'nt.msg': 'الرسالة', 'nt.send': 'إرسال',
   'nt.empty': 'اكتب الرسالة أولاً.', 'nt.no_person': 'هذا الشخص غير موجود في قائمة الفريق.', 'nt.sent': 'أُرسلت إلى {name} — يظهر رده في المحادثة.'
+});
+
+/* v55 Gudang → "Penjualan barang" (owner 2026-10-15: «بمراقبة المخزون اجعل إمكانية البحث ومراقبة البيع لكل عنصر مثلا أريد أن أتأكد من بيع
+   التمر العجوة أضع التمر عجوة تخرج لي كل المبيعات التمر العجوة على المدة المرجوة … إمكانية البحث حسب النوع أو حسب الكمية أو حسب التعبية»):
+   the sales of each product over a chosen period, searched by name / barcode, category and packaging, sorted by quantity; a row opens
+   every sale line of that product. The last 12 months come from the year Gudang already keeps (no extra server call); an older
+   period is one get_sales call. Void sales are left out; amounts are per line, before an invoice discount. */
+const GS = { preset: '30d', from: '', to: '', q: '', cat: '', pack: '', sort: 'qty', zero: false, open: '', data: null, key: '', err: '', seq: 0, capped: false };
+const GS_PRESETS = ['today', '7d', '30d', 'month', 'lastmonth', 'custom'], GS_SORTS = ['qty', 'qty_asc', 'omzet', 'name'];
+function gsRange(p) { const T = today(); return p === '30d' ? [addDays(T, -29), T] : presetRange(p); }
+/** The period to show; after a date was typed (`edited` = 'from' | 'to') the other date follows it: never before it, at most a year away. */
+function gsFixRange(edited) {
+  if (GS.preset !== 'custom' || !GS.from || !GS.to) [GS.from, GS.to] = gsRange(GS.preset === 'custom' ? '30d' : GS.preset);
+  if (!edited) return;
+  GS.capped = false;
+  if (GS.from > GS.to) { if (edited === 'from') GS.to = GS.from; else GS.from = GS.to; }
+  if (daysBetween(GS.from, GS.to) > 365) { GS.capped = true; if (edited === 'from') GS.to = addDays(GS.from, 365); else GS.from = addDays(GS.to, -365); }
+}
+const gsInYear = () => GS.from >= addDays(today(), -364) && GS.to <= today();
+/** The sales for the period: the 12-month data Gudang keeps, or (older dates) one get_sales call; null while it loads. */
+function gsSource() {
+  if (gsInYear()) return GD.year;
+  const key = GS.from + '|' + GS.to;
+  if (GS.key === key && GS.data) return GS.data;
+  const seq = ++GS.seq;
+  loadSales(GS.from, GS.to, true).then(d => { if (seq !== GS.seq) return; GS.data = d; GS.key = key; GS.err = ''; gsDrawRows(); })
+    .catch(e => { if (seq !== GS.seq) return; GS.err = errMsg(e); gsDrawRows(); });
+  return null;
+}
+const gsPackKind = (p, bulk) => num(p.repack_from) > 0 ? 'pack' : bulk.has(String(p.id)) ? 'bulk' : 'orig';
+const gsUnits = () => [...new Set(S.products.filter(p => p.active !== false && p.unit).map(p => String(p.unit).toLowerCase()))].sort();
+function gsCompute(d) {
+  const voided = new Set(d.sales.filter(s => s.status === 'void').map(s => s.invoice_no)), saleBy = new Map(d.sales.map(s => [s.invoice_no, s]));
+  const pBy = new Map(S.products.map(p => [String(p.id), p])), bulk = new Set(S.products.filter(p => num(p.repack_from) > 0).map(p => String(p.repack_from)));
+  const toks = norm(GS.q).split(' ').filter(Boolean), [pk, pv] = GS.pack.split(':');
+  const okP = p => (!GS.cat || p.category === GS.cat) && (!GS.pack || (pk === 'u' ? String(p.unit || '').toLowerCase() === pv : gsPackKind(p, bulk) === pv));
+  const okName = (p, name) => { if (!toks.length) return true; const h = norm(p ? `${p.name} ${p.sku} ${p.category}` : name); return toks.every(tk => h.includes(tk)); };
+  const rows = new Map(), skip = new Set();
+  d.items.forEach(i => {
+    const sd = String(i.sale_date || '').slice(0, 10); if (sd < GS.from || sd > GS.to || voided.has(i.invoice_no)) return;
+    const p = pBy.get(String(i.product_id)) || null, k = p ? 'p' + p.id : 'n' + norm(i.name);
+    if (skip.has(k)) return;
+    let r = rows.get(k);
+    if (!r) {
+      if ((p ? !okP(p) : (GS.cat || GS.pack)) || !okName(p, i.name)) { skip.add(k); return; }
+      r = { k, p, name: p ? p.name : i.name, unit: p ? p.unit || '' : '', qty: 0, omzet: 0, laba: 0, hasLaba: false, inv: new Set(), ecer: 0, gros: 0, lines: [] };
+      rows.set(k, r);
+    }
+    const q = num(i.qty), s = saleBy.get(i.invoice_no) || {};
+    r.qty = roundQty(r.qty + q); r.omzet += int(i.line_total); r.inv.add(i.invoice_no);
+    if (i.line_profit !== undefined && i.line_profit !== null) { r.laba += int(i.line_profit); r.hasLaba = true; }
+    if (i.price_type === 'grosir') r.gros = roundQty(r.gros + q); else r.ecer = roundQty(r.ecer + q);
+    r.lines.push({ date: sd, at: s.sale_time || '', inv: i.invoice_no, qty: q, price: int(i.unit_price), pt: i.price_type === 'grosir' ? 'grosir' : 'eceran', total: int(i.line_total), cashier: s.cashier || '', cust: s.customer_name || i.customer_name || '' });
+  });
+  if (GS.zero) filterProducts(GS.q, GS.cat).filter(okP).forEach(p => { const k = 'p' + p.id; if (!rows.has(k)) rows.set(k, { k, p, name: p.name, unit: p.unit || '', qty: 0, omzet: 0, laba: 0, hasLaba: false, inv: new Set(), ecer: 0, gros: 0, lines: [] }); });
+  const list = [...rows.values()], byName = (a, b) => a.name.localeCompare(b.name);
+  const sorts = { qty: (a, b) => b.qty - a.qty || byName(a, b), qty_asc: (a, b) => a.qty - b.qty || byName(a, b), omzet: (a, b) => b.omzet - a.omzet || byName(a, b), name: byName };
+  list.sort(sorts[GS.sort] || sorts.qty);
+  list.forEach(r => r.lines.sort((a, b) => String(b.at || b.date).localeCompare(String(a.at || a.date))));
+  return list;
+}
+function gdDrawSold(body, err) {
+  gsFixRange();
+  if (!$('#gs-q', body)) {
+    const units = gsUnits();
+    body.innerHTML = `<p class="muted small" style="margin-top:0" id="gs-hint">${esc(t('gs.hint'))}</p>
+      <div class="toolbar"><div class="chips" id="gs-presets">${GS_PRESETS.map(p => `<button class="chip ${GS.preset === p ? 'on' : ''}" data-act="gs-preset" data-p="${p}">${esc(t(p === 'custom' ? 'act.custom' : p === '30d' ? 'act.30d' : 'pr.' + p))}</button>`).join('')}</div>
+        <span id="gs-dates" ${GS.preset === 'custom' ? '' : 'hidden'}><label class="f" style="margin:0">${esc(t('from'))} <input class="input" type="date" id="gs-from" value="${esc(GS.from)}" style="width:auto"></label>
+        <label class="f" style="margin:0">${esc(t('to'))} <input class="input" type="date" id="gs-to" value="${esc(GS.to)}" style="width:auto"></label></span></div>
+      <div class="toolbar">
+        <input class="input" id="gs-q" type="search" placeholder="${esc(t('gs.search'))}" aria-label="${esc(t('gs.search'))}" value="${esc(GS.q)}">
+        <select class="input" id="gs-cat" aria-label="${esc(t('category'))}"><option value="">${esc(t('all_categories'))}</option>${categories().map(c => `<option ${GS.cat === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+        <select class="input" id="gs-pack" aria-label="${esc(t('gs.pack'))}"><option value="">${esc(t('gs.pack_all'))}</option>
+          <optgroup label="${esc(t('gs.pack_kind'))}">${['orig', 'bulk', 'pack'].map(k => `<option value="pk:${k}" ${GS.pack === 'pk:' + k ? 'selected' : ''}>${esc(t('gd.pk_' + k))}</option>`).join('')}</optgroup>
+          ${units.length ? `<optgroup label="${esc(t('gs.unit_grp'))}">${units.map(u => `<option value="u:${esc(u)}" ${GS.pack === 'u:' + u ? 'selected' : ''}>${esc(u)}</option>`).join('')}</optgroup>` : ''}</select>
+        <select class="input" id="gs-sort" aria-label="${esc(t('gs.sort'))}">${GS_SORTS.map(k => `<option value="${k}" ${GS.sort === k ? 'selected' : ''}>${esc(t('gs.sort_' + k))}</option>`).join('')}</select>
+        <label class="row" style="gap:6px;align-items:center;min-height:40px"><input type="checkbox" id="gs-zero" ${GS.zero ? 'checked' : ''}> <span class="small">${esc(t('gs.zero'))}</span></label></div>
+      <div id="gs-err"></div><div id="gs-list"></div>`;
+    const q = $('#gs-q', body);
+    q.addEventListener('input', debounce(() => { GS.q = q.value; GS.open = ''; gsDrawRows(); }, 150));
+    $('#gs-cat', body).onchange = e => { GS.cat = e.target.value; GS.open = ''; gsDrawRows(); };
+    $('#gs-pack', body).onchange = e => { GS.pack = e.target.value; GS.open = ''; gsDrawRows(); };
+    $('#gs-sort', body).onchange = e => { GS.sort = e.target.value; gsDrawRows(); };
+    $('#gs-zero', body).onchange = e => { GS.zero = e.target.checked; gsDrawRows(); };
+    const setDate = (k, el) => { GS[k] = el.value || today(); GS.open = ''; gsFixRange(k); $('#gs-from').value = GS.from; $('#gs-to').value = GS.to; gsDrawRows(); };
+    $('#gs-from', body).onchange = e => setDate('from', e.target);
+    $('#gs-to', body).onchange = e => setDate('to', e.target);
+  }
+  const e = $('#gs-err', body); if (e) e.innerHTML = err;
+  gsDrawRows();
+}
+function gsQtyByUnit(list) {
+  const m = new Map(); list.forEach(r => { if (r.qty) m.set(r.unit, roundQty((m.get(r.unit) || 0) + r.qty)); });
+  return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([u, q]) => `${fmtQty(q)} ${u}`.trim()).join(' · ') || '0';
+}
+function gsLinesHTML(r) {
+  const max = 300, more = r.lines.length - max;
+  return `<tr class="gs-lines" data-lines="${esc(r.k)}"><td colspan="6" style="padding:4px 8px 12px;background:var(--bg2,rgba(10,125,75,.05))">
+    <div class="small muted" style="margin:4px 0 6px" data-split>${esc(t('gs.split', { e: `${fmtQty(r.ecer)} ${r.unit}`.trim(), g: `${fmtQty(r.gros)} ${r.unit}`.trim() }))}${r.hasLaba && canSeeCost() ? ` · ${esc(t('gs.sum_profit'))}: <b class="num">${fmtRp(r.laba)}</b>` : ''}</div>
+    ${r.lines.length ? `<div class="tbl-wrap"><table class="tbl" data-lines-table="${esc(r.k)}"><thead><tr><th>${esc(t('gs.l_when'))} · ${esc(t('gs.l_inv'))}</th><th class="r">${esc(t('gs.l_qty'))}</th><th class="r">${esc(t('gs.l_total'))}</th><th class="hide-phone">${esc(t('gs.l_who'))}</th></tr></thead><tbody>
+      ${r.lines.slice(0, max).map(l => `<tr data-line="${esc(l.inv)}"><td><div class="num" style="white-space:nowrap">${esc(l.at ? fmtDateTime(l.at, l.date) : fmtDate(l.date))}</div><div class="small muted num">${esc(l.inv)}${l.pt === 'grosir' ? ` <span class="badge blue">${esc(t('grosir'))}</span>` : ''}</div></td>
+        <td class="r num" data-col="qty"><b>${fmtQty(l.qty)}</b> <span class="small muted">${esc(r.unit)}</span></td><td class="r num" data-col="total">${fmtRp(l.total)}<div class="small muted">@ ${fmtRp(l.price)}</div></td><td class="small hide-phone">${esc([l.cashier, l.cust].filter(Boolean).join(' · '))}</td></tr>`).join('')}</tbody></table></div>
+      ${more > 0 ? `<div class="small muted" style="margin-top:4px">${esc(t('gs.more', { n: fmtNum(more) }))}</div>` : ''}` : `<div class="small muted">${esc(t('gs.none_one'))}</div>`}</td></tr>`;
+}
+function gsDrawRows() {
+  const box = $('#gs-list'); if (!box || S.view !== 'gudang' || GD.tab !== 'sold') return;
+  $$('#gs-presets .chip').forEach(c => c.classList.toggle('on', c.dataset.p === GS.preset));
+  const dates = $('#gs-dates'); if (dates) dates.hidden = GS.preset !== 'custom';
+  const d = gsSource();
+  if (!d) { box.innerHTML = GS.err && !gsInYear() ? `<div class="empty red" role="alert">${esc(GS.err)}</div>` : `<div class="empty">${esc(t('loading'))}</div>`; return; }
+  const list = gsCompute(d), days = daysBetween(GS.from, GS.to) + 1, own = canSeeCost();
+  const open = list.length === 1 ? list[0].k : GS.open;
+  const invAll = new Set(); list.forEach(r => r.inv.forEach(n => invAll.add(n)));
+  const laba = list.some(r => r.hasLaba) && own ? sum(list, r => r.laba) : null;
+  const rowHTML = r => `<tr class="click" data-act="gs-open" data-k="${esc(r.k)}" data-pid="${esc(r.p ? r.p.id : '')}" aria-expanded="${open === r.k}">
+      <td><b>${open === r.k ? '▾' : '▸'} ${esc(r.name)}</b><div class="small muted">${esc([r.p ? r.p.category : t('gs.deleted'), r.p && num(r.p.repack_from) > 0 ? t('gd.pk_pack') : ''].filter(Boolean).join(' · '))}${r.p ? `<span class="show-phone"> · ${esc(t('gs.col_stock'))} ${fmtQty(r.p.stock)} ${esc(r.p.unit || '')}</span>` : ''}</div></td>
+      <td class="r num" data-col="sold"><b class="${r.qty ? '' : 'muted'}">${fmtQty(r.qty)}</b> <span class="small muted">${esc(r.unit)}</span></td>
+      <td class="r num" data-col="omzet">${fmtRp(r.omzet)}</td>
+      <td class="r num hide-phone" data-col="inv">${fmtNum(r.inv.size)}</td>
+      <td class="r num hide-phone" data-col="day">${fmtQty(roundQty(r.qty / days))}</td>
+      <td class="r num hide-phone" data-col="stock">${r.p ? `${fmtQty(r.p.stock)} <span class="small muted">${esc(r.p.unit || '')}</span>` : '—'}</td></tr>${open === r.k ? gsLinesHTML(r) : ''}`;
+  box.innerHTML = `<div class="kpis" id="gs-sum" style="margin-bottom:10px">
+      <div class="kpi" data-kpi="gs-items"><div class="k">${esc(t('gs.sum_items'))}</div><div class="v num">${fmtNum(list.length)}</div><div class="s">${esc(fmtDate(GS.from))} – ${esc(fmtDate(GS.to))} (${esc(t('gs.n_days', { n: fmtNum(days) }))})</div></div>
+      <div class="kpi" data-kpi="gs-qty"><div class="k">${esc(t('gs.sum_qty'))}</div><div class="v num" style="font-size:18px">${esc(gsQtyByUnit(list))}</div></div>
+      <div class="kpi" data-kpi="gs-omzet"><div class="k">${esc(t('gs.sum_omzet'))}</div><div class="v num">${fmtRp(sum(list, r => r.omzet))}</div><div class="s">${esc(t('gs.n_inv', { n: fmtNum(invAll.size) }))}</div></div>
+      ${laba != null ? `<div class="kpi" data-kpi="gs-profit"><div class="k">${esc(t('gs.sum_profit'))}</div><div class="v num">${fmtRp(laba)}</div></div>` : ''}</div>
+    ${GS.capped ? `<p class="small amber" id="gs-capped">${esc(t('gs.max_year'))}</p>` : ''}
+    <div class="tbl-wrap"><table class="tbl" id="gs-table"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('gs.col_sold'))}</th><th class="r">${esc(t('gs.col_omzet'))}</th><th class="r hide-phone">${esc(t('gs.col_inv'))}</th><th class="r hide-phone">${esc(t('gs.col_day'))}</th><th class="r hide-phone">${esc(t('gs.col_stock'))}</th></tr></thead>
+    <tbody>${list.slice(0, 400).map(rowHTML).join('') || `<tr><td colspan="6" class="empty" id="gs-none">${esc(t('gs.none'))}</td></tr>`}</tbody></table></div>`;
+}
+Object.assign(ACT, {
+  'gs-preset': el => { GS.preset = el.dataset.p; GS.open = ''; GS.capped = false; if (GS.preset !== 'custom') [GS.from, GS.to] = gsRange(GS.preset); gsFixRange(); const f = $('#gs-from'), to = $('#gs-to'); if (f) { f.value = GS.from; to.value = GS.to; } gsDrawRows(); },
+  'gs-open': el => { const k = el.dataset.k; GS.open = GS.open === k ? '' : k; gsDrawRows(); }
+});
+Object.assign(I18N.id, {
+  'gd.tab_sold': 'Penjualan barang', 'gs.hint': 'Penjualan tiap barang dalam periode yang dipilih. Ketik nama barang (mis. Kurma Ajwa) atau pilih kategori / kemasan; ketuk barang untuk melihat setiap penjualannya. Nota batal tidak dihitung; harga per baris sebelum diskon nota.',
+  'gs.search': 'Cari barang: nama / barcode…', 'gs.pack': 'Kemasan', 'gs.pack_all': 'Semua kemasan', 'gs.pack_kind': 'Jenis kemasan', 'gs.unit_grp': 'Satuan',
+  'gs.sort': 'Urutkan', 'gs.sort_qty': 'Terjual terbanyak', 'gs.sort_qty_asc': 'Terjual paling sedikit', 'gs.sort_omzet': 'Omzet terbesar', 'gs.sort_name': 'Nama (A–Z)',
+  'gs.zero': 'Tampilkan juga yang tidak terjual', 'gs.col_sold': 'Terjual', 'gs.col_omzet': 'Omzet', 'gs.col_inv': 'Nota', 'gs.col_day': 'Per hari', 'gs.col_stock': 'Stok kini',
+  'gs.sum_items': 'Barang', 'gs.sum_qty': 'Jumlah terjual', 'gs.sum_omzet': 'Omzet', 'gs.sum_profit': 'Laba', 'gs.n_days': '{n} hari', 'gs.n_inv': '{n} nota',
+  'gs.none': 'Tidak ada penjualan yang cocok di periode ini.', 'gs.none_one': 'Belum terjual di periode ini.', 'gs.deleted': 'produk sudah dihapus',
+  'gs.l_when': 'Waktu', 'gs.l_inv': 'Nota', 'gs.l_qty': 'Qty', 'gs.l_price': 'Harga', 'gs.l_total': 'Jumlah', 'gs.l_who': 'Kasir · pelanggan',
+  'gs.split': 'Eceran {e} · Grosir {g}', 'gs.more': '+{n} baris lagi — persempit periodenya.', 'gs.max_year': 'Periode paling panjang 1 tahun: tanggal yang lain sudah disesuaikan.'
+});
+Object.assign(I18N.ar, {
+  'gd.tab_sold': 'مبيعات الأصناف', 'gs.hint': 'مبيعات كل صنف خلال الفترة المختارة. اكتب اسم الصنف (مثل تمر عجوة) أو اختر الفئة / التعبئة؛ اضغط على الصنف لترى كل عملية بيع له. الفواتير الملغاة لا تُحسب؛ السعر لكل سطر قبل خصم الفاتورة.',
+  'gs.search': 'ابحث عن صنف: الاسم / الباركود…', 'gs.pack': 'التعبئة', 'gs.pack_all': 'كل أنواع التعبئة', 'gs.pack_kind': 'نوع التعبئة', 'gs.unit_grp': 'الوحدة',
+  'gs.sort': 'الترتيب', 'gs.sort_qty': 'الأكثر كمية', 'gs.sort_qty_asc': 'الأقل كمية', 'gs.sort_omzet': 'الأعلى قيمة', 'gs.sort_name': 'الاسم (أ–ي)',
+  'gs.zero': 'أظهر أيضًا ما لم يُبع', 'gs.col_sold': 'المباع', 'gs.col_omzet': 'القيمة', 'gs.col_inv': 'الفواتير', 'gs.col_day': 'في اليوم', 'gs.col_stock': 'المخزون الآن',
+  'gs.sum_items': 'الأصناف', 'gs.sum_qty': 'الكمية المباعة', 'gs.sum_omzet': 'القيمة', 'gs.sum_profit': 'الربح', 'gs.n_days': '{n} يوم', 'gs.n_inv': '{n} فاتورة',
+  'gs.none': 'لا توجد مبيعات مطابقة في هذه الفترة.', 'gs.none_one': 'لم يُبع في هذه الفترة.', 'gs.deleted': 'صنف محذوف',
+  'gs.l_when': 'الوقت', 'gs.l_inv': 'الفاتورة', 'gs.l_qty': 'الكمية', 'gs.l_price': 'السعر', 'gs.l_total': 'المجموع', 'gs.l_who': 'الكاشير · العميل',
+  'gs.split': 'تجزئة {e} · جملة {g}', 'gs.more': '+{n} سطر آخر — ضيّق الفترة.', 'gs.max_year': 'أطول فترة سنة واحدة: عُدّل التاريخ الآخر.'
 });
 
 /* ========== Boot ========== */
