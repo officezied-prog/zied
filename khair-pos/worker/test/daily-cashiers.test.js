@@ -42,7 +42,7 @@ test('daily_report: one entry per cashier, each with its own sales, debt, voids,
   assert.equal(r.ok, true, JSON.stringify(r));
   const R = r.report, by = Object.fromEntries(R.cashiers.map((c) => [c.name, c]));
   assert.deepEqual(R.cashiers.map((c) => c.name), ['Siti', 'Rina', 'Jihan']); // biggest sales first
-  assert.deepEqual(by.Siti.sales, { count: 3, total: 230000, discount: 0, items_qty: 6, by_method: { tunai: 130000, transfer: 0, qris: 50000 }, debt: 50000 });
+  assert.deepEqual(by.Siti.sales, { count: 3, total: 230000, discount: 0, items_qty: 6, by_method: { tunai: 130000, transfer: 0, qris: 50000, kartu: 0 }, debt: 50000 });
   // a credit sale with a down payment: the paid part counts by its method (unknown 'hutang' → cash), like the store total
   assert.equal(R.sales.by_method.tunai, 100000 + 30000 + 70000);
   assert.equal(by.Siti.expenses.from_kas, 15000);

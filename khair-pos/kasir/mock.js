@@ -74,7 +74,7 @@ const MockServer = (() => {
   function priceSale(db, data, quote) {
     if (!Array.isArray(data.items) || !data.items.length) throw E('INVALID', 'items required');
     const split = Array.isArray(data.payments) && data.payments.length; // v51: one sale paid by several methods (shared/pay-split.js)
-    if (!quote && !split && !['tunai', 'transfer', 'qris', 'hutang'].includes(data.payment_method)) throw E('INVALID', 'payment_method');
+    if (!quote && !split && !['tunai', 'transfer', 'qris', 'kartu', 'hutang'].includes(data.payment_method)) throw E('INVALID', 'payment_method');
     const cust = data.customer_id ? db.customers.find(c => c.id === Number(data.customer_id)) : null;
     if (data.customer_id && !cust) throw E('NOT_FOUND', 'customer');
     const lines = data.items.map(it => {
@@ -123,7 +123,7 @@ const MockServer = (() => {
     // v15: sales per method + pieces sold (transfer / QRIS = what was paid that way, hutang = the debt part)
     const invs = new Set(sales.map(x => x.invoice_no));
     return Object.assign({}, sh, { sales_count: sales.length, sales_total: sum(sales, x => int(x.total)), cash_sales, cash_payments, cash_in, cash_out, moves: JSON.stringify(list),
-      transfer_sales: sum(sales, x => window.KPay.of(x).transfer), qris_sales: sum(sales, x => window.KPay.of(x).qris),
+      transfer_sales: sum(sales, x => window.KPay.of(x).transfer), qris_sales: sum(sales, x => window.KPay.of(x).qris), card_sales: sum(sales, x => window.KPay.of(x).kartu),
       debt_sales: sum(sales, x => int(x.debt_amount)), items_qty: roundQty(sum(db.items.filter(i => invs.has(i.invoice_no)), i => num(i.qty))),
       expected_cash: int(sh.opening_cash) + cash_sales + cash_payments + cash_in - cash_out });
   }

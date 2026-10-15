@@ -151,7 +151,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.8.3';
+const APP_VERSION = '2.8.4';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1071,7 +1071,7 @@ function drawOwnerSales() {
   const ok = sales.filter(s => s.status !== 'void');
   const byM = ok.reduce(addMethods, {}), by = m => byM[m] || 0; // v51: a split sale counts by its parts
   b.innerHTML = `${OM.err ? `<div class="notice red small">${esc(OM.err)}</div>` : ''}<div class="kpis">${kpi('om-omzet', t('rep.omzet'), fmtRp(sum(ok, s => int(s.total))), '', 'hl')}${kpi('om-count', t('rep.tx_count'), fmtNum(ok.length))}
-      ${['tunai', 'transfer', 'qris', 'hutang'].map(m => kpi('om-' + m, t('pm.' + m), fmtRp(by(m)))).join('')}${sales.length - ok.length ? kpi('om-void', t('void'), fmtNum(sales.length - ok.length)) : ''}</div>
+      ${['tunai', 'transfer', 'qris', 'kartu', 'hutang'].map(m => kpi('om-' + m, t('pm.' + m), fmtRp(by(m)))).join('')}${sales.length - ok.length ? kpi('om-void', t('void'), fmtNum(sales.length - ok.length)) : ''}</div>
     <div class="tbl-wrap"><table class="tbl" id="om-table"><thead><tr><th>${esc(t('rc.no'))}</th><th>${esc(t('time'))}</th><th class="hide-phone">${esc(t('rc.cashier'))}</th><th>${esc(t('rc.customer'))}</th><th class="hide-phone">${esc(t('pos.method'))}</th><th class="r">${esc(t('total'))}</th><th>${esc(t('status'))}</th></tr></thead><tbody>
     ${sales.map(s => `<tr class="click ${s.status === 'void' ? 'void' : ''}" data-act="om-open" data-inv="${esc(s.invoice_no)}"><td>${esc(s.invoice_no)}</td><td class="num">${esc(jktTime(s.sale_time))}</td><td class="hide-phone">${esc(s.cashier || '')}</td><td>${esc(s.customer_name || t('pos.walkin'))}</td><td class="hide-phone">${esc(t('pm.' + s.payment_method))}</td><td class="r num">${fmtRp(s.total)}</td><td>${s.status === 'void' ? `<span class="badge red">${esc(t('void'))}</span>` : s.debt_amount ? `<span class="badge amber">${esc(t('debt'))}</span>` : `<span class="badge">${esc(t('ok_status'))}</span>`}</td></tr>`).join('')
       || `<tr><td colspan="7" class="empty">${esc(t('om.none'))}</td></tr>`}</tbody></table></div>`;
@@ -1144,7 +1144,7 @@ function renderCart(flashId) {
   const el = $('#cart'); if (!el || !S.cart) return;
   const v = cartView(), c = S.cart;
   const cust = v.cust;
-  const methods = ['tunai', 'transfer', 'qris', 'hutang'];
+  const methods = ['tunai', 'transfer', 'qris', 'kartu', 'hutang']; // v53: + card (EDC)
   const quick = quickAmounts(v.total);
   if (VS.on && VS.cart !== c) stopVoice(); // the sale changed under a running recording (held, resumed, cleared)
   el.innerHTML = `
@@ -2979,7 +2979,7 @@ function computeHome(d, brand) {
   const prod = new Map();
   d.items.filter(i => inv.has(i.invoice_no)).forEach(i => { const a = prod.get(String(i.product_id)) || { name: i.name, qty: 0, omzet: 0, unit: (prodById(i.product_id) || {}).unit || '' }; a.qty += num(i.qty); a.omzet += int(i.line_total); prod.set(String(i.product_id), a); });
   const top = [...prod.values()].map(a => Object.assign(a, { qty: roundQty(a.qty) })).sort((a, b) => b.qty - a.qty || b.omzet - a.omzet).slice(0, 10);
-  const methods = { tunai: 0, transfer: 0, qris: 0, hutang: 0 }; ok.forEach(s => addMethods(methods, s));
+  const methods = { tunai: 0, transfer: 0, qris: 0, kartu: 0, hutang: 0 }; ok.forEach(s => addMethods(methods, s));
   const channels = {}; ok.forEach(s => { const c = s.channel || 'toko'; channels[c] = (channels[c] || 0) + int(s.total); });
   const hours = Array.from({ length: 24 }, (_, h) => ({ h, n: 0, omzet: 0 })); ok.forEach(s => { const x = hours[jktHour(s.sale_time)]; x.n++; x.omzet += int(s.total); });
   const used = hours.filter(x => x.n); const lo = Math.min(8, ...used.map(x => x.h)), hi = Math.max(21, ...used.map(x => x.h));
@@ -3027,7 +3027,7 @@ function drawHome() {
     <div class="panel chart" style="margin-bottom:14px" id="home-hourly"><h3>${ic('chart')} ${esc(t('home.hourly'))}</h3><div class="pb">${hourlySVG(H.hours)}</div>
       <div class="legend"><span><i class="lg-omzet"></i>${esc(t('rep.omzet'))}</span><span><i class="lg-laba"></i>${esc(t('home.tx'))}</span></div></div>
     <div class="rgrid">
-      ${blockHTML('home-methods', t('rep.methods'), barRows(['tunai', 'transfer', 'qris', 'hutang'].map(m => [t('pm.' + m), H.methods[m] || 0]), H.omzet))}
+      ${blockHTML('home-methods', t('rep.methods'), barRows(['tunai', 'transfer', 'qris', 'kartu', 'hutang'].map(m => [t('pm.' + m), H.methods[m] || 0]), H.omzet))}
       ${blockHTML('home-channels', t('home.channels'), barRows(Object.entries(H.channels).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([c, v]) => [t('ch.' + c), v]), chTotal, true), Object.keys(H.channels).length > 5)}
       ${blockHTML('home-cashiers', t('home.cashiers'), homeCashierRows(H.cashiers, 5), H.cashiers.length > 5)}
       <div class="panel" id="home-field"><h3>${ic('pin')} ${esc(t('field.today'))}<button class="btn xs" style="margin-inline-start:auto" data-act="go" data-view="field">${esc(t('field.open'))}</button></h3><div class="pb" id="home-field-body"><div class="muted">${esc(t('loading'))}</div></div></div>
@@ -4504,7 +4504,7 @@ function computeReport(d, from, to) {
   const count = ok.length;
   const split = { eceran: 0, grosir: 0 };
   items.forEach(i => { split[i.price_type === 'grosir' ? 'grosir' : 'eceran'] += int(i.line_total); });
-  const methods = { tunai: 0, transfer: 0, qris: 0, hutang: 0 };
+  const methods = { tunai: 0, transfer: 0, qris: 0, kartu: 0, hutang: 0 };
   ok.forEach(s => addMethods(methods, s)); // v51: a split sale counts by its parts
   const purchases = d.purchases.filter(p => !isInternalRow(p));
   const agg = new Map();
@@ -4742,7 +4742,7 @@ function drawReport() {
       <div class="legend"><span><i class="lg-omzet"></i>${esc(t('rep.omzet'))}</span>${L ? `<span><i class="lg-laba"></i>${esc(t('rep.profit'))}</span>` : ''}</div></div>
     <div class="rgrid">
       <div class="panel"><h3>${esc(t('rep.split'))}</h3><div class="pb" id="rp-split">${barRows([[t('eceran'), R.split.eceran], [t('grosir'), R.split.grosir]], R.split.eceran + R.split.grosir, true)}<div class="small muted">${esc(t('rep.split_hint'))}</div></div></div>
-      <div class="panel"><h3>${esc(t('rep.methods'))}</h3><div class="pb" id="rp-methods">${barRows(['tunai', 'transfer', 'qris', 'hutang'].map(m => [t('pm.' + m), R.methods[m] || 0]), R.omzet)}</div></div>
+      <div class="panel"><h3>${esc(t('rep.methods'))}</h3><div class="pb" id="rp-methods">${barRows(['tunai', 'transfer', 'qris', 'kartu', 'hutang'].map(m => [t('pm.' + m), R.methods[m] || 0]), R.omzet)}</div></div>
     </div>
     <div class="rgrid">
       <div class="panel"><h3>${esc(t('rep.top_qty'))}</h3>${prodTable(R.topQty, [[t('qty'), r => `${fmtQty(r.qty)} <span class="muted small">${esc(r.unit)}</span>`], [t('rep.omzet'), r => fmtRp(r.omzet)]], 'rp-top-qty')}</div>
@@ -4773,7 +4773,7 @@ function reportText(R, kind) {
   if (R.hasProfit) out.push(`${tid('rep.profit')}: *${fmtRp(R.laba)}*`, `${tid('rep.margin')}: ${fmtPct(R.margin)}`, `${tid('yr.expenses')}: ${fmtRp(R.expensesTotal)}`, `${tid('yr.net')}: *${fmtRp(R.net)}*`);
   out.push(`${tid('rep.tx_count')}: ${fmtNum(R.count)} (${tid('rep.avg').toLowerCase()} ${fmtRp(R.avg)})`,
     `${tid('eceran')}: ${fmtRp(R.split.eceran)} · ${tid('grosir')}: ${fmtRp(R.split.grosir)}`,
-    `${['tunai', 'transfer', 'qris', 'hutang'].map(m => `${tid('pm.' + m)} ${fmtRp(R.methods[m] || 0)}`).join(' · ')}`, '',
+    `${['tunai', 'transfer', 'qris', 'kartu', 'hutang'].map(m => `${tid('pm.' + m)} ${fmtRp(R.methods[m] || 0)}`).join(' · ')}`, '',
     `*${tid('rep.top5')}:*`);
   R.topOmzet.slice(0, 5).forEach((p, i) => out.push(`${i + 1}. ${p.name} — ${fmtQty(p.qty)} ${p.unit} — ${fmtRp(p.omzet)}`));
   if (!R.topOmzet.length) out.push('-');
@@ -4816,7 +4816,7 @@ const I18N = {
     'navs.pos': 'Kasir', 'navs.products': 'Produk', 'navs.purchases': 'Masuk', 'navs.customers': 'Pelanggan', 'navs.history': 'Riwayat', 'navs.reports': 'Laporan', 'navs.settings': 'Setelan',
     'nav.pos': 'Kasir', 'nav.products': 'Produk', 'nav.purchases': 'Barang Masuk', 'nav.customers': 'Pelanggan', 'nav.history': 'Riwayat', 'nav.reports': 'Laporan', 'nav.settings': 'Pengaturan',
     'role.owner': 'Pemilik', 'role.kasir': 'Kasir', 'type.grosir': 'Grosir', 'type.eceran': 'Eceran', 'type': 'Jenis',
-    'pm.tunai': 'Tunai', 'pm.transfer': 'Transfer', 'pm.qris': 'QRIS', 'pm.hutang': 'Hutang', 'pm.campur': 'Campur',
+    'pm.tunai': 'Tunai', 'pm.transfer': 'Transfer', 'pm.qris': 'QRIS', 'pm.hutang': 'Hutang', 'pm.campur': 'Campur', 'pm.kartu': 'Kartu', 'dr.b_sales_card': 'Penjualan kartu (EDC)',
     'loose.btn': 'Curah', 'loose.title': 'Barang curah: pelanggan ambil sesukanya, kasir mengetik beratnya (gram)', 'loose.form': 'Dijual curah — kasir mengetik beratnya (gram); harga per kg',
     'loose.on': '{name}: dijual curah (kasir mengetik gram)', 'loose.off': '{name}: tidak lagi curah', 'loose.unit': 'Barang curah: satuannya harus kg / gram / ons',
     'pr.today': 'Hari ini', 'pr.yesterday': 'Kemarin', 'pr.7d': '7 hari', 'pr.month': 'Bulan ini', 'pr.lastmonth': 'Bulan lalu',
@@ -4896,7 +4896,7 @@ const I18N = {
     'navs.pos': 'الكاشير', 'navs.products': 'المنتجات', 'navs.purchases': 'الوارد', 'navs.customers': 'العملاء', 'navs.history': 'السجل', 'navs.reports': 'التقارير', 'navs.settings': 'الإعدادات',
     'nav.pos': 'الكاشير', 'nav.products': 'المنتجات', 'nav.purchases': 'الوارد', 'nav.customers': 'العملاء', 'nav.history': 'السجل', 'nav.reports': 'التقارير', 'nav.settings': 'الإعدادات',
     'role.owner': 'المالك', 'role.kasir': 'كاشير', 'type.grosir': 'جملة', 'type.eceran': 'تجزئة', 'type': 'النوع',
-    'pm.tunai': 'نقدًا', 'pm.transfer': 'تحويل', 'pm.qris': 'QRIS', 'pm.hutang': 'دَين', 'pm.campur': 'مختلط',
+    'pm.tunai': 'نقدًا', 'pm.transfer': 'تحويل', 'pm.qris': 'QRIS', 'pm.hutang': 'دَين', 'pm.campur': 'مختلط', 'pm.kartu': 'بطاقة', 'dr.b_sales_card': 'مبيعات البطاقة (EDC)',
     'loose.btn': 'سائب', 'loose.title': 'بضاعة سائبة: يأخذ الزبون ما يشاء، والكاشير يكتب الوزن (غرام)', 'loose.form': 'يُباع سائبًا — الكاشير يكتب الوزن (غرام)؛ السعر لكل كغ',
     'loose.on': '{name}: يُباع سائبًا (الكاشير يكتب الغرام)', 'loose.off': '{name}: لم يعد سائبًا', 'loose.unit': 'البضاعة السائبة: الوحدة يجب أن تكون كغ / غرام / أونصة',
     'pr.today': 'اليوم', 'pr.yesterday': 'أمس', 'pr.7d': '7 أيام', 'pr.month': 'هذا الشهر', 'pr.lastmonth': 'الشهر الماضي',
@@ -7992,8 +7992,8 @@ function drawDaily() {
   const nums = [['company', to.company], ['manager', to.manager], ['owner', to.owner]].map(([k, n]) => [k, normPhone(n) || String(n || '').replace(/\D/g, '')]).filter(x => x[1]);
   box.innerHTML = `${drCashiersHTML(R)}<div class="kpis">${kpi('dr-total', t('dr.sales_total'), fmtRp(s0.total), esc(t('dr.n_tx', { n: fmtNum(s0.count) })), 'hl')}${kpi('dr-items', t('dr.items'), fmtQty(s0.items_qty))}${kpi('dr-bank', t('dr.bank_in'), fmtRp(bank.in_total), '', 'gold')}${own && R.profit != null ? kpi('dr-profit', t('rep.profit'), fmtRp(R.profit)) : ''}</div>
     <div class="dr-grid">
-      <div class="panel" id="dr-methods"><h3>${esc(t('dr.by_method'))}</h3><div class="pb">${row(t('pm.tunai'), fmtRp(bm.tunai), 'tunai')}${row(t('pm.transfer'), fmtRp(bm.transfer), 'transfer')}${row(t('pm.qris'), fmtRp(bm.qris), 'qris')}${row(t('pm.hutang'), fmtRp(s0.debt), 'hutang', s0.debt ? 'amber' : '')}${row(t('dr.discount'), fmtRp(s0.discount), 'discount')}${DR.data.send_fees ? row(t('rs.fee_line'), `${fmtNum(DR.data.send_fees.count)} · ${fmtRp(DR.data.send_fees.total)}`, 'send-fee') : ''}${row(t('dr.voids'), `${fmtNum((s0.voids || {}).count)} · ${fmtRp((s0.voids || {}).total)}`, 'voids', (s0.voids || {}).count ? 'red' : '')}</div></div>
-      <div class="panel" id="dr-bank"><h3>${ic('bank')} ${esc(t('dr.bank'))}</h3><div class="pb">${row(t('dr.b_sales_tf'), fmtRp(bank.sales_transfer), 'b-stf')}${row(t('dr.b_sales_qris'), fmtRp(bank.sales_qris), 'b-sqr')}${row(t('dr.b_pay_tf'), fmtRp(bank.payments_transfer), 'b-ptf')}${row(t('dr.b_pay_qris'), fmtRp(bank.payments_qris), 'b-pqr')}${row(t('dr.b_in_total'), fmtRp(bank.in_total), 'b-in', 'green')}${row(t('dr.b_out'), fmtRp(bank.out_transfer), 'b-out', bank.out_transfer ? 'red' : '')}</div></div>
+      <div class="panel" id="dr-methods"><h3>${esc(t('dr.by_method'))}</h3><div class="pb">${row(t('pm.tunai'), fmtRp(bm.tunai), 'tunai')}${row(t('pm.transfer'), fmtRp(bm.transfer), 'transfer')}${row(t('pm.qris'), fmtRp(bm.qris), 'qris')}${row(t('pm.kartu'), fmtRp(bm.kartu || 0), 'kartu')}${row(t('pm.hutang'), fmtRp(s0.debt), 'hutang', s0.debt ? 'amber' : '')}${row(t('dr.discount'), fmtRp(s0.discount), 'discount')}${DR.data.send_fees ? row(t('rs.fee_line'), `${fmtNum(DR.data.send_fees.count)} · ${fmtRp(DR.data.send_fees.total)}`, 'send-fee') : ''}${row(t('dr.voids'), `${fmtNum((s0.voids || {}).count)} · ${fmtRp((s0.voids || {}).total)}`, 'voids', (s0.voids || {}).count ? 'red' : '')}</div></div>
+      <div class="panel" id="dr-bank"><h3>${ic('bank')} ${esc(t('dr.bank'))}</h3><div class="pb">${row(t('dr.b_sales_tf'), fmtRp(bank.sales_transfer), 'b-stf')}${row(t('dr.b_sales_qris'), fmtRp(bank.sales_qris), 'b-sqr')}${row(t('dr.b_sales_card'), fmtRp(bank.sales_card || 0), 'b-scd')}${row(t('dr.b_pay_tf'), fmtRp(bank.payments_transfer), 'b-ptf')}${row(t('dr.b_pay_qris'), fmtRp(bank.payments_qris), 'b-pqr')}${row(t('dr.b_in_total'), fmtRp(bank.in_total), 'b-in', 'green')}${row(t('dr.b_out'), fmtRp(bank.out_transfer), 'b-out', bank.out_transfer ? 'red' : '')}</div></div>
       <div class="panel" id="dr-cash"><h3>${ic('cash')} ${esc(t('dr.cash'))}</h3><div class="pb">${row(t('dr.c_sales'), fmtRp(cash.sales), 'c-sales')}${row(t('dr.c_pin'), fmtRp(cash.payments_in), 'c-pin')}${row(t('dr.c_pout'), fmtRp(cash.payments_out), 'c-pout')}${row(t('dr.c_exp'), fmtRp(cash.expenses_from_kas), 'c-exp')}${row(t('shift.expected'), fmtRp(cash.expected_total), 'c-exp-total')}${row(t('shift.counted'), fmtRp(cash.counted_total), 'c-counted')}${row(t('shift.difference'), fmtRp(cash.difference_total), 'c-diff', cash.difference_total ? 'red' : 'green')}</div></div>
       <div class="panel" id="dr-pay"><h3>${ic('wallet')} ${esc(t('dr.payments'))}</h3><div class="pb">${row(t('dr.pin'), `${fmtNum(pin.count)} · ${fmtRp(pin.total)}`, 'pin')}${row(t('dr.pout'), `${fmtNum(pout.count)} · ${fmtRp(pout.total)}`, 'pout')}${row(t('dr.expenses'), `${fmtNum(ex.count)} · ${fmtRp(ex.total)}`, 'exp')}${ex.flagged || ex.approved || ex.rejected ? row(t('dr.exp_check'), esc(t('dr.exp_check_v', { f: fmtNum(ex.flagged || 0), a: fmtNum(ex.approved || 0), r: fmtNum(ex.rejected || 0) })), 'exp-check', ex.flagged || ex.rejected ? 'red' : '') : ''}</div></div>
       ${(() => { const c = R.corrections || {}; return c.count ? `<div class="panel" id="dr-corrections"><h3>${ic('tag')} ${esc(t('dr.corrections'))}</h3><div class="pb">${row(t('dr.cor_count'), fmtNum(c.count), 'cor-count')}${row(t('dr.cor_net'), fmtRp(c.net), 'cor-net')}${row(t('dr.cor_refund'), fmtRp(c.refund_paid), 'cor-refund')}${row(t('dr.cor_writeoff'), fmtRp(c.writeoff), 'cor-writeoff')}</div></div>` : ''; })()}
@@ -8026,7 +8026,7 @@ function drCashiersHTML(R) {
       : `<div class="small muted" style="margin-top:8px" data-pc="no-drawer">${esc(t('dr.pc_no_drawer'))}</div>`;
     return `<div class="panel dr-pc" data-cashier="${esc(c.name)}"><h3 class="row wrap"><span class="grow">${ic('user')} ${esc(c.name)}</span>${d && d.open ? `<span class="badge amber">${esc(t('shift.status_open'))}</span>` : ''}</h3><div class="pb">
       <div class="small muted" data-pc="tx">${esc(t('dr.pc_tx', { n: fmtNum(s.count), q: fmtQty(s.items_qty) }))}</div>
-      ${row(t('dr.pc_sales'), fmtRp(s.total), 'total')}${row(t('pm.tunai'), fmtRp(m.tunai), 'tunai')}${row(t('pm.transfer'), fmtRp(m.transfer), 'transfer')}${row(t('pm.qris'), fmtRp(m.qris), 'qris')}${row(t('pm.hutang'), fmtRp(s.debt), 'hutang', s.debt ? 'amber' : '')}
+      ${row(t('dr.pc_sales'), fmtRp(s.total), 'total')}${row(t('pm.tunai'), fmtRp(m.tunai), 'tunai')}${row(t('pm.transfer'), fmtRp(m.transfer), 'transfer')}${row(t('pm.qris'), fmtRp(m.qris), 'qris')}${row(t('pm.kartu'), fmtRp(m.kartu || 0), 'kartu')}${row(t('pm.hutang'), fmtRp(s.debt), 'hutang', s.debt ? 'amber' : '')}
       ${vd.count ? row(t('dr.voids'), `${fmtNum(vd.count)} · ${fmtRp(vd.total)}`, 'voids', 'red') : ''}${pin.count ? row(t('dr.pc_pin'), fmtRp(pin.total), 'pin') : ''}${pout.count ? row(t('dr.pc_pout'), fmtRp(pout.total), 'pout') : ''}${ex.count ? row(t('dr.pc_exp'), fmtRp(ex.total), 'exp') : ''}
       ${kas}</div></div>`;
   }).join('');
@@ -8041,7 +8041,7 @@ function dailyCashierLines(R) {
   (R.cashiers || []).forEach(c => {
     const s = c.sales || {}, m = s.by_method || {}, d = c.drawer, pin = c.payments_in || {}, pout = c.payments_out || {}, ex = c.expenses || {}, vd = c.voids || {};
     L.push('', `*${c.name}* — ${fmtNum(s.count)} transaksi · ${fmtQty(s.items_qty)} barang`, `Penjualan: *${fmtRp(s.total)}*`,
-      `• Tunai ${fmtRp(m.tunai)} · Transfer ${fmtRp(m.transfer)} · QRIS ${fmtRp(m.qris)} · Hutang ${fmtRp(s.debt)}`);
+      `• Tunai ${fmtRp(m.tunai)} · Transfer ${fmtRp(m.transfer)} · QRIS ${fmtRp(m.qris)} · Kartu ${fmtRp(m.kartu || 0)} · Hutang ${fmtRp(s.debt)}`);
     if (vd.count) L.push(`Batal: ${fmtNum(vd.count)} faktur (${fmtRp(vd.total)})`);
     if (pin.count) L.push(`Bayar hutang diterima: ${fmtRp(pin.total)} (tunai ${fmtRp(pin.tunai)})`);
     if (pout.count) L.push(`Uang keluar (bayar / retur): ${fmtRp(pout.total)} (tunai ${fmtRp(pout.tunai)})`);
@@ -8059,7 +8059,7 @@ function dailyText(R, withProfit) {
   if (per) L.push('', '*① PER KASIR*', ...dailyCashierLines(R), '', '*② TOTAL TOKO (semua kasir)*');
   L.push(
     `Transaksi: ${fmtNum(s0.count)} · Barang terjual: ${fmtQty(s0.items_qty)}`, `Total penjualan: *${fmtRp(s0.total)}*`,
-    `• Tunai: ${fmtRp(bm.tunai)}`, `• Transfer: ${fmtRp(bm.transfer)}`, `• QRIS: ${fmtRp(bm.qris)}`, `• Hutang: ${fmtRp(s0.debt)}`,
+    `• Tunai: ${fmtRp(bm.tunai)}`, `• Transfer: ${fmtRp(bm.transfer)}`, `• QRIS: ${fmtRp(bm.qris)}`, `• Kartu: ${fmtRp(bm.kartu || 0)}`, `• Hutang: ${fmtRp(s0.debt)}`,
     `Masuk rekening bank: *${fmtRp(bank.in_total)}* (transfer ${fmtRp(bank.sales_transfer + bank.payments_transfer)}, QRIS ${fmtRp(bank.sales_qris + bank.payments_qris)})`,
     `Pembayaran hutang masuk: ${fmtRp(pin.total)} · Bayar pemasok: ${fmtRp(pout.total)}`, `Pengeluaran: ${fmtRp(ex.total)} (dari kas ${fmtRp(ex.from_kas)})` + (ex.flagged || ex.rejected ? ` — cek nota: ${fmtNum(ex.flagged || 0)} menunggu, ${fmtNum(ex.rejected || 0)} ditolak` : ''),
     `Kas laci: seharusnya ${fmtRp(cash.expected_total)}, dihitung ${fmtRp(cash.counted_total)}, selisih ${fmtRp(cash.difference_total)}`);

@@ -236,7 +236,8 @@ CREATE TABLE IF NOT EXISTS pos_shifts (
   transfer_sales REAL,
   qris_sales REAL,
   debt_sales REAL,
-  items_qty REAL
+  items_qty REAL,
+  card_sales REAL
 );
 CREATE INDEX IF NOT EXISTS idx_pos_shifts_status ON pos_shifts (status);
 CREATE INDEX IF NOT EXISTS idx_pos_shifts_shift_date ON pos_shifts (shift_date);

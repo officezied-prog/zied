@@ -110,7 +110,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.7.1';
+const APP_VERSION = 'kasir-1.7.2';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1927,10 +1927,10 @@ function payCalc(v) {
   if (m === 'campur') {
     // v51 (owner 2026-10-15: «نصف نقدا والنصف الآخر عن طريق الجوال أو التحويل»): transfer + QRIS as typed, the rest in cash — the
     // change comes from the cash only; what is still missing is debt (a customer + the manager's approval, like hutang)
-    const sp = c.split || {}, tr = moneyVal(sp.transfer || ''), qr = moneyVal(sp.qris || ''), nonCash = tr + qr, need = Math.max(0, v.total - nonCash);
+    const sp = c.split || {}, tr = moneyVal(sp.transfer || ''), qr = moneyVal(sp.qris || ''), kr = moneyVal(sp.kartu || ''), nonCash = tr + qr + kr, need = Math.max(0, v.total - nonCash);
     const cashIn = String(sp.tunai || '').trim() !== '' ? moneyVal(sp.tunai) : need, cash = Math.min(cashIn, need);
     change = Math.max(0, cashIn - need); paid = cash + Math.min(nonCash, v.total); debt = Math.max(0, v.total - paid);
-    parts = [['tunai', cash], ['transfer', tr], ['qris', qr]].filter(x => x[1] > 0).map(x => ({ method: x[0], amount: x[1] }));
+    parts = [['tunai', cash], ['transfer', tr], ['qris', qr], ['kartu', kr]].filter(x => x[1] > 0).map(x => ({ method: x[0], amount: x[1] }));
     if (!(nonCash > 0)) error = t('pay.split_need');
     else if (nonCash > v.total) error = t('pay.split_over', { amount: fmtRp(nonCash - v.total) });
     else if (debt > 0 && !v.cust) error = t('pay.split_short', { amount: fmtRp(debt) });
@@ -1972,14 +1972,14 @@ function drawPay(bg) {
       <input class="input num" data-rule="num" id="pay-disc" inputmode="numeric" autocomplete="off" placeholder="0" value="${c.discount ? esc(fmtNum(moneyVal(c.discount))) : ''}">
       <div class="small" id="pay-disc-warn" role="status"></div>
     </div>
-    <div class="seg" id="pay-m" role="radiogroup" aria-label="${esc(t('pay.method'))}" style="margin-top:12px">${['tunai', 'transfer', 'qris', 'hutang', 'campur'].map(x => `<button role="radio" id="pm-${x}" aria-checked="${m === x}" class="${m === x ? 'on' : ''}" data-act="pay-method" data-m="${x}">${esc(t('pm.' + x))}</button>`).join('')}</div>
+    <div class="seg seg3" id="pay-m" role="radiogroup" aria-label="${esc(t('pay.method'))}" style="margin-top:12px">${['tunai', 'transfer', 'qris', 'kartu', 'hutang', 'campur'].map(x => `<button role="radio" id="pm-${x}" aria-checked="${m === x}" class="${m === x ? 'on' : ''}" data-act="pay-method" data-m="${x}">${esc(t('pm.' + x))}</button>`).join('')}</div>
     <div id="pay-detail" style="margin-top:12px">${m === 'tunai' ? `<div class="field"><label class="f" for="pay-cash">${esc(t('pay.cash_in'))}</label><input class="input money" data-rule="num" id="pay-cash" inputmode="numeric" autocomplete="off" placeholder="${esc(t('pay.exact'))}" value="${c.paid === '' ? '' : esc(fmtNum(moneyVal(c.paid)))}"></div>
         <div class="quick" id="pay-quick"><button class="btn xs" data-act="paid-set" data-v="">${esc(t('pay.exact'))}</button>${quickAmounts(v.total).map(a => `<button class="btn xs num" data-act="paid-set" data-v="${a}">${fmtShort(a)}</button>`).join('')}</div>`
       : m === 'hutang' ? `${cust ? '' : `<button class="btn block" data-act="pick-customer" id="pay-pick">${ic('user')} ${esc(t('pay.pick_customer'))}</button>`}
         <div class="field" style="margin-top:8px"><label class="f" for="pay-dp">${esc(t('pay.dp'))}</label><input class="input money" data-rule="num" id="pay-dp" inputmode="numeric" autocomplete="off" placeholder="0" value="${c.paid === '' ? '' : esc(fmtNum(moneyVal(c.paid)))}"></div>
         <p class="small muted" style="margin:0">${esc(S.role === 'kasir' ? t('pay.debt_hint_kasir') : t('pay.debt_hint'))}</p>`
       : m === 'campur' ? `<p class="small muted" style="margin:0 0 8px">${esc(t('pay.split_hint'))}</p>
-        <div class="grid2">${['transfer', 'qris'].map(k => `<div class="field"><label class="f" for="pay-sp-${k}">${esc(t('pm.' + k))} (Rp)</label><input class="input money" data-rule="num" id="pay-sp-${k}" data-sp="${k}" inputmode="numeric" autocomplete="off" placeholder="0" value="${(c.split || {})[k] ? esc(fmtNum(moneyVal(c.split[k]))) : ''}"></div>`).join('')}</div>
+        <div class="grid3">${['transfer', 'qris', 'kartu'].map(k => `<div class="field"><label class="f" for="pay-sp-${k}">${esc(t('pm.' + k))} (Rp)</label><input class="input money" data-rule="num" id="pay-sp-${k}" data-sp="${k}" inputmode="numeric" autocomplete="off" placeholder="0" value="${(c.split || {})[k] ? esc(fmtNum(moneyVal(c.split[k]))) : ''}"></div>`).join('')}</div>
         <div class="field"><label class="f" for="pay-sp-tunai">${esc(t('pay.split_cash'))}</label><input class="input money" data-rule="num" id="pay-sp-tunai" data-sp="tunai" inputmode="numeric" autocomplete="off" value="${(c.split || {}).tunai ? esc(fmtNum(moneyVal(c.split.tunai))) : ''}"></div>
         <div class="small" id="pay-sp-sum" role="status"></div>
         ${cust ? '' : `<p class="small muted" style="margin:6px 0 0">${esc(t('pay.split_debt_hint'))}</p>`}`
@@ -3739,7 +3739,7 @@ async function openCloseShift() {
    tap per number (shop / manager / owner, settings wa_*_number) through wa.me; the cashier presses Send in WhatsApp.
    The message is always Indonesian plain text. Never cost or profit. */
 const tid = (k, v) => { let s = I18N.id[k] || k; if (v) s = s.replace(/\{(\w+)\}/g, (m, x) => v[x] != null ? v[x] : m); return s; };
-function shiftMethods(sh) { return { tunai: int(sh.cash_sales), transfer: int(sh.transfer_sales), qris: int(sh.qris_sales), hutang: int(sh.debt_sales) }; }
+function shiftMethods(sh) { return { tunai: int(sh.cash_sales), transfer: int(sh.transfer_sales), qris: int(sh.qris_sales), kartu: int(sh.card_sales), hutang: int(sh.debt_sales) }; }
 function shiftReportHTML(sh) {
   const st = settings(), d = int(sh.difference), m = shiftMethods(sh);
   const row = (k, v, b, id) => `<div class="r2 ${b ? 'b' : ''}" ${id ? `id="${id}"` : ''}><span>${esc(k)}</span><span>${esc(v)}</span></div>`;
@@ -3747,7 +3747,7 @@ function shiftReportHTML(sh) {
     ${row(t('rc.cashier'), sh.cashier)}${row(t('date'), fmtDate(sh.shift_date))}${row(t('kas.t_open'), fmtDateTime(sh.opened_at))}${row(t('kas.t_close'), sh.closed_at ? fmtDateTime(sh.closed_at) : '—')}
     <div class="ln"></div>${row(t('kas.n_sales'), fmtNum(sh.sales_count), false, 'sr-count')}${row(t('kas.items'), fmtQty(sh.items_qty), false, 'sr-items')}${row(t('kas.sales_total'), fmtRp(sh.sales_total), true, 'sr-total')}
     <div class="ln"></div><div class="b">${esc(t('kas.by_method'))}</div>
-    ${row(t('pm.tunai'), fmtRp(m.tunai), false, 'sr-m-tunai')}${row(t('pm.transfer'), fmtRp(m.transfer), false, 'sr-m-transfer')}${row(t('pm.qris'), fmtRp(m.qris), false, 'sr-m-qris')}${row(t('pm.hutang'), fmtRp(m.hutang), false, 'sr-m-hutang')}
+    ${row(t('pm.tunai'), fmtRp(m.tunai), false, 'sr-m-tunai')}${row(t('pm.transfer'), fmtRp(m.transfer), false, 'sr-m-transfer')}${row(t('pm.qris'), fmtRp(m.qris), false, 'sr-m-qris')}${row(t('pm.kartu'), fmtRp(m.kartu), false, 'sr-m-kartu')}${row(t('pm.hutang'), fmtRp(m.hutang), false, 'sr-m-hutang')}
     <div class="ln"></div>${row(t('kas.opening'), fmtRp(sh.opening_cash))}${row(t('kas.cash_sales'), fmtRp(sh.cash_sales))}${row(t('kas.cash_payments'), fmtRp(sh.cash_payments), false, 'sr-cpay')}${row(t('kas.cash_in'), fmtRp(sh.cash_in))}${row(t('kas.cash_out'), (int(sh.cash_out) ? '-' : '') + fmtRp(sh.cash_out))}
     <div class="ln"></div>${row(t('kas.expected'), fmtRp(sh.expected_cash), true, 'sr-expected')}${row(t('kas.counted'), fmtRp(sh.counted_cash), true, 'sr-counted')}
     <div class="r2 big"><span>${esc(t('kas.difference'))}</span><span id="sr-diff" data-diff="${d}">${d > 0 ? '+' : ''}${esc(fmtRp(d))}</span></div>
@@ -3761,7 +3761,7 @@ function shiftReportText(sh) {
     `${tid('rc.cashier')}: ${sh.cashier} · ${fmtDate(sh.shift_date)} ${tm(sh.opened_at)}–${tm(sh.closed_at)}`,
     `${tid('kas.n_sales')}: ${fmtNum(sh.sales_count)} · ${tid('kas.items')}: ${fmtQty(sh.items_qty)}`,
     `${tid('kas.sales_total')}: ${fmtRp(sh.sales_total)}`,
-    `${tid('pm.tunai')}: ${fmtRp(m.tunai)} · ${tid('pm.transfer')}: ${fmtRp(m.transfer)} · ${tid('pm.qris')}: ${fmtRp(m.qris)} · ${tid('pm.hutang')}: ${fmtRp(m.hutang)}`,
+    `${tid('pm.tunai')}: ${fmtRp(m.tunai)} · ${tid('pm.transfer')}: ${fmtRp(m.transfer)} · ${tid('pm.qris')}: ${fmtRp(m.qris)} · ${tid('pm.kartu')}: ${fmtRp(m.kartu)} · ${tid('pm.hutang')}: ${fmtRp(m.hutang)}`,
     `${tid('kas.cash_payments')}: ${fmtRp(sh.cash_payments)}`,
     `${tid('rep.cash')}: ${tid('kas.opening').toLowerCase()} ${fmtRp(sh.opening_cash)}, ${tid('kas.cash_in').toLowerCase()} ${fmtRp(sh.cash_in)}, ${tid('kas.cash_out').toLowerCase()} ${fmtRp(sh.cash_out)}`,
     `${tid('kas.expected')}: ${fmtRp(sh.expected_cash)} · ${tid('kas.counted')}: ${fmtRp(sh.counted_cash)} · ${tid('kas.difference')}: ${d > 0 ? '+' : ''}${fmtRp(d)}`
@@ -4701,10 +4701,11 @@ const I18N = {
     'pay.dp': 'Dibayar sekarang (DP)', 'pay.new_debt': 'Hutang baru', 'pay.debt_hint_kasir': 'Hutang perlu persetujuan pemilik atau manajer.', 'pay.debt_hint': 'Hutang dicatat atas nama pelanggan.',
     'pay.check_transfer': 'Pastikan transfer sudah masuk sebelum menekan SELESAI.', 'pay.check_qris': 'Pastikan pembayaran QRIS berhasil sebelum menekan SELESAI.',
     'pay.more': 'Kanal & kode promo', 'pay.promo': 'Kode promo',
-    'pm.tunai': 'Tunai', 'pm.transfer': 'Transfer', 'pm.qris': 'QRIS', 'pm.hutang': 'Hutang', 'pm.campur': 'Campur',
+    'pm.tunai': 'Tunai', 'pm.transfer': 'Transfer', 'pm.qris': 'QRIS', 'pm.hutang': 'Hutang', 'pm.campur': 'Campur', 'pm.kartu': 'Kartu',
+    'pay.check_kartu': 'Gesek / tap kartu debit atau kredit di mesin EDC, tunggu struk EDC keluar (berhasil), baru tekan SELESAI.',
     'loose.chip': 'Curah', 'loose.badge': 'Curah', 'ws.label': 'Berat yang diambil (gram)', 'ws.need': 'Ketik beratnya dalam gram, mis. 250', 'ws.per': '{g} × {price}/{unit}',
-    'pay.split_hint': 'Bayar dengan beberapa cara: isi bagian transfer / QRIS, sisanya tunai (kembalian dari tunai).', 'pay.split_cash': 'Tunai diterima (Rp)',
-    'pay.split_need': 'Isi jumlah transfer atau QRIS', 'pay.split_over': 'Transfer + QRIS lebih {amount} dari total', 'pay.split_short': 'Kurang {amount} — tambah tunai, atau pilih pelanggan untuk hutang',
+    'pay.split_hint': 'Bayar dengan beberapa cara: isi bagian transfer / QRIS / kartu, sisanya tunai (kembalian dari tunai).', 'pay.split_cash': 'Tunai diterima (Rp)',
+    'pay.split_need': 'Isi jumlah transfer, QRIS atau kartu', 'pay.split_over': 'Bagian non-tunai lebih {amount} dari total', 'pay.split_short': 'Kurang {amount} — tambah tunai, atau pilih pelanggan untuk hutang',
     'pay.split_debt_hint': 'Kalau sebagian belum dibayar: pilih pelanggan dulu (jadi hutang, perlu persetujuan seperti hutang).',
     'ch.toko': 'Toko', 'ch.whatsapp': 'WhatsApp', 'ch.shopee': 'Shopee', 'ch.tiktok': 'TikTok', 'ch.tokopedia': 'Tokopedia', 'ch.web': 'Web', 'ch.lainnya': 'Lainnya',
     'apr.title': 'Hutang perlu persetujuan', 'apr.hint': 'Pilih salah satu cara:', 'apr.remote': 'Minta persetujuan', 'apr.here': 'PIN Pemilik/Manajer di sini',
@@ -4815,10 +4816,11 @@ const I18N = {
     'pay.dp': 'المدفوع الآن (عربون)', 'pay.new_debt': 'دَين جديد', 'pay.debt_hint_kasir': 'الدَّين يحتاج موافقة المالك أو المدير.', 'pay.debt_hint': 'يُسجَّل الدَّين باسم العميل.',
     'pay.check_transfer': 'تأكد من وصول التحويل قبل الإتمام.', 'pay.check_qris': 'تأكد من نجاح دفع QRIS قبل الإتمام.',
     'pay.more': 'القناة ورمز العرض', 'pay.promo': 'رمز العرض',
-    'pm.tunai': 'نقدًا', 'pm.transfer': 'تحويل', 'pm.qris': 'QRIS', 'pm.hutang': 'دَين', 'pm.campur': 'مختلط',
+    'pm.tunai': 'نقدًا', 'pm.transfer': 'تحويل', 'pm.qris': 'QRIS', 'pm.hutang': 'دَين', 'pm.campur': 'مختلط', 'pm.kartu': 'بطاقة',
+    'pay.check_kartu': 'مرّر بطاقة الخصم أو الائتمان في جهاز EDC، وانتظر خروج إيصال الجهاز (ناجح)، ثم اضغط إتمام.',
     'loose.chip': 'سائب', 'loose.badge': 'سائب', 'ws.label': 'الوزن المأخوذ (غرام)', 'ws.need': 'اكتب الوزن بالغرام، مثلًا 250', 'ws.per': '{g} × {price}/{unit}',
-    'pay.split_hint': 'الدفع بعدة طرق: اكتب جزء التحويل / QRIS، والباقي نقدًا (الباقي للزبون من النقد).', 'pay.split_cash': 'النقد المستلم (روبية)',
-    'pay.split_need': 'اكتب مبلغ التحويل أو QRIS', 'pay.split_over': 'التحويل + QRIS أكثر من الإجمالي بـ {amount}', 'pay.split_short': 'ناقص {amount} — أضف نقدًا، أو اختر عميلًا ليصبح دَينًا',
+    'pay.split_hint': 'الدفع بعدة طرق: اكتب جزء التحويل / QRIS / البطاقة، والباقي نقدًا (الباقي للزبون من النقد).', 'pay.split_cash': 'النقد المستلم (روبية)',
+    'pay.split_need': 'اكتب مبلغ التحويل أو QRIS أو البطاقة', 'pay.split_over': 'الأجزاء غير النقدية أكثر من الإجمالي بـ {amount}', 'pay.split_short': 'ناقص {amount} — أضف نقدًا، أو اختر عميلًا ليصبح دَينًا',
     'pay.split_debt_hint': 'إذا بقي جزء غير مدفوع: اختر العميل أولًا (يصبح دَينًا ويحتاج موافقة مثل الدَّين).',
     'ch.toko': 'المتجر', 'ch.whatsapp': 'واتساب', 'ch.shopee': 'Shopee', 'ch.tiktok': 'تيك توك', 'ch.tokopedia': 'Tokopedia', 'ch.web': 'الموقع', 'ch.lainnya': 'أخرى',
     'apr.title': 'الدَّين يحتاج موافقة', 'apr.hint': 'اختر طريقة:', 'apr.remote': 'طلب موافقة', 'apr.here': 'رمز المالك/المدير هنا',
