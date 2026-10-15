@@ -37,6 +37,19 @@ export const POS_MIGRATIONS = [
   // and how much of a repack's packaging cost they were.
   'ALTER TABLE pos_products ADD COLUMN repack_costs TEXT',
   'ALTER TABLE pos_repacks ADD COLUMN materials_cost REAL',
+  // v50 (owner 2026-10-15: «وبعد عملية التعليب تقع الموافقة على الكمية التي تمت عن طريق المدير»): a repack is started, then the manager
+  // confirms what it gave — its state, the plan, the bulk left over and who confirmed.
+  'ALTER TABLE pos_repacks ADD COLUMN status TEXT',
+  'ALTER TABLE pos_repacks ADD COLUMN planned_qty REAL',
+  'ALTER TABLE pos_repacks ADD COLUMN planned_from_qty REAL',
+  'ALTER TABLE pos_repacks ADD COLUMN remaining_qty REAL',
+  'ALTER TABLE pos_repacks ADD COLUMN bulk_cost REAL',
+  'ALTER TABLE pos_repacks ADD COLUMN started_by TEXT',
+  'ALTER TABLE pos_repacks ADD COLUMN started_at TEXT',
+  'ALTER TABLE pos_repacks ADD COLUMN confirmed_by TEXT',
+  'ALTER TABLE pos_repacks ADD COLUMN confirmed_at TEXT',
+  'CREATE INDEX IF NOT EXISTS idx_pos_repacks_status ON pos_repacks (status)',
+  'CREATE INDEX IF NOT EXISTS idx_pos_repacks_repack_id ON pos_repacks (repack_id)',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;
@@ -74,6 +87,21 @@ export async function handleRequest(adapter, body, headers, STORE_KEY) {
     }
     claimed.push(String(g.request_id));
   }
+  // v50 'repack_close': a started repack is confirmed once — two managers confirming it at the same second: only the first gets it
+  // (proses → menutup with one conditional UPDATE; the write then stores selesai / batal), the other is told and writes nothing.
+  const closed = [];
+  const undoClosed = async () => { for (const id of closed) { try { await adapter.run("UPDATE pos_repacks SET status = 'proses' WHERE repack_id = ? AND status = 'menutup'", [id]); } catch (e2) { /* keep the first error */ } } };
+  for (const g of guards) {
+    if (g.type !== 'repack_close') continue;
+    const r = await adapter.run("UPDATE pos_repacks SET status = 'menutup' WHERE repack_id = ? AND status = 'proses'", [String(g.repack_id)]);
+    if (!(Number(r && r.changes) > 0)) {
+      await undoClosed();
+      for (const id of claimed) await adapter.run("UPDATE pos_approvals SET status = 'pending' WHERE request_id = ? AND status = 'deciding'", [id]);
+      const now = (await adapter.all('SELECT status, confirmed_by FROM pos_repacks WHERE repack_id = ?', [String(g.repack_id)]))[0] || {};
+      return { ok: false, error: 'INVALID', message: 'Kemas ulang ini sudah ' + (now.status === 'batal' ? 'dibatalkan' : 'dikonfirmasi') + (now.confirmed_by ? ' oleh ' + now.confirmed_by : ' orang lain barusan') };
+    }
+    closed.push(String(g.repack_id));
+  }
   // v39 'stock_claim' (a direct repack): the bulk stock moves from the value process.js read to the new one with ONE conditional
   // UPDATE; if two cashiers record a repack of the same bulk at the same second, only the first gets it — the second writes nothing
   // and is shown the repack that just happened (so the same work is never recorded twice and no stock change is lost).
@@ -84,10 +112,11 @@ export async function handleRequest(adapter, body, headers, STORE_KEY) {
     const r = await adapter.run('UPDATE pos_products SET stock = ? WHERE id = ? AND stock = ?', [Number(g.to), Number(g.product_id), Number(g.from)]);
     if (!(Number(r && r.changes) > 0)) {
       await undoClaims();
+      await undoClosed();
       for (const id of claimed) await adapter.run("UPDATE pos_approvals SET status = 'pending' WHERE request_id = ? AND status = 'deciding'", [id]);
       const last = (await adapter.all('SELECT * FROM pos_repacks WHERE from_product_id = ? ORDER BY id DESC LIMIT 1', [Number(g.product_id)]))[0];
       const wib = (iso) => { const t0 = Date.parse(iso); return isFinite(t0) ? new Date(t0 + 7 * 3600000).toISOString().slice(0, 16).replace('T', ' ') + ' WIB' : ''; };
-      if (last && Date.now() - Date.parse(last.repack_time) < 2 * 3600000) {
+      if (!g.plain && last && Date.now() - Date.parse(last.repack_time) < 2 * 3600000) {
         return { ok: false, error: 'REPACK_RECENT',
           message: last.user + ' baru saja mengemas ulang ' + last.from_name + ' ' + Number(last.from_qty) + ' ' + (last.from_unit || '') + ' → ' + last.to_name + ' x' + Number(last.to_qty) + ' pada ' + wib(last.repack_time) + ' (' + last.repack_id + '). Kalau ini kemas ulang lain (bukan yang sama), tekan "Ya, ini kemas ulang baru".',
           recent: { repack_id: last.repack_id, user: last.user, at: last.repack_time, from_name: last.from_name, from_qty: Number(last.from_qty), from_unit: last.from_unit || '', to_name: last.to_name, to_qty: Number(last.to_qty) } };
@@ -121,6 +150,7 @@ export async function handleRequest(adapter, body, headers, STORE_KEY) {
   } catch (e) {
     // a failed write never leaves an approval stuck in 'deciding'
     await undoClaims();
+    await undoClosed();
     for (const id of claimed) { try { await adapter.run("UPDATE pos_approvals SET status = 'pending' WHERE request_id = ? AND status = 'deciding'", [id]); } catch (e2) { /* keep the first error */ } }
     throw e;
   }

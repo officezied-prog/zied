@@ -323,8 +323,9 @@ const MockServer = (() => {
     } else s.counted = [...set].map(k => isFinite(Number(k)) ? Number(k) : k);
     db.settings.opname_state = s;
   }
-  function settingsOut(db) {
+  function settingsOut(db, role) {
     const st = Object.assign({}, V16_DEFAULTS, db.settings);
+    st.repack_materials = window.KRepackMock ? window.KRepackMock.catalogOut(db, role) : []; // v50: names only for the cashier / rep
     if (st.opname_state && typeof st.opname_state === 'object') { const o = Object.assign({}, st.opname_state); o.counted_n = Array.isArray(o.counted) ? o.counted.length : 0; delete o.counted; st.opname_state = o; }
     return st;
   }
@@ -353,9 +354,16 @@ const MockServer = (() => {
   const prodOut = p => Object.assign({}, p, { shop_stock: shopOf(p), gudang_stock: roundQty(num(p.stock) - shopOf(p)) });
   // v48 (owner 2026-10-14): a pack's materials (sticker, lid, jar …) with their cost per pack — mirrors the server's repackCostsOf;
   // the cashier / rep see the names only (productOut on the server).
-  const repackCostsOf = p => { let a = []; try { a = JSON.parse(String((p && p.repack_costs) || '') || '[]'); } catch (e) { a = []; } return (Array.isArray(a) ? a : []).map(x => ({ name: String((x && x.n) || '').trim().slice(0, 40), cost: Math.max(0, Math.round(Number((x && x.c) || 0))) })).filter(x => x.name).slice(0, 12); };
-  const repackCostPer = p => repackCostsOf(p).reduce((t, x) => t + x.cost, 0);
-  const costNamesFor = (p, role) => p.repack_costs && !['owner', 'manager', 'akuntan'].includes(role) ? Object.assign({}, p, { repack_costs: JSON.stringify(repackCostsOf(p).map(x => ({ n: x.name }))) }) : p;
+  // v50: with the materials list (settings.repack_materials) — one copy for both demo apps in shared/repack-mock.js
+  const repackCostsOf = (db, p) => window.KRepackMock.costsOf(db, p);
+  const repackCostPer = (db, p) => window.KRepackMock.costPer(db, p);
+  const costNamesFor = (db, p, role) => window.KRepackMock.productCosts(db, p, role);
+  // v50 (owner 2026-10-15): two-step repacking + the materials list, written once in shared/repack-mock.js, loaded on the first request
+  let repackLoad = null;
+  function loadRepackMock(src) {
+    if (window.KRepackMock) return Promise.resolve();
+    return repackLoad || (repackLoad = new Promise(res => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = res; document.head.appendChild(sc); }));
+  }
   /** After every request (like the server's normShop): sales / voids / move_stock set the shelf; any other stock change
    *  keeps the shelf as it was, capped at the total; a new product's opening stock is on the shelf. */
   function normShop(db, snap) {
@@ -779,6 +787,7 @@ const MockServer = (() => {
      'repack' for the manager OR the accountant → decide_approval moves the stock; cancel_repack after 24 h), the one-pending-request-per-bulk
      lock, the client-id resend and the owner's notices (activity kind 'notifikasi', target roles in ref). Keep identical to backend/process.js. ---- */
   const REPACK_STALE_MS = 24 * 3600000, REPACK_RECENT_MS = 2 * 3600000;
+  const RPX = { E: (c, m, x) => E(c, m, x), nextId: (db, k) => nextId(db, k), logAct: (...a) => logAct(...a), notify: (...a) => notifyR(...a), safeName: (v, m) => safeName(v, m), pending: (db, id) => { const p = pendingRepackFor(db, id); return p ? repackBusy(p) : null; } };
   function notifyR(db, u, roles, summary, level) {
     db.activity = db.activity || [];
     db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + randId(8), at: new Date().toISOString(), act_date: jktDate(), user: u.name, role: roleOf(u), kind: 'notifikasi',
@@ -800,7 +809,7 @@ const MockServer = (() => {
   const repackText = pl => strv(pl.from_name) + ' ' + fmtN(pl.from_qty) + ' ' + strv(pl.from_unit) + ' → ' + strv(pl.to_name) + ' x' + fmtN(pl.to_qty) + ' (hasil ' + pl.yield_pct + '%, susut ' + fmtN(pl.loss_qty) + ' ' + strv(pl.from_unit) + ')';
   function applyRepack(db, u, P, o) {
     const { from, to, toQty, fromQty } = P;
-    const matCost = Math.round(repackCostPer(to) * toQty); // v48: the pack's materials × packs made
+    const matCost = Math.round(repackCostPer(db, to) * toQty); // v48: the pack's materials × packs made
     const packCost = Math.max(0, int(o.packaging_cost)) + matCost;
     const unitCost = Math.round((fromQty * int(from.cost_price) + packCost) / toQty);
     const date = isYmd(o.date) ? o.date : jktDate();
@@ -1174,7 +1183,7 @@ const MockServer = (() => {
         logAct(db, u, 'pindah_stok', (toShop ? 'Gudang → toko: ' : 'Toko → gudang: ') + mv.map(x => x.p.name + ' ' + fmtN(x.q) + ' ' + strv(x.p.unit)).join('; ') + (mnote ? ' | ' + mnote : ''), '', 0, 'info');
         return { stock: mv.map(x => ({ product_id: x.p.id, stock: num(x.p.stock), shop_stock: x.sh, gudang_stock: roundQty(num(x.p.stock) - x.sh) })) };
       }
-      case 'bootstrap': return { opname: opnameBoot(db), user: { name: u.name, role: roleOf(u) }, products: db.products.map(p => costNamesFor(prodOut(p), u.role)), customers: db.customers, settings: settingsOut(db), ai_reader: (() => { try { return localStorage.getItem('kmock.ai') !== 'off'; } catch (e) { return true; } })(), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
+      case 'bootstrap': return { opname: opnameBoot(db), user: { name: u.name, role: roleOf(u) }, products: db.products.map(p => costNamesFor(db, prodOut(p), u.role)), customers: db.customers, settings: settingsOut(db, u.role), ai_reader: (() => { try { return localStorage.getItem('kmock.ai') !== 'off'; } catch (e) { return true; } })(), repacks_open: window.KRepackMock.openList(db, u.role), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
         users: db.users.map(x => owner ? { name: x.name, role: x.role, active: x.active, must_change: x.must_change === true, locked: Date.parse(x.locked_until) > Date.now(), tamper: isLockedAcct(x.name), has_master: x.role === 'owner' && isHash(x.master_hash) } : { name: x.name, role: x.role, active: x.active }), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
         shift: blind(shiftSummary(db, openShiftOf(db, u.name)), u.role), open_shifts: ['owner', 'manager'].includes(u.role) ? db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)) : [],
         activity_recent: owner ? db.activity.filter(a => a.act_date >= addDays(jktDate(), -7) && a.act_date <= jktDate()).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 100) : [],
@@ -1860,7 +1869,8 @@ const MockServer = (() => {
         if (bulk && !(num(data.repack_qty) > 0)) throw E('INVALID', 'Isi per kemasan wajib diisi');
         const qty = bulk ? roundQty(data.repack_qty) : 0;
         let cIn = null;
-        if (data.costs !== undefined) {
+        if (data.materials !== undefined) { cIn = window.KRepackMock.matsIn(db, data.materials); if (cIn.error) throw E('INVALID', cIn.error); } // v50: chosen from the list
+        else if (data.costs !== undefined) {
           if (!Array.isArray(data.costs)) throw E('INVALID', 'Daftar bahan kemasan tidak valid');
           const list = [];
           for (const x0 of data.costs) {
@@ -1874,7 +1884,7 @@ const MockServer = (() => {
           cIn = { json: list.length ? JSON.stringify(list) : '', list };
         }
         const rpT = v => 'Rp ' + String(Math.round(Math.abs(num(v)))).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-        const costsText = (list, unit) => list.length ? `bahan kemasan per ${unit || 'pcs'}: ${list.map(x => strv(x.n) + ' ' + rpT(x.c)).join(' + ')} = ${rpT(list.reduce((t, x) => t + num(x.c), 0))}` : 'tanpa bahan kemasan';
+        const costsText = window.KRepackMock.costsText;
         const desc = (b, q, unit) => b ? `${b.name}, ${fmtN(q)} ${b.unit || ''} per ${unit || 'pcs'}` : 'tidak dikemas ulang';
         const who = ` — oleh ${u.role === 'manager' ? 'manajer' : 'pemilik'} ${u.name}`;
         const tell = txt => { db.activity = db.activity || []; db.activity.push({ id: nextId(db, 'activity'), act_id: 'AC' + Math.random().toString(36).slice(2, 10).toUpperCase(), at: new Date().toISOString(), act_date: jktDate(), user: u.name, role: u.role, kind: 'notifikasi', summary: txt, ref: ['owner', 'manager', 'akuntan'].filter(r => r !== u.role).join(','), amount: 0, level: 'info' }); };
@@ -1900,7 +1910,7 @@ const MockServer = (() => {
         const sameSetup = (was ? was.id : 0) === (bulk ? bulk.id : 0) && wasQty === qty;
         let txt = bulk ? (sameSetup ? `Biaya kemasan diubah: ${pk.name}` : `Kemas ulang diatur: ${pk.name} dibuat dari ${desc(bulk, qty, pk.unit)}` + (was ? ` (sebelumnya ${desc(was, wasQty, pk.unit)})` : ''))
           : `Kemas ulang dihapus: ${pk.name} tidak lagi dibuat dari ${was ? was.name : '—'}`;
-        if (bulk && costs !== wasCosts) txt += '; ' + costsText(cIn ? cIn.list : [], pk.unit) + (wasCosts ? ` (sebelumnya ${costsText(repackCostsOf(pk).map(x => ({ n: x.name, c: x.cost })), pk.unit)})` : '');
+        if (bulk && costs !== wasCosts) txt += '; ' + costsText(cIn ? cIn.list : [], pk.unit) + (wasCosts ? ` (sebelumnya ${costsText(repackCostsOf(db, pk).map(x => ({ n: x.name, q: x.qty, c: x.cost })), pk.unit)})` : '');
         txt += who;
         pk.repack_from = bulk ? bulk.id : 0; pk.repack_qty = qty; pk.repack_costs = costs;
         logAct(db, u, 'atur_kemas', txt, String(pk.id), 0, 'info'); tell(txt);
@@ -2491,6 +2501,10 @@ const MockServer = (() => {
         return { correction: { request_id: ap.request_id, product_name: p.name, old_price: oldPrice, new_price: newPrice, invoices: details.length, net_diff: netDiff, refund_total: refundTotal, under_total: underTotal, refunds, consults, cashiers: Object.keys(cashiers), price_setters: setters }, product: catalog ? prodOut(catalog) : undefined };
       }
       case 'repack': case 'request_repack': case 'cancel_repack': return repackAction(db, u, action, data, x => canDecideAp(u, x)); // v38
+      // v50 (owner 2026-10-15): start → the manager confirms the packs made + the bulk left over; the materials list
+      case 'repack_start': return window.KRepackMock.start(db, u, data, RPX);
+      case 'repack_finish': return window.KRepackMock.finish(db, u, data, RPX);
+      case 'set_repack_materials': return window.KRepackMock.materials(db, u, data, RPX);
       case 'stock_count': return stockCount(db, u, data);
       case 'profit_loss': {
         // v36 (owner 2026-10-11: "الكشف الشهري يكتب الربح والخسارة") — same lines as the server's profit_loss
@@ -2526,7 +2540,7 @@ const MockServer = (() => {
         const sales = db.sales.filter(s => inR(s.sale_date));
         const inv = new Set(sales.map(s => s.invoice_no));
         return { sales, items: db.items.filter(i => inv.has(i.invoice_no)), payments: db.payments.filter(p => inR(p.pay_date)), purchases: db.purchases.filter(p => inR(p.purchase_date)).map(p => { if (mockCostOk(db, u)) return p; const o = Object.assign({}, p); delete o.total; return o; }), expenses: db.expenses.filter(x => inR(x.expense_date)), shifts: db.shifts.filter(x => inR(x.shift_date)).map(x => blind(shiftSummary(db, x), u.role)),
-          repacks: (db.repacks || []).filter(r => inR(r.repack_date)).map(r => { const o = Object.assign({}, r); delete o.id; if (!owner) { delete o.unit_cost; delete o.packaging_cost; delete o.materials_cost; } return o; }) };
+          repacks: (db.repacks || []).filter(r => inR(r.repack_date)).map(r => window.KRepackMock.out(r, u.role)) };
       }
       case 'save_settings': {
         needOwner();
@@ -2686,6 +2700,7 @@ const MockServer = (() => {
     await ensure();
     if (!extLoad) extLoad = loadExtFieldMock();
     await extLoad;
+    await loadRepackMock('shared/repack-mock.js');
     if (/^(att_|worker_)/.test(body.action)) await loadAttMock();
     await sleep(30 + Math.random() * 50);
     let forced = false; try { forced = localStorage.getItem('kmock.offline') === '1'; } catch (e) { }

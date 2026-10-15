@@ -97,6 +97,9 @@ export const TABLES = {
     requested_by: 'string', approved_by: 'string', request_id: 'string',
     client_id: 'string', // v39: the form's id — a double tap / retry / resend of the same repack is recorded once
     materials_cost: 'number', // v48: the pack's materials × packs made (part of packaging_cost)
+    // v50: two steps — started (status 'proses', the bulk taken out) → confirmed by the manager ('selesai' / 'batal')
+    status: 'string', planned_qty: 'number', planned_from_qty: 'number', remaining_qty: 'number', bulk_cost: 'number',
+    started_by: 'string', started_at: 'string', confirmed_by: 'string', confirmed_at: 'string',
   },
   pos_activity: {
     act_id: 'string', at: 'string', act_date: 'string', user: 'string', role: 'string',

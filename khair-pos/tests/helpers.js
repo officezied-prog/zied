@@ -156,4 +156,11 @@ async function pickCarrier(page, type = 'pemasok') {
   await expect(page.locator(`#pu-car-${type}`)).toHaveClass(/\bon\b/);
 }
 const CARRIER = { type: 'pemasok', name: 'Pak Darto', vehicle: 'B 9012 TTF' };
-module.exports = { staffSession, switchUser, pickCarrier, CARRIER, rp, pct, sha, SHOTS, jktToday, openApp, enterKey, typePin, login, getDb, productByName, nav, addBySearch, confirmQty, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect, editDb, blockMapNetwork };
+/** v50 "type to find" picker (shared/pick.js): type text in #<id>-q, tap the option for `value`, check it is chosen. */
+async function pick(page, id, text, value) {
+  if (await page.locator(`#${id}-v`).isVisible()) await page.locator(`#${id}-v .kp-l`).click();
+  await page.fill(`#${id}-q`, text);
+  await page.locator(`#${id}-list [data-pick="${value}"]`).click();
+  await expect(page.locator('#' + id)).toHaveAttribute('data-value', String(value));
+}
+module.exports = { pick, staffSession, switchUser, pickCarrier, CARRIER, rp, pct, sha, SHOTS, jktToday, openApp, enterKey, typePin, login, getDb, productByName, nav, addBySearch, confirmQty, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect, editDb, blockMapNetwork };
