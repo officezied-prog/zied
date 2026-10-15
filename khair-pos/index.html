@@ -149,7 +149,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.7.8';
+const APP_VERSION = '2.7.9';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -4061,7 +4061,7 @@ async function loadSales(from, to, useCache, ttl = 120000) {
   data.sales.forEach(s => { ['subtotal', 'discount', 'total', 'paid_amount', 'debt_amount'].forEach(f => s[f] = int(s[f])); if ('profit' in s) s.profit = int(s.profit); if ('total_cost' in s) s.total_cost = int(s.total_cost); });
   data.items.forEach(i => { i.qty = num(i.qty); i.unit_price = int(i.unit_price); i.line_total = int(i.line_total); if ('line_profit' in i) i.line_profit = int(i.line_profit); });
   data.payments.forEach(p => p.amount = int(p.amount));
-  data.purchases.forEach(p => { p.qty = num(p.qty); p.total = int(p.total); });
+  data.purchases.forEach(p => { p.qty = num(p.qty); if (p.total !== undefined && p.total !== null) p.total = int(p.total); }); // v50: no total = hidden for this account, not 0
   salesCache[k] = { at: Date.now(), data };
   return data;
 }
@@ -5454,7 +5454,7 @@ const ACT = {
   'pu-doc': el => {
     const n = PH.data && purchaseNotes(PH.data.purchases).find(x => x.no === el.dataset.no); if (!n || !window.KDocs) return;
     const lines = noteProducts(n).map(a => { const p = prodById(a.pid); return { name: a.name, unit: p ? p.unit || '' : '', qty: a.qty, cost_price: a.qty ? Math.round(a.total / a.qty) : 0, total: a.total }; });
-    printDoc(KDocs.goodsIn({ no: n.no, date: n.date, supplier: n.supplier, user: n.user, carrier_text: n.carrier, note_status: n.status ? t('mt.' + n.status) : '', lines }, docCtx({ showPrices: isOwner() })));
+    printDoc(KDocs.goodsIn({ no: n.no, date: n.date, supplier: n.supplier, user: n.user, carrier_text: n.carrier, note_status: n.status ? t('mt.' + n.status) : '', lines }, docCtx({ showPrices: !n.hidden }))); // v50: prices whenever this account may see them
   },
   'cust-statement': el => {
     const c = custById(el.dataset.id); if (!c || !window.KDocs) return;
@@ -6930,8 +6930,9 @@ function purchaseNotes(purchases) {
   purchases.filter(r => !isInternalRow(r)).forEach(r => {
     const k = r.purchase_no || `${r.purchase_date}|${r.supplier}|${r.photo_id || ''}`;
     let n = m.get(k);
-    if (!n) m.set(k, n = { key: k, no: r.purchase_no || '', date: '', supplier: r.supplier || '', rows: [], status: '', notes: '', user: '', fixed: false, total: 0, id: 0, carrier: carrierText(r) });
-    n.rows.push(r); n.total += int(r.total); n.id = Math.max(n.id, num(r.id));
+    if (!n) m.set(k, n = { key: k, no: r.purchase_no || '', date: '', supplier: r.supplier || '', rows: [], status: '', notes: '', user: '', fixed: false, total: 0, id: 0, carrier: carrierText(r), hidden: false });
+    // v50: no total from the server = purchase prices hidden for this account (owner's setting), never "Rp 0"
+    n.rows.push(r); n.total += int(r.total); if (r.total === undefined || r.total === null) n.hidden = true; n.id = Math.max(n.id, num(r.id));
     if (r.match_status === 'koreksi') n.fixed = true;
     else { if (!n.date || r.purchase_date < n.date) n.date = r.purchase_date; n.status = r.match_status || n.status || (r.photo_id ? '' : 'tanpa_foto'); n.notes = r.match_notes || n.notes; n.user = r.user || n.user; }
   });
@@ -6949,9 +6950,9 @@ function drawPurchaseHistory() {
   el.innerHTML = notes.length ? `<div class="tbl-wrap"><table class="tbl" id="pu-hist"><thead><tr><th>${esc(t('date'))}</th><th>${esc(t('pu.no'))}</th><th>${esc(t('pu.supplier'))}</th><th class="hide-phone">${esc(t('items'))}</th><th class="r">${esc(t('total'))}</th><th>${esc(t('status'))}</th><th></th></tr></thead><tbody>
     ${notes.map(n => `<tr data-no="${esc(n.no)}"><td class="num">${esc(fmtDate(n.date))}</td><td class="small"><b>${esc(n.no || '—')}</b></td><td>${esc(n.supplier || '—')}${n.carrier ? `<div class="small muted" data-carrier>${ic('truck')} ${esc(n.carrier)}</div>` : ''}</td>
       <td class="hide-phone small">${noteProducts(n).slice(0, 4).map(a => `${esc(a.name)} <b class="num">×${fmtQty(a.qty)}</b>`).join(', ')}${noteProducts(n).length > 4 ? ' …' : ''}</td>
-      <td class="r num">${fmtRp(n.total)}</td><td>${matchBadge(n.status)}${n.fixed ? ' ' + matchBadge('koreksi') : ''}${n.notes && n.status === 'tidak_cocok' ? `<div class="small muted">${esc(n.notes)}</div>` : ''}</td>
+      <td class="r num">${n.hidden ? `<span class="muted" data-cost-hidden title="${esc(t('pu.cost_hidden_hint'))}">${esc(t('pu.cost_hidden'))}</span>` : fmtRp(n.total)}</td><td>${matchBadge(n.status)}${n.fixed ? ' ' + matchBadge('koreksi') : ''}${n.notes && n.status === 'tidak_cocok' ? `<div class="small muted">${esc(n.notes)}</div>` : ''}</td>
       <td class="r" style="white-space:nowrap">${n.no && n.status !== 'retur' && isApprover() && !isOwner() ? `<button class="btn xs" data-act="pu-fix" data-no="${esc(n.no)}">${ic('edit')} ${esc(t('fix.button'))}</button> <button class="btn xs" data-act="pu-retur" data-no="${esc(n.no)}">${ic('return')} ${esc(t('rt.btn'))}</button>` : ''}${n.no ? ` <button class="btn xs" data-act="pu-doc" data-no="${esc(n.no)}">${ic('print')} ${esc(t('doc.goods_in'))}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
-    <p class="small muted">${esc(t('pu.locked_hint'))}</p>` : `<div class="muted">${esc(t('no_data'))}</div>`;
+    <p class="small muted">${esc(t('pu.locked_hint'))}${notes.some(n => n.hidden) ? ' ' + esc(t('pu.cost_hidden_hint')) : ''}</p>` : `<div class="muted">${esc(t('no_data'))}</div>`;
 }
 function openPurchaseFix(no) {
   const n = PH.data && purchaseNotes(PH.data.purchases).find(x => x.no === no); if (!n) return;
@@ -7940,7 +7941,7 @@ Object.assign(I18N.id, {
   'mt.cocok': 'cocok dengan nota', 'mt.tidak_cocok': 'tidak cocok', 'mt.perlu_cek': 'perlu cek', 'mt.tanpa_foto': 'tanpa foto', 'mt.koreksi': 'dikoreksi',
   'pu.cmp_title': 'Cek dengan nota', 'pu.cmp_item': 'Barang di nota', 'pu.cmp_note': 'Nota', 'pu.cmp_typed': 'Diketik', 'pu.cmp_ok': 'Semua jumlah sama dengan nota.', 'pu.cmp_bad': '{n} baris berbeda dengan nota — perbaiki jumlah atau simpan dengan alasan.', 'pu.use_note': 'Pakai jumlah nota',
   'pu.mm_title': 'Jumlah tidak sama dengan nota', 'pu.mm_hint': 'Belum disimpan. Perbaiki jumlah, atau tulis alasannya (misal "2 dus bonus").', 'pu.mm_fix': 'Perbaiki jumlah', 'pu.mm_reason': 'Alasan beda dengan nota', 'pu.mm_reason_ph': 'mis. 2 dus bonus dari sales', 'pu.mm_save': 'Simpan dengan alasan',
-  'pu.history': 'Riwayat barang masuk (30 hari)', 'pu.no': 'No.', 'pu.locked_hint': 'Setelah disimpan, jumlah dan harga terkunci. Perubahan lewat "Koreksi" dengan alasan; manajer/pemilik menyetujui dan pemilik melihatnya di Aktivitas.',
+  'pu.history': 'Riwayat barang masuk (30 hari)', 'pu.cost_hidden': 'disembunyikan', 'pu.cost_hidden_hint': 'Harga beli disembunyikan untuk akun ini. Pemilik bisa mengizinkannya di Pengaturan → "Akuntan & manajer boleh melihat harga beli".', 'pu.no': 'No.', 'pu.locked_hint': 'Setelah disimpan, jumlah dan harga terkunci. Perubahan lewat "Koreksi" dengan alasan; manajer/pemilik menyetujui dan pemilik melihatnya di Aktivitas.',
   'fix.button': 'Koreksi', 'fix.title': 'Koreksi barang masuk', 'fix.hint_apply': 'Koreksi langsung diterapkan ke stok dan dicatat untuk pemilik.', 'fix.hint_request': 'Koreksi dikirim ke manajer / pemilik untuk disetujui.', 'fix.now': 'Sekarang', 'fix.new_qty': 'Jumlah benar',
   'fix.reason': 'Alasan koreksi', 'fix.reason_ph': 'mis. 2 dus rusak dikembalikan', 'fix.save': 'Simpan koreksi', 'fix.nothing': 'Tidak ada perubahan', 'fix.applied': 'Koreksi {no} diterapkan', 'fix.requested': 'Koreksi dikirim untuk persetujuan: {id}', 'fix.req_label': 'Koreksi barang masuk {no}', 'fix.before': 'Sebelum', 'fix.after': 'Sesudah',
   'led.title': 'Buku piutang', 'led.invoice': 'Faktur', 'led.note': 'Nota', 'led.debt': 'Hutang', 'led.paid': 'Dibayar', 'led.remaining': 'Sisa', 'led.open_total': 'Sisa tagihan', 'led.open_total_sup': 'Sisa nota belum dibayar', 'led.unalloc_total': 'Pembayaran belum dialokasi', 'led.open_invoices': 'Faktur belum lunas', 'led.open_notes': 'Nota belum lunas',
@@ -8019,7 +8020,7 @@ Object.assign(I18N.ar, {
   'mt.cocok': 'مطابق للفاتورة', 'mt.tidak_cocok': 'غير مطابق', 'mt.perlu_cek': 'يحتاج مراجعة', 'mt.tanpa_foto': 'بلا صورة', 'mt.koreksi': 'مُصحَّح',
   'pu.cmp_title': 'المقارنة مع فاتورة المورد', 'pu.cmp_item': 'الصنف في الفاتورة', 'pu.cmp_note': 'الفاتورة', 'pu.cmp_typed': 'المُدخل', 'pu.cmp_ok': 'كل الكميات مطابقة للفاتورة.', 'pu.cmp_bad': '{n} سطر يختلف عن الفاتورة — صحّح الكمية أو احفظ مع السبب.', 'pu.use_note': 'استخدم كمية الفاتورة',
   'pu.mm_title': 'الكمية لا تطابق الفاتورة', 'pu.mm_hint': 'لم يُحفظ بعد. صحّح الكميات أو اكتب السبب (مثلًا «كرتونان هدية»).', 'pu.mm_fix': 'تصحيح الكميات', 'pu.mm_reason': 'سبب الاختلاف عن الفاتورة', 'pu.mm_reason_ph': 'مثلًا كرتونان هدية من المندوب', 'pu.mm_save': 'حفظ مع السبب',
-  'pu.history': 'سجل الوارد (30 يومًا)', 'pu.no': 'الرقم', 'pu.locked_hint': 'بعد الحفظ تُقفل الكميات والأسعار. التغيير عبر «تصحيح» مع السبب؛ يوافق المدير/المالك ويراه المالك في سجل النشاط.',
+  'pu.history': 'سجل الوارد (30 يومًا)', 'pu.cost_hidden': 'مخفي', 'pu.cost_hidden_hint': 'سعر الشراء مخفي لهذا الحساب. يمكن للمالك السماح به من الإعدادات ← «يسمح للمحاسب والمديرة برؤية سعر الشراء».', 'pu.no': 'الرقم', 'pu.locked_hint': 'بعد الحفظ تُقفل الكميات والأسعار. التغيير عبر «تصحيح» مع السبب؛ يوافق المدير/المالك ويراه المالك في سجل النشاط.',
   'fix.button': 'تصحيح', 'fix.title': 'تصحيح الوارد', 'fix.hint_apply': 'يُطبَّق التصحيح على المخزون مباشرة ويُسجَّل للمالك.', 'fix.hint_request': 'يُرسل التصحيح إلى المدير / المالك للموافقة.', 'fix.now': 'الحالي', 'fix.new_qty': 'الكمية الصحيحة',
   'fix.reason': 'سبب التصحيح', 'fix.reason_ph': 'مثلًا كرتونان تالفان أُعيدا', 'fix.save': 'حفظ التصحيح', 'fix.nothing': 'لا يوجد تغيير', 'fix.applied': 'طُبّق تصحيح {no}', 'fix.requested': 'أُرسل التصحيح للموافقة: {id}', 'fix.req_label': 'تصحيح الوارد {no}', 'fix.before': 'قبل', 'fix.after': 'بعد',
   'led.title': 'دفتر الذمم', 'led.invoice': 'الفاتورة', 'led.note': 'فاتورة الوارد', 'led.debt': 'الدَّين', 'led.paid': 'المدفوع', 'led.remaining': 'المتبقي', 'led.open_total': 'المتبقي للتحصيل', 'led.open_total_sup': 'المتبقي من فواتير الوارد', 'led.unalloc_total': 'دفعات غير مخصصة', 'led.open_invoices': 'فواتير غير مسددة', 'led.open_notes': 'فواتير وارد غير مسددة',
