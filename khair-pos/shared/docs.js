@@ -113,6 +113,7 @@
     h += '<table class="tot">' + t.map(function (r) { return '<tr><td>' + esc(r[0]) + '</td><td class="n">' + esc(r[1]) + '</td></tr>'; }).join('') +
       '<tr class="b"><td>TOTAL</td><td class="n">' + esc(rp(rc.total)) + '</td></tr>' +
       '<tr><td>Dibayar (' + esc(METHOD[rc.method] || rc.method || '-') + ')</td><td class="n">' + esc(rp(int(rc.total) - int(rc.debt))) + '</td></tr>' +
+      (Array.isArray(rc.parts) ? rc.parts : []).map(function (x) { return '<tr class="part"><td>&nbsp;&nbsp;' + esc(METHOD[x.m] || x.m) + '</td><td class="n">' + esc(rp(x.a)) + '</td></tr>'; }).join('') + // v51 split payment
       (int(rc.debt) ? '<tr class="b"><td>Sisa tagihan</td><td class="n">' + esc(rp(rc.debt)) + '</td></tr>' : '') + '</table>';
     h += '<div class="words">Terbilang: ' + esc(words(rc.total)) + '</div>';
     if (int(rc.debt)) h += '<div class="note">Sisa tagihan ' + esc(rp(rc.debt)) + ' dibayar paling lambat ' + esc(date(due)) + '.</div>' + banksHTML(st);
