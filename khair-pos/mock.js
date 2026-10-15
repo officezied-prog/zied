@@ -88,7 +88,8 @@ const MockServer = (() => {
   }
   function priceSale(db, data, quote) {
     if (!Array.isArray(data.items) || !data.items.length) throw E('INVALID', 'items required');
-    if (!quote && !['tunai', 'transfer', 'qris', 'hutang'].includes(data.payment_method)) throw E('INVALID', 'payment_method');
+    const split = Array.isArray(data.payments) && data.payments.length; // v51: one sale paid by several methods (shared/pay-split.js)
+    if (!quote && !split && !['tunai', 'transfer', 'qris', 'hutang'].includes(data.payment_method)) throw E('INVALID', 'payment_method');
     const cust = data.customer_id ? db.customers.find(c => c.id === Number(data.customer_id)) : null;
     if (data.customer_id && !cust) throw E('NOT_FOUND', 'customer');
     const lines = data.items.map(it => {
@@ -110,21 +111,23 @@ const MockServer = (() => {
     const sendFee = data.send_receipt === true ? (num(cust.receipts_sent) >= 1 ? fee : 0) : 0;
     const total = subtotal - discount + sendFee;
     const total_cost = sum(lines, l => l.line_cost);
-    const paid = Math.max(0, int(data.paid_amount));
+    const sp = split ? window.KPay.partsIn(data.payments, total) : null;
+    if (sp && sp.error) throw E('INVALID', sp.error);
+    const paid = sp ? sp.paid : Math.max(0, int(data.paid_amount));
     const debt = Math.max(0, total - paid);
-    if (debt > 0 && !cust && !quote) throw E('INVALID', 'Debt requires customer_id');
+    if (debt > 0 && !cust && !quote) throw E('INVALID', 'Hutang / bayar kurang wajib pilih pelanggan');
     const qtyBy = new Map(); lines.forEach(l => qtyBy.set(l.p.id, roundQty((qtyBy.get(l.p.id) || 0) + l.qty)));
-    return { cust, lines, subtotal, discount, total, total_cost, paid, debt, sale_date: isYmd(data.sale_date) ? data.sale_date : jktDate(), listTotal: sum(lines, l => l.list_total), qtyBy, sendFee };
+    return { cust, lines, subtotal, discount, total, total_cost, paid, debt, method: sp ? sp.method : data.payment_method, parts: sp && sp.parts.length ? sp.parts : null, sale_date: isYmd(data.sale_date) ? data.sale_date : jktDate(), listTotal: sum(lines, l => l.list_total), qtyBy, sendFee };
   }
   const openShiftOf = (db, name) => db.shifts.find(x => x.status === 'open' && String(x.cashier).toLowerCase() === String(name).toLowerCase());
   function shiftSummary(db, sh) {
     if (!sh) return null;
     if (sh.status === 'closed') return sh;
     const sales = db.sales.filter(x => x.shift_id === sh.shift_id && x.status !== 'void');
-    const cash_sales = sum(sales.filter(x => x.payment_method === 'tunai' || x.payment_method === 'hutang'), x => Math.min(int(x.paid_amount), int(x.total)));
+    const cash_sales = sum(sales, x => window.KPay.of(x).tunai); // v51: a split sale's cash part only
     const cash_payments = sum(db.payments.filter(x => x.shift_id === sh.shift_id && x.method === 'tunai' && (x.direction || 'in') === 'in'), x => int(x.amount));
     const supKas = db.payments.filter(x => x.shift_id === sh.shift_id && x.direction === 'out' && x.paid_from === 'kas');
-    const paidOf = m => sum(sales.filter(x => x.payment_method === m), x => Math.min(int(x.paid_amount), int(x.total)));
+    const paidOf = m => sum(sales, x => window.KPay.of(x)[m]);
     const inv = new Set(sales.map(x => x.invoice_no));
     const moves = db.cash_moves.filter(x => x.shift_id === sh.shift_id);
     const kasExp = db.expenses.filter(x => x.shift_id === sh.shift_id && x.paid_from === 'kas');
@@ -1247,7 +1250,7 @@ const MockServer = (() => {
           id: nextId(db, 'sale'), invoice_no: invoiceNo(db, sale_date), sale_date, sale_time: data.sale_time || jktISO(),
           cashier: u.name, customer_id: cust ? cust.id : null, customer_name: cust ? cust.name : (data.customer_name || 'Umum'),
           customer_type: cust ? cust.type : 'eceran', subtotal, discount, send_fee: P.sendFee, total, total_cost, profit: total - total_cost,
-          payment_method: data.payment_method, paid_amount: paid, debt_amount: debt, status: 'ok',
+          payment_method: P.method, pay_parts: P.parts ? JSON.stringify(P.parts) : '', paid_amount: paid, debt_amount: debt, status: 'ok',
           survey: JSON.stringify(data.survey_consent && Array.isArray(data.survey) ? data.survey.filter(x => x && String(x.a || '').trim()).map(x => ({ q: String(x.q), a: String(x.a) })) : []),
           survey_transcript: data.survey_consent === true ? String(data.survey_transcript || '').trim().slice(0, 4000) : '',
           notes: (String(data.notes || '').trim() + (mem && mem.pct > 0 ? ' [member ' + mem.pct + '% · pembelian ke-' + mem.purchase_no + ']' : '') + (discBy ? ' [diskon ' + disc.pct + '% disetujui ' + discBy + ']' : '')).trim(), client_id: cid, approved_by, exit_photo: exitReq ? 'required' : '', exit_match: '',
@@ -1256,7 +1259,8 @@ const MockServer = (() => {
         if (usedApproval) usedApproval.status = 'used';
         if (usedDisc) usedDisc.status = 'used';
         db.sales.push(sale);
-        if (sale.payment_method === 'transfer' && int(sale.paid_amount) > 0) addTransferConfirm(db, u, 'faktur', sale.invoice_no, sale.paid_amount, sale.customer_name, strv(data.bank), strv(data.transfer_ref));
+        const trPart = window.KPay.of(sale).transfer; // v51: a split sale's transfer part is checked too
+        if (trPart > 0) addTransferConfirm(db, u, 'faktur', sale.invoice_no, trPart, sale.customer_name, strv(data.bank), strv(data.transfer_ref));
         for (const l of lines) {
           db.items.push({ invoice_no: sale.invoice_no, sale_date, product_id: l.p.id, sku: l.p.sku, name: l.p.name, qty: l.qty, unit_price: l.unit_price, price_type: l.price_type, cost_price: l.p.cost_price, line_total: l.line_total, line_profit: l.line_total - l.line_cost, customer_name: sale.customer_name });
         }
@@ -2240,7 +2244,7 @@ const MockServer = (() => {
         const okInv = new Set(okSales.map(x => x.invoice_no));
         const items = db.items.filter(x => okInv.has(x.invoice_no));
         const byMethod = { tunai: 0, transfer: 0, qris: 0 };
-        okSales.forEach(x => { const paid = Math.min(int(x.paid_amount), int(x.total)); if (byMethod[x.payment_method] !== undefined) byMethod[x.payment_method] += paid; else byMethod.tunai += paid; });
+        okSales.forEach(x => { const sp = window.KPay.of(x); byMethod.tunai += sp.tunai; byMethod.transfer += sp.transfer; byMethod.qris += sp.qris; });
         const prod = {};
         items.forEach(it => { const k = String(it.product_id); if (!prod[k]) prod[k] = { name: strv(it.name), qty: 0, total: 0 }; prod[k].qty = roundQty(prod[k].qty + num(it.qty)); prod[k].total += int(it.line_total); });
         const pays = db.payments.filter(p => p.pay_date === day), pin = pays.filter(p => payDir(p) === 'in'), pout = pays.filter(p => payDir(p) === 'out');
@@ -2273,8 +2277,8 @@ const MockServer = (() => {
         const per = {}, invWho = {};
         const who = n => { const k = strv(n) || '-'; if (!per[k]) per[k] = { name: k, sales: { count: 0, total: 0, discount: 0, items_qty: 0, by_method: { tunai: 0, transfer: 0, qris: 0 }, debt: 0 }, voids: { count: 0, total: 0 },
           payments_in: { count: 0, total: 0, tunai: 0, transfer: 0, qris: 0 }, payments_out: { count: 0, total: 0, tunai: 0 }, expenses: { count: 0, total: 0, from_kas: 0 }, shifts: [] }; return per[k]; };
-        okSales.forEach(x => { const c = who(x.cashier), s1 = c.sales, paid = Math.min(int(x.paid_amount), int(x.total)); invWho[x.invoice_no] = c; s1.count++; s1.total += int(x.total); s1.discount += int(x.discount); s1.debt += int(x.debt_amount);
-          s1.by_method[s1.by_method[x.payment_method] !== undefined ? x.payment_method : 'tunai'] += paid; });
+        okSales.forEach(x => { const c = who(x.cashier), s1 = c.sales, sp = window.KPay.of(x); invWho[x.invoice_no] = c; s1.count++; s1.total += int(x.total); s1.discount += int(x.discount); s1.debt += int(x.debt_amount);
+          s1.by_method.tunai += sp.tunai; s1.by_method.transfer += sp.transfer; s1.by_method.qris += sp.qris; });
         items.forEach(it => { const c = invWho[it.invoice_no]; if (c) c.sales.items_qty = roundQty(c.sales.items_qty + num(it.qty)); });
         voids.forEach(x => { const c = who(x.cashier); c.voids.count++; c.voids.total += int(x.total); });
         pin.forEach(p => { const c = who(p.cashier); c.payments_in.count++; c.payments_in.total += int(p.amount); if (c.payments_in[p.method] !== undefined) c.payments_in[p.method] += int(p.amount); });

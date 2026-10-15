@@ -36,7 +36,7 @@ export const TABLES = {
     invoice_no: 'string', sale_date: 'string', sale_time: 'string', cashier: 'string',
     customer_id: 'number', customer_name: 'string', customer_type: 'string', subtotal: 'number',
     discount: 'number', total: 'number', total_cost: 'number', profit: 'number',
-    payment_method: 'string', paid_amount: 'number', debt_amount: 'number', status: 'string',
+    payment_method: 'string', pay_parts: 'string', paid_amount: 'number', debt_amount: 'number', status: 'string',
     survey: 'string', notes: 'string', client_id: 'string', approved_by: 'string',
     exit_photo: 'string', exit_match: 'string', channel: 'string', promo_code: 'string',
     shift_id: 'string', survey_transcript: 'string', send_fee: 'number',

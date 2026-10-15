@@ -154,5 +154,5 @@ test('v36 self-migration adds the new columns to an older D1 (before loading)', 
   const cols = a.all('PRAGMA table_info(pos_expenses)', []).map((x) => x.name);
   for (const c of ['lines', 'check_status', 'request_id', 'checked_by']) assert.ok(cols.includes(c), c);
   assert.ok(a.all('PRAGMA table_info(pos_products)', []).some((x) => x.name === 'review'));
-  assert.equal(POS_MIGRATIONS.length, 28); // + pos_tamper_shots and its index (v36 code-attempt photos) + v37 pos_activity.detail and its kind index + v38 repack requested_by / approved_by / request_id and the approvals client_id index + v39 pos_repacks.client_id + v48 pos_products.repack_costs and pos_repacks.materials_cost + v50 the two-step repack columns (status, plan, left over, who confirmed) and their two indexes
+  assert.equal(POS_MIGRATIONS.length, 29); // + pos_tamper_shots and its index (v36 code-attempt photos) + v37 pos_activity.detail and its kind index + v38 repack requested_by / approved_by / request_id and the approvals client_id index + v39 pos_repacks.client_id + v48 pos_products.repack_costs and pos_repacks.materials_cost + v50 the two-step repack columns (status, plan, left over, who confirmed) and their two indexes + v51 pos_sales.pay_parts (split payment)
 });
