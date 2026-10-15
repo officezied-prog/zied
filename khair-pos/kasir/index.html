@@ -95,6 +95,7 @@
 <script src="../shared/chat-ui.js"></script>
 <script src="../shared/tamper-guard.js"></script>
 <script src="../shared/barcode-cam.js"></script>
+<script src="../shared/pick.js"></script>
 <script src="../shared/install-btn.js" data-host="#login:not([hidden]) > .screen-card"></script>
 <script src="../shared/app-update.js"></script>
 <script src="../shared/field-mock.js"></script>
@@ -108,7 +109,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.6.8';
+const APP_VERSION = 'kasir-1.6.9';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -979,6 +980,7 @@ function applyData(d) {
   if (Array.isArray(d.users)) S.users = d.users;
   if (d.approvals_pending != null) AP.count = int(d.approvals_pending);
   if ('shift' in d) { S.shift = d.shift || null; S.shiftsSupported = true; }
+  if (Array.isArray(d.repacks_open)) S.repacksOpen = d.repacks_open; // v50: started repacks waiting for the manager's confirmation
   S.products.forEach(p => { noCost(p); p.id = isNaN(Number(p.id)) ? p.id : Number(p.id); ['retail_price', 'wholesale_price'].forEach(k => { p[k] = int(p[k]); }); p.stock = num(p.stock); p.min_stock = num(p.min_stock); p.wholesale_min_qty = num(p.wholesale_min_qty); p.active = !(p.active === false || p.active === 'false' || p.active === 0 || p.active === '0'); });
   S.customers.forEach(c => { c.id = isNaN(Number(c.id)) ? c.id : Number(c.id); c.debt_balance = int(c.debt_balance); });
   updateOpnameBanner(); // v37
@@ -4007,9 +4009,24 @@ function openPriceChange(p) {
 const rkPacks = () => S.products.filter(p => p.active !== false && num(p.repack_from) > 0 && prodById(p.repack_from));
 /** Same formulas as the server: packs expected from the bulk used, the yield and the loss. */
 function rkCalc(size, qty, fromQty) { const expected = size > 0 ? roundQty(fromQty / size) : 0; return { expected, yieldPct: expected > 0 ? Math.round(qty / expected * 1000) / 10 : 0, loss: roundQty(fromQty - qty * size) }; }
-/** The preview line: bulk used → expected packs, made = yield %, loss; too little bulk in stock → red. */
-/** v48: the names of a pack's materials (the manager sets them with their cost in the owner app; the cashier sees the names only). */
-function rkMaterials(p) { let a = []; try { a = JSON.parse(String((p && p.repack_costs) || '') || '[]'); } catch (e) { a = []; } return (Array.isArray(a) ? a : []).map(x => String((x && x.n) || '').trim()).filter(Boolean); }
+/** v48: the names of a pack's materials (the manager sets them in the owner app; the cashier sees the names only). */
+function rkMaterials(p) { let a = []; try { a = JSON.parse(String((p && p.repack_costs) || '') || '[]'); } catch (e) { a = []; } return (Array.isArray(a) ? a : []).map(x => String((x && x.n) || '').trim() + (num(x && x.q) > 1 ? ' ×' + fmtQty(x.q) : '')).filter(Boolean); }
+/* v50 (owner 2026-10-15: «تنطلق عملية التعبية باختيار العنصر الكبير … ثم اختيار من القائمة العنصر الصغير … ثم الحاسوب يحسب مباشرة الكمية
+   المطلوبة … وبعد عملية التعليب تقع الموافقة على الكمية التي تمت عن طريق المدير»; «إمكانية كتابة الكلمة كاملة ليس الحرف فقط»): the form starts
+   from the BULK (type any word of its name), then one of its packs; the bulk amount gives the packs at once (whole packs + what is
+   left over). "Mulai kemas" takes the bulk out of stock; when the packing is done the manager confirms the packs really made and the
+   bulk left over — here (manager) or in the owner app. Two cashiers, one job: the same pack from the same bulk cannot be started twice. */
+function rkBulkItems() {
+  const packs = rkPacks(), ids = [...new Set(packs.map(p => String(p.repack_from)))];
+  return ids.map(id => prodById(id)).filter(Boolean).sort((a, b) => String(a.name).localeCompare(String(b.name)))
+    .map(b => ({ id: String(b.id), label: b.name, keys: b.category || '', sub: `${t('stock')} ${fmtQty(b.stock)} ${b.unit || ''} · ${t('rk.n_packs', { n: packs.filter(p => String(p.repack_from) === String(b.id)).length })}` }));
+}
+function rkPackItems(b) {
+  return b ? rkPacks().filter(p => String(p.repack_from) === String(b.id)).sort((x, y) => num(y.repack_qty) - num(x.repack_qty))
+    .map(p => ({ id: String(p.id), label: p.name, sub: t('rk.pk_sub', { s: fmtQty(p.repack_qty), u: b.unit || '', pu: p.unit || 'pcs', st: fmtQty(p.stock) }) })) : [];
+}
+const rkMgr = () => S.role === 'manager' || S.role === 'owner';
+/** The approval card of a v38 request (still pending): bulk used → expected packs, made = yield %, loss; too little bulk in stock → red. */
 function rkPreview(box, size, unit, stock, qty, fromQty) {
   if (!box) return;
   if (!(qty > 0) || !(fromQty > 0) || !(size > 0)) { box.className = 'rp-preview'; box.innerHTML = `<span class="muted">${esc(t('rk.preview_empty'))}</span>`; return; }
@@ -4019,83 +4036,142 @@ function rkPreview(box, size, unit, stock, qty, fromQty) {
     <div><b data-yield>${esc(t('rk.pv_yield', { n: fmtQty(qty), p: NF1.format(c.yieldPct) }))}</b> · <span data-loss>${esc(t('rk.pv_loss', { q: fmtQty(c.loss), u: unit || '' }))}</span></div>
     ${over ? `<div data-short><b>${esc(t('rk.not_enough', { q: fmtQty(stock), u: unit || '' }))}</b></div>` : ''}`;
 }
+function rkOpenHTML() {
+  const list = (S.repacksOpen || []).slice().sort((a, b) => String(a.started_at || a.repack_time).localeCompare(String(b.started_at || b.repack_time)));
+  if (!list.length) return '';
+  return `<div class="card" style="padding:10px 12px;margin-bottom:12px" id="rk-open-list"><b>${ic('repack')} ${esc(t('rk.open_title'))}</b>${list.map(r => `<div class="rk-open-row" data-rk-open="${esc(r.repack_id)}" style="padding:8px 0;border-top:1px solid var(--border)">
+      <div>${esc(r.from_name)} ${fmtQty(r.from_qty)} ${esc(r.from_unit || '')} → <b>${esc(r.to_name)}</b> · ${esc(t('rk.plan_n', { n: fmtNum(num(r.planned_qty)), u: r.to_unit || 'pcs' }))}</div>
+      <div class="small muted">${esc(t('rk.fin_by', { name: r.started_by || r.user || '', time: fmtDateTime(r.started_at || r.repack_time) }))}</div>
+      <div style="margin-top:6px">${rkMgr() ? `<button class="btn xs primary" data-act="rk-fin" data-id="${esc(r.repack_id)}">${ic('check')} ${esc(t('rk.fin_btn'))}</button>` : `<span class="badge amber">${esc(t('rk.wait_mgr'))}</span>`}</div></div>`).join('')}</div>`;
+}
 function openRepack() {
-  const mgr = S.role === 'manager' || S.role === 'owner', packs = rkPacks();
-  const R = { cid: uuid() }; // one client id per form: a double tap / retry / resend is recorded once
+  const mgr = rkMgr(), bulks = rkBulkItems();
+  const R = { cid: uuid(), bulk: '', pack: '' }; // one client id per form: a double tap / retry / resend is recorded once
   const el = openModal({
     title: t('rk.title'), id: 'repack', focus: false,
     body: `<p class="small muted" style="margin-top:0">${esc(t(mgr ? 'rk.hint_mgr' : 'rk.hint'))}</p>
-      ${packs.length ? '' : `<div class="empty" id="rk-none">${esc(t('rk.none'))}</div>`}
-      <div class="field"><label class="f" for="rk-to">${esc(t('rk.pack_product'))}</label><select class="input" id="rk-to"><option value="">— ${esc(t('rk.pick'))} —</option>${packs.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select></div>
-      <div id="rk-info" class="small muted" style="margin:-4px 0 10px"></div>
-      <div class="grid2"><div class="field"><label class="f" for="rk-qty">${esc(t('rk.pieces'))}</label><input class="input num" id="rk-qty" data-rule="num" inputmode="decimal" autocomplete="off"></div>
-        <div class="field"><label class="f" for="rk-from">${esc(t('rk.bulk_used'))} (<span id="rk-unit">—</span>)</label><input class="input num" id="rk-from" data-rule="num" inputmode="decimal" autocomplete="off" placeholder="${esc(t('rk.auto'))}"></div></div>
+      <div id="rk-open">${rkOpenHTML()}</div>
+      ${bulks.length ? '' : `<div class="empty" id="rk-none">${esc(t('rk.none'))}</div>`}
+      <div class="field"><label class="f" for="rk-bulk-q">1. ${esc(t('rk.f_bulk'))}</label><div id="rk-bulk"></div><div id="rk-info" class="small muted" style="margin-top:4px"></div></div>
+      <div class="field"><label class="f" for="rk-pack-q">2. ${esc(t('rk.f_pack'))}</label><div id="rk-pack"></div><div id="rk-pack-info" class="small muted" style="margin-top:4px"></div></div>
+      <div class="field"><label class="f" for="rk-amount">3. ${esc(t('rk.f_amount'))} (<span id="rk-unit">—</span>)</label><input class="input num" id="rk-amount" data-rule="num" inputmode="decimal" autocomplete="off"></div>
+      <div class="rp-preview" id="rk-calc"></div>
       <div class="grid2"><div class="field"><label class="f" for="rk-cost">${esc(t('rk.extra_cost'))} (Rp)</label><input class="input num" id="rk-cost" data-rule="num" inputmode="numeric" autocomplete="off" placeholder="${esc(t('rk.extra_ph'))}"></div>
         <div class="field"><label class="f" for="rk-exp">${esc(t('rk.exp'))}</label><input class="input" type="date" id="rk-exp"></div></div>
       <div class="field"><label class="f" for="rk-note">${esc(t('notes'))}</label><input class="input" id="rk-note" maxlength="300" autocomplete="off"></div>
-      <div class="rp-preview" id="rk-preview"></div><div class="err" id="rk-err" role="alert"></div><div id="rk-res"></div>`,
-    foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button><button class="btn primary" id="rk-ok" ${packs.length ? '' : 'disabled'}>${ic('check')} ${esc(t('rk.save'))}</button>`
+      <div class="err" id="rk-err" role="alert"></div><div id="rk-res"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button><button class="btn primary" id="rk-ok" ${bulks.length ? '' : 'disabled'}>${ic('check')} ${esc(t('rk.start'))}</button>`
   });
+  const amount = $('#rk-amount', el);
   const read = () => {
-    const to = prodById($('#rk-to', el).value), from = to ? prodById(to.repack_from) : null;
-    const qty = qtyVal($('#rk-qty', el).value || ''), rawFrom = $('#rk-from', el).value.trim();
-    const size = to ? num(to.repack_qty) : 0, fromQty = rawFrom ? qtyVal(rawFrom) : roundQty(qty * size);
-    return { to, from, qty, size, rawFrom, fromQty };
+    const b = prodById(R.bulk), p = R.pack ? prodById(R.pack) : null, size = p ? num(p.repack_qty) : 0, fromQty = qtyVal(amount.value || '');
+    const packs = size > 0 && fromQty > 0 ? Math.floor(fromQty / size + 1e-9) : 0;
+    return { b, p, size, fromQty, packs, left: size > 0 ? roundQty(fromQty - packs * size) : 0 };
   };
   const draw = () => {
     const r = read();
-    $('#rk-unit', el).textContent = r.from ? (r.from.unit || '') : '—';
-    // v48: the pack's materials (sticker, lid …) set by the manager — the cashier sees their names; their cost is added by the server
-    const mats = r.to ? rkMaterials(r.to) : [];
-    $('#rk-info', el).innerHTML = r.from ? `${esc(t('rk.from_bulk'))}: <b>${esc(r.from.name)}</b> · ${esc(t('stock'))} <b class="num" id="rk-bulk-stock">${fmtQty(r.from.stock)} ${esc(r.from.unit || '')}</b> · ${esc(t('rk.size'))}: <b>${fmtQty(r.size)} ${esc(r.from.unit || '')}</b>` +
-      (mats.length ? `<div id="rk-mats">${esc(t('rk.mats', { list: mats.join(', ') }))}</div>` : '') : '';
-    rkPreview($('#rk-preview', el), r.size, r.from ? r.from.unit : '', r.from ? r.from.stock : null, r.qty, r.fromQty);
+    $('#rk-unit', el).textContent = r.b ? (r.b.unit || '') : '—';
+    $('#rk-info', el).innerHTML = r.b ? `${esc(t('stock'))} <b class="num" id="rk-bulk-stock">${fmtQty(r.b.stock)} ${esc(r.b.unit || '')}</b>` : '';
+    const mats = r.p ? rkMaterials(r.p) : [];
+    $('#rk-pack-info', el).innerHTML = r.p ? `${esc(t('rk.size'))}: <b>${fmtQty(r.size)} ${esc(r.b ? r.b.unit || '' : '')}</b> / ${esc(r.p.unit || 'pcs')}${mats.length ? `<div id="rk-mats">${esc(t('rk.mats', { list: mats.join(', ') }))}</div>` : ''}` : '';
+    const box = $('#rk-calc', el);
+    if (!r.b || !r.p || !(r.fromQty > 0)) { box.className = 'rp-preview'; box.innerHTML = `<span class="muted">${esc(t('rk.calc_empty'))}</span>`; return; }
+    const u = r.b.unit || '', over = r.fromQty > num(r.b.stock) + 1e-9;
+    box.className = 'rp-preview' + (over || !r.packs ? ' bad' : '');
+    box.innerHTML = `<div>${esc(fmtQty(r.fromQty))} ${esc(u)} ÷ ${esc(fmtQty(r.size))} ${esc(u)} = <b style="font-size:20px" id="rk-planned" data-planned="${r.packs}">${esc(t('rk.calc_packs', { n: fmtNum(r.packs), u: r.p.unit || 'pcs' }))}</b></div>
+      ${r.left > 0 ? `<div data-left>${esc(t('rk.calc_left', { q: fmtQty(r.left), u }))}</div>` : ''}${!r.packs ? `<div><b>${esc(t('rk.calc_less', { s: fmtQty(r.size), u }))}</b></div>` : ''}
+      ${over ? `<div data-short><b>${esc(t('rk.not_enough', { q: fmtQty(r.b.stock), u }))}</b></div>` : ''}`;
   };
-  ['#rk-to', '#rk-qty', '#rk-from'].forEach(s => $(s, el).addEventListener('input', draw));
-  $('#rk-to', el).addEventListener('change', draw);
+  const pack = KPick.mount($('#rk-pack', el), { id: 'rk-pack', items: [], placeholder: t('rk.pack_ph'), empty: t('rk.no_match'), label: t('rk.f_pack'),
+    onChange: id => { R.pack = id; $('#rk-err', el).textContent = ''; draw(); if (id) amount.focus(); } });
+  KPick.mount($('#rk-bulk', el), { id: 'rk-bulk', items: bulks, placeholder: t('rk.bulk_ph'), empty: t('rk.no_match'), label: t('rk.f_bulk'),
+    onChange: id => { R.bulk = id; R.pack = ''; const its = rkPackItems(prodById(id)); pack.setItems(its); pack.set(its.length === 1 ? its[0].id : '', true); R.pack = pack.value; $('#rk-err', el).textContent = ''; draw(); if (id) { if (R.pack) amount.focus(); else pack.focus(); } } });
+  amount.addEventListener('input', () => { $('#rk-err', el).textContent = ''; draw(); });
   $('#rk-cost', el).addEventListener('change', e => { const x = moneyVal(e.target.value); e.target.value = x ? fmtNum(x) : ''; });
   draw();
   const ok = $('#rk-ok', el), err = $('#rk-err', el), res = $('#rk-res', el);
-  const lockForm = () => { $$('#rk-to, #rk-qty, #rk-from, #rk-cost, #rk-exp, #rk-note', el).forEach(i => { i.disabled = true; }); ok.hidden = true; };
+  const lockForm = () => { $$('#rk-amount, #rk-cost, #rk-exp, #rk-note, #rk-bulk-q, #rk-pack-q', el).forEach(i => { i.disabled = true; }); $$('#rk-bulk-v, #rk-pack-v', el).forEach(i => { i.disabled = true; }); ok.hidden = true; };
   const send = async (confirmRecent) => {
     const r = read();
     err.textContent = ''; res.innerHTML = '';
-    if (!r.to) { err.textContent = t('rk.pick_first'); return; }
-    if (!(r.qty > 0) || !(r.fromQty > 0)) { err.textContent = t('rk.qty_invalid'); $('#rk-qty', el).focus(); return; }
-    if (r.fromQty > num(r.from.stock) + 1e-9) { err.textContent = t('rk.not_enough', { q: fmtQty(r.from.stock), u: r.from.unit || '' }); return; }
-    const data = { client_id: R.cid, to_product_id: r.to.id, to_qty: r.qty, note: $('#rk-note', el).value.trim() };
-    if (r.rawFrom) data.from_qty = r.fromQty;
+    if (!r.b) { err.textContent = t('rk.pick_bulk'); return; }
+    if (!r.p) { err.textContent = t('rk.pick_first'); pack.focus(); return; }
+    if (!(r.fromQty > 0)) { err.textContent = t('rk.qty_invalid'); amount.focus(); return; }
+    if (r.fromQty > num(r.b.stock) + 1e-9) { err.textContent = t('rk.not_enough', { q: fmtQty(r.b.stock), u: r.b.unit || '' }); return; }
+    if (!(r.packs >= 1)) { err.textContent = t('rk.calc_less', { s: fmtQty(r.size), u: r.b.unit || '' }); return; }
+    const data = { client_id: R.cid, from_product_id: r.b.id, to_product_id: r.p.id, from_qty: r.fromQty, note: $('#rk-note', el).value.trim() };
     const pc = moneyVal($('#rk-cost', el).value); if (pc) data.packaging_cost = pc;
     const ex = $('#rk-exp', el).value; if (/^\d{4}-\d{2}-\d{2}$/.test(ex)) data.exp_date = ex;
     if (confirmRecent) data.confirm_recent = true;
     ok.disabled = true;
     try {
-      // v39: no approval — the stock moves at once (cashier and manager alike); the owner / manager / accountant are told
-      const out = await api('repack', data), rp = out.repack || {};
+      const out = await api('repack_start', data), rp = out.repack || {};
       if (out.stock) applyStock(out.stock);
+      S.repacksOpen = (S.repacksOpen || []).filter(x => x.repack_id !== rp.repack_id).concat(rp.status === 'proses' ? [rp] : []);
       saveCache(); renderGrid();
-      res.innerHTML = `<div class="status cocok" id="rk-done" data-yield="${esc(rp.yield_pct)}"><div class="st">${ic('check')} ${esc(t('rk.saved', { from: fmtQty(rp.from_qty) + ' ' + (rp.from_unit || ''), n: fmtQty(rp.to_qty), name: rp.to_name || '' }))}</div>
-        <div>${esc(t('rk.pv_yield', { n: fmtQty(rp.to_qty), p: NF1.format(num(rp.yield_pct)) }))} · ${esc(t('rk.pv_loss', { q: fmtQty(rp.loss_qty), u: rp.from_unit || '' }))}</div><div class="small muted" id="rk-told">${esc(t(mgr ? 'rk.owner_told' : 'rk.all_told'))}</div></div>`;
-      lockForm(); toast(t('rk.saved_toast'), 'ok');
+      res.innerHTML = `<div class="status cocok" id="rk-done" data-rp="${esc(rp.repack_id)}"><div class="st">${ic('check')} ${esc(t('rk.started', { from: fmtQty(rp.from_qty) + ' ' + (rp.from_unit || ''), name: rp.to_name || '', n: fmtNum(num(rp.planned_qty)) }))}</div>
+        <div class="small" id="rk-told">${esc(t(mgr ? 'rk.started_mgr' : 'rk.started_hint'))}</div></div>`;
+      $('#rk-open', el).innerHTML = rkOpenHTML();
+      lockForm(); toast(t('rk.started_toast'), 'ok');
     } catch (e) {
       ok.disabled = false;
-      const pend = e.res && e.res.pending, rec = e.res && e.res.recent;
+      const rec = e.res && e.res.recent, busy = e.res && e.res.busy;
       if (e.code === 'REPACK_RECENT' && rec) {
-        // v38/v39 («ممكن 2 كاشير يقوم بنفس الطلب والتعليب، انتبه منها»): someone repacked this bulk in the last 2 h — the same work, or another?
+        // v38/v39 («ممكن 2 كاشير يقوم بنفس الطلب والتعليب، انتبه منها»): this bulk was packed in the last 2 h — the same work, or another?
         res.innerHTML = `<div class="status tidak_cocok" id="rk-recent" data-by="${esc(rec.user)}"><div class="st">${ic('repack')} ${esc(t('rk.recent_title'))}</div>
           <div>${esc(t('rk.recent', { name: rec.user, time: fmtDateTime(rec.at), bulk: rec.from_name, q: fmtQty(rec.from_qty), u: rec.from_unit || '', pack: rec.to_name, n: fmtQty(rec.to_qty) }))}</div>
           <div class="small">${esc(t('rk.recent_q'))}</div>
           <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn xs primary" id="rk-again">${ic('check')} ${esc(t('rk.recent_yes'))}</button><button class="btn xs" id="rk-same">${ic('x')} ${esc(t('rk.recent_no'))}</button></div></div>`;
         $('#rk-again', res).onclick = () => send(true);
         $('#rk-same', res).onclick = () => closeModal();
-      } else if (e.code === 'REPACK_PENDING' && pend) {
-        res.innerHTML = `<div class="status tidak_cocok" id="rk-busy" data-by="${esc(pend.cashier)}"><div class="st">${ic('lock')} ${esc(t('rk.busy_title'))}</div>
-          <div>${esc(t('rk.busy', { name: pend.cashier, time: fmtDateTime(pend.created_at), id: pend.request_id, bulk: pend.from_name, pack: pend.to_name, n: fmtQty(pend.to_qty) }))}</div>
-          <div class="small">${esc(t(pend.stale ? 'rk.busy_stale' : 'rk.busy_wait'))}</div></div>`;
+      } else if (e.code === 'REPACK_BUSY' && busy) {
+        res.innerHTML = `<div class="status tidak_cocok" id="rk-busy" data-by="${esc(busy.by)}"><div class="st">${ic('lock')} ${esc(t('rk.busy_title2'))}</div>
+          <div>${esc(t('rk.busy2', { name: busy.by, time: fmtDateTime(busy.at), bulk: busy.from_name, q: fmtQty(busy.from_qty), u: busy.from_unit || '', pack: busy.to_name }))}</div></div>`;
       } else err.textContent = e instanceof NetError ? t('rk.need_online') : errMsg(e); // the same client id is sent again on the next tap
     }
   };
   ok.onclick = () => send(false);
+}
+/** v50: the manager confirms a started repack here: the packs really made + the bulk left over (back to stock), or cancels it. */
+function openRkFinish(r) {
+  const F = num(r.from_qty), s = num(r.pack_size), u = r.from_unit || '', N = num(r.planned_qty), pu = r.to_unit || 'pcs';
+  const el = openModal({
+    title: t('rk.fin_title'), id: 'rk-fin-modal',
+    body: `<p style="margin-top:0"><b>${esc(r.from_name)}</b> ${fmtQty(F)} ${esc(u)} → <b>${esc(r.to_name)}</b><br><span class="small">${esc(t('rk.fin_plan', { n: fmtNum(N), s: fmtQty(s), u, pu }))}</span></p>
+      <div class="grid2"><div class="field"><label class="f" for="rkf-made">${esc(t('rk.fin_made'))} (${esc(pu)})</label><input class="input num" id="rkf-made" data-rule="num" inputmode="decimal" autocomplete="off" value="${esc(fmtQtyInput(N))}"></div>
+        <div class="field"><label class="f" for="rkf-rem">${esc(t('rk.fin_rem'))} (${esc(u)})</label><input class="input num" id="rkf-rem" data-rule="num" inputmode="decimal" autocomplete="off" value="${esc(fmtQtyInput(Math.max(0, roundQty(F - N * s))))}"></div></div>
+      <div class="rp-preview" id="rkf-pv"></div><div class="err" id="rkf-err" role="alert"></div>`,
+    foot: `<button class="btn danger" id="rkf-cancel">${esc(t('rk.fin_cancel'))}</button><button class="btn" data-act="modal-close">${esc(t('close'))}</button><button class="btn primary" id="rkf-ok">${ic('check')} ${esc(t('rk.fin_ok'))}</button>`
+  });
+  const made = $('#rkf-made', el), rem = $('#rkf-rem', el), pv = $('#rkf-pv', el), err = $('#rkf-err', el);
+  let remTouched = false;
+  const draw = () => {
+    const m = qtyVal(made.value || ''), lf = qtyVal(rem.value || ''), used = roundQty(F - lf), c = rkCalc(s, m, used);
+    pv.className = 'rp-preview' + (m < N || c.yieldPct < 95 ? ' low' : '');
+    pv.innerHTML = `<div>${esc(t('rk.pv_used', { q: fmtQty(used), u, e: fmtQty(c.expected) }))}</div><div><b data-yield>${esc(t('rk.pv_yield', { n: fmtQty(m), p: NF1.format(c.yieldPct) }))}</b> · <span data-loss>${esc(t('rk.pv_loss', { q: fmtQty(c.loss), u }))}</span></div>
+      ${m < N ? `<div data-short><b>${esc(t('rk.fin_short', { n: fmtQty(roundQty(N - m)), pu }))}</b></div>` : ''}`;
+  };
+  made.addEventListener('input', () => { if (!remTouched) rem.value = fmtQtyInput(Math.max(0, roundQty(F - qtyVal(made.value || '') * s))); err.textContent = ''; draw(); });
+  rem.addEventListener('input', () => { remTouched = true; err.textContent = ''; draw(); });
+  draw();
+  const send = async (data, btn) => {
+    btn.disabled = true; err.textContent = '';
+    try {
+      const out = await api('repack_finish', Object.assign({ repack_id: r.repack_id }, data));
+      if (out.stock) applyStock(out.stock);
+      S.repacksOpen = (S.repacksOpen || []).filter(x => x.repack_id !== r.repack_id);
+      saveCache(); renderGrid(); closeModal();
+      toast(t(data.cancel ? 'rk.fin_cancelled' : 'rk.fin_saved'), 'ok');
+      const box = $('#rk-open'); if (box) box.innerHTML = rkOpenHTML();
+    } catch (e) { err.textContent = e instanceof NetError ? t('rk.need_online') : errMsg(e); btn.disabled = false; }
+  };
+  $('#rkf-ok', el).onclick = e => {
+    const m = qtyVal(made.value || ''), lf = qtyVal(rem.value || '');
+    if (!(m > 0)) { err.textContent = t('rk.fin_need'); made.focus(); return; }
+    if (!(lf >= 0) || lf > F + 1e-9) { err.textContent = t('rk.fin_rem_bad', { q: fmtQty(F), u }); rem.focus(); return; }
+    send({ to_qty: m, remaining_qty: lf }, e.currentTarget);
+  };
+  $('#rkf-cancel', el).onclick = async e => { const b = e.currentTarget; if (!(await confirmBox(t('rk.fin_cancel_q', { q: fmtQty(F), u, name: r.from_name }), { danger: true })).ok) return; send({ cancel: true }, b); };
 }
 /** v38: a repack request still waiting after 24 h can be cancelled by the cashier who asked (the lock on the bulk is freed). */
 async function cancelMyRepack(id, btn) {
@@ -4443,6 +4519,7 @@ const ACT = {
   'void-pick': el => requestVoid(el.dataset.inv),
   'price-req': () => openPricePicker(),
   'repack-open': () => openRepack(), // v38
+  'rk-fin': el => { const r = (S.repacksOpen || []).find(x => x.repack_id === el.dataset.id); if (r) openRkFinish(r); }, // v50: the manager confirms a started repack
   'req-cancel': el => cancelMyRepack(el.dataset.id, el), // v38
   'price-pick': el => { const p = prodById(el.dataset.id); closeModal(); if (p) openPriceChange(p); },
   'my-req': () => openMyRequests(),
@@ -5220,6 +5297,42 @@ Object.assign(I18N.ar, {
   'req.repack': 'إعادة تعبئة {name} × {n}', 'req.st_cancelled': 'ملغى', 'req.toast_cancel': '{label}: ألغاه {name}',
   'apr.kind_repack': 'إعادة تعبئة: {name}', 'apr.repack_hint': 'راجع عدد العبوات الناتجة والسائب المستخدم (يمكن تصحيحهما). موافقة = ينقص السائب ويزيد مخزون العبوات؛ رفض = لا يتغير المخزون. يصل إشعار إلى المالك.',
   'err.REPACK_PENDING': 'يوجد طلب إعادة تعبئة سابق لهذا السائب', 'err.REPACK_STOCK': 'مخزون السائب لم يعد يكفي', 'err.TOO_EARLY': 'لا يمكن الإلغاء بعد'
+});
+Object.assign(I18N.id, { // v50 two-step repacking (start → the manager confirms)
+  'rk.hint': 'Pilih curahnya, lalu kemasannya, isi berapa curah yang dikemas: jumlah kemasan langsung dihitung. Curah keluar dari stok saat mulai; setelah selesai manajer mengonfirmasi kemasan yang jadi dan sisa curahnya.',
+  'rk.hint_mgr': 'Pilih curahnya, lalu kemasannya, isi berapa curah yang dikemas. Setelah selesai, konfirmasi kemasan yang jadi dan sisa curahnya di "Sedang dikemas". Pemilik dan akuntan diberi tahu.',
+  'rk.more_s': 'Curah → kemasan kecil (manajer mengonfirmasi hasilnya)',
+  'rk.f_bulk': 'Barang curah (besar)', 'rk.f_pack': 'Kemasan kecil (hasil)', 'rk.f_amount': 'Curah yang dikemas', 'rk.start': 'Mulai kemas',
+  'rk.bulk_ph': 'Ketik nama curah, mis. kurma ajwa', 'rk.pack_ph': 'Ketik nama kemasan', 'rk.no_match': 'Tidak ada yang cocok',
+  'rk.n_packs': '{n} kemasan', 'rk.pk_sub': '{s} {u} per {pu} · stok {st}',
+  'rk.calc_empty': 'Pilih curah dan kemasan, lalu isi berapa curah yang dikemas.', 'rk.calc_packs': '{n} {u}', 'rk.calc_left': 'Sisa {q} {u} (kurang dari satu kemasan)',
+  'rk.calc_less': 'Kurang dari isi satu kemasan ({s} {u})', 'rk.pick_bulk': 'Pilih barang curah dulu',
+  'rk.started': 'Mulai dikemas: {from} → {name} (rencana {n})', 'rk.started_hint': 'Setelah selesai, manajer mengonfirmasi jumlah kemasan yang jadi.', 'rk.started_mgr': 'Setelah selesai, konfirmasi hasilnya di "Sedang dikemas".',
+  'rk.started_toast': 'Kemas ulang dimulai', 'rk.busy_title2': 'Kemasan ini sedang dikemas',
+  'rk.busy2': '{name} sedang mengemas {bulk} {q} {u} → {pack} (mulai {time}). Manajer mengonfirmasi hasilnya dulu — jangan dikemas dua kali.',
+  'rk.open_title': 'Sedang dikemas', 'rk.plan_n': 'rencana {n} {u}', 'rk.fin_by': 'dimulai {name}, {time}', 'rk.wait_mgr': 'menunggu konfirmasi manajer', 'rk.fin_btn': 'Konfirmasi hasil',
+  'rk.fin_title': 'Konfirmasi hasil kemas ulang', 'rk.fin_plan': 'Rencana {n} {pu} ({s} {u} per {pu})', 'rk.fin_made': 'Kemasan yang jadi', 'rk.fin_rem': 'Sisa curah (kembali ke stok)',
+  'rk.fin_cancel': 'Batalkan', 'rk.fin_ok': 'Konfirmasi', 'rk.fin_short': 'Kurang {n} {pu} dari rencana', 'rk.fin_need': 'Isi jumlah kemasan yang jadi (atau batalkan)',
+  'rk.fin_rem_bad': 'Sisa curah 0 sampai {q} {u}', 'rk.fin_cancel_q': 'Batalkan kemas ulang ini? {q} {u} {name} kembali ke stok, tidak ada kemasan yang dibuat.',
+  'rk.fin_saved': 'Hasil kemas ulang dikonfirmasi', 'rk.fin_cancelled': 'Kemas ulang dibatalkan'
+});
+Object.assign(I18N.ar, {
+  'rk.hint': 'اختر السائب، ثم العبوة، واكتب كمية السائب: يُحسب عدد العبوات مباشرة. يخرج السائب من المخزون عند البدء؛ وبعد الانتهاء يؤكد المدير العبوات الناتجة والسائب المتبقي.',
+  'rk.hint_mgr': 'اختر السائب، ثم العبوة، واكتب كمية السائب. بعد الانتهاء أكّد العبوات الناتجة والسائب المتبقي في «قيد التعبئة». يصل إشعار للمالك والمحاسب.',
+  'rk.more_s': 'سائب ← عبوات صغيرة (يؤكد المدير النتيجة)',
+  'rk.f_bulk': 'الصنف السائب (الكبير)', 'rk.f_pack': 'العبوة الصغيرة (الناتج)', 'rk.f_amount': 'كمية السائب التي تُعبّأ', 'rk.start': 'ابدأ التعبئة',
+  'rk.bulk_ph': 'اكتب اسم السائب، مثل تمر عجوة', 'rk.pack_ph': 'اكتب اسم العبوة', 'rk.no_match': 'لا يوجد تطابق',
+  'rk.n_packs': '{n} عبوات', 'rk.pk_sub': '{s} {u} لكل {pu} · المخزون {st}',
+  'rk.calc_empty': 'اختر السائب والعبوة، ثم اكتب كمية السائب.', 'rk.calc_packs': '{n} {u}', 'rk.calc_left': 'يتبقى {q} {u} (أقل من عبوة واحدة)',
+  'rk.calc_less': 'أقل من كمية عبوة واحدة ({s} {u})', 'rk.pick_bulk': 'اختر الصنف السائب أولًا',
+  'rk.started': 'بدأت التعبئة: {from} ← {name} (المخطط {n})', 'rk.started_hint': 'بعد الانتهاء يؤكد المدير عدد العبوات الناتجة.', 'rk.started_mgr': 'بعد الانتهاء أكّد النتيجة في «قيد التعبئة».',
+  'rk.started_toast': 'بدأت إعادة التعبئة', 'rk.busy_title2': 'هذه العبوة قيد التعبئة الآن',
+  'rk.busy2': '{name} يعبّئ {bulk} {q} {u} ← {pack} (بدأ {time}). يؤكد المدير النتيجة أولًا — لا تعبّئ مرتين.',
+  'rk.open_title': 'قيد التعبئة', 'rk.plan_n': 'المخطط {n} {u}', 'rk.fin_by': 'بدأها {name}، {time}', 'rk.wait_mgr': 'بانتظار تأكيد المدير', 'rk.fin_btn': 'تأكيد النتيجة',
+  'rk.fin_title': 'تأكيد نتيجة إعادة التعبئة', 'rk.fin_plan': 'المخطط {n} {pu} ({s} {u} لكل {pu})', 'rk.fin_made': 'العبوات الناتجة', 'rk.fin_rem': 'السائب المتبقي (يعود للمخزون)',
+  'rk.fin_cancel': 'إلغاء', 'rk.fin_ok': 'تأكيد', 'rk.fin_short': 'أقل من المخطط بـ {n} {pu}', 'rk.fin_need': 'اكتب عدد العبوات الناتجة (أو ألغِ)',
+  'rk.fin_rem_bad': 'السائب المتبقي من 0 إلى {q} {u}', 'rk.fin_cancel_q': 'إلغاء إعادة التعبئة هذه؟ يعود {q} {u} من {name} إلى المخزون ولا تُصنع عبوات.',
+  'rk.fin_saved': 'تم تأكيد نتيجة إعادة التعبئة', 'rk.fin_cancelled': 'أُلغيت إعادة التعبئة'
 });
 /* ========== Boot ========== */
 /* ========== Trial links (?demo=1 / ?mock=1) can be closed by the owner ==========

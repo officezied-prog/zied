@@ -1,6 +1,7 @@
 // v48 (owner 2026-10-14: «اجعل للمدير له خانات يمكن ان يضيفها للتكلفة التعبية»): the manager lists a pack's materials (sticker, lid, jar …)
 // with their cost per pack in the owner app; the cashier's repack form shows their NAMES (never the prices) and the server adds
 // materials × packs to the pack's cost. The typed field is now "Biaya lain" (other, optional).
+// v50: the cashier starts the repack (bulk first; its only pack is chosen by itself); the cost is added when the manager confirms.
 const { test, expect } = require('@playwright/test');
 const H = require('./helpers');
 
@@ -16,25 +17,37 @@ const ADD = `
     repack_costs: JSON.stringify([{ n: 'Toples', c: 2500 }, { n: 'Stiker', c: 400 }, { n: 'Tutup segel', c: 600 }]) }, base));
 `;
 
-test("cashier: the materials' names show (no prices); the repack carries materials × packs in its cost", async ({ page }) => {
+test("cashier: the materials' names show (no prices); the confirmed repack carries materials × packs in its cost", async ({ page, context }) => {
   await H.openKasir(page);
   await H.setDb(page, ADD);
   await H.login(page, 'Siti', '1111', { noGoto: true });
-  const db0 = await H.getDb(page), pk = db0.products.find(p => p.sku === 'RCP1');
+  const db0 = await H.getDb(page), pk = db0.products.find(p => p.sku === 'RCP1'), bulk = db0.products.find(p => p.sku === 'RCB1');
   await H.tab(page, 'more');
   await page.click('#m-repack');
   await expect(page.locator('#repack')).toBeVisible();
-  await page.selectOption('#rk-to', String(pk.id));
+  await H.pick(page, 'rk-bulk', 'sukari', bulk.id);
+  await expect(page.locator('#rk-pack')).toHaveAttribute('data-value', String(pk.id)); // its only pack
   await expect(page.locator('#rk-mats')).toHaveText('Bahan kemasan: Toples, Stiker, Tutup segel (biayanya dihitung otomatis)');
   await expect(page.locator('#rk-mats')).not.toContainText('Rp');
   await expect(page.locator('label[for="rk-cost"]')).toContainText('Biaya lain');
-  await page.fill('#rk-qty', '6');
+  await page.fill('#rk-amount', '3');
+  await expect(page.locator('#rk-planned')).toHaveAttribute('data-planned', '6');
   await H.shot(page, 'phone-repack-materials', false, { noToasts: true });
   await page.click('#rk-ok');
   await expect(page.locator('#rk-done')).toBeVisible();
+  // the manager confirms the 6 packs on her phone
+  const p2 = await H.otherPhone(context);
+  await H.login(p2, 'Jihan', '2222');
+  await H.tab(p2, 'more');
+  await p2.click('#m-repack');
+  await p2.locator('#rk-open-list [data-act="rk-fin"]').click();
+  await expect(p2.locator('#rkf-made')).toHaveValue('6');
+  await expect(p2.locator('#rkf-rem')).toHaveValue('0');
+  await p2.click('#rkf-ok');
+  await expect(p2.locator('.toast.ok', { hasText: 'Hasil kemas ulang dikonfirmasi' })).toBeVisible();
   const db = await H.getDb(page);
   const rp = db.repacks.slice(-1)[0];
-  expect(rp).toMatchObject({ user: 'Siti', to_qty: 6, from_qty: 3, materials_cost: 21000, packaging_cost: 21000 });
+  expect(rp).toMatchObject({ started_by: 'Siti', confirmed_by: 'Jihan', status: 'selesai', to_qty: 6, from_qty: 3, materials_cost: 21000, packaging_cost: 21000 });
   expect(rp.unit_cost).toBe(Math.round((3 * 60000 + 21000) / 6));
   // the cashier's own product list never carries the prices of the materials
   const names = await page.evaluate(id => JSON.parse(S.products.find(p => p.id === id).repack_costs), pk.id);
