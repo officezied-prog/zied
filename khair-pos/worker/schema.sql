@@ -285,7 +285,16 @@ CREATE TABLE IF NOT EXISTS pos_repacks (
   approved_by TEXT,
   request_id TEXT,
   client_id TEXT,
-  materials_cost REAL
+  materials_cost REAL,
+  status TEXT,
+  planned_qty REAL,
+  planned_from_qty REAL,
+  remaining_qty REAL,
+  bulk_cost REAL,
+  started_by TEXT,
+  started_at TEXT,
+  confirmed_by TEXT,
+  confirmed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pos_repacks_repack_date ON pos_repacks (repack_date);
 

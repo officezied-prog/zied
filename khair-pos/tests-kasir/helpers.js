@@ -134,4 +134,11 @@ async function fillPuExp(page, date = '2027-06-01') {
   for (let i = 0; i < n; i++) await page.locator(`[data-pu-exp="${i}"]`).fill(date);
 }
 
-module.exports = { otherPhone, pickCarrier, presetDeviceConsent, rp, sha, SHOTS, shot, PHONE, TABLET, openKasir, enterKey, typePin, login, getDb, setDb, productByName, addItem, confirmQty, openCart, pay, photoFile, closeModals, tab, fillPuExp };
+/** v50 "type to find" picker (shared/pick.js): type text in #<id>-q, tap the option for `value`, check it is chosen. */
+async function pick(page, id, text, value) {
+  if (await page.locator(`#${id}-v`).isVisible()) await page.locator(`#${id}-v .kp-l`).click();
+  await page.fill(`#${id}-q`, text);
+  await page.locator(`#${id}-list [data-pick="${value}"]`).click();
+  await expect(page.locator('#' + id)).toHaveAttribute('data-value', String(value));
+}
+module.exports = { pick, otherPhone, pickCarrier, presetDeviceConsent, rp, sha, SHOTS, shot, PHONE, TABLET, openKasir, enterKey, typePin, login, getDb, setDb, productByName, addItem, confirmQty, openCart, pay, photoFile, closeModals, tab, fillPuExp };

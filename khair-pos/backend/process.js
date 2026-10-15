@@ -237,6 +237,8 @@ const DEFAULT_SETTINGS = {
   bank_accounts: [],
   invoice_due_days: 14,
   akuntan_sees_cost: false,
+  // v50: the packaging materials list (name + price per piece) the manager keeps; a pack's materials are chosen from it
+  repack_materials: [],
   // v37 (owner 2026-10-12: «الكميات التي يتم جردها آخر كل شهرين»): a FULL stock count every N days (owner or manager sets 7–180).
   opname_every_days: 60
 };
@@ -667,6 +669,8 @@ function opnameProgress(lines, byName) {
 // Settings for the apps: the cycle's product id list stays on the server (only its size goes out).
 function settingsOut() {
   const st = readSettings(), os = opnameState();
+  // v50: the materials list carries prices (costs): the cashier / rep get the names only
+  st.repack_materials = matCatalog().map(function (x) { return ['owner', 'manager', 'akuntan'].indexOf(role) >= 0 ? { n: x.name, c: x.cost } : { n: x.name }; });
   if (Object.keys(os).length) {
     const o = Object.assign({}, os);
     o.counted_n = Array.isArray(o.counted) ? o.counted.length : 0;
@@ -996,11 +1000,44 @@ const REPACK_RECENT_MS = 2 * 3600000;
 // setup and stored on the pack product (repack_costs, JSON [{n, c}]). Every repack adds them × packs made to the packaging cost,
 // so the pack's cost price carries them; anything else (a one-off cost) is still typed in the repack form.
 const REPACK_COSTS_MAX = 12;
+// v50 (owner 2026-10-15: «عندما نختار مثلا الستيكر أو التوبليس … لا يمكن كتابة شيء بعد كلمة توبليس أو ستيكر … فهي تكون عنصر للاختيار بس
+// وليس مكان للكتابة»): the materials are a LIST the manager keeps (setting repack_materials [{n, c}] = name + price per piece); a
+// pack's materials are CHOSEN from it with how many pieces go in one pack ([{n, q, c}], c = price × q when saved). The cost of a
+// material on the list always follows the list's price; a v48 line typed before the list ({n, c}) keeps its own cost.
+const REPACK_MAT_MAX = 60;
+var matCache = null; // read once per request (the settings do not change while it runs)
+function matCatalog() {
+  if (matCache) return matCache;
+  const a = readSettings().repack_materials;
+  matCache = (Array.isArray(a) ? a : []).map(function (x) { return { name: str(x && x.n).slice(0, 40), cost: Math.max(0, money(x && x.c)) }; })
+    .filter(function (x) { return x.name; }).slice(0, REPACK_MAT_MAX);
+  return matCache;
+}
+function matPrice(name) { const k = str(name).toLowerCase(); const m = matCatalog().find(function (x) { return x.name.toLowerCase() === k; }); return m ? m.cost : null; }
 function repackCostsOf(p) {
   let a = [];
   try { a = JSON.parse(str(p && p.repack_costs) || '[]'); } catch (e) { a = []; }
-  return (Array.isArray(a) ? a : []).map(function (x) { return { name: str(x && x.n).slice(0, 40), cost: Math.max(0, money(x && x.c)) }; })
-    .filter(function (x) { return x.name; }).slice(0, REPACK_COSTS_MAX);
+  return (Array.isArray(a) ? a : []).map(function (x) {
+    const name = str(x && x.n).slice(0, 40), q = num(x && x.q) > 0 ? Math.round(num(x.q) * 1000) / 1000 : 1, price = matPrice(name);
+    return { name: name, qty: q, cost: price === null ? Math.max(0, money(x && x.c)) : Math.round(price * q) };
+  }).filter(function (x) { return x.name; }).slice(0, REPACK_COSTS_MAX);
+}
+/** v50: a pack's materials chosen from the list ([{name, qty}]) → the stored JSON, or {error}. */
+function repackMatsIn(list) {
+  if (!Array.isArray(list)) return { error: 'Daftar bahan kemasan tidak valid' };
+  const cat = matCatalog(), out = [];
+  for (let i = 0; i < list.length; i++) {
+    const x = list[i] || {}, k = str(x.name).toLowerCase();
+    if (!k) continue;
+    const m = cat.find(function (c) { return c.name.toLowerCase() === k; });
+    if (!m) return { error: 'Bahan "' + str(x.name).slice(0, 40) + '" tidak ada di daftar bahan kemasan — tambahkan dulu ke daftar' };
+    const q = x.qty === undefined || x.qty === null || x.qty === '' ? 1 : Number(x.qty);
+    if (!isFinite(q) || q <= 0 || q > 1000) return { error: 'Jumlah ' + m.name + ' per kemasan tidak valid' };
+    if (out.some(function (o) { return o.n.toLowerCase() === k; })) return { error: m.name + ' dipilih dua kali' };
+    out.push({ n: m.name, q: Math.round(q * 1000) / 1000, c: Math.round(m.cost * q) });
+  }
+  if (out.length > REPACK_COSTS_MAX) return { error: 'Paling banyak ' + REPACK_COSTS_MAX + ' bahan kemasan' };
+  return { json: out.length ? JSON.stringify(out) : '', list: out };
 }
 function repackCostPer(p) { return repackCostsOf(p).reduce(function (t, x) { return t + x.cost; }, 0); }
 /** The manager's list → the stored JSON ('' = none), or {error}. Empty rows are skipped. */
@@ -1022,7 +1059,7 @@ function rpTxt(v) { return 'Rp ' + String(Math.round(Math.abs(num(v)))).replace(
 function repackCostsText(list, unit) {
   if (!list.length) return 'tanpa bahan kemasan';
   const tot = list.reduce(function (t, x) { return t + num(x.c !== undefined ? x.c : x.cost); }, 0);
-  return 'bahan kemasan per ' + (unit || 'pcs') + ': ' + list.map(function (x) { return str(x.n || x.name) + ' ' + rpTxt(x.c !== undefined ? x.c : x.cost); }).join(' + ') + ' = ' + rpTxt(tot);
+  return 'bahan kemasan per ' + (unit || 'pcs') + ': ' + list.map(function (x) { const q = num(x.q !== undefined ? x.q : x.qty); return str(x.n || x.name) + (q > 0 && q !== 1 ? ' x' + fmtN(q) : '') + ' ' + rpTxt(x.c !== undefined ? x.c : x.cost); }).join(' + ') + ' = ' + rpTxt(tot);
 }
 /** The pack product, its bulk product and the quantities (packs made; bulk used = packs × size unless typed). */
 function repackPlan(toId, toQtyIn, fromQtyIn) {
@@ -1077,6 +1114,8 @@ function applyRepack(P, o) {
   if (role !== 'owner') { delete out.unit_cost; delete out.packaging_cost; delete out.materials_cost; }
   return { rp: rp, out: out, stock: stock };
 }
+/** v50: a repack row as each role may see it (the cost figures are the owner's). */
+function repackOut(r) { const o = clean(r); if (role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; delete o.materials_cost; delete o.bulk_cost; } return o; }
 /** The pending repack request that holds the lock on this bulk product (one at a time). */
 function pendingRepackFor(fromId) { return approvalRows.find(function (a) { return a.kind === 'repack' && a.status === 'pending' && str(a.ref) === String(fromId); }) || null; }
 function repackBusy(p) {
@@ -1266,6 +1305,8 @@ switch (req.action) {
       customers: customers.map(clean),
       settings: settingsOut(),
       opname: opnameStatus(),
+      // v50: the repacks being packed now (started, not yet confirmed by the manager)
+      repacks_open: ['owner', 'manager', 'kasir', 'akuntan'].indexOf(role) >= 0 ? rows('Get Open Repacks').map(repackOut) : [],
       users: users.map(function (u) { return role === 'owner' ? { name: u.name, role: u.role, active: u.active !== false, must_change: u.must_change === true, locked: Date.parse(u.locked_until) > Date.now(), tamper: isLocked(u.name), has_master: u.role === 'owner' && isHash(u.master_hash) } : { name: u.name, role: u.role, active: u.active !== false }; }),
       via_master: viaMaster, must_change: me.must_change === true && !viaMaster,
       shift: shiftOut(myShift),
@@ -1622,6 +1663,165 @@ switch (req.action) {
       (R.rp.yield_pct < 95 ? ' — PERHATIAN: hasil di bawah 95%' : '') + (data.confirm_recent === true ? ' — dikonfirmasi bukan kemas ulang ganda' : ''),
       R.rp.yield_pct < 95 ? 'warn' : 'info');
     return done({ ok: true, repack: R.out, stock: R.stock });
+  }
+
+  case 'set_repack_materials': {
+    // v50 (owner 2026-10-15: «تضيف فيها كل المستلزمات من ستيكر وعلب وكل شيء»): the packaging materials list — name + price per
+    // piece — kept by the manager / owner. Packs choose their materials from it; a price changed here changes every pack's cost.
+    if (role !== 'owner' && role !== 'manager') return fail('FORBIDDEN', 'Hanya pemilik / manajer');
+    if (!Array.isArray(data.materials)) return fail('INVALID', 'Daftar bahan kemasan tidak valid');
+    const out = [];
+    for (let i = 0; i < data.materials.length; i++) {
+      const x = data.materials[i] || {}, raw = str(x.name);
+      if (!raw) continue;
+      const name = safeName(raw, 40);
+      if (!name) return fail('INVALID', 'Nama bahan kemasan hanya boleh huruf dan angka (maks. 40)');
+      const c = Number(x.cost === '' || x.cost === undefined || x.cost === null ? NaN : x.cost);
+      if (!isFinite(c) || c < 0 || c > 10000000) return fail('INVALID', 'Harga ' + name + ' per buah tidak valid');
+      if (out.some(function (o) { return o.n.toLowerCase() === name.toLowerCase(); })) return fail('INVALID', name + ' ada dua kali di daftar');
+      out.push({ n: name, c: Math.round(c) });
+    }
+    if (out.length > REPACK_MAT_MAX) return fail('INVALID', 'Paling banyak ' + REPACK_MAT_MAX + ' bahan kemasan');
+    const before = matCatalog(), ch = [];
+    out.forEach(function (x) { const b = before.find(function (y) { return y.name.toLowerCase() === x.n.toLowerCase(); }); if (!b) ch.push('+ ' + x.n + ' ' + rpTxt(x.c)); else if (b.cost !== x.c) ch.push(x.n + ' ' + rpTxt(b.cost) + ' → ' + rpTxt(x.c)); });
+    before.forEach(function (b) { if (!out.some(function (x) { return x.n.toLowerCase() === b.name.toLowerCase(); })) ch.push('− ' + b.name); });
+    if (!ch.length) return done({ ok: true, unchanged: true, materials: out });
+    const r0 = settingRows.find(function (r) { return r.skey === 'repack_materials'; });
+    ops.settings.push({ _id: r0 ? r0.id : -1, skey: 'repack_materials', svalue: JSON.stringify(out) });
+    const txt = 'Daftar bahan kemasan diubah (harga per buah): ' + ch.join('; ') + ' — oleh ' + (role === 'manager' ? 'manajer ' : 'pemilik ') + me.name;
+    logAct('atur_kemas', txt.slice(0, 1000), 'bahan', 0, 'info');
+    notify(['owner', 'manager', 'akuntan'].filter(function (r) { return r !== role; }), txt, 'info');
+    return done({ ok: true, materials: out });
+  }
+
+  case 'repack_start': {
+    // v50 (owner 2026-10-15: «تنطلق عملية التعبية باختيار العنصر الكبير … ثم الحاسوب يحسب مباشرة الكمية … وبعد عملية التعليب تقع الموافقة
+    // على الكمية التي تمت عن طريق المدير فإن كانت كمية أقل فيرجى كتابتها وكم الكمية اللي ما زالت»): a repack in two steps.
+    //  1. repack_start (cashier, manager, owner): the bulk and how much of it is taken out to pack (from_qty), the pack (already set
+    //     up from this bulk); the server works out the packs it should give (whole packs: from_qty ÷ size) and takes the bulk out of
+    //     stock at once (it is on the packing table now). The manager is told to confirm the result when the packing is done.
+    //  2. repack_finish (manager / owner): the packs really made and the bulk left over (back to the bulk's stock); the packs enter
+    //     the stock with their cost, the loss and the yield are recorded; the owner and the accountant are told.
+    // The same pack from the same bulk cannot be started twice before it is finished (two cashiers, one job).
+    if (['owner', 'manager', 'kasir'].indexOf(role) < 0) return fail('FORBIDDEN', 'Tidak diizinkan');
+    const cid = str(data.client_id).slice(0, 60);
+    const recent = rows('Get Recent Repacks'), open = rows('Get Open Repacks');
+    if (cid) {
+      const same = open.concat(recent).find(function (r) { return str(r.client_id) === cid; });
+      if (same) return done({ ok: true, duplicate: true, repack: repackOut(same) });
+    }
+    const bulk = productById[String(data.from_product_id)], to = productById[String(data.to_product_id)];
+    if (!bulk || bulk.active === false) return fail('NOT_FOUND', 'Produk curah tidak ditemukan');
+    if (!to || to.active === false) return fail('NOT_FOUND', 'Produk kemasan tidak ditemukan');
+    if (!(num(to.repack_from) > 0) || !(num(to.repack_qty) > 0)) return fail('INVALID', str(to.name) + ' belum diatur sebagai kemasan ulang (manajer mengaturnya dulu)');
+    if (Number(to.repack_from) !== Number(bulk.id)) return fail('INVALID', str(to.name) + ' dibuat dari ' + str((productById[String(to.repack_from)] || {}).name || '—') + ', bukan dari ' + str(bulk.name));
+    const pend = pendingRepackFor(bulk.id); // a cashier's v38 request still waiting for this bulk is decided (or cancelled) first
+    if (pend) return repackBusy(pend);
+    const size = num(to.repack_qty), fromQty = Math.round(num(data.from_qty) * 1000) / 1000;
+    if (!(fromQty > 0)) return fail('INVALID', 'Jumlah curah yang dikemas tidak valid');
+    if (fromQty > num(bulk.stock) + 1e-9) return fail('INVALID', 'Stok ' + str(bulk.name) + ' tidak cukup (' + fmtN(bulk.stock) + ' ' + str(bulk.unit) + ')');
+    const planned = Math.floor(fromQty / size + 1e-9);
+    if (planned < 1) return fail('INVALID', fmtN(fromQty) + ' ' + str(bulk.unit) + ' kurang dari isi satu kemasan (' + fmtN(size) + ' ' + str(bulk.unit) + ')');
+    const busy = open.find(function (r) { return Number(r.from_product_id) === Number(bulk.id) && Number(r.to_product_id) === Number(to.id); });
+    if (busy) {
+      Object.keys(ops).forEach(function (k) { ops[k] = []; });
+      return done({ ok: false, error: 'REPACK_BUSY',
+        message: str(busy.started_by || busy.user) + ' sedang mengemas ' + str(busy.from_name) + ' ' + fmtN(busy.from_qty) + ' ' + str(busy.from_unit) + ' → ' + str(busy.to_name) + ' (mulai ' + wibStamp(busy.started_at || busy.repack_time) + ', ' + str(busy.repack_id) + '). Selesaikan dulu: manajer mengonfirmasi hasilnya.',
+        busy: { repack_id: str(busy.repack_id), by: str(busy.started_by || busy.user), at: str(busy.started_at || busy.repack_time), from_name: str(busy.from_name), from_qty: num(busy.from_qty), from_unit: str(busy.from_unit), to_name: str(busy.to_name), planned: num(busy.planned_qty) } });
+    }
+    if (data.confirm_recent !== true) {
+      const last = recent.concat(open).filter(function (r) { return Number(r.from_product_id) === Number(bulk.id) && Date.now() - Date.parse(r.started_at || r.repack_time) < REPACK_RECENT_MS; })
+        .sort(function (a1, b1) { return String(a1.started_at || a1.repack_time).localeCompare(String(b1.started_at || b1.repack_time)); }).pop();
+      if (last) {
+        Object.keys(ops).forEach(function (k) { ops[k] = []; });
+        const lq = str(last.status) === 'proses' ? num(last.planned_qty) : num(last.to_qty);
+        return done({ ok: false, error: 'REPACK_RECENT',
+          message: str(last.started_by || last.user) + ' sudah mengemas ulang ' + str(last.from_name) + ' ' + fmtN(last.from_qty) + ' ' + str(last.from_unit) + ' → ' + str(last.to_name) + ' x' + fmtN(lq) + ' pada ' + wibStamp(last.started_at || last.repack_time) + ' (' + str(last.repack_id) + '). Kalau ini kemas ulang lain (bukan yang sama), tekan "Ya, ini kemas ulang baru".',
+          recent: { repack_id: str(last.repack_id), user: str(last.started_by || last.user), at: str(last.started_at || last.repack_time), from_name: str(last.from_name), from_qty: num(last.from_qty), from_unit: str(last.from_unit), to_name: str(last.to_name), to_qty: lq } });
+      }
+    }
+    const now = new Date().toISOString(), date = jkDate(), fromOld = num(bulk.stock), fromNew = Math.round((fromOld - fromQty) * 1000) / 1000;
+    ops.products.push(forWrite(Object.assign({}, bulk, { stock: fromNew }), bulk.id));
+    ops.guard.push({ type: 'stock_claim', product_id: bulk.id, from: fromOld, to: fromNew, from_name: str(bulk.name) });
+    const rp = {
+      repack_id: 'RP' + rand(6), repack_date: date, repack_time: now, user: me.name, status: 'proses',
+      from_product_id: bulk.id, from_name: str(bulk.name), from_unit: str(bulk.unit), from_qty: fromQty,
+      to_product_id: to.id, to_name: str(to.name), to_unit: str(to.unit), to_qty: 0, pack_size: size,
+      expected_qty: planned, planned_qty: planned, planned_from_qty: fromQty, yield_pct: 0, loss_qty: 0, remaining_qty: 0,
+      packaging_cost: Math.max(0, money(data.packaging_cost)), unit_cost: 0, materials_cost: 0, bulk_cost: money(bulk.cost_price),
+      exp_date: isDate(data.exp_date) ? data.exp_date : '', note: str(data.note).slice(0, 300),
+      requested_by: '', approved_by: '', request_id: '', client_id: cid, started_by: me.name, started_at: now, confirmed_by: '', confirmed_at: ''
+    };
+    ops.repacks.push(forWrite(rp, -1));
+    ops.purchases.push(forWrite({ purchase_date: date, supplier: 'KEMAS ULANG', product_id: bulk.id, name: str(bulk.name), qty: -fromQty, cost_price: money(bulk.cost_price), total: 0,
+      note: ('diambil untuk dikemas → ' + str(to.name) + ' (rencana ' + planned + ', ' + rp.repack_id + ') ' + rp.note).trim(), user: me.name, photo_id: '', exp_date: '' }, -1));
+    const who = { owner: 'pemilik', manager: 'manajer', kasir: 'kasir' }[role] || role;
+    const txt = 'Mulai kemas ulang oleh ' + who + ' ' + me.name + ' (' + wibStamp(now) + ', ' + rp.repack_id + '): ' + str(bulk.name) + ' ' + fmtN(fromQty) + ' ' + str(bulk.unit) +
+      ' diambil → ' + str(to.name) + ' (' + fmtN(size) + ' ' + str(bulk.unit) + ' per ' + str(to.unit || 'pcs') + ') = ' + planned + ' kemasan rencana' +
+      (Math.round((fromQty - planned * size) * 1000) / 1000 > 0 ? ', sisa ' + fmtN(Math.round((fromQty - planned * size) * 1000) / 1000) + ' ' + str(bulk.unit) : '') +
+      ' | stok ' + str(bulk.name) + ' ' + fmtN(fromOld) + ' → ' + fmtN(fromNew) + ' ' + str(bulk.unit) + (data.confirm_recent === true ? ' — dikonfirmasi bukan kemas ulang ganda' : '') +
+      '. Setelah selesai, manajer mengonfirmasi jumlah kemasan jadi.';
+    logAct('kemas_ulang', txt, rp.repack_id, 0, 'info');
+    notify(['owner', 'manager'].filter(function (r) { return r !== role; }), txt, 'info');
+    return done({ ok: true, repack: repackOut(rp), stock: [{ product_id: bulk.id, stock: fromNew }] });
+  }
+
+  case 'repack_finish': {
+    // v50 step 2 (see repack_start): the manager / owner confirms what the packing gave — packs made (to_qty) and the bulk left
+    // over (remaining_qty, back to the bulk's stock); cancel: nothing was packed, all of it goes back.
+    if (role !== 'owner' && role !== 'manager') return fail('FORBIDDEN', 'Hanya manajer / pemilik yang mengonfirmasi hasil kemas ulang');
+    const r = rows('Get Repack By Id').find(function (x) { return str(x.repack_id) === str(data.repack_id); });
+    if (!r) return fail('NOT_FOUND', 'Kemas ulang tidak ditemukan');
+    if (str(r.status) !== 'proses') return fail('INVALID', 'Kemas ulang ' + str(r.repack_id) + ' sudah ' + (str(r.status) === 'batal' ? 'dibatalkan' : 'dikonfirmasi') + (str(r.confirmed_by) ? ' oleh ' + str(r.confirmed_by) : ''));
+    const bulk = productById[String(r.from_product_id)], to = productById[String(r.to_product_id)];
+    if (!bulk || !to) return fail('NOT_FOUND', 'Produk curah / kemasan tidak ditemukan');
+    const F = num(r.from_qty), size = num(r.pack_size) > 0 ? num(r.pack_size) : num(to.repack_qty), cancel = data.cancel === true;
+    const made = cancel ? 0 : Math.round(num(data.to_qty) * 1000) / 1000;
+    const rem = cancel ? F : Math.round(num(data.remaining_qty) * 1000) / 1000;
+    if (!cancel && !(made > 0)) return fail('INVALID', 'Isi jumlah kemasan yang jadi (atau batalkan kemas ulang ini)');
+    if (!(rem >= 0) || rem > F + 1e-9) return fail('INVALID', 'Sisa curah harus antara 0 dan ' + fmtN(F) + ' ' + str(r.from_unit));
+    const used = Math.round((F - rem) * 1000) / 1000;
+    if (!cancel && !(used > 0)) return fail('INVALID', 'Tidak ada curah yang terpakai: periksa sisa curah');
+    if (made * size > used * 1.1 + 1e-9) return fail('INVALID', fmtN(made) + ' kemasan × ' + fmtN(size) + ' ' + str(r.from_unit) + ' lebih dari curah yang terpakai (' + fmtN(used) + ' ' + str(r.from_unit) + ')');
+    const matCost = Math.round(repackCostPer(to) * made), other = Math.max(0, money(r.packaging_cost)) + Math.max(0, money(data.packaging_cost));
+    const packCost = cancel ? 0 : other + matCost;
+    const bulkCost = num(r.bulk_cost) > 0 ? money(r.bulk_cost) : money(bulk.cost_price);
+    const unitCost = made > 0 ? Math.round((used * bulkCost + packCost) / made) : 0;
+    const expected = size > 0 ? Math.round(used / size * 1000) / 1000 : 0;
+    const yieldPct = expected > 0 ? Math.round(made / expected * 1000) / 10 : 0, loss = Math.round((used - made * size) * 1000) / 1000;
+    const now = new Date().toISOString(), date = jkDate(), stock = [];
+    if (rem > 0) {
+      const bOld = num(bulk.stock), bNew = Math.round((bOld + rem) * 1000) / 1000;
+      ops.products.push(forWrite(Object.assign({}, bulk, { stock: bNew }), bulk.id));
+      ops.guard.push({ type: 'stock_claim', product_id: bulk.id, from: bOld, to: bNew, from_name: str(bulk.name), plain: true });
+      ops.purchases.push(forWrite({ purchase_date: date, supplier: 'KEMAS ULANG', product_id: bulk.id, name: str(bulk.name), qty: rem, cost_price: bulkCost, total: 0,
+        note: (cancel ? 'kemas ulang dibatalkan, curah kembali (' : 'sisa curah dikembalikan (') + str(r.repack_id) + ')', user: me.name, photo_id: '', exp_date: '' }, -1));
+      stock.push({ product_id: bulk.id, stock: bNew });
+    }
+    let toCost = money(to.cost_price);
+    if (made > 0) {
+      const oldTo = Math.max(0, num(to.stock)), toNew = Math.round((num(to.stock) + made) * 1000) / 1000;
+      toCost = oldTo + made > 0 ? Math.round((oldTo * money(to.cost_price) + made * unitCost) / (oldTo + made)) : unitCost;
+      ops.products.push(forWrite(Object.assign({}, to, { stock: toNew, cost_price: toCost }), to.id));
+      ops.purchases.push(forWrite({ purchase_date: date, supplier: 'KEMAS ULANG', product_id: to.id, name: str(to.name), qty: made, cost_price: unitCost, total: 0,
+        note: ('dari ' + str(bulk.name) + ' ' + used + ' ' + str(bulk.unit) + ' (' + str(r.repack_id) + ', dikonfirmasi ' + me.name + ') ' + str(r.note)).trim(), user: me.name, photo_id: '', exp_date: str(r.exp_date) }, -1));
+      const so = { product_id: to.id, stock: toNew }; if (role === 'owner') so.cost_price = toCost; stock.push(so);
+    }
+    const nr = Object.assign({}, r, {
+      status: cancel ? 'batal' : 'selesai', repack_date: date, from_qty: used, to_qty: made, expected_qty: expected, yield_pct: yieldPct, loss_qty: cancel ? 0 : loss,
+      remaining_qty: rem, packaging_cost: packCost, materials_cost: cancel ? 0 : matCost, unit_cost: unitCost, confirmed_by: me.name, confirmed_at: now,
+      note: (str(r.note) + (str(data.note) ? (str(r.note) ? ' | ' : '') + str(data.note).slice(0, 200) : '')).slice(0, 500)
+    });
+    ops.repacks.push(forWrite(nr, r.id));
+    ops.guard.push({ type: 'repack_close', repack_id: str(r.repack_id) });
+    const by = (role === 'manager' ? 'manajer ' : 'pemilik ') + me.name, start = 'dimulai ' + str(r.started_by || r.user) + ' ' + wibStamp(r.started_at || r.repack_time);
+    const txt = cancel
+      ? 'Kemas ulang DIBATALKAN oleh ' + by + ' (' + str(r.repack_id) + ', ' + start + '): ' + str(r.from_name) + ' ' + fmtN(F) + ' ' + str(r.from_unit) + ' kembali ke stok curah, tidak ada ' + str(r.to_name) + ' yang dibuat.'
+      : 'Kemas ulang selesai, dikonfirmasi ' + by + ' (' + str(r.repack_id) + ', ' + start + '): ' + repackText(nr) + ' — rencana ' + fmtN(r.planned_qty) + ', jadi ' + fmtN(made) +
+        (rem > 0 ? '; sisa curah ' + fmtN(rem) + ' ' + str(r.from_unit) + ' kembali ke stok' : '') + (made < num(r.planned_qty) ? ' — KURANG ' + fmtN(Math.round((num(r.planned_qty) - made) * 1000) / 1000) + ' dari rencana' : '');
+    logAct('kemas_ulang', txt, str(r.repack_id), 0, cancel || yieldPct < 95 || made < num(r.planned_qty) ? 'warn' : 'info');
+    notify(['owner', 'manager', 'akuntan'].filter(function (x) { return x !== role; }), txt, cancel || yieldPct < 95 ? 'warn' : 'info');
+    return done({ ok: true, repack: repackOut(nr), stock: stock });
   }
 
   case 'cancel_repack': {
@@ -2485,7 +2685,8 @@ switch (req.action) {
     if (pk && bulk && num(bulk.repack_from) === num(pk.id)) return fail('INVALID', 'Produk curah itu sendiri dibuat dari produk ini');
     if (bulk && !(num(data.repack_qty) > 0)) return fail('INVALID', 'Isi per kemasan wajib diisi');
     const qty = bulk ? Math.round(num(data.repack_qty) * 1000) / 1000 : 0;
-    const cIn = data.costs === undefined ? null : repackCostsIn(data.costs);
+    // v50: materials chosen from the list ({name, qty}); `costs` (typed names + cost, v48 apps) still accepted
+    const cIn = data.materials !== undefined ? repackMatsIn(data.materials) : data.costs === undefined ? null : repackCostsIn(data.costs);
     if (cIn && cIn.error) return fail('INVALID', cIn.error);
     const who = ' — oleh ' + (role === 'manager' ? 'manajer ' : 'pemilik ') + me.name;
     const told = ['owner', 'manager', 'akuntan'].filter(function (r) { return r !== role; });
@@ -2522,7 +2723,7 @@ switch (req.action) {
     const sameSetup = (was ? was.id : 0) === (bulk ? bulk.id : 0) && wasQty === qty;
     let txt = bulk ? (sameSetup ? 'Biaya kemasan diubah: ' + str(pk.name) : 'Kemas ulang diatur: ' + str(pk.name) + ' dibuat dari ' + desc(bulk, qty, pk.unit) + (was ? ' (sebelumnya ' + desc(was, wasQty, pk.unit) + ')' : ''))
       : 'Kemas ulang dihapus: ' + str(pk.name) + ' tidak lagi dibuat dari ' + (was ? str(was.name) : '—');
-    if (bulk && costs !== wasCosts) txt += '; ' + repackCostsText(cIn ? cIn.list : [], pk.unit) + (wasCosts ? ' (sebelumnya ' + repackCostsText(repackCostsOf(pk).map(function (x) { return { n: x.name, c: x.cost }; }), pk.unit) + ')' : '');
+    if (bulk && costs !== wasCosts) txt += '; ' + repackCostsText(cIn ? cIn.list : [], pk.unit) + (wasCosts ? ' (sebelumnya ' + repackCostsText(repackCostsOf(pk).map(function (x) { return { n: x.name, q: x.qty, c: x.cost }; }), pk.unit) + ')' : '');
     txt += who;
     logAct('atur_kemas', txt, String(pk.id), 0, 'info');
     notify(told, txt, 'info');
@@ -3263,7 +3464,7 @@ switch (req.action) {
       purchases: rows('Get Range Purchases').map(function (r) { const o = strip(r, role); if (!costOk()) delete o.total; return o; }),
       expenses: rows('Get Range Expenses').map(clean),
       shifts: rows('Get Range Shifts').map(clean),
-      repacks: rows('Get Range Repacks').map(function (r) { const o = clean(r); if (role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; delete o.materials_cost; } return o; })
+      repacks: rows('Get Range Repacks').map(repackOut)
     });
   }
 

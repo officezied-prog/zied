@@ -4,7 +4,7 @@
 // owner, the manager and the accountant as a notice with the stock before → after; the same bulk repacked again within 2 h is confirmed
 // first (no double recording); a v38 request still pending is finished by the manager / accountant.
 const { test, expect } = require('@playwright/test');
-const { login, openApp, enterKey, staffSession, getDb, productByName, nav, editDb, asUser } = require('./helpers');
+const { login, openApp, enterKey, staffSession, getDb, productByName, nav, editDb, asUser, pick } = require('./helpers');
 
 const fq = n => new Intl.NumberFormat('id-ID', { maximumFractionDigits: 3 }).format(n);
 const r3 = n => Math.round(n * 1000) / 1000;
@@ -44,7 +44,7 @@ test('v39 a cashier repacks directly: stock moves at once; the owner, manager an
   // the history in Gudang → Kemas ulang names the cashier
   await nav(page, 'gudang');
   await page.click('#gd-tabs [data-tab="repack"]');
-  await expect(page.locator('#view-gudang')).toContainText('Kasir juga mengemas langsung di aplikasi kasir');
+  await expect(page.locator('#view-gudang')).toContainText('manajer mengonfirmasi kemasan yang jadi');
   await expect(page.locator(`#rp-hist tr[data-rp="${r.repack.repack_id}"]`)).toContainText('Siti');
 });
 
@@ -68,9 +68,11 @@ test('v39 no double recording: the same bulk repacked again within 2 h asks firs
   // the manager in Gudang → Kemas ulang: the same question, then confirmed
   await nav(page, 'gudang');
   await page.click('#gd-tabs [data-tab="repack"]');
-  await page.selectOption('#rp-to', String(p250.id));
-  await page.fill('#rp-qty', '2');
-  await page.click('#rp-save');
+  await pick(page, 'rp-bulk', 'rabia curah', bulk.id);
+  await pick(page, 'rp-pack', 'kemas 250', p250.id);
+  await page.fill('#rp-amount', '0,5');
+  await expect(page.locator('#rp-planned')).toHaveAttribute('data-planned', '2');
+  await page.click('#rp-start');
   await expect(page.locator('#rp-recent')).toContainText('Siti sudah mengemas ulang ' + bulk.name);
   await expect(page.locator('#rp-recent')).toContainText('Jangan dicatat dua kali');
   expect(productByName(await getDb(page), /Kurma Rabia Curah/).stock).toBe(r3(bulk.stock - 2));
@@ -79,8 +81,8 @@ test('v39 no double recording: the same bulk repacked again within 2 h asks firs
   const db = await getDb(page);
   expect(productByName(db, /Kurma Rabia Curah/).stock).toBe(r3(bulk.stock - 2.5));
   const n = db.activity.filter(a => a.kind === 'notifikasi').slice(-1)[0];
-  expect(n).toMatchObject({ ref: 'owner,akuntan', user: 'Jihan' });
-  expect(n.summary).toMatch(/^Kemas ulang oleh manajer Jihan .*dikonfirmasi bukan kemas ulang ganda/);
+  expect(n).toMatchObject({ ref: 'owner', user: 'Jihan' }); // v50: started (the bulk is out); the result is confirmed afterwards
+  expect(n.summary).toMatch(/^Mulai kemas ulang oleh manajer Jihan .*dikonfirmasi bukan kemas ulang ganda/);
 });
 
 test('v39 a v38 request still pending: the bulk waits for it, and the accountant finishes it from the management screens', async ({ page }) => {

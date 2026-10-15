@@ -137,6 +137,7 @@
 <script src="shared/chat-ui.js"></script>
 <script src="shared/tamper-guard.js"></script>
 <script src="shared/barcode-cam.js"></script>
+<script src="shared/pick.js"></script>
 <script src="shared/install-btn.js" data-host="#login:not([hidden]) .login-card"></script>
 <script src="shared/app-update.js"></script>
 <script src="mock.js"></script>
@@ -149,7 +150,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.8.0';
+const APP_VERSION = '2.8.1';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -780,6 +781,7 @@ function applyData(d) {
   if (Array.isArray(d.users) && S.inApp && S.user) { const me = d.users.find(u => u.name.toLowerCase() === S.user.toLowerCase()); if (me && (me.role === 'kasir' || me.role === 'sales') && S.role !== me.role) setTimeout(() => showKasirRedirect(S.user, me.role), 0); }
   if (Array.isArray(d.open_shifts)) S.openShifts = d.open_shifts;
   if (typeof d.ai_reader === 'boolean') S.aiReader = d.ai_reader; // v50: the photo reader (AI key in the Worker) on / off
+  if (Array.isArray(d.repacks_open)) S.repacksOpen = d.repacks_open; // v50: started repacks waiting for the manager's confirmation
   if (Array.isArray(d.activity_recent)) { ACTV.recent = d.activity_recent; if (S.inApp) updateActBadge(); }
   if (Array.isArray(d.notifications)) { S.notices = d.notifications; if (S.inApp) updateBell(); } // v38: role-addressed notices (bell)
   if (d.must_change === true && S.inApp && typeof showPinChange === 'function') setTimeout(() => showPinChange(), 0);
@@ -5739,7 +5741,7 @@ function gdDraw(full) {
   const err = GD.err ? `<div class="red small" style="margin-bottom:8px" role="alert">${esc(GD.err)}</div>` : '';
   if (GD.tab === 'list') { gdDrawList(body, err); return; }
   if (GD.tab === 'expiry') { body.innerHTML = err + gdExpiryHTML(); return; }
-  if (GD.tab === 'repack') { if (full || !$('#rp-form', body)) gdDrawRepack(body); else rpPreview(); return; }
+  if (GD.tab === 'repack') { if (full || !$('#rp-form', body)) gdDrawRepack(body); else rpRefresh(); return; }
   body.innerHTML = err + gdOverviewHTML();
 }
 
@@ -6668,207 +6670,450 @@ function gdGroupHead(g, rows, own) {
 }
 
 /* ========== Gudang: Kemas ulang (repacking in the shop) ========== */
-const RPK = { days: 30, pick: '', result: '' };
+/* v50 (owner 2026-10-15: «تنطلق عملية التعبية باختيار العنصر الكبير الصندوق الكبير ثم اختيار من القائمة العنصر الصغير أو كتابة عنصر جديد مع
+   إمكانية وجود خانة لإضافة تعليب صغير جديد … ثم الحاسوب يحسب مباشرة الكمية المطلوبة … وبعد عملية التعليب تقع الموافقة على الكمية التي تمت
+   عن طريق المدير فإن كانت كمية أقل فيرجى كتابتها وكم الكمية اللي ما زالت»; «يكون كل عنصر مرتبط بنفس الوحدة القياسية و نفس النوع … ولا يضع
+   الزيوت»; «إمكانية كتابة الكلمة كاملة ليس الحرف فقط»). The form starts from the BULK (type any word of its name), then the pack: the
+   packs made from this bulk, the products of the same kind (category) not packed yet, or a new pack — for those the manager sets the
+   size (in the bulk's unit) and the materials right here. The bulk amount gives the packs at once (whole packs + what is left over).
+   "Mulai kemas" takes the bulk out of stock; when the packing is done the manager confirms the packs really made and the bulk left over
+   ("Sedang dikemas" → "Konfirmasi hasil"); the owner and the accountant are told. */
+const RPK = { days: 30, bulk: '', pack: '', result: '', cid: '' };
 const packProducts = () => S.products.filter(p => p.active !== false && num(p.repack_from) > 0 && prodById(p.repack_from));
+const isBulkOfAny = p => packProducts().some(x => String(x.repack_from) === String(p.id));
+/* v43: the manager (and the owner) sets up which product is packed from which bulk; the server tells the owner and the accountant. */
+const canSetRepack = () => isOwner() || S.role === 'manager';
+/* v50 (owner 2026-10-15: «عندما نختار مثلا الستيكر أو التوبليس … لا يمكن كتابة شيء بعد كلمة توبليس أو ستيكر … فهي تكون عنصر للاختيار بس»):
+   the packaging materials are a LIST (name + price per piece) the manager keeps; a pack chooses its materials from it, with the pieces
+   per pack; their cost follows the list's price (server: repackCostsOf). A v48 line typed before the list keeps its own cost. */
+const matList = () => (Array.isArray((S.settings || {}).repack_materials) ? S.settings.repack_materials : []).map(x => ({ name: String((x && x.n) || '').trim(), cost: int(x && x.c) })).filter(x => x.name);
+const matPrice = n => { const k = String(n || '').toLowerCase(); const m = matList().find(x => x.name.toLowerCase() === k); return m ? m.cost : null; };
+const rpCostsOf = p => { let a = []; try { a = JSON.parse(String((p && p.repack_costs) || '') || '[]'); } catch (e) { a = []; } return (Array.isArray(a) ? a : []).map(x => { const name = String((x && x.n) || '').trim(), qty = num(x && x.q) > 0 ? roundQty(x.q) : 1, pr = matPrice(name); return { name, qty, cost: pr === null ? int(x && x.c) : Math.round(pr * qty) }; }).filter(x => x.name); };
+const rpCostPer = p => rpCostsOf(p).reduce((s, x) => s + x.cost, 0);
+function rsCostsLine(p) {
+  const c = rpCostsOf(p); if (!c.length) return '';
+  return t('rps.costs_line', { list: c.map(x => `${x.name}${x.qty !== 1 ? ' ×' + fmtQty(x.qty) : ''} ${fmtRp(x.cost)}`).join(' + '), rp: fmtRp(rpCostPer(p)), u: p.unit || 'pcs' });
+}
+/** Bulk products for the picker: the bulks already packed first, then (manager / owner) any product in stock that is not a pack. */
+function rpBulkItems() {
+  const packs = packProducts(), bulkIds = new Set(packs.map(p => String(p.repack_from))), own = canSetRepack();
+  return S.products.filter(p => p.active !== false && !(num(p.repack_from) > 0) && (bulkIds.has(String(p.id)) || (own && num(p.stock) > 0)))
+    .sort((a, b) => (bulkIds.has(String(b.id)) - bulkIds.has(String(a.id))) || String(a.name).localeCompare(String(b.name)))
+    .map(p => { const n = packs.filter(x => String(x.repack_from) === String(p.id)).length; return { id: String(p.id), label: p.name, keys: p.category || '', sub: `${t('stock')} ${fmtQty(p.stock)} ${p.unit || ''}${p.category ? ' · ' + p.category : ''}${n ? ' · ' + t('rp.n_packs', { n }) : ''}` }; });
+}
+/** Packs for a bulk: those made from it; for the manager / owner also the same-kind (category) products not packed yet. */
+function rpPackItems(b) {
+  if (!b) return [];
+  const cat = String(b.category || '').trim().toLowerCase();
+  const set = packProducts().filter(p => String(p.repack_from) === String(b.id)).sort((x, y) => num(y.repack_qty) - num(x.repack_qty))
+    .map(p => ({ id: String(p.id), label: p.name, sub: t('rp.pk_sub', { s: fmtQty(p.repack_qty), u: b.unit || '', pu: p.unit || 'pcs', st: fmtQty(p.stock) }) }));
+  const free = canSetRepack() && cat ? S.products.filter(p => p.active !== false && String(p.id) !== String(b.id) && !(num(p.repack_from) > 0) && String(p.category || '').trim().toLowerCase() === cat && !isBulkOfAny(p))
+    .sort((x, y) => String(x.name).localeCompare(String(y.name))).map(p => ({ id: String(p.id), label: p.name, rank: 1, sub: t('rp.pk_free', { pu: p.unit || 'pcs' }) })) : [];
+  return set.concat(free);
+}
+const rpPackExtra = () => (canSetRepack() ? [{ id: '__new', label: '＋ ' + t('rps.new_pack') }] : []);
+
+/* ---- the pack set-up block (size + materials; a new pack's name / price / unit / barcode), used in the form and in "Ubah" ---- */
+const PS = {};
+function psBlockHTML(px) {
+  return `<div id="${px}-new" class="rs-new" hidden style="border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin:0 0 10px">
+      <div class="small muted" style="margin-bottom:6px">${esc(t('rps.new_hint'))}</div>
+      <div class="grid2"><div class="field"><label class="f" for="${px}-n-name">${esc(t('rps.new_name'))}</label><input class="input" id="${px}-n-name" maxlength="80" autocomplete="off"></div>
+        <div class="field"><label class="f" for="${px}-n-price">${esc(t('rps.new_price'))}</label><input class="input num" id="${px}-n-price" inputmode="numeric" autocomplete="off"></div></div>
+      <div class="grid2"><div class="field"><label class="f" for="${px}-n-unit">${esc(t('rps.new_unit'))}</label><input class="input" id="${px}-n-unit" maxlength="15" placeholder="pcs" autocomplete="off"></div>
+        <div class="field"><label class="f" for="${px}-n-sku">${esc(t('rps.new_sku'))}</label><div class="row" style="gap:6px"><input class="input grow" id="${px}-n-sku" maxlength="40" autocomplete="off" style="min-width:0">${camOk() ? `<button type="button" class="icon-btn" id="${px}-n-sku-cam" style="flex:0 0 auto;width:42px;height:42px" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}">${ic('scan')}</button>` : ''}</div></div></div>
+    </div>
+    <div class="field"><label class="f" for="${px}-size">${esc(t('rps.qty'))} (<span id="${px}-unit">—</span>)</label><input class="input num" id="${px}-size" inputmode="decimal" autocomplete="off"></div>
+    <div class="field"><label class="f">${esc(t('rps.costs'))} <span class="small muted">— ${esc(t('rps.costs_hint2'))}</span></label><div id="${px}-mats"></div>
+      <div class="row wrap" style="gap:8px;margin-top:6px"><button type="button" class="btn xs" data-act="ps-mat-add" data-px="${px}" id="${px}-mat-add">＋ ${esc(t('rps.cost_add'))}</button><span class="grow"></span><b class="small" id="${px}-mat-total"></b></div>
+      <div id="${px}-newmat" class="rs-new" hidden style="border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-top:8px">
+        <div class="small muted" style="margin-bottom:6px">${esc(t('rpm.new_hint'))}</div>
+        <div class="grid2"><div class="field"><label class="f" for="${px}-nm-name">${esc(t('rpm.name'))}</label><input class="input" id="${px}-nm-name" maxlength="40" autocomplete="off"></div>
+          <div class="field"><label class="f" for="${px}-nm-price">${esc(t('rpm.price'))}</label><input class="input num" id="${px}-nm-price" inputmode="numeric" autocomplete="off"></div></div>
+        <div class="row" style="gap:8px;justify-content:flex-end"><button type="button" class="btn xs" data-act="ps-nm-x" data-px="${px}">${esc(t('cancel'))}</button><button type="button" class="btn xs primary" data-act="ps-nm-ok" data-px="${px}" id="${px}-nm-ok">${ic('check')} ${esc(t('rpm.add'))}</button></div>
+        <div class="red small" id="${px}-nm-err" role="alert"></div></div></div>`;
+}
+const matItems = () => matList().map(m => ({ id: m.name, label: m.name, sub: t('rpm.per_piece', { rp: fmtRp(m.cost) }) }));
+function psDraw(px) {
+  const S0 = PS[px], box = $('#' + px + '-mats'); if (!S0 || !box) return;
+  box.innerHTML = S0.rows.map((r, i) => `<div class="row ps-mat" data-i="${i}" style="gap:6px;margin-bottom:6px;align-items:flex-start"><div class="grow ps-mat-pick" id="${px}-m${i}" style="min-width:0"></div>
+    <input class="input num ps-mat-qty" inputmode="decimal" value="${esc(fmtQtyInput(r.qty || 1))}" aria-label="${esc(t('rpm.pieces'))}" title="${esc(t('rpm.pieces'))}" style="width:64px;flex:0 0 auto">
+    <span class="small num ps-mat-rp" style="width:86px;flex:0 0 auto;align-self:center;text-align:end"></span><button type="button" class="btn xs ghost" data-act="ps-mat-del" data-px="${px}" data-i="${i}" aria-label="${esc(t('rps.del'))}" style="align-self:center">✕</button></div>`).join('');
+  S0.rows.forEach((r, i) => {
+    KPick.mount($('#' + px + '-m' + i), { id: px + '-m' + i, items: matItems(), value: r.name || '', placeholder: t('rpm.pick_ph'), empty: t('rpm.none'), label: t('rps.cost_name'),
+      extra: [{ id: '__newmat', label: '＋ ' + t('rpm.new') }],
+      onChange: (id, it, typed) => {
+        if (id === '__newmat') { S0.line = i; const nb = $('#' + px + '-newmat'); nb.hidden = false; $('#' + px + '-nm-name').value = String(typed || '').slice(0, 40); $('#' + px + '-nm-price').value = ''; $('#' + px + '-nm-err').textContent = ''; $('#' + px + '-m' + i)._kpick.set(r.name || '', true); $('#' + (typed ? px + '-nm-price' : px + '-nm-name')).focus(); return; }
+        r.name = id; psTotal(px); if (S0.onInput) S0.onInput();
+      } });
+  });
+  box.querySelectorAll('.ps-mat-qty').forEach(inp => inp.addEventListener('input', () => { const i = +inp.closest('.ps-mat').dataset.i; S0.rows[i].qty = qtyVal(inp.value) || 0; psTotal(px); if (S0.onInput) S0.onInput(); }));
+  psTotal(px);
+}
+function psTotal(px) {
+  const S0 = PS[px]; if (!S0) return;
+  let tot = 0;
+  $$('#' + px + '-mats .ps-mat').forEach(row => { const r = S0.rows[+row.dataset.i] || {}, pr = r.name ? matPrice(r.name) : null, c = pr == null ? 0 : Math.round(pr * (num(r.qty) || 0)); tot += c; row.querySelector('.ps-mat-rp').textContent = r.name ? fmtRp(c) : ''; });
+  const el = $('#' + px + '-mat-total'); if (el) el.textContent = tot ? t('rps.cost_total', { u: S0.unit ? S0.unit() : 'pcs', rp: fmtRp(tot) }) : '';
+}
+/** Binds a pack set-up block. o: { pack (product or null for a new one), bulk, unit() (pack unit for the total line), onInput } */
+function psBind(px, o) {
+  PS[px] = { rows: o.pack ? rpCostsOf(o.pack).map(x => ({ name: x.name, qty: x.qty })) : [], line: -1, unit: o.unit, onInput: o.onInput };
+  const isNew = !o.pack;
+  $('#' + px + '-new').hidden = !isNew;
+  $('#' + px + '-unit').textContent = o.bulk ? (o.bulk.unit || '') : '—';
+  const sz = $('#' + px + '-size'); sz.value = o.pack && num(o.pack.repack_qty) > 0 ? fmtQtyInput(o.pack.repack_qty) : '';
+  sz.addEventListener('input', () => { if (o.onInput) o.onInput(); });
+  const pr = $('#' + px + '-n-price'); if (pr) pr.addEventListener('change', e => { const x = moneyVal(e.target.value); e.target.value = x ? fmtNum(x) : ''; });
+  const un = $('#' + px + '-n-unit'); if (un) un.addEventListener('input', () => psTotal(px));
+  const cam = $('#' + px + '-n-sku-cam'); if (cam) cam.onclick = () => cameraScan(code => { $('#' + px + '-n-sku').value = String(code || '').trim().slice(0, 40); });
+  const np = $('#' + px + '-nm-price'); if (np) np.addEventListener('change', e => { const x = moneyVal(e.target.value); e.target.value = x ? fmtNum(x) : ''; });
+  psDraw(px);
+}
+/** The set_repack request for this block, or {error}. */
+function psData(px, bulk, pack) {
+  const size = qtyVal($('#' + px + '-size').value || '');
+  if (!bulk) return { error: t('rp.pick_bulk') };
+  if (!(size > 0)) { $('#' + px + '-size').focus(); return { error: t('rps.need') }; }
+  const rows = PS[px].rows.filter(r => r.name);
+  if (PS[px].rows.some(r => r.name && !(num(r.qty) > 0))) return { error: t('rpm.qty_bad') };
+  const materials = rows.map(r => ({ name: r.name, qty: num(r.qty) || 1 }));
+  if (!pack) {
+    const name = String($('#' + px + '-n-name').value || '').trim(), price = moneyVal($('#' + px + '-n-price').value);
+    if (!name || !(price > 0)) { (name ? $('#' + px + '-n-price') : $('#' + px + '-n-name')).focus(); return { error: t('rps.new_need') }; }
+    return { new_product: { name, unit: String($('#' + px + '-n-unit').value || '').trim() || 'pcs', sku: String($('#' + px + '-n-sku').value || '').trim(), retail_price: price }, repack_from: Number(bulk.id), repack_qty: size, materials };
+  }
+  if (String(pack.id) === String(bulk.id)) return { error: t('rps.same') };
+  return { product_id: Number(pack.id), repack_from: Number(bulk.id), repack_qty: size, materials };
+}
+async function rpSetRepack(data) {
+  const r = await api('set_repack', data);
+  if (r.product) { upsertLocal(S.products, r.product); applyData({ products: S.products }); saveCache(); }
+  return r;
+}
+async function matSave(list) {
+  const r = await api('set_repack_materials', { materials: list.map(x => ({ name: x.name, cost: x.cost })) });
+  S.settings = Object.assign({}, S.settings || {}, { repack_materials: r.materials || [] }); saveCache();
+  return r;
+}
+Object.assign(ACT, {
+  'ps-mat-add': el => { const px = el.dataset.px, S0 = PS[px]; if (!S0) return; S0.rows.push({ name: '', qty: 1 }); psDraw(px); const h = $('#' + px + '-m' + (S0.rows.length - 1)); if (h && h._kpick) h._kpick.focus(); },
+  'ps-mat-del': el => { const px = el.dataset.px, S0 = PS[px]; if (!S0) return; S0.rows.splice(int(el.dataset.i), 1); psDraw(px); if (S0.onInput) S0.onInput(); },
+  'ps-nm-x': el => { const px = el.dataset.px; $('#' + px + '-newmat').hidden = true; if (PS[px]) PS[px].line = -1; },
+  'ps-nm-ok': async el => {
+    const px = el.dataset.px, S0 = PS[px], err = $('#' + px + '-nm-err'); if (!S0) return;
+    const name = String($('#' + px + '-nm-name').value || '').trim().replace(/\s+/g, ' '), price = moneyVal($('#' + px + '-nm-price').value);
+    if (!name) { err.textContent = t('rpm.name_need'); $('#' + px + '-nm-name').focus(); return; }
+    if (String($('#' + px + '-nm-price').value || '').trim() === '') { err.textContent = t('rpm.price_need'); $('#' + px + '-nm-price').focus(); return; }
+    const have = matList().find(m => m.name.toLowerCase() === name.toLowerCase());
+    el.disabled = true; err.textContent = '';
+    try {
+      if (!have) await matSave(matList().concat([{ name, cost: price }]));
+      const nm = have ? have.name : name;
+      if (S0.line >= 0 && S0.rows[S0.line]) S0.rows[S0.line].name = nm; else S0.rows.push({ name: nm, qty: 1 });
+      S0.line = -1; $('#' + px + '-newmat').hidden = true; psDraw(px); if (S0.onInput) S0.onInput();
+      toast(t(have ? 'rpm.exists' : 'rpm.added', { name: nm }), 'ok');
+    } catch (e) { err.textContent = errMsg(e); }
+    el.disabled = false;
+  }
+});
+
+/* ---- the tab ---- */
 function gdDrawRepack(body) {
   const own = isOwner(), packs = packProducts(), canSet = canSetRepack();
   const bulks = [...new Set(packs.map(p => String(p.repack_from)))].map(id => prodById(id)).filter(Boolean);
   body.innerHTML = `<p class="muted small" style="margin-top:0">${esc(t('rp.hint'))}</p>
     ${RPK.result ? `<div id="rp-result">${RPK.result}</div>` : ''}
     <div class="rgrid">
-      <div class="panel" id="rp-bulks"><h3>${ic('box')} ${esc(t('rp.bulks'))}</h3><div class="pb">${bulks.map(b => `<div class="rp-bulk" data-bulk="${esc(b.id)}" style="margin-bottom:10px">
+      <div class="card pad" id="rp-form"><h3 style="margin:0 0 10px;font-size:16px">${ic('repack')} ${esc(t('rp.form_title'))}</h3>
+        <div class="field"><label class="f" for="rp-bulk-q">1. ${esc(t('rp.f_bulk'))}</label><div id="rp-bulk"></div><div id="rp-bulk-info" class="small muted" style="margin-top:4px"></div></div>
+        <div class="field"><label class="f" for="rp-pack-q">2. ${esc(t('rp.f_pack'))}</label><div id="rp-pack"></div><div id="rp-pack-info" class="small muted" style="margin-top:4px"></div></div>
+        <div id="rp-setup-inline" hidden style="border-inline-start:3px solid var(--primary);padding-inline-start:10px;margin:0 0 10px">${psBlockHTML('rpi')}</div>
+        <div class="field"><label class="f" for="rp-amount">3. ${esc(t('rp.f_amount'))} (<span id="rp-unit">—</span>)</label><input class="input num" id="rp-amount" inputmode="decimal" autocomplete="off"></div>
+        <div class="rp-preview" id="rp-calc"></div>
+        <div class="grid2"><div class="field"><label class="f" for="rp-cost">${esc(t('rp.extra_cost'))} (Rp)</label><input class="input num" id="rp-cost" inputmode="numeric" placeholder="${esc(t('rp.extra_ph'))}"></div>
+          <div class="field"><label class="f" for="rp-exp">${esc(t('pu.exp'))}</label><input class="input" type="date" id="rp-exp"></div></div>
+        <div class="field"><label class="f" for="rp-note">${esc(t('notes'))}</label><input class="input" id="rp-note" maxlength="300"></div>
+        <div class="red" id="rp-err" role="alert"></div>
+        <button class="btn primary big block" id="rp-start" data-act="rp-start">${ic('check')} ${esc(t('rp.start'))}</button>
+        <div class="small muted" style="margin-top:6px">${esc(t('rp.start_hint'))}</div></div>
+      <div>
+        <div class="panel" id="rp-open"><h3>${ic('repack')} ${esc(t('rp.open_title'))}</h3><div class="pb" id="rp-open-body"></div></div>
+        <div class="panel" id="rp-bulks"><h3>${ic('box')} ${esc(t('rp.bulks'))}</h3><div class="pb">${bulks.map(b => `<div class="rp-bulk" data-bulk="${esc(b.id)}" style="margin-bottom:10px">
           <div class="row"><b class="grow">${esc(b.name)}</b><span class="num" data-bulk-stock>${esc(t('stock'))}: <b>${fmtQty(b.stock)}</b> ${esc(b.unit || '')}</span></div>
           <table class="tbl" style="margin-top:4px"><tbody>${packs.filter(p => String(p.repack_from) === String(b.id)).map(p => `<tr data-pack="${esc(p.id)}"><td>${esc(p.name)}<div class="small muted">${fmtQty(p.repack_qty)} ${esc(b.unit || '')} / ${esc(p.unit || 'pcs')}</div></td>
             <td class="r num">${fmtQty(p.stock)} ${esc(p.unit || '')}</td><td class="r small muted">${esc(t('rp.can_make', { n: fmtNum(Math.floor(Math.max(0, num(b.stock)) / num(p.repack_qty) + 1e-9)) }))}</td>
-            <td class="r"><button class="btn xs" data-act="rp-pick" data-id="${esc(p.id)}">${ic('repack')} ${esc(t('rp.make'))}</button></td></tr>`).join('')}</tbody></table></div>`).join('') || `<div class="muted">${esc(t(canSet ? 'rp.none_owner' : 'rp.none'))}</div>`}</div></div>
-      <div class="card pad" id="rp-form"><h3 style="margin:0 0 10px;font-size:16px">${ic('repack')} ${esc(t('rp.form_title'))}</h3>
-        <div class="field"><label class="f" for="rp-to">${esc(t('rp.pack_product'))}</label><select class="input" id="rp-to"><option value="">— ${esc(t('rp.pick'))} —</option>${packs.map(p => `<option value="${esc(p.id)}" ${String(RPK.pick) === String(p.id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
-        <div id="rp-info" class="small muted" style="margin:-4px 0 10px"></div>
-        <div class="grid2"><div class="field"><label class="f" for="rp-qty">${esc(t('rp.pieces'))}</label><input class="input num" id="rp-qty" inputmode="decimal" autocomplete="off"></div>
-          <div class="field"><label class="f" for="rp-from">${esc(t('rp.bulk_used'))} (<span id="rp-unit">—</span>)</label><input class="input num" id="rp-from" inputmode="decimal" autocomplete="off" placeholder="${esc(t('rp.auto'))}"></div></div>
-        <div class="grid2"><div class="field"><label class="f" for="rp-cost">${esc(t('rp.extra_cost'))} (Rp)</label><input class="input num" id="rp-cost" inputmode="numeric" placeholder="${esc(t('rp.extra_ph'))}"></div>
-          <div class="field"><label class="f" for="rp-exp">${esc(t('pu.exp'))}</label><input class="input" type="date" id="rp-exp"></div></div>
-        <div class="field"><label class="f" for="rp-note">${esc(t('notes'))}</label><input class="input" id="rp-note"></div>
-        <div class="rp-preview" id="rp-preview"></div><div class="red" id="rp-err" role="alert"></div>
-        <button class="btn primary big block" id="rp-save" data-act="rp-save">${ic('check')} ${esc(t('rp.save'))}</button></div>
+            <td class="r"><button class="btn xs" data-act="rp-pick" data-bulk="${esc(b.id)}" data-id="${esc(p.id)}">${ic('repack')} ${esc(t('rp.make'))}</button></td></tr>`).join('')}</tbody></table></div>`).join('') || `<div class="muted">${esc(t(canSet ? 'rp.none_owner' : 'rp.none'))}</div>`}</div></div>
+      </div>
     </div>
     ${canSet ? rsPanelHTML(packs) : ''}
     <div class="panel" id="rp-history"><h3 class="row wrap">${esc(t('rp.history'))}<span class="chips" style="margin-inline-start:auto;padding:0">${[7, 30, 90].map(n => `<button class="chip ${RPK.days === n ? 'on' : ''}" data-act="rp-days" data-n="${n}">${esc(t('gd.days', { n }))}</button>`).join('')}</span></h3><div class="pb" id="rp-hist-body"><div class="muted">${esc(t('loading'))}</div></div></div>`;
   const v = body;
-  ['#rp-to', '#rp-qty', '#rp-from'].forEach(id => $(id, v).addEventListener('input', rpPreview));
-  $('#rp-to', v).addEventListener('change', () => { RPK.pick = $('#rp-to').value; rpPreview(); });
+  RPK.bulkPick = KPick.mount($('#rp-bulk', v), { id: 'rp-bulk', items: rpBulkItems(), value: RPK.bulk, placeholder: t('rp.bulk_ph'), empty: t('rp.no_match'), label: t('rp.f_bulk'),
+    onChange: id => { RPK.bulk = id; RPK.pack = ''; rpPackSync(true); rpCalc(); if (id) RPK.packPick.focus(); } });
+  RPK.packPick = KPick.mount($('#rp-pack', v), { id: 'rp-pack', items: rpPackItems(prodById(RPK.bulk)), extra: RPK.bulk ? rpPackExtra() : [], value: RPK.pack, placeholder: t('rp.pack_ph'), empty: t('rp.no_pack'), label: t('rp.f_pack'),
+    onChange: (id, it, typed) => { RPK.pack = id; rpPackSync(false, typed); rpCalc(); const a = $('#rp-amount'); if (id && a && !id.startsWith('__')) a.focus(); } });
+  $('#rp-amount', v).addEventListener('input', rpCalc);
   $('#rp-cost', v).addEventListener('change', e => { const x = moneyVal(e.target.value); e.target.value = x ? fmtNum(x) : ''; });
   if (canSet) bindRsPanel(v);
-  rpPreview();
+  rpPackSync(false);
+  rpCalc(); rpDrawOpen();
   loadRepackHistory();
 }
-/* v43 (owner 2026-10-13: «اختيار البضائع لاعادة التعبئة للمواد يقوم بها المدير ليس المالك و يصل اشعار للمالك و المحاسب»):
-   the manager (and the owner) chooses which product is packed in the shop, from which bulk product and how much goes in one
-   pack — here in Gudang → Kemas ulang, no product form needed. The server tells the owner and the accountant. */
-const canSetRepack = () => isOwner() || S.role === 'manager';
-/* v48 (owner 2026-10-14: «في بعض الأحيان نقوم بتعبية منتج جديد مثلا نختار عبوة جديدة و ستيكر جديد … واجعل ايضا هناك مصاريف للتعبية
-   مثلا اختيار الستيكر الغطاء كثير اشياء فاجعل للمدير له خانات يمكن ان يضيفها للتكلفة التعبية»): the pack can be a NEW product made
-   right here (new jar + new sticker), and the pack's materials (sticker, lid, jar …) with their cost per pack are set here; every
-   repack adds them × packs made to the pack's cost (server: repackCostsOf). */
-const rpCostsOf = p => { let a = []; try { a = JSON.parse(String((p && p.repack_costs) || '') || '[]'); } catch (e) { a = []; } return (Array.isArray(a) ? a : []).map(x => ({ name: String((x && x.n) || '').trim(), cost: int(x && x.c) })).filter(x => x.name); };
-const rpCostPer = p => rpCostsOf(p).reduce((t, x) => t + x.cost, 0);
-const RS = { rows: [] };
-const RS_NAMES = ['Stiker', 'Label', 'Tutup', 'Toples', 'Botol', 'Plastik', 'Kotak', 'Box', 'Pita', 'Segel', 'Kardus'];
-function rsCostsLine(p) {
-  const c = rpCostsOf(p); if (!c.length) return '';
-  return t('rps.costs_line', { list: c.map(x => `${x.name} ${fmtRp(x.cost)}`).join(' + '), rp: fmtRp(rpCostPer(p)), u: p.unit || 'pcs' });
-}
-function rsPanelHTML(packs) {
-  const prods = S.products.filter(p => p.active !== false).slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  const opt = p => `<option value="${esc(p.id)}" data-unit="${esc(p.unit || '')}">${esc(p.name)}</option>`;
-  return `<div class="panel" id="rp-setup"><h3>${ic('gear')} ${esc(t('rps.title'))}</h3><div class="pb">
-    <p class="small muted" style="margin-top:0">${esc(t(isOwner() ? 'rps.hint_owner' : 'rps.hint'))}</p>
-    <div class="grid3">
-      <div class="field"><label class="f" for="rs-pack">${esc(t('rps.pack'))}</label><select class="input" id="rs-pack"><option value="">— ${esc(t('rp.pick'))} —</option><option value="__new">＋ ${esc(t('rps.new_pack'))}</option>${prods.map(opt).join('')}</select></div>
-      <div class="field"><label class="f" for="rs-bulk">${esc(t('rps.bulk'))}</label><select class="input" id="rs-bulk"><option value="">— ${esc(t('rp.pick'))} —</option>${prods.map(opt).join('')}</select></div>
-      <div class="field"><label class="f" for="rs-qty">${esc(t('rps.qty'))} (<span id="rs-unit">—</span>)</label><input class="input num" id="rs-qty" inputmode="decimal" autocomplete="off"></div>
-    </div>
-    <div id="rs-new" class="rs-new" hidden style="border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin:0 0 10px">
-      <div class="small muted" style="margin-bottom:6px">${esc(t('rps.new_hint'))}</div>
-      <div class="grid2"><div class="field"><label class="f" for="rs-n-name">${esc(t('rps.new_name'))}</label><input class="input" id="rs-n-name" maxlength="80" autocomplete="off"></div>
-        <div class="field"><label class="f" for="rs-n-price">${esc(t('rps.new_price'))}</label><input class="input num" id="rs-n-price" inputmode="numeric" autocomplete="off"></div></div>
-      <div class="grid2"><div class="field"><label class="f" for="rs-n-unit">${esc(t('rps.new_unit'))}</label><input class="input" id="rs-n-unit" maxlength="15" placeholder="pcs" autocomplete="off"></div>
-        <div class="field"><label class="f" for="rs-n-sku">${esc(t('rps.new_sku'))}</label><div class="row" style="gap:6px"><input class="input grow" id="rs-n-sku" maxlength="40" autocomplete="off" style="min-width:0">${camOk() ? `<button type="button" class="icon-btn" id="rs-n-sku-cam" style="flex:0 0 auto;width:42px;height:42px" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}">${ic('scan')}</button>` : ''}</div></div></div>
-    </div>
-    <div class="field" id="rs-costs-box"><label class="f">${esc(t('rps.costs'))} <span class="small muted">— ${esc(t('rps.costs_hint'))}</span></label>
-      <div id="rs-costs"></div>
-      <div class="row wrap" style="gap:8px;margin-top:6px"><button type="button" class="btn xs" data-act="rs-cost-add" id="rs-cost-add">＋ ${esc(t('rps.cost_add'))}</button><span class="grow"></span><b class="small" id="rs-cost-total"></b></div>
-      <datalist id="rs-cost-names">${RS_NAMES.map(n => `<option value="${esc(n)}">`).join('')}</datalist></div>
-    <div class="red" id="rs-err" role="alert"></div>
-    <div class="row" style="justify-content:flex-end"><button class="btn primary" id="rs-save" data-act="rs-save">${ic('check')} ${esc(t('rps.save'))}</button></div>
-    ${packs.length ? `<h4 style="margin:12px 0 6px">${esc(t('rps.list'))}</h4><table class="tbl" id="rs-list"><tbody>${packs.map(p => { const b = prodById(p.repack_from) || {}, cl = rsCostsLine(p); return `<tr data-rs="${esc(p.id)}"><td><b>${esc(p.name)}</b><div class="small muted">← ${esc(b.name || '')} · ${fmtQty(p.repack_qty)} ${esc(b.unit || '')} / ${esc(p.unit || 'pcs')}</div>${cl ? `<div class="small" data-rs-costs>${esc(cl)}</div>` : ''}</td>
-      <td class="r" style="white-space:nowrap"><button class="btn xs" data-act="rs-edit" data-id="${esc(p.id)}">${ic('edit')} ${esc(t('rps.edit'))}</button> <button class="btn xs danger" data-act="rs-del" data-id="${esc(p.id)}">${ic('trash')} ${esc(t('rps.del'))}</button></td></tr>`; }).join('')}</tbody></table>` : ''}
-  </div></div>`;
-}
-function rsUnit(v) { const pk = $('#rs-pack', v).value; return pk === '__new' ? (String($('#rs-n-unit', v).value || '').trim() || 'pcs') : ((prodById(pk) || {}).unit || 'pcs'); }
-function rsCostsRead(v) { return [...v.querySelectorAll('.rs-c-row')].map(r => ({ name: String(r.querySelector('.rs-c-name').value || '').trim(), cost: moneyVal(r.querySelector('.rs-c-cost').value) })); }
-function rsCostsTotal(v) {
-  const tot = rsCostsRead(v).reduce((a, x) => a + (x.cost || 0), 0), el = $('#rs-cost-total', v);
-  if (el) el.textContent = tot ? t('rps.cost_total', { u: rsUnit(v), rp: fmtRp(tot) }) : '';
-}
-function rsCostsDraw(v) {
-  const box = $('#rs-costs', v); if (!box) return;
-  box.innerHTML = RS.rows.map((r, i) => `<div class="row rs-c-row" data-i="${i}" style="gap:6px;margin-bottom:6px"><input class="input grow rs-c-name" list="rs-cost-names" maxlength="40" placeholder="${esc(t('rps.cost_name'))}" value="${esc(r.name || '')}" aria-label="${esc(t('rps.cost_name'))}" style="min-width:0">
-    <input class="input num rs-c-cost" inputmode="numeric" placeholder="Rp" value="${r.cost ? esc(fmtNum(r.cost)) : ''}" aria-label="Rp" style="width:120px;flex:0 0 auto"><button type="button" class="btn xs ghost" data-act="rs-cost-del" data-i="${i}" aria-label="${esc(t('rps.del'))}">✕</button></div>`).join('');
-  box.querySelectorAll('.rs-c-cost').forEach(inp => inp.addEventListener('change', () => { const x = moneyVal(inp.value); inp.value = x ? fmtNum(x) : ''; rsCostsTotal(v); }));
-  box.querySelectorAll('input').forEach(inp => inp.addEventListener('input', () => { RS.rows = rsCostsRead(v); $('#rs-err', v).textContent = ''; rsCostsTotal(v); }));
-  rsCostsTotal(v);
-}
-function bindRsPanel(v) {
-  const pack = $('#rs-pack', v), bulk = $('#rs-bulk', v), unit = () => { const o = bulk.selectedOptions[0]; $('#rs-unit', v).textContent = (o && o.value && o.dataset.unit) || '—'; };
-  RS.rows = [];
-  pack.addEventListener('change', () => {
-    const isNew = pack.value === '__new', p = isNew ? null : prodById(pack.value);
-    $('#rs-new', v).hidden = !isNew;
-    if (p && num(p.repack_from) > 0) { bulk.value = String(p.repack_from); $('#rs-qty', v).value = fmtQtyInput(p.repack_qty); }
-    RS.rows = p ? rpCostsOf(p).map(x => ({ name: x.name, cost: x.cost })) : isNew ? RS.rows : [];
-    if (isNew) { const nm = $('#rs-n-name', v); if (nm) nm.focus(); }
-    $('#rs-err', v).textContent = ''; unit(); rsCostsDraw(v);
-  });
-  bulk.addEventListener('change', () => { $('#rs-err', v).textContent = ''; unit(); });
-  $('#rs-qty', v).addEventListener('input', () => { $('#rs-err', v).textContent = ''; });
-  $('#rs-n-unit', v).addEventListener('input', () => rsCostsTotal(v));
-  $('#rs-n-price', v).addEventListener('change', e => { const x = moneyVal(e.target.value); e.target.value = x ? fmtNum(x) : ''; });
-  const cam = $('#rs-n-sku-cam', v); if (cam) cam.onclick = () => cameraScan(code => { $('#rs-n-sku', v).value = String(code || '').trim().slice(0, 40); });
-  rsCostsDraw(v);
-}
-async function rsSend(data, okMsg) {
-  const r = await api('set_repack', data);
-  if (r.product) { upsertLocal(S.products, r.product); applyData({ products: S.products }); saveCache(); }
-  toast(t(okMsg), 'ok'); RENDER.gudang();
-}
-Object.assign(ACT, {
-  'rs-edit': el => { const p = prodById(el.dataset.id), v = $('#rp-setup'); if (!p || !v) return; $('#rs-pack', v).value = String(p.id); $('#rs-pack', v).dispatchEvent(new Event('change')); v.scrollIntoView({ block: 'nearest' }); $('#rs-qty', v).focus(); },
-  'rs-del': async el => {
-    const p = prodById(el.dataset.id); if (!p) return;
-    if (!(await confirmBox(t('rps.del_q', { name: p.name }), { danger: true })).ok) return;
-    try { await rsSend({ product_id: p.id, repack_from: 0, repack_qty: 0 }, 'rps.deleted'); } catch (e) { toast(errMsg(e), 'err'); }
-  },
-  'rs-cost-add': () => { const v = $('#rp-setup'); if (!v) return; RS.rows = rsCostsRead(v).concat([{ name: '', cost: 0 }]); rsCostsDraw(v); const ins = v.querySelectorAll('.rs-c-name'); if (ins.length) ins[ins.length - 1].focus(); },
-  'rs-cost-del': el => { const v = $('#rp-setup'); if (!v) return; const rows = rsCostsRead(v); rows.splice(int(el.dataset.i), 1); RS.rows = rows; $('#rs-err', v).textContent = ''; rsCostsDraw(v); },
-  'rs-save': async () => {
-    const v = $('#rp-setup'); if (!v) return;
-    const err = $('#rs-err', v), pid = $('#rs-pack', v).value, bid = $('#rs-bulk', v).value, q = qtyVal($('#rs-qty', v).value || '');
-    if (!pid || !bid || !(q > 0)) { err.textContent = t('rps.need'); return; }
-    if (pid === bid) { err.textContent = t('rps.same'); return; }
-    const costs = rsCostsRead(v).filter(x => x.name || x.cost);
-    if (costs.some(x => !x.name)) { err.textContent = t('rps.cost_need_name'); return; }
-    const isNew = pid === '__new';
-    let data;
-    if (isNew) {
-      const name = String($('#rs-n-name', v).value || '').trim(), price = moneyVal($('#rs-n-price', v).value);
-      if (!name || !(price > 0)) { err.textContent = t('rps.new_need'); (name ? $('#rs-n-price', v) : $('#rs-n-name', v)).focus(); return; }
-      data = { new_product: { name, unit: String($('#rs-n-unit', v).value || '').trim() || 'pcs', sku: String($('#rs-n-sku', v).value || '').trim(), retail_price: price }, repack_from: Number(bid), repack_qty: q, costs };
-    } else data = { product_id: Number(pid), repack_from: Number(bid), repack_qty: q, costs };
-    const btn = $('#rs-save', v); btn.disabled = true; err.textContent = '';
-    try { await rsSend(data, isNew ? 'rps.created' : 'rps.saved'); } catch (e) { err.textContent = errMsg(e); btn.disabled = false; }
+/** The pack field follows the bulk: its list, and the set-up block for a new pack / a product not packed yet. */
+function rpPackSync(bulkChanged, typed) {
+  const b = prodById(RPK.bulk), pk = RPK.packPick; if (!pk) return;
+  if (bulkChanged) { pk.setItems(rpPackItems(b)); pk.setExtra(b ? rpPackExtra() : []); pk.set('', true); RPK.pack = ''; }
+  const info = $('#rp-bulk-info'); if (info) info.innerHTML = b ? `${esc(t('stock'))} <b class="num" id="rp-bulk-stock">${fmtQty(b.stock)} ${esc(b.unit || '')}</b>${b.category ? ' · ' + esc(b.category) : ''}` : '';
+  $('#rp-unit').textContent = b ? (b.unit || '') : '—';
+  const p = RPK.pack && RPK.pack !== '__new' ? prodById(RPK.pack) : null, isSet = p && num(p.repack_from) > 0;
+  const needSetup = RPK.pack === '__new' || (p && !isSet);
+  const box = $('#rp-setup-inline'); box.hidden = !needSetup;
+  if (needSetup) {
+    psBind('rpi', { pack: p || null, bulk: b, unit: () => (p ? p.unit : String($('#rpi-n-unit').value || '').trim()) || 'pcs', onInput: rpCalc });
+    if (RPK.pack === '__new' && typed) $('#rpi-n-name').value = String(typed).slice(0, 80);
+    if (RPK.pack === '__new') setTimeout(() => { const n = $('#rpi-n-name'); if (n) n.focus(); }, 0);
   }
-});
+  const pi = $('#rp-pack-info');
+  pi.innerHTML = isSet ? `${esc(t('rp.size'))}: <b>${fmtQty(p.repack_qty)} ${esc(b ? b.unit || '' : '')}</b> / ${esc(p.unit || 'pcs')} · ${esc(t('stock'))} <b class="num">${fmtQty(p.stock)}</b>${rsCostsLine(p) ? `<div data-rp-mats>${esc(rsCostsLine(p))}</div>` : ''}`
+    : needSetup ? esc(t(p ? 'rp.setup_free' : 'rp.setup_new')) : (b && !rpPackItems(b).length ? esc(t(canSetRepack() ? 'rp.no_pack_mgr' : 'rp.no_pack')) : '');
+}
+/** Bulk amount → whole packs + what is left over (the pack's size, or the size typed for a new set-up). */
 function rpRead() {
-  const to = prodById(($('#rp-to') || {}).value), from = to ? prodById(to.repack_from) : null;
-  const qty = qtyVal(($('#rp-qty') || {}).value || ''), rawFrom = String(($('#rp-from') || {}).value || '').trim();
-  if (!to || !from) return { to, from };
-  const size = num(to.repack_qty), fromQty = rawFrom ? qtyVal(rawFrom) : roundQty(qty * size);
-  const expected = size > 0 ? roundQty(fromQty / size) : 0;
-  return { to, from, qty, size, fromQty, rawFrom, expected, yieldPct: expected > 0 ? Math.round(qty / expected * 1000) / 10 : 0, loss: roundQty(fromQty - qty * size) };
+  const b = prodById(RPK.bulk), p = RPK.pack && RPK.pack !== '__new' ? prodById(RPK.pack) : null;
+  const setup = !$('#rp-setup-inline').hidden;
+  const size = setup ? qtyVal(($('#rpi-size') || {}).value || '') : p ? num(p.repack_qty) : 0;
+  const amount = qtyVal(($('#rp-amount') || {}).value || '');
+  const packs = size > 0 && amount > 0 ? Math.floor(amount / size + 1e-9) : 0;
+  return { b, p, setup, size, amount, packs, left: size > 0 ? roundQty(amount - packs * size) : 0 };
 }
-function rpPreview() {
-  const R = rpRead(), info = $('#rp-info'), pv = $('#rp-preview'); if (!info || !pv) return;
-  $('#rp-unit').textContent = R.from ? (R.from.unit || '') : '—';
-  info.innerHTML = R.from ? `${esc(t('rp.from_bulk'))}: <b>${esc(R.from.name)}</b> · ${esc(t('stock'))} <b class="num" id="rp-bulk-stock">${fmtQty(R.from.stock)} ${esc(R.from.unit || '')}</b> · ${esc(t('rp.size'))}: <b>${fmtQty(R.size)} ${esc(R.from.unit || '')}</b>` : '';
-  if (!R.from || !(R.qty > 0)) { pv.className = 'rp-preview'; pv.innerHTML = `<span class="muted">${esc(t('rp.preview_empty'))}</span>`; return; }
-  const over = R.fromQty > num(R.from.stock) + 1e-9, low = R.yieldPct < 95;
-  pv.className = 'rp-preview' + (over ? ' bad' : low ? ' low' : '');
-  const per = rpCostPer(R.to), mat = per > 0 ? `<div data-mat>${esc(t('rp.pv_mat', { per: fmtRp(per), u: R.to.unit || 'pcs', n: fmtQty(R.qty), tot: fmtRp(Math.round(per * R.qty)) }))}</div>` : '';
-  pv.innerHTML = `<div>${esc(t('rp.pv_used', { q: fmtQty(R.fromQty), u: R.from.unit || '', e: fmtQty(R.expected) }))}</div>
-    <div><b data-yield>${esc(t('rp.pv_yield', { n: fmtQty(R.qty), p: NF1.format(R.yieldPct) }))}</b> · <span data-loss>${esc(t('rp.pv_loss', { q: fmtQty(R.loss), u: R.from.unit || '' }))}</span></div>
-    ${mat}${over ? `<div><b>${esc(t('rp.not_enough', { q: fmtQty(R.from.stock), u: R.from.unit || '' }))}</b></div>` : ''}`;
+function rpCalc() {
+  const R = rpRead(), pv = $('#rp-calc'); if (!pv) return;
+  $('#rp-err').textContent = '';
+  if (!R.b || !(R.size > 0) || !(R.amount > 0)) { pv.className = 'rp-preview'; pv.innerHTML = `<span class="muted">${esc(t('rp.calc_empty'))}</span>`; return; }
+  const u = R.b.unit || '', over = R.amount > num(R.b.stock) + 1e-9, pu = R.p ? R.p.unit || 'pcs' : String(($('#rpi-n-unit') || {}).value || '').trim() || 'pcs';
+  pv.className = 'rp-preview' + (over || !R.packs ? ' bad' : '');
+  pv.innerHTML = `<div class="row wrap" style="gap:6px 12px"><span>${esc(fmtQty(R.amount))} ${esc(u)} ÷ ${esc(fmtQty(R.size))} ${esc(u)} =</span><b style="font-size:20px" id="rp-planned" data-planned="${R.packs}">${esc(t('rp.calc_packs', { n: fmtNum(R.packs), u: pu }))}</b></div>
+    ${R.left > 0 ? `<div data-left>${esc(t('rp.calc_left', { q: fmtQty(R.left), u }))}</div>` : ''}
+    ${!R.packs ? `<div><b>${esc(t('rp.calc_less', { s: fmtQty(R.size), u }))}</b></div>` : ''}${over ? `<div><b>${esc(t('rp.not_enough', { q: fmtQty(R.b.stock), u }))}</b></div>` : ''}`;
 }
-async function saveRepack(confirmRecent) {
-  const R = rpRead(), err = $('#rp-err'), btn = $('#rp-save');
-  if (!R.to) { err.textContent = t('rp.pick_first'); return; }
-  if (!(R.qty > 0)) { err.textContent = t('rp.qty_invalid'); $('#rp-qty').focus(); return; }
-  if (!(R.fromQty > 0)) { err.textContent = t('rp.qty_invalid'); return; }
-  if (R.fromQty > num(R.from.stock) + 1e-9) { err.textContent = t('rp.not_enough', { q: fmtQty(R.from.stock), u: R.from.unit || '' }); return; }
-  RPK.cid = RPK.cid || uuid(); // v39: one id per form — a double tap / retry is recorded once
-  const data = { client_id: RPK.cid, to_product_id: R.to.id, to_qty: R.qty, note: $('#rp-note').value.trim() };
-  if (confirmRecent === true) data.confirm_recent = true;
-  if (R.rawFrom) data.from_qty = R.fromQty;
-  const pc = moneyVal($('#rp-cost').value); if (pc) data.packaging_cost = pc;
-  if (isYmdStr($('#rp-exp').value)) data.exp_date = $('#rp-exp').value;
-  btn.disabled = true; err.textContent = '';
+async function rpStart(confirmRecent) {
+  const R = rpRead(), err = $('#rp-err'), btn = $('#rp-start');
+  err.textContent = '';
+  if (!R.b) { err.textContent = t('rp.pick_bulk'); RPK.bulkPick.focus(); return; }
+  if (!RPK.pack) { err.textContent = t('rp.pick_first'); RPK.packPick.focus(); return; }
+  if (!(R.amount > 0)) { err.textContent = t('rp.qty_invalid'); $('#rp-amount').focus(); return; }
+  if (R.amount > num(R.b.stock) + 1e-9) { err.textContent = t('rp.not_enough', { q: fmtQty(R.b.stock), u: R.b.unit || '' }); return; }
+  let to = R.p;
+  const setup = R.setup ? psData('rpi', R.b, to) : null;
+  if (setup && setup.error) { err.textContent = setup.error; return; }
+  if (!(R.packs >= 1)) { err.textContent = t('rp.calc_less', { s: fmtQty(R.size), u: R.b.unit || '' }); return; }
+  btn.disabled = true;
   try {
-    const r = await api('repack', data), rp = r.repack || {};
+    if (setup) { // a new pack, or a product of this kind packed for the first time: set it up first (the owner and the accountant are told)
+      const r0 = await rpSetRepack(setup);
+      to = r0.product ? prodById(r0.product.id) || r0.product : to;
+      if (!to || to.id == null) throw new Error(t('rp.setup_failed'));
+      RPK.pack = String(to.id);
+    }
+    RPK.cid = RPK.cid || uuid(); // one id per form: a double tap / retry is recorded once
+    const data = { client_id: RPK.cid, from_product_id: R.b.id, to_product_id: to.id, from_qty: R.amount, note: $('#rp-note').value.trim() };
+    const pc = moneyVal($('#rp-cost').value); if (pc) data.packaging_cost = pc;
+    if (isYmdStr($('#rp-exp').value)) data.exp_date = $('#rp-exp').value;
+    if (confirmRecent === true) data.confirm_recent = true;
+    const r = await api('repack_start', data), rp = r.repack || {};
     RPK.cid = '';
     if (r.stock) applyStock(r.stock);
-    RPK.result = `<div class="panel" style="margin-bottom:12px;border-color:${rp.yield_pct < 95 ? 'var(--warn-b)' : 'var(--ok)'}" id="rp-res" data-yield="${esc(rp.yield_pct)}"><h3>${ic('check')} ${esc(t('rp.saved', { from: fmtQty(rp.from_qty) + ' ' + (rp.from_unit || ''), n: fmtQty(rp.to_qty), name: rp.to_name || '' }))}</h3>
-      <div class="pb">${esc(t('rp.pv_yield', { n: fmtQty(rp.to_qty), p: NF1.format(num(rp.yield_pct)) }))} · ${esc(t('rp.pv_loss', { q: fmtQty(rp.loss_qty), u: rp.from_unit || '' }))}${isOwner() && rp.unit_cost != null ? ` · ${esc(t('rp.unit_cost'))} <b class="num" data-unit-cost>${fmtRp(rp.unit_cost)}</b>` : ''}</div></div>`;
-    toast(t('rp.saved_toast'), 'ok');
+    S.repacksOpen = (S.repacksOpen || []).filter(x => x.repack_id !== rp.repack_id).concat(r.duplicate && rp.status !== 'proses' ? [] : [rp]);
+    RPK.result = `<div class="panel" style="margin-bottom:12px;border-color:var(--ok)" id="rp-res" data-rp="${esc(rp.repack_id)}"><h3>${ic('check')} ${esc(t('rp.started', { from: fmtQty(rp.from_qty) + ' ' + (rp.from_unit || ''), name: rp.to_name || '', n: fmtNum(num(rp.planned_qty)) }))}</h3>
+      <div class="pb small">${esc(t(canSetRepack() ? 'rp.started_mgr' : 'rp.started_hint'))}</div></div>`;
+    toast(t('rp.started_toast'), 'ok');
+    RPK.pack = ''; RPK.bulk = '';
     Object.keys(salesCache).forEach(k => delete salesCache[k]); gdInvalidate();
     if (S.view === 'gudang') gdDrawRepack($('#gd-body'));
   } catch (e) {
-    const pend = e.code === 'REPACK_PENDING' && e.data && e.data.pending; // v38: a cashier's request for this bulk waits → decide it, do not repack twice
-    const rec = e.code === 'REPACK_RECENT' && e.data && e.data.recent; // v39: this bulk was repacked in the last 2 h — the same work, or another?
+    const rec = e.code === 'REPACK_RECENT' && e.data && e.data.recent; // the same bulk in the last 2 h — the same work, or another?
+    const busy = e.code === 'REPACK_BUSY' && e.data && e.data.busy;
     if (rec) {
       err.innerHTML = `<div id="rp-recent">${esc(t('rk.recent', { name: rec.user, time: fmtDateTime(rec.at), bulk: rec.from_name, q: fmtQty(rec.from_qty), u: rec.from_unit || '', pack: rec.to_name, n: fmtQty(rec.to_qty) }))} ${esc(t('rk.recent_q'))}
         <div style="margin-top:6px"><button class="btn xs primary" id="rp-again">${ic('check')} ${esc(t('rk.recent_yes'))}</button></div></div>`;
-      $('#rp-again').onclick = () => saveRepack(true);
-    } else err.textContent = pend ? t('rk.busy', { name: pend.cashier, time: fmtDateTime(pend.created_at), id: pend.request_id, bulk: pend.from_name, pack: pend.to_name, n: fmtQty(pend.to_qty) }) + ' ' + t('rk.busy_mgr') : errMsg(e);
+      $('#rp-again').onclick = () => rpStart(true);
+    } else err.textContent = busy ? t('rp.busy', { name: busy.by, time: fmtDateTime(busy.at), bulk: busy.from_name, q: fmtQty(busy.from_qty), u: busy.from_unit || '', pack: busy.to_name }) : errMsg(e);
     btn.disabled = false;
   }
 }
+/* ---- "Sedang dikemas": started, waiting for the manager's confirmation ---- */
+function rpDrawOpen() {
+  const box = $('#rp-open-body'); if (!box) return;
+  const list = (S.repacksOpen || []).slice().sort((a, b) => String(a.started_at || a.repack_time).localeCompare(String(b.started_at || b.repack_time)));
+  const can = canSetRepack();
+  box.innerHTML = list.length ? list.map(r => `<div class="rp-open-row" data-rp-open="${esc(r.repack_id)}" style="padding:8px 0;border-bottom:1px solid var(--border)">
+      <div><b>${esc(r.from_name)}</b> ${fmtQty(r.from_qty)} ${esc(r.from_unit || '')} → <b>${esc(r.to_name)}</b> · ${esc(t('rp.plan_n', { n: fmtNum(num(r.planned_qty)), u: r.to_unit || 'pcs' }))}</div>
+      <div class="small muted">${esc(t('rp.fin_by', { name: r.started_by || r.user || '', time: fmtDateTime(r.started_at || r.repack_time) }))}${r.note ? ' · ' + esc(r.note) : ''}</div>
+      <div class="row wrap" style="gap:6px;margin-top:6px">${can ? `<button class="btn xs primary" data-act="rp-fin" data-id="${esc(r.repack_id)}">${ic('check')} ${esc(t('rp.fin_btn'))}</button>` : `<span class="badge amber">${esc(t('rp.wait_mgr'))}</span>`}</div></div>`).join('')
+    : `<div class="muted">${esc(t('rp.open_none'))}</div>`;
+}
+function openRepackFinish(r) {
+  const F = num(r.from_qty), s = num(r.pack_size), u = r.from_unit || '', N = num(r.planned_qty), pu = r.to_unit || 'pcs';
+  const el = openModal({
+    title: t('rp.fin_title'), id: 'rp-fin-modal',
+    body: `<p style="margin-top:0"><b>${esc(r.from_name)}</b> ${fmtQty(F)} ${esc(u)} → <b>${esc(r.to_name)}</b><br><span class="small">${esc(t('rp.fin_plan', { n: fmtNum(N), s: fmtQty(s), u, pu }))}</span><br>
+        <span class="small muted">${esc(t('rp.fin_by', { name: r.started_by || r.user || '', time: fmtDateTime(r.started_at || r.repack_time) }))}</span></p>
+      <div class="grid2"><div class="field"><label class="f" for="rf-made">${esc(t('rp.fin_made'))} (${esc(pu)})</label><input class="input num" id="rf-made" inputmode="decimal" autocomplete="off" value="${esc(fmtQtyInput(N))}"></div>
+        <div class="field"><label class="f" for="rf-rem">${esc(t('rp.fin_rem'))} (${esc(u)})</label><input class="input num" id="rf-rem" inputmode="decimal" autocomplete="off" value="${esc(fmtQtyInput(Math.max(0, roundQty(F - N * s))))}"></div></div>
+      <div class="field"><label class="f" for="rf-cost">${esc(t('rp.extra_cost'))} (Rp)</label><input class="input num" id="rf-cost" inputmode="numeric" placeholder="${esc(t('rp.extra_ph'))}"></div>
+      <div class="field"><label class="f" for="rf-note">${esc(t('notes'))}</label><input class="input" id="rf-note" maxlength="200"></div>
+      <div class="rp-preview" id="rf-pv"></div><div class="red" id="rf-err" role="alert"></div>`,
+    foot: `<button class="btn danger" id="rf-cancel">${ic('x')} ${esc(t('rp.fin_cancel'))}</button><button class="btn" data-act="modal-close">${esc(t('close'))}</button><button class="btn primary" id="rf-ok">${ic('check')} ${esc(t('rp.fin_ok'))}</button>`
+  });
+  const made = $('#rf-made', el), rem = $('#rf-rem', el), pv = $('#rf-pv', el), err = $('#rf-err', el);
+  let remTouched = false;
+  const draw = () => {
+    const m = qtyVal(made.value || ''), lf = qtyVal(rem.value || ''), used = roundQty(F - lf), exp = s > 0 ? roundQty(used / s) : 0, y = exp > 0 ? Math.round(m / exp * 1000) / 10 : 0, loss = roundQty(used - m * s);
+    pv.className = 'rp-preview' + (m < N || y < 95 ? ' low' : '');
+    pv.innerHTML = `<div>${esc(t('rp.pv_used', { q: fmtQty(used), u, e: fmtQty(exp) }))}</div><div><b data-yield>${esc(t('rp.pv_yield', { n: fmtQty(m), p: NF1.format(y) }))}</b> · <span data-loss>${esc(t('rp.pv_loss', { q: fmtQty(loss), u }))}</span></div>
+      ${m < N ? `<div data-short><b>${esc(t('rp.fin_short', { n: fmtQty(roundQty(N - m)), pu }))}</b></div>` : ''}`;
+  };
+  made.addEventListener('input', () => { if (!remTouched) rem.value = fmtQtyInput(Math.max(0, roundQty(F - qtyVal(made.value || '') * s))); draw(); err.textContent = ''; });
+  rem.addEventListener('input', () => { remTouched = true; draw(); err.textContent = ''; });
+  $('#rf-cost', el).addEventListener('change', e => { const x = moneyVal(e.target.value); e.target.value = x ? fmtNum(x) : ''; });
+  draw();
+  const send = async (data, btn) => {
+    btn.disabled = true; err.textContent = '';
+    try {
+      const out = await api('repack_finish', Object.assign({ repack_id: r.repack_id }, data)), rp = out.repack || {};
+      if (out.stock) applyStock(out.stock);
+      S.repacksOpen = (S.repacksOpen || []).filter(x => x.repack_id !== r.repack_id);
+      saveCache(); closeModal();
+      RPK.result = data.cancel ? '' : `<div class="panel" style="margin-bottom:12px;border-color:${num(rp.yield_pct) < 95 ? 'var(--warn-b)' : 'var(--ok)'}" id="rp-res" data-yield="${esc(rp.yield_pct)}"><h3>${ic('check')} ${esc(t('rp.saved', { from: fmtQty(rp.from_qty) + ' ' + (rp.from_unit || ''), n: fmtQty(rp.to_qty), name: rp.to_name || '' }))}</h3>
+        <div class="pb">${esc(t('rp.pv_yield', { n: fmtQty(rp.to_qty), p: NF1.format(num(rp.yield_pct)) }))} · ${esc(t('rp.pv_loss', { q: fmtQty(rp.loss_qty), u: rp.from_unit || '' }))}${num(rp.remaining_qty) > 0 ? ' · ' + esc(t('rp.fin_back', { q: fmtQty(rp.remaining_qty), u: rp.from_unit || '' })) : ''}${isOwner() && rp.unit_cost != null ? ` · ${esc(t('rp.unit_cost'))} <b class="num" data-unit-cost>${fmtRp(rp.unit_cost)}</b>` : ''}</div></div>`;
+      toast(t(data.cancel ? 'rp.cancelled' : 'rp.saved_toast'), 'ok');
+      Object.keys(salesCache).forEach(k => delete salesCache[k]); gdInvalidate();
+      if (S.view === 'gudang') gdDrawRepack($('#gd-body'));
+    } catch (e) { err.textContent = errMsg(e); btn.disabled = false; }
+  };
+  $('#rf-ok', el).onclick = e => {
+    const m = qtyVal(made.value || ''), lf = qtyVal(rem.value || '');
+    if (!(m > 0)) { err.textContent = t('rp.fin_need'); made.focus(); return; }
+    if (!(lf >= 0) || lf > F + 1e-9) { err.textContent = t('rp.fin_rem_bad', { q: fmtQty(F), u }); rem.focus(); return; }
+    const d = { to_qty: m, remaining_qty: lf, note: $('#rf-note', el).value.trim() }, pc = moneyVal($('#rf-cost', el).value); if (pc) d.packaging_cost = pc;
+    send(d, e.currentTarget);
+  };
+  $('#rf-cancel', el).onclick = async e => { const b = e.currentTarget; if (!(await confirmBox(t('rp.fin_cancel_q', { q: fmtQty(F), u, name: r.from_name }), { danger: true })).ok) return; send({ cancel: true }, b); };
+}
+/** Data came back (poll / refresh): the stock lines, the open list and the result, without touching what is being typed. */
+function rpRefresh() {
+  const b = prodById(RPK.bulk), info = $('#rp-bulk-stock'); if (info && b) info.textContent = `${fmtQty(b.stock)} ${b.unit || ''}`;
+  rpCalc(); rpDrawOpen();
+}
+
+/* ---- set-up (manager / owner): the packs set up, "Ubah" (size + materials), "Hapus"; the materials list ---- */
+function rsPanelHTML(packs) {
+  const mats = matList();
+  return `<div class="panel" id="rp-setup"><h3>${ic('gear')} ${esc(t('rps.title'))}</h3><div class="pb">
+    <p class="small muted" style="margin-top:0">${esc(t(isOwner() ? 'rps.hint_owner' : 'rps.hint'))}</p>
+    ${packs.length ? `<table class="tbl" id="rs-list"><tbody>${packs.map(p => { const b = prodById(p.repack_from) || {}, cl = rsCostsLine(p); return `<tr data-rs="${esc(p.id)}"><td><b>${esc(p.name)}</b><div class="small muted">← ${esc(b.name || '')} · ${fmtQty(p.repack_qty)} ${esc(b.unit || '')} / ${esc(p.unit || 'pcs')}</div>${cl ? `<div class="small" data-rs-costs>${esc(cl)}</div>` : ''}</td>
+      <td class="r" style="white-space:nowrap"><button class="btn xs" data-act="rs-edit" data-id="${esc(p.id)}">${ic('edit')} ${esc(t('rps.edit'))}</button> <button class="btn xs danger" data-act="rs-del" data-id="${esc(p.id)}">${ic('trash')} ${esc(t('rps.del'))}</button></td></tr>`; }).join('')}</tbody></table>` : `<div class="muted small">${esc(t('rps.none_yet'))}</div>`}
+    <h4 style="margin:14px 0 6px">${esc(t('rpm.title'))}</h4><p class="small muted" style="margin-top:0">${esc(t('rpm.hint'))}</p>
+    <table class="tbl" id="rm-list"><tbody>${mats.map((m, i) => `<tr data-rm="${esc(m.name)}"><td><b>${esc(m.name)}</b></td><td class="r" style="width:150px"><input class="input num rm-price" data-i="${i}" inputmode="numeric" value="${esc(fmtNum(m.cost))}" aria-label="${esc(t('rpm.price'))} ${esc(m.name)}" style="width:130px"></td>
+      <td class="r" style="width:44px"><button type="button" class="btn xs ghost" data-act="rm-del" data-name="${esc(m.name)}" aria-label="${esc(t('rps.del'))}">✕</button></td></tr>`).join('') || `<tr><td class="muted small">${esc(t('rpm.empty'))}</td></tr>`}</tbody></table>
+    <div class="row wrap" style="gap:8px;margin-top:8px"><input class="input grow" id="rm-n-name" maxlength="40" placeholder="${esc(t('rpm.name'))}" autocomplete="off" style="min-width:140px"><input class="input num" id="rm-n-price" inputmode="numeric" placeholder="${esc(t('rpm.price'))}" autocomplete="off" style="width:150px">
+      <button type="button" class="btn" data-act="rm-add" id="rm-add">＋ ${esc(t('rpm.add'))}</button><button type="button" class="btn primary" data-act="rm-save" id="rm-save">${ic('check')} ${esc(t('rpm.save'))}</button></div>
+    <div class="red small" id="rm-err" role="alert"></div>
+  </div></div>`;
+}
+const RM = { list: null };
+function bindRsPanel(v) {
+  RM.list = matList();
+  $$('#rm-list .rm-price', v).forEach(inp => inp.addEventListener('change', () => { const x = moneyVal(inp.value); inp.value = fmtNum(x); RM.list[+inp.dataset.i].cost = x; }));
+  const np = $('#rm-n-price', v); if (np) np.addEventListener('change', e => { const x = moneyVal(e.target.value); e.target.value = String(e.target.value).trim() === '' ? '' : fmtNum(x); });
+}
+function openPackEdit(p) {
+  const b = prodById(p.repack_from); if (!b) return;
+  const el = openModal({ title: t('rps.edit_title', { name: p.name }), id: 'rse-modal', body: `<p class="small muted" style="margin-top:0">← ${esc(b.name)}</p>${psBlockHTML('rse')}<div class="red" id="rse-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="rse-save">${ic('check')} ${esc(t('rps.save'))}</button>` });
+  psBind('rse', { pack: p, bulk: b, unit: () => p.unit || 'pcs' });
+  $('#rse-save', el).onclick = async e => {
+    const d = psData('rse', b, p), err = $('#rse-err', el);
+    if (d.error) { err.textContent = d.error; return; }
+    e.currentTarget.disabled = true;
+    try { await rpSetRepack(d); closeModal(); toast(t('rps.saved'), 'ok'); RENDER.gudang(); } catch (x) { err.textContent = errMsg(x); e.currentTarget.disabled = false; }
+  };
+}
+Object.assign(ACT, {
+  'rs-edit': el => { const p = prodById(el.dataset.id); if (p) openPackEdit(p); },
+  'rs-del': async el => {
+    const p = prodById(el.dataset.id); if (!p) return;
+    if (!(await confirmBox(t('rps.del_q', { name: p.name }), { danger: true })).ok) return;
+    try { await rpSetRepack({ product_id: p.id, repack_from: 0, repack_qty: 0 }); toast(t('rps.deleted'), 'ok'); RENDER.gudang(); } catch (e) { toast(errMsg(e), 'err'); }
+  },
+  'rm-add': () => {
+    const err = $('#rm-err'), nm = $('#rm-n-name'), pr = $('#rm-n-price'), name = String(nm.value || '').trim().replace(/\s+/g, ' ');
+    if (!name) { err.textContent = t('rpm.name_need'); nm.focus(); return; }
+    if (String(pr.value || '').trim() === '') { err.textContent = t('rpm.price_need'); pr.focus(); return; }
+    if (RM.list.some(m => m.name.toLowerCase() === name.toLowerCase())) { err.textContent = t('rpm.exists', { name }); return; }
+    RM.list.push({ name, cost: moneyVal(pr.value) }); ACT['rm-save']();
+  },
+  'rm-del': el => { RM.list = RM.list.filter(m => m.name !== el.dataset.name); ACT['rm-save'](); },
+  'rm-save': async () => {
+    const err = $('#rm-err'), btn = $('#rm-save'); if (btn) btn.disabled = true; if (err) err.textContent = '';
+    try { const r = await matSave(RM.list); toast(t(r.unchanged ? 'rpm.unchanged' : 'rpm.saved'), 'ok'); RENDER.gudang(); } catch (e) { if (err) err.textContent = errMsg(e); if (btn) btn.disabled = false; }
+  },
+  'rp-start': () => rpStart(),
+  'rp-fin': el => { const r = (S.repacksOpen || []).find(x => x.repack_id === el.dataset.id); if (r) openRepackFinish(r); },
+  'rp-pick': el => { RPK.bulk = String(el.dataset.bulk || ''); RPK.pack = String(el.dataset.id || ''); RPK.bulkPick.set(RPK.bulk, true); rpPackSync(true); RPK.pack = String(el.dataset.id || ''); RPK.packPick.set(RPK.pack, true); rpPackSync(false); rpCalc(); const a = $('#rp-amount'); if (a) { a.scrollIntoView({ block: 'nearest' }); a.focus(); } }
+});
+Object.assign(I18N.id, { // v50 two-step repacking, the materials list
+  'rp.f_bulk': 'Barang curah (besar)', 'rp.f_pack': 'Kemasan kecil (hasil)', 'rp.f_amount': 'Curah yang dikemas', 'rp.start': 'Mulai kemas',
+  'rp.start_hint': 'Curah keluar dari stok sekarang. Setelah selesai, manajer mengonfirmasi jumlah kemasan yang jadi dan sisa curahnya.',
+  'rp.open_title': 'Sedang dikemas', 'rp.open_none': 'Tidak ada yang sedang dikemas.', 'rp.bulk_ph': 'Ketik nama curah, mis. kurma ajwa', 'rp.pack_ph': 'Ketik nama kemasan',
+  'rp.no_match': 'Tidak ada yang cocok', 'rp.no_pack': 'Belum ada kemasan untuk curah ini — manajer mengaturnya', 'rp.no_pack_mgr': 'Belum ada kemasan sejenis: pilih "＋ Kemasan baru".',
+  'rp.n_packs': '{n} kemasan', 'rp.pk_sub': '{s} {u} per {pu} · stok {st}', 'rp.pk_free': 'sejenis, belum dikemas ulang — isi per {pu} diatur di bawah',
+  'rp.setup_free': 'Barang ini belum diatur sebagai kemasan: isi per kemasan dan bahannya di bawah (disimpan saat mulai).', 'rp.setup_new': 'Kemasan baru: nama, harga, isi per kemasan dan bahannya di bawah (dibuat saat mulai).',
+  'rp.calc_empty': 'Pilih curah dan kemasan, lalu isi berapa curah yang dikemas.', 'rp.calc_packs': '{n} {u}', 'rp.calc_left': 'Sisa {q} {u} (kurang dari satu kemasan)',
+  'rp.calc_less': 'Kurang dari isi satu kemasan ({s} {u})', 'rp.pick_bulk': 'Pilih barang curah dulu', 'rp.setup_failed': 'Kemasan belum tersimpan, coba lagi',
+  'rp.started': 'Mulai dikemas: {from} → {name} (rencana {n})', 'rp.started_mgr': 'Setelah selesai, konfirmasi hasilnya di "Sedang dikemas".', 'rp.started_hint': 'Setelah selesai, manajer mengonfirmasi hasilnya.',
+  'rp.started_toast': 'Kemas ulang dimulai', 'rp.busy': '{name} sedang mengemas {bulk} {q} {u} → {pack} (mulai {time}). Manajer mengonfirmasi hasilnya dulu.',
+  'rp.plan_n': 'rencana {n} {u}', 'rp.fin_by': 'dimulai {name}, {time}', 'rp.fin_btn': 'Konfirmasi hasil', 'rp.wait_mgr': 'menunggu konfirmasi manajer',
+  'rp.fin_title': 'Konfirmasi hasil kemas ulang', 'rp.fin_plan': 'Rencana {n} {pu} ({s} {u} per {pu})', 'rp.fin_made': 'Kemasan yang jadi', 'rp.fin_rem': 'Sisa curah (kembali ke stok)',
+  'rp.fin_cancel': 'Batalkan', 'rp.fin_ok': 'Konfirmasi', 'rp.fin_short': 'Kurang {n} {pu} dari rencana', 'rp.fin_back': 'sisa {q} {u} kembali ke stok', 'rp.cancelled': 'Kemas ulang dibatalkan',
+  'rp.fin_need': 'Isi jumlah kemasan yang jadi (atau batalkan)', 'rp.fin_rem_bad': 'Sisa curah 0 sampai {q} {u}', 'rp.fin_cancel_q': 'Batalkan kemas ulang ini? {q} {u} {name} kembali ke stok, tidak ada kemasan yang dibuat.',
+  'rps.costs_hint2': 'pilih dari daftar bahan; harganya ikut daftar', 'rps.none_yet': 'Belum ada. Kemasan diatur saat memilihnya di "Kemas ulang" (kemasan baru atau barang sejenis).', 'rps.edit_title': 'Ubah kemasan {name}',
+  'rpm.title': 'Daftar bahan kemasan', 'rpm.hint': 'Stiker, toples, tutup, plastik… dengan harga per buah. Kemasan memilih bahannya dari daftar ini; harga yang diubah di sini dipakai di kemas ulang berikutnya.',
+  'rpm.name': 'Nama bahan', 'rpm.price': 'Harga per buah (Rp)', 'rpm.add': 'Tambah ke daftar', 'rpm.save': 'Simpan daftar', 'rpm.saved': 'Daftar bahan disimpan', 'rpm.unchanged': 'Tidak ada perubahan',
+  'rpm.empty': 'Daftar masih kosong.', 'rpm.per_piece': '{rp} / buah', 'rpm.pieces': 'Jumlah per kemasan', 'rpm.pick_ph': 'Ketik nama bahan', 'rpm.none': 'Tidak ada di daftar', 'rpm.new': 'Bahan baru…',
+  'rpm.new_hint': 'Bahan baru masuk ke daftar bahan kemasan (nama + harga per buah).', 'rpm.qty_bad': 'Jumlah bahan per kemasan tidak valid', 'rpm.name_need': 'Isi nama bahan', 'rpm.price_need': 'Isi harga per buah',
+  'rpm.exists': '{name} sudah ada di daftar', 'rpm.added': '{name} ditambahkan ke daftar'
+});
+Object.assign(I18N.ar, {
+  'rp.f_bulk': 'الصنف السائب (الكبير)', 'rp.f_pack': 'العبوة الصغيرة (الناتج)', 'rp.f_amount': 'كمية السائب التي تُعبّأ', 'rp.start': 'ابدأ التعبئة',
+  'rp.start_hint': 'يخرج السائب من المخزون الآن. بعد الانتهاء يؤكد المدير عدد العبوات الناتجة والسائب المتبقي.',
+  'rp.open_title': 'قيد التعبئة', 'rp.open_none': 'لا شيء قيد التعبئة.', 'rp.bulk_ph': 'اكتب اسم السائب، مثل تمر عجوة', 'rp.pack_ph': 'اكتب اسم العبوة',
+  'rp.no_match': 'لا يوجد تطابق', 'rp.no_pack': 'لا توجد عبوات لهذا السائب — يضبطها المدير', 'rp.no_pack_mgr': 'لا توجد عبوة من نفس النوع: اختر «＋ عبوة جديدة».',
+  'rp.n_packs': '{n} عبوات', 'rp.pk_sub': '{s} {u} لكل {pu} · المخزون {st}', 'rp.pk_free': 'من نفس النوع، غير مضبوط بعد — كمية كل {pu} تُضبط في الأسفل',
+  'rp.setup_free': 'هذا الصنف غير مضبوط كعبوة: كمية كل عبوة ومستلزماتها في الأسفل (تُحفظ عند البدء).', 'rp.setup_new': 'عبوة جديدة: الاسم والسعر وكمية كل عبوة ومستلزماتها في الأسفل (تُنشأ عند البدء).',
+  'rp.calc_empty': 'اختر السائب والعبوة، ثم اكتب كمية السائب.', 'rp.calc_packs': '{n} {u}', 'rp.calc_left': 'يتبقى {q} {u} (أقل من عبوة واحدة)',
+  'rp.calc_less': 'أقل من كمية عبوة واحدة ({s} {u})', 'rp.pick_bulk': 'اختر الصنف السائب أولًا', 'rp.setup_failed': 'لم تُحفظ العبوة، حاول مجددًا',
+  'rp.started': 'بدأت التعبئة: {from} ← {name} (المخطط {n})', 'rp.started_mgr': 'بعد الانتهاء أكّد النتيجة في «قيد التعبئة».', 'rp.started_hint': 'بعد الانتهاء يؤكد المدير النتيجة.',
+  'rp.started_toast': 'بدأت إعادة التعبئة', 'rp.busy': '{name} يعبّئ {bulk} {q} {u} ← {pack} (بدأ {time}). يؤكد المدير النتيجة أولًا.',
+  'rp.plan_n': 'المخطط {n} {u}', 'rp.fin_by': 'بدأها {name}، {time}', 'rp.fin_btn': 'تأكيد النتيجة', 'rp.wait_mgr': 'بانتظار تأكيد المدير',
+  'rp.fin_title': 'تأكيد نتيجة إعادة التعبئة', 'rp.fin_plan': 'المخطط {n} {pu} ({s} {u} لكل {pu})', 'rp.fin_made': 'العبوات الناتجة', 'rp.fin_rem': 'السائب المتبقي (يعود للمخزون)',
+  'rp.fin_cancel': 'إلغاء', 'rp.fin_ok': 'تأكيد', 'rp.fin_short': 'أقل من المخطط بـ {n} {pu}', 'rp.fin_back': 'يعود {q} {u} للمخزون', 'rp.cancelled': 'أُلغيت إعادة التعبئة',
+  'rp.fin_need': 'اكتب عدد العبوات الناتجة (أو ألغِ)', 'rp.fin_rem_bad': 'السائب المتبقي من 0 إلى {q} {u}', 'rp.fin_cancel_q': 'إلغاء إعادة التعبئة هذه؟ يعود {q} {u} من {name} إلى المخزون ولا تُصنع عبوات.',
+  'rps.costs_hint2': 'اختر من قائمة المستلزمات؛ السعر من القائمة', 'rps.none_yet': 'لا يوجد بعد. تُضبط العبوة عند اختيارها في «إعادة التعبئة» (عبوة جديدة أو صنف من نفس النوع).', 'rps.edit_title': 'تعديل العبوة {name}',
+  'rpm.title': 'قائمة مستلزمات التعبئة', 'rpm.hint': 'ستيكر، علبة، غطاء، كيس… مع سعر القطعة. العبوات تختار مستلزماتها من هذه القائمة؛ السعر المعدّل هنا يُستخدم في التعبئة التالية.',
+  'rpm.name': 'اسم المستلزم', 'rpm.price': 'سعر القطعة (روبية)', 'rpm.add': 'أضف إلى القائمة', 'rpm.save': 'حفظ القائمة', 'rpm.saved': 'حُفظت قائمة المستلزمات', 'rpm.unchanged': 'لا تغيير',
+  'rpm.empty': 'القائمة فارغة.', 'rpm.per_piece': '{rp} / قطعة', 'rpm.pieces': 'العدد لكل عبوة', 'rpm.pick_ph': 'اكتب اسم المستلزم', 'rpm.none': 'غير موجود في القائمة', 'rpm.new': 'مستلزم جديد…',
+  'rpm.new_hint': 'المستلزم الجديد يُضاف إلى قائمة مستلزمات التعبئة (الاسم + سعر القطعة).', 'rpm.qty_bad': 'عدد المستلزم لكل عبوة غير صحيح', 'rpm.name_need': 'اكتب اسم المستلزم', 'rpm.price_need': 'اكتب سعر القطعة',
+  'rpm.exists': '{name} موجود في القائمة', 'rpm.added': 'أُضيف {name} إلى القائمة'
+});
 let rpSeq = 0;
 async function loadRepackHistory() {
   const seq = ++rpSeq, T = today(), from = addDays(T, -(RPK.days - 1));
   let d;
   try { d = await loadSales(from, T, true); } catch (e) { const b = $('#rp-hist-body'); if (b) b.innerHTML = `<span class="red">${esc(errMsg(e))}</span>`; return; }
   const box = $('#rp-hist-body'); if (!box || seq !== rpSeq) return;
-  const own = isOwner(), list = (d.repacks || []).slice().sort((a, b) => String(b.repack_time || b.repack_date).localeCompare(String(a.repack_time || a.repack_date)));
+  const own = isOwner(), list = (d.repacks || []).filter(r => r.status !== 'proses' && r.status !== 'menutup').slice().sort((a, b) => String(b.repack_time || b.repack_date).localeCompare(String(a.repack_time || a.repack_date)));
   const tot = new Map();
   list.forEach(r => { const k = String(r.to_product_id); const a = tot.get(k) || { name: r.to_name, from: r.from_name, unit: r.from_unit, to_unit: r.to_unit, used: 0, made: 0, exp: 0, n: 0, cost: 0 }; a.used = roundQty(a.used + num(r.from_qty)); a.made = roundQty(a.made + num(r.to_qty)); a.exp = roundQty(a.exp + num(r.expected_qty)); a.n++; a.cost += int(r.packaging_cost); tot.set(k, a); });
   box.innerHTML = list.length ? `<div class="tbl-wrap" style="margin-bottom:12px"><table class="tbl" id="rp-hist"><thead><tr><th>${esc(t('date'))}</th><th>${esc(t('rp.made'))}</th><th class="r">${esc(t('rp.bulk_used'))}</th><th class="r">${esc(t('rp.expected'))}</th><th class="r">${esc(t('rp.yield'))}</th><th class="r">${esc(t('rp.loss'))}</th>${own ? `<th class="r">${esc(t('rp.pack_cost'))}</th>` : ''}<th class="hide-phone">${esc(t('pc.user'))}</th></tr></thead><tbody>
@@ -7017,8 +7262,6 @@ function bukaKasAprHTML(a, pl) {
     ${a.note ? `<div class="small" style="margin-bottom:8px">${esc(t('notes'))}: ${esc(a.note)}</div>` : ''}<div class="small muted" style="margin-bottom:8px">${esc(t('bk.hint'))}</div>`;
 }
 Object.assign(ACT, {
-  'rp-pick': el => { RPK.pick = el.dataset.id; const s0 = $('#rp-to'); if (s0) { s0.value = el.dataset.id; rpPreview(); const q = $('#rp-qty'); if (q) q.focus(); } },
-  'rp-save': () => saveRepack(),
   'rp-days': el => { RPK.days = +el.dataset.n; $$('#rp-history .chip').forEach(c => c.classList.toggle('on', c === el)); loadRepackHistory(); },
   'pu-usenote': el => { const l = PU.lines[+el.dataset.i]; if (!l) return; l.qty = roundQty(el.dataset.q); PU.mismatch = null; savePuDraft(); RENDER.purchases(); },
   'pu-fixqty': () => { PU.mismatch = null; const box = $('#pu-mismatch'); if (box) box.remove(); const tr = $('#pu-cmp tr[data-cmp="diff"]'); const inp = $$('[data-pu-qty]')[0]; if (tr) tr.scrollIntoView({ block: 'center' }); if (inp) inp.focus(); },
@@ -7932,7 +8175,7 @@ Object.assign(I18N.id, {
   'gd.g_nocat': 'Tanpa kategori', 'gd.g_nosup': 'Tanpa pemasok', 'gd.expb_lewat': 'Sudah lewat', 'gd.expb_le7': '≤ 7 hari', 'gd.expb_le30': '≤ 30 hari', 'gd.expb_le90': '≤ 90 hari', 'gd.expb_gt90': '> 90 hari', 'gd.expb_none': 'Tanpa tanggal',
   'gd.abc_A': 'A — 80% nilai penjualan', 'gd.abc_B': 'B — 15% berikutnya', 'gd.abc_C': 'C — sisanya', 'gd.abc_none': 'Tidak terjual (30 hari)', 'gd.abc_hint': 'ABC dari nilai penjualan 30 hari terakhir',
   'gd.pk_orig': 'Kemasan asli', 'gd.pk_bulk': 'Curah (dipakai untuk kemas ulang)', 'gd.pk_pack': 'Kemas ulang toko', 'gd.mv_repack': 'Kemas ulang', 'gd.mv_fix': 'Koreksi barang masuk {no}',
-  'rp.hint': 'Barang curah (karton / karung) yang dikemas kecil di toko: berapa curah dipakai, berapa kemasan jadi, dan susutnya. Kasir juga mengemas langsung di aplikasi kasir (tanpa persetujuan); setiap kemas ulang dikirim ke pemilik, manajer dan akuntan.', 'rp.bulks': 'Produk curah & kemasannya', 'rp.can_make': 'cukup ±{n}', 'rp.make': 'Kemas', 'rp.none': 'Belum ada produk kemas ulang. Manajer / pemilik mengaturnya di sini ("Atur barang kemas ulang").', 'rp.none_owner': 'Belum ada produk kemas ulang. Atur di bawah: "Atur barang kemas ulang".',
+  'rp.hint': 'Barang curah (karton / karung) yang dikemas kecil di toko. Pilih curahnya, lalu kemasannya (sejenis), isi berapa curah yang dikemas: jumlah kemasan langsung dihitung. Curah keluar dari stok saat mulai; setelah selesai manajer mengonfirmasi kemasan yang jadi dan sisa curahnya. Pemilik, manajer dan akuntan diberi tahu.', 'rp.bulks': 'Produk curah & kemasannya', 'rp.can_make': 'cukup ±{n}', 'rp.make': 'Kemas', 'rp.none': 'Belum ada produk kemas ulang. Manajer / pemilik mengaturnya di sini ("Atur barang kemas ulang").', 'rp.none_owner': 'Belum ada produk kemas ulang. Atur di bawah: "Atur barang kemas ulang".',
   'rps.title': 'Atur barang kemas ulang', 'rps.hint': 'Pilih barang kemasan kecil, barang curah asalnya dan isi per kemasan. Pemilik dan akuntan diberi tahu.',
   'rps.hint_owner': 'Pilih barang kemasan kecil, barang curah asalnya dan isi per kemasan. Manajer dan akuntan diberi tahu.', 'rps.pack': 'Barang kemasan (hasil)', 'rps.bulk': 'Dibuat dari (curah)',
   'rps.qty': 'Isi per kemasan', 'rps.save': 'Simpan pengaturan', 'rps.list': 'Sudah diatur', 'rps.edit': 'Ubah', 'rps.del': 'Hapus', 'rps.del_q': 'Hapus pengaturan kemas ulang {name}?',
@@ -7941,7 +8184,7 @@ Object.assign(I18N.id, {
   'rps.new_need': 'Isi nama dan harga jual kemasan baru', 'rps.created': 'Kemasan baru dibuat dan diatur', 'rps.costs': 'Bahan kemasan per kemasan', 'rps.costs_hint': 'stiker, tutup, toples… ditambahkan ke modal setiap kemas ulang', 'rps.cost_name': 'Nama bahan (mis. Stiker)',
   'rps.cost_add': 'Tambah bahan', 'rps.cost_total': 'Total per {u}: {rp}', 'rps.cost_need_name': 'Isi nama bahan untuk setiap biaya', 'rps.costs_line': 'Bahan: {list} = {rp} / {u}',
   'rp.extra_cost': 'Biaya lain', 'rp.extra_ph': 'opsional', 'rp.pv_mat': 'Bahan kemasan {per} / {u} × {n} = {tot} (otomatis)', 'rps.need': 'Pilih barang kemasan, barang curah dan isi per kemasan', 'rps.same': 'Barang curah tidak boleh sama dengan barang kemasan',
-  'rp.form_title': 'Kemas ulang sekarang', 'rp.pack_product': 'Produk kemasan', 'rp.pick': 'pilih', 'rp.pieces': 'Jumlah kemasan jadi', 'rp.bulk_used': 'Curah dipakai', 'rp.auto': 'otomatis', 'rp.pack_cost': 'Biaya kemasan', 'rp.save': 'Simpan kemas ulang',
+  'rp.form_title': 'Kemas ulang', 'rp.pack_product': 'Produk kemasan', 'rp.pick': 'pilih', 'rp.pieces': 'Jumlah kemasan jadi', 'rp.bulk_used': 'Curah dipakai', 'rp.auto': 'otomatis', 'rp.pack_cost': 'Biaya kemasan', 'rp.save': 'Simpan kemas ulang',
   'rp.from_bulk': 'Dari', 'rp.size': 'Isi per kemasan', 'rp.preview_empty': 'Pilih produk kemasan dan isi jumlah kemasan jadi.', 'rp.pv_used': 'Curah dipakai {q} {u} → seharusnya {e} kemasan', 'rp.pv_yield': 'Jadi {n} = hasil {p}%', 'rp.pv_loss': 'susut {q} {u}',
   'rp.not_enough': 'Stok curah tidak cukup ({q} {u})', 'rp.pick_first': 'Pilih produk kemasan dulu', 'rp.qty_invalid': 'Jumlah tidak valid', 'rp.saved': 'Kemas ulang tersimpan: {from} → {name} × {n}', 'rp.saved_toast': 'Kemas ulang tersimpan', 'rp.unit_cost': 'Modal per kemasan',
   'rp.history': 'Riwayat kemas ulang', 'rp.made': 'Kemasan jadi', 'rp.expected': 'Seharusnya', 'rp.yield': 'Hasil', 'rp.loss': 'Susut', 'rp.totals': 'Total per produk', 'rp.avg_yield': 'Rata-rata hasil', 'rp.n_times': '{n} kali', 'rp.no_history': 'Belum ada kemas ulang di periode ini.',
@@ -8011,7 +8254,7 @@ Object.assign(I18N.ar, {
   'gd.g_nocat': 'بلا فئة', 'gd.g_nosup': 'بلا مورد', 'gd.expb_lewat': 'منتهية', 'gd.expb_le7': '≤ 7 أيام', 'gd.expb_le30': '≤ 30 يومًا', 'gd.expb_le90': '≤ 90 يومًا', 'gd.expb_gt90': '> 90 يومًا', 'gd.expb_none': 'بلا تاريخ',
   'gd.abc_A': 'A — 80% من قيمة المبيعات', 'gd.abc_B': 'B — 15% التالية', 'gd.abc_C': 'C — الباقي', 'gd.abc_none': 'لم يُبع (30 يومًا)', 'gd.abc_hint': 'تصنيف ABC حسب قيمة مبيعات آخر 30 يومًا',
   'gd.pk_orig': 'تعبئة أصلية', 'gd.pk_bulk': 'سائب (يُعاد تعبئته)', 'gd.pk_pack': 'معبأ في المتجر', 'gd.mv_repack': 'إعادة تعبئة', 'gd.mv_fix': 'تصحيح الوارد {no}',
-  'rp.hint': 'بضاعة سائبة (كرتون / كيس) تُعبأ صغيرة في المتجر: كم استُخدم من السائب، وكم عبوة نتجت، والفاقد. الكاشير يعبّئ مباشرة من تطبيق الكاشير (بلا موافقة)، وكل تعبئة تصل إلى المالك والمدير والمحاسب.', 'rp.bulks': 'المنتجات السائبة وعبواتها', 'rp.can_make': 'يكفي ±{n}', 'rp.make': 'عبّئ', 'rp.none': 'لا توجد منتجات معاد تعبئتها. يضبطها المدير أو المالك هنا («ضبط بضائع إعادة التعبئة»).', 'rp.none_owner': 'لا توجد منتجات معاد تعبئتها. اضبطها في الأسفل: «ضبط بضائع إعادة التعبئة».',
+  'rp.hint': 'بضاعة سائبة (كرتون / كيس) تُعبأ صغيرة في المتجر. اختر السائب، ثم العبوة (من نفس النوع)، واكتب كمية السائب: يُحسب عدد العبوات مباشرة. يخرج السائب من المخزون عند البدء؛ وبعد الانتهاء يؤكد المدير عدد العبوات الناتجة والسائب المتبقي. يصل إشعار للمالك والمدير والمحاسب.', 'rp.bulks': 'المنتجات السائبة وعبواتها', 'rp.can_make': 'يكفي ±{n}', 'rp.make': 'عبّئ', 'rp.none': 'لا توجد منتجات معاد تعبئتها. يضبطها المدير أو المالك هنا («ضبط بضائع إعادة التعبئة»).', 'rp.none_owner': 'لا توجد منتجات معاد تعبئتها. اضبطها في الأسفل: «ضبط بضائع إعادة التعبئة».',
   'rps.title': 'ضبط بضائع إعادة التعبئة', 'rps.hint': 'اختر صنف العبوة الصغيرة، والصنف السائب الذي يُعبّأ منه، وكمية كل عبوة. يصل إشعار للمالك والمحاسب.',
   'rps.hint_owner': 'اختر صنف العبوة الصغيرة، والصنف السائب الذي يُعبّأ منه، وكمية كل عبوة. يصل إشعار للمدير والمحاسب.', 'rps.pack': 'صنف العبوة (الناتج)', 'rps.bulk': 'يُعبّأ من (السائب)',
   'rps.qty': 'كمية كل عبوة', 'rps.save': 'حفظ الضبط', 'rps.list': 'المضبوط حاليًا', 'rps.edit': 'تعديل', 'rps.del': 'حذف', 'rps.del_q': 'حذف ضبط إعادة تعبئة {name}؟',
@@ -8020,7 +8263,7 @@ Object.assign(I18N.ar, {
   'rps.new_need': 'اكتب اسم العبوة الجديدة وسعر بيعها', 'rps.created': 'تم إنشاء العبوة الجديدة وضبطها', 'rps.costs': 'مواد التعبئة لكل عبوة', 'rps.costs_hint': 'ستيكر، غطاء، علبة… تُضاف إلى تكلفة كل تعبئة', 'rps.cost_name': 'اسم المادة (مثلًا ستيكر)',
   'rps.cost_add': 'إضافة مادة', 'rps.cost_total': 'المجموع لكل {u}: {rp}', 'rps.cost_need_name': 'اكتب اسم المادة لكل تكلفة', 'rps.costs_line': 'المواد: {list} = {rp} / {u}',
   'rp.extra_cost': 'تكاليف أخرى', 'rp.extra_ph': 'اختياري', 'rp.pv_mat': 'مواد التعبئة {per} / {u} × {n} = {tot} (تلقائيًا)', 'rps.need': 'اختر صنف العبوة والصنف السائب وكمية كل عبوة', 'rps.same': 'لا يمكن أن يكون السائب هو نفس صنف العبوة',
-  'rp.form_title': 'إعادة التعبئة الآن', 'rp.pack_product': 'منتج العبوة', 'rp.pick': 'اختر', 'rp.pieces': 'عدد العبوات الناتجة', 'rp.bulk_used': 'السائب المستخدم', 'rp.auto': 'تلقائي', 'rp.pack_cost': 'تكلفة التغليف', 'rp.save': 'حفظ إعادة التعبئة',
+  'rp.form_title': 'إعادة التعبئة', 'rp.pack_product': 'منتج العبوة', 'rp.pick': 'اختر', 'rp.pieces': 'عدد العبوات الناتجة', 'rp.bulk_used': 'السائب المستخدم', 'rp.auto': 'تلقائي', 'rp.pack_cost': 'تكلفة التغليف', 'rp.save': 'حفظ إعادة التعبئة',
   'rp.from_bulk': 'من', 'rp.size': 'محتوى العبوة', 'rp.preview_empty': 'اختر منتج العبوة وأدخل عدد العبوات الناتجة.', 'rp.pv_used': 'السائب المستخدم {q} {u} ← المتوقع {e} عبوة', 'rp.pv_yield': 'الناتج {n} = نسبة {p}%', 'rp.pv_loss': 'فاقد {q} {u}',
   'rp.not_enough': 'مخزون السائب غير كافٍ ({q} {u})', 'rp.pick_first': 'اختر منتج العبوة أولًا', 'rp.qty_invalid': 'كمية غير صالحة', 'rp.saved': 'حُفظت إعادة التعبئة: {from} ← {name} × {n}', 'rp.saved_toast': 'حُفظت إعادة التعبئة', 'rp.unit_cost': 'تكلفة العبوة',
   'rp.history': 'سجل إعادة التعبئة', 'rp.made': 'العبوات الناتجة', 'rp.expected': 'المتوقع', 'rp.yield': 'النسبة', 'rp.loss': 'الفاقد', 'rp.totals': 'الإجمالي لكل منتج', 'rp.avg_yield': 'متوسط النسبة', 'rp.n_times': '{n} مرة', 'rp.no_history': 'لا توجد إعادة تعبئة في هذه الفترة.',

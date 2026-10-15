@@ -264,7 +264,7 @@ const MockServer = (() => {
   const repackText = pl => str(pl.from_name) + ' ' + fmtN(pl.from_qty) + ' ' + str(pl.from_unit) + ' → ' + str(pl.to_name) + ' x' + fmtN(pl.to_qty) + ' (hasil ' + pl.yield_pct + '%, susut ' + fmtN(pl.loss_qty) + ' ' + str(pl.from_unit) + ')';
   function applyRepack(db, u, P, o) {
     const { from, to, toQty, fromQty } = P;
-    const matCost = Math.round(repackCostPer(to) * toQty); // v48: the pack's materials × packs made
+    const matCost = Math.round(repackCostPer(db, to) * toQty); // v48: the pack's materials × packs made
     const packCost = Math.max(0, int(o.packaging_cost)) + matCost;
     const unitCost = Math.round((fromQty * int(from.cost_price) + packCost) / toQty);
     const date = isYmd(o.date) ? o.date : jktDate();
@@ -431,8 +431,9 @@ const MockServer = (() => {
     }
     return st;
   }
-  function settingsOut(db) {
+  function settingsOut(db, role) {
     const st = Object.assign({}, V16_DEFAULTS, db.settings);
+    st.repack_materials = window.KRepackMock ? window.KRepackMock.catalogOut(db, role) : []; // v50: names only for the cashier / rep
     if (st.opname_state && typeof st.opname_state === 'object') { const o = Object.assign({}, st.opname_state); o.counted_n = Array.isArray(o.counted) ? o.counted.length : 0; delete o.counted; st.opname_state = o; }
     return st;
   }
@@ -636,9 +637,16 @@ const MockServer = (() => {
   const productOut = p => Object.assign({}, p, { shop_stock: shopOf(p), gudang_stock: r3(num(p.stock) - shopOf(p)) });
   // v48 (owner 2026-10-14): a pack's materials (sticker, lid, jar …) with their cost per pack — mirrors the server's repackCostsOf;
   // the cashier / rep see the names only (productOut on the server).
-  const repackCostsOf = p => { let a = []; try { a = JSON.parse(String((p && p.repack_costs) || '') || '[]'); } catch (e) { a = []; } return (Array.isArray(a) ? a : []).map(x => ({ name: String((x && x.n) || '').trim().slice(0, 40), cost: Math.max(0, Math.round(Number((x && x.c) || 0))) })).filter(x => x.name).slice(0, 12); };
-  const repackCostPer = p => repackCostsOf(p).reduce((t, x) => t + x.cost, 0);
-  const costNamesFor = (p, role) => p.repack_costs && !['owner', 'manager', 'akuntan'].includes(role) ? Object.assign({}, p, { repack_costs: JSON.stringify(repackCostsOf(p).map(x => ({ n: x.name }))) }) : p;
+  // v50: with the materials list (settings.repack_materials) — one copy for both demo apps in shared/repack-mock.js
+  const repackCostPer = (db, p) => window.KRepackMock.costPer(db, p);
+  const costNamesFor = (db, p, role) => window.KRepackMock.productCosts(db, p, role);
+  // v50 (owner 2026-10-15): two-step repacking + the materials list, written once in shared/repack-mock.js, loaded on the first request
+  let repackLoad = null;
+  function loadRepackMock(src) {
+    if (window.KRepackMock) return Promise.resolve();
+    return repackLoad || (repackLoad = new Promise(res => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = res; document.head.appendChild(sc); }));
+  }
+  const RPX = { E: (c, m, x) => E(c, m, x), nextId: (db, k) => nextId(db, k), logAct: (...a) => logAct(...a), notify: (...a) => { notifyR(...a); dirty = true; }, safeName: (v, m) => safeName(v, m), pending: (db, id) => { const p = pendingRepackFor(db, id); return p ? repackBusy(p) : null; } };
   const shopSet = new Map();
   function normShop(db, snap) {
     db.products.forEach(p => {
@@ -846,7 +854,7 @@ const MockServer = (() => {
         if (!deviceTouch(db, u, data.device, true)) throw E('INVALID', 'device.id tidak valid');
         return { require_location: db.settings.require_device_location === true, server_time: new Date().toISOString() };
       }
-      case 'bootstrap': return { opname: opnameBoot(db), products: db.products.map(p => costNamesFor(productOut(p), u.role)), customers: db.customers, settings: settingsOut(db), ai_reader: (() => { try { return localStorage.getItem('kmock.ai') !== 'off'; } catch (e) { return true; } })(), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
+      case 'bootstrap': return { opname: opnameBoot(db), products: db.products.map(p => costNamesFor(db, productOut(p), u.role)), customers: db.customers, settings: settingsOut(db, u.role), ai_reader: (() => { try { return localStorage.getItem('kmock.ai') !== 'off'; } catch (e) { return true; } })(), repacks_open: window.KRepackMock.openList(db, u.role), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
         users: db.users.map(x => u.role === 'owner' ? { name: x.name, role: x.role, active: x.active !== false, must_change: x.must_change === true, locked: Date.parse(x.locked_until) > Date.now(), has_master: x.role === 'owner' && isHex64(x.master_hash) } : { name: x.name, role: x.role, active: x.active !== false }), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
         shift: blind(shiftSummary(db, openShiftOf(db, u.name)), u.role), open_shifts: ['owner', 'manager'].includes(u.role) ? db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)) : [] };
 
@@ -1094,6 +1102,8 @@ const MockServer = (() => {
         return { approval: approvalOut(ap, u.role) };
       }
       case 'repack': case 'request_repack': case 'cancel_repack': return repackAction(db, u, action, data, x => canDecideAp(u.role, x)); // v38
+      case 'repack_start': { const r0 = window.KRepackMock.start(db, u, data, RPX); dirty = true; return r0; } // v50 step 1: the bulk leaves the stock
+      case 'repack_finish': { const r0 = window.KRepackMock.finish(db, u, data, RPX); dirty = true; return r0; } // step 2: the manager confirms the result
       case 'list_approvals': {
         if (!['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Owner/manager only');
         return { approvals: db.approvals.filter(x => x.status === 'pending').map(x => approvalOut(x, u.role)) };
@@ -1775,6 +1785,7 @@ const MockServer = (() => {
   let extLoad = null;
   async function request(body) {
     await ensure();
+    await loadRepackMock('../shared/repack-mock.js');
     if (/^(att_|worker_)/.test(body.action)) await loadAttMock();
     await sleep(30 + Math.random() * 50);
     let forced = false; try { forced = localStorage.getItem('kmock.offline') === '1'; } catch (e) { }
