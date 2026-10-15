@@ -97,6 +97,7 @@
 <script src="../shared/barcode-cam.js"></script>
 <script src="../shared/pick.js"></script>
 <script src="../shared/pay-split.js"></script>
+<script src="../shared/bank-slip.js"></script>
 <script src="../shared/printer.js"></script>
 <script src="../shared/install-btn.js" data-host="#login:not([hidden]) > .screen-card"></script>
 <script src="../shared/app-update.js"></script>
@@ -111,7 +112,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.7.3';
+const APP_VERSION = 'kasir-1.7.4';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1920,6 +1921,12 @@ document.addEventListener('change', e => {
 
 /* ========== Pay sheet ========== */
 function payCalc(v) {
+  const p = payCalc0(v), tr = trPartOf(v, p);
+  // v57: with several store accounts the transfer names the one it went to (a tap, or the slip photo picks it)
+  if (!p.error && tr > 0 && payAccounts().length > 1 && !(S.cart.tr && S.cart.tr.acc)) p.error = t('pay.tr_pick');
+  return p;
+}
+function payCalc0(v) {
   const c = S.cart, m = c.method, typed = String(c.paid).trim() !== '';
   let paid = v.total, change = 0, debt = 0, error = '';
   if (m === 'tunai') { paid = typed ? moneyVal(c.paid) : v.total; if (paid < v.total) error = t('pay.short', { amount: fmtRp(v.total - paid) }); change = Math.max(0, paid - v.total); }
@@ -1983,8 +1990,9 @@ function drawPay(bg) {
         <div class="grid3">${['transfer', 'qris', 'kartu'].map(k => `<div class="field"><label class="f" for="pay-sp-${k}">${esc(t('pm.' + k))} (Rp)</label><input class="input money" data-rule="num" id="pay-sp-${k}" data-sp="${k}" inputmode="numeric" autocomplete="off" placeholder="0" value="${(c.split || {})[k] ? esc(fmtNum(moneyVal(c.split[k]))) : ''}"></div>`).join('')}</div>
         <div class="field"><label class="f" for="pay-sp-tunai">${esc(t('pay.split_cash'))}</label><input class="input money" data-rule="num" id="pay-sp-tunai" data-sp="tunai" inputmode="numeric" autocomplete="off" value="${(c.split || {}).tunai ? esc(fmtNum(moneyVal(c.split.tunai))) : ''}"></div>
         <div class="small" id="pay-sp-sum" role="status"></div>
-        ${cust ? '' : `<p class="small muted" style="margin:6px 0 0">${esc(t('pay.split_debt_hint'))}</p>`}`
-      : `<p class="muted" style="margin:4px 0">${esc(t('pay.check_' + m))}</p>`}</div>
+        ${cust ? '' : `<p class="small muted" style="margin:6px 0 0">${esc(t('pay.split_debt_hint'))}</p>`}
+        ${trBoxHTML()}`
+      : `<p class="muted" style="margin:4px 0">${esc(t('pay.check_' + m))}</p>${m === 'transfer' ? trBoxHTML() : ''}`}</div>
     <div class="result" id="pay-result"></div>
     <details class="more" id="pay-more" ${c.channel !== 'toko' || c.promo ? 'open' : ''}><summary>${esc(t('pay.more'))}: ${esc(t('ch.' + (c.channel || 'toko')))}${c.promo ? ' · ' + esc(c.promo) : ''}</summary>
       <div class="chips" style="margin-top:6px">${CHANNELS.map(ch => `<button type="button" class="chip ${(c.channel || 'toko') === ch ? 'on' : ''}" data-act="channel" data-c="${ch}">${esc(t('ch.' + ch))}</button>`).join('')}</div>
@@ -2007,6 +2015,7 @@ function drawPay(bg) {
   disc.addEventListener('keydown', e => { if (e.key === 'Enter') payOk(); });
   vsShowText(); vsTick();
   bindRsBox(bg);
+  const slipIn = $('#pay-slip', body); if (slipIn) slipIn.onchange = () => { const f = slipIn.files[0]; if (f) trScan(f, bg); }; // v57
   payResult(bg);
   const spFirst = $('#pay-sp-transfer', body);
   if ((cash || spFirst) && !isTouch()) setTimeout(() => (cash || spFirst).focus(), 30);
@@ -2055,6 +2064,7 @@ function payResult(bg) {
     const ci = $('#pay-sp-tunai', bg); if (ci) ci.placeholder = fmtNum(p.need);
     const sm = $('#pay-sp-sum', bg); if (sm) sm.textContent = p.parts.length ? p.parts.map(x => t('pm.' + x.method) + ' ' + fmtRp(x.amount)).join(' + ') + (p.debt > 0 ? ' + ' + t('pm.hutang') + ' ' + fmtRp(p.debt) : '') + ' = ' + fmtRp(v.total) : '';
   }
+  trUpdate(bg, v, p); // v57: the transfer box follows the transfer part (split payment) and checks the slip's amount
   const ok = $('#pay-ok', bg); if (ok) { ok.disabled = !!p.error; if (!saving) ok.textContent = needDiscApproval(v) ? t('disc.ask') : t('pay.finish'); }
   // v16: live discount % against the limit
   const tot = $('#pay-total', bg); if (tot) tot.textContent = fmtRp(v.total);
@@ -2077,7 +2087,8 @@ function buildSaleRequest(v, pay) {
     discount: v.discount, payment_method: pay.method, paid_amount: Math.min(pay.paid, v.total),
     payments: pay.method === 'campur' ? pay.parts : undefined, // v51: the parts of a split payment (the server keeps them)
     survey: manual ? sv.answers : [], survey_consent: manual || !!vo, survey_transcript: vo ? vsClean(vo.text) : '', // transcript only when a recording ran (v36: it starts by itself on Bayar)
-    channel: c.channel || 'toko', promo_code: cleanPromo(c.promo), notes: '', send_receipt: v.send
+    channel: c.channel || 'toko', promo_code: cleanPromo(c.promo), notes: '', send_receipt: v.send,
+    ...trRequest(v, pay) // v57: the store account the transfer went to, the slip photo, the sender's bank and the transfer no.
   };
 }
 function receiptFromCart(v, pay, req) {
@@ -3977,6 +3988,7 @@ function openPayment(c) {
       if (int(ex.amount) > 0) P.amount = int(ex.amount);
       if (ex.bank) P.bank = String(ex.bank).slice(0, 40);
       if (ex.transfer_ref) P.ref = String(ex.transfer_ref).slice(0, 60);
+      const acc0 = window.KBank ? KBank.slipAccount(payAccounts(), ex, 'in') : ''; if (acc0) P.account_id = acc0; // v57
       const d = parseAnyDate(ex.date); if (d) P.date = d;
     } catch (e) { P.scanErr = (e instanceof NetError ? t('pu.scan_net') : errMsg(e)) + ' ' + t('pu.scan_retry'); }
     P.scanning = false; draw();
@@ -5454,6 +5466,78 @@ Object.assign(I18N.ar, {
   'rk.fin_cancel': 'إلغاء', 'rk.fin_ok': 'تأكيد', 'rk.fin_short': 'أقل من المخطط بـ {n} {pu}', 'rk.fin_need': 'اكتب عدد العبوات الناتجة (أو ألغِ)',
   'rk.fin_rem_bad': 'السائب المتبقي من 0 إلى {q} {u}', 'rk.fin_cancel_q': 'إلغاء إعادة التعبئة هذه؟ يعود {q} {u} من {name} إلى المخزون ولا تُصنع عبوات.',
   'rk.fin_saved': 'تم تأكيد نتيجة إعادة التعبئة', 'rk.fin_cancelled': 'أُلغيت إعادة التعبئة'
+});
+/* v57 (owner 2026-10-15: «في عملية التحويلات إمكانية اختيار كتابة التحويل لأي بنك تمت … والتطبيق أيضا عندما يتم عملية التحويل البنكي يقع التقاط الصورة
+   للتحويل البنكي والتطبيق مباشرة يتعرف على أي نوع البنك ويصنفها حسب الصورة»): a sale paid (partly) by transfer names the store account
+   it went to — a tap on the account, or a photo of the transfer slip: the account (number, else bank) is recognised by itself, and the
+   slip's amount is checked against the transfer. With one store account it is that one; with several, one must be chosen. */
+const TRS = { scanning: false, err: '' }; // this screen only (not kept with the cart)
+function trPartOf(v, p) {
+  if (!p) return 0;
+  if (p.method === 'transfer') return v.total;
+  if (p.method === 'campur') return int(((p.parts || []).find(x => x.method === 'transfer') || {}).amount);
+  return 0;
+}
+const trAccLabel = a => a ? `${a.bank} ${a.account_no}` : '';
+function trSlipHTML(amount) {
+  const tr = S.cart.tr || {}, ex = tr.ex;
+  if (TRS.scanning) return `<span class="row" style="gap:6px"><span class="spinner" style="width:18px;height:18px;border-width:3px;margin:0"></span><b>${esc(t('pay.tr_reading'))}</b></span>`;
+  if (TRS.err) return `<span class="red">${esc(TRS.err)}</span>`;
+  if (!ex) return `<span class="muted">${esc(t('pay.tr_slip_hint'))}</span>`;
+  const amt = ex.amount != null && isFinite(Number(ex.amount)) ? int(ex.amount) : null, acc = tr.auto ? payAccounts().find(a => a.id === tr.acc) : null;
+  return `<span id="pay-slip-read">${amt != null ? `<b class="num">${fmtRp(amt)}</b> ` : ''}${amt == null ? `<span class="red">${esc(t('pay.tr_unclear'))}</span>` : amt !== amount ? `<span class="red" id="pay-slip-mm">${esc(t('pay.tr_mm', { slip: fmtRp(amt), amt: fmtRp(amount) }))}</span>` : `<span class="okc" id="pay-slip-ok">✓ ${esc(t('pay.tr_ok'))}</span>`}
+    ${ex.sender_bank || ex.bank ? ` · ${esc(t('pay.tr_from', { b: ex.sender_bank || ex.bank }))}` : ''}${ex.transfer_ref ? ` · ref ${esc(ex.transfer_ref)}` : ''}${acc ? `<br><span id="pay-slip-acc">${esc(t('pay.tr_acc_found', { acc: trAccLabel(acc) }))}</span>` : ''}</span>`;
+}
+function trBoxHTML() {
+  const accs = payAccounts(), tr = S.cart.tr || {}, on = a => tr.acc ? tr.acc === a.id : accs.length === 1;
+  return `<div class="trbox" id="pay-tr" style="margin-top:10px;border:1px solid var(--line,#e2e8f0);border-radius:12px;padding:10px">
+    <div class="row wrap" style="gap:8px;align-items:center"><label class="btn sm" for="pay-slip" id="pay-slip-btn">${ic('camera')} ${esc(t(tr.photo_id ? 'pu.photo_retake' : 'pay.tr_slip'))}</label>${PHOTO_INPUT('pay-slip')}
+      <span class="small grow" id="pay-slip-st" role="status"></span></div>
+    ${accs.length ? `<div class="small" style="margin:8px 0 4px"><b>${esc(t('pay.tr_to'))}</b></div><div class="chips" id="pay-acc" role="radiogroup">${accs.map(a => `<button type="button" role="radio" class="chip ${on(a) ? 'on' : ''}" aria-checked="${on(a)}" data-act="pay-acc" data-acc="${esc(a.id)}" id="pay-acc-${esc(a.id)}">${esc(a.bank)} <span class="num small">${esc(String(a.account_no).slice(-4))}</span></button>`).join('')}</div>` : ''}</div>`;
+}
+function trUpdate(bg, v, p) {
+  const box = $('#pay-tr', bg); if (!box) return;
+  const amount = trPartOf(v, p);
+  box.hidden = !(amount > 0);
+  const st = $('#pay-slip-st', box); if (st) st.innerHTML = trSlipHTML(amount);
+}
+async function trScan(file, bg) {
+  TRS.scanning = true; TRS.err = ''; payResult(bg);
+  try {
+    const img = await imageToJpeg(file);
+    const r = await apiPhoto('scan_payment', { image_base64: img.base64, mime: img.mime });
+    const ex = r.extracted || {}, keep = {};
+    ['amount', 'sender_name', 'sender_bank', 'bank', 'receiver_bank', 'receiver_account', 'transfer_ref', 'date'].forEach(k => { if (ex[k] != null) keep[k] = typeof ex[k] === 'string' ? ex[k].slice(0, 80) : ex[k]; });
+    const acc = window.KBank ? KBank.slipAccount(payAccounts(), ex, 'in') : '';
+    S.cart.tr = Object.assign({}, S.cart.tr, { photo_id: r.photo_id || '', ex: keep }, acc ? { acc, auto: true } : {});
+  } catch (e) { TRS.err = (e instanceof NetError ? t('pu.scan_net') : errMsg(e)) + ' ' + t('pu.scan_retry'); }
+  TRS.scanning = false; saveCart();
+  drawPay(bg);
+}
+function trRequest(v, pay) {
+  const tr = S.cart.tr || {};
+  if (!(trPartOf(v, pay) > 0)) return {};
+  const o = {};
+  if (tr.acc) o.account_id = tr.acc;
+  if (tr.photo_id) o.photo_id = tr.photo_id;
+  if (tr.ex && (tr.ex.sender_bank || tr.ex.bank)) o.bank = String(tr.ex.sender_bank || tr.ex.bank).slice(0, 60);
+  if (tr.ex && tr.ex.transfer_ref) o.transfer_ref = String(tr.ex.transfer_ref).slice(0, 80);
+  return o;
+}
+Object.assign(ACT, {
+  'pay-acc': el => { S.cart.tr = Object.assign({}, S.cart.tr, { acc: el.dataset.acc, auto: false }); saveCart(); $$('#pay-acc .chip').forEach(c => { const on = c === el; c.classList.toggle('on', on); c.setAttribute('aria-checked', on); }); payResult(el.closest('.modal-bg')); }
+});
+Object.assign(I18N.id, {
+  'pay.tr_slip': 'Foto bukti transfer', 'pay.tr_slip_hint': 'Foto bukti transfer: rekening toko dan jumlahnya dicek sendiri.', 'pay.tr_reading': 'Membaca bukti transfer…',
+  'pay.tr_to': 'Masuk ke rekening toko:', 'pay.tr_pick': 'Pilih rekening toko tujuan transfer (atau foto buktinya)',
+  'pay.tr_mm': 'Bukti {slip} ≠ transfer {amt} — periksa lagi', 'pay.tr_ok': 'Jumlah cocok', 'pay.tr_unclear': 'Jumlah di bukti tidak terbaca',
+  'pay.tr_from': 'dari {b}', 'pay.tr_acc_found': 'Rekening toko dikenali dari bukti: {acc}'
+});
+Object.assign(I18N.ar, {
+  'pay.tr_slip': 'صورة إيصال التحويل', 'pay.tr_slip_hint': 'صوّر إيصال التحويل: يُعرف حساب المتجر ويُتحقق من المبلغ تلقائيًا.', 'pay.tr_reading': 'جارٍ قراءة الإيصال…',
+  'pay.tr_to': 'دخل إلى حساب المتجر:', 'pay.tr_pick': 'اختر حساب المتجر الذي وصل إليه التحويل (أو صوّر الإيصال)',
+  'pay.tr_mm': 'الإيصال {slip} ≠ التحويل {amt} — تحقّق مرة أخرى', 'pay.tr_ok': 'المبلغ مطابق', 'pay.tr_unclear': 'المبلغ في الإيصال غير مقروء',
+  'pay.tr_from': 'من {b}', 'pay.tr_acc_found': 'حساب المتجر المعروف من الإيصال: {acc}'
 });
 /* ========== Boot ========== */
 /* ========== Trial links (?demo=1 / ?mock=1) can be closed by the owner ==========

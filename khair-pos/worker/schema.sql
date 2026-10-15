@@ -95,7 +95,11 @@ CREATE TABLE IF NOT EXISTS pos_sales (
   promo_code TEXT,
   shift_id TEXT,
   survey_transcript TEXT,
-  send_fee REAL
+  send_fee REAL,
+  account_id TEXT,
+  bank TEXT,
+  transfer_ref TEXT,
+  proof_photo_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pos_sales_sale_date ON pos_sales (sale_date);
 CREATE INDEX IF NOT EXISTS idx_pos_sales_client_id ON pos_sales (client_id);
@@ -140,7 +144,8 @@ CREATE TABLE IF NOT EXISTS pos_payments (
   match_status TEXT,
   pay_time TEXT,
   account_id TEXT,
-  slip_date TEXT
+  slip_date TEXT,
+  payee TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pos_payments_pay_date ON pos_payments (pay_date);
 CREATE INDEX IF NOT EXISTS idx_pos_payments_customer_id ON pos_payments (customer_id);
