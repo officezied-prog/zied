@@ -846,7 +846,7 @@ const MockServer = (() => {
         if (!deviceTouch(db, u, data.device, true)) throw E('INVALID', 'device.id tidak valid');
         return { require_location: db.settings.require_device_location === true, server_time: new Date().toISOString() };
       }
-      case 'bootstrap': return { opname: opnameBoot(db), products: db.products.map(p => costNamesFor(productOut(p), u.role)), customers: db.customers, settings: settingsOut(db), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
+      case 'bootstrap': return { opname: opnameBoot(db), products: db.products.map(p => costNamesFor(productOut(p), u.role)), customers: db.customers, settings: settingsOut(db), ai_reader: (() => { try { return localStorage.getItem('kmock.ai') !== 'off'; } catch (e) { return true; } })(), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
         users: db.users.map(x => u.role === 'owner' ? { name: x.name, role: x.role, active: x.active !== false, must_change: x.must_change === true, locked: Date.parse(x.locked_until) > Date.now(), has_master: x.role === 'owner' && isHex64(x.master_hash) } : { name: x.name, role: x.role, active: x.active !== false }), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
         shift: blind(shiftSummary(db, openShiftOf(db, u.name)), u.role), open_shifts: ['owner', 'manager'].includes(u.role) ? db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)) : [] };
 
@@ -1229,6 +1229,9 @@ const MockServer = (() => {
         if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
         let extracted;
         try { extracted = JSON.parse(localStorage.getItem('kmock.scan') || 'null'); } catch (e) { }
+        // v50: kmock.scan = "off" plays a Worker without the AI key (the photo is kept, nothing read, ai: 'off')
+        const aiOff = extracted === 'off';
+        if (aiOff) extracted = { items: [], readable: false, notes: 'AI gagal membaca: AI_DISABLED' };
         if (!extracted) extracted = {
           supplier: 'CV Timur Tengah Food', date: jktDate(), invoice_no: 'TTF-' + jktDate().replace(/-/g, '').slice(2), total: 3710000,
           items: [
@@ -1246,7 +1249,7 @@ const MockServer = (() => {
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'masuk', ref: '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted, match_status: '', match_notes: '' };
         keepPhotoImg(db, photo, data);
         db.photos.push(photo);
-        return { photo_id: photo.photo_id, extracted, suggestions, drive_url: photo.drive_url };
+        return { photo_id: photo.photo_id, extracted, suggestions, drive_url: photo.drive_url, ai: aiOff ? 'off' : 'ok' };
       }
       case 'scan_expense': {
         // v29/v36 photo workflow, kind 'biaya': an expense invoice. Demo: localStorage kmock.expscan = the extracted JSON,

@@ -153,6 +153,8 @@ export default {
               : path.endsWith('khair-cold') ? handleCold
                 : handleRequest;
         response = await handler(adapter, text, headers, env.STORE_KEY, { env }); // env: the Google Places key (field search), when set
+        // v50: the apps show whether the photo reader (AI) is on — the owner sees at once that ANTHROPIC_API_KEY is missing
+        if (handler === handleRequest && response && response.ok === true && response.user && response.server_time) response.ai_reader = !!env.ANTHROPIC_API_KEY;
       }
       const counted = recordUsage(env.DB, adapter.use);
       if (ctx && ctx.waitUntil) ctx.waitUntil(counted); else await counted; // tests (no ctx) wait for it
