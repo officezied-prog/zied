@@ -1,7 +1,7 @@
 // v17 A4 documents (shared/docs.js): faktur, surat jalan, penawaran, tanda terima barang, rekap tagihan.
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, login, getDb, nav, addBySearch, checkoutSkip } = require('./helpers');
+const { SHOTS, login, getDb, nav, addBySearch, checkoutSkip, editDb, rp } = require('./helpers');
 
 const stubPrint = page => page.evaluate(() => { window.__printed = 0; window.print = () => { window.__printed++; }; });
 const printed = page => page.evaluate(() => window.__printed);
@@ -89,4 +89,32 @@ test('manager: Tanda terima without purchase prices', async ({ page }) => {
   await expect.poll(() => printed(page)).toBe(1);
   await expect(page.locator('#print-area .kdoc h1')).toHaveText('TANDA TERIMA BARANG');
   await expect(page.locator('#print-area')).not.toContainText('Harga beli');
+});
+
+// v50 (owner 2026-10-15: «عند ادخال بضائع جديده … تخرج الاجمالي صفر وعند طباعه الورقه ايضا … صفر»): the manager saw "Rp 0" for every
+// goods-in note. Purchase prices hidden (the owner's setting) → "disembunyikan", never 0; once the owner allows them → the real total
+// on screen and on the receipt (the server used to drop the total even then).
+test('manager: note totals hidden → "disembunyikan" (never Rp 0); allowed by the owner → the real total on screen and on the receipt', async ({ page }) => {
+  await login(page, 'Jihan', '2222', '', { stay: true });
+  await stubPrint(page);
+  await nav(page, 'purchases');
+  const row = page.locator('#pu-hist tbody tr').first();
+  await expect(row.locator('[data-cost-hidden]')).toHaveText('disembunyikan');
+  await expect(page.locator('#pu-hist')).not.toContainText('Rp 0');
+  await expect(page.locator('#pu-recent')).toContainText('Akuntan & manajer boleh melihat harga beli');
+  // the owner allows purchase prices for the manager
+  await editDb(page, 'db.settings.akuntan_sees_cost = true;');
+  await page.reload(); // (the screen keeps its 2-minute copy of the list otherwise)
+  await expect(page.locator('#app')).toBeVisible();
+  await nav(page, 'purchases');
+  await expect(row.locator('[data-cost-hidden]')).toHaveCount(0);
+  const no = await row.getAttribute('data-no');
+  const total = (await getDb(page)).purchases.filter(p => p.purchase_no === no).reduce((a, p) => a + p.total, 0);
+  expect(total).toBeGreaterThan(0);
+  await expect(row.locator('td.r.num')).toHaveText(rp(total));
+  await stubPrint(page); // again after the reload
+  await row.locator('[data-act="pu-doc"]').click();
+  await expect.poll(() => printed(page)).toBe(1);
+  await expect(page.locator('#print-area')).toContainText('Harga beli');
+  await expect(page.locator('#print-area .tot tr.b td.n')).toHaveText(rp(total));
 });
