@@ -112,7 +112,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.7.4';
+const APP_VERSION = 'kasir-1.7.5';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -2441,7 +2441,7 @@ async function printReceipt(rc, btn) {
 }
 function openPrinter() {
   const el = openModal({ title: KPrint.text(S.lang, 'title'), id: 'printer', body: '<div id="prn-panel"></div>', foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button>` });
-  KPrint.panel($('#prn-panel', el), S.lang, { store: settings(), printHTML });
+  KPrint.panel($('#prn-panel', el), S.lang, { store: settings(), printHTML, apk: 'https://github.com/officezied-prog/zied/releases/download/android/khair-kasir.apk' });
 }
 function printHTML(html) {
   $('#page-style').textContent = `@media print{@page{size:${paperW()}mm auto;margin:2mm}}`;
