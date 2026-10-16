@@ -18,8 +18,8 @@ const ONLY_GENERATE = process.argv.includes('--generate-only');
 const OUT = path.join(HERE, 'out');
 const WORK = path.join(HERE, 'work');
 export const APPS = [
-  { id: 'owner', dir: '', pkg: 'com.khairmart.owner', name: 'Khair Mart', launcher: 'Khair Mart' },
-  { id: 'kasir', dir: 'kasir/', pkg: 'com.khairmart.kasir', name: 'Khair Kasir', launcher: 'Khair Kasir' },
+  { id: 'owner', dir: '', pkg: 'com.khairmart.owner', name: 'Khair Mart', launcher: 'Khair Mart', print: true },
+  { id: 'kasir', dir: 'kasir/', pkg: 'com.khairmart.kasir', name: 'Khair Kasir', launcher: 'Khair Kasir', print: true },
   { id: 'sales', dir: 'sales/', pkg: 'com.khairmart.sales', name: 'Khair Sales', launcher: 'Khair Sales' },
   { id: 'gudang', dir: 'gudang/', pkg: 'com.khairmart.gudang', name: 'Khair Gudang Dingin', launcher: 'Khair Gudang' }
 ];
@@ -42,6 +42,40 @@ function twaFor(app) {
   return twa;
 }
 
+// v58 (owner 2026-10-16: «يجب ان يتثبت مع تثبيت التطبيق مباشر لا يثبت لحاله»): the owner and cashier apps print on a paired Bluetooth
+// receipt printer by themselves (native/KhairPrintActivity.java, opened by the page with an intent: link, scheme khairprint) —
+// no RawBT to install. Added to the generated project: the activity, its intent filter and the Bluetooth permissions.
+function addPrinting(dir, app) {
+  const src = fs.readFileSync(path.join(HERE, 'native', 'KhairPrintActivity.java'), 'utf8').replace('__PACKAGE__', app.pkg);
+  const javaDir = path.join(dir, 'app/src/main/java', ...app.pkg.split('.'));
+  fs.mkdirSync(javaDir, { recursive: true });
+  fs.writeFileSync(path.join(javaDir, 'KhairPrintActivity.java'), src);
+  const mf = path.join(dir, 'app/src/main/AndroidManifest.xml');
+  let xml = fs.readFileSync(mf, 'utf8');
+  const perms = `
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+`;
+  const activity = `
+        <activity android:name="${app.pkg}.KhairPrintActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="khairprint" />
+            </intent-filter>
+        </activity>
+    </application>`;
+  const open = xml.match(/<manifest[^>]*>/);
+  if (!open || xml.split('</application>').length !== 2) throw new Error('AndroidManifest.xml: unexpected layout, printing not added');
+  xml = xml.replace(open[0], open[0] + perms).replace('</application>', activity.trimStart());
+  fs.writeFileSync(mf, xml);
+}
+
 function sh(cmd, args, opts = {}) { execFileSync(cmd, args, { stdio: 'inherit', ...opts }); }
 function buildTools() {
   const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
@@ -60,6 +94,7 @@ for (const app of APPS) {
   const twa = twaFor(app);
   log.info(`${app.pkg}: ${twa.host}${twa.startUrl}`);
   await new TwaGenerator().createTwaProject(dir, twa, log);
+  if (app.print) addPrinting(dir, app);
   fs.writeFileSync(path.join(dir, 'twa-manifest.json'), JSON.stringify(twa.toJson(), null, 2));
   if (ONLY_GENERATE) continue;
   sh(process.platform === 'win32' ? 'gradlew.bat' : './gradlew', ['assembleRelease', '--no-daemon', '--stacktrace'], { cwd: dir });

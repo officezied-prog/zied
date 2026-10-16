@@ -1,6 +1,9 @@
 /* Khair Mart — small receipt printers (v54, owner 2026-10-15: «أحاول أن أربط التطبيق بهذه المطبعة الصغيرة ولكن لا يعمل. أريد من التطبيق أن
    يرتبط بكثير من أنواع من المطابع حتى يستطيع طباعة الأوراق الصغيرة، الفاتورات الصغيرة»). Receipt printers (58 / 80 mm, "POS-58",
    VSC TM-58D, RPP02 …) speak ESC/POS. The page builds the receipt as ESC/POS bytes and sends them one of these ways (chosen per device):
+     app     v58 (owner 2026-10-16: «يجب ان يتثبت مع تثبيت التطبيق مباشر لا يثبت لحاله»): inside the Khair Mart / Khair Kasir Android app
+             (APK) the app itself prints on a paired Bluetooth printer (android/native/KhairPrintActivity.java, intent scheme
+             khairprint) — no other app to install; the default there
      system  the browser's print window (as before: needs the printer's driver on a PC, or a print service app on Android)
      rawbt   Android: the free RawBT app (Google Play) prints to any Bluetooth / USB / Wi-Fi receipt printer it is paired with
      ble     Bluetooth straight from Chrome (Web Bluetooth) — printers with "BLE" (Bluetooth 4 Low Energy); no extra app
@@ -13,21 +16,28 @@
    KPrint.receipt(rc, store) → the sale receipt as ESC/POS bytes (labels in Indonesian: receipt printers have no Arabic letters)
    KPrint.panel(el, lang, {store, printHTML}) — the "Printer struk" settings (ways, paper, cut, test print) drawn into el
    KPrint.text(lang, key, vars) / KPrint.errText(lang, e) — this file's own texts (id / ar)
-   KPrint.support() → {ble, usb, serial, android}
-   KPrint.go(url) opens the RawBT link (replaceable, e.g. by the tests)
+   KPrint.support() → {app, ble, usb, serial, android}
+   KPrint.go(url) opens the RawBT / Khair app link (replaceable, e.g. by the tests)
    Only ASCII reaches the printer (receipt printers have no Arabic or emoji): accents are dropped, other characters become '?'. */
 (function () {
   'use strict';
   if (window.KPrint) return;
-  var KEY = 'kprint.cfg', MODES = ['system', 'rawbt', 'ble', 'usb', 'serial'];
+  var KEY = 'kprint.cfg', MODES = ['app', 'system', 'rawbt', 'ble', 'usb', 'serial'];
+  // v58: inside the Khair Android app (a Trusted Web Activity) the page is opened with the referrer android-app://<package>; kept for
+  // the reloads of this app (the update check reloads the page)
+  var APP = (function () {
+    var m = /^android-app:\/\/(com\.khairmart\.(?:owner|kasir))/.exec(document.referrer || '');
+    try { if (m) localStorage.setItem('kprint.app', m[1]); return m ? m[1] : (localStorage.getItem('kprint.app') || ''); } catch (e) { return m ? m[1] : ''; }
+  })();
   function cfg() {
     var c = {};
     try { c = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { c = {}; }
-    return { mode: MODES.indexOf(c.mode) >= 0 ? c.mode : 'system', width: Number(c.width) === 80 ? 80 : 58, cut: c.cut !== false };
+    var mode = MODES.indexOf(c.mode) >= 0 && (c.mode !== 'app' || APP) ? c.mode : APP ? 'app' : 'system';
+    return { mode: mode, width: Number(c.width) === 80 ? 80 : 58, cut: c.cut !== false };
   }
   function save(c) { try { localStorage.setItem(KEY, JSON.stringify({ mode: c.mode, width: c.width, cut: c.cut })); } catch (e) { } return cfg(); }
   var android = /Android/i.test(navigator.userAgent || '');
-  function support() { return { ble: !!(navigator.bluetooth && navigator.bluetooth.requestDevice), usb: !!(navigator.usb && navigator.usb.requestDevice), serial: !!(navigator.serial && navigator.serial.requestPort), android: android }; }
+  function support() { return { app: !!APP, ble: !!(navigator.bluetooth && navigator.bluetooth.requestDevice), usb: !!(navigator.usb && navigator.usb.requestDevice), serial: !!(navigator.serial && navigator.serial.requestPort), android: android }; }
 
   /* ---- text → printable ASCII ---- */
   var MAP = { '→': '->', '←': '<-', '×': 'x', '–': '-', '—': '-', '‘': "'", '’': "'", '“': '"', '”': '"', '…': '...', '•': '*', '·': '-', '≥': '>=', '≤': '<=', ' ': ' ' };
@@ -92,6 +102,13 @@
     var url = android ? 'intent:base64,' + b64(bytes) + '#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;' : 'rawbt:base64,' + b64(bytes);
     try { (window.KPrint.go || function (u) { window.location.href = u; })(url); } catch (e) { return Promise.reject(err('NO_RAWBT')); }
     return Promise.resolve('rawbt');
+  }
+  // v58 the Khair Android app prints itself (classic Bluetooth, the paired printer it remembers); "choose" asks for the printer again
+  function appLink(what) { return 'intent:' + what + '#Intent;scheme=khairprint;package=' + APP + ';end;'; }
+  function viaApp(bytes) {
+    if (!APP) return Promise.reject(err('NO_SUPPORT'));
+    try { (window.KPrint.go || function (u) { window.location.href = u; })(appLink('base64,' + b64(bytes))); } catch (e) { return Promise.reject(err('WRITE_FAILED', e && e.message)); }
+    return Promise.resolve('app');
   }
   // Web Bluetooth: the GATT services receipt printers use for their "serial over BLE"
   var BLE_SERVICES = ['000018f0-0000-1000-8000-00805f9b34fb', 'e7810a71-73ae-499d-8c15-faa9aef0c3f2', '49535343-fe7d-4ae5-8fa9-9fafd205e455',
@@ -174,7 +191,7 @@
   }
   function send(bytes, mode) {
     mode = mode || cfg().mode;
-    return mode === 'rawbt' ? viaRawBT(bytes) : mode === 'ble' ? viaBLE(bytes) : mode === 'usb' ? viaUSB(bytes) : mode === 'serial' ? viaSerial(bytes) : Promise.reject(err('NO_SUPPORT', 'system'));
+    return mode === 'app' ? viaApp(bytes) : mode === 'rawbt' ? viaRawBT(bytes) : mode === 'ble' ? viaBLE(bytes) : mode === 'usb' ? viaUSB(bytes) : mode === 'serial' ? viaSerial(bytes) : Promise.reject(err('NO_SUPPORT', 'system'));
   }
 
   /* ---- the sale receipt (the apps' receipt object: invoice_no, sale_time, cashier, customer_name, lines, totals, method, parts …) ---- */
@@ -229,6 +246,8 @@
   /* ---- the settings panel and its texts ---- */
   var TEXT = {
     id: { title: 'Printer struk', hint: 'Pilih cara mencetak struk dari perangkat ini, lalu tekan "Tes cetak". Printer struk kecil 58 / 80 mm (POS-58, VSC, RPP02 …).',
+      mode_app: 'Bluetooth (aplikasi Khair)', desc_app: 'Langsung dari aplikasi Khair di HP ini, tanpa aplikasi lain: printer Bluetooth yang sudah dipasangkan. Pertama kali pilih printernya.',
+      choose: 'Pilih / ganti printer', apk: 'Di Android: pasang aplikasi Khair (APK) — mencetak sendiri ke printer Bluetooth, tanpa RawBT.',
       mode_system: 'Jendela cetak (driver)', mode_rawbt: 'RawBT (Android)', mode_ble: 'Bluetooth langsung (BLE)', mode_usb: 'Kabel USB langsung', mode_serial: 'Port COM (komputer)',
       desc_system: 'Seperti sebelumnya: jendela cetak browser. Di komputer pasang driver printernya dulu.',
       desc_rawbt: 'Paling cocok untuk HP / tablet Android: pasang aplikasi gratis RawBT, pilih printernya di sana (Bluetooth / USB / Wi-Fi).',
@@ -240,6 +259,8 @@
       sent: 'Struk dikirim ke printer', e_cancel: 'Tidak ada printer yang dipilih', e_support: 'Cara cetak ini tidak didukung di browser ini — pilih cara lain di Printer struk',
       e_notfound: 'Printer tidak dikenali — coba cara lain (RawBT / Port COM)', e_fail: 'Gagal mengirim ke printer: {msg}' },
     ar: { title: 'طابعة الإيصالات', hint: 'اختر طريقة طباعة الإيصال من هذا الجهاز، ثم اضغط «طباعة تجربة». طابعات الإيصالات الصغيرة 58 / 80 مم.',
+      mode_app: 'بلوتوث (تطبيق خير)', desc_app: 'مباشرة من تطبيق خير في هذا الهاتف، بدون أي تطبيق آخر: طابعة بلوتوث مقترنة. في المرة الأولى اختر الطابعة.',
+      choose: 'اختر / غيّر الطابعة', apk: 'في أندرويد: ثبّت تطبيق خير (APK) — يطبع بنفسه على طابعة البلوتوث بدون RawBT.',
       mode_system: 'نافذة الطباعة (التعريف)', mode_rawbt: 'RawBT (أندرويد)', mode_ble: 'بلوتوث مباشر (BLE)', mode_usb: 'كابل USB مباشر', mode_serial: 'منفذ COM (الحاسوب)',
       desc_system: 'كما كان: نافذة الطباعة في المتصفح. في الحاسوب ثبّت تعريف الطابعة أولًا.',
       desc_rawbt: 'الأنسب للهاتف / الجهاز اللوحي أندرويد: ثبّت تطبيق RawBT المجاني واختر الطابعة فيه (بلوتوث / USB / Wi-Fi).',
@@ -257,18 +278,24 @@
   function panel(el, lang, opts) {
     opts = opts || {};
     var sup = support(), ok = function (m) { return m === 'system' || m === 'rawbt' || !!sup[m]; }, T = function (k, v) { return h(text(lang, k, v)); };
+    var shown = MODES.filter(function (m) { return m !== 'app' || APP; }); // the app's own printing only inside the Khair Android app
     var draw = function () {
       var c = cfg();
-      el.innerHTML = '<p class="small muted" style="margin-top:0">' + T('hint') + '</p><div class="list" id="prn-m" role="radiogroup">' + MODES.map(function (m) {
+      el.innerHTML = '<p class="small muted" style="margin-top:0">' + T('hint') + '</p>'
+        + (!APP && android && opts.apk ? '<p class="small" id="prn-apk" style="margin-top:0">📲 <a href="' + h(opts.apk) + '">' + T('apk') + '</a></p>' : '')
+        + '<div class="list" id="prn-m" role="radiogroup">' + shown.map(function (m) {
         return '<button type="button" class="li' + (c.mode === m ? ' on' : '') + '" role="radio" aria-checked="' + (c.mode === m) + '" data-m="' + m + '" id="prn-m-' + m + '"' + (ok(m) ? '' : ' disabled') + '>'
           + '<div class="grow"><div class="t">' + (c.mode === m ? '● ' : '○ ') + T('mode_' + m) + '</div><div class="s">' + T(ok(m) ? 'desc_' + m : 'no_support') + '</div></div></button>';
       }).join('') + '</div>'
         + '<div class="li" style="margin-top:10px"><div class="grow t">' + T('width') + '</div><div class="seg" style="min-width:150px" id="prn-w"><button type="button" class="' + (c.width === 58 ? 'on' : '') + '" data-w="58">58 mm</button><button type="button" class="' + (c.width === 80 ? 'on' : '') + '" data-w="80">80 mm</button></div></div>'
         + '<label class="check" style="margin-top:8px"><input type="checkbox" id="prn-cut"' + (c.cut ? ' checked' : '') + '> ' + T('cut') + '</label>'
+        + (c.mode === 'app' ? '<button type="button" class="btn block" id="prn-choose" style="margin-top:10px">' + T('choose') + '</button>' : '')
         + '<button type="button" class="btn primary block" id="prn-test" style="margin-top:12px">' + T('test') + '</button><div class="small" id="prn-status" role="status" style="margin-top:8px"></div>';
       Array.prototype.forEach.call(el.querySelectorAll('#prn-m [data-m]'), function (b) { b.onclick = function () { save(Object.assign(cfg(), { mode: b.dataset.m })); ble.dev = null; ble.ch = null; draw(); }; });
       Array.prototype.forEach.call(el.querySelectorAll('#prn-w [data-w]'), function (b) { b.onclick = function () { save(Object.assign(cfg(), { width: Number(b.dataset.w) })); draw(); }; });
       el.querySelector('#prn-cut').onchange = function (e) { save(Object.assign(cfg(), { cut: e.target.checked })); };
+      var chooseBtn = el.querySelector('#prn-choose');
+      if (chooseBtn) chooseBtn.onclick = function () { save(cfg()); (window.KPrint.go || function (u) { window.location.href = u; })(appLink('choose')); };
       el.querySelector('#prn-test').onclick = function (e) {
         var btn = e.currentTarget, st = el.querySelector('#prn-status'), cc = cfg();
         if (cc.mode === 'system') { if (opts.printHTML) opts.printHTML('<div class="receipt w' + cc.width + '" id="receipt"><div class="c b big">' + h((opts.store || {}).store_name || 'Khair Mart') + '</div><div class="c">Tes printer OK</div></div>'); return; }
