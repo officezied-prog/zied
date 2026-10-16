@@ -93,3 +93,57 @@ test('Arabic: the printer window reads in Arabic (the receipt itself stays in La
   await expect(page.locator('#prn-m-rawbt')).toContainText('RawBT (أندرويد)');
   await expect(page.locator('#prn-test')).toContainText('طباعة تجربة');
 });
+
+// v58 (owner 2026-10-16: «يجب ان يتثبت مع تثبيت التطبيق مباشر لا يثبت لحاله»): inside the Khair Kasir Android app the app prints itself
+// (android/native/KhairPrintActivity.java) — the page sends the bytes with an intent link to its own app, scheme khairprint.
+const appBytes = u => text(Buffer.from(u.slice('intent:base64,'.length, u.indexOf('#')), 'base64'));
+test('inside the Khair Kasir Android app: "Bluetooth (aplikasi Khair)" is the default — test print and receipts go to the app itself (no RawBT); choose the printer again', async ({ page }) => {
+  await page.addInitScript(() => { try { localStorage.setItem('kprint.app', 'com.khairmart.kasir'); } catch (e) { } }); // (the app opens the page with the referrer android-app://com.khairmart.kasir)
+  await page.addInitScript(fakePrinters, { usb: false });
+  await H.login(page);
+  await page.evaluate(() => { window.__go = []; KPrint.go = u => window.__go.push(u); });
+  await openPrinter(page);
+  await expect(page.locator('#prn-m-app')).toHaveAttribute('aria-checked', 'true');
+  await expect(page.locator('#prn-m-app')).toContainText('Bluetooth (aplikasi Khair)');
+  await expect(page.locator('#prn-apk')).toHaveCount(0);
+  await page.click('#prn-test');
+  await expect(page.locator('#prn-status')).toContainText('Terkirim ke printer');
+  const u = await page.evaluate(() => window.__go[0]);
+  expect(u).toMatch(/^intent:base64,[A-Za-z0-9+/=]+#Intent;scheme=khairprint;package=com\.khairmart\.kasir;end;$/);
+  expect(appBytes(u)).toContain('Tes printer OK');
+  expect(appBytes(u)).toContain('Bluetooth (aplikasi Khair)'); // (the way + paper width wraps at 32 characters)
+  await page.click('#prn-choose');
+  expect(await page.evaluate(() => window.__go[1])).toBe('intent:choose#Intent;scheme=khairprint;package=com.khairmart.kasir;end;');
+  await page.evaluate(() => { const b = document.querySelector('#prn-panel').closest('.modal-b'); if (b) b.scrollTop = 0; });
+  await H.shot(page, 'phone-printer-app', false, { noToasts: true });
+  await H.closeModals(page);
+  // a sale: its receipt goes to the app too
+  await H.tab(page, 'sell');
+  await H.addItem(page, 'tunisia');
+  await H.pay(page);
+  await page.click('#pay-ok');
+  await expect(page.locator('#rc-modal #receipt')).toBeVisible();
+  const inv = (await H.getDb(page)).sales.slice(-1)[0].invoice_no;
+  await page.click('#rc-print');
+  await expect(page.locator('.toast.ok', { hasText: 'Struk dikirim ke printer' })).toBeVisible();
+  const rc = appBytes(await page.evaluate(() => window.__go[2]));
+  expect(rc).toContain(inv);
+  expect(rc).toContain('TOTAL');
+});
+
+test.describe('Chrome on an Android phone', () => {
+  test.use({ userAgent: 'Mozilla/5.0 (Linux; Android 14; SM-A155F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36' });
+  test('outside the app: no in-app way, but a link to the Khair Kasir APK that prints by itself; Arabic', async ({ page }) => {
+    await page.addInitScript(fakePrinters, { usb: false });
+    await H.login(page);
+    await openPrinter(page);
+    await expect(page.locator('#prn-m-app')).toHaveCount(0);
+    await expect(page.locator('#prn-m-system')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.locator('#prn-apk a')).toHaveAttribute('href', 'https://github.com/officezied-prog/zied/releases/download/android/khair-kasir.apk');
+    await expect(page.locator('#prn-apk')).toContainText('tanpa RawBT');
+    await H.closeModals(page);
+    await page.evaluate(() => setLang('ar'));
+    await openPrinter(page);
+    await expect(page.locator('#prn-apk')).toContainText('بدون RawBT');
+  });
+});

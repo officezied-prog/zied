@@ -15,11 +15,13 @@ async function loginAkuntan(page) {
   await enterKey(page);
   await staffSession(page, 'Lestari', '5555');
   await expect(page.locator('#app')).toBeVisible();
-  // the demo's data is seeded at the first login: then Mandiri is made active too (two store accounts)
+  // the demo's data is seeded at the first login: once its bank accounts are there, Mandiri is made active too (two store accounts)
+  await expect.poll(() => page.evaluate(() => ((JSON.parse(localStorage.getItem('kmock.db') || '{}').settings || {}).bank_accounts || []).length)).toBe(2);
   await editDb(page, `db.settings.bank_accounts.forEach(a => { a.active = true; });`);
   await page.reload();
   await expect(page.locator('#app')).toBeVisible();
-  await expect.poll(() => page.evaluate(() => settings().bank_accounts.filter(a => a.active !== false).length)).toBe(2);
+  // (right after the reload the app may not have its settings yet: no accounts until they arrive)
+  await expect.poll(() => page.evaluate(() => (settings().bank_accounts || []).filter(a => a.active !== false).length)).toBe(2);
 }
 /** The transfers of the last 30 days as the page lists them (sales by their transfer part, payments by method transfer). */
 function transfers(db) {
