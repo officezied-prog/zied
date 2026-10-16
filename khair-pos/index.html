@@ -153,7 +153,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.8.9';
+const APP_VERSION = '2.9.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -448,7 +448,7 @@ const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
 // v36 (owner 2026-10-11: "the visits table … a copy for the manager, the accountant and the owner"): + the field page, read-only
 const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'invchg', 'approvals', 'shoplist', 'field', 'settings'];
-const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
+const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|printer-open|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
