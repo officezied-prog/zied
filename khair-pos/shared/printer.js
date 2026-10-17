@@ -18,6 +18,7 @@
    KPrint.text(lang, key, vars) / KPrint.errText(lang, e) — this file's own texts (id / ar)
    KPrint.support() → {app, ble, usb, serial, android}
    KPrint.go(url) opens the RawBT / Khair app link (replaceable, e.g. by the tests)
+   KPrint.appLink(what) the Khair app link (intent:…;scheme=khairprint) inside the Khair Android app, else '' (v59: 'site-settings' for the camera)
    Only ASCII reaches the printer (receipt printers have no Arabic or emoji): accents are dropped, other characters become '?'. */
 (function () {
   'use strict';
@@ -306,5 +307,5 @@
     };
     draw();
   }
-  window.KPrint = { MODES: MODES, cfg: cfg, save: save, support: support, doc: doc, send: send, receipt: receipt, testBytes: testBytes, panel: panel, text: text, errText: errText, ascii: ascii, wrap: wrap, forget: function () { ble.dev = null; ble.ch = null; } };
+  window.KPrint = { MODES: MODES, cfg: cfg, save: save, support: support, doc: doc, send: send, receipt: receipt, testBytes: testBytes, panel: panel, text: text, errText: errText, ascii: ascii, wrap: wrap, appLink: function (what) { return APP ? appLink(what) : ''; }, forget: function () { ble.dev = null; ble.ch = null; } };
 })();
