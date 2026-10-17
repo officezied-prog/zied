@@ -2,7 +2,7 @@
    Network-first for the app files, cache fallback when offline. API calls (POST to n8n) are
    never cached or intercepted. The cache name is distinct from the owner app's ("khair-pos-v1"),
    and only old "khair-kasir-*" caches are removed on activate. */
-const CACHE = 'khair-kasir-v30';
+const CACHE = 'khair-kasir-v31';
 // ../shared/docs.js (A4 documents, v17), ../shared/chat-ui.js (chat, Phase 3) and ../shared/field-mock.js (field reps' orders, read-only) are outside this scope's folder but loaded by the page, so they are cached and served here too.
 const SHELL = ['./', './index.html', './styles.css', './mock.js', './manifest.webmanifest', './icon.svg', '../logo.png', '../shared/docs.js', '../shared/face.js', '../shared/att-kiosk.js', '../shared/chat-ui.js', '../shared/field-mock.js', '../shared/gmaps-import.js', '../shared/tamper-guard.js', '../shared/install-btn.js', '../shared/barcode-cam.js', '../shared/app-update.js', '../shared/pick.js', '../shared/pay-split.js', '../shared/bank-slip.js', '../shared/printer.js', '../vendor/zxing/zxing.min.js'];
 // v49 (owner 2026-10-14: «لم تظهرت النسخة الجديدة»): pages and code are checked with the site on every fetch ("no-cache":

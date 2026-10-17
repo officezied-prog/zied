@@ -143,3 +143,18 @@ test('a changed or deleted record shows as a warning in the report; settings wit
   expect(db.att.settings.att_seasons).toEqual([{ name: 'Menjelang Ramadan', from: '2026-12-08', to: '2027-03-09', work_end: '23:00' }]);
   expect(db.att.records.slice(-1)[0]).toMatchObject({ kind: 'setting' });
 });
+
+// v59 (owner 2026-10-17: «لا يمكن استعمال الكميرا في تسجيل الحضور»): enrolment with the camera refused says why and how to allow it.
+test('v59 enrolment with the camera refused: the reason and the steps, then back to the consent', async ({ page }) => {
+  await login(page, 'Jihan', '2222', '', { stay: true });
+  await nav(page, 'absensi');
+  await page.locator('#att-w-tbl tr').filter({ hasText: 'Budi Santoso' }).locator('[data-act="att-enroll"]').click();
+  await page.evaluate(() => { delete window.KFACE_STUB; KFace.load = () => Promise.resolve(true); navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('test', 'NotAllowedError')); });
+  const k = page.locator('#att-kiosk.kak');
+  await k.locator('#kak-consent').check();
+  await k.locator('#kak-start').click();
+  await expect(k.locator('#kak-cam-help')).toHaveAttribute('data-reason', 'denied');
+  await expect(k.locator('#kak-cam-help')).toContainText('Setelan situs → Kamera');
+  await k.locator('#kak-done').click(); // "Coba lagi"
+  await expect(k.locator('#kak-start')).toBeVisible();
+});

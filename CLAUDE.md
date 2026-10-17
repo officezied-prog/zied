@@ -18,7 +18,8 @@ from `khair-pos/android/`; the signing key is `khair-pos/android/khair-release.p
 `ANDROID_KEY_PASSWORD` (never lose it: a new key means everyone reinstalls). Digital Asset Links live in the repo
 `officezied-prog/officezied-prog.github.io` (`.well-known/assetlinks.json`, copied from `khair-pos/android/assetlinks.json`).
 The owner APK (also the manager's and the accountant's app) and the kasir APK also print on a paired Bluetooth receipt printer by themselves (v58: `khair-pos/android/native/KhairPrintActivity.java`,
-added by `build.mjs`; the page opens `intent:…;scheme=khairprint`); a Chrome install prints through RawBT / BLE / USB instead.
+added by `build.mjs`; the page opens `intent:…;scheme=khairprint`; v59: `intent:site-settings…` opens Chrome's site settings, where the
+attendance camera is allowed again after a refusal); a Chrome install prints through RawBT / BLE / USB instead.
 
 **New versions reach phones by themselves (v49):** `shared/app-update.js` (KUpdate) re-reads the app's own page
 (`cache:'no-cache'`, a 304 when unchanged) on open, on return to the screen (≥5 min) and every 30 min; another

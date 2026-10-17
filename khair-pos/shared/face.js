@@ -31,12 +31,35 @@
     }).then(function () { return true; }).catch(function (e) { state.loading = null; throw e; });
     return state.loading;
   }
+  /** v59 (owner 2026-10-17: «لا يمكن استعمال الكميرا في تسجيل الحضور»): the front camera; any camera when that one cannot be had;
+   *  one more try after a moment when the camera is busy (another app, the barcode scanner or the tamper shot letting it go).
+   *  Rejects with the browser's error: camReason(e) says why. */
   function startCamera(video) {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return Promise.reject(new Error('NO_CAMERA'));
-    return navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false }).then(function (st) {
+    var md = navigator.mediaDevices;
+    if (!md || !md.getUserMedia) { var e = new Error('NO_CAMERA'); e.name = 'NotSupportedError'; return Promise.reject(e); }
+    var front = { video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false };
+    function get(c, again) {
+      return md.getUserMedia(c).catch(function (e) {
+        var n = e && e.name;
+        if (c === front && (n === 'OverconstrainedError' || n === 'ConstraintNotSatisfiedError' || n === 'NotFoundError')) return get({ video: true, audio: false }, again);
+        if (again && camReason(e) === 'busy') return new Promise(function (ok) { setTimeout(ok, 800); }).then(function () { return get(c, false); });
+        throw e;
+      });
+    }
+    return get(front, true).then(function (st) {
       video.srcObject = st; video.setAttribute('playsinline', ''); video.muted = true;
       return video.play().then(function () { return st; }, function () { return st; });
     });
+  }
+  /** Why the camera did not open: 'denied' (refused for this site, or for the browser itself), 'busy' (another app holds it),
+   *  'none' (no camera), 'unsupported' (no camera in this browser / not https), 'other'. */
+  function camReason(e) {
+    var n = e && e.name;
+    if (n === 'NotAllowedError' || n === 'PermissionDeniedError' || n === 'SecurityError') return 'denied';
+    if (n === 'NotReadableError' || n === 'TrackStartError' || n === 'AbortError') return 'busy';
+    if (n === 'NotFoundError' || n === 'DevicesNotFoundError' || n === 'OverconstrainedError') return 'none';
+    if (n === 'NotSupportedError') return 'unsupported';
+    return 'other';
   }
   function stopCamera(stream) { try { (stream && stream.getTracks ? stream.getTracks() : []).forEach(function (t) { t.stop(); }); } catch (e) { } }
   function thumb(video, box) {
@@ -79,5 +102,5 @@
     }
     return step();
   }
-  root.KFace = { load: load, startCamera: startCamera, stopCamera: stopCamera, read: read, readAverage: readAverage };
+  root.KFace = { load: load, startCamera: startCamera, camReason: camReason, stopCamera: stopCamera, read: read, readAverage: readAverage };
 })(window);

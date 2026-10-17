@@ -34,6 +34,7 @@ import java.util.UUID;
  * which every small receipt printer has (VSC TM-58D, RPP02, POS-58 …). No other app to install. The web page opens
  *   intent:base64,<bytes>#Intent;scheme=khairprint;package=<this app>;end   → print these bytes
  *   intent:choose#Intent;scheme=khairprint;package=<this app>;end           → choose the printer (again)
+ *   intent:site-settings#Intent;scheme=khairprint;package=<this app>;end    → Chrome's settings of this site (v59: the camera)
  * The printer chosen once is remembered on this phone; the first print (or "choose") shows the paired devices, printers first.
  * Copied into the owner and cashier apps by ../build.mjs (the package line is filled in there).
  */
@@ -48,6 +49,7 @@ public class KhairPrintActivity extends Activity {
         super.onCreate(state);
         Uri u = getIntent() != null ? getIntent().getData() : null;
         String s = u != null && u.getSchemeSpecificPart() != null ? u.getSchemeSpecificPart() : "";
+        if (s.startsWith("site-settings")) { openSiteSettings(); return; }
         if (s.startsWith("base64,")) {
             try { data = Base64.decode(s.substring(7), Base64.DEFAULT); } catch (IllegalArgumentException e) { data = null; }
         }
@@ -169,6 +171,20 @@ public class KhairPrintActivity extends Activity {
 
     private String name(BluetoothDevice d) {
         try { String n = d.getName(); return n != null && !n.isEmpty() ? n : d.getAddress(); } catch (SecurityException e) { return d.getAddress(); }
+    }
+
+    /**
+     * v59 (owner 2026-10-17: «لا يمكن استعمال الكميرا في تسجيل الحضور»): a camera refused once stays refused for the site, and the
+     * app has no address bar to change it. The Chrome helper library's ManageDataLauncherActivity (in every Bubblewrap app) opens
+     * Chrome's site settings for this app's site: Kamera → Izinkan. The attendance screen opens intent:site-settings…
+     */
+    private void openSiteSettings() {
+        try {
+            startActivity(new Intent().setClassName(this, "com.google.androidbrowserhelper.trusted.ManageDataLauncherActivity"));
+        } catch (Exception e) {
+            toast("Buka Chrome → Setelan → Setelan situs → Kamera → Izinkan");
+        }
+        finish();
     }
 
     private BluetoothAdapter adapter() {
