@@ -85,6 +85,9 @@ function strip(r, role) {
 }
 // Purchase prices (never profit) reach the owner always, and the accountant / manager when the owner allows it (akuntan_sees_cost).
 function costOk() { return role === 'owner' || ((role === 'akuntan' || role === 'manager') && readSettings().akuntan_sees_cost === true); }
+// v59 (owner 2026-10-17: «لا يظهر الإجمالي و يكتب مخفي لماذا اصلح هذا»): the amounts of a goods-in note — the supplier's invoice, which
+// the manager types in — reach the manager and the accountant too; the products' average cost, margins and profit stay with costOk().
+function noteTotalOk() { return costOk() || role === 'manager' || role === 'akuntan'; }
 function jkDate() { return new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10); }
 function rand(n) {
   const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -642,7 +645,7 @@ function changeOut(a) {
   try { d = JSON.parse(a.detail || '{}') || {}; } catch (e) { d = {}; }
   const o = Object.assign({}, d, { act_id: str(a.act_id), at: str(a.at), act_date: str(a.act_date), user: str(a.user), amount: money(a.amount) });
   if (role === 'owner') o.summary = str(a.summary);
-  if (d.doc === 'masuk' && !costOk()) {
+  if (d.doc === 'masuk' && !noteTotalOk()) {
     o.changes = (d.changes || []).map(function (c) { const x = Object.assign({}, c); ['price_from', 'price_to', 'total_from', 'total_to', 'total'].forEach(function (f) { delete x[f]; }); return x; });
     delete o.amount;
   }
@@ -3428,7 +3431,7 @@ switch (req.action) {
         const p = productById[String(r.product_id)];
         const l = { product_id: Number(r.product_id), name: str(r.name) || (p ? str(p.name) : ''), unit: p ? str(p.unit) : '', qty: Math.round(num(r.qty) * 1000) / 1000, exp_date: str(r.exp_date),
           stock_now: p ? Math.round(num(p.stock) * 1000) / 1000 : null, shop_now: p ? Math.round(shopOf(p) * 1000) / 1000 : null };
-        if (costOk()) { l.cost_price = money(r.cost_price); l.total = money(r.total); }
+        if (noteTotalOk()) { l.cost_price = money(r.cost_price); l.total = money(r.total); }
         gin[no].lines.push(l);
         gin[no].qty = Math.round((gin[no].qty + l.qty) * 1000) / 1000;
         gin[no].total += money(r.total);
@@ -3437,12 +3440,12 @@ switch (req.action) {
     const notes = ginOrder.map(function (no) {
       const g = gin[no];
       g.changes_today = changesDay.filter(function (c) { return c.no === no || (c.nos || []).indexOf(no) >= 0; }).length;
-      if (!costOk()) delete g.total;
+      if (!noteTotalOk()) delete g.total;
       return g;
     }).sort(function (a1, b1) { return String(a1.at || '~').localeCompare(String(b1.at || '~')); });
     rep.goods_in = { count: notes.length, lines: notes.reduce(function (a1, g) { return a1 + g.lines.length; }, 0), qty: Math.round(notes.reduce(function (a1, g) { return a1 + g.qty; }, 0) * 1000) / 1000,
       mismatch: notes.filter(function (g) { return g.match_status === 'tidak_cocok' || g.match_status === 'perlu_cek'; }).length, notes: notes };
-    if (costOk()) rep.goods_in.total = notes.reduce(function (a1, g) { return a1 + money(g.total); }, 0);
+    if (noteTotalOk()) rep.goods_in.total = notes.reduce(function (a1, g) { return a1 + money(g.total); }, 0);
     rep.invoice_changes = { count: changesDay.length, list: changesDay };
     return done({ ok: true, report: rep, send_to: { company: str(st.wa_shop_number), manager: str(st.wa_manager_number), owner: str(st.wa_owner_number) } });
   }
@@ -3682,8 +3685,8 @@ switch (req.action) {
       sales: rows('Get Range Sales').map(function (r) { return strip(r, role); }),
       items: rows('Get Range Items').map(function (r) { return strip(r, role); }),
       payments: rows('Get Range Payments').map(clean),
-      // v50: the note totals go with the purchase prices: the owner, and the accountant / manager when the owner allows it
-      purchases: rows('Get Range Purchases').map(function (r) { const o = strip(r, role); if (!costOk()) delete o.total; return o; }),
+      // v50 / v59: the note totals reach the owner, the manager and the accountant (noteTotalOk); unit costs follow strip()
+      purchases: rows('Get Range Purchases').map(function (r) { const o = strip(r, role); if (!noteTotalOk()) delete o.total; return o; }),
       expenses: rows('Get Range Expenses').map(clean),
       shifts: rows('Get Range Shifts').map(clean),
       repacks: rows('Get Range Repacks').map(repackOut)

@@ -70,7 +70,8 @@ test('v37 #1 goods-in correction approved by the manager → audit record + owne
   // the owner sees it as a notice; the manager's own bootstrap does not list it as hers
   const bo = await call(a, 'bootstrap', 'Pemilik', '1234', {});
   assert.ok(bo.notifications.some((n) => n.kind === 'ubah_faktur' && n.ref === no), JSON.stringify(bo.notifications));
-  // the audit list: owner sees prices; the manager (akuntan_sees_cost off) quantities only; the accountant may read it; a cashier not
+  // the audit list: owner sees prices; the manager too for a goods-in note (v59: the note's amounts are hers to see), not the
+  // owner's summary; the accountant may read it; a cashier not
   const lo = await call(a, 'list_invoice_changes', 'Pemilik', '1234', { from: jkToday(), to: jkToday() });
   assert.equal(lo.ok, true, JSON.stringify(lo));
   assert.equal(lo.changes.length, 1);
@@ -78,7 +79,7 @@ test('v37 #1 goods-in correction approved by the manager → audit record + owne
   assert.ok(lo.changes[0].summary);
   const lm = await call(a, 'list_invoice_changes', 'Jihan', '2222', { from: jkToday(), to: jkToday() });
   assert.equal(lm.changes[0].changes[0].qty_to, 8);
-  assert.equal(lm.changes[0].changes[0].price_to, undefined);
+  assert.equal(lm.changes[0].changes[0].price_to, 20000);
   assert.equal(lm.changes[0].summary, undefined);
   assert.equal((await call(a, 'list_invoice_changes', 'Aqil', '4444', { from: jkToday(), to: jkToday() })).ok, true);
   assert.equal((await call(a, 'list_invoice_changes', 'Siti', '1111', { from: jkToday(), to: jkToday() })).error, 'FORBIDDEN');
@@ -265,10 +266,11 @@ test('v37 #3 daily report lists today\'s goods-in notes, lines, stock now and th
   assert.equal(ro.report.invoice_changes.count, 1);
   assert.equal(ro.report.invoice_changes.list[0].approved_by, 'Jihan');
   const rm = await call(a, 'daily_report', 'Jihan', '2222', { date: jkToday() });
-  assert.equal(rm.report.goods_in.notes[0].lines[0].cost_price, undefined);
-  assert.equal(rm.report.goods_in.total, undefined);
-  assert.equal(rm.report.invoice_changes.list[0].changes[0].price_to, undefined);
-  // akuntan_sees_cost on → the manager sees purchase prices too
+  // v59: the goods-in notes' amounts reach the manager without the owner's purchase-price setting
+  assert.equal(rm.report.goods_in.notes[0].lines[0].cost_price, 20000);
+  assert.equal(rm.report.goods_in.total, 10 * 20000 + 4 * 41000);
+  assert.equal(rm.report.invoice_changes.list[0].changes[0].price_to, 20000);
+  // akuntan_sees_cost on → the same
   insert(db, 'pos_settings', { id: 12, skey: 'akuntan_sees_cost', svalue: 'true' });
   const rm2 = await call(a, 'daily_report', 'Jihan', '2222', { date: jkToday() });
   assert.equal(rm2.report.goods_in.notes[0].lines[0].cost_price, 20000);

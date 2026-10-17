@@ -95,7 +95,7 @@ test('the manager sees "Perubahan faktur" with quantities only; the owner\'s own
   await expect(rows).toHaveCount(2);
   const fixRow = page.locator(`#ic-table tbody tr[data-what="koreksi_masuk"]`);
   await expect(fixRow).toContainText('qty 10 → 8');
-  await expect(fixRow).not.toContainText('Rp'); // no purchase prices for the manager (akuntan_sees_cost off)
+  await expect(fixRow).toContainText('Rp'); // v59: a goods-in note's prices reach the manager (akuntan_sees_cost off)
   await expect(page.locator('#ic-table tbody tr[data-what="batal"]')).toContainText(inv.invoice_no);
   // the manager is not told by the bell (the notice is the owner's)
   await bell(page, 'invchg', false);
