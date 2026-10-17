@@ -296,11 +296,13 @@ const MockServer = (() => {
     return d;
   }
   const mockCostOk = (db, u) => u.role === 'owner' || (['akuntan', 'manager'].includes(u.role) && db.settings.akuntan_sees_cost === true);
+  // v59: goods-in note amounts reach the manager and the accountant too (backend/process.js noteTotalOk)
+  const mockNoteOk = (db, u) => mockCostOk(db, u) || ['akuntan', 'manager'].includes(u.role);
   function changeOut(db, u, a) {
     let d = {}; try { d = JSON.parse(a.detail || '{}') || {}; } catch (e) { d = {}; }
     const o = Object.assign({}, d, { act_id: a.act_id, at: a.at, act_date: a.act_date, user: a.user, amount: int(a.amount) });
     if (u.role === 'owner') o.summary = a.summary;
-    if (d.doc === 'masuk' && !mockCostOk(db, u)) { o.changes = (d.changes || []).map(c => { const x = Object.assign({}, c); ['price_from', 'price_to', 'total_from', 'total_to', 'total'].forEach(f => delete x[f]); return x; }); delete o.amount; }
+    if (d.doc === 'masuk' && !mockNoteOk(db, u)) { o.changes = (d.changes || []).map(c => { const x = Object.assign({}, c); ['price_from', 'price_to', 'total_from', 'total_to', 'total'].forEach(f => delete x[f]); return x; }); delete o.amount; }
     return o;
   }
   const isoDay = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
@@ -2425,7 +2427,7 @@ const MockServer = (() => {
         // v37 (owner: «المتابعة اليومية للفواتير التي تم تنزيلها مع الكميات الموجودة»): the day's goods-in notes and invoice changes
         const dayAct = (db.activity || []).filter(a => a.act_date === day), inAt = {};
         dayAct.forEach(a => { if (a.kind === 'masuk' && a.ref && !inAt[a.ref]) inAt[a.ref] = a.at; });
-        const gin = new Map(), cOk = mockCostOk(db, u);
+        const gin = new Map(), cOk = mockNoteOk(db, u);
         db.purchases.filter(r => r.purchase_date === day && strv(r.purchase_no) && !['koreksi', 'retur'].includes(strv(r.match_status)) && !internalSup(r.supplier) && num(r.qty) > 0).forEach(r => {
           const no = strv(r.purchase_no);
           if (!gin.has(no)) gin.set(no, { purchase_no: no, supplier: strv(r.supplier), at: inAt[no] || '', by: strv(r.user), match_status: strv(r.match_status) || 'tanpa_foto', match_notes: strv(r.match_notes),
@@ -2665,7 +2667,7 @@ const MockServer = (() => {
         const inR = d => d >= data.from && d <= data.to;
         const sales = db.sales.filter(s => inR(s.sale_date));
         const inv = new Set(sales.map(s => s.invoice_no));
-        return { sales, items: db.items.filter(i => inv.has(i.invoice_no)), payments: db.payments.filter(p => inR(p.pay_date)), purchases: db.purchases.filter(p => inR(p.purchase_date)).map(p => { if (mockCostOk(db, u)) return p; const o = Object.assign({}, p); delete o.total; return o; }), expenses: db.expenses.filter(x => inR(x.expense_date)), shifts: db.shifts.filter(x => inR(x.shift_date)).map(x => blind(shiftSummary(db, x), u.role)),
+        return { sales, items: db.items.filter(i => inv.has(i.invoice_no)), payments: db.payments.filter(p => inR(p.pay_date)), purchases: db.purchases.filter(p => inR(p.purchase_date)).map(p => { if (mockCostOk(db, u)) return p; const o = Object.assign({}, p); delete o.cost_price; if (!mockNoteOk(db, u)) delete o.total; return o; }), expenses: db.expenses.filter(x => inR(x.expense_date)), shifts: db.shifts.filter(x => inR(x.shift_date)).map(x => blind(shiftSummary(db, x), u.role)),
           repacks: (db.repacks || []).filter(r => inR(r.repack_date)).map(r => window.KRepackMock.out(r, u.role)) };
       }
       case 'save_settings': {
