@@ -32,7 +32,7 @@ test('accountant: lands on reports, sees only the audit views, cannot change any
   await page.evaluate(() => { window.__printed = 0; window.print = () => { window.__printed++; }; });
   await page.locator('#pu-hist [data-act="pu-doc"]').first().click();
   await expect.poll(() => page.evaluate(() => window.__printed)).toBe(1);
-  await expect(page.locator('#print-area')).not.toContainText('Harga beli'); // default: no purchase prices
+  await expect(page.locator('#print-area .tot tr.b td')).toContainText(['TOTAL']); // v59: the note's prices and total, without the owner's setting
   await nav(page, 'customers');
   await page.locator('[data-act="cust-open"]').filter({ hasText: 'Toko Berkah' }).click();
   await expect(page.locator('#cd-ledger #led-docs')).toBeVisible();
