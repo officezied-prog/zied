@@ -223,7 +223,6 @@ export const TABLES = {
     customer_id: 'string', rate: 'number', rate_unit: 'string', parser: 'string', active: 'boolean',
     created_at: 'string', created_by: 'string', rate_frozen: 'number', rate_chiller: 'number',
     rate_dry: 'number', mode: 'string',
-    hours: 'string', // v59: the cooler's hours (JSON: open, close, brk, last, days, arrange, ot)
   },
   cold_products: {
     code: 'string', name: 'string', kg_per_ctn: 'number', aliases: 'string', active: 'boolean',
@@ -256,9 +255,17 @@ export const TABLES = {
     picked_at: 'string', picked_by: 'string', pick_date: 'string', cancel_reason: 'string',
     cancelled_at: 'string', cancelled_by: 'string', trip: 'string', log: 'string', customer_id: 'number',
     plate: 'string', dest_phone: 'string', // v36: truck plate on the order + the customer's phone
-    // v59: agreed extra cost (a day by arrangement), the car's expected / real arrival, the door, overtime and its cause, cars cancelled
-    extra_cost: 'number', extra_note: 'string', eta_at: 'string', arrived_at: 'string', door: 'string',
-    ot_hours: 'number', ot_cost: 'number', ot_cause: 'string', ot_note: 'string', trip_cancels: 'number',
+  },
+  // v60 (owner 2026-10-18): Khair Order Brad — the cold-store order process as its own app until it is proven. Its own
+  // orders; the gudang tables are only read (the goods go out of cold_movements when the car leaves).
+  brad_orders: {
+    order_no: 'string', order_date: 'string', warehouse: 'string', status: 'string', created_at: 'string', created_by: 'string',
+    source: 'string', read_by: 'string', dest_type: 'string', dest_name: 'string', dest_phone: 'string', dest_address: 'string',
+    customer_id: 'number', note: 'string', lines: 'string', log: 'string', sent_at: 'string', approved_at: 'string',
+    rejected_reason: 'string', ready_at: 'string', extra_cost: 'number', extra_note: 'string', car: 'string', eta_at: 'string',
+    car_cancels: 'number', arrived_at: 'string', door: 'string', ot_hours: 'number', ot_cost: 'number', ot_cause: 'string',
+    ot_note: 'string', load_at: 'string', load_end_est: 'string', departed_at: 'string', stock_note: 'string',
+    delivered_at: 'string', cancelled_at: 'string', cancel_reason: 'string',
   },
 };
 
@@ -304,3 +311,7 @@ export const OPS_TABLE_COLD = {
   pallets: 'cold_pallets', movements: 'cold_movements', checks: 'cold_checks',
   orders: 'cold_orders', customers: 'pos_customers', settings: 'pos_settings',
 };
+
+// Khair Order Brad (v60) ops key → table: its own orders, the brad_* settings, and the goods out of the gudang ledger
+// when a car leaves. Nothing else of the gudang data is ever written by it.
+export const OPS_TABLE_BRAD = { orders: 'brad_orders', movements: 'cold_movements', settings: 'pos_settings' };

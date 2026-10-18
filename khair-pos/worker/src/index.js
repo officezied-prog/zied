@@ -8,6 +8,7 @@ import { handleChat } from './chat.js';
 import { handleAtt } from './attendance.js';
 import { handlePhoto, handlePhotoFile } from './photo.js';
 import { handleCold } from './cold.js';
+import { handleBrad } from './brad.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*', // store-key auth, no cookies → safe
@@ -151,6 +152,7 @@ export default {
           : path.endsWith('khair-chat') ? handleChat
             : path.endsWith('khair-att') ? handleAtt
               : path.endsWith('khair-cold') ? handleCold
+                : path.endsWith('khair-brad') ? handleBrad // v60: Khair Order Brad (the cold-store orders, own app)
                 : handleRequest;
         response = await handler(adapter, text, headers, env.STORE_KEY, { env }); // env: the Google Places key (field search), when set
         // v50: the apps show whether the photo reader (AI) is on — the owner sees at once that ANTHROPIC_API_KEY is missing

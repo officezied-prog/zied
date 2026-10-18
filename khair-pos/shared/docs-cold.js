@@ -110,17 +110,6 @@
     return '*INFO PENGAMBILAN ' + o.order_no + '*\nSopir: ' + (tr.driver || '-') + (tr.driver_wa ? '\nHP: +' + tr.driver_wa : '') + '\nKendaraan: ' + (tr.vehicle || '-') + (tr.plate ? '\nPlat: ' + tr.plate : '') +
       '\nTotal: ' + t.cartons + ' ctn\nMohon serahkan barang kepada sopir ini. Terima kasih.';
   }
-  /** v59: the door number for the driver (Indonesian). */
-  function waDoor(o, ctx) {
-    var w = (ctx.wh || {})[o.warehouse] || {};
-    return '*' + o.order_no + '*\nSilakan masuk ke *PINTU ' + (o.door || '-') + '* di gudang ' + (w.name || o.warehouse) + (w.address ? ' (' + w.address + ')' : '') + '.\nTunjukkan nomor order ini ke petugas gudang. Terima kasih.';
-  }
-  /** v59: to the customer — the goods have left the cooler (Indonesian). */
-  function waDepart(o, ctx) {
-    var tr = o.trip || {}, t = orderTotals(o, ctx), c = ctx.company || {};
-    return '*' + (c.store || 'Khair Mart') + '*\nPesanan ' + o.order_no + ' sudah berangkat dari gudang: ' + t.cartons + ' karton.' + (tr.driver ? '\nSopir: ' + tr.driver + (tr.driver_wa ? ' (+' + tr.driver_wa + ')' : '') : '') +
-      (tr.plate ? '\nPlat: ' + tr.plate : '') + (tr.vehicle ? '\nKendaraan: ' + tr.vehicle : '') + '\nTujuan: ' + o.dest_name + (o.dest_address ? ', ' + o.dest_address : '') + '\nTerima kasih.';
-  }
   function waCancel(o) { return '*PEMBATALAN ' + o.order_no + '*\nMohon maaf, permintaan pengambilan ' + o.order_no + ' dibatalkan' + (o.cancel_reason ? ' (' + o.cancel_reason + ')' : '') + '. Terima kasih.'; }
   /** To the owner / manager in Arabic: the goods are ready, approve sending. */
   function waDispatch(o, ctx, vehicle) {
@@ -178,5 +167,5 @@
   function toXls(rows, filename, sheet) { download(new Blob([xlsXml(rows, sheet)], { type: 'application/vnd.ms-excel' }), filename); }
   /** The same sheet as a File, for the phone's share sheet (Android → WhatsApp). */
   function xlsFile(rows, filename, sheet) { try { return new File([xlsXml(rows, sheet)], filename, { type: 'application/vnd.ms-excel' }); } catch (e) { return null; } }
-  root.KColdDocs = { orderRows: orderRows, takeOf: takeOf, order: order, check: check, stock: stock, waOrder: waOrder, waEntry: waEntry, waDriver: waDriver, waDoor: waDoor, waDepart: waDepart, waCancel: waCancel, waDispatch: waDispatch, toDoc: toDoc, toXls: toXls, xlsFile: xlsFile, orderTotals: orderTotals, esc: esc, date: date, wib: wib };
+  root.KColdDocs = { orderRows: orderRows, takeOf: takeOf, order: order, check: check, stock: stock, waOrder: waOrder, waEntry: waEntry, waDriver: waDriver, waCancel: waCancel, waDispatch: waDispatch, toDoc: toDoc, toXls: toXls, xlsFile: xlsFile, orderTotals: orderTotals, esc: esc, date: date, wib: wib };
 })(window);

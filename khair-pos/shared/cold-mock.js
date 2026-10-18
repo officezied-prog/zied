@@ -57,12 +57,10 @@
       var o3 = M('order_save', { warehouse: 'DPP', order_date: day(2), dest_type: 'toko', dest_address: 'Jl. Raya Condet No.4, Jakarta Timur', pickup_person: 'Wahyu', lines: [{ pallet_code: '2274538', cartons: 50 }, { pallet_code: '3619211', cartons: 20 }] }, 2).order;
       M('order_pick', { order_no: o3.order_no, pick_date: day(2) }, 2, '15:00'); M('order_status', { order_no: o3.order_no, to: 'delivered' }, 2, '17:00');
       var o4 = M('order_save', { warehouse: 'DPP', order_date: day(-1), dest_type: 'toko', dest_address: 'Jl. Raya Condet No.4, Jakarta Timur', pickup_person: 'Wahyu', vehicle: 'Engkel (CDE)', note: 'Untuk stok Maulid', lines: [{ pallet_code: '2274538', cartons: 100 }, { pallet_code: '3619208', cartons: 21 }] }, 1, '16:00').order;
-      // v59: a pickup on a day by arrangement (a Sunday) goes with the agreed extra cost
-      var X = function (d) { var K = root.KCold; return K.dayKind(d, K.hoursOf({}), []) === 'arrange' ? { extra_cost: 350000, extra_note: 'Buka Minggu (perjanjian)' } : {}; };
-      M('order_status', Object.assign({ order_no: o4.order_no, to: 'sent' }, X(day(-1))), 1, '16:05');
+      M('order_status', { order_no: o4.order_no, to: 'sent' }, 1, '16:05');
       // a customer order at Kawanishi: the warehouse said yes and the goods are ready — waiting for the owner's approval to send
       var o5 = M('order_save', { warehouse: 'KAWANISHI', order_date: day(0), dest_type: 'pelanggan', dest_name: 'Toko Al Amin', dest_address: 'Jl. Kalimalang 12, Bekasi', pickup_person: 'Sopir Lalamove', lines: [{ pallet_code: 'K-77001', cartons: 30 }] }, 1, '17:00').order;
-      M('order_status', Object.assign({ order_no: o5.order_no, to: 'sent' }, X(day(0))), 1, '17:02'); M('order_status', { order_no: o5.order_no, to: 'approved' }, 1, '18:10'); M('order_status', { order_no: o5.order_no, to: 'ready' }, 0, '07:30');
+      M('order_status', { order_no: o5.order_no, to: 'sent' }, 1, '17:02'); M('order_status', { order_no: o5.order_no, to: 'approved' }, 1, '18:10'); M('order_status', { order_no: o5.order_no, to: 'ready' }, 0, '07:30');
       // a container on its way: entry request sent, waiting for the warehouse
       M('container_save', { kind: 'container', container_no: 'FBIU5049090', size: '40', warehouse: 'BOSKO', arrival_date: day(-5), supplier: 'Tunis Dates Co', origin: 'Tunisia', product: 'KHALAS-10', cartons: 1600 }, 1, '10:00');
       M('container_status', { container_no: 'FBIU5049090', to: 'requested' }, 1, '10:05');

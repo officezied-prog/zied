@@ -6,10 +6,6 @@
 const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const { login } = require('./helpers');
-// v59: the cooler's hours (last order 16:00, overtime after 17:00, Sunday only by arrangement) depend on the clock, so these tests
-// run on a Wednesday at 10:00 WIB; tests/cold-hours.spec.js covers the other times.
-const FIXED = '2026-10-14T10:00:00+07:00';
-test.beforeEach(async ({ page }) => { await page.clock.setFixedTime(new Date(FIXED)); });
 
 async function coldLogin(page, user = 'Pemilik', pin = '1234') {
   await page.goto('gudang/index.html?mock=1');

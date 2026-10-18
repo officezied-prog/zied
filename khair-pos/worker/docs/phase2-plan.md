@@ -7,8 +7,20 @@ first, then cost (owner's standing rule).
 
 ## Update 2026-10-18 — the owner's real process, the cold store's hours, the recommended design
 
-Status: A (cold storage on the Worker) and the inline UI are done (Batch C, PR #22). The dispatch
-automation below is proposed to the owner and **awaits his go** (stage 1 needs no accounts).
+Status: A (cold storage on the Worker) and the inline UI are done (Batch C, PR #22). **Stage 1 is built (v60) as a
+separate trial app, Khair Order Brad (`khair-pos/brad/`)** — owner 2026-10-18: «انطلق بالمرحلة الاولى و الاحسن في تطبيق اخر الان منفصل
+حتى نتأكد منه قبل دمجه مع القديم». The gudang app stays as it was; the two are merged only once the owner says the trial works.
+
+### The owner's answers (2026-10-18)
+- Volume: up to 200 orders a day at most, **25 a day on average** (≈ 650 a month).
+- **The cold stores accept nothing but WhatsApp** (no link page for them). So stage 1 prepares every message for one tap
+  (`wa.me`), stage 2 sends them automatically through the WhatsApp Cloud API.
+- Many cold stores, about **40 doors** each; loading **25–35 minutes a pallet** (the app counts 30, owner setting).
+- Working days: Monday–Saturday; Sunday only by arrangement at a cost agreed each time; closed on public holidays (my reading of
+  «البراد يعمل الايوم الأحد …», to be confirmed; each cooler's days are a setting). A started overtime hour counts in full.
+  Lalamove's minutes + 15–20 % (the app adds 20 %, owner setting).
+- Cost at 25 orders a day: WhatsApp Cloud API ≈ 5 sends an order × Rp 357 ≈ Rp 1.2 M a month (stage 2); AI reading ≈ US$1–7 a
+  month; an n8n agent (~15 executions an order ≈ 9,750 a month) would sit at the n8n Pro wall (10,000) — still ruled out.
 
 ### The process today (owner 2026-10-17, all by WhatsApp by hand)
 1. Write the order: quantity, product, pallet number, product code.
@@ -45,7 +57,7 @@ driver → picked → delivered, `backend/cold/cold-core.js` FLOW); every step i
 - **WhatsApp Cloud API:** since 1 Oct 2026 every business-sent message is charged (service replies are no
   longer free beyond 1,000 a month per number): Indonesia utility ≈ Rp 357 (US$0.025) a message; incoming
   messages cost nothing. All steps by WhatsApp ≈ 4–5 sends an order ≈ Rp 7–8 M a month. So:
-  - **the cold store works on a link page** (its own orders today, buttons: setuju / tolak, siap, door
+  - (dropped 2026-10-18: the cold stores accept only WhatsApp) **the cold store works on a link page** (its own orders today, buttons: setuju / tolak, siap, door
     number, sudah dimuat; a secret link per cold store, any phone, no install, no cost) and WhatsApp is kept
     for the driver's door message and the customer's departure message (≈ 2 sends an order ≈ Rp 2–4 M a
     month), plus batched alerts to the cold store;
@@ -62,7 +74,7 @@ driver → picked → delivered, `backend/cold/cold-core.js` FLOW); every step i
   executions — WhatsApp messages + Lalamove updates — so ~900 orders/month would pass the 10,000
   of n8n Pro; that kind of wall is what took every app down before), and money decisions (booking
   a car) stay fixed rules, never an agent's judgement. n8n itself stays untouched (reference).
-- **The cold store's link page** for its buttons (Setuju / Tolak, Siap, door number, Sudah dimuat) and the
+- (dropped 2026-10-18, WhatsApp only) **The cold store's link page** for its buttons (Setuju / Tolak, Siap, door number, Sudah dimuat) and the
   **WhatsApp Cloud API** for the sends that must reach a phone (see "Volume and what it costs");
   **Lalamove API** for booking, driver/plate, arrival, cancel → rebook.
 - **AI only where there is no button**: free-text replies (e.g. a door number in a sentence), a photo
@@ -72,8 +84,8 @@ driver → picked → delivered, `backend/cold/cold-core.js` FLOW); every step i
 - Manual buttons stay as the fallback when WhatsApp or Lalamove is down.
 
 ### Stages (each one works on its own)
-1. **Now, no accounts needed** (1a built in v59: the hours rules, the car's arrival time, door, cancel → rebook, overtime recorded with
-   its cause, departure message; 1b next: the order from a photo / a customer message by AI): order from a photo / a customer message (AI), the hours rules
+1. **Now, no accounts needed — built in v60 as the trial app Khair Order Brad** (`brad/`, own table `brad_orders`, reads the gudang
+   data, writes only the goods out at departure): order from a photo / a customer message (AI), the hours rules
    above (16:00 cut-off → next morning, break, 17:00 deadline alerts, overtime recorded), door
    number, car cancelled → another car, departure message to the customer; messages stay one-tap.
 2. **After the owner's WhatsApp business number is verified (Meta):** automatic sends, buttons,
