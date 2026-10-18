@@ -821,3 +821,21 @@ CREATE TABLE IF NOT EXISTS brad_orders (
 );
 CREATE INDEX IF NOT EXISTS idx_brad_orders_status ON brad_orders (status);
 CREATE INDEX IF NOT EXISTS idx_brad_orders_order_date ON brad_orders (order_date);
+
+CREATE TABLE IF NOT EXISTS brad_wa_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  wamid TEXT,
+  dir TEXT,
+  peer TEXT,
+  order_no TEXT,
+  kind TEXT,
+  template TEXT,
+  text TEXT,
+  status TEXT,
+  error TEXT,
+  applied TEXT,
+  at TEXT,
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_brad_wa_log_wamid ON brad_wa_log (wamid);
+CREATE INDEX IF NOT EXISTS idx_brad_wa_log_at ON brad_wa_log (at);

@@ -8,7 +8,7 @@ import { handleChat } from './chat.js';
 import { handleAtt } from './attendance.js';
 import { handlePhoto, handlePhotoFile } from './photo.js';
 import { handleCold } from './cold.js';
-import { handleBrad } from './brad.js';
+import { handleBrad, handleWaWebhook } from './brad.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*', // store-key auth, no cookies → safe
@@ -122,6 +122,22 @@ export default {
         });
       } catch (e) {
         return json({ ok: false, error: 'SERVER', message: 'Server error' }, 500);
+      }
+    }
+    // v61: Meta's WhatsApp webhook — GET handshake + signed POST events (src/brad.js handleWaWebhook). Plain text answers.
+    if (/\/webhook\/wa$/.test(url.pathname) && (request.method === 'GET' || request.method === 'POST')) {
+      if (!env || !env.DB) return new Response('not configured', { status: 500 });
+      const headers = {};
+      request.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
+      try {
+        const raw = request.method === 'POST' ? await request.text() : '';
+        const adapter = d1Adapter(env.DB);
+        const r = await handleWaWebhook(adapter, request.method, url, raw, headers, env);
+        const counted = recordUsage(env.DB, adapter.use);
+        if (ctx && ctx.waitUntil) ctx.waitUntil(counted); else await counted;
+        return new Response(r.text, { status: r.status, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      } catch (e) {
+        return new Response('error', { status: 500 });
       }
     }
     if (request.method === 'GET' && /\/health\/batch$/.test(url.pathname)) {

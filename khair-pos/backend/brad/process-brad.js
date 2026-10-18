@@ -1,19 +1,21 @@
 // Code "Process Brad" = cold-parsers.js + cold-core.js + brad-core.js + this file (no key here: "Check Key" holds it).
-// Feeds the core with the loaded rows (POS users, pos_settings, the gudang tables read-only, brad_orders) and returns
-// { response, ops } for the writers: brad_orders, the brad_* settings and — only when a car leaves — cold_movements (OUT).
+// Feeds the core with the loaded rows (POS users, pos_settings, the gudang tables read-only, brad_orders, the WhatsApp log)
+// and returns { response, ops } for the writers: brad_orders, the brad_* settings, the WhatsApp log and — only when a car
+// leaves — cold_movements (OUT). An incoming WhatsApp message (stage 2) comes as req.__wa, set only by the Worker after it
+// has checked Meta's signature (a client's request can never carry it: parseBrad keeps only action/key/user/pin_hash/data).
 const req = $('Parse Brad').first().json;
 function rows(name) {
   try { return $(name).all().map(function (i) { return i.json; }).filter(function (r) { return r && r.id !== undefined && r.id !== null; }); } catch (e) { return []; }
 }
-const LOAD = { warehouses: 'Get Warehouses', products: 'Get Products', pallets: 'Get Pallets', movements: 'Get Movements', cold_orders: 'Get Cold Orders', customers: 'Get Customers', orders: 'Get Orders' };
-const WRITE = ['orders', 'movements'];
+const LOAD = { warehouses: 'Get Warehouses', products: 'Get Products', pallets: 'Get Pallets', movements: 'Get Movements', cold_orders: 'Get Cold Orders', customers: 'Get Customers', orders: 'Get Orders', wa_log: 'Get WA Log' };
+const WRITE = ['orders', 'movements', 'log'];
 function out(o, ops) { const e = { settings: [] }; WRITE.forEach(function (t) { e[t] = []; }); return [{ json: { response: o, ops: ops || e } }]; }
 if ($('Check Key').first().json.key_ok !== true) return out({ ok: false, error: 'BAD_KEY', message: 'Kunci toko salah' });
 const settings = {}, settingId = {};
 rows('Get Settings').forEach(function (r) { settingId[r.skey] = r.id; try { settings[r.skey] = JSON.parse(r.svalue); } catch (e) { settings[r.skey] = r.svalue; } });
 const state = { users: rows('Get Users'), settings: settings };
 Object.keys(LOAD).forEach(function (t) { state[t] = rows(LOAD[t]); });
-const res = KBrad.core(state, req, new Date().toISOString());
+const res = req.__wa ? KBrad.waEvent(state, req.__wa, new Date().toISOString()) : KBrad.core(state, req, new Date().toISOString());
 const ops = { settings: [] };
 WRITE.forEach(function (t) { ops[t] = []; });
 res.writes.forEach(function (w) {

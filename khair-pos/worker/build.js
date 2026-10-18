@@ -38,6 +38,7 @@ const INDEXES = {
   cold_pallets: ['warehouse', 'pallet_code'],
   cold_orders: ['status', 'order_date'],
   brad_orders: ['status', 'order_date'],
+  brad_wa_log: ['wamid', 'at'],
 };
 
 function buildSchema() {

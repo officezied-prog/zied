@@ -267,6 +267,12 @@ export const TABLES = {
     ot_note: 'string', load_at: 'string', load_end_est: 'string', departed_at: 'string', stock_note: 'string',
     delivered_at: 'string', cancelled_at: 'string', cancel_reason: 'string',
   },
+  // v61 (owner 2026-10-18: «ابدأ المرحلة الثانية: إرسال الواتساب تلقائيًا»): every WhatsApp message of the order flow — sent
+  // (its wamid, then sent / delivered / read / failed from Meta's webhook) and received (the cold store's buttons and replies).
+  brad_wa_log: {
+    wamid: 'string', dir: 'string', peer: 'string', order_no: 'string', kind: 'string', template: 'string', text: 'string',
+    status: 'string', error: 'string', applied: 'string', at: 'string', updated_at: 'string',
+  },
 };
 
 // Convenience: boolean column lookup per table (used by the D1 read/write coercion).
@@ -314,4 +320,4 @@ export const OPS_TABLE_COLD = {
 
 // Khair Order Brad (v60) ops key → table: its own orders, the brad_* settings, and the goods out of the gudang ledger
 // when a car leaves. Nothing else of the gudang data is ever written by it.
-export const OPS_TABLE_BRAD = { orders: 'brad_orders', movements: 'cold_movements', settings: 'pos_settings' };
+export const OPS_TABLE_BRAD = { orders: 'brad_orders', movements: 'cold_movements', settings: 'pos_settings', log: 'brad_wa_log' };
