@@ -72,7 +72,8 @@ driver → picked → delivered, `backend/cold/cold-core.js` FLOW); every step i
 - Manual buttons stay as the fallback when WhatsApp or Lalamove is down.
 
 ### Stages (each one works on its own)
-1. **Now, no accounts needed:** order from a photo / a customer message (AI), the hours rules
+1. **Now, no accounts needed** (1a built in v59: the hours rules, the car's arrival time, door, cancel → rebook, overtime recorded with
+   its cause, departure message; 1b next: the order from a photo / a customer message by AI): order from a photo / a customer message (AI), the hours rules
    above (16:00 cut-off → next morning, break, 17:00 deadline alerts, overtime recorded), door
    number, car cancelled → another car, departure message to the customer; messages stay one-tap.
 2. **After the owner's WhatsApp business number is verified (Meta):** automatic sends, buttons,

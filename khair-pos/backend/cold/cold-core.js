@@ -16,9 +16,10 @@ var KCold = (function () {
   var READ = { login: 1, bootstrap: 1, report: 1, fefo: 1, check_preview: 1 };
   var EXPIRY_DAYS = 60;
   /* Order flow (every step is logged with who and when; status is never written outside these tables):
-     open → sent (to the warehouse) → approved | rejected → ready → dispatch (owner/manager approve sending) → driver → picked (stock out) → delivered.
+     open → sent (to the warehouse) → approved | rejected → ready → dispatch (owner/manager approve sending) → driver → [arrived] → picked (stock out) → delivered.
+     v59: arrived (order_arrived: the car entered and registered, door, overtime) and trip_cancel (driver → dispatch, book another car).
      rejected → open (edit and send again). cancel: any step before picked. Statuses in HOLD keep their cartons reserved. */
-  var HOLD = ['open', 'sent', 'approved', 'ready', 'dispatch', 'driver'];
+  var HOLD = ['open', 'sent', 'approved', 'ready', 'dispatch', 'driver', 'arrived']; // v59: arrived = the car is in (order_arrived)
   var FLOW = { open: ['sent'], sent: ['approved', 'rejected'], approved: ['ready'], ready: ['dispatch'], dispatch: ['driver'], picked: ['delivered'], rejected: ['open'] };
   /* Inbound (containers and in-place purchases): planned → requested (entry request sent) → approved | rejected → stored (pallets entered). */
   var CFLOW = { planned: ['requested', 'stored'], requested: ['approved', 'rejected'], rejected: ['requested'], approved: ['stored'] };
@@ -60,6 +61,73 @@ var KCold = (function () {
   function pad3(n) { return ('00' + n).slice(-3); }
   function vehicleFor(kg) { var g = num(kg) * 1.1; for (var i = 0; i < VEHICLES.length; i++) if (g <= VEHICLES[i][0]) return VEHICLES[i][1]; return VEHICLES[VEHICLES.length - 1][1]; }
   function active(r) { return r.active !== false && r.active !== 'false'; }
+
+  /* ---------- the cooler's hours (v59) ----------
+     Owner 2026-10-18: «البراد يعمل من الساعة 9 الصبح الى الساعة 17 … الوقت الإضافة بعد الساعة 17 ب300 الف روبية لكل ساعة … راحة من الساعة 12
+     الى 13 … اذا لم تدخل السيارة و تسجل قبل الساعة 17 ينطلق احتساب وقت إضافي … اخر طلبية في الوقت العادي الساعة 16»; a started hour counts in
+     full; Sunday only by arrangement, at a cost agreed each time; closed on public holidays; Lalamove's time + 15–20 %.
+     Each cooler may keep its own `hours` (JSON); these are the owner's defaults, field by field. */
+  var HOURS = { open: '09:00', close: '17:00', brk: '12:00-13:00', last: '16:00', days: [1, 2, 3, 4, 5, 6], arrange: [0], ot: 300000 };
+  var ETA_MARGIN = 20; // % added to the minutes Lalamove shows
+  var OT_CAUSES = ['order_late', 'store_late', 'car_late', 'car_cancel', 'other'];
+  function hmOk(s) { return /^([01]\d|2[0-3]):[0-5]\d$/.test(str(s)); }
+  function hm(s) { var p = str(s).split(':'); return Number(p[0]) * 60 + Number(p[1]); }
+  function rpS(n) { return 'Rp ' + String(Math.round(num(n))).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+  function hmStr(m) { m = Math.max(0, Math.round(m)); return ('0' + Math.floor(m / 60) % 24).slice(-2) + ':' + ('0' + m % 60).slice(-2); }
+  function dayList(v, d) {
+    if (!Array.isArray(v)) return d.slice();
+    return v.map(Number).filter(function (n, i, a) { return n >= 0 && n <= 6 && Math.floor(n) === n && a.indexOf(n) === i; }).sort();
+  }
+  function hoursOf(w) {
+    var x = json(w && w.hours, {}) || {}, o = {};
+    ['open', 'close', 'last'].forEach(function (k) { o[k] = hmOk(x[k]) ? x[k] : HOURS[k]; });
+    var b = str(x.brk).split('-');
+    o.brk = x.brk === '' ? '' : b.length === 2 && hmOk(b[0]) && hmOk(b[1]) && hm(b[0]) < hm(b[1]) ? str(x.brk) : HOURS.brk;
+    o.days = dayList(x.days, HOURS.days);
+    o.arrange = dayList(x.arrange, HOURS.arrange).filter(function (d) { return o.days.indexOf(d) < 0; });
+    o.ot = x.ot !== undefined && x.ot !== null && x.ot !== '' && isFinite(Number(x.ot)) && Number(x.ot) >= 0 ? Math.round(Number(x.ot)) : HOURS.ot;
+    return o;
+  }
+  /** WIB date, minutes since midnight and weekday (0 = Sunday) of an ISO time. */
+  function wibAt(iso) { var s = wib(iso); return { date: s.slice(0, 10), min: Number(s.slice(11, 13)) * 60 + Number(s.slice(14, 16)), dow: new Date(s.slice(0, 10) + 'T00:00:00Z').getUTCDay() }; }
+  function holidayName(date, holidays) { var x = (holidays || []).find(function (h) { return h && h.date === date; }); return x ? str(x.name) || 'Libur' : ''; }
+  /** 'work' | 'arrange' (open only by arrangement, at a cost) | 'holiday' | 'closed'. */
+  function dayKind(date, H, holidays) {
+    if (holidayName(date, holidays)) return 'holiday';
+    var d = new Date(date + 'T00:00:00Z').getUTCDay();
+    return H.days.indexOf(d) >= 0 ? 'work' : H.arrange.indexOf(d) >= 0 ? 'arrange' : 'closed';
+  }
+  function nextWorkDay(date, H, holidays) { for (var i = 1; i <= 31; i++) { var d = addDays(date, i); if (dayKind(d, H, holidays) === 'work') return d; } return addDays(date, 1); }
+  /** A car that enters at `iso`: every started hour after closing is a full hour of overtime. */
+  function overtimeAt(iso, H) { var late = wibAt(iso).min - hm(H.close), hrs = late > 0 ? Math.ceil(late / 60) : 0; return { minutes: Math.max(0, late), hours: hrs, cost: hrs * H.ot }; }
+  function inBreak(min, H) { if (!H.brk) return false; var b = H.brk.split('-'); return min >= hm(b[0]) && min < hm(b[1]); }
+  /** When the car will really be there: Lalamove's minutes plus the margin. */
+  function etaOf(nowIso, etaMin, margin) { return new Date(Date.parse(nowIso) + Math.round(num(etaMin) * (1 + num(margin) / 100)) * 60000).toISOString(); }
+  /** Today's pickups at risk of overtime: no car yet from 30 min before the last order time, a car not in from 30 min before closing
+      (or past its expected time), still not in after closing. */
+  function timeAlerts(orders, warehouses, nowIso, holidays) {
+    var n = wibAt(nowIso), out = [];
+    (orders || []).forEach(function (o) {
+      if (!str(o.order_date) || str(o.order_date) > n.date || ['sent', 'approved', 'ready', 'dispatch', 'driver'].indexOf(o.status) < 0) return;
+      var H = hoursOf((warehouses || []).find(function (w) { return w.code === o.warehouse; }) || {}), k = dayKind(n.date, H, holidays), kind = '';
+      if (k === 'holiday' || k === 'closed') return;
+      if (n.min >= hm(H.close)) kind = 'overtime';
+      else if (o.status === 'driver') { if (n.min >= hm(H.close) - 30 || (str(o.eta_at) && Date.parse(o.eta_at) < Date.parse(nowIso))) kind = 'car_late'; }
+      else if (n.min >= hm(H.last) - 30) kind = 'no_car';
+      if (kind) out.push({ order_no: o.order_no, warehouse: o.warehouse, status: o.status, kind: kind });
+    });
+    return out;
+  }
+  /** Overtime and agreed extra costs of a month (pickup month), by cause. */
+  function otSummary(orders, month) {
+    var s = { month: month, count: 0, hours: 0, cost: 0, n_extra: 0, extra: 0, by_cause: {} };
+    (orders || []).forEach(function (o) {
+      if (str(o.order_date).slice(0, 7) !== month || o.status === 'cancelled') return;
+      if (num(o.ot_cost) > 0) { var c = str(o.ot_cause) || 'other'; s.count++; s.hours += num(o.ot_hours); s.cost += num(o.ot_cost); s.by_cause[c] = (s.by_cause[c] || 0) + num(o.ot_cost); }
+      if (num(o.extra_cost) > 0) { s.n_extra++; s.extra += num(o.extra_cost); }
+    });
+    return s;
+  }
 
   /* ---------- stock from movements ---------- */
   function ledger(moves, asOf, wh) {
@@ -197,6 +265,8 @@ var KCold = (function () {
     if (!READ[action] && role === 'akuntan') return fail('FORBIDDEN', 'Akuntan hanya bisa melihat');
     if (OWNER_ONLY[action] && role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik');
     var seesCost = role === 'owner' || role === 'akuntan';
+    var holidays = json(st.settings.cold_holidays, []) || [], ms = st.settings.cold_eta_margin;
+    var margin = ms !== undefined && ms !== null && ms !== '' && isFinite(Number(ms)) ? Number(ms) : ETA_MARGIN; // v59
 
     function wh(c) { return st.warehouses.find(function (w) { return w.code === code(c); }); }
     function product(c) { return st.products.find(function (p) { return p.code === code(c); }); }
@@ -210,7 +280,7 @@ var KCold = (function () {
       if (!row.grp) row.grp = row.seq;
       put('movements', row); return row;
     }
-    function whOut(w) { var o = { id: w.id, code: w.code, name: w.name, mode: str(w.mode), address: str(w.address), pic_name: str(w.pic_name), pic_wa: str(w.pic_wa), customer_id: str(w.customer_id), parser: str(w.parser) || 'generic', active: active(w) }; if (seesCost) { o.rate = num(w.rate); o.rate_frozen = rateOf(w, 'FROZEN'); o.rate_chiller = rateOf(w, 'CHILLER'); o.rate_dry = rateOf(w, 'DRY'); o.rate_unit = w.rate_unit || 'month'; } return o; }
+    function whOut(w) { var o = { id: w.id, code: w.code, name: w.name, mode: str(w.mode), hours: hoursOf(w), hours_set: !!str(w.hours), address: str(w.address), pic_name: str(w.pic_name), pic_wa: str(w.pic_wa), customer_id: str(w.customer_id), parser: str(w.parser) || 'generic', active: active(w) }; if (seesCost) { o.rate = num(w.rate); o.rate_frozen = rateOf(w, 'FROZEN'); o.rate_chiller = rateOf(w, 'CHILLER'); o.rate_dry = rateOf(w, 'DRY'); o.rate_unit = w.rate_unit || 'month'; } return o; }
     /** Containers with what came in, what is left and the day the last carton went out (finished). */
     function contOut(c) {
       var pals = st.pallets.filter(function (p) { return p.container_no === c.container_no; }).map(function (p) { return p.pallet_code; });
@@ -260,6 +330,7 @@ var KCold = (function () {
       var a = { expiring: exp, no_check_today: st.warehouses.filter(function (w) { return active(w) && withStock[w.code] && !checked[w.code]; }).map(function (w) { return w.code; }),
         unexplained: st.checks.filter(function (c) { return num(c.n_diff) > 0 && !str(c.explained_note); }).map(function (c) { return checkOut(c); }).slice(-20) };
       if (seesCost) a.storage = st.warehouses.filter(active).map(function (w) { return storage(st, w, today.slice(0, 7), today); });
+      a.overtime = otSummary(st.orders, today.slice(0, 7)); // v59: overtime + agreed extra costs this month (every role: it is avoidable)
       return a;
     }
 
@@ -269,7 +340,7 @@ var KCold = (function () {
       case 'bootstrap': {
         var s = st.settings;
         return done({
-          me: { name: by, role: role }, today: today, sees_cost: seesCost,
+          me: { name: by, role: role }, today: today, sees_cost: seesCost, holidays: holidays, eta_margin: margin, ot_causes: OT_CAUSES,
           company: { name: str(s.cold_company) || 'PT. SAIDA REZEKI ABADI', store: str(s.store_name) || 'Khair Mart', address: str(s.address), phone: str(s.phone) },
           drivers: json(s.cold_drivers, []), wa: { owner: str(s.wa_owner_number), manager: str(s.wa_manager_number) },
           customers: st.customers.filter(function (c) { return str(c.name); }).map(function (c) { return { id: c.id, name: str(c.name), phone: str(c.phone), address: str(c.address), type: str(c.type) }; }),
@@ -290,8 +361,23 @@ var KCold = (function () {
         var waRaw = str(data.pic_wa), wa = waRaw ? normPhone(waRaw) : '';
         if (waRaw && !wa) return fail('INVALID', 'Nomor WhatsApp tidak valid');
         var mode = MODES.indexOf(str(data.mode)) >= 0 ? str(data.mode) : (ex ? str(ex.mode) : ''); // Batch C: cooler operating mode
+        // v59: the cooler's hours (open, close, break, last order, working days, days by arrangement, overtime per hour)
+        var hrs = ex ? str(ex.hours) : '';
+        if (data.hours !== undefined) {
+          var hx = data.hours && typeof data.hours === 'object' ? data.hours : null;
+          if (!hx) hrs = '';
+          else {
+            var hb = str(hx.brk), hbp = hb.split('-');
+            if (!hmOk(hx.open) || !hmOk(hx.close) || !hmOk(hx.last) || !(hm(hx.open) < hm(hx.last) && hm(hx.last) <= hm(hx.close))) return fail('INVALID', 'Jam kerja: buka < order terakhir ≤ tutup (JJ:MM)');
+            if (hb && !(hbp.length === 2 && hmOk(hbp[0]) && hmOk(hbp[1]) && hm(hx.open) <= hm(hbp[0]) && hm(hbp[0]) < hm(hbp[1]) && hm(hbp[1]) <= hm(hx.close))) return fail('INVALID', 'Jam istirahat tidak valid (contoh 12:00-13:00)');
+            var hdays = dayList(hx.days, []), harr = dayList(hx.arrange, []).filter(function (d) { return hdays.indexOf(d) < 0; }), hot = num(hx.ot);
+            if (!hdays.length) return fail('INVALID', 'Pilih minimal satu hari kerja');
+            if (hot < 0 || hot > 100000000) return fail('INVALID', 'Tarif lembur tidak valid');
+            hrs = JSON.stringify({ open: hx.open, close: hx.close, brk: hb, last: hx.last, days: hdays, arrange: harr, ot: Math.round(hot) });
+          }
+        }
         var row = Object.assign({}, ex || { created_at: now, created_by: by }, { code: c, name: name, mode: mode, address: clean(data.address, 200), pic_name: clean(data.pic_name, 40), pic_wa: wa,
-          customer_id: clean(data.customer_id, 20), rate: rate, rate_frozen: rz.rate_frozen, rate_chiller: rz.rate_chiller, rate_dry: rz.rate_dry, rate_unit: unit, parser: parser, active: data.active === undefined ? true : bool(data.active) });
+          customer_id: clean(data.customer_id, 20), rate: rate, rate_frozen: rz.rate_frozen, rate_chiller: rz.rate_chiller, rate_dry: rz.rate_dry, rate_unit: unit, parser: parser, active: data.active === undefined ? true : bool(data.active), hours: hrs });
         put('warehouses', row);
         return done({ warehouse: whOut(row) });
       }
@@ -319,6 +405,18 @@ var KCold = (function () {
           put('settings', { skey: 'cold_drivers', svalue: JSON.stringify(drv) });
         }
         if (data.company !== undefined) { var cn = clean(data.company, 60); if (!cn) return fail('INVALID', 'Nama perusahaan wajib'); put('settings', { skey: 'cold_company', svalue: JSON.stringify(cn) }); }
+        if (data.holidays !== undefined) { // v59: public holidays (the coolers are closed)
+          if (!Array.isArray(data.holidays) || data.holidays.length > 60) return fail('INVALID', 'Maksimal 60 hari libur');
+          var hl = [];
+          for (var hi = 0; hi < data.holidays.length; hi++) {
+            var hd = data.holidays[hi] || {};
+            if (!isDate(hd.date)) return fail('INVALID', 'Tanggal libur tidak valid: ' + str(hd.date));
+            if (!hl.some(function (x) { return x.date === hd.date; })) hl.push({ date: hd.date, name: clean(hd.name, 40) });
+          }
+          hl.sort(function (a, b) { return a.date.localeCompare(b.date); });
+          put('settings', { skey: 'cold_holidays', svalue: JSON.stringify(hl) });
+        }
+        if (data.eta_margin !== undefined) { var em = num(data.eta_margin); if (!(em >= 0 && em <= 100)) return fail('INVALID', 'Tambahan waktu 0–100 %'); put('settings', { skey: 'cold_eta_margin', svalue: JSON.stringify(Math.round(em)) }); }
         return done({});
       }
       case 'customer_save': {
@@ -471,6 +569,9 @@ var KCold = (function () {
         if (oe && oe.status !== 'open' && oe.status !== 'rejected') return fail('INVALID', 'Order sudah ' + oe.status);
         if (oe && oe.warehouse !== ow.code) return fail('INVALID', 'Gudang order tidak bisa diganti; batalkan dan buat baru');
         var od = data.order_date || today; if (!isDate(od) || od < addDays(today, -7)) return fail('INVALID', 'Tanggal ambil tidak valid');
+        // v59: the pickup day must be a day the cooler opens (a day by arrangement is settled when the order is sent)
+        var oH = hoursOf(ow), oK = od >= today ? dayKind(od, oH, holidays) : 'work';
+        if (oK === 'holiday' || oK === 'closed') return fail('CLOSED', 'Gudang ' + ow.name + ' tutup tanggal ' + od + (oK === 'holiday' ? ' (' + holidayName(od, holidays) + ')' : '') + '. Hari kerja berikutnya: ' + nextWorkDay(od, oH, holidays), { next: nextWorkDay(od, oH, holidays), kind: oK });
         var ocid = int(data.customer_id), ocust = ocid ? cust(ocid) : null; // Batch C: link to the customer registry
         var dt = data.dest_type === 'pelanggan' ? 'pelanggan' : 'toko', dn2 = clean(data.dest_name, 60) || (ocust ? clean(ocust.name, 60) : '');
         if (dt === 'pelanggan' && !dn2) return fail('INVALID', 'Nama pelanggan wajib');
@@ -507,6 +608,29 @@ var KCold = (function () {
         if ((FLOW[os.status] || []).indexOf(to) < 0) return fail('INVALID', 'Status ' + os.status + ' → ' + to + ' tidak boleh');
         if (to === 'rejected' && onote.length < 3) return fail('INVALID', 'Alasan penolakan wajib');
         if (to === 'driver' && !(json(os.trip, {}) || {}).driver) return fail('INVALID', 'Isi data sopir dulu (Pesan truk)');
+        if (to === 'sent') {
+          // v59: a pickup today after the last order time costs overtime (when = 'overtime' accepts it, 'later' moves the pickup to the
+          // next working day); a day by arrangement needs the extra cost agreed with the cooler; a closed day / holiday only 'later'.
+          var sw = wh(os.warehouse) || {}, sH = hoursOf(sw), sn = wibAt(now), pd0 = str(os.order_date) || sn.date, when = str(data.when);
+          var pk = pd0 >= sn.date ? dayKind(pd0, sH, holidays) : 'work', late = pd0 <= sn.date && sn.min > hm(sH.last);
+          var nextD = nextWorkDay(pd0 > sn.date ? pd0 : sn.date, sH, holidays);
+          if (when === 'later' && (pk !== 'work' || late)) {
+            os = Object.assign({}, os, { order_date: nextD });
+            onote = (onote ? onote + ' · ' : '') + 'Diambil ' + nextD + ' (tanpa lembur)';
+          } else {
+            if (pk === 'holiday' || pk === 'closed') return fail('CLOSED', 'Gudang ' + str(sw.name || os.warehouse) + ' tutup tanggal ' + pd0 + (pk === 'holiday' ? ' (' + holidayName(pd0, holidays) + ')' : ''), { next: nextD, kind: pk });
+            if (pk === 'arrange') {
+              if (data.extra_cost === undefined || data.extra_cost === null || data.extra_cost === '') return fail('ARRANGE', 'Tanggal ' + pd0 + ' gudang buka hanya dengan perjanjian dan biaya tambahan. Isi biaya yang disepakati.', { next: nextD });
+              var xc = num(data.extra_cost); if (!(xc >= 0 && xc <= 100000000)) return fail('INVALID', 'Biaya tambahan tidak valid');
+              os = Object.assign({}, os, { extra_cost: Math.round(xc), extra_note: clean(data.extra_note, 120) || 'Buka di luar hari kerja (perjanjian)' });
+              onote = (onote ? onote + ' · ' : '') + 'Biaya tambahan ' + rpS(xc);
+            }
+            if (late) {
+              if (when !== 'overtime') return fail('AFTER_HOURS', 'Lewat jam order terakhir (' + sH.last + '). Diambil hari ini bisa kena lembur ' + rpS(sH.ot) + ' per jam setelah ' + sH.close + '.', { next: nextD, last: sH.last, close: sH.close, ot: sH.ot });
+              onote = (onote ? onote + ' · ' : '') + 'Lewat ' + sH.last + ': risiko lembur disetujui';
+            }
+          }
+        }
         return done({ order: orderOut(put('orders', step(os, to, onote))) });
       }
       case 'order_pick': {
@@ -536,10 +660,52 @@ var KCold = (function () {
         var trip = { vehicle: clean(data.vehicle, 40), driver: clean(data.driver, 40), driver_wa: data.driver_wa ? normPhone(data.driver_wa) : '', plate: clean(data.plate, 12).toUpperCase(),
           cost: Math.round(cost), via: data.via === 'lalamove' ? 'lalamove' : 'sopir', saved_by: by, saved_at: now };
         if (!trip.vehicle && !trip.driver && !trip.plate) return fail('INVALID', 'Isi kendaraan, sopir atau plat');
-        var trow = Object.assign({}, ot, { trip: JSON.stringify(trip) });
-        if (ot.status === 'dispatch' && trip.driver) trow = step(trow, 'driver', [trip.driver, trip.plate].filter(Boolean).join(' · '));
+        // v59: the minutes Lalamove shows + the margin = when the car is really there; a pickup today that would enter after closing
+        // is overtime (accept_ot: true accepts it); arriving in the break only warns (the car waits)
+        var etaRaw = data.eta_min, eta = etaRaw === undefined || etaRaw === null || etaRaw === '' ? null : int(etaRaw), etaAt = str(ot.eta_at), warn = '', tnote = '';
+        if (eta !== null) {
+          if (!(eta >= 0 && eta <= 600)) return fail('INVALID', 'Waktu tiba 0–600 menit');
+          etaAt = etaOf(now, eta, margin); trip.eta_min = eta;
+          if (str(ot.order_date) <= today) {
+            var tH = hoursOf(wh(ot.warehouse) || {}), ea = wibAt(etaAt), eo = overtimeAt(etaAt, tH);
+            if (eo.hours > 0 && data.accept_ot !== true) return fail('LATE_CAR', 'Mobil diperkirakan tiba ' + hmStr(ea.min) + ', lewat ' + tH.close + ': lembur ' + eo.hours + ' jam (' + rpS(eo.cost) + ')', { eta_at: etaAt, ot_hours: eo.hours, ot_cost: eo.cost });
+            if (eo.hours > 0) tnote = 'Tiba ±' + hmStr(ea.min) + ': lembur ' + eo.hours + ' jam diterima';
+            else if (inBreak(ea.min, tH)) warn = 'BREAK';
+          }
+        }
+        var trow = Object.assign({}, ot, { trip: JSON.stringify(trip), eta_at: etaAt });
+        if (ot.status === 'dispatch' && trip.driver) trow = step(trow, 'driver', [trip.driver, trip.plate, tnote].filter(Boolean).join(' · '));
         var tr = put('orders', trow);
-        return done({ order: orderOut(tr) });
+        return done({ order: orderOut(tr), warn: warn });
+      }
+      case 'trip_cancel': {
+        // v59: the car was cancelled (driver / Lalamove): back to "book a car", the cancellation stays in the history
+        var tc = order(data.order_no); if (!tc) return fail('NOT_FOUND', 'Order tidak ada');
+        if (tc.status !== 'driver') return fail('INVALID', 'Belum ada mobil untuk order ini');
+        var tcr = clean(data.reason, 120); if (tcr.length < 3) return fail('INVALID', 'Alasan wajib');
+        var old = json(tc.trip, {}) || {}, tcn = wibAt(now), tcH = hoursOf(wh(tc.warehouse) || {});
+        var tcrow = step(Object.assign({}, tc, { trip: '', eta_at: '', trip_cancels: num(tc.trip_cancels) + 1 }), 'dispatch', 'Mobil batal: ' + [old.driver, old.plate].filter(Boolean).join(' · ') + ' — ' + tcr);
+        return done({ order: orderOut(put('orders', tcrow)), risk: str(tc.order_date) <= today && tcn.min >= hm(tcH.last) - 30 });
+      }
+      case 'order_arrived': {
+        // v59: the car entered and registered at the cooler (the time, the door); after closing every started hour is overtime, with its cause
+        var oa = order(data.order_no); if (!oa) return fail('NOT_FOUND', 'Order tidak ada');
+        var door = clean(data.door, 10).toUpperCase();
+        if (oa.status === 'arrived') { // only the door can still change
+          if (!door) return fail('INVALID', 'Isi nomor pintu');
+          return done({ order: orderOut(put('orders', Object.assign({}, oa, { door: door }))) });
+        }
+        if (oa.status !== 'driver') return fail('INVALID', oa.status === 'dispatch' ? 'Isi data mobil dulu (Pesan truk)' : 'Order sudah ' + oa.status);
+        var an = wibAt(now), aAt = now;
+        if (str(data.time)) {
+          if (!hmOk(data.time)) return fail('INVALID', 'Jam tidak valid (JJ:MM)');
+          if (hm(data.time) > an.min) return fail('INVALID', 'Jam masuk belum terjadi');
+          aAt = new Date(Date.parse(an.date + 'T' + data.time + ':00+07:00')).toISOString();
+        }
+        var aH = hoursOf(wh(oa.warehouse) || {}), ov = overtimeAt(aAt, aH), cause = str(data.cause);
+        if (ov.hours > 0 && OT_CAUSES.indexOf(cause) < 0) return fail('CAUSE', 'Mobil masuk lewat ' + aH.close + ': lembur ' + ov.hours + ' jam (' + rpS(ov.cost) + '). Pilih sebabnya.', { ot_hours: ov.hours, ot_cost: ov.cost });
+        var arow = Object.assign({}, oa, { arrived_at: aAt, door: door, ot_hours: ov.hours, ot_cost: ov.cost, ot_cause: ov.hours ? cause : '', ot_note: ov.hours ? clean(data.note, 120) : '' });
+        return done({ order: orderOut(put('orders', step(arow, 'arrived', ['Masuk ' + hmStr(wibAt(aAt).min), door ? 'Pintu ' + door : '', ov.hours ? 'Lembur ' + ov.hours + ' jam (' + rpS(ov.cost) + ')' : ''].filter(Boolean).join(' · ')))) });
       }
       case 'fefo': {
         var fw = wh(data.warehouse), fp = product(data.product), fc = int(data.cartons);
@@ -563,6 +729,8 @@ var KCold = (function () {
         return fail('INVALID', 'Aksi tidak dikenal: ' + action);
     }
   }
-  return { core: core, stockRows: stockRows, fefo: fefo, storage: storage, compare: compare, FLOW: FLOW, CFLOW: CFLOW, HOLD: HOLD, vehicleFor: vehicleFor, zoneOf: zoneOf, ZONES: ZONES, MODES: MODES, VEHICLES: VEHICLES, EXPIRY_DAYS: EXPIRY_DAYS };
+  return { core: core, stockRows: stockRows, fefo: fefo, storage: storage, compare: compare, FLOW: FLOW, CFLOW: CFLOW, HOLD: HOLD, vehicleFor: vehicleFor, zoneOf: zoneOf, ZONES: ZONES, MODES: MODES, VEHICLES: VEHICLES, EXPIRY_DAYS: EXPIRY_DAYS,
+    HOURS: HOURS, ETA_MARGIN: ETA_MARGIN, OT_CAUSES: OT_CAUSES, hoursOf: hoursOf, hm: hm, hmStr: hmStr, wibAt: wibAt, dayKind: dayKind, nextWorkDay: nextWorkDay, holidayName: holidayName,
+    overtimeAt: overtimeAt, inBreak: inBreak, etaOf: etaOf, timeAlerts: timeAlerts, otSummary: otSummary };
 })();
 if (typeof window !== 'undefined') window.KCold = KCold;

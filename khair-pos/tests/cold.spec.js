@@ -7,7 +7,11 @@ const { SHOTS, login } = require('./helpers');
 
 const SAMPLE_TSV = fs.readFileSync(path.join(__dirname, '../backend/cold/sample-dpp.tsv'), 'utf8');
 const SAMPLE_XLSX = path.join(__dirname, '../backend/cold/sample-dpp.xlsx');
-const today = () => new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
+const today = () => FIXED.slice(0, 10);
+// v59: the cooler's hours (last order 16:00, overtime after 17:00, Sunday only by arrangement) depend on the clock, so these tests
+// run on a Wednesday at 10:00 WIB; tests/cold-hours.spec.js covers the other times.
+const FIXED = '2026-10-14T10:00:00+07:00';
+test.beforeEach(async ({ page }) => { await page.clock.setFixedTime(new Date(FIXED)); });
 
 async function coldLogin(page, user = 'Pemilik', pin = '1234') {
   await page.goto('gudang/index.html?mock=1');
