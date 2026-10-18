@@ -336,6 +336,60 @@ err(call('nope', {}), 'INVALID');
   assert.deepStrictEqual(al('2026-10-14T10:05:00Z'), ['overtime']); // 17:05: still out after closing
   assert.deepStrictEqual(al('2026-10-15T03:00:00Z'), []); // the next morning: nothing yet
 }
+// ---------- v60: an order read from a photo / a message (stage 1b) — read only; pallets as written, else FEFO ----------
+{
+  NOW = '2026-10-15T02:00:00Z'; // Thursday 09:00 WIB
+  ok(call('product_save', { code: 'ZAHIDI-9', name: 'Kurma Zahidi 9kg', kg_per_ctn: 9, aliases: 'zahidi' }));
+  ok(call('pallet_in', { warehouse: 'BOSKO', date: '2026-10-15', pallets: [{ pallet_code: 'ZH-01', product: 'ZAHIDI-9', cartons: 50, exp_date: '2027-01-01' },
+    { pallet_code: 'ZH-02', product: 'ZAHIDI-9', cartons: 40, exp_date: '2026-12-01' }, { pallet_code: 'ZH-03', product: 'ZAHIDI-9', cartons: 60, exp_date: '2027-03-01' }] }, 'manager'));
+  ok(call('customer_save', { name: 'Toko Zahra', phone: '081300000099', address: 'Jl. Melati 9' }));
+  const zahra = T.customers.find(c => c.name === 'Toko Zahra');
+  err(call('order_read', { text: 'Zahidi 10 ctn' }, 'akuntan'), 'FORBIDDEN');
+  err(call('order_read', {}, 'manager'), 'INVALID');
+  err(call('order_read', { has_image: true }, 'manager'), 'AI_OFF'); // no AI key: a photo cannot be read (a typed message still can)
+  // with the AI on, the first pass only checks the user and gives the Worker the prompt (the coolers, products, pallets in stock)
+  const pre = ok(call('order_read', { has_image: true, ai_on: true }, 'manager'));
+  assert.strictEqual(pre.need_ai, true); assert.match(pre.prompt.system, /ONE JSON object/); assert.match(pre.prompt.system, /today is 2026-10-15/);
+  assert.match(pre.prompt.catalog, /ZH-02 \| ZAHIDI-9 \| BOSKO \| 40/); assert.match(pre.prompt.catalog, /ZAHIDI-9 \| Kurma Zahidi 9kg \| zahidi \| 9/);
+  // the AI's answer → the draft: the written pallet whole, 70 ctn by FEFO, "1 palet" = the oldest pallet left, an unknown line listed
+  const ans = { customer: { name: 'Zahra', phone: '0813-0000-0099' }, date: '2026-10-16', note: 'Pintu belakang', items: [
+    { pallet: 'ZH-03', qty: 0, unit: 'ctn', line: 'PLT ZH-03 utuh' }, { code: 'ZAHIDI-9', product: 'Zahidi', qty: 70, unit: 'ctn', line: 'Zahidi 70 dus' },
+    { product: 'Mangga', qty: 5, unit: 'ctn', line: 'Mangga 5 ctn' }, { product: 'zahidi', qty: 1, unit: 'pallet', line: '1 palet zahidi', unclear: true }] };
+  const rd = ok(call('order_read', { has_image: true, ai_on: true, _ai: { text: 'Here it is:\n```json\n' + JSON.stringify(ans) + '\n```', model: 'claude-haiku-5-5' } }, 'manager'));
+  const d = rd.draft;
+  assert.strictEqual(rd.read_by, 'claude-haiku-5-5');
+  assert.deepStrictEqual([d.warehouse, d.order_date, d.dest_type, d.dest_name, d.dest_phone, d.dest_address, d.customer_id, d.note], ['BOSKO', '2026-10-16', 'pelanggan', 'Toko Zahra', '6281300000099', 'Jl. Melati 9', zahra.id, 'Pintu belakang']);
+  assert.deepStrictEqual(d.lines.map(l => [l.pallet_code, l.cartons, l.src]), [['ZH-03', 60, 'pallet'], ['ZH-02', 40, 'fefo'], ['ZH-01', 50, 'fefo']]);
+  assert.deepStrictEqual(d.unmatched, [{ line: 'Mangga 5 ctn', reason: 'unknown' }]);
+  assert.deepStrictEqual([d.unclear, d.n_items, d.warn.length], [2, 4, 0]);
+  // more than there is: what is free is taken and the rest is said; "2 palet" with only one left; a pallet in another cooler
+  const d2 = ok(call('order_read', { has_image: true, _ai: { text: JSON.stringify({ warehouse: 'Bosko', items: [{ code: 'ZAHIDI-9', qty: 200 }, { pallet: '2274537', qty: 10 }, { pallet: 'ZZ-404', product: 'Zahidi', qty: 2, unit: 'pallet' }] }), model: 'm' } }, 'manager')).draft;
+  assert.strictEqual(d2.warehouse, 'BOSKO');
+  assert.deepStrictEqual(d2.lines.map(l => [l.pallet_code, l.cartons]), [['ZH-02', 40], ['ZH-01', 50], ['ZH-03', 60]]);
+  assert.deepStrictEqual(d2.warn, [{ line: '200 ZAHIDI-9', kind: 'short', product: 'ZAHIDI-9', n: 50 }, { line: '2 pallet Zahidi ZZ-404', kind: 'no_pallet', pallet: 'ZZ-404' }, { line: '2 pallet Zahidi ZZ-404', kind: 'short_pallets', product: 'ZAHIDI-9', n: 2 }]);
+  assert.deepStrictEqual(d2.unmatched, [{ line: '10 2274537', pallet: '2274537', reason: 'elsewhere' }]);
+  // a photo the AI could not read, or an AI failure: said, with what to do; a message falls back to the rules
+  err(call('order_read', { has_image: true, _ai: { text: 'Maaf, foto buram.' } }, 'manager'), 'AI_UNREAD');
+  assert.match(err(call('order_read', { has_image: true, _ai: { error: 'AI HTTP 529' } }, 'manager'), 'AI_ERROR').message, /AI HTTP 529/);
+  const fb = ok(call('order_read', { text: 'Zahidi 10 ctn', _ai: { error: 'AI HTTP 529' } }, 'manager'));
+  assert.deepStrictEqual([fb.read_by, fb.ai, fb.draft.lines.length], ['rules', 'error', 1]);
+  // no AI: a pasted WhatsApp message read by the rules (customer from the registry, "besok", the address, PID, "2 palet")
+  const msg = 'Selamat pagi pak\nKirim ke Toko Zahra besok ya\n1. Zahidi 10 ctn\n2. PID ZH-01 5 dus\n3. 2 palet zahidi\n4. Mangga 3 ctn\nAlamat: Jl. Melati 9 Blok C\nTerima kasih';
+  const rr = ok(call('order_read', { text: msg, warehouse: 'DPP' }, 'manager'));
+  assert.deepStrictEqual([rr.read_by, rr.ai], ['rules', 'off']);
+  const r3 = rr.draft;
+  assert.deepStrictEqual([r3.warehouse, r3.order_date, r3.dest_name, r3.customer_id, r3.dest_address, r3.dest_phone], ['BOSKO', '2026-10-16', 'Toko Zahra', zahra.id, 'Jl. Melati 9 Blok C', '6281300000099']);
+  assert.deepStrictEqual(r3.lines.map(l => [l.pallet_code, l.cartons, l.src]), [['ZH-02', 40, 'fefo'], ['ZH-01', 50, 'pallet']]);
+  assert.deepStrictEqual(r3.unmatched, [{ line: 'Mangga 3 ctn', reason: 'unknown' }]);
+  // the shop itself is not a customer
+  assert.strictEqual(ok(call('order_read', { has_image: true, _ai: { text: JSON.stringify({ customer: { name: 'Khair Mart' }, items: [{ pallet: 'ZH-02', qty: 4 }] }) } }, 'manager')).draft.dest_type, 'toko');
+  // the draft saves as any order; the pallets it booked are then "taken" for the next one
+  const so = ok(call('order_save', { warehouse: d.warehouse, order_date: d.order_date, dest_type: d.dest_type, dest_name: d.dest_name, dest_phone: d.dest_phone, dest_address: d.dest_address, customer_id: d.customer_id, note: d.note, lines: d.lines.map(l => ({ pallet_code: l.pallet_code, cartons: l.cartons })) }, 'manager')).order;
+  assert.deepStrictEqual([so.warehouse, so.customer_id, so.lines.length], ['BOSKO', zahra.id, 3]);
+  const d4 = ok(call('order_read', { has_image: true, _ai: { text: JSON.stringify({ items: [{ pallet: 'ZH-03' }] }) } }, 'manager')).draft;
+  assert.deepStrictEqual([d4.lines.length, d4.unmatched[0].reason], [0, 'taken']);
+  assert.strictEqual(KCold.readJson('nothing'), null); assert.deepStrictEqual(KCold.readJson('{"items":[]}'), { items: [] });
+}
 // nothing was ever deleted and no movement changed
 assert(T.movements.every(m => m.by_user && m.at));
 console.log('test-cold: all passed (' + T.movements.length + ' movements, ' + T.orders.length + ' orders)');

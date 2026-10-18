@@ -74,11 +74,31 @@
   }
   var ready = null;
   function db() { if (!ready) { var d = load(); ready = d && d.users ? Promise.resolve(d) : seed(); } return ready; }
+  // v60 (stage 1b): the server reads an order photo with the AI; the demo has no AI, so a stand-in answers the way the AI would
+  // for a sample sheet (tests may set window.KColdMockAI to a function giving that answer, or to false = AI off). A typed
+  // message is read by the same fixed rules as the server (no AI in the demo).
+  function demoAI(data) {
+    if (typeof root.KColdMockAI === 'function') return root.KColdMockAI(data);
+    return JSON.stringify({ customer: { name: 'Toko Barokah', phone: '081300000020' }, note: '', items: [
+      { pallet: '2274537', product: 'Sukari 3kg', qty: 40, unit: 'ctn', line: 'Sukari 3kg · PLT 2274537 · 40 ctn' },
+      { code: 'AJWA-5', product: 'Ajwa 5kg', qty: 1, unit: 'pallet', line: 'Ajwa 5kg · 1 palet' },
+      { product: 'Zahidi', qty: 10, unit: 'ctn', unclear: true, line: 'Zahidi · 10 ctn' }] });
+  }
+  function readOrder(d, body) {
+    var x = body.data || {}, img = typeof x.image_base64 === 'string' && x.image_base64.length > 0;
+    var base = { text: typeof x.text === 'string' ? x.text.slice(0, 4000) : '', warehouse: String(x.warehouse || ''), has_image: img, ai_on: img && root.KColdMockAI !== false };
+    var first = run(d, Object.assign({}, body, { data: base }));
+    if (!first.ok || !first.need_ai) return first;
+    return run(d, Object.assign({}, body, { data: Object.assign({}, base, { _ai: { text: demoAI(x), model: 'demo' } }) }));
+  }
   /** Same envelope as the server; the key must be "demo". */
   function api(body) {
     return db().then(function (d) {
       if (body.key !== 'demo') return { ok: false, error: 'BAD_KEY', message: 'Kunci toko salah (demo: "demo")' };
-      return run(d, body);
+      if (body.action === 'order_read') return readOrder(d, body);
+      var r = run(d, body);
+      if (body.action === 'bootstrap' && r.ok) r.ai_reader = root.KColdMockAI !== false;
+      return r;
     });
   }
   function reset() { try { localStorage.removeItem(DBKEY); } catch (e) { } ready = null; return db(); }

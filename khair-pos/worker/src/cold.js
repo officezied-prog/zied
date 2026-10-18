@@ -108,13 +108,62 @@ async function ensureColdSchema(adapter) {
   coldSchemaEnsured = true;
 }
 
-export async function handleCold(adapter, body, headers, STORE_KEY) {
+// v60 (owner 2026-10-17, stage 1b): an order read from a photo of the written sheet or a customer's message. The core checks
+// the user and builds the prompt (pass 1); the AI only READS (claude-haiku-5-5 — a photo with unclear or unmatched lines, or
+// one it could not read, is read once more by claude-sonnet-5-5); the core turns the reading into a draft (pass 2) with fixed
+// rules (the pallet as written, else FEFO). Nothing is saved: the manager checks the draft and saves it as any order. No key,
+// or an AI failure on a typed message → the core reads it by fixed rules. A client's own `_ai` is never forwarded.
+export const READ_MODELS = ['claude-haiku-5-5', 'claude-sonnet-5-5'];
+async function readAI(env, prompt, img, mime, text, model, effort) {
+  try {
+    const content = [];
+    if (img) content.push({ type: 'image', source: { type: 'base64', media_type: mime, data: img } });
+    content.push({ type: 'text', text: prompt.catalog + '\n\n' + (text ? 'The order (message):\n' + text : 'The order is in the photo.') });
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model, max_tokens: 8000, system: prompt.system, output_config: { effort }, messages: [{ role: 'user', content }] }),
+    });
+    if (!r.ok) return { error: 'AI HTTP ' + r.status };
+    const j = await r.json();
+    if (j && j.stop_reason === 'max_tokens') return { error: 'AI_CUT_OFF' };
+    if (j && j.stop_reason === 'refusal') return { error: 'AI_REFUSED' };
+    const out = (j && Array.isArray(j.content) ? j.content : []).filter((b) => b && b.type === 'text').map((b) => b.text).join('\n');
+    return out ? { text: out, model } : { error: 'AI_EMPTY' };
+  } catch (e) {
+    return { error: String(e && e.message ? e.message : e).slice(0, 80) };
+  }
+}
+async function readOrder(nodes, req, env) {
+  const d = req.data || {};
+  const img = typeof d.image_base64 === 'string' ? d.image_base64.replace(/^data:[^,]*,/, '').replace(/\s/g, '') : '';
+  if (img.length > 8000000 || (img && !/^[A-Za-z0-9+/]+=*$/.test(img))) return { ok: false, error: 'INVALID', message: 'Foto terlalu besar atau rusak' };
+  const mime = /^image\/(jpeg|png|webp)$/.test(String(d.mime || '')) ? d.mime : 'image/jpeg';
+  const base = { text: typeof d.text === 'string' ? d.text.slice(0, 4000) : '', warehouse: String(d.warehouse || '').slice(0, 30), has_image: !!img, ai_on: !!(env && env.ANTHROPIC_API_KEY) };
+  const run = (data) => { nodes['Parse Cold'] = [{ ...req, data }]; return runProcessCold(makeAccessor(nodes))[0].json.response; };
+  const first = run(base);
+  if (!first || first.ok !== true || !first.need_ai) return first; // refused, or read by the rules (no key)
+  let res = run({ ...base, _ai: await readAI(env, first.prompt, img, mime, base.text, READ_MODELS[0], 'low') });
+  if (img && (res.ok !== true || (res.draft && res.draft.unclear > 0))) {
+    const ai2 = await readAI(env, first.prompt, img, mime, base.text, READ_MODELS[1], 'medium');
+    if (!ai2.error) {
+      const res2 = run({ ...base, _ai: ai2 });
+      if (res2.ok === true && (res.ok !== true || res2.draft.unclear <= res.draft.unclear)) res = res2;
+    }
+  }
+  return res;
+}
+
+export async function handleCold(adapter, body, headers, STORE_KEY, opts = {}) {
   await ensureColdSchema(adapter); // reads need the tables to exist, so ensure before loading
-  const req = parseCold(body);
+  const req = parseCold(body), env = (opts && opts.env) || {};
   const nodes = await loadColdNodes(adapter, req);
   nodes['Check Key'] = [{ key_ok: req.key === STORE_KEY }]; // the separate n8n "Check Key" node
+  if (req.action === 'order_read') return readOrder(nodes, req, env); // v60: reads only, writes nothing
   const $ = makeAccessor(nodes);
   const out = runProcessCold($)[0].json; // { response, ops }
   await applyOps(adapter, out.ops || {}, OPS_TABLE_COLD);
+  // v60: the order form says at once whether photos can be read (the owner adds ANTHROPIC_API_KEY)
+  if (req.action === 'bootstrap' && out.response && out.response.ok === true) out.response.ai_reader = !!env.ANTHROPIC_API_KEY;
   return out.response; // cold workflow has no Finalize node
 }

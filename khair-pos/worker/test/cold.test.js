@@ -287,3 +287,75 @@ test('cold v59: hours saved on a cooler; after 16:00 a same-day pickup asks firs
   const ot = (await call('2026-10-14T10:20:00Z', 'bootstrap', 'Mgr', '2222', {})).alerts.overtime;
   assert.deepEqual([ot.count, ot.hours, ot.cost], [1, 1, 300000]);
 });
+
+// v60 (owner 2026-10-17, stage 1b): an order read from a photo / a message. The AI (Anthropic API) is a stand-in fetch here.
+async function withFetch(fake, fn) {
+  const real = globalThis.fetch;
+  globalThis.fetch = fake;
+  try { return await fn(); } finally { globalThis.fetch = real; }
+}
+const aiReply = (o) => new Response(JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: JSON.stringify(o) }] }), { status: 200 });
+async function readSeed() {
+  const db = seed(), a = sqliteAdapter(db), W = '2026-10-15T02:00:00Z'; // Thursday 09:00 WIB
+  const r = await at(W, () => handleCold(a, base('pallet_in', 'Mgr', '2222', { warehouse: 'BOSCO', date: '2026-10-15', pallets: [
+    { pallet_code: 'AJ-1', product: 'AJWA', cartons: 30, exp_date: '2027-02-01' }, { pallet_code: 'AJ-2', product: 'AJWA', cartons: 50, exp_date: '2026-12-01' }] }), {}, KEY));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  return { a, W, read: (user, pin, data, env) => at(W, () => handleCold(a, base('order_read', user, pin, data), {}, KEY, { env })) };
+}
+test('cold v60: no AI key — a pasted message is read by fixed rules, a photo says the AI is off; nothing is saved', async () => {
+  const { a, read } = await readSeed();
+  let calls = 0;
+  await withFetch(async () => { calls++; return aiReply({}); }, async () => {
+    const r = await read('Mgr', '2222', { text: 'Ajwa 60 ctn\nPID AJ-1 5 dus', _ai: { text: '{"items":[{"pallet":"AJ-2","qty":1}]}' } }, {}); // a client's own _ai is ignored
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual([r.read_by, r.ai, r.draft.warehouse], ['rules', 'off', 'BOSCO']);
+    assert.deepEqual(r.draft.lines.map((l) => [l.pallet_code, l.cartons, l.src]), [['AJ-2', 50, 'fefo'], ['AJ-1', 15, 'fefo']]);
+    assert.equal((await read('Mgr', '2222', { image_base64: 'data:image/jpeg;base64,' + 'A'.repeat(400) }, {})).error, 'AI_OFF');
+  });
+  assert.equal(calls, 0);
+  assert.equal(a.all('SELECT COUNT(*) AS n FROM cold_orders', [])[0].n, 0);
+  const bs = await at('2026-10-15T02:00:00Z', () => handleCold(a, base('bootstrap', 'Mgr', '2222'), {}, KEY, { env: {} }));
+  assert.equal(bs.ai_reader, false);
+  assert.equal((await at('2026-10-15T02:00:00Z', () => handleCold(a, base('bootstrap', 'Mgr', '2222'), {}, KEY, { env: { ANTHROPIC_API_KEY: 'k' } }))).ai_reader, true);
+});
+test('cold v60: a photo is read by claude-haiku-5-5 (the catalogue in the prompt); unclear lines → claude-sonnet-5-5 once; the accountant never reaches the AI', async () => {
+  const { a, read } = await readSeed(), env = { ANTHROPIC_API_KEY: 'test-key' }, IMG = 'data:image/jpeg;base64,' + 'A'.repeat(400);
+  const sent = [];
+  // a clear sheet: one call to the small model
+  let r = await withFetch(async (url, init) => { sent.push(JSON.parse(init.body)); return aiReply({ customer: { name: 'Toko Baru', phone: '0812 3456 7890' }, items: [{ pallet: 'AJ-1', qty: 0, line: 'PLT AJ-1' }, { code: 'AJWA', qty: 20, unit: 'ctn', line: 'Ajwa 20 ctn' }] }); },
+    () => read('Mgr', '2222', { image_base64: IMG, mime: 'image/jpeg' }, env));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(sent.length, 1);
+  assert.deepEqual([sent[0].model, sent[0].output_config.effort, sent[0].max_tokens], ['claude-haiku-5-5', 'low', 8000]);
+  assert.match(sent[0].system, /ONE JSON object/);
+  assert.equal(sent[0].messages[0].content[0].type, 'image');
+  assert.match(sent[0].messages[0].content[1].text, /AJ-2 \| AJWA \| BOSCO \| 50/);
+  assert.equal(r.read_by, 'claude-haiku-5-5');
+  assert.deepEqual(r.draft.lines.map((l) => [l.pallet_code, l.cartons]), [['AJ-1', 30], ['AJ-2', 20]]);
+  assert.deepEqual([r.draft.dest_type, r.draft.dest_name, r.draft.dest_phone], ['pelanggan', 'Toko Baru', '6281234567890']);
+  // an unclear line: the stronger model reads it once more, and its clearer reading is used
+  sent.length = 0;
+  r = await withFetch(async (url, init) => {
+    const b = JSON.parse(init.body); sent.push(b);
+    return b.model === 'claude-haiku-5-5' ? aiReply({ items: [{ pallet: 'AJ-7', product: '?', qty: 5, unclear: true }] }) : aiReply({ items: [{ pallet: 'AJ-1', qty: 5 }] });
+  }, () => read('Mgr', '2222', { image_base64: IMG }, env));
+  assert.deepEqual(sent.map((b) => [b.model, b.output_config.effort]), [['claude-haiku-5-5', 'low'], ['claude-sonnet-5-5', 'medium']]);
+  assert.deepEqual([r.read_by, r.draft.unclear, r.draft.lines[0].pallet_code], ['claude-sonnet-5-5', 0, 'AJ-1']);
+  // the small model is down (529): the stronger one reads it; both down: said
+  r = await withFetch(async (url, init) => (JSON.parse(init.body).model === 'claude-haiku-5-5' ? new Response('{}', { status: 529 }) : aiReply({ items: [{ pallet: 'AJ-2', qty: 3 }] })),
+    () => read('Mgr', '2222', { image_base64: IMG }, env));
+  assert.deepEqual([r.ok, r.read_by], [true, 'claude-sonnet-5-5']);
+  r = await withFetch(async () => new Response('{}', { status: 500 }), () => read('Mgr', '2222', { image_base64: IMG }, env));
+  assert.deepEqual([r.ok, r.error], [false, 'AI_ERROR']);
+  // a typed message with the AI down: the fixed rules
+  r = await withFetch(async () => new Response('{}', { status: 500 }), () => read('Mgr', '2222', { text: 'Ajwa 10 ctn' }, env));
+  assert.deepEqual([r.ok, r.read_by, r.ai, r.draft.lines.length], [true, 'rules', 'error', 1]);
+  // the accountant (read-only) and a wrong PIN never reach the AI
+  let calls = 0;
+  await withFetch(async () => { calls++; return aiReply({ items: [] }); }, async () => {
+    assert.equal((await read('Akun', '3333', { image_base64: IMG }, env)).error, 'FORBIDDEN');
+    assert.equal((await read('Mgr', '9999', { image_base64: IMG }, env)).error, 'BAD_PIN');
+  });
+  assert.equal(calls, 0);
+  assert.equal(a.all('SELECT COUNT(*) AS n FROM cold_orders', [])[0].n, 0); // reading never saves an order
+});

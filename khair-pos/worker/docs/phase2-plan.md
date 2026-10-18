@@ -73,7 +73,9 @@ driver → picked → delivered, `backend/cold/cold-core.js` FLOW); every step i
 
 ### Stages (each one works on its own)
 1. **Now, no accounts needed** (1a built in v59: the hours rules, the car's arrival time, door, cancel → rebook, overtime recorded with
-   its cause, departure message; 1b next: the order from a photo / a customer message by AI): order from a photo / a customer message (AI), the hours rules
+   its cause, departure message; 1b built in v60: "Baca pesanan" in the new-order form — a photo of the sheet or a pasted message →
+   a draft order the manager checks and saves; the AI only reads, fixed rules match pallets / FEFO; no AI key → typed messages are
+   still read by rules, and the AI key (`ANTHROPIC_API_KEY`, already used by the goods-in photo reader) turns photos on): order from a photo / a customer message (AI), the hours rules
    above (16:00 cut-off → next morning, break, 17:00 deadline alerts, overtime recorded), door
    number, car cancelled → another car, departure message to the customer; messages stay one-tap.
 2. **After the owner's WhatsApp business number is verified (Meta):** automatic sends, buttons,

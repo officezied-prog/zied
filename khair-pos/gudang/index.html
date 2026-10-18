@@ -170,7 +170,14 @@ const I18N = {
     ot_title: 'Lembur & biaya tambahan bulan ini', ot_none: 'Belum ada lembur bulan ini.', ot_sum: 'Lembur: {n} kali · {h} jam · {cost}', ot_extra: 'Biaya hari perjanjian: {n} kali · {cost}',
     s_hours: 'Jam kerja gudang', h_open: 'Buka', h_close: 'Tutup', h_brk: 'Istirahat (kosong = tanpa)', h_last: 'Order terakhir', h_days: 'Hari kerja', h_arr: 'Buka dengan perjanjian (biaya tambahan)', h_ot: 'Lembur per jam (Rp)',
     s_hol: 'Libur nasional (gudang tutup)', hol_hint: 'Satu baris per hari, contoh: 2026-12-25 Natal', s_margin: 'Tambahan waktu Lalamove (%)', dow: 'Min,Sen,Sel,Rab,Kam,Jum,Sab',
-    depart_wa: 'Nomor WhatsApp pelanggan belum ada di order ini', door_need: 'Isi nomor pintu dan HP sopir dulu'
+    depart_wa: 'Nomor WhatsApp pelanggan belum ada di order ini', door_need: 'Isi nomor pintu dan HP sopir dulu',
+    rd_title: 'Baca pesanan dari foto atau pesan WhatsApp', rd_hint: 'Foto kertas pesanan, atau tempel pesan pelanggan. Hasilnya draf: periksa dulu, lalu Simpan.',
+    rd_hint_off: 'Pembaca foto (AI) belum aktif — pesan yang ditempel tetap dibaca.', rd_photo: 'Foto pesanan', rd_paste: 'Tempel pesan WhatsApp di sini…', rd_go: 'Baca',
+    rd_reading: 'Membaca…', rd_need: 'Pilih foto atau tempel pesan dulu', rd_bad_photo: 'Foto tidak bisa dibuka', rd_done: '{n} baris terbaca → {p} palet di form',
+    rd_by_ai: 'dibaca AI', rd_by_rules: 'dibaca tanpa AI', rd_ai_err: 'AI gagal, dibaca dengan aturan', rd_un: 'Belum dipahami — isi sendiri:',
+    rd_r_unknown: 'produk tidak dikenal', rd_r_qty: 'jumlah tidak jelas', rd_r_taken: 'palet sudah dipesan order lain', rd_r_elsewhere: 'palet ada di gudang lain',
+    rd_r_empty: 'palet sudah kosong', rd_r_no_pallet: 'palet tidak ditemukan', rd_r_unread: 'baris tidak terbaca',
+    rd_w_short: 'stok kurang {n} ctn', rd_w_short_p: 'kurang {n} palet', rd_w_no_pallet: 'palet {p} tidak ditemukan — diambil FEFO', rd_check: 'Periksa gudang, pelanggan dan palet, lalu tekan Simpan.'
   },
   ar: {
     title: 'مخازن خير المبرّدة', login: 'دخول', key: 'مفتاح المتجر', key_hint: 'يُكتب مرة واحدة على هذا الجهاز', change_key: 'تغيير المفتاح', user: 'اسم المستخدم', pin: 'الرمز السري', logout: 'خروج',
@@ -224,7 +231,14 @@ const I18N = {
     ot_title: 'الوقت الإضافي والتكاليف الإضافية هذا الشهر', ot_none: 'لا وقت إضافي هذا الشهر.', ot_sum: 'وقت إضافي: {n} مرة · {h} ساعة · {cost}', ot_extra: 'أيام بالاتفاق: {n} مرة · {cost}',
     s_hours: 'أوقات عمل البراد', h_open: 'يفتح', h_close: 'يغلق', h_brk: 'الاستراحة (فارغ = بلا)', h_last: 'آخر طلبية', h_days: 'أيام العمل', h_arr: 'يعمل بالاتفاق (تكلفة إضافية)', h_ot: 'الوقت الإضافي للساعة (روبية)',
     s_hol: 'العطل الرسمية (البراد مغلق)', hol_hint: 'سطر لكل يوم، مثال: 2026-12-25 Natal', s_margin: 'زيادة على وقت لالاموف (%)', dow: 'الأحد,الاثنين,الثلاثاء,الأربعاء,الخميس,الجمعة,السبت',
-    depart_wa: 'رقم واتساب الزبون غير موجود في هذه الطلبية', door_need: 'اكتب رقم الباب وهاتف السائق أولًا'
+    depart_wa: 'رقم واتساب الزبون غير موجود في هذه الطلبية', door_need: 'اكتب رقم الباب وهاتف السائق أولًا',
+    rd_title: 'قراءة الطلبية من صورة أو رسالة واتساب', rd_hint: 'صوّر ورقة الطلبية أو الصق رسالة الزبون. النتيجة مسودة: راجعها ثم اضغط حفظ.',
+    rd_hint_off: 'قارئ الصور (الذكاء الاصطناعي) غير مفعّل بعد — الرسالة الملصوقة تُقرأ مع ذلك.', rd_photo: 'صورة الطلبية', rd_paste: 'الصق رسالة الواتساب هنا…', rd_go: 'اقرأ',
+    rd_reading: 'جارٍ القراءة…', rd_need: 'اختر صورة أو الصق رسالة أولًا', rd_bad_photo: 'تعذّر فتح الصورة', rd_done: 'قُرئ {n} سطر ← {p} بلات في النموذج',
+    rd_by_ai: 'قرأها الذكاء الاصطناعي', rd_by_rules: 'قُرئت بدون ذكاء اصطناعي', rd_ai_err: 'تعذّر الذكاء الاصطناعي، قُرئت بالقواعد', rd_un: 'لم يُفهم — أكمله بنفسك:',
+    rd_r_unknown: 'صنف غير معروف', rd_r_qty: 'الكمية غير واضحة', rd_r_taken: 'البلات محجوز لأمر آخر', rd_r_elsewhere: 'البلات في براد آخر',
+    rd_r_empty: 'البلات فارغ', rd_r_no_pallet: 'البلات غير موجود', rd_r_unread: 'سطر غير مقروء',
+    rd_w_short: 'المخزون ناقص {n} كرتون', rd_w_short_p: 'ناقص {n} بلات', rd_w_no_pallet: 'البلات {p} غير موجود — أُخذ الأقدم انتهاءً', rd_check: 'راجع البراد والزبون والبلاتات ثم اضغط حفظ.'
   }
 };
 const MON = { id: ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'], ar: ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'] };
@@ -842,8 +856,44 @@ function orderForm(o) {
       if (r.short > 0) toast(t('fefo_short', { n: r.short }), true);
     } catch (e) { toast(e.message || e.error, true); }
   } }, t('fefo'));
+  // v60 (owner 2026-10-17, stage 1b): read the order from a photo of the written sheet or a customer's WhatsApp message. The
+  // form is filled as a draft (the pallet as written, else FEFO) and what was not understood is listed; reading saves nothing.
+  const rdFile = h('input', { id: 'of-rd-photo', type: 'file', accept: 'image/*' }), rdText = h('textarea', { id: 'of-rd-text', rows: 3, placeholder: t('rd_paste') });
+  const rdOut = h('div', { id: 'of-rd-out' });
+  function fillDraft(d) {
+    if (d.warehouse && whOpts(false).some(x => x[0] === d.warehouse)) wh.value = d.warehouse;
+    if (d.order_date) date.value = d.order_date;
+    dtype.value = d.dest_type;
+    if (d.dest_type === 'pelanggan') { dname.value = d.dest_name || ''; daddr.value = d.dest_address || ''; dphone.value = d.dest_phone || ''; cpick.value = d.customer_id ? String(d.customer_id) : 'new'; }
+    if (d.note && !note.value) note.value = d.note;
+    tb.replaceChildren(); d.lines.forEach(l => addLine(l.pallet_code, l.cartons)); if (!d.lines.length) addLine();
+  }
+  function draftNote(r) {
+    const d = r.draft, wtxt = w => w.kind === 'no_pallet' ? t('rd_w_no_pallet', { p: w.pallet }) : w.kind === 'short_pallets' ? t('rd_w_short_p', { n: w.n }) : t('rd_w_short', { n: w.n });
+    const by = r.read_by === 'rules' ? t('rd_by_rules') + (r.ai === 'error' ? ' · ' + t('rd_ai_err') : '') : t('rd_by_ai');
+    return h('div', { id: 'of-rd-note', 'data-by': r.read_by, 'data-unclear': String(d.unclear) },
+      h('div', { class: d.unmatched.length || d.warn.length ? 'warn' : 'ok', id: 'of-rd-sum', text: t('rd_done', { n: d.n_items, p: d.lines.length }) + ' · ' + by }),
+      d.warn.map(w => h('div', { class: 'warn', 'data-warn': w.kind, text: w.line + ' — ' + wtxt(w) })),
+      d.unmatched.length ? h('div', { id: 'of-rd-un' }, h('b', { text: t('rd_un') }),
+        d.unmatched.map(u => h('div', { class: 'bad', 'data-reason': u.reason, text: u.line + ' — ' + t('rd_r_' + u.reason) + (u.pallet ? ' (' + u.pallet + ')' : '') }))) : null,
+      h('p', { class: 'muted', text: t('rd_check') }));
+  }
+  const rdGo = h('button', { class: 'btn pri sm', type: 'button', id: 'of-rd-go', onclick: async () => {
+    const f = rdFile.files && rdFile.files[0], txt = rdText.value.trim();
+    if (!f && !txt) { toast(t('rd_need'), true); return; }
+    rdGo.disabled = true; rdOut.replaceChildren(h('div', { class: 'muted', text: t('rd_reading') }));
+    try {
+      const img = f ? await shrinkPhoto(f) : null;
+      const r = await api('order_read', { text: txt, warehouse: wh.value, image_base64: img ? img.data : undefined, mime: img ? img.mime : undefined });
+      fillDraft(r.draft); rdOut.replaceChildren(draftNote(r));
+    } catch (e) { rdOut.replaceChildren(h('div', { class: 'bad', id: 'of-rd-err', text: e.message || e.error })); }
+    rdGo.disabled = false;
+  } }, t('rd_go'));
+  const readBox = o ? null : h('details', { class: 'card', id: 'of-read', style: 'margin:0 0 10px' }, h('summary', { text: '📷 ' + t('rd_title') }),
+    h('p', { class: 'muted', id: 'of-rd-hint', text: t(S.D.ai_reader === false ? 'rd_hint_off' : 'rd_hint') }),
+    field(t('rd_photo'), rdFile), rdText, h('div', { class: 'row', style: 'margin-top:6px' }, rdGo), rdOut);
   modal(o ? t('or_edit') + ' ' + o.order_no : t('or_new'), h('div', null,
-    h('datalist', { id: 'veh-list' }, S.D.vehicles.map(v => h('option', { value: v.name }))),
+    h('datalist', { id: 'veh-list' }, S.D.vehicles.map(v => h('option', { value: v.name }))), readBox,
     h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('wh'), wh)), h('div', { style: 'flex:1;min-width:140px' }, field(t('date'), date))),
     field(t('dest_cust'), cpick),
     h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('dest'), dtype)), h('div', { style: 'flex:1;min-width:140px' }, field(t('dest_name'), dname))),
@@ -857,6 +907,26 @@ function orderForm(o) {
       const r = await act('order_save', { order_no: o ? o.order_no : undefined, warehouse: wh.value, order_date: date.value, dest_type: dtype.value, dest_name: dname.value, dest_address: daddr.value, dest_phone: dtype.value === 'pelanggan' ? dphone.value : '', customer_id: dtype.value === 'pelanggan' ? (Number(cpick.value) || 0) : 0, pickup_person: pick.value, vehicle: veh.value, plate: plate.value, note: note.value, lines });
       if (r) { closeModal(); S.f.ost = 'active'; render(); }
     } }, t('save'))]);
+}
+// v60: a photo for the order reader — at most 1600 px on its long side, JPEG 80 % (a phone photo of a sheet ≈ 200–400 KB).
+// Read through a data: URL (the page's CSP allows data: images, not blob:).
+function shrinkPhoto(file) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader(), bad = () => rej({ message: t('rd_bad_photo') });
+    fr.onerror = bad;
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = bad;
+      img.onload = () => {
+        const k = Math.min(1, 1600 / Math.max(img.naturalWidth || 1, img.naturalHeight || 1)), c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        res({ data: c.toDataURL('image/jpeg', 0.8).split(',')[1], mime: 'image/jpeg' });
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
 }
 function truckForm(o) {
   const C = ctx(), tt = KColdDocs.orderTotals(o, C), w = WH(o.warehouse), sug = KCold.vehicleFor(tt.kg), tr = o.trip || {};

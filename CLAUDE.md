@@ -49,7 +49,9 @@ the worker tests + the three Playwright suites on every PR. This removed n8n's m
 - `gudang/` (cold storage, `/webhook/khair-cold`) moved to the Worker in Batch C (PR #22) and is shown inside the owner
   app; Phase 2 proper (WhatsApp + Lalamove) is still to do (plan in `khair-pos/worker/docs/phase2-plan.md`). v59 stage 1: the coolers'
   hours in `backend/cold/cold-core.js` (last order 16:00, overtime Rp 300k per started hour after 17:00, Sunday by arrangement with an
-  agreed cost, public holidays closed, Lalamove minutes + 20 %) — time-dependent, so cold Playwright tests fix the page clock.
+  agreed cost, public holidays closed, Lalamove minutes + 20 %) — time-dependent, so cold Playwright tests fix the page clock. v60 stage 1b: `order_read` turns a photo of
+  the written order sheet or a customer's message into a draft order (AI only reads: `claude-haiku-5-5`, unclear photo lines once more by
+  `claude-sonnet-5-5`, in `worker/src/cold.js`; the core matches pallets as written, else FEFO; no key → typed messages by fixed rules); nothing is saved.
 
 ## Owner standing rules — ALWAYS honor
 

@@ -239,6 +239,161 @@ var KCold = (function () {
       total_theirs: parsed.items.reduce(function (s, i) { return s + num(i.cartons); }, 0), total_ours: ours.reduce(function (s, r) { return s + r.cartons; }, 0) };
   }
 
+  /* ---------- v60: an order read from a photo of the written sheet or from a customer's message (stage 1b) ----------
+     Owner 2026-10-17: the order is a sheet with the quantity, the product, the pallet number and the product code, sent by
+     WhatsApp. The AI (or, without an AI key, the rules below) only READS it; these fixed rules turn what was read into a
+     draft order — the pallet as written, else FEFO — which the manager checks and saves like any other order. Nothing is
+     saved here, and a line that cannot be matched is listed, never dropped. */
+  var READ_MAX = 60;
+  function productKeys(st) {
+    var keys = [];
+    st.products.filter(active).forEach(function (p) {
+      [p.code, p.name].concat(str(p.aliases).split(',')).forEach(function (a) { var k = norm(a); if (k.length >= 3) keys.push({ k: k, code: p.code }); });
+    });
+    st.pallets.forEach(function (p) { if (p.ext_item) keys.push({ k: norm(p.ext_item), code: p.product }); });
+    return keys.sort(function (a, b) { return b.k.length - a.k.length; });
+  }
+  function productIn(keys, codeText, text) {
+    var c = norm(codeText); if (c) { var e = keys.find(function (x) { return x.k === c; }); if (e) return e.code; }
+    var t = norm(text); if (!t) return '';
+    var hit = keys.find(function (x) { return t.indexOf(x.k) >= 0; }) || (t.length >= 4 ? keys.find(function (x) { return x.k.indexOf(t) >= 0; }) : null);
+    return hit ? hit.code : '';
+  }
+  /** What the AI reads the order against: the coolers, the products and the pallets in stock (it copies their codes). */
+  function readPrompt(st, today) {
+    var R = reserved(st, ''), rows = stockRows(st, '', '').filter(function (r) { return r.cartons > 0; }).slice(0, 400);
+    var system = [
+      'You read pickup orders for the cold-storage goods of Khair Mart (Jakarta). The input is a photo of a written order sheet or a customer\'s WhatsApp message, in Indonesian, Arabic or English. A line usually has a quantity, the product, a pallet number and a product code.',
+      'Answer with ONE JSON object and nothing else:',
+      '{"warehouse":"","customer":{"name":"","phone":"","address":""},"date":"","note":"","items":[{"pallet":"","code":"","product":"","qty":0,"unit":"ctn","unclear":false,"line":""}]}',
+      '- items: one per order line, in the order written; never add a line that is not written; skip greetings and signatures.',
+      '- pallet: the pallet number as written. When it is close to a pallet in the list (a digit hard to read), give the listed one and set unclear to true.',
+      '- code: the product code from the list when you can tell which product it is, else empty. product: the product as written.',
+      '- qty and unit: "ctn" for cartons (dus, karton, box, MC, cs), "pallet" for whole pallets, "kg" for kilograms. A pallet line with no quantity: qty 0 (the whole pallet).',
+      '- unclear: true when you are not sure of the pallet, the product or the quantity of that line.',
+      '- warehouse: the cooler code from the list when the order names the cooler, else empty.',
+      '- customer: who receives the goods (not the cold store, not Khair Mart itself); the phone as written.',
+      '- date: the pickup day as YYYY-MM-DD when written ("besok" = tomorrow; today is ' + today + ' in Jakarta), else empty.',
+      '- note: anything else the cold store must know, short.'
+    ].join('\n');
+    var catalog = ['Coolers (code | name):'].concat(st.warehouses.filter(active).map(function (w) { return w.code + ' | ' + str(w.name); }),
+      ['', 'Products (code | name | other names | kg per carton):'], st.products.filter(active).map(function (p) { return [p.code, str(p.name), str(p.aliases), num(p.kg_per_ctn) || ''].join(' | '); }),
+      ['', 'Pallets in stock (pallet | product code | cooler | free cartons):'], rows.map(function (r) { return [r.pallet_code, r.product, r.warehouse, r.cartons - (R[r.pallet_code + '|' + r.warehouse] || 0)].join(' | '); })).join('\n');
+    return { system: system, catalog: catalog };
+  }
+  /** The model's answer → { warehouse, customer, date, note, items } (the JSON object in it), or null. */
+  function readJson(text) {
+    var s = str(text), a = s.indexOf('{'), b = s.lastIndexOf('}'), o = null;
+    if (a < 0 || b <= a) return null;
+    try { o = JSON.parse(s.slice(a, b + 1)); } catch (e) { return null; }
+    return o && typeof o === 'object' && Array.isArray(o.items) ? o : null;
+  }
+  /** No AI: a typed / pasted message read by fixed rules ("Sukari 50 ctn", "2 palet Ajwa", "PID 2274537 120 dus"). */
+  var RE_RQTY = /(\d[\d.,]*)\s*(ctn|ctns|carton|cartons|karton|krt|dus|box|bx|mc|cs|palet|pallet|pallets|plt)\b/i;
+  var RE_RPAL = /\b(?:pid|plt|pallet|palet)\s*(?:no\.?|nomor|#|:)?\s*-?\s*([A-Z]*-?\d[A-Z0-9\-]*)/i;
+  function readRules(st, text, today) {
+    var toI = P ? P.toInt : function (v) { return Math.round(Number(String(v).replace(/[.,]/g, ''))); };
+    var pals = st.pallets.map(function (p) { return p.pallet_code; }).filter(function (c) { return norm(c).length >= 4; }).sort(function (a, b) { return b.length - a.length; });
+    var keys = productKeys(st), out = { items: [], unread: [], customer: {}, date: '' }, all = String(text || '').replace(/\r/g, '');
+    var ph = all.match(/(?:\+62|\b62|\b0)8[\d\s.\-]{7,14}\d/); if (ph) out.customer.phone = ph[0];
+    var na = norm(all), cm = st.customers.filter(function (c) { return norm(c.name).length >= 4 && na.indexOf(norm(c.name)) >= 0; }).sort(function (a, b) { return str(b.name).length - str(a.name).length; })[0];
+    if (cm) out.customer.name = str(cm.name);
+    if (/\bbesok\b|\btomorrow\b|غدا|غداً/i.test(all)) out.date = addDays(today, 1);
+    var dm = all.match(/\b\d{1,2}[\/.-]\d{1,2}[\/.-]\d{4}\b/); if (dm && P && P.toDate(dm[0])) out.date = P.toDate(dm[0]);
+    all.split('\n').forEach(function (l) {
+      var s = clean(l, 200).replace(/^\s*(?:[-•*·]|\d{1,2}[.)])\s+/, ''); if (!s) return;
+      var am = s.match(/^(?:alamat|address|العنوان)\s*[:=]?\s*(.+)$/i); if (am) { out.customer.address = clean(am[1], 200); return; }
+      var nm = s.match(/^(?:nama|name|kepada|untuk|pelanggan|customer|الزبون|الاسم)\s*[:=]\s*(.+)$/i); if (nm) { if (!out.customer.name) out.customer.name = clean(nm[1], 60); return; }
+      if (ph && s.indexOf(ph[0]) >= 0 && !/[a-z]{3}/i.test(s.replace(ph[0], '').replace(/\b(hp|wa|telp|tel|no)\b/ig, ''))) return; // a phone-only line
+      var it = { line: s, unit: 'ctn', qty: 0 }, rest = s, ns = norm(s);
+      var pk = pals.find(function (c) { return ns.indexOf(norm(c)) >= 0; });
+      if (pk) { it.pallet = pk; rest = rest.replace(new RegExp(pk.replace(/[-]/g, '[-\\s]?'), 'i'), ' '); }
+      else { var pm = rest.match(RE_RPAL); if (pm && norm(pm[1]).length >= 3 && !RE_RQTY.test(pm[0] + ' x')) { it.pallet = pm[1].toUpperCase(); rest = rest.replace(pm[0], ' '); } }
+      rest = rest.replace(/\b(?:pid|plt)\b\s*[:#.]?/ig, ' ');
+      var q = rest.match(RE_RQTY);
+      if (q) { it.qty = toI(q[1]); it.unit = /^(palet|pallet|pallets|plt)$/i.test(q[2]) ? 'pallet' : 'ctn'; rest = rest.replace(q[0], ' '); }
+      else {
+        var tq = rest.match(/(?:^|\s|[=:x×])(\d[\d.,]*)\s*$/), lq = rest.match(/^\s*(\d[\d.,]*)\s*(?:x|×)?\s+(?=\S)/i);
+        if (tq && /[a-z]/i.test(rest.slice(0, rest.length - tq[0].length))) { it.qty = toI(tq[1]); rest = rest.slice(0, rest.length - tq[0].length); }
+        else if (lq) { it.qty = toI(lq[1]); rest = rest.slice(lq[0].length); }
+      }
+      it.product = clean(rest.replace(/[:=|,;]+/g, ' '), 80);
+      if (!(it.qty > 0) && !it.pallet) { if (/\d/.test(s) || productIn(keys, '', s)) out.unread.push(s); return; }
+      out.items.push(it);
+    });
+    out.items = out.items.slice(0, READ_MAX);
+    return out;
+  }
+  /** What was read → a draft order. Pallet lines take that pallet (its free cartons, the whole of it when no quantity is
+      written); product lines take FEFO in the cooler; "N palet" = the N oldest pallets whole. */
+  function draftOf(st, read, hint, today) {
+    read = read && typeof read === 'object' ? read : {};
+    var items = (Array.isArray(read.items) ? read.items : []).slice(0, READ_MAX), keys = productKeys(st), R = reserved(st, '');
+    var rows = stockRows(st, '', ''), whs = st.warehouses.filter(active), byPal = {}, prodOf = {};
+    st.pallets.forEach(function (p) { byPal[norm(p.pallet_code)] = p; });
+    st.products.forEach(function (p) { prodOf[p.code] = p; });
+    var got = items.map(function (it) {
+      it = it && typeof it === 'object' ? it : {};
+      var line = clean(it.line, 120) || clean([it.qty, it.unit, it.product || it.code, it.pallet].filter(function (x) { return str(x); }).join(' '), 120);
+      var u = str(it.unit).toLowerCase(), p = str(it.pallet) ? byPal[norm(it.pallet)] || null : null;
+      return { line: line, qty: num(it.qty), unit: /^(pallet|pallets|palet|plt)$/.test(u) ? 'pallet' : u === 'kg' ? 'kg' : 'ctn', pallet: p, pallet_raw: clean(it.pallet, 30),
+        product: p ? str(p.product) : productIn(keys, it.code, str(it.product) || line), unclear: bool(it.unclear) };
+    });
+    // the cooler: as written, else where the written pallets are, else where the products can be taken (the form's cooler wins a tie)
+    var W = null, wr = norm(read.warehouse), h0 = code(hint);
+    if (wr) W = whs.find(function (w) { return norm(w.code) === wr || norm(w.name) === wr; }) || whs.find(function (w) { return norm(w.name).indexOf(wr) >= 0 || wr.indexOf(norm(w.code)) >= 0; }) || null;
+    function bestOf(m) { var k = Object.keys(m).filter(function (x) { return m[x] > 0; }).sort(function (a, b) { return m[b] - m[a] || (b === h0) - (a === h0); })[0]; return k ? whs.find(function (w) { return w.code === k; }) || null : null; }
+    if (!W) { var pw = {}; got.forEach(function (g) { if (g.pallet) rows.forEach(function (r) { if (r.pallet_code === g.pallet.pallet_code && r.cartons > 0) pw[r.warehouse] = (pw[r.warehouse] || 0) + 1; }); }); W = bestOf(pw); }
+    if (!W) { var fw = {}; got.forEach(function (g) { if (!g.pallet && g.product) rows.forEach(function (r) { if (r.product === g.product) fw[r.warehouse] = (fw[r.warehouse] || 0) + Math.max(0, r.cartons - (R[r.pallet_code + '|' + r.warehouse] || 0)); }); }); W = bestOf(fw); }
+    if (!W) W = whs.find(function (w) { return w.code === h0; }) || whs[0] || null;
+    var wc = W ? W.code : '', take = {}, lines = [], unmatched = [], warn = [], unclear = 0;
+    function free(pc) { var r = rows.find(function (x) { return x.pallet_code === pc && x.warehouse === wc; }); return r ? r.cartons - (R[pc + '|' + wc] || 0) : 0; }
+    function left(pc) { return free(pc) - (take[pc] || 0); }
+    function add(pc, n, g, src) {
+      take[pc] = (take[pc] || 0) + n;
+      var x = lines.find(function (l) { return l.pallet_code === pc; }); if (x) { x.cartons += n; return; }
+      var pp = byPal[norm(pc)] || {}, pr = prodOf[pp.product] || {};
+      lines.push({ pallet_code: pc, cartons: n, product: str(pp.product), product_name: str(pr.name) || str(pp.product), exp_date: str(pp.exp_date), src: src, line: g.line });
+    }
+    got.forEach(function (g) {
+      if (g.unclear) unclear++;
+      var pr = prodOf[g.product] || null, kpc = pr ? num(pr.kg_per_ctn) : 0;
+      if (g.pallet) {
+        var pc = g.pallet.pallet_code, f = left(pc);
+        if (f <= 0) { // booked by another order (or an earlier line), in another cooler, or empty
+          var inW = rows.some(function (r) { return r.pallet_code === pc && r.warehouse === wc && r.cartons > 0; });
+          unmatched.push({ line: g.line, pallet: pc, reason: inW ? 'taken' : rows.some(function (r) { return r.pallet_code === pc && r.cartons > 0; }) ? 'elsewhere' : 'empty' }); unclear++; return;
+        }
+        var want = g.unit === 'pallet' || !(g.qty > 0) ? f : g.unit === 'kg' ? (kpc > 0 ? Math.ceil(g.qty / kpc) : 0) : Math.round(g.qty);
+        if (!(want > 0)) { unmatched.push({ line: g.line, pallet: pc, reason: 'qty' }); unclear++; return; }
+        if (want > f) { warn.push({ line: g.line, kind: 'short', pallet: pc, n: want - f }); want = f; }
+        add(pc, want, g, 'pallet'); return;
+      }
+      if (!pr) { unmatched.push(g.pallet_raw ? { line: g.line, pallet: g.pallet_raw, reason: 'no_pallet' } : { line: g.line, reason: 'unknown' }); unclear++; return; }
+      if (g.pallet_raw) { warn.push({ line: g.line, kind: 'no_pallet', pallet: g.pallet_raw }); unclear++; } // the written pallet is not ours: FEFO instead, said
+      var avail = rows.filter(function (r) { return r.warehouse === wc && r.product === pr.code && left(r.pallet_code) > 0; }); // FEFO order (stockRows)
+      if (g.unit === 'pallet') {
+        var np = Math.max(1, Math.round(g.qty) || 1), whole = avail.slice(0, np);
+        whole.forEach(function (r) { add(r.pallet_code, left(r.pallet_code), g, 'fefo'); });
+        if (whole.length < np) warn.push({ line: g.line, kind: 'short_pallets', product: pr.code, n: np - whole.length });
+        return;
+      }
+      var need = g.unit === 'kg' ? (kpc > 0 ? Math.ceil(g.qty / kpc) : 0) : Math.round(g.qty);
+      if (!(need > 0)) { unmatched.push({ line: g.line, product: pr.code, reason: 'qty' }); unclear++; return; }
+      avail.forEach(function (r) { if (need <= 0) return; var tk = Math.min(need, left(r.pallet_code)); if (tk > 0) { add(r.pallet_code, tk, g, 'fefo'); need -= tk; } });
+      if (need > 0) warn.push({ line: g.line, kind: 'short', product: pr.code, n: need });
+    });
+    // who receives it: the registry customer (same phone, else same name), a new customer, or the shop itself
+    var cu = read.customer && typeof read.customer === 'object' ? read.customer : {}, cn = clean(cu.name, 60), cph = str(cu.phone) ? normPhone(cu.phone) : '', ca = clean(cu.address, 200);
+    var shop = norm(st.settings.store_name || 'Khair Mart'), isShop = !!cn && (norm(cn) === shop || norm(cn).indexOf('khairmart') >= 0);
+    var cm = isShop ? null : (cph && st.customers.find(function (c) { return normPhone(c.phone) === cph; })) || (cn && st.customers.find(function (c) { return norm(c.name) === norm(cn); })) || null;
+    var pel = !isShop && !!(cm || cn);
+    return { warehouse: wc, order_date: isDate(str(read.date)) && read.date >= today ? read.date : today,
+      dest_type: pel ? 'pelanggan' : 'toko', dest_name: pel ? (cm ? str(cm.name) : cn) : '', dest_phone: pel ? (cph || (cm ? str(cm.phone) : '')) : '',
+      dest_address: pel ? (ca || (cm ? str(cm.address) : '')) : '', customer_id: pel && cm ? cm.id : 0, note: clean(read.note, 200),
+      lines: lines, unmatched: unmatched, warn: warn, unclear: unclear + (items.length ? 0 : 1), n_items: items.length };
+  }
+
   /* ---------- the request ---------- */
   function core(state, req, nowIso) {
     var st = {};
@@ -707,6 +862,24 @@ var KCold = (function () {
         var arow = Object.assign({}, oa, { arrived_at: aAt, door: door, ot_hours: ov.hours, ot_cost: ov.cost, ot_cause: ov.hours ? cause : '', ot_note: ov.hours ? clean(data.note, 120) : '' });
         return done({ order: orderOut(put('orders', step(arow, 'arrived', ['Masuk ' + hmStr(wibAt(aAt).min), door ? 'Pintu ' + door : '', ov.hours ? 'Lembur ' + ov.hours + ' jam (' + rpS(ov.cost) + ')' : ''].filter(Boolean).join(' · ')))) });
       }
+      case 'order_read': { // v60 stage 1b: a draft order from a photo / a message — read only, nothing is saved
+        // The Worker passes has_image / ai_on and, after its AI call, _ai = { text, model } or { error }; it never forwards a
+        // client's own _ai. First call with the AI on → { need_ai, prompt } (never sent to the app: the Worker reads it).
+        var rtxt = String(data.text === undefined || data.text === null ? '' : data.text).slice(0, 4000).trim(), rimg = bool(data.has_image), rh = str(data.warehouse);
+        var rai = data._ai && typeof data._ai === 'object' ? data._ai : null;
+        if (!rtxt && !rimg) return fail('INVALID', 'Kirim foto pesanan atau tempel pesannya');
+        if (rai && str(rai.text)) {
+          var rj = readJson(rai.text);
+          if (rj) return done({ draft: draftOf(st, rj, rh, today), read_by: clean(rai.model, 40) || 'ai' });
+          if (rimg) return fail('AI_UNREAD', 'Foto tidak terbaca. Ambil foto lebih dekat dan terang, atau ketik pesannya.');
+        } else if (rai) {
+          if (rimg) return fail('AI_ERROR', 'Pembaca foto (AI) gagal: ' + clean(rai.error, 60) + '. Coba lagi, atau ketik pesannya.');
+        } else if (bool(data.ai_on)) return done({ need_ai: true, prompt: readPrompt(st, today) });
+        else if (rimg) return fail('AI_OFF', 'Pembaca foto (AI) belum aktif: pemilik perlu memasang kunci AI. Untuk sekarang tempel atau ketik pesannya.');
+        var rr = readRules(st, rtxt, today), rd = draftOf(st, rr, rh, today); // no AI (or it failed on a text): the fixed rules
+        rd.unmatched = rd.unmatched.concat(rr.unread.map(function (l) { return { line: l, reason: 'unread' }; }));
+        return done({ draft: rd, read_by: 'rules', ai: rai ? 'error' : 'off' });
+      }
       case 'fefo': {
         var fw = wh(data.warehouse), fp = product(data.product), fc = int(data.cartons);
         if (!fw || !fp) return fail('NOT_FOUND', 'Gudang atau produk tidak ada');
@@ -731,6 +904,7 @@ var KCold = (function () {
   }
   return { core: core, stockRows: stockRows, fefo: fefo, storage: storage, compare: compare, FLOW: FLOW, CFLOW: CFLOW, HOLD: HOLD, vehicleFor: vehicleFor, zoneOf: zoneOf, ZONES: ZONES, MODES: MODES, VEHICLES: VEHICLES, EXPIRY_DAYS: EXPIRY_DAYS,
     HOURS: HOURS, ETA_MARGIN: ETA_MARGIN, OT_CAUSES: OT_CAUSES, hoursOf: hoursOf, hm: hm, hmStr: hmStr, wibAt: wibAt, dayKind: dayKind, nextWorkDay: nextWorkDay, holidayName: holidayName,
-    overtimeAt: overtimeAt, inBreak: inBreak, etaOf: etaOf, timeAlerts: timeAlerts, otSummary: otSummary };
+    overtimeAt: overtimeAt, inBreak: inBreak, etaOf: etaOf, timeAlerts: timeAlerts, otSummary: otSummary,
+    readPrompt: readPrompt, readJson: readJson, readRules: readRules, draftOf: draftOf };
 })();
 if (typeof window !== 'undefined') window.KCold = KCold;
