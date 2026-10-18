@@ -36,15 +36,35 @@ driver → picked → delivered, `backend/cold/cold-core.js` FLOW); every step i
   - overtime that happens anyway is recorded on the order (hours × Rp 300,000, and why: late order,
     cold store late, car late / cancelled) so the owner sees what it cost and who caused it.
 - Still to ask the owner: working days / public holidays; is a started overtime hour charged in
-  full; how long a Lalamove car usually takes to reach the cold store; orders per day.
+  full; how long a Lalamove car usually takes to reach the cold store; how many cold stores, loading
+  doors and minutes of loading per car (to space the cars so they do not queue at the doors).
+
+### Volume and what it costs (owner 2026-10-18: up to **200 orders a day** across all cold stores)
+≈ 5,200 orders a month. Manual WhatsApp work cannot keep up; the design has to be automatic and cheap per order.
+- **n8n agent:** ~15 executions an order → ~78,000 a month, beyond n8n Business (40,000). Ruled out.
+- **WhatsApp Cloud API:** since 1 Oct 2026 every business-sent message is charged (service replies are no
+  longer free beyond 1,000 a month per number): Indonesia utility ≈ Rp 357 (US$0.025) a message; incoming
+  messages cost nothing. All steps by WhatsApp ≈ 4–5 sends an order ≈ Rp 7–8 M a month. So:
+  - **the cold store works on a link page** (its own orders today, buttons: setuju / tolak, siap, door
+    number, sudah dimuat; a secret link per cold store, any phone, no install, no cost) and WhatsApp is kept
+    for the driver's door message and the customer's departure message (≈ 2 sends an order ≈ Rp 2–4 M a
+    month), plus batched alerts to the cold store;
+  - unofficial WhatsApp gateways (flat cheap monthly) are rejected: the number can be banned and the whole
+    flow stops — against the reliability rule.
+- **AI:** customer messages / order photos read with `claude-haiku-5-5` first (≈ $0.0005 a photo) and only
+  unclear ones with `claude-sonnet-5-5` (≈ $0.01) → ≈ US$15 (≈ Rp 250 k) a month at this volume.
+- **Lalamove:** trip fees as today; the app should also propose grouping orders for the same cold store and
+  area into one bigger vehicle (it already sizes vehicles by weight: `KCold.vehicleFor`) — likely the
+  largest saving of all at 200 orders a day.
 
 ### Recommended design (reliability first, then cost)
 - **Code on this Worker**, not an n8n AI agent: no monthly execution wall (an order is ~15 n8n
   executions — WhatsApp messages + Lalamove updates — so ~900 orders/month would pass the 10,000
   of n8n Pro; that kind of wall is what took every app down before), and money decisions (booking
   a car) stay fixed rules, never an agent's judgement. n8n itself stays untouched (reference).
-- **WhatsApp Cloud API** with interactive buttons for the cold store (Setuju / Tolak, Siap, Sudah
-  dimuat) and automatic sends; **Lalamove API** for booking, driver/plate, arrival, cancel → rebook.
+- **The cold store's link page** for its buttons (Setuju / Tolak, Siap, door number, Sudah dimuat) and the
+  **WhatsApp Cloud API** for the sends that must reach a phone (see "Volume and what it costs");
+  **Lalamove API** for booking, driver/plate, arrival, cancel → rebook.
 - **AI only where there is no button**: free-text replies (e.g. a door number in a sentence), a photo
   of a handwritten order, a customer's order message → a draft order the manager confirms.
   `claude-haiku-5-5` for short replies (≈ $0.0003 a reply), `claude-sonnet-5-5` for photos
