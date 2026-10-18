@@ -168,6 +168,92 @@ assert(W.orders.length >= 5);
 // ---------- the cold store's reply, pasted ----------
 assert.deepStrictEqual(['Ok pak siap', 'Pak, mobil masuk pintu 12 ya', 'Maaf stok habis', 'Barang sudah siap diambil', 'Terima kasih', 'door no. 7B'].map(s => KBrad.readReply(s)),
   [{ kind: 'approve', door: '' }, { kind: 'door', door: '12' }, { kind: 'reject', door: '' }, { kind: 'ready', door: '' }, { kind: '', door: '' }, { kind: 'door', door: '7B' }]);
+// ---------- v61 stage 2: automatic WhatsApp — the template messages of each step; the cold store's buttons and replies ----------
+{
+  NOW = '2026-10-15T03:00:00Z'; // Thursday 10:00 WIB
+  T.wa_log = [];
+  const waIn = (ev) => { // like the Worker's webhook: the event through waEvent, its writes kept
+    const r = KBrad.waEvent(JSON.parse(JSON.stringify(T)), ev, NOW);
+    r.writes.forEach(w => { const row = JSON.parse(JSON.stringify(w.row));
+      if (w.table === 'log') { row.id = nid++; T.wa_log.push(row); return; }
+      assert.strictEqual(w.table, 'orders'); const i = T.orders.findIndex(x => x.id === row.id); T.orders[i] = row; });
+    return r.response;
+  };
+  const st = no => T.orders.find(x => x.order_no === no).status;
+  const o = mk({ order_date: '2026-10-15', lines: [{ pallet_code: 'A-2001', cartons: 3 }] }), no = o.order_no;
+  // step 2: the order to the cold store — one line per value, buttons carrying the order number
+  const s2 = ok(call('order_status', { order_no: no, to: 'sent' }));
+  assert.strictEqual(s2.wa.length, 1);
+  const m = s2.wa[0];
+  assert.deepStrictEqual([m.kind, m.to, m.template, m.lang, m.order_no], ['order', '6281211112222', 'khair_order_brad', 'id', no]);
+  assert.deepStrictEqual(m.payloads, ['BRD|APPROVE|' + no, 'BRD|REJECT|' + no, 'BRD|READY|' + no]);
+  assert.deepStrictEqual(m.params, [no, 'Kamis, 15 Oktober 2026', 'DPP Cold Storage', 'Toko Zahra (pelanggan)', '3 ctn Kurma Ajwa 5kg, palet A-2001, kode AJWA-5', '3 ctn, 1 palet']);
+  // a tap from another number is shown, never applied; the cold store's own tap is
+  let r = waIn({ id: 'wamid.x1', from: '6289999999999', type: 'button', payload: 'BRD|APPROVE|' + no, text: 'Setuju' });
+  assert.deepStrictEqual([r.applied, r.note, st(no)], ['', 'not_cooler', 'sent']);
+  r = waIn({ id: 'wamid.x2', from: '081211112222', type: 'button', payload: 'BRD|APPROVE|' + no, text: 'Setuju' });
+  assert.deepStrictEqual([r.applied, st(no)], ['approved', 'approved']);
+  assert.strictEqual(JSON.parse(T.orders.find(x => x.order_no === no).log).pop().by, 'WhatsApp DPP Cold Storage');
+  r = waIn({ id: 'wamid.x3', from: '6281211112222', type: 'button', payload: 'BRD|APPROVE|' + no, text: 'Setuju' });
+  assert.deepStrictEqual([r.applied, r.note], ['', 'not_now']); // already agreed
+  r = waIn({ id: 'wamid.x4', from: '6281211112222', type: 'button', payload: 'BRD|READY|' + no, text: 'Barang siap' });
+  assert.deepStrictEqual([r.applied, st(no)], ['ready', 'ready']);
+  // step 5: the car to the cold store, with the "Mobil sudah masuk" button
+  const c5 = ok(call('car_save', { order_no: no, driver: 'Pak Andi', plate: 'B 7 XY', driver_wa: '081277776666', vehicle: 'Pickup (bak)', eta_min: 20 }));
+  assert.deepStrictEqual([c5.wa[0].kind, c5.wa[0].template, c5.wa[0].payloads, c5.wa[0].params], ['car', 'khair_mobil_brad', ['BRD|IN|' + no],
+    [no, 'DPP Cold Storage', 'Pickup (bak)', 'B 7 XY', 'Pak Andi (081277776666)', '10:23']]); // 20 min + the owner's 15 % (set above)
+  // the cold store replies to that message "pintu 7": the car is in, at door 7 — and the door goes on to the driver by itself
+  NOW = '2026-10-15T03:30:00Z';
+  r = waIn({ id: 'wamid.x5', from: '6281211112222', type: 'text', text: 'Sudah masuk pak, pintu 7', ctx_order_no: no });
+  assert.deepStrictEqual([r.applied, st(no)], ['door', 'door']);
+  const od = T.orders.find(x => x.order_no === no);
+  assert.deepStrictEqual([od.door, od.arrived_at, od.ot_hours], ['7', '2026-10-15T03:30:00Z', 0]);
+  assert.deepStrictEqual([r.wa[0].kind, r.wa[0].to, r.wa[0].template, r.wa[0].params], ['door', '6281277776666', 'khair_pintu_brad', ['Pak Andi', no, 'DPP Cold Storage', 'Jakarta Utara', '7', '1 palet, 3 ctn', 'Toko Zahra']]);
+  // a reply that quotes nothing goes to that cold store's only waiting order; with two waiting it stays unassigned
+  T.orders.filter(x => x.warehouse === 'DPP' && ['sent', 'approved', 'car', 'arrived'].includes(x.status)).forEach(x => ok(call('order_status', { order_no: x.order_no, to: 'cancelled', note: 'uji WhatsApp' })));
+  const p1 = mk({ order_date: '2026-10-15', lines: [{ pallet_code: 'A-2001', cartons: 1 }] }); ok(call('order_status', { order_no: p1.order_no, to: 'sent' }));
+  r = waIn({ id: 'wamid.x6', from: '6281211112222', type: 'text', text: 'ok siap' });
+  assert.deepStrictEqual([r.order_no, r.applied], [p1.order_no, 'approved']); // (the door order is not waiting for an answer)
+  const p2 = mk({ order_date: '2026-10-15', lines: [{ pallet_code: 'A-2001', cartons: 1 }] }); ok(call('order_status', { order_no: p2.order_no, to: 'sent' }));
+  const p3 = mk({ order_date: '2026-10-15', lines: [{ pallet_code: 'A-2001', cartons: 1 }] }); ok(call('order_status', { order_no: p3.order_no, to: 'sent' }));
+  r = waIn({ id: 'wamid.x7', from: '6281211112222', type: 'text', text: 'ok' });
+  assert.deepStrictEqual([r.order_no, r.applied], ['', '']);
+  r = waIn({ id: 'wamid.x8', from: '6281211112222', type: 'button', payload: 'BRD|REJECT|' + p2.order_no, text: 'Tolak' });
+  assert.deepStrictEqual([r.applied, st(p2.order_no)], ['rejected', 'rejected']);
+  assert.match(T.orders.find(x => x.order_no === p2.order_no).rejected_reason, /Lewat WhatsApp: Tolak/);
+  // "Mobil sudah masuk" after 17:00: not entered by WhatsApp (the overtime's cause is chosen in the app)
+  ok(call('order_status', { order_no: p3.order_no, to: 'approved' })); ok(call('order_status', { order_no: p3.order_no, to: 'ready' }));
+  ok(call('car_save', { order_no: p3.order_no, driver: 'Pak C', plate: 'B 3 EF' }));
+  NOW = '2026-10-15T10:10:00Z'; // 17:10
+  r = waIn({ id: 'wamid.x9', from: '6281211112222', type: 'button', payload: 'BRD|IN|' + p3.order_no, text: 'Mobil sudah masuk' });
+  assert.deepStrictEqual([r.applied, r.note, st(p3.order_no)], ['', 'after_close', 'car']);
+  // every incoming message is logged (shown on its order)
+  assert.deepStrictEqual(T.wa_log.map(x => [x.dir, x.applied]).slice(0, 3), [['in', 'not_cooler'], ['in', 'approved'], ['in', 'not_now']]);
+  // the departure goes to the customer; a shop order sends nothing
+  NOW = '2026-10-15T04:00:00Z';
+  ok(call('load_start', { order_no: no }));
+  const dpt = ok(call('depart', { order_no: no }));
+  assert.deepStrictEqual([dpt.wa[0].kind, dpt.wa[0].to, dpt.wa[0].template, dpt.wa[0].params[7]], ['depart', '6281300000099', 'khair_berangkat_brad', 'Khair Mart']);
+  // the owner: the templates to register (Indonesian, UTILITY; quick replies on the order and the car); a test message
+  err(call('wa_admin', { op: 'templates' }, 'manager'), 'FORBIDDEN');
+  assert.strictEqual(ok(call('wa_admin', { op: 'status' }, 'manager')).names.length, 4);
+  const defs = ok(call('wa_admin', { op: 'templates' }, 'owner')).defs;
+  assert.deepStrictEqual(defs.map(d => [d.name, d.language, d.category, (d.components[1] || { buttons: [] }).buttons.length]),
+    [['khair_order_brad', 'id', 'UTILITY', 3], ['khair_mobil_brad', 'id', 'UTILITY', 1], ['khair_pintu_brad', 'id', 'UTILITY', 0], ['khair_berangkat_brad', 'id', 'UTILITY', 0]]);
+  defs.forEach(d => { const b = d.components[0], n = (b.text.match(/\{\{\d+\}\}/g) || []).length;
+    assert.strictEqual(b.example.body_text[0].length, n, d.name); assert(!/^\{\{/.test(b.text) && !/\}\}$/.test(b.text.trim()), d.name + ' starts/ends with a variable');
+    (d.components[1] || { buttons: [] }).buttons.forEach(x => assert(x.text.length <= 20, x.text)); });
+  err(call('wa_admin', { op: 'test', to: '12' }, 'owner'), 'INVALID');
+  assert.strictEqual(ok(call('wa_admin', { op: 'test', to: '0812 1111 0000' }, 'owner')).wa[0].to, '6281211110000');
+  // the month's cap (owner) and the light poll's stamp
+  ok(call('settings_save', { wa_cap: 500 }, 'owner'));
+  assert.strictEqual(ok(call('bootstrap')).wa_cap, 500);
+  const stamp = ok(call('poll', {}, 'akuntan')).stamp;
+  assert.strictEqual(stamp, KBrad.stampOf(T.orders, T.wa_log));
+  assert(stamp >= '2026-10-15T10:10:00Z');
+  ok(call('order_status', { order_no: p3.order_no, to: 'cancelled', note: 'uji stamp' })); // a change in the same second still shows
+  assert.notStrictEqual(ok(call('poll', {}, 'akuntan')).stamp, stamp);
+}
 // nothing of the gudang data but OUT movements was ever written (checked in call())
 assert(T.movements.filter(m => m.type === 'OUT').every(m => /^BRD-/.test(m.order_no)));
 console.log('test-brad: all passed (' + T.orders.length + ' orders, ' + T.movements.length + ' movements)');

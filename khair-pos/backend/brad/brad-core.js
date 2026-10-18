@@ -17,7 +17,7 @@ var KBrad = (function () {
   'use strict';
   var K = typeof KCold !== 'undefined' ? KCold : (typeof window !== 'undefined' ? window.KCold : null);
   var P = typeof KColdParsers !== 'undefined' ? KColdParsers : (typeof window !== 'undefined' ? window.KColdParsers : null);
-  var ROLES = ['owner', 'manager', 'akuntan'], READ = { login: 1, bootstrap: 1 }, OWNER_ONLY = { cooler_save: 1, settings_save: 1 };
+  var ROLES = ['owner', 'manager', 'akuntan'], READ = { login: 1, bootstrap: 1, poll: 1 }, OWNER_ONLY = { cooler_save: 1, settings_save: 1 };
   var STEPS = ['new', 'sent', 'approved', 'ready', 'car', 'arrived', 'door', 'loading', 'departed'];
   var LIVE = STEPS.slice(0, 8); // these hold their pallets; at 'departed' the goods leave the stock
   var NEXT = { new: ['sent'], sent: ['approved', 'rejected'], approved: ['ready'], departed: ['delivered'] };
@@ -86,10 +86,11 @@ var KBrad = (function () {
   /** The settings this app keeps (pos_settings, keys brad_*): per cooler { wa, hours }, holidays, ETA margin, minutes a pallet. */
   function settingsOf(s) {
     s = s || {};
-    var c = json(s.brad_coolers, {}), h = json(s.brad_holidays, []), m = s.brad_eta_margin, l = s.brad_load_min;
+    var c = json(s.brad_coolers, {}), h = json(s.brad_holidays, []), m = s.brad_eta_margin, l = s.brad_load_min, wc = s.brad_wa_cap;
     return { coolers: c && typeof c === 'object' && !Array.isArray(c) ? c : {}, holidays: Array.isArray(h) ? h : [],
       margin: m !== undefined && m !== null && m !== '' && isFinite(Number(m)) ? Number(m) : ETA_MARGIN,
-      load_min: l !== undefined && l !== null && l !== '' && Number(l) > 0 ? Number(l) : LOAD_MIN };
+      load_min: l !== undefined && l !== null && l !== '' && Number(l) > 0 ? Number(l) : LOAD_MIN,
+      wa_cap: wc !== undefined && wc !== null && wc !== '' && isFinite(Number(wc)) && Number(wc) >= 0 ? Math.round(Number(wc)) : 3000 };
   }
   /** Today's pickups at risk of overtime (computed on the device too): no car yet from 30 min before the last order time,
       a car not in from 30 min before closing (or past its expected time), still not in after closing. */
@@ -336,10 +337,134 @@ var KBrad = (function () {
     return { kind: '', door: '' };
   }
 
+  /* ---------- stage 2: automatic WhatsApp (the official WhatsApp Cloud API, sent by the Worker) ----------
+     Owner 2026-10-18: «ابدأ المرحلة الثانية: إرسال الواتساب تلقائيًا». The cold stores accept only WhatsApp, so the four messages
+     of the flow go out by themselves as Meta-approved templates (utility, Indonesian): the order to the cold store with buttons
+     Setuju / Tolak / Barang siap, the car to the cold store with a button "Mobil sudah masuk", the door to the driver, the
+     departure to the customer. A button tapped — or a reply such as "pintu 12" — from THE COLD STORE'S OWN NUMBER moves the
+     order by the same fixed rules as the buttons in the app (no AI deciding); anything else is only shown. Not configured,
+     over the monthly cap, or refused by WhatsApp → the app falls back to the one-tap wa.me message of stage 1: nothing stops.
+     Template variables may not hold line breaks: every value is one line. */
+  var WA_LANG = 'id';
+  var WA_TEMPLATES = {
+    order: { name: 'khair_order_brad', buttons: ['Setuju', 'Tolak', 'Barang siap'],
+      body: 'Order ambil Khair Mart {{1}}\nTanggal ambil: {{2}}\nGudang: {{3}}\nTujuan: {{4}}\nBarang: {{5}}\nTotal: {{6}}\nMohon konfirmasi dengan tombol di bawah. Terima kasih.',
+      example: ['BRD-261014-001', 'Rabu, 14 Oktober 2026', 'DPP Cold Storage', 'Toko Barokah (pelanggan)', '40 ctn Kurma Sukari 3kg, palet 2274537, kode SUKARI-3', '40 ctn, 1 palet'] },
+    car: { name: 'khair_mobil_brad', buttons: ['Mobil sudah masuk'],
+      body: 'Order {{1}}: mobil untuk ambil di {{2}}.\nKendaraan: {{3}}\nNo. polisi: {{4}}\nSopir: {{5}}\nPerkiraan tiba: {{6}}\nSaat mobil masuk, tekan tombol di bawah atau balas pesan ini dengan nomor pintu. Terima kasih.',
+      example: ['BRD-261014-001', 'DPP Cold Storage', 'Engkel (CDE)', 'B 1234 XYZ', 'Pak Budi (081299990000)', '14:20'] },
+    door: { name: 'khair_pintu_brad', buttons: [],
+      body: 'Halo {{1}}, untuk order {{2}} silakan masuk ke {{3}} ({{4}}), PINTU {{5}}. Muat {{6}} untuk {{7}}. Terima kasih.',
+      example: ['Pak Budi', 'BRD-261014-001', 'DPP Cold Storage', 'Jakarta Utara', '12', '1 palet, 40 ctn', 'Toko Barokah'] },
+    depart: { name: 'khair_berangkat_brad', buttons: [],
+      body: 'Halo {{1}}, pesanan {{2}} ({{3}}) sudah berangkat dari {{4}} jam {{5}}. Mobil {{6}}, sopir {{7}}. Terima kasih, {{8}}.',
+      example: ['Toko Barokah', 'BRD-261014-001', '40 ctn', 'DPP Cold Storage', '15:10', 'B 1234 XYZ', 'Pak Budi (081299990000)', 'Khair Mart'] }
+  };
+  var WA_CAP = 3000; // messages a month (≈ Rp 1,1 juta); above it the app sends by hand (wa.me) — owner setting brad_wa_cap
+  /** One template value: one line, no tabs, never empty (WhatsApp refuses an empty value). */
+  function waVal(v, max) { var s = clean(v, max || 200); return s || '-'; }
+  /** What goes to whom for a step: { kind, order_no, to, template, lang, params, payloads } — or null when nobody to send to. */
+  function waOut(o, kind, C) {
+    C = C || {};
+    var w = C.cooler || {}, pr = C.products || {}, co = C.company || {}, c = car(o), T = totals(o), no = o.order_no, wname = str(w.name) || o.warehouse;
+    var drv = str(c.driver) + (str(c.driver_wa) ? ' (' + phoneLocal(c.driver_wa) + ')' : ''), to = '', params = [], payloads = [];
+    if (kind === 'order') {
+      to = normPhone(w.wa);
+      var L = json(o.lines, []), parts = [], used = 0;
+      for (var i = 0; i < L.length; i++) { // the lines in one value; a very long order is cut (the full list stays in the app)
+        var l = L[i], p = pr[l.product] || {}, s = n0(l.cartons) + ' ctn ' + (str(p.name) || str(l.product_name) || str(l.product)) + ', palet ' + l.pallet_code + (l.full ? ' (utuh)' : '') + ', kode ' + str(l.product);
+        if (used + s.length > 560) { parts.push('+' + (L.length - i) + ' baris lagi (daftar lengkap menyusul)'); break; }
+        parts.push(s); used += s.length + 3;
+      }
+      params = [no, dLong(o.order_date), wname, str(o.dest_name) + (o.dest_type === 'pelanggan' ? ' (pelanggan)' : ''), parts.join(' | '),
+        n0(T.cartons) + ' ctn, ' + T.pallets + ' palet' + (num(o.extra_cost) > 0 ? ', biaya perjanjian ' + rpS(o.extra_cost) : '')];
+      payloads = ['BRD|APPROVE|' + no, 'BRD|REJECT|' + no, 'BRD|READY|' + no];
+    } else if (kind === 'car') {
+      to = normPhone(w.wa);
+      params = [no, wname, str(c.vehicle), str(c.plate), drv, str(o.eta_at) ? hmStr(wibAt(o.eta_at).min) : ''];
+      payloads = ['BRD|IN|' + no];
+    } else if (kind === 'door') {
+      to = normPhone(c.driver_wa);
+      params = [str(c.driver) || 'Pak/Bu sopir', no, wname, str(w.address), str(o.door), T.pallets + ' palet, ' + n0(T.cartons) + ' ctn', str(o.dest_name)];
+    } else if (kind === 'depart') {
+      to = o.dest_type === 'pelanggan' ? normPhone(o.dest_phone) : '';
+      params = [str(o.dest_name), no, n0(T.cartons) + ' ctn', wname, str(o.departed_at) ? hmStr(wibAt(o.departed_at).min) : '', str(c.plate), drv, str(co.store) || 'Khair Mart'];
+    } else return null;
+    if (!to) return null;
+    return { kind: kind, order_no: no, to: to, template: WA_TEMPLATES[kind].name, lang: WA_LANG, params: params.map(function (v) { return waVal(v, kind === 'order' ? 600 : 200); }), payloads: payloads };
+  }
+  /** The templates as Meta's message_templates API takes them (category UTILITY, Indonesian), with example values. */
+  function waTemplateDefs() {
+    return Object.keys(WA_TEMPLATES).map(function (k) {
+      var t = WA_TEMPLATES[k], comps = [{ type: 'BODY', text: t.body, example: { body_text: [t.example] } }];
+      if (t.buttons.length) comps.push({ type: 'BUTTONS', buttons: t.buttons.map(function (b) { return { type: 'QUICK_REPLY', text: b }; }) });
+      return { name: t.name, language: WA_LANG, category: 'UTILITY', components: comps };
+    });
+  }
+
+  /** An incoming WhatsApp message (the Worker has checked Meta's signature and resolved which order a reply refers to).
+      ev = { id, from, type: 'button' | 'text' | 'interactive' | …, payload, text, ctx_order_no }.
+      Only the order's cold store (its WhatsApp number) moves the order, by the same rules as the app's buttons; a car that comes
+      in after closing is NOT entered (the overtime needs its cause, chosen in the app). Returns { response, writes }. */
+  function waEvent(state, ev, nowIso) {
+    var st = { warehouses: (state.warehouses || []).slice(), orders: (state.orders || []).slice(), settings: state.settings || {} };
+    var S = settingsOf(st.settings), now = str(nowIso), today = wib(now).slice(0, 10), writes = [];
+    ev = ev && typeof ev === 'object' ? ev : {};
+    var from = normPhone(ev.from), text = clean(ev.text, 300), pm = str(ev.payload).match(/^BRD\|(APPROVE|REJECT|READY|IN)\|(BRD-[0-9-]{6,20})$/);
+    function waOf(code) { var w = st.warehouses.find(function (x) { return x.code === code; }) || {}, cfg = S.coolers[code] || {}; return normPhone(cfg.wa) || normPhone(w.pic_wa); }
+    function nameOf(code) { var w = st.warehouses.find(function (x) { return x.code === code; }); return w ? str(w.name) : code; }
+    var no = pm ? pm[2] : str(ev.ctx_order_no), o = no ? st.orders.find(function (x) { return x.order_no === no; }) : null;
+    if (!o && !pm && from) { // a reply that quotes nothing: the one order of that cold store now waiting for it, if there is exactly one
+      var cand = st.orders.filter(function (x) { return ['sent', 'approved', 'car', 'arrived'].indexOf(x.status) >= 0 && waOf(x.warehouse) === from; }); // waiting for its answer
+      if (cand.length === 1) o = cand[0];
+    }
+    var act = pm ? pm[1] : '', door = '';
+    if (!act && text) { var r = readReply(text); act = { approve: 'APPROVE', reject: 'REJECT', ready: 'READY', door: 'DOOR' }[r.kind] || ''; door = r.door; }
+    var applied = '', note = '';
+    function step(row, to, nt) { var l = json(row.log, []); l.push({ at: now, by: 'WhatsApp ' + nameOf(row.warehouse), from: str(row.status), to: to, note: nt || '' }); return Object.assign({}, row, { status: to, log: JSON.stringify(l.slice(-60)) }); }
+    function put(row) { writes.push({ table: 'orders', row: row }); return row; }
+    if (o && act && from && waOf(o.warehouse) === from) {
+      var st0 = o.status, H = hoursOf(S.coolers[o.warehouse]);
+      if (act === 'APPROVE' && st0 === 'sent') { put(step(Object.assign({}, o, { approved_at: now }), 'approved', text)); applied = 'approved'; }
+      else if (act === 'READY' && (st0 === 'sent' || st0 === 'approved')) { put(step(step(Object.assign({}, o, { approved_at: o.approved_at || now, ready_at: now }), 'approved', ''), 'ready', text)); applied = 'ready'; }
+      else if (act === 'REJECT' && st0 === 'sent') { put(step(Object.assign({}, o, { rejected_reason: ('Lewat WhatsApp: ' + (text || 'Tolak')).slice(0, 120) }), 'rejected', text)); applied = 'rejected'; }
+      else if ((act === 'IN' || (act === 'DOOR' && door)) && st0 === 'car') {
+        var ov = overtimeAt(now, H);
+        if (ov.hours > 0) note = 'after_close'; // the overtime's cause is chosen in the app
+        else {
+          var row = Object.assign({}, o, { arrived_at: now, ot_hours: 0, ot_cost: 0, ot_cause: '', ot_note: '' });
+          if (door) row.door = door.slice(0, 6);
+          put(step(row, door ? 'door' : 'arrived', ['Masuk ' + hmStr(wibAt(now).min), door ? 'Pintu ' + door : ''].filter(Boolean).join(' · ')));
+          applied = door ? 'door' : 'arrived';
+        }
+      } else if (act === 'DOOR' && door && ['arrived', 'door', 'loading'].indexOf(st0) >= 0) {
+        var drow = Object.assign({}, o, { door: door.slice(0, 6) });
+        put(st0 === 'arrived' ? step(drow, 'door', 'Pintu ' + door) : step(drow, st0, 'Pintu diubah: ' + door)); applied = 'door';
+      } else note = 'not_now';
+    } else if (o && act && from) note = 'not_cooler';
+    writes.push({ table: 'log', row: { wamid: str(ev.id).slice(0, 120), dir: 'in', peer: from, order_no: o ? o.order_no : '', kind: str(ev.type).slice(0, 20) || 'text',
+      text: text || clean(ev.payload, 120), status: 'received', applied: applied || note, at: now, updated_at: now } });
+    var resp = { ok: true, order_no: o ? o.order_no : '', applied: applied, note: note };
+    if (applied === 'door') { // the door the cold store gave goes on to the driver by itself
+      var nw = writes.filter(function (x) { return x.table === 'orders'; }).pop().row, w0 = st.warehouses.find(function (x) { return x.code === nw.warehouse; }) || {};
+      var dm = waOut(nw, 'door', { cooler: { name: str(w0.name) || nw.warehouse, address: str(w0.address), wa: waOf(nw.warehouse) }, company: { store: str(st.settings.store_name) || 'Khair Mart' } });
+      resp.wa = dm ? [dm] : [];
+    }
+    return { response: resp, writes: writes };
+  }
+  /** The newest change the app could not have seen yet (the light poll): the latest order log line or WhatsApp message, and how
+      many there are — two changes in the same second still change it. */
+  function stampOf(orders, log) {
+    var m = '', n = 0;
+    (orders || []).forEach(function (o) { var l = json(o.log, []), a = l.length ? str(l[l.length - 1].at) : ''; n += l.length; if (a > m) m = a; });
+    (log || []).forEach(function (x) { var a = str(x.updated_at) || str(x.at); if (a > m) m = a; });
+    return m + '#' + n + '.' + (log || []).length + '.' + (orders || []).length;
+  }
+
   /* ---------- the request ---------- */
   function core(state, req, nowIso) {
     var st = {};
-    ['warehouses', 'products', 'pallets', 'movements', 'cold_orders', 'customers', 'orders', 'users'].forEach(function (k) { st[k] = (state[k] || []).slice(); });
+    ['warehouses', 'products', 'pallets', 'movements', 'cold_orders', 'customers', 'orders', 'users', 'wa_log'].forEach(function (k) { st[k] = (state[k] || []).slice(); });
     st.settings = state.settings || {};
     st.movements = st.movements.map(function (m) { return Object.assign({}, m, { seq: num(m.seq), cartons: num(m.cartons) }); }).sort(function (a, b) { return a.seq - b.seq; });
     var writes = [], now = str(nowIso), today = wib(now).slice(0, 10), yymmdd = today.slice(2).replace(/-/g, '');
@@ -404,6 +529,14 @@ var KBrad = (function () {
       }
       return { lines: out };
     }
+    /** What the WhatsApp texts need about an order: its cooler, the product names, the company. */
+    function ctxOf(o) {
+      var w = st.warehouses.find(function (x) { return x.code === o.warehouse; }), pr = {};
+      st.products.forEach(function (p) { pr[p.code] = { name: str(p.name) }; });
+      return { cooler: w ? coolerOut(w) : { name: o.warehouse }, products: pr, company: { name: str(st.settings.cold_company), store: str(st.settings.store_name) || 'Khair Mart' } };
+    }
+    /** done() for a step whose message goes out by WhatsApp (sent by the Worker when it is set up; else the app sends it by hand). */
+    function doneWa(resp, row, kind) { var m = waOut(row, kind, ctxOf(row)); resp.wa = m ? [m] : []; return done(resp); }
     function closedMsg(w, d, k, Hx) { return 'Gudang ' + w.name + ' tutup tanggal ' + d + (k === 'holiday' ? ' (' + holidayName(d, S.holidays) + ')' : '') + '. Hari kerja berikutnya: ' + nextWorkDay(d, Hx, S.holidays); }
 
     switch (action) {
@@ -423,8 +556,25 @@ var KBrad = (function () {
           products: st.products.filter(active).map(function (p) { return { code: p.code, name: str(p.name), kg_per_ctn: num(p.kg_per_ctn), ctn_per_pallet: num(p.ctn_per_pallet), aliases: str(p.aliases) }; }),
           stock: stockRows(st, '', '').filter(function (r) { return r.cartons > 0; }).map(function (r) { return Object.assign({}, r, { free: r.cartons - (R0[r.pallet_code + '|' + r.warehouse] || 0) }); }),
           customers: custs, drivers: json(s.cold_drivers, []),
-          orders: st.orders.slice(-300).reverse().map(orderOut), overtime: otSummary(st.orders, today.slice(0, 7))
+          orders: st.orders.slice(-300).reverse().map(orderOut), overtime: otSummary(st.orders, today.slice(0, 7)),
+          // stage 2: the WhatsApp messages of the last days (sent, delivered, read, failed; the cold store's replies), the monthly cap
+          wa_log: st.wa_log.slice(-400).map(function (x) { return { at: str(x.at), dir: str(x.dir), kind: str(x.kind), order_no: str(x.order_no), peer: str(x.peer), text: str(x.text), status: str(x.status), error: str(x.error), applied: str(x.applied) }; }),
+          wa_cap: S.wa_cap, stamp: stampOf(st.orders, st.wa_log)
         });
+      }
+      case 'poll': // the app's light check (every minute while it is on screen): has anything changed since its last look?
+        return done({ stamp: stampOf(st.orders, st.wa_log) });
+      case 'wa_admin': { // automatic WhatsApp: status (owner, manager); register the templates / a test message (owner). The Worker does the calls.
+        var wop = str(data.op);
+        if (['status', 'templates', 'test'].indexOf(wop) < 0) return fail('INVALID', 'Aksi WhatsApp tidak dikenal');
+        if (wop !== 'status' && role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik');
+        if (wop === 'templates') return done({ wa_admin: wop, defs: waTemplateDefs() });
+        if (wop === 'test') {
+          var tto = normPhone(data.to); if (!tto) return fail('INVALID', 'Nomor WhatsApp tidak valid');
+          var tp = WA_TEMPLATES.depart;
+          return done({ wa_admin: wop, wa: [{ kind: 'test', order_no: '', to: tto, template: tp.name, lang: WA_LANG, params: tp.example.slice(), payloads: [] }] });
+        }
+        return done({ wa_admin: wop, names: Object.keys(WA_TEMPLATES).map(function (k) { return WA_TEMPLATES[k].name; }) });
       }
       case 'order_read': { // a draft from a photo / a message — read only, nothing is saved
         // The Worker passes has_image / ai_on and, after its AI call, _ai = { text, model } or { error }; it never forwards a
@@ -499,7 +649,8 @@ var KBrad = (function () {
         if (to === 'rejected') { if (note.length < 3) return fail('INVALID', 'Alasan penolakan wajib'); row.rejected_reason = note; }
         if (to === 'ready') row.ready_at = now;
         if (to === 'delivered') row.delivered_at = now;
-        return done({ order: orderOut(put('orders', step(row, to, note))) });
+        var srow = put('orders', step(row, to, note));
+        return to === 'sent' ? doneWa({ order: orderOut(srow) }, srow, 'order') : done({ order: orderOut(srow) });
       }
       case 'car_save': { // step 5: the car booked (Lalamove or own driver) — its plate and driver go to the cold store
         var co = order(data.order_no); if (!co) return fail('NOT_FOUND', 'Order tidak ada');
@@ -518,7 +669,7 @@ var KBrad = (function () {
         var trip = { via: data.via === 'sopir' ? 'sopir' : 'lalamove', vehicle: clean(data.vehicle, 40), driver: drv, driver_wa: dwa, plate: plate, cost: Math.max(0, Math.round(num(data.cost))), eta_min: em, booked_at: now };
         var crow = Object.assign({}, co, { car: JSON.stringify(trip), eta_at: eta });
         crow = step(crow, 'car', (co.status === 'car' ? 'Mobil diubah: ' : '') + plate + ' · ' + drv + (eta ? ' · tiba ± ' + hmStr(wibAt(eta).min) : '') + (bool(data.accept_ot) && eta && overtimeAt(eta, cH).hours ? ' · risiko lembur disetujui' : ''));
-        return done({ order: orderOut(put('orders', crow)), warn: warn });
+        return doneWa({ order: orderOut(put('orders', crow)), warn: warn }, crow, 'car');
       }
       case 'car_cancel': { // the car was cancelled: back to "book a car", counted; after the last order time that risks overtime
         var xo = order(data.order_no); if (!xo) return fail('NOT_FOUND', 'Order tidak ada');
@@ -538,14 +689,16 @@ var KBrad = (function () {
         var arow = Object.assign({}, ao, { arrived_at: aAt, ot_hours: ov.hours, ot_cost: ov.cost, ot_cause: ov.hours ? cause : '', ot_note: ov.hours ? clean(data.note, 120) : '' });
         if (door) arow.door = door;
         var anote = ['Masuk ' + tm, door ? 'Pintu ' + door : '', ov.hours ? 'Lembur ' + ov.hours + ' jam (' + rpS(ov.cost) + ')' : ''].filter(Boolean).join(' · ');
-        return done({ order: orderOut(put('orders', step(arow, door ? 'door' : 'arrived', anote))) });
+        var arow2 = put('orders', step(arow, door ? 'door' : 'arrived', anote));
+        return door ? doneWa({ order: orderOut(arow2) }, arow2, 'door') : done({ order: orderOut(arow2) });
       }
       case 'door_save': { // step 7: the door the car drives to (the cold store says it; the driver gets it by WhatsApp)
         var dor = order(data.order_no); if (!dor) return fail('NOT_FOUND', 'Order tidak ada');
         if (['arrived', 'door', 'loading'].indexOf(dor.status) < 0) return fail('INVALID', 'Mobil belum masuk');
         var dno = clean(data.door, 6).toUpperCase(); if (!/^[A-Z0-9-]{1,6}$/.test(dno)) return fail('INVALID', 'Nomor pintu tidak valid');
         var drow = Object.assign({}, dor, { door: dno });
-        return done({ order: orderOut(put('orders', dor.status === 'arrived' ? step(drow, 'door', 'Pintu ' + dno) : step(drow, dor.status, 'Pintu diubah: ' + dno))) });
+        var drow2 = put('orders', dor.status === 'arrived' ? step(drow, 'door', 'Pintu ' + dno) : step(drow, dor.status, 'Pintu diubah: ' + dno));
+        return dno !== str(dor.door) ? doneWa({ order: orderOut(drow2) }, drow2, 'door') : done({ order: orderOut(drow2) });
       }
       case 'load_start': { // step 8: loading — about LOAD_MIN minutes a pallet
         var lo = order(data.order_no); if (!lo) return fail('NOT_FOUND', 'Order tidak ada');
@@ -564,7 +717,8 @@ var KBrad = (function () {
           return Object.assign({}, l, { out: take, pallet_ctn: b, full: b > 0 && take >= b });
         });
         var prow = Object.assign({}, dp, { departed_at: now, lines: JSON.stringify(dl), stock_note: short.join(', ') });
-        return done({ order: orderOut(put('orders', step(prow, 'departed', short.length ? 'Stok kurang: ' + short.join(', ') : ''))), short: short });
+        var prow2 = put('orders', step(prow, 'departed', short.length ? 'Stok kurang: ' + short.join(', ') : ''));
+        return doneWa({ order: orderOut(prow2), short: short }, prow2, 'depart');
       }
       case 'cooler_save': { // owner: a cooler's WhatsApp for orders and its hours (empty hours = the owner's defaults)
         var cw = wh(data.code); if (!cw) return fail('NOT_FOUND', 'Gudang tidak ada');
@@ -598,6 +752,7 @@ var KBrad = (function () {
           put('settings', { skey: 'brad_holidays', svalue: JSON.stringify(hl) });
         }
         if (data.eta_margin !== undefined) { var mg = num(data.eta_margin); if (!(mg >= 0 && mg <= 100)) return fail('INVALID', 'Tambahan waktu 0–100 %'); put('settings', { skey: 'brad_eta_margin', svalue: JSON.stringify(Math.round(mg)) }); }
+        if (data.wa_cap !== undefined) { var wcap = num(data.wa_cap); if (!(wcap >= 0 && wcap <= 100000) || Math.floor(wcap) !== wcap) return fail('INVALID', 'Batas WhatsApp per bulan 0–100.000'); put('settings', { skey: 'brad_wa_cap', svalue: JSON.stringify(wcap) }); }
         if (data.load_min !== undefined) { var lm = num(data.load_min); if (!(lm >= 5 && lm <= 120)) return fail('INVALID', 'Menit muat per palet 5–120'); put('settings', { skey: 'brad_load_min', svalue: JSON.stringify(Math.round(lm)) }); }
         return done({});
       }
@@ -608,6 +763,7 @@ var KBrad = (function () {
   return { core: core, STEPS: STEPS, LIVE: LIVE, HOURS: HOURS, ETA_MARGIN: ETA_MARGIN, LOAD_MIN: LOAD_MIN, OT_CAUSES: OT_CAUSES,
     hoursOf: hoursOf, hm: hm, hmStr: hmStr, rpS: rpS, wibAt: wibAt, atWib: atWib, dayKind: dayKind, nextWorkDay: nextWorkDay, holidayName: holidayName,
     overtimeAt: overtimeAt, inBreak: inBreak, etaOf: etaOf, timeAlerts: timeAlerts, otSummary: otSummary, readReply: readReply, readJson: readJson,
-    readRules: readRules, draftOf: draftOf, readPrompt: readPrompt, msgOrder: msgOrder, msgCar: msgCar, msgDoor: msgDoor, msgDepart: msgDepart, dLong: dLong };
+    readRules: readRules, draftOf: draftOf, readPrompt: readPrompt, msgOrder: msgOrder, msgCar: msgCar, msgDoor: msgDoor, msgDepart: msgDepart, dLong: dLong,
+    WA_TEMPLATES: WA_TEMPLATES, WA_LANG: WA_LANG, waOut: waOut, waEvent: waEvent, waTemplateDefs: waTemplateDefs, stampOf: stampOf };
 })();
 if (typeof window !== 'undefined') window.KBrad = KBrad;
