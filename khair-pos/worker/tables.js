@@ -223,6 +223,7 @@ export const TABLES = {
     customer_id: 'string', rate: 'number', rate_unit: 'string', parser: 'string', active: 'boolean',
     created_at: 'string', created_by: 'string', rate_frozen: 'number', rate_chiller: 'number',
     rate_dry: 'number', mode: 'string',
+    hours: 'string', // v59: the cooler's hours (JSON: open, close, brk, last, days, arrange, ot)
   },
   cold_products: {
     code: 'string', name: 'string', kg_per_ctn: 'number', aliases: 'string', active: 'boolean',
@@ -255,6 +256,9 @@ export const TABLES = {
     picked_at: 'string', picked_by: 'string', pick_date: 'string', cancel_reason: 'string',
     cancelled_at: 'string', cancelled_by: 'string', trip: 'string', log: 'string', customer_id: 'number',
     plate: 'string', dest_phone: 'string', // v36: truck plate on the order + the customer's phone
+    // v59: agreed extra cost (a day by arrangement), the car's expected / real arrival, the door, overtime and its cause, cars cancelled
+    extra_cost: 'number', extra_note: 'string', eta_at: 'string', arrived_at: 'string', door: 'string',
+    ot_hours: 'number', ot_cost: 'number', ot_cause: 'string', ot_note: 'string', trip_cancels: 'number',
   },
 };
 

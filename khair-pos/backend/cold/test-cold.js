@@ -249,6 +249,93 @@ assert.strictEqual(boot.alerts.unexplained.length, 0);
 assert(boot.orders.some(o => o.status === 'cancelled'));
 assert.strictEqual(KCold.vehicleFor(500), 'Pickup (bak)'); assert.strictEqual(KCold.vehicleFor(2000), 'Engkel (CDE)');
 err(call('nope', {}), 'INVALID');
+
+// ---------- v59: the cooler's hours — last order 16:00, overtime after 17:00 (a started hour is a full hour, Rp 300.000),
+// Sunday only by arrangement at an agreed cost, closed on public holidays, Lalamove's minutes + 20 % ----------
+{
+  const K = KCold, H = K.hoursOf({});
+  assert.deepStrictEqual([H.open, H.close, H.brk, H.last, H.ot, H.days, H.arrange], ['09:00', '17:00', '12:00-13:00', '16:00', 300000, [1, 2, 3, 4, 5, 6], [0]]);
+  assert.strictEqual(K.dayKind('2026-10-18', H, []), 'arrange'); // a Sunday
+  assert.strictEqual(K.dayKind('2026-10-19', H, []), 'work');
+  assert.strictEqual(K.dayKind('2026-12-25', H, [{ date: '2026-12-25', name: 'Natal' }]), 'holiday');
+  assert.strictEqual(K.nextWorkDay('2026-10-17', H, []), '2026-10-19'); // Saturday → Monday
+  assert.deepStrictEqual(K.overtimeAt('2026-10-14T10:00:00Z', H), { minutes: 0, hours: 0, cost: 0 }); // 17:00 WIB: in time
+  assert.deepStrictEqual(K.overtimeAt('2026-10-14T10:10:00Z', H), { minutes: 10, hours: 1, cost: 300000 }); // 17:10: one full hour
+  assert.deepStrictEqual(K.overtimeAt('2026-10-14T11:01:00Z', H), { minutes: 61, hours: 2, cost: 600000 }); // 18:01: two
+  assert.strictEqual(K.etaOf('2026-10-14T08:00:00Z', 50, 20), '2026-10-14T09:00:00.000Z'); // 50 min + 20 % = 60 min
+  assert(K.inBreak(12 * 60 + 30, H) && !K.inBreak(13 * 60, H));
+  // the owner's settings: holidays and the margin
+  err(call('settings_save', { holidays: [{ date: '2026-12-25', name: 'Natal' }] }, 'manager'), 'FORBIDDEN');
+  err(call('settings_save', { holidays: [{ date: '25-12-2026' }] }), 'INVALID');
+  ok(call('settings_save', { holidays: [{ date: '2026-12-25', name: 'Natal' }, { date: '2026-10-21', name: 'Libur test' }], eta_margin: 20 }));
+  assert.deepStrictEqual(ok(call('bootstrap', {})).holidays.map(h => h.date), ['2026-10-21', '2026-12-25']);
+  // a cooler's own hours
+  err(call('warehouse_save', { code: 'BOSKO', name: 'Bosko', hours: { open: '09:00', close: '17:00', last: '18:00', days: [1] } }), 'INVALID'); // last order after closing
+  err(call('warehouse_save', { code: 'BOSKO', name: 'Bosko', hours: { open: '09:00', close: '17:00', last: '16:00', days: [] } }), 'INVALID');
+  ok(call('warehouse_save', { code: 'BOSKO', name: 'Bosko', rate: 15000, rate_unit: 'day', parser: 'bosko', hours: { open: '08:00', close: '16:00', brk: '', last: '15:00', days: [1, 2, 3, 4, 5], arrange: [6], ot: 250000 } }));
+  const bosko = ok(call('bootstrap', {})).warehouses.find(w => w.code === 'BOSKO');
+  assert.deepStrictEqual(bosko.hours, { open: '08:00', close: '16:00', brk: '', last: '15:00', days: [1, 2, 3, 4, 5], arrange: [6], ot: 250000 });
+  assert.strictEqual(ok(call('bootstrap', {})).warehouses.find(w => w.code === 'DPP').hours.close, '17:00'); // the defaults
+  // fresh stock for these orders
+  NOW = '2026-10-14T03:00:00Z'; // Wednesday 10:00 WIB
+  ok(call('pallet_in', { warehouse: 'DPP', date: '2026-10-14', pallets: [{ pallet_code: 'V59-A', product: 'SUKARI-3', cartons: 300, exp_date: '2027-06-01' }] }));
+  const mk = (date, n) => ok(call('order_save', { warehouse: 'DPP', order_date: date, dest_type: 'toko', lines: [{ pallet_code: 'V59-A', cartons: n || 10 }] }, 'manager')).order;
+  err(call('order_save', { warehouse: 'DPP', order_date: '2026-10-21', dest_type: 'toko', lines: [{ pallet_code: 'V59-A', cartons: 1 }] }, 'manager'), 'CLOSED'); // the holiday
+  // before 16:00: sent as usual
+  const a = mk('2026-10-14');
+  NOW = '2026-10-14T08:00:00Z'; // 15:00 WIB
+  ok(call('order_status', { order_no: a.order_no, to: 'sent' }, 'manager'));
+  // after 16:00 for today: refused with the choice; "later" → pickup on the next working day, sent now; "overtime" → today, noted
+  const b = mk('2026-10-14'), c = mk('2026-10-14');
+  NOW = '2026-10-14T09:20:00Z'; // 16:20 WIB
+  const ah = err(call('order_status', { order_no: b.order_no, to: 'sent' }, 'manager'), 'AFTER_HOURS');
+  assert.strictEqual(ah.next, '2026-10-15'); assert.strictEqual(ah.ot, 300000);
+  const bl = ok(call('order_status', { order_no: b.order_no, to: 'sent', when: 'later' }, 'manager')).order;
+  assert.deepStrictEqual([bl.status, bl.order_date], ['sent', '2026-10-15']);
+  assert.match(bl.log[bl.log.length - 1].note, /Diambil 2026-10-15/);
+  const co = ok(call('order_status', { order_no: c.order_no, to: 'sent', when: 'overtime' }, 'manager')).order;
+  assert.deepStrictEqual([co.status, co.order_date], ['sent', '2026-10-14']);
+  assert.match(co.log[co.log.length - 1].note, /risiko lembur disetujui/);
+  // a pickup tomorrow may still be sent tonight
+  ok(call('order_status', { order_no: mk('2026-10-15').order_no, to: 'sent' }, 'manager'));
+  // Sunday: only with the agreed extra cost (or moved to Monday)
+  const su = mk('2026-10-18'), su2 = mk('2026-10-18');
+  err(call('order_status', { order_no: su.order_no, to: 'sent' }, 'manager'), 'ARRANGE');
+  const sus = ok(call('order_status', { order_no: su.order_no, to: 'sent', extra_cost: 750000, extra_note: 'Buka Minggu' }, 'manager')).order;
+  assert.deepStrictEqual([sus.extra_cost, sus.extra_note], [750000, 'Buka Minggu']);
+  assert.strictEqual(ok(call('order_status', { order_no: su2.order_no, to: 'sent', when: 'later' }, 'manager')).order.order_date, '2026-10-19');
+  // the car: Lalamove's 40 min + 20 % from 16:20 = 17:08 → overtime unless accepted; the break only warns
+  ['approved', 'ready', 'dispatch'].forEach(to => ok(call('order_status', { order_no: c.order_no, to }, 'manager')));
+  const late = err(call('trip_save', { order_no: c.order_no, via: 'lalamove', vehicle: 'Engkel (CDE)', driver: 'Pak Budi', plate: 'B 1 AB', driver_wa: '0812 3333 4444', eta_min: 40 }, 'manager'), 'LATE_CAR');
+  assert.deepStrictEqual([late.ot_hours, late.ot_cost], [1, 300000]);
+  const tc = ok(call('trip_save', { order_no: c.order_no, via: 'lalamove', vehicle: 'Engkel (CDE)', driver: 'Pak Budi', plate: 'B 1 AB', driver_wa: '0812 3333 4444', eta_min: 40, accept_ot: true }, 'manager')).order;
+  assert.strictEqual(tc.status, 'driver'); assert.strictEqual(tc.eta_at, '2026-10-14T10:08:00.000Z'); assert.strictEqual(tc.trip.eta_min, 40);
+  // the car is cancelled: back to "book a car", counted, the history keeps it
+  err(call('trip_cancel', { order_no: c.order_no, reason: '' }, 'manager'), 'INVALID');
+  const cx = ok(call('trip_cancel', { order_no: c.order_no, reason: 'Sopir batal' }, 'manager'));
+  assert.deepStrictEqual([cx.order.status, cx.order.trip, cx.order.trip_cancels, cx.risk], ['dispatch', null, 1, true]);
+  assert.match(cx.order.log[cx.order.log.length - 1].note, /Mobil batal: Pak Budi · B 1 AB — Sopir batal/);
+  ok(call('trip_save', { order_no: c.order_no, via: 'lalamove', vehicle: 'Engkel (CDE)', driver: 'Pak Andi', plate: 'B 2 CD', eta_min: 30, accept_ot: true }, 'manager'));
+  // it enters at 17:10: one full hour of overtime, a cause is required; the door; then picked as before
+  NOW = '2026-10-14T10:15:00Z'; // 17:15 WIB
+  err(call('order_arrived', { order_no: c.order_no, time: '17:20' }, 'manager'), 'INVALID'); // not yet
+  const cause = err(call('order_arrived', { order_no: c.order_no, time: '17:10', door: '3' }, 'manager'), 'CAUSE');
+  assert.deepStrictEqual([cause.ot_hours, cause.ot_cost], [1, 300000]);
+  const ar = ok(call('order_arrived', { order_no: c.order_no, time: '17:10', door: '3', cause: 'car_cancel', note: 'Mobil pertama batal' }, 'manager')).order;
+  assert.deepStrictEqual([ar.status, ar.door, ar.ot_hours, ar.ot_cost, ar.ot_cause, ar.arrived_at], ['arrived', '3', 1, 300000, 'car_cancel', '2026-10-14T10:10:00.000Z']);
+  assert.strictEqual(ok(call('order_arrived', { order_no: c.order_no, door: '5' }, 'manager')).order.door, '5'); // the door can still change
+  err(call('trip_cancel', { order_no: c.order_no, reason: 'x y z' }, 'manager'), 'INVALID'); // the car is already in
+  assert.strictEqual(ok(call('order_pick', { order_no: c.order_no }, 'manager')).order.status, 'picked');
+  // the month's overtime and agreed costs
+  const ot = ok(call('bootstrap', {})).alerts.overtime;
+  assert.deepStrictEqual([ot.month, ot.count, ot.hours, ot.cost, ot.n_extra, ot.extra, ot.by_cause.car_cancel], ['2026-10', 1, 1, 300000, 1, 750000, 300000]);
+  // the home page's warnings (computed on the device from the same rules)
+  const W = ok(call('bootstrap', {})), whs = W.warehouses, al = (iso) => K.timeAlerts(W.orders, whs, iso, W.holidays).filter(x => x.order_no === a.order_no).map(x => x.kind);
+  assert.deepStrictEqual(al('2026-10-14T08:00:00Z'), []); // 15:00
+  assert.deepStrictEqual(al('2026-10-14T08:35:00Z'), ['no_car']); // 15:35: no car yet
+  assert.deepStrictEqual(al('2026-10-14T10:05:00Z'), ['overtime']); // 17:05: still out after closing
+  assert.deepStrictEqual(al('2026-10-15T03:00:00Z'), []); // the next morning: nothing yet
+}
 // nothing was ever deleted and no movement changed
 assert(T.movements.every(m => m.by_user && m.at));
 console.log('test-cold: all passed (' + T.movements.length + ' movements, ' + T.orders.length + ' orders)');
