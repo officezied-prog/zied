@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#1E40AF"/>
+  <!-- a truck taking cold goods: the box with a snowflake -->
+  <rect x="64" y="176" width="240" height="160" rx="18" fill="#fff"/>
+  <path d="M304 216h76l52 56v64H304z" fill="#DBEAFE"/>
+  <path d="M322 232h52l36 40h-88z" fill="#1E40AF" opacity=".35"/>
+  <circle cx="132" cy="350" r="34" fill="#0F172A"/><circle cx="132" cy="350" r="14" fill="#fff"/>
+  <circle cx="372" cy="350" r="34" fill="#0F172A"/><circle cx="372" cy="350" r="14" fill="#fff"/>
+  <g stroke="#1E40AF" stroke-width="14" stroke-linecap="round" fill="none" transform="translate(184 256)">
+    <path d="M0-56V56M-48.5-28 48.5 28M-48.5 28 48.5-28"/>
+    <path d="M-14-42 0-28 14-42M-14 42 0 28 14 42"/>
+  </g>
+</svg>

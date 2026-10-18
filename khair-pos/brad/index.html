@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://khair-mart-jumla.officezied.workers.dev; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Khair Order Brad</title>
+<meta name="theme-color" content="#1E40AF">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Order Brad">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<!-- Khair Order Brad (v60, owner 2026-10-18: «انطلق بالمرحلة الاولى و الاحسن في تطبيق اخر الان منفصل حتى نتأكد منه قبل دمجه مع القديم»):
+     the cold-store order process as its own app until it is proven — the order read from a photo / a message, the owner's
+     9 steps with one-tap WhatsApp (cold store, driver, customer), the cooler's hours and overtime, the car, the door, loading,
+     departure. Server: the Worker (/webhook/khair-brad), logic in ../backend/brad/brad-core.js. Demo: ?mock=1 (key "demo"). -->
+<style>
+  /* Unified with the owner app (khair-pos/index.html): same blue brand, surfaces, and dark mode. */
+  :root { --pri:#1E40AF; --pri2:#1E3A8A; --pri-l:#DBEAFE; --bg:#F4F6FA; --card:#FFFFFF; --soft:#F8FAFC; --tx:#0F172A; --mu:#526075; --bd:#DCE3EC; --inp:#FFFFFF; --inp-bd:#C3CDDA; --toast:#0F172A; --bad:#B91C1C; --bad-l:#FEE2E2; --warn:#B45309; --warn-l:#FEF3C7; --ok:#15803D; --ok-l:#DCFCE7; --font:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans","Noto Naskh Arabic","Geeza Pro",Tahoma,Arial,sans-serif; }
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){ --pri:#2563EB; --pri2:#93C5FD; --pri-l:#1E2B4D; --bg:#0B1220; --card:#111A2E; --soft:#0F172A; --tx:#E5E9F2; --mu:#9AA8BF; --bd:#24324D; --inp:#0F172A; --inp-bd:#334366; --toast:#1E293B; --bad:#F87171; --bad-l:#2A1215; --warn:#FBBF24; --warn-l:#2B2108; --ok:#4ADE80; --ok-l:#10291A; color-scheme:dark; } }
+  :root[data-theme="dark"]{ --pri:#2563EB; --pri2:#93C5FD; --pri-l:#1E2B4D; --bg:#0B1220; --card:#111A2E; --soft:#0F172A; --tx:#E5E9F2; --mu:#9AA8BF; --bd:#24324D; --inp:#0F172A; --inp-bd:#334366; --toast:#1E293B; --bad:#F87171; --bad-l:#2A1215; --warn:#FBBF24; --warn-l:#2B2108; --ok:#4ADE80; --ok-l:#10291A; color-scheme:dark; }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.4 var(--font); background: var(--bg); color: var(--tx); margin: 0; }
+  header { background: var(--pri); color: #fff; padding: 10px 16px; display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 17px; margin: 0; flex: 1; }
+  header small { opacity: .85; }
+  header button { background: rgba(255,255,255,.15); color: #fff; border: 0; border-radius: 6px; padding: 8px 10px; min-height: 40px; cursor: pointer; }
+  nav { display: flex; gap: 4px; overflow-x: auto; background: var(--card); border-bottom: 1px solid var(--bd); padding: 6px 8px; position: sticky; top: 60px; z-index: 4; }
+  nav button { border: 0; background: none; padding: 10px 12px; border-radius: 6px; white-space: nowrap; font-size: 14px; min-height: 42px; cursor: pointer; color: var(--tx); }
+  nav button.on { background: var(--pri-l); color: var(--pri2); font-weight: 600; }
+  main { padding: 12px 16px 80px; max-width: 1100px; margin: 0 auto; }
+  .card { background: var(--card); border-radius: 10px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .card h2 { font-size: 16px; margin: 0 0 10px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+  .kpi b { font-size: 20px; display: block; }
+  .muted { color: var(--mu); font-size: 13px; }
+  label { display: block; font-size: 13px; color: var(--mu); margin: 6px 0 2px; }
+  input, select, textarea { font: inherit; padding: 9px 10px; border: 1px solid var(--inp-bd); border-radius: 6px; width: 100%; min-height: 42px; background: var(--inp); color: var(--tx); }
+  textarea { min-height: 140px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .btn { border: 1px solid var(--inp-bd); background: var(--card); color: var(--tx); border-radius: 6px; padding: 9px 14px; min-height: 42px; cursor: pointer; font: inherit; }
+  .btn.pri { background: var(--pri); border-color: var(--pri); color: #fff; }
+  .btn.bad { color: var(--bad); border-color: #fca5a5; }
+  .btn.sm { min-height: 34px; padding: 5px 9px; font-size: 13px; }
+  .btn:disabled { opacity: .5; }
+  .tw { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { border-bottom: 1px solid var(--bd); padding: 7px 6px; text-align: start; vertical-align: top; }
+  th { color: var(--mu); font-weight: 600; font-size: 12px; white-space: nowrap; }
+  td.n, th.n { text-align: end; white-space: nowrap; }
+  tr.diff td, .bad { color: var(--bad); font-weight: 600; }
+  .warn { color: var(--warn); font-weight: 600; }
+  .chip { display: inline-block; border-radius: 99px; padding: 2px 9px; font-size: 12px; background: var(--bd); }
+  .chip.open, .chip.sent, .chip.approved { background: var(--pri-l); } .chip.ready, .chip.dispatch, .chip.driver { background: var(--warn-l); } .chip.picked, .chip.delivered { background: var(--ok-l); } .chip.rejected { background: var(--bad-l); } .chip.cancelled { background: var(--bad-l); text-decoration: line-through; }
+  .list > div { border-bottom: 1px solid var(--bd); padding: 8px 0; }
+  .order { border: 1px solid var(--bd); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .order .row .btn { flex: 0 0 auto; }
+  #toast { position: fixed; left: 16px; right: 16px; bottom: 16px; background: var(--toast); color: #fff; padding: 12px 14px; border-radius: 8px; text-align: center; display: none; z-index: 30; }
+  #toast.err { background: var(--bad); }
+  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 20; display: flex; align-items: flex-start; justify-content: center; overflow-y: auto; padding: 16px; }
+  #modal[hidden] { display: none; }
+  #modal .box { background: var(--card); border-radius: 10px; padding: 16px; width: 100%; max-width: 720px; margin: auto 0; }
+  #modal h3 { margin: 0 0 8px; }
+  .lines td input, .lines td select { min-height: 36px; padding: 5px 6px; }
+  pre.copy { white-space: pre-wrap; background: var(--soft); border: 1px solid var(--bd); border-radius: 6px; padding: 8px; font-size: 13px; }
+  #print-area { display: none; }
+  /* shown inside the owner app (البرادات page): the owner app's own header and menu frame this page */
+  .embed header { display: none; } .embed nav { top: 0; }
+  [dir="rtl"] td.n, [dir="rtl"] th.n { text-align: left; }
+  @media (max-width: 640px) { th.hp, td.hp { display: none; } main { padding: 10px 12px 80px; } }
+  @media print { body > *:not(#print-area) { display: none !important; } #print-area { display: block; } body { background: #fff; } }
+  /* Khair Order Brad: the 9 steps as dots on every order, the next action first and big */
+  .steps { display: flex; gap: 4px; margin: 8px 0 4px; }
+  .steps i { flex: 1; height: 6px; border-radius: 3px; background: var(--bd); }
+  .steps i.done { background: var(--pri); } .steps i.now { background: var(--warn); }
+  .order h4 { margin: 0; font-size: 15px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .order .next { margin-top: 8px; } .order .next .btn.pri { font-weight: 600; }
+  .order.alert { border-color: var(--warn); }
+  .chip.car, .chip.arrived, .chip.door, .chip.loading { background: var(--warn-l); } .chip.departed { background: var(--ok-l); }
+  .ok { color: var(--ok, #15803d); font-weight: 600; }
+  .trial { background: var(--warn-l); border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 12px; }
+  a.btn { display: inline-flex; align-items: center; text-decoration: none; }
+</style>
+<script>
+  /* Follow the owner app's manual light/dark choice (shared localStorage, same origin); 'auto' falls back to the media query above. */
+  try {
+    var _mk = /[?&]mock=1/.test(location.search);
+    var _raw = localStorage.getItem((_mk ? 'kpos.mock.' : 'kpos.') + 'theme');
+    var _th = _raw ? JSON.parse(_raw) : 'auto';
+    if (_th === 'light' || _th === 'dark') document.documentElement.dataset.theme = _th;
+  } catch (e) {}
+</script>
+</head>
+<body>
+<header><button id="home" type="button" hidden></button><img id="hd-logo" src="../logo.png" alt="Khair Mart" width="54" height="32" style="height:32px;width:auto;background:#fff;border-radius:6px;padding:2px 4px;box-sizing:border-box;flex:none"><h1 id="title">Khair Order Brad</h1><small id="who"></small><button id="lang" type="button">AR</button><button id="logout" type="button" hidden></button></header>
+<nav id="nav" hidden></nav>
+<main id="app"></main>
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="modal" hidden><div class="box" id="modal-box"></div></div>
+<script src="../backend/cold/cold-parsers.js"></script>
+<script src="../backend/cold/cold-core.js"></script>
+<script src="../backend/brad/brad-core.js"></script>
+<script src="../shared/cold-mock.js"></script>
+<script src="../shared/brad-mock.js"></script>
+<script src="../shared/install-btn.js" data-host="#app > .card:has(#lg-key)"></script>
+<script src="../shared/app-update.js"></script>
+<script>
+'use strict';
+const APP_VERSION = '1.0.0'; // the update signal (shared/app-update.js): bump with every change of this app
+if (window.top !== window.self) { try { window.top.location = window.location.href; } catch (e) { document.documentElement.innerHTML = ''; } }
+// Backend = the Khair Mart Jumla Worker (code, no monthly execution cap).
+const CONFIG = { BRAD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-brad', LALAMOVE_URL: 'https://web.lalamove.com/' };
+const MOCK = /[?&](mock|demo)=1\b/.test(location.search);
+const KP = MOCK ? 'kpos.mock.' : 'kpos.'; // the owner app's storage (same site): its key and this tab's session are reused
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } }
+};
+const SS = {
+  get(k) { try { return JSON.parse(sessionStorage.getItem(k) || 'null'); } catch (e) { return null; } },
+  set(k, v) { try { if (v) sessionStorage.setItem(k, JSON.stringify(v)); else sessionStorage.removeItem(k); } catch (e) { } }
+};
+
+/* ---------- texts ---------- */
+const I18N = {
+  id: {
+    title: 'Khair Order Brad', login: 'Masuk', key: 'Kunci toko', key_hint: 'Diisi sekali di perangkat ini', change_key: 'Ganti kunci', user: 'Nama pengguna', pin: 'PIN', logout: 'Keluar',
+    demo: 'Mode demo — data contoh. Kunci: demo · Pemilik 1234 · Jihan 2222 · Akuntan 3333', ro: 'Hanya lihat', to_admin: 'Khair Mart', err_net: 'Tidak ada koneksi. Coba lagi.',
+    trial: 'Aplikasi uji coba: order di sini terpisah dari aplikasi Gudang. Stok gudang dibaca dari sana dan hanya berkurang saat mobil berangkat.',
+    t_today: 'Hari ini', t_all: 'Semua order', t_ot: 'Lembur', t_set: 'Pengaturan', none: 'Belum ada.', all: 'Semua', st_active: 'Berjalan', saved: 'Tersimpan', save: 'Simpan', close: 'Tutup',
+    st_new: 'Ditulis', st_sent: 'Dikirim ke gudang', st_approved: 'Gudang setuju', st_ready: 'Barang siap', st_car: 'Mobil dipesan', st_arrived: 'Mobil masuk', st_door: 'Ke pintu',
+    st_loading: 'Dimuat', st_departed: 'Berangkat', st_delivered: 'Sampai', st_rejected: 'Ditolak gudang', st_cancelled: 'Batal',
+    a_send: 'Kirim ke gudang (WhatsApp)', a_edit: 'Ubah', a_cancel: 'Batalkan', a_reply: 'Tempel balasan gudang', a_approve: 'Gudang setuju', a_reject: 'Gudang tolak', a_rewa: 'Kirim ulang WhatsApp',
+    a_ready: 'Barang siap', a_car: 'Pesan mobil', a_lala: 'Buka Lalamove', a_car_wa: 'Data mobil ke gudang (WhatsApp)', a_arrived: 'Mobil sudah masuk', a_car_cancel: 'Mobil batal', a_car_edit: 'Ubah mobil',
+    a_door: 'Nomor pintu', a_door_wa: 'Pintu ke sopir (WhatsApp)', a_load: 'Mulai muat', a_depart: 'Sudah berangkat', a_depart_wa: 'Kabari pelanggan (WhatsApp)', a_delivered: 'Sudah sampai',
+    al_title: 'Perlu perhatian', al_no_car: '{no} · {wh}: belum ada mobil — order terakhir {last}, tutup {close}', al_car_late: '{no} · {wh}: mobil belum masuk — gudang tutup {close}',
+    al_overtime: '{no} · {wh}: lewat {close} — lembur {ot} per jam (jam yang mulai dihitung penuh)', al_none: 'Semua aman.',
+    or_new: 'Order baru', or_edit: 'Ubah order', wh: 'Gudang', date: 'Tanggal ambil', dest: 'Tujuan', dest_toko: 'Toko Khair Mart', dest_cust: 'Pelanggan', cu_pick: 'Pilih pelanggan', cu_add: 'Pelanggan baru',
+    dest_name: 'Nama pelanggan', phone: 'HP / WhatsApp', dest_addr: 'Alamat', note: 'Catatan', lines: 'Palet', ctn: 'ctn', add_row: '+ Baris', fefo: 'Isi otomatis (FEFO)', fefo_short: 'Stok kurang {n} ctn',
+    total: 'Total', need_wh: 'Belum ada gudang (isi di aplikasi Gudang)', pallets: 'palet',
+    rd_title: 'Baca pesanan dari foto atau pesan WhatsApp', rd_hint: 'Foto kertas pesanan, atau tempel pesan pelanggan. Hasilnya draf: periksa dulu, lalu Simpan.',
+    rd_hint_off: 'Pembaca foto (AI) belum aktif — pesan yang ditempel tetap dibaca.', rd_photo: 'Foto pesanan', rd_paste: 'Tempel pesan WhatsApp di sini…', rd_go: 'Baca',
+    rd_reading: 'Membaca…', rd_need: 'Pilih foto atau tempel pesan dulu', rd_bad_photo: 'Foto tidak bisa dibuka', rd_done: '{n} baris terbaca → {p} palet di form',
+    rd_by_ai: 'dibaca AI', rd_by_rules: 'dibaca tanpa AI', rd_ai_err: 'AI gagal, dibaca dengan aturan', rd_un: 'Belum dipahami — isi sendiri:',
+    rd_r_unknown: 'produk tidak dikenal', rd_r_qty: 'jumlah tidak jelas', rd_r_taken: 'palet sudah dipesan order lain', rd_r_elsewhere: 'palet ada di gudang lain',
+    rd_r_empty: 'palet sudah kosong', rd_r_no_pallet: 'palet tidak ditemukan', rd_r_unread: 'baris tidak terbaca',
+    rd_w_short: 'stok kurang {n} ctn', rd_w_short_p: 'kurang {n} palet', rd_w_no_pallet: 'palet {p} tidak ditemukan — diambil FEFO', rd_check: 'Periksa gudang, pelanggan dan palet, lalu tekan Simpan.',
+    ah_title: 'Lewat jam order terakhir ({last})', ah_text: 'Kalau diambil hari ini, mobil harus masuk gudang sebelum {close}. Setelah itu lembur {ot} per jam (jam yang sudah mulai dihitung penuh).',
+    ah_later: 'Ambil {d} (tanpa lembur)', ah_today: 'Hari ini (risiko lembur)',
+    ar_title: 'Hari perjanjian', ar_text: '{d}: gudang buka hanya dengan perjanjian. Isi biaya tambahan yang disepakati dengan gudang.', ar_cost: 'Biaya tambahan (Rp)', ar_note: 'Keterangan',
+    ar_go: 'Kirim dengan biaya ini', ar_later: 'Ambil {d}',
+    wa_order: 'Kirim order ke gudang', wa_car: 'Data mobil ke gudang', wa_door: 'Nomor pintu ke sopir', wa_depart: 'Kabari pelanggan', wa_to: 'Ke: {n}',
+    wa_no_number: 'Nomor belum ada — pilih kontak di WhatsApp', wa_go: 'Buka WhatsApp', copy: 'Salin', copied: 'Disalin',
+    rp_title: 'Balasan gudang — {no}', rp_paste: 'Tempel balasan WhatsApp dari gudang…', rp_read: 'Baca', rp_approve: 'Gudang SETUJU', rp_ready: 'Barang SIAP', rp_reject: 'Gudang MENOLAK',
+    rp_door: 'PINTU {d}', rp_none: 'Tidak dipahami — pilih tombolnya sendiri.', rp_apply: 'Terapkan', rp_not_now: 'Belum cocok dengan langkah order ini.',
+    car_title: 'Mobil — {no}', via: 'Lewat', via_lala: 'Lalamove', via_drv: 'Sopir sendiri', drv_pick: 'Pilih sopir', vehicle: 'Kendaraan', driver: 'Nama sopir', driver_wa: 'HP sopir',
+    plate: 'No. polisi', cost: 'Ongkos (Rp)', eta: 'Menit di Lalamove', eta_at: 'Perkiraan tiba (+{m}%): {t}', eta_late: 'Lewat {close}: lembur {h} jam ({cost})', eta_break: 'Tiba saat istirahat {b}',
+    eta_ok: 'Sebelum {close}', late_q: 'Mobil tiba setelah tutup', late_ok: 'Ya, terima lembur', sug_vehicle: 'Saran: {v} (± {kg} kg)',
+    in_title: 'Mobil masuk — {no}', time: 'Jam masuk', door_opt: 'Nomor pintu (kalau sudah tahu)', ot_will: 'Lembur {h} jam ({cost})', cause: 'Sebab lembur', ot_note: 'Keterangan',
+    cause_order_late: 'Order terlambat', cause_store_late: 'Gudang terlambat', cause_car_late: 'Mobil terlambat', cause_car_cancel: 'Mobil batal / ganti', cause_other: 'Lain',
+    cc_title: 'Mobil batal — {no}', reason: 'Alasan', cc_risk: 'Sudah lewat jam order terakhir: cepat pesan mobil lain — risiko lembur setelah jam tutup.',
+    door_title: 'Nomor pintu — {no}', door: 'Pintu', load_est: 'selesai muat ± {t}', dep_q: 'Mobil sudah berangkat? Barang keluar dari stok gudang.', dep_short: 'Stok kurang: {s}',
+    cn_title: 'Batalkan {no}', rj_title: 'Gudang menolak {no}', yes: 'Ya',
+    lbl_car: 'Mobil', lbl_eta: 'tiba ±', lbl_door: 'Pintu', lbl_ot: 'Lembur', lbl_extra: 'Biaya perjanjian', history: 'Riwayat', cancels: 'mobil batal {n}×', src_photo: 'dari foto', src_message: 'dari pesan',
+    ot_title: 'Lembur & biaya tambahan bulan ini', ot_none: 'Belum ada lembur bulan ini.', ot_sum: 'Lembur: {n} kali · {h} jam · {cost}', ot_extra: 'Biaya hari perjanjian: {n} kali · {cost}', ot_list: 'Order dengan lembur',
+    s_coolers: 'Gudang: WhatsApp & jam kerja', s_wa: 'WhatsApp gudang (untuk order)', s_wa_hint: 'Kosong = nomor PIC dari aplikasi Gudang', h_open: 'Buka', h_close: 'Tutup', h_brk: 'Istirahat (kosong = tanpa)',
+    h_last: 'Order terakhir', h_days: 'Hari kerja', h_arr: 'Buka dengan perjanjian (biaya tambahan)', h_ot: 'Lembur per jam (Rp)', s_hol: 'Libur nasional (gudang tutup)',
+    hol_hint: 'Satu baris per hari, contoh: 2026-12-25 Natal', s_margin: 'Tambahan waktu Lalamove (%)', s_load: 'Menit muat per palet', s_rules: 'Libur & waktu', dow: 'Min,Sen,Sel,Rab,Kam,Jum,Sab'
+  },
+  ar: {
+    title: 'طلبيات البراد', login: 'دخول', key: 'مفتاح المتجر', key_hint: 'يُكتب مرة واحدة على هذا الجهاز', change_key: 'تغيير المفتاح', user: 'اسم المستخدم', pin: 'الرمز السري', logout: 'خروج',
+    demo: 'وضع تجريبي — بيانات مثال. المفتاح: demo · Pemilik 1234 · Jihan 2222 · Akuntan 3333', ro: 'عرض فقط', to_admin: 'خير مارت', err_net: 'لا يوجد اتصال. حاول مرة أخرى.',
+    trial: 'تطبيق تجريبي: الطلبيات هنا منفصلة عن تطبيق البراد القديم. المخزون يُقرأ من هناك وينقص فقط عند انطلاق السيارة.',
+    t_today: 'اليوم', t_all: 'كل الطلبيات', t_ot: 'الوقت الإضافي', t_set: 'الإعدادات', none: 'لا يوجد بعد.', all: 'الكل', st_active: 'الجارية', saved: 'تم الحفظ', save: 'حفظ', close: 'إغلاق',
+    st_new: 'مكتوبة', st_sent: 'أُرسلت للبراد', st_approved: 'وافق البراد', st_ready: 'البضاعة جاهزة', st_car: 'السيارة محجوزة', st_arrived: 'السيارة دخلت', st_door: 'إلى الباب',
+    st_loading: 'تحميل', st_departed: 'انطلقت', st_delivered: 'وصلت', st_rejected: 'رفض البراد', st_cancelled: 'ملغاة',
+    a_send: 'إرسال للبراد (واتساب)', a_edit: 'تعديل', a_cancel: 'إلغاء', a_reply: 'لصق رد البراد', a_approve: 'وافق البراد', a_reject: 'رفض البراد', a_rewa: 'إعادة إرسال واتساب',
+    a_ready: 'البضاعة جاهزة', a_car: 'حجز سيارة', a_lala: 'فتح لالاموف', a_car_wa: 'بيانات السيارة للبراد (واتساب)', a_arrived: 'السيارة دخلت', a_car_cancel: 'السيارة ألغت', a_car_edit: 'تعديل السيارة',
+    a_door: 'رقم الباب', a_door_wa: 'رقم الباب للسائق (واتساب)', a_load: 'بدء التحميل', a_depart: 'انطلقت السيارة', a_depart_wa: 'إبلاغ الزبون (واتساب)', a_delivered: 'وصلت',
+    al_title: 'تحتاج انتباهًا', al_no_car: '{no} · {wh}: لا توجد سيارة — آخر طلبية {last} والإغلاق {close}', al_car_late: '{no} · {wh}: السيارة لم تدخل — البراد يغلق {close}',
+    al_overtime: '{no} · {wh}: بعد {close} — وقت إضافي {ot} لكل ساعة (الساعة التي تبدأ تُحسب كاملة)', al_none: 'كل شيء على ما يرام.',
+    or_new: 'طلبية جديدة', or_edit: 'تعديل الطلبية', wh: 'البراد', date: 'تاريخ السحب', dest: 'الوجهة', dest_toko: 'محل خير مارت', dest_cust: 'زبون', cu_pick: 'اختر زبونًا', cu_add: 'زبون جديد',
+    dest_name: 'اسم الزبون', phone: 'الهاتف / واتساب', dest_addr: 'العنوان', note: 'ملاحظة', lines: 'البلاتات', ctn: 'كرتون', add_row: '+ سطر', fefo: 'تعبئة تلقائية (الأقدم انتهاءً)', fefo_short: 'المخزون ناقص {n} كرتون',
+    total: 'المجموع', need_wh: 'لا يوجد براد بعد (أضفه في تطبيق البراد)', pallets: 'بلات',
+    rd_title: 'قراءة الطلبية من صورة أو رسالة واتساب', rd_hint: 'صوّر ورقة الطلبية أو الصق رسالة الزبون. النتيجة مسودة: راجعها ثم اضغط حفظ.',
+    rd_hint_off: 'قارئ الصور (الذكاء الاصطناعي) غير مفعّل بعد — الرسالة الملصوقة تُقرأ مع ذلك.', rd_photo: 'صورة الطلبية', rd_paste: 'الصق رسالة الواتساب هنا…', rd_go: 'اقرأ',
+    rd_reading: 'جارٍ القراءة…', rd_need: 'اختر صورة أو الصق رسالة أولًا', rd_bad_photo: 'تعذّر فتح الصورة', rd_done: 'قُرئ {n} سطر ← {p} بلات في النموذج',
+    rd_by_ai: 'قرأها الذكاء الاصطناعي', rd_by_rules: 'قُرئت بدون ذكاء اصطناعي', rd_ai_err: 'تعذّر الذكاء الاصطناعي، قُرئت بالقواعد', rd_un: 'لم يُفهم — أكمله بنفسك:',
+    rd_r_unknown: 'صنف غير معروف', rd_r_qty: 'الكمية غير واضحة', rd_r_taken: 'البلات محجوز لأمر آخر', rd_r_elsewhere: 'البلات في براد آخر',
+    rd_r_empty: 'البلات فارغ', rd_r_no_pallet: 'البلات غير موجود', rd_r_unread: 'سطر غير مقروء',
+    rd_w_short: 'المخزون ناقص {n} كرتون', rd_w_short_p: 'ناقص {n} بلات', rd_w_no_pallet: 'البلات {p} غير موجود — أُخذ الأقدم انتهاءً', rd_check: 'راجع البراد والزبون والبلاتات ثم اضغط حفظ.',
+    ah_title: 'بعد آخر وقت للطلبيات ({last})', ah_text: 'إذا سُحبت اليوم يجب أن تدخل السيارة البراد قبل {close}. بعدها وقت إضافي {ot} لكل ساعة (الساعة التي تبدأ تُحسب كاملة).',
+    ah_later: 'السحب يوم {d} (بدون وقت إضافي)', ah_today: 'اليوم (مع خطر الوقت الإضافي)',
+    ar_title: 'يوم باتفاق', ar_text: '{d}: البراد يعمل فقط باتفاق. اكتب التكلفة الإضافية المتفق عليها مع البراد.', ar_cost: 'التكلفة الإضافية (روبية)', ar_note: 'ملاحظة',
+    ar_go: 'إرسال بهذه التكلفة', ar_later: 'السحب يوم {d}',
+    wa_order: 'إرسال الطلبية للبراد', wa_car: 'بيانات السيارة للبراد', wa_door: 'رقم الباب للسائق', wa_depart: 'إبلاغ الزبون', wa_to: 'إلى: {n}',
+    wa_no_number: 'لا يوجد رقم — اختر جهة الاتصال في واتساب', wa_go: 'فتح واتساب', copy: 'نسخ', copied: 'تم النسخ',
+    rp_title: 'رد البراد — {no}', rp_paste: 'الصق رد الواتساب من البراد…', rp_read: 'اقرأ', rp_approve: 'البراد وافق', rp_ready: 'البضاعة جاهزة', rp_reject: 'البراد رفض',
+    rp_door: 'الباب {d}', rp_none: 'لم يُفهم — اختر الزر بنفسك.', rp_apply: 'تطبيق', rp_not_now: 'لا يناسب خطوة هذه الطلبية بعد.',
+    car_title: 'السيارة — {no}', via: 'عن طريق', via_lala: 'لالاموف', via_drv: 'سائقنا', drv_pick: 'اختر سائقًا', vehicle: 'المركبة', driver: 'اسم السائق', driver_wa: 'هاتف السائق',
+    plate: 'رقم اللوحة', cost: 'الأجرة (روبية)', eta: 'الدقائق في لالاموف', eta_at: 'الوصول المتوقع (+{m}%): {t}', eta_late: 'بعد {close}: وقت إضافي {h} ساعة ({cost})', eta_break: 'تصل وقت الاستراحة {b}',
+    eta_ok: 'قبل {close}', late_q: 'السيارة تصل بعد الإغلاق', late_ok: 'نعم، أقبل الوقت الإضافي', sug_vehicle: 'المقترح: {v} (± {kg} كغ)',
+    in_title: 'دخول السيارة — {no}', time: 'ساعة الدخول', door_opt: 'رقم الباب (إن عُرف)', ot_will: 'وقت إضافي {h} ساعة ({cost})', cause: 'سبب الوقت الإضافي', ot_note: 'ملاحظة',
+    cause_order_late: 'الطلبية متأخرة', cause_store_late: 'البراد تأخر', cause_car_late: 'السيارة تأخرت', cause_car_cancel: 'السيارة ألغت / تبديل', cause_other: 'سبب آخر',
+    cc_title: 'السيارة ألغت — {no}', reason: 'السبب', cc_risk: 'بعد آخر وقت للطلبيات: احجز سيارة أخرى فورًا — خطر وقت إضافي بعد الإغلاق.',
+    door_title: 'رقم الباب — {no}', door: 'الباب', load_est: 'ينتهي التحميل ± {t}', dep_q: 'هل انطلقت السيارة؟ تخرج البضاعة من مخزون البراد.', dep_short: 'المخزون ناقص: {s}',
+    cn_title: 'إلغاء {no}', rj_title: 'البراد رفض {no}', yes: 'نعم',
+    lbl_car: 'السيارة', lbl_eta: 'تصل ±', lbl_door: 'الباب', lbl_ot: 'وقت إضافي', lbl_extra: 'تكلفة الاتفاق', history: 'السجل', cancels: 'ألغيت السيارة {n} مرة', src_photo: 'من صورة', src_message: 'من رسالة',
+    ot_title: 'الوقت الإضافي والتكاليف الإضافية هذا الشهر', ot_none: 'لا يوجد وقت إضافي هذا الشهر.', ot_sum: 'وقت إضافي: {n} مرة · {h} ساعة · {cost}', ot_extra: 'تكاليف أيام الاتفاق: {n} مرة · {cost}', ot_list: 'طلبيات بوقت إضافي',
+    s_coolers: 'البرادات: الواتساب وساعات العمل', s_wa: 'واتساب البراد (للطلبيات)', s_wa_hint: 'فارغ = رقم المسؤول من تطبيق البراد', h_open: 'يفتح', h_close: 'يغلق', h_brk: 'الاستراحة (فارغ = بدون)',
+    h_last: 'آخر طلبية', h_days: 'أيام العمل', h_arr: 'يعمل باتفاق (تكلفة إضافية)', h_ot: 'الوقت الإضافي لكل ساعة (روبية)', s_hol: 'العطل الرسمية (البراد مغلق)',
+    hol_hint: 'سطر لكل يوم، مثال: 2026-12-25 Natal', s_margin: 'زيادة وقت لالاموف (%)', s_load: 'دقائق تحميل البلات', s_rules: 'العطل والأوقات', dow: 'الأحد,الاثنين,الثلاثاء,الأربعاء,الخميس,الجمعة,السبت'
+  }
+};
+const MON = { id: ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'], ar: ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'] };
+const S = { key: '', user: '', role: '', pin_hash: '', lang: LS.get('kbrad.lang', 'id') === 'ar' ? 'ar' : 'id', tab: 'today', D: null, f: { st: 'active' } };
+function t(k, v) { let s = (I18N[S.lang] && I18N[S.lang][k]) || I18N.id[k] || k; Object.keys(v || {}).forEach(x => { s = s.split('{' + x + '}').join(String(v[x])); }); return s; }
+
+/* ---------- small helpers (user data only ever goes through textContent) ---------- */
+const $ = s => document.querySelector(s);
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  Object.keys(attrs || {}).forEach(k => {
+    const v = attrs[k];
+    if (v === null || v === undefined || v === false) return;
+    if (k === 'class') el.className = v; else if (k === 'text') el.textContent = v;
+    else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2), v);
+    else if (k === 'value') el.value = v; else el.setAttribute(k, v === true ? '' : v);
+  });
+  kids.flat(9).forEach(c => { if (c === null || c === undefined || c === false) return; el.append(c instanceof Node ? c : document.createTextNode(String(c))); });
+  return el;
+}
+const n0 = v => { const n = Math.round(Number(v) || 0); return (n < 0 ? '-' : '') + Math.abs(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.'); };
+const rp = v => 'Rp ' + n0(v);
+const fd = d => { if (!d) return ''; const p = String(d).slice(0, 10).split('-'); return p.length === 3 ? Number(p[2]) + ' ' + MON[S.lang][Number(p[1]) - 1] + ' ' + p[0] : d; };
+const hmOf = iso => iso ? KBrad.hmStr(KBrad.wibAt(iso).min) : '';
+const nowIso = () => new Date().toISOString();
+const today = () => KBrad.wibAt(nowIso()).date;
+const can = () => S.role === 'owner' || S.role === 'manager';
+const isOwner = () => S.role === 'owner';
+let toastT = 0;
+function toast(msg, err) { const el = $('#toast'); el.textContent = msg; el.className = err ? 'err' : ''; el.style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(() => { el.style.display = 'none'; }, 3500); }
+function sha256(s) { return crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)).then(b => Array.from(new Uint8Array(b)).map(x => ('0' + x.toString(16)).slice(-2)).join('')); }
+function field(label, input) { return h('div', null, h('label', { text: label }), input); }
+function sel(id, opts, value, attrs) { return h('select', Object.assign({ id: id }, attrs || {}), opts.map(o => h('option', { value: o[0], selected: String(o[0]) === String(value) }, o[1]))); }
+const CO = code => (S.D.coolers.find(w => w.code === code) || { code, name: code, hours: KBrad.hoursOf({}) });
+const PR = code => (S.D.products.find(p => p.code === code) || { code, name: code });
+function ctx(o) { const pr = {}; S.D.products.forEach(p => { pr[p.code] = p; }); return { cooler: CO(o.warehouse), products: pr, company: S.D.company }; }
+function waLink(num, text) { return 'https://wa.me/' + encodeURIComponent(num || '') + '?text=' + encodeURIComponent(text); }
+function copyText(s) { (navigator.clipboard ? navigator.clipboard.writeText(s) : Promise.reject()).then(() => toast(t('copied')), () => toast(t('copied'))); }
+
+/* ---------- API ---------- */
+async function api(action, data) {
+  const body = { action, key: S.key, user: S.user, pin_hash: S.pin_hash, data: data || {} };
+  let r;
+  try {
+    if (MOCK) r = await KBradMock.api(body);
+    else r = await (await fetch(CONFIG.BRAD_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=UTF-8' }, body: JSON.stringify(body), cache: 'no-store' })).json();
+  } catch (e) { r = { ok: false, error: 'NETWORK', message: t('err_net') }; }
+  if (!r || r.ok !== true) {
+    const e = r || { ok: false, error: 'SERVER', message: 'Server error' };
+    if (action !== 'login' && ['BAD_PIN', 'BAD_KEY', 'LOCKED', 'PIN_CHANGE_REQUIRED'].includes(e.error)) logout();
+    throw e;
+  }
+  return r;
+}
+/** A write: runs, reloads the data, re-renders. Returns the response, or null after saying why. */
+async function act(action, data, okMsg) {
+  try { const r = await api(action, data); if (okMsg !== false) toast(okMsg || t('saved')); await load(); return r; }
+  catch (e) { toast(e.message || e.error, true); return null; }
+}
+async function load() { S.D = await api('bootstrap', {}); render(); }
+
+/* ---------- login ---------- */
+function logout() { SS.set('kbrad.session', null); S.user = ''; S.pin_hash = ''; S.role = ''; S.D = null; renderLogin(); }
+function renderLogin(msg) {
+  $('#nav').hidden = true; $('#logout').hidden = true; $('#who').textContent = '';
+  const keyKnown = !!S.key;
+  const keyIn = h('input', { id: 'lg-key', type: 'password', autocomplete: 'off', value: S.key, hidden: keyKnown });
+  $('#app').replaceChildren(h('div', { class: 'card', style: 'max-width:420px;margin:24px auto' },
+    h('h2', { text: t('login') }),
+    MOCK ? h('p', { class: 'muted', text: t('demo') }) : null,
+    h('div', { hidden: keyKnown, id: 'lg-keybox' }, field(t('key'), keyIn), h('p', { class: 'muted', text: t('key_hint') })),
+    keyKnown ? h('button', { class: 'btn sm', type: 'button', id: 'lg-chkey', onclick: () => { $('#lg-keybox').hidden = false; keyIn.hidden = false; keyIn.value = ''; keyIn.focus(); } }, t('change_key')) : null,
+    field(t('user'), h('input', { id: 'lg-user', autocomplete: 'username', value: LS.get('kbrad.user', '') })),
+    field(t('pin'), h('input', { id: 'lg-pin', type: 'password', inputmode: 'numeric', autocomplete: 'current-password' })),
+    msg ? h('p', { class: 'bad', id: 'lg-msg', text: msg }) : null,
+    h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn pri', id: 'lg-go', type: 'button', onclick: doLogin, style: 'width:100%' }, t('login')))));
+  $('#lg-pin').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+}
+async function doLogin() {
+  const key = ($('#lg-key').value || '').trim(), user = $('#lg-user').value.trim(), pin = $('#lg-pin').value.trim();
+  if (!key || !user || !pin) { toast(t('key') + ' / ' + t('user') + ' / ' + t('pin'), true); return; }
+  S.key = key; S.user = user; S.pin_hash = await sha256(key + ':' + user.toLowerCase() + ':' + pin);
+  try {
+    const r = await api('login', {});
+    S.user = r.me.name; S.role = r.me.role;
+    LS.set('kbrad.key', key); LS.set('kbrad.user', S.user);
+    SS.set('kbrad.session', { user: S.user, pin_hash: S.pin_hash, role: S.role });
+    await load();
+  } catch (e) { S.pin_hash = ''; renderLogin(e.message || e.error); }
+}
+
+/* ---------- shell ---------- */
+const TABS = ['today', 'all', 'ot', 'set'];
+function render() {
+  document.documentElement.lang = S.lang; document.documentElement.dir = S.lang === 'ar' ? 'rtl' : 'ltr';
+  $('#title').textContent = t('title'); $('#lang').textContent = S.lang === 'ar' ? 'ID' : 'AR';
+  const hb = $('#home'); hb.hidden = false; hb.textContent = (S.lang === 'ar' ? '→ ' : '← ') + t('to_admin');
+  if (!S.D) return;
+  $('#who').textContent = S.user + (S.role === 'akuntan' ? ' (' + t('ro') + ')' : '') + (MOCK ? ' · demo' : '');
+  $('#logout').hidden = false; $('#logout').textContent = t('logout');
+  const tabs = TABS.filter(x => x !== 'set' || isOwner());
+  if (!tabs.includes(S.tab)) S.tab = 'today';
+  const nav = $('#nav'); nav.hidden = false;
+  nav.replaceChildren(...tabs.map(x => h('button', { type: 'button', 'data-tab': x, class: S.tab === x ? 'on' : '', onclick: () => { S.tab = x; render(); } }, t('t_' + x))));
+  const v = ({ today: vToday, all: vAll, ot: vOt, set: vSet })[S.tab]();
+  v.id = 'v-' + S.tab;
+  $('#app').replaceChildren(v);
+}
+function modal(title, body, buttons) {
+  const box = $('#modal-box');
+  box.replaceChildren(h('h3', { text: title }), body, h('div', { class: 'row', style: 'margin-top:14px;justify-content:flex-end' },
+    (buttons || []).concat([h('button', { class: 'btn', type: 'button', id: 'md-close', onclick: closeModal }, t('close'))])));
+  $('#modal').hidden = false;
+}
+function closeModal() { $('#modal').hidden = true; $('#modal-box').replaceChildren(); }
+/** One question with a text answer (a reason): onOk(value) → false keeps the box open. */
+function ask(title, label, onOk) {
+  const inp = h('input', { id: 'ask-in' });
+  modal(title, field(label, inp), [h('button', { class: 'btn pri', type: 'button', id: 'ask-ok', onclick: async () => { if ((await onOk(inp.value.trim())) !== false) closeModal(); } }, t('save'))]);
+  inp.focus();
+}
+/** A WhatsApp message ready to go: the text, who it is for, one tap (a real link: never blocked as a pop-up). */
+function waModal(title, num, text, extra) {
+  modal(title, h('div', null, extra || null,
+    h('p', { class: 'muted', id: 'wa-to', text: num ? t('wa_to', { n: num }) : t('wa_no_number') }),
+    h('pre', { class: 'copy', id: 'wa-text', text: text })),
+    [h('button', { class: 'btn', type: 'button', id: 'wa-copy', onclick: () => copyText(text) }, t('copy')),
+      h('a', { class: 'btn pri', id: 'wa-go', href: waLink(num, text), target: '_blank', rel: 'noopener', onclick: () => setTimeout(closeModal, 300) }, t('wa_go'))]);
+}
+
+/* ---------- home: what needs doing now ---------- */
+function alertsCard() {
+  const cfg = {}; S.D.coolers.forEach(c => { cfg[c.code] = { hours: c.hours }; });
+  const al = KBrad.timeAlerts(S.D.orders, cfg, nowIso(), S.D.holidays);
+  return h('div', { class: 'card', id: 'al-card' }, h('h2', { text: t('al_title') }),
+    al.length ? h('div', { id: 'al-list' }, al.map(a => { const H = CO(a.warehouse).hours;
+      return h('div', { class: a.kind === 'overtime' ? 'bad' : 'warn', 'data-kind': a.kind, 'data-no': a.order_no, text: t('al_' + a.kind, { no: a.order_no, wh: CO(a.warehouse).name, last: H.last, close: H.close, ot: rp(H.ot) }) }); }))
+      : h('p', { class: 'muted', id: 'al-none', text: t('al_none') }));
+}
+function vToday() {
+  const live = S.D.orders.filter(o => KBrad.LIVE.includes(o.status) || (o.status === 'departed' && o.departed_at && KBrad.wibAt(o.departed_at).date === today()))
+    .sort((a, b) => String(a.order_date).localeCompare(String(b.order_date)) || b.step - a.step);
+  return h('div', null, h('div', { class: 'trial', id: 'trial', text: t('trial') }), alertsCard(),
+    can() ? h('div', { class: 'card row' }, h('button', { class: 'btn pri', type: 'button', id: 'or-new', onclick: () => orderForm(null) }, '+ ' + t('or_new'))) : null,
+    h('div', { id: 'or-list' }, live.length ? live.map(card) : h('div', { class: 'card muted', text: t('none') })));
+}
+function vAll() {
+  const sts = ['new', 'sent', 'approved', 'ready', 'car', 'arrived', 'door', 'loading', 'departed', 'delivered', 'rejected', 'cancelled'];
+  const list = S.D.orders.filter(o => !S.f.st || (S.f.st === 'active' ? KBrad.LIVE.includes(o.status) : o.status === S.f.st));
+  return h('div', null, h('div', { class: 'card' }, sel('or-st', [['', t('all')], ['active', t('st_active')]].concat(sts.map(x => [x, t('st_' + x)])), S.f.st, { onchange: e => { S.f.st = e.target.value; render(); } })),
+    h('div', { id: 'or-list' }, list.length ? list.map(card) : h('div', { class: 'card muted', text: t('none') })));
+}
+function card(o) {
+  const c = o.car || {}, w = CO(o.warehouse), alertNos = KBrad.timeAlerts([o], { [o.warehouse]: { hours: w.hours } }, nowIso(), S.D.holidays).length;
+  const dots = h('div', { class: 'steps', 'data-step': String(o.step) }, KBrad.STEPS.map((s, i) => h('i', { class: i + 1 < o.step || o.status === 'delivered' ? 'done' : i + 1 === o.step ? 'now' : '' })));
+  const info = [
+    o.status === 'rejected' && o.rejected_reason ? h('div', { class: 'bad', text: t('st_rejected') + ': ' + o.rejected_reason }) : null,
+    c.plate ? h('div', { 'data-car': '', text: t('lbl_car') + ': ' + c.plate + ' · ' + c.driver + (c.vehicle ? ' · ' + c.vehicle : '') + (o.eta_at && ['car'].includes(o.status) ? ' · ' + t('lbl_eta') + ' ' + hmOf(o.eta_at) : '') }) : null,
+    o.door ? h('div', { 'data-door': '', text: t('lbl_door') + ' ' + o.door + (o.load_end_est && o.status === 'loading' ? ' · ' + t('load_est', { t: hmOf(o.load_end_est) }) : '') }) : null,
+    o.ot_cost > 0 ? h('div', { class: 'bad', 'data-ot': '', text: t('lbl_ot') + ' ' + o.ot_hours + ' · ' + rp(o.ot_cost) + ' (' + t('cause_' + (o.ot_cause || 'other')) + ')' }) : null,
+    o.extra_cost > 0 ? h('div', { class: 'warn', 'data-extra': '', text: t('lbl_extra') + ': ' + rp(o.extra_cost) }) : null,
+    o.car_cancels > 0 ? h('div', { class: 'muted', 'data-cancels': '', text: t('cancels', { n: o.car_cancels }) }) : null,
+    o.stock_note ? h('div', { class: 'warn', text: t('dep_short', { s: o.stock_note }) }) : null];
+  const hist = h('details', { class: 'muted', 'data-log': '' }, h('summary', { text: t('history') + ' (' + (o.log || []).length + ')' }),
+    (o.log || []).slice().reverse().map(l => h('div', { text: fd(KBrad.wibAt(l.at).date) + ' ' + hmOf(l.at) + ' · ' + l.by + ' · ' + t('st_' + l.to) + (l.note ? ' — ' + l.note : '') })));
+  return h('div', { class: 'card order' + (alertNos ? ' alert' : ''), 'data-no': o.order_no, 'data-status': o.status },
+    h('h4', null, h('span', { text: o.order_no }), h('span', { class: 'chip ' + o.status, 'data-chip': '', text: (o.step ? o.step + '/9 ' : '') + t('st_' + o.status) })),
+    h('div', { text: w.name + (S.lang === 'ar' ? ' ← ' : ' → ') + o.dest_name + ' · ' + fd(o.order_date) + ' · ' + n0(o.cartons) + ' ' + t('ctn') + ' · ' + o.pallets + ' ' + t('pallets') + (o.source && o.source !== 'manual' ? ' · ' + t('src_' + o.source) : '') }),
+    dots,
+    h('div', { class: 'muted' }, (o.lines || []).map(l => h('div', { text: 'PLT ' + l.pallet_code + ' · ' + (l.product_name || PR(l.product).name) + ' · ' + n0(l.cartons) + ' ' + t('ctn') + (l.full ? ' (utuh)' : '') }))),
+    info, can() ? h('div', { class: 'row next' }, nextButtons(o)) : null, hist);
+}
+function B(act, label, onclick, pri) { return h('button', { class: 'btn sm' + (pri ? ' pri' : ''), type: 'button', 'data-act': act, onclick }, label); }
+function nextButtons(o) {
+  const st = o.status, c = o.car || {};
+  const cancel = B('cancel', t('a_cancel'), () => ask(t('cn_title', { no: o.order_no }), t('reason'), v => v.length < 3 ? (toast(t('reason'), true), false) : act('order_status', { order_no: o.order_no, to: 'cancelled', note: v })));
+  if (st === 'new') return [B('send', t('a_send'), () => sendFlow(o), true), B('edit', t('a_edit'), () => orderForm(o)), cancel];
+  if (st === 'rejected') return [B('edit', t('a_edit'), () => orderForm(o), true), cancel];
+  if (st === 'sent') return [B('reply', t('a_reply'), () => replyForm(o), true), B('approve', t('a_approve'), () => act('order_status', { order_no: o.order_no, to: 'approved' })),
+    B('reject', t('a_reject'), () => ask(t('rj_title', { no: o.order_no }), t('reason'), v => v.length < 3 ? (toast(t('reason'), true), false) : act('order_status', { order_no: o.order_no, to: 'rejected', note: v }))),
+    B('rewa', t('a_rewa'), () => waModal(t('wa_order'), CO(o.warehouse).wa, KBrad.msgOrder(o, ctx(o)))), cancel];
+  if (st === 'approved') return [B('ready', t('a_ready'), () => act('order_status', { order_no: o.order_no, to: 'ready' }), true), B('reply', t('a_reply'), () => replyForm(o)), cancel];
+  if (st === 'ready') return [B('car', t('a_car'), () => carForm(o), true), h('a', { class: 'btn sm', 'data-act': 'lala', href: CONFIG.LALAMOVE_URL, target: '_blank', rel: 'noopener' }, t('a_lala')), cancel];
+  if (st === 'car') return [B('arrived', t('a_arrived'), () => arrivedForm(o), true), B('car-wa', t('a_car_wa'), () => waModal(t('wa_car'), CO(o.warehouse).wa, KBrad.msgCar(o, ctx(o)))),
+    B('reply', t('a_reply'), () => replyForm(o)), B('car-cancel', t('a_car_cancel'), () => carCancel(o)), B('car-edit', t('a_car_edit'), () => carForm(o)), cancel];
+  if (st === 'arrived') return [B('door', t('a_door'), () => doorForm(o), true), B('reply', t('a_reply'), () => replyForm(o)), cancel];
+  if (st === 'door') return [B('door-wa', t('a_door_wa'), () => waModal(t('wa_door'), c.driver_wa, KBrad.msgDoor(o, ctx(o))), true), B('load', t('a_load'), () => act('load_start', { order_no: o.order_no })),
+    B('door', t('a_door'), () => doorForm(o)), cancel];
+  if (st === 'loading') return [B('depart', t('a_depart'), () => departFlow(o), true), B('door', t('a_door'), () => doorForm(o))];
+  if (st === 'departed') return [B('depart-wa', t('a_depart_wa'), () => departWa(o), true), B('delivered', t('a_delivered'), () => act('order_status', { order_no: o.order_no, to: 'delivered' }))];
+  return [];
+}
+
+/* ---------- step 1: the order (read from a photo / a message, or typed) ---------- */
+function orderForm(o) {
+  if (!S.D.coolers.length) { toast(t('need_wh'), true); return; }
+  const wh = sel('of-wh', S.D.coolers.map(c => [c.code, c.name]), o ? o.warehouse : '', o ? { disabled: true } : null);
+  const date = h('input', { id: 'of-date', type: 'date', value: o ? o.order_date : today() });
+  const dtype = sel('of-dtype', [['toko', t('dest_toko')], ['pelanggan', t('dest_cust')]], o ? o.dest_type : 'toko');
+  const dname = h('input', { id: 'of-dname', value: o && o.dest_type === 'pelanggan' ? o.dest_name : '' }), dphone = h('input', { id: 'of-dphone', inputmode: 'tel', value: o ? (o.dest_phone || '') : '' });
+  const daddr = h('input', { id: 'of-daddr', value: o ? (o.dest_address || '') : '' }), note = h('input', { id: 'of-note', value: o ? (o.note || '') : '' });
+  const custs = S.D.customers.slice().sort((a, b) => a.name.localeCompare(b.name));
+  const cpick = sel('of-cust', [['', t('cu_pick')], ['new', '+ ' + t('cu_add')]].concat(custs.map((c, i) => ['c' + i, c.name + (c.phone ? ' · ' + c.phone : '')])), '');
+  let cid = o ? o.customer_id || 0 : 0, src = o ? o.source : 'manual', readBy = o ? o.read_by : '';
+  if (o && o.dest_type === 'pelanggan') { const i = custs.findIndex(c => c.name.toLowerCase() === String(o.dest_name).toLowerCase()); if (i >= 0) cpick.value = 'c' + i; }
+  cpick.addEventListener('change', () => {
+    if (cpick.value === 'new') { dtype.value = 'pelanggan'; dname.value = ''; daddr.value = ''; dphone.value = ''; cid = 0; dname.focus(); return; }
+    const c = custs[Number(cpick.value.slice(1))]; if (c) { dtype.value = 'pelanggan'; dname.value = c.name; daddr.value = c.address || ''; dphone.value = c.phone || ''; cid = c.id || 0; }
+  });
+  dname.addEventListener('input', () => { if (dname.value.trim()) dtype.value = 'pelanggan'; cid = 0; cpick.value = 'new'; });
+  const fp = sel('of-fp', S.D.products.map(p => [p.code, p.name]), ''), fc = h('input', { id: 'of-fc', inputmode: 'numeric', placeholder: t('ctn'), style: 'max-width:110px' });
+  const tb = h('tbody', { id: 'of-lines' }), sum = h('div', { class: 'muted', id: 'of-sum' });
+  // what can be taken: the stock less what other orders hold; this order's own lines count as free again
+  const mine = {}; (o ? o.lines : []).forEach(l => { mine[l.pallet_code] = (mine[l.pallet_code] || 0) + Number(l.cartons); });
+  const avail = () => S.D.stock.filter(r => r.warehouse === wh.value).map(r => Object.assign({}, r, { free: r.free + (o && o.warehouse === r.warehouse ? mine[r.pallet_code] || 0 : 0) })).filter(r => r.free > 0);
+  function recalc() { const c = Array.from(tb.querySelectorAll('[data-f="cartons"]')).reduce((s, i) => s + (Number(i.value) || 0), 0); sum.textContent = t('total') + ': ' + n0(c) + ' ' + t('ctn'); }
+  function addLine(pc, n) {
+    const ps = sel('', [['', '—']].concat(avail().map(r => [r.pallet_code, r.pallet_code + ' · ' + r.product_name + ' · ' + fd(r.exp_date) + ' · ' + n0(r.free) + ' ' + t('ctn')])), pc || '', { 'data-f': 'pallet_code' });
+    const ci = h('input', { 'data-f': 'cartons', inputmode: 'numeric', value: n || '', style: 'width:90px', oninput: recalc });
+    tb.append(h('tr', null, h('td', null, ps), h('td', null, ci), h('td', null, h('button', { class: 'btn sm bad', type: 'button', onclick: e => { e.target.closest('tr').remove(); recalc(); } }, '×'))));
+    recalc();
+  }
+  (o ? o.lines : []).forEach(l => addLine(l.pallet_code, l.cartons));
+  if (!o) addLine();
+  wh.addEventListener('change', () => { tb.replaceChildren(); addLine(); });
+  const fefoBtn = h('button', { class: 'btn sm', type: 'button', id: 'of-fefo', onclick: () => { // FEFO here, on the device: oldest expiry first
+    let need = Number(fc.value) || 0; if (!(need > 0) || !fp.value) return;
+    Array.from(tb.querySelectorAll('tr')).forEach(tr => { if (!tr.querySelector('[data-f="pallet_code"]').value) tr.remove(); });
+    const used = {}; Array.from(tb.querySelectorAll('tr')).forEach(tr => { const p = tr.querySelector('[data-f="pallet_code"]').value; used[p] = (used[p] || 0) + (Number(tr.querySelector('[data-f="cartons"]').value) || 0); });
+    avail().filter(r => r.product === fp.value).forEach(r => { const left = r.free - (used[r.pallet_code] || 0); if (need <= 0 || left <= 0) return; const tk = Math.min(need, left); addLine(r.pallet_code, tk); need -= tk; });
+    if (need > 0) toast(t('fefo_short', { n: need }), true);
+  } }, t('fefo'));
+  // read from a photo of the written sheet or a customer's message → the form is filled as a draft; reading saves nothing
+  const rdFile = h('input', { id: 'of-rd-photo', type: 'file', accept: 'image/*' }), rdText = h('textarea', { id: 'of-rd-text', rows: 3, placeholder: t('rd_paste'), style: 'min-height:80px' });
+  const rdOut = h('div', { id: 'of-rd-out' });
+  function fillDraft(d) {
+    if (d.warehouse && S.D.coolers.some(c => c.code === d.warehouse)) wh.value = d.warehouse;
+    if (d.order_date) date.value = d.order_date;
+    dtype.value = d.dest_type;
+    if (d.dest_type === 'pelanggan') {
+      dname.value = d.dest_name || ''; daddr.value = d.dest_address || ''; dphone.value = d.dest_phone || ''; cid = d.customer_id || 0;
+      const i = custs.findIndex(c => c.name.toLowerCase() === String(d.dest_name).toLowerCase()); cpick.value = i >= 0 ? 'c' + i : 'new';
+    }
+    if (d.note && !note.value) note.value = d.note;
+    tb.replaceChildren(); d.lines.forEach(l => addLine(l.pallet_code, l.cartons)); if (!d.lines.length) addLine();
+  }
+  function draftNote(r) {
+    const d = r.draft, wtxt = w => w.kind === 'no_pallet' ? t('rd_w_no_pallet', { p: w.pallet }) : w.kind === 'short_pallets' ? t('rd_w_short_p', { n: w.n }) : t('rd_w_short', { n: w.n });
+    const by = r.read_by === 'rules' ? t('rd_by_rules') + (r.ai === 'error' ? ' · ' + t('rd_ai_err') : '') : t('rd_by_ai');
+    return h('div', { id: 'of-rd-note', 'data-by': r.read_by, 'data-unclear': String(d.unclear) },
+      h('div', { class: d.unmatched.length || d.warn.length ? 'warn' : 'ok', id: 'of-rd-sum', text: t('rd_done', { n: d.n_items, p: d.lines.length }) + ' · ' + by }),
+      d.warn.map(w => h('div', { class: 'warn', 'data-warn': w.kind, text: w.line + ' — ' + wtxt(w) })),
+      d.unmatched.length ? h('div', { id: 'of-rd-un' }, h('b', { text: t('rd_un') }),
+        d.unmatched.map(u => h('div', { class: 'bad', 'data-reason': u.reason, text: u.line + ' — ' + t('rd_r_' + u.reason) + (u.pallet ? ' (' + u.pallet + ')' : '') }))) : null,
+      h('p', { class: 'muted', text: t('rd_check') }));
+  }
+  const rdGo = h('button', { class: 'btn pri sm', type: 'button', id: 'of-rd-go', onclick: async () => {
+    const f = rdFile.files && rdFile.files[0], txt = rdText.value.trim();
+    if (!f && !txt) { toast(t('rd_need'), true); return; }
+    rdGo.disabled = true; rdOut.replaceChildren(h('div', { class: 'muted', text: t('rd_reading') }));
+    try {
+      const img = f ? await shrinkPhoto(f) : null;
+      const r = await api('order_read', { text: txt, warehouse: wh.value, image_base64: img ? img.data : undefined, mime: img ? img.mime : undefined });
+      fillDraft(r.draft); src = f ? 'photo' : 'message'; readBy = r.read_by; rdOut.replaceChildren(draftNote(r));
+    } catch (e) { rdOut.replaceChildren(h('div', { class: 'bad', id: 'of-rd-err', text: e.message || e.error })); }
+    rdGo.disabled = false;
+  } }, t('rd_go'));
+  const readBox = o ? null : h('details', { class: 'card', id: 'of-read', style: 'margin:0 0 10px' }, h('summary', { text: '📷 ' + t('rd_title') }),
+    h('p', { class: 'muted', id: 'of-rd-hint', text: t(S.D.ai_reader === false ? 'rd_hint_off' : 'rd_hint') }),
+    field(t('rd_photo'), rdFile), rdText, h('div', { class: 'row', style: 'margin-top:6px' }, rdGo), rdOut);
+  modal(o ? t('or_edit') + ' ' + o.order_no : t('or_new'), h('div', null, readBox,
+    h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('wh'), wh)), h('div', { style: 'flex:1;min-width:140px' }, field(t('date'), date))),
+    field(t('dest_cust'), cpick),
+    h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('dest'), dtype)), h('div', { style: 'flex:1;min-width:140px' }, field(t('dest_name'), dname))),
+    h('div', { class: 'row' }, h('div', { style: 'flex:2;min-width:180px' }, field(t('dest_addr'), daddr)), h('div', { style: 'flex:1;min-width:140px' }, field(t('phone'), dphone))),
+    field(t('note'), note),
+    h('h3', { style: 'margin-top:12px', text: t('lines') }), h('div', { class: 'row' }, h('div', { style: 'flex:2;min-width:140px' }, fp), fc, fefoBtn),
+    h('div', { class: 'tw' }, h('table', { class: 'lines' }, tb)), h('div', { class: 'row' }, h('button', { class: 'btn sm', type: 'button', id: 'of-add', onclick: () => addLine() }, t('add_row')), sum)),
+    [h('button', { class: 'btn pri', type: 'button', id: 'of-save', onclick: async () => {
+      const lines = Array.from(tb.querySelectorAll('tr')).map(tr => ({ pallet_code: tr.querySelector('[data-f="pallet_code"]').value, cartons: Number(tr.querySelector('[data-f="cartons"]').value) })).filter(l => l.pallet_code);
+      const r = await act('order_save', { order_no: o ? o.order_no : undefined, warehouse: wh.value, order_date: date.value, dest_type: dtype.value, dest_name: dname.value, dest_phone: dphone.value,
+        dest_address: daddr.value, customer_id: dtype.value === 'pelanggan' ? cid : 0, note: note.value, source: src, read_by: readBy, lines });
+      if (r) { closeModal(); S.tab = 'today'; render(); }
+    } }, t('save'))]);
+}
+// a photo for the order reader — at most 1600 px on its long side, JPEG 80 % (a phone photo of a sheet ≈ 200–400 KB). Read
+// through a data: URL (the page's CSP allows data: images, not blob:).
+function shrinkPhoto(file) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader(), bad = () => rej({ message: t('rd_bad_photo') });
+    fr.onerror = bad;
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = bad;
+      img.onload = () => {
+        const k = Math.min(1, 1600 / Math.max(img.naturalWidth || 1, img.naturalHeight || 1)), c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        res({ data: c.toDataURL('image/jpeg', 0.8).split(',')[1], mime: 'image/jpeg' });
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+/* ---------- step 2: to the cold store — after 16:00 / on a day by arrangement it asks first ---------- */
+async function sendFlow(o, extra) {
+  let r;
+  try { r = await api('order_status', Object.assign({ order_no: o.order_no, to: 'sent' }, extra || {})); }
+  catch (e) {
+    if (e.error === 'AFTER_HOURS') {
+      modal(t('ah_title', { last: e.last }), h('p', { id: 'sd-text', text: t('ah_text', { close: e.close, ot: rp(e.ot) }) }),
+        [h('button', { class: 'btn pri', type: 'button', id: 'sd-later', onclick: () => { closeModal(); sendFlow(o, Object.assign({}, extra, { when: 'later' })); } }, t('ah_later', { d: KBrad.dLong(e.next) })),
+          h('button', { class: 'btn', type: 'button', id: 'sd-today', onclick: () => { closeModal(); sendFlow(o, Object.assign({}, extra, { when: 'overtime' })); } }, t('ah_today'))]);
+      return;
+    }
+    if (e.error === 'ARRANGE') {
+      const cost = h('input', { id: 'sd-cost', inputmode: 'numeric' }), nt = h('input', { id: 'sd-note' });
+      modal(t('ar_title'), h('div', null, h('p', { id: 'sd-text', text: t('ar_text', { d: KBrad.dLong(e.date) }) }), field(t('ar_cost'), cost), field(t('ar_note'), nt)),
+        [h('button', { class: 'btn', type: 'button', id: 'sd-arr-later', onclick: async () => { closeModal(); if (await act('order_save', reSave(o, e.next), false)) sendFlow(Object.assign({}, o, { order_date: e.next })); } }, t('ar_later', { d: KBrad.dLong(e.next) })),
+          h('button', { class: 'btn pri', type: 'button', id: 'sd-cost-go', onclick: () => { const v = Number(String(cost.value).replace(/\D/g, '')); if (!(v > 0)) { toast(t('ar_cost'), true); return; } closeModal(); sendFlow(o, Object.assign({}, extra, { extra_cost: v, extra_note: nt.value })); } }, t('ar_go'))]);
+      return;
+    }
+    toast(e.message || e.error, true); return;
+  }
+  await load();
+  const sent = S.D.orders.find(x => x.order_no === o.order_no) || r.order;
+  waModal(t('wa_order'), CO(sent.warehouse).wa, KBrad.msgOrder(sent, ctx(sent)));
+}
+function reSave(o, date) { return { order_no: o.order_no, warehouse: o.warehouse, order_date: date, dest_type: o.dest_type, dest_name: o.dest_name, dest_phone: o.dest_phone, dest_address: o.dest_address,
+  customer_id: o.customer_id, note: o.note, source: o.source, read_by: o.read_by, lines: o.lines.map(l => ({ pallet_code: l.pallet_code, cartons: l.cartons })) }; }
+
+/* ---------- the cold store's WhatsApp reply, pasted: what it says, one tap to apply ---------- */
+function replyForm(o) {
+  const ta = h('textarea', { id: 'rp-text', rows: 3, placeholder: t('rp_paste'), style: 'min-height:80px' }), out = h('div', { id: 'rp-out' });
+  const go = h('button', { class: 'btn pri sm', type: 'button', id: 'rp-go', onclick: () => {
+    const r = KBrad.readReply(ta.value), st = o.status;
+    let label = '', run = null;
+    if (r.kind === 'approve') { label = t('rp_approve'); if (st === 'sent') run = () => act('order_status', { order_no: o.order_no, to: 'approved' }); }
+    if (r.kind === 'ready') { label = t('rp_ready'); if (st === 'sent') run = async () => (await act('order_status', { order_no: o.order_no, to: 'approved' }, false)) && act('order_status', { order_no: o.order_no, to: 'ready' }); else if (st === 'approved') run = () => act('order_status', { order_no: o.order_no, to: 'ready' }); }
+    if (r.kind === 'reject') { label = t('rp_reject'); if (st === 'sent') run = () => act('order_status', { order_no: o.order_no, to: 'rejected', note: ta.value.trim().slice(0, 120) }); }
+    if (r.kind === 'door') { label = t('rp_door', { d: r.door }); if (st === 'car') run = () => { closeModal(); arrivedForm(o, r.door); }; else if (['arrived', 'door', 'loading'].includes(st)) run = async () => { const x = await act('door_save', { order_no: o.order_no, door: r.door }); if (x) doorWa(x.order); }; }
+    out.replaceChildren(h('div', { id: 'rp-kind', 'data-kind': r.kind, class: r.kind ? (r.kind === 'reject' ? 'bad' : 'ok') : 'muted', text: r.kind ? label : t('rp_none') }),
+      r.kind && !run ? h('p', { class: 'muted', text: t('rp_not_now') }) : null,
+      run ? h('button', { class: 'btn pri', type: 'button', id: 'rp-apply', style: 'margin-top:8px', onclick: async () => { const keep = r.kind === 'door' && st === 'car'; if (!keep) closeModal(); await run(); } }, t('rp_apply') + ': ' + label) : null);
+  } }, t('rp_read'));
+  modal(t('rp_title', { no: o.order_no }), h('div', null, ta, h('div', { class: 'row', style: 'margin-top:6px' }, go), out));
+  ta.focus();
+}
+
+/* ---------- step 5: the car (Lalamove's minutes + the margin, checked against the break and closing) ---------- */
+function carForm(o) {
+  const tr = o.car || {}, H = CO(o.warehouse).hours, margin = S.D.eta_margin;
+  const kg = (o.lines || []).reduce((s, l) => s + Number(l.cartons) * (Number(PR(l.product).kg_per_ctn) || 0), 0), sug = KCold.vehicleFor(kg);
+  const drv = sel('tk-drv', [['', t('drv_pick')]].concat((S.D.drivers || []).map((d, i) => [String(i), d.name + ' · ' + (d.vehicle || '') + ' · ' + (d.plate || '')])), '');
+  const via = sel('tk-via', [['lalamove', t('via_lala')], ['sopir', t('via_drv')]], tr.via || 'lalamove');
+  const veh = h('input', { id: 'tk-veh', value: tr.vehicle || sug }), dn = h('input', { id: 'tk-driver', value: tr.driver || '' }), dwa = h('input', { id: 'tk-dwa', inputmode: 'tel', value: tr.driver_wa || '' });
+  const pl = h('input', { id: 'tk-plate', value: tr.plate || '', style: 'text-transform:uppercase' }), cost = h('input', { id: 'tk-cost', inputmode: 'numeric', value: tr.cost || '' });
+  const eta = h('input', { id: 'tk-eta', inputmode: 'numeric', value: tr.eta_min != null ? tr.eta_min : '', style: 'max-width:120px' }), info = h('div', { id: 'tk-eta-info' });
+  drv.addEventListener('change', () => { const d = (S.D.drivers || [])[Number(drv.value)]; if (d) { via.value = 'sopir'; dn.value = d.name; dwa.value = d.wa || ''; pl.value = d.plate || ''; veh.value = d.vehicle || veh.value; } });
+  const calc = () => {
+    const m = Number(eta.value); if (eta.value.trim() === '' || !(m >= 0)) return null;
+    const at = KBrad.etaOf(nowIso(), m, margin), a = KBrad.wibAt(at), sameDay = String(o.order_date) <= today();
+    return { a, ov: sameDay ? KBrad.overtimeAt(at, H) : { hours: 0, cost: 0 }, brk: sameDay && KBrad.inBreak(a.min, H) };
+  };
+  const show = () => {
+    const e = calc(); info.replaceChildren(); if (!e) return;
+    info.append(h('div', { id: 'tk-eta-at', text: t('eta_at', { m: margin, t: KBrad.hmStr(e.a.min) }) }),
+      e.ov.hours ? h('div', { class: 'bad', id: 'tk-eta-late', text: t('eta_late', { close: H.close, h: e.ov.hours, cost: rp(e.ov.cost) }) })
+        : e.brk ? h('div', { class: 'warn', id: 'tk-eta-break', text: t('eta_break', { b: H.brk }) }) : h('div', { class: 'ok', id: 'tk-eta-ok', text: t('eta_ok', { close: H.close }) }));
+  };
+  eta.addEventListener('input', show); show();
+  const save = async (acceptOt) => {
+    try {
+      const r = await api('car_save', { order_no: o.order_no, via: via.value, vehicle: veh.value, driver: dn.value, driver_wa: dwa.value, plate: pl.value, cost: Number(cost.value) || 0, eta_min: eta.value.trim() === '' ? '' : Number(eta.value), accept_ot: !!acceptOt });
+      await load(); const x = S.D.orders.find(y => y.order_no === o.order_no) || r.order;
+      waModal(t('wa_car'), CO(x.warehouse).wa, KBrad.msgCar(x, ctx(x)), r.warn === 'BREAK' ? h('p', { class: 'warn', text: t('eta_break', { b: H.brk }) }) : null);
+    } catch (e) {
+      if (e.error === 'LATE_CAR') {
+        modal(t('late_q'), h('p', { class: 'bad', id: 'tk-late-q', text: e.message }), [h('button', { class: 'btn pri', type: 'button', id: 'tk-accept', onclick: () => { closeModal(); save(true); } }, t('late_ok'))]);
+        return;
+      }
+      toast(e.message || e.error, true);
+    }
+  };
+  modal(t('car_title', { no: o.order_no }), h('div', null,
+    h('p', { class: 'muted', id: 'tk-sug', text: t('sug_vehicle', { v: sug, kg: n0(kg) }) }),
+    (S.D.drivers || []).length ? field(t('drv_pick'), drv) : null,
+    h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('via'), via)), h('div', { style: 'flex:1;min-width:140px' }, field(t('vehicle'), veh))),
+    h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('driver'), dn)), h('div', { style: 'flex:1;min-width:140px' }, field(t('driver_wa'), dwa))),
+    h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:120px' }, field(t('plate'), pl)), h('div', { style: 'flex:1;min-width:120px' }, field(t('cost'), cost)), h('div', { style: 'flex:1;min-width:120px' }, field(t('eta'), eta))),
+    info), [h('button', { class: 'btn pri', type: 'button', id: 'tk-save', onclick: () => save(false) }, t('save'))]);
+}
+function carCancel(o) {
+  ask(t('cc_title', { no: o.order_no }), t('reason'), async v => {
+    if (v.length < 3) { toast(t('reason'), true); return false; }
+    const r = await act('car_cancel', { order_no: o.order_no, reason: v }, false);
+    if (r && r.risk) toast(t('cc_risk'), true); else if (r) toast(t('saved'));
+  });
+}
+
+/* ---------- steps 6–9: the car is in (overtime with its cause), the door to the driver, loading, gone ---------- */
+function arrivedForm(o, door) {
+  const H = CO(o.warehouse).hours, tm = h('input', { id: 'in-time', type: 'time', value: KBrad.hmStr(KBrad.wibAt(nowIso()).min) }), dr = h('input', { id: 'in-door', value: door || '' });
+  const cause = sel('in-cause', S.D.ot_causes.map(c => [c, t('cause_' + c)]), ''), nt = h('input', { id: 'in-note' }), otBox = h('div', { id: 'in-ot' });
+  const show = () => {
+    const ov = /^\d{2}:\d{2}$/.test(tm.value) ? KBrad.overtimeAt(KBrad.atWib(today(), tm.value), H) : { hours: 0, cost: 0 };
+    otBox.replaceChildren(ov.hours ? h('div', null, h('p', { class: 'bad', id: 'in-ot-text', text: t('ot_will', { h: ov.hours, cost: rp(ov.cost) }) }), field(t('cause'), cause), field(t('ot_note'), nt)) : '');
+  };
+  tm.addEventListener('input', show); show();
+  modal(t('in_title', { no: o.order_no }), h('div', null, h('div', { class: 'row' }, h('div', { style: 'flex:1' }, field(t('time'), tm)), h('div', { style: 'flex:1' }, field(t('door_opt'), dr))), otBox),
+    [h('button', { class: 'btn pri', type: 'button', id: 'in-save', onclick: async () => {
+      const r = await act('order_arrived', { order_no: o.order_no, time: tm.value, door: dr.value, cause: cause.value, note: nt.value }, false);
+      if (!r) return;
+      closeModal();
+      if (r.order.door) doorWa(r.order); else toast(t('saved'));
+    } }, t('save'))]);
+}
+function doorWa(o) { const x = S.D.orders.find(y => y.order_no === o.order_no) || o; waModal(t('wa_door'), (x.car || {}).driver_wa, KBrad.msgDoor(x, ctx(x))); }
+function doorForm(o) {
+  const dr = h('input', { id: 'dr-no', value: o.door || '' });
+  modal(t('door_title', { no: o.order_no }), field(t('door'), dr), [h('button', { class: 'btn pri', type: 'button', id: 'dr-save', onclick: async () => {
+    const r = await act('door_save', { order_no: o.order_no, door: dr.value }, false); if (r) { closeModal(); doorWa(r.order); }
+  } }, t('save'))]);
+  dr.focus();
+}
+function departFlow(o) {
+  modal(t('a_depart') + ' — ' + o.order_no, h('p', { id: 'dep-q', text: t('dep_q') }), [h('button', { class: 'btn pri', type: 'button', id: 'dep-ok', onclick: async () => {
+    const r = await act('depart', { order_no: o.order_no }, false); if (!r) return;
+    closeModal(); departWa(r.order, r.short && r.short.length ? h('p', { class: 'warn', id: 'dep-short', text: t('dep_short', { s: r.short.join(', ') }) }) : null);
+  } }, t('yes'))]);
+}
+function departWa(o, extra) {
+  const x = S.D.orders.find(y => y.order_no === o.order_no) || o, to = x.dest_type === 'pelanggan' ? x.dest_phone : (S.D.company.phone || '').replace(/\D/g, '').replace(/^0/, '62');
+  waModal(t('wa_depart'), to, KBrad.msgDepart(x, ctx(x)), extra);
+}
+
+/* ---------- overtime this month ---------- */
+function vOt() {
+  const s = S.D.overtime, by = Object.keys(s.by_cause || {});
+  const list = S.D.orders.filter(o => o.ot_cost > 0 && String(o.order_date).slice(0, 7) === s.month);
+  return h('div', null, h('div', { class: 'card', id: 'ot-card' }, h('h2', { text: t('ot_title') }),
+    s.count ? h('div', { class: 'bad', id: 'ot-sum', text: t('ot_sum', { n: s.count, h: s.hours, cost: rp(s.cost) }) }) : h('p', { class: 'muted', id: 'ot-none', text: t('ot_none') }),
+    by.map(c => h('div', { 'data-cause': c, text: t('cause_' + c) + ': ' + rp(s.by_cause[c]) })),
+    s.n_extra ? h('div', { class: 'warn', id: 'ot-extra', text: t('ot_extra', { n: s.n_extra, cost: rp(s.extra) }) }) : null),
+    list.length ? h('div', null, h('h3', { text: t('ot_list') }), list.map(card)) : null);
+}
+
+/* ---------- settings (owner): each cooler's WhatsApp and hours, holidays, the margins ---------- */
+function vSet() {
+  const days = t('dow').split(',');
+  const coolers = S.D.coolers.map(c => {
+    const H = c.hours, f = k => h('input', { 'data-h': k, value: k === 'brk' ? H.brk : H[k], inputmode: k === 'ot' ? 'numeric' : null, style: 'max-width:110px' });
+    const box = (k, list) => h('div', { class: 'row', 'data-days': k }, days.map((d, i) => h('label', { style: 'display:inline-flex;gap:4px;align-items:center;margin:0 8px 0 0' },
+      h('input', { type: 'checkbox', 'data-dow': String(i), checked: list.includes(i), style: 'width:auto;min-height:0' }), d)));
+    const wa = h('input', { 'data-f': 'wa', inputmode: 'tel', value: c.wa_own ? c.wa : '', placeholder: c.wa || '' }), card = h('div', { class: 'card', 'data-cooler': c.code });
+    card.append(h('h2', { text: c.name }), field(t('s_wa'), wa), h('p', { class: 'muted', text: t('s_wa_hint') }),
+      h('div', { class: 'row' }, ['open', 'last', 'close', 'brk', 'ot'].map(k => h('div', null, h('label', { text: t('h_' + k) }), f(k)))),
+      h('label', { text: t('h_days') }), box('days', H.days), h('label', { text: t('h_arr') }), box('arrange', H.arrange),
+      h('button', { class: 'btn pri sm', type: 'button', 'data-save': c.code, style: 'margin-top:8px', onclick: () => {
+        const v = k => card.querySelector('[data-h="' + k + '"]').value.trim(), dl = k => Array.from(card.querySelectorAll('[data-days="' + k + '"] input:checked')).map(x => Number(x.dataset.dow));
+        act('cooler_save', { code: c.code, wa: wa.value, hours: { open: v('open'), close: v('close'), brk: v('brk'), last: v('last'), days: dl('days'), arrange: dl('arrange'), ot: Number(v('ot').replace(/\D/g, '')) } });
+      } }, t('save')));
+    return card;
+  });
+  const hol = h('textarea', { id: 'set-hol', rows: 4, style: 'min-height:90px' }, S.D.holidays.map(x => x.date + ' ' + (x.name || '')).join('\n'));
+  const mg = h('input', { id: 'set-margin', inputmode: 'numeric', value: S.D.eta_margin, style: 'max-width:110px' }), lm = h('input', { id: 'set-load', inputmode: 'numeric', value: S.D.load_min, style: 'max-width:110px' });
+  return h('div', null, h('h2', { text: t('s_coolers') }), coolers,
+    h('div', { class: 'card' }, h('h2', { text: t('s_rules') }), field(t('s_hol'), hol), h('p', { class: 'muted', text: t('hol_hint') }),
+      h('div', { class: 'row' }, h('div', null, field(t('s_margin'), mg)), h('div', null, field(t('s_load'), lm))),
+      h('button', { class: 'btn pri', type: 'button', id: 'set-save', onclick: () => {
+        const holidays = hol.value.split('\n').map(l => l.trim()).filter(Boolean).map(l => ({ date: l.slice(0, 10), name: l.slice(10).trim() }));
+        act('settings_save', { holidays, eta_margin: Number(mg.value), load_min: Number(lm.value) });
+      } }, t('save'))));
+}
+
+$('#lang').addEventListener('click', () => { S.lang = S.lang === 'ar' ? 'id' : 'ar'; LS.set('kbrad.lang', S.lang); if (S.D) render(); else { render(); renderLogin(); } });
+$('#logout').addEventListener('click', logout);
+$('#home').addEventListener('click', () => { location.href = '../' + location.search; });
+$('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
+// the home page's warnings follow the clock: redrawn every minute while nothing is open (no server call)
+setInterval(() => { if (S.D && $('#modal').hidden && document.visibilityState === 'visible' && S.tab === 'today') render(); }, 60000);
+(async function start() {
+  render();
+  try { if (window.KUpdate) KUpdate.start({ version: APP_VERSION, idle: () => !S.D }); } catch (e) { } // a new version reaches every phone by itself
+  S.key = LS.get('kbrad.key', '') || LS.get(KP + 'key', '') || LS.get('kcold.key', '') || (MOCK ? 'demo' : '');
+  // this tab's session: our own, or the owner app's (same site, same tab) — the PIN hash is never kept in localStorage
+  const own = SS.get('kbrad.session'), pos = SS.get(KP + 'session');
+  const sess = own && own.pin_hash ? own : pos && pos.pin_hash && ['owner', 'manager', 'akuntan'].includes(pos.role) ? pos : null;
+  if (S.key && sess) {
+    S.user = sess.user; S.pin_hash = sess.pin_hash;
+    try { const r = await api('login', {}); S.user = r.me.name; S.role = r.me.role; SS.set('kbrad.session', { user: S.user, pin_hash: S.pin_hash, role: S.role }); await load(); return; }
+    catch (e) { S.pin_hash = ''; }
+  }
+  renderLogin();
+})();
+</script>
+</body>
+</html>

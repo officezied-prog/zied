@@ -9,6 +9,7 @@ Tests: Playwright under `khair-pos/tests*`.
 - Cashier (الكاشير): https://officezied-prog.github.io/zied/khair-pos/kasir/
 - Field sales rep (المندوب): https://officezied-prog.github.io/zied/khair-pos/sales/
 - Cold storage (البرادات): https://officezied-prog.github.io/zied/khair-pos/gudang/
+- Cold-store orders, trial app (طلبيات البراد — تجريبي): https://officezied-prog.github.io/zied/khair-pos/brad/ (demo: `?mock=1`)
 
 **Installing on phones (v45–v46):** recommended = Chrome install (a WebAPK Google signs: no warning). Each login card
 shows a green "Pasang / تثبيت" card from `shared/install-btn.js` (Chrome's `beforeinstallprompt`; iPhone: Share → Add to
@@ -47,9 +48,15 @@ the worker tests + the three Playwright suites on every PR. This removed n8n's m
   Cloudflare dashboard — never in the repo/apps); hard cap 4,500 calls/month (`pos_api_usage`) < Google's free 5,000 →
   bill 0; over the cap / no key → the apps keep the free OpenStreetMap search. Only "Pro" fields (no phone/rating/hours).
 - `gudang/` (cold storage, `/webhook/khair-cold`) moved to the Worker in Batch C (PR #22) and is shown inside the owner
-  app; Phase 2 proper (WhatsApp + Lalamove) is still to do (plan in `khair-pos/worker/docs/phase2-plan.md`). v59 stage 1: the coolers'
-  hours in `backend/cold/cold-core.js` (last order 16:00, overtime Rp 300k per started hour after 17:00, Sunday by arrangement with an
-  agreed cost, public holidays closed, Lalamove minutes + 20 %) — time-dependent, so cold Playwright tests fix the page clock.
+  app; Phase 2 proper (WhatsApp + Lalamove) is still to do (plan in `khair-pos/worker/docs/phase2-plan.md`).
+- **Khair Order Brad (`brad/`, v60) = stage 1 of that plan as its OWN app until the owner has proven it** (owner 2026-10-18: «في تطبيق
+  اخر الان منفصل حتى نتأكد منه قبل دمجه مع القديم»; the gudang app stays exactly as before — do not add the order process to it until he
+  says so). Logic `backend/brad/brad-core.js` (KBrad, loaded after cold-parsers + cold-core), Worker `/webhook/khair-brad` (`worker/src/brad.js`).
+  Own table `brad_orders` + `pos_settings` keys `brad_*`; it only READS the gudang tables, except the OUT movements written when a car
+  leaves (`depart`). The owner's 9 steps with one-tap `wa.me` messages (the cold stores accept only WhatsApp), the order read from a photo /
+  message (`claude-haiku-5-5`, unclear photo lines once more by `claude-sonnet-5-5`; no key → rules), the coolers' hours (last order 16:00,
+  overtime Rp 300k per started hour after 17:00, Sunday by arrangement with an agreed cost, holidays, Lalamove minutes + 20 %, loading
+  30 min a pallet). Time-dependent, so its Playwright tests (`tests/brad.spec.js`) fix the page clock. Own `APP_VERSION` in `brad/index.html`.
 
 ## Owner standing rules — ALWAYS honor
 
