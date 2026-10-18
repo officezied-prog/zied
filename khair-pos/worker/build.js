@@ -37,6 +37,7 @@ const INDEXES = {
   cold_movements: ['pallet_code', 'warehouse'],
   cold_pallets: ['warehouse', 'pallet_code'],
   cold_orders: ['status', 'order_date'],
+  brad_orders: ['status', 'order_date'],
 };
 
 function buildSchema() {
@@ -80,6 +81,8 @@ const PROCESSES = [
   // node (check-key.js) that is NOT concatenated here, so this node body has no STORE_KEY decl:
   // params is ['$'] only, and handleCold feeds a synthetic 'Check Key' node.
   { srcs: [['..', 'backend', 'cold', 'cold-parsers.js'], ['..', 'backend', 'cold', 'cold-core.js'], ['..', 'backend', 'cold', 'process-cold.js']], fn: 'runProcessCold', out: 'process-cold.gen.js', params: ['$'] },
+  // v60: Khair Order Brad = the cold readers + core (read-only helpers: stock, FEFO) + brad-core.js + process-brad.js.
+  { srcs: [['..', 'backend', 'cold', 'cold-parsers.js'], ['..', 'backend', 'cold', 'cold-core.js'], ['..', 'backend', 'brad', 'brad-core.js'], ['..', 'backend', 'brad', 'process-brad.js']], fn: 'runProcessBrad', out: 'process-brad.gen.js', params: ['$'] },
 ];
 const STORE_KEY_DECL = /(?:const|var) STORE_KEY = '__STORE_KEY__';/;
 

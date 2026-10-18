@@ -661,8 +661,7 @@ CREATE TABLE IF NOT EXISTS cold_warehouses (
   rate_frozen REAL,
   rate_chiller REAL,
   rate_dry REAL,
-  mode TEXT,
-  hours TEXT
+  mode TEXT
 );
 
 CREATE TABLE IF NOT EXISTS cold_products (
@@ -774,17 +773,51 @@ CREATE TABLE IF NOT EXISTS cold_orders (
   log TEXT,
   customer_id REAL,
   plate TEXT,
+  dest_phone TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cold_orders_status ON cold_orders (status);
+CREATE INDEX IF NOT EXISTS idx_cold_orders_order_date ON cold_orders (order_date);
+
+CREATE TABLE IF NOT EXISTS brad_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_no TEXT,
+  order_date TEXT,
+  warehouse TEXT,
+  status TEXT,
+  created_at TEXT,
+  created_by TEXT,
+  source TEXT,
+  read_by TEXT,
+  dest_type TEXT,
+  dest_name TEXT,
   dest_phone TEXT,
+  dest_address TEXT,
+  customer_id REAL,
+  note TEXT,
+  lines TEXT,
+  log TEXT,
+  sent_at TEXT,
+  approved_at TEXT,
+  rejected_reason TEXT,
+  ready_at TEXT,
   extra_cost REAL,
   extra_note TEXT,
+  car TEXT,
   eta_at TEXT,
+  car_cancels REAL,
   arrived_at TEXT,
   door TEXT,
   ot_hours REAL,
   ot_cost REAL,
   ot_cause TEXT,
   ot_note TEXT,
-  trip_cancels REAL
+  load_at TEXT,
+  load_end_est TEXT,
+  departed_at TEXT,
+  stock_note TEXT,
+  delivered_at TEXT,
+  cancelled_at TEXT,
+  cancel_reason TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_cold_orders_status ON cold_orders (status);
-CREATE INDEX IF NOT EXISTS idx_cold_orders_order_date ON cold_orders (order_date);
+CREATE INDEX IF NOT EXISTS idx_brad_orders_status ON brad_orders (status);
+CREATE INDEX IF NOT EXISTS idx_brad_orders_order_date ON brad_orders (order_date);

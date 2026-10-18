@@ -53,7 +53,7 @@
   tr.diff td, .bad { color: var(--bad); font-weight: 600; }
   .warn { color: var(--warn); font-weight: 600; }
   .chip { display: inline-block; border-radius: 99px; padding: 2px 9px; font-size: 12px; background: var(--bd); }
-  .chip.open, .chip.sent, .chip.approved { background: var(--pri-l); } .chip.ready, .chip.dispatch, .chip.driver, .chip.arrived { background: var(--warn-l); } .chip.picked, .chip.delivered { background: var(--ok-l); } .chip.rejected { background: var(--bad-l); } .chip.cancelled { background: var(--bad-l); text-decoration: line-through; }
+  .chip.open, .chip.sent, .chip.approved { background: var(--pri-l); } .chip.ready, .chip.dispatch, .chip.driver { background: var(--warn-l); } .chip.picked, .chip.delivered { background: var(--ok-l); } .chip.rejected { background: var(--bad-l); } .chip.cancelled { background: var(--bad-l); text-decoration: line-through; }
   .list > div { border-bottom: 1px solid var(--bd); padding: 8px 0; }
   .order { border: 1px solid var(--bd); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
   .order .row .btn { flex: 0 0 auto; }
@@ -153,24 +153,7 @@ const I18N = {
     nx_driver_wa: 'Info sopir ke gudang (WA)', nx_delivered: 'Sudah sampai', nx_fix: 'Ubah & kirim ulang', reject_q: 'Alasan gudang menolak', share: 'Bagikan file', history: 'Riwayat', need_action: 'Perlu tindakan',
     cold_chain: 'Barang beku/dingin: pesan truk berpendingin (Lalamove biasa tidak berpendingin).', cancel_wa: 'Beri tahu gudang (WA)',
     kind: 'Jenis', kind_container: 'Kontainer', kind_in_place: 'Beli di gudang (tanpa kontainer)', in_no: 'Nomor (kosong = otomatis)', cs_planned: 'Direncanakan', cs_requested: 'Minta izin masuk', cs_approved: 'Diizinkan gudang', cs_rejected: 'Ditolak gudang', cs_stored: 'Tersimpan',
-    cx_request: 'Minta izin masuk (WA)', cx_ok: 'Gudang terima', cx_no: 'Gudang tolak', cx_notice: 'Beri tahu gudang (WA)',
-    // v59 (owner 2026-10-18): the cooler's hours, the car's arrival and its door, overtime
-    st_arrived: 'Mobil sudah masuk', nx_arrived: 'Mobil sudah masuk', nx_door_wa: 'Nomor pintu ke sopir (WA)', nx_car_cancel: 'Mobil batal / ganti', nx_depart_wa: 'Kabari pelanggan: berangkat (WA)',
-    car_cancel_q: 'Kenapa mobil batal?', car_risk: 'Sudah sore: pesan mobil lain segera. Lewat {close} ada lembur {ot} per jam.',
-    arr_title: 'Mobil masuk gudang', arr_time: 'Jam masuk', door: 'Nomor pintu', arr_ot: 'Masuk lewat {close}: lembur {h} jam · {cost}', ot_cause: 'Sebab lembur', ot_note: 'Catatan',
-    oc_order_late: 'Order telat dikirim', oc_store_late: 'Gudang telat siap', oc_car_late: 'Mobil telat', oc_car_cancel: 'Mobil batal', oc_other: 'Lainnya',
-    ah_title: 'Lewat jam order terakhir ({last})', ah_text: 'Kalau diambil hari ini, mobil harus masuk gudang sebelum {close}. Setelah itu lembur {ot} per jam (jam yang sudah mulai dihitung penuh).',
-    ah_later: 'Ambil {d} (tanpa lembur)', ah_today: 'Tetap hari ini (risiko lembur)',
-    ar_title: '{d}: buka dengan perjanjian', ar_text: 'Gudang buka hari itu hanya dengan perjanjian dan biaya tambahan. Isi biaya yang sudah disepakati dengan gudang.', ar_cost: 'Biaya tambahan disepakati (Rp)', ar_send: 'Kirim dengan biaya ini', ar_need: 'Isi biaya yang disepakati',
-    cl_title: 'Gudang tutup', cl_text: 'Gudang tutup {d}{n}.',
-    eta: 'Lalamove: tiba dalam (menit)', eta_hint: 'Menit dari aplikasi Lalamove, ditambah {m}% untuk macet.', eta_at: 'Perkiraan tiba {t}', eta_break: 'Tiba saat istirahat ({b}): mobil menunggu. Lebih baik pesan untuk tiba {e}.',
-    eta_late: 'Tiba lewat {close}: lembur {h} jam · {cost}.', eta_ok: 'Tiba sebelum {close}: tanpa lembur.', late_q: 'Mobil diperkirakan tiba {t}: lembur {h} jam · {cost}. Terima lembur?', accept_ot: 'Terima lembur', driver_wa: 'HP / WhatsApp sopir',
-    extra: 'Biaya tambahan', in_at: 'Masuk {t}', ot_line: 'Lembur {h} jam · {cost} — {c}', cancels: 'Mobil batal {n}×',
-    ta_no_car: 'Belum ada mobil — risiko lembur', ta_car_late: 'Mobil belum masuk', ta_overtime: 'Lewat {close}: lembur berjalan',
-    ot_title: 'Lembur & biaya tambahan bulan ini', ot_none: 'Belum ada lembur bulan ini.', ot_sum: 'Lembur: {n} kali · {h} jam · {cost}', ot_extra: 'Biaya hari perjanjian: {n} kali · {cost}',
-    s_hours: 'Jam kerja gudang', h_open: 'Buka', h_close: 'Tutup', h_brk: 'Istirahat (kosong = tanpa)', h_last: 'Order terakhir', h_days: 'Hari kerja', h_arr: 'Buka dengan perjanjian (biaya tambahan)', h_ot: 'Lembur per jam (Rp)',
-    s_hol: 'Libur nasional (gudang tutup)', hol_hint: 'Satu baris per hari, contoh: 2026-12-25 Natal', s_margin: 'Tambahan waktu Lalamove (%)', dow: 'Min,Sen,Sel,Rab,Kam,Jum,Sab',
-    depart_wa: 'Nomor WhatsApp pelanggan belum ada di order ini', door_need: 'Isi nomor pintu dan HP sopir dulu'
+    cx_request: 'Minta izin masuk (WA)', cx_ok: 'Gudang terima', cx_no: 'Gudang tolak', cx_notice: 'Beri tahu gudang (WA)'
   },
   ar: {
     title: 'مخازن خير المبرّدة', login: 'دخول', key: 'مفتاح المتجر', key_hint: 'يُكتب مرة واحدة على هذا الجهاز', change_key: 'تغيير المفتاح', user: 'اسم المستخدم', pin: 'الرمز السري', logout: 'خروج',
@@ -208,23 +191,7 @@ const I18N = {
     nx_driver_wa: 'أرسل بيانات السائق للمخزن', nx_delivered: 'وصلت', nx_fix: 'عدّل وأعد الإرسال', reject_q: 'سبب رفض المخزن', share: 'مشاركة الملف', history: 'السجل', need_action: 'يحتاج إجراء',
     cold_chain: 'بضاعة مجمّدة/مبرّدة: اطلب شاحنة مبرّدة (Lalamove العادي غير مبرّد).', cancel_wa: 'أبلغ المخزن (واتساب)',
     kind: 'النوع', kind_container: 'حاوية', kind_in_place: 'شراء داخل المخزن (بلا حاوية)', in_no: 'الرقم (فارغ = تلقائي)', cs_planned: 'مخطط', cs_requested: 'طُلب إذن الدخول', cs_approved: 'وافق المخزن', cs_rejected: 'رفض المخزن', cs_stored: 'مخزّنة',
-    cx_request: 'اطلب إذن الدخول (واتساب)', cx_ok: 'المخزن قبل', cx_no: 'المخزن رفض', cx_notice: 'أبلغ المخزن (واتساب)',
-    st_arrived: 'دخلت السيارة', nx_arrived: 'دخلت السيارة', nx_door_wa: 'رقم الباب للسائق (واتساب)', nx_car_cancel: 'ألغيت السيارة / تبديلها', nx_depart_wa: 'أبلغ الزبون بالانطلاق (واتساب)',
-    car_cancel_q: 'لماذا ألغيت السيارة؟', car_risk: 'الوقت متأخر: اطلب سيارة أخرى فورًا. بعد {close} وقت إضافي {ot} للساعة.',
-    arr_title: 'دخول السيارة إلى البراد', arr_time: 'ساعة الدخول', door: 'رقم الباب', arr_ot: 'دخلت بعد {close}: وقت إضافي {h} ساعة · {cost}', ot_cause: 'سبب الوقت الإضافي', ot_note: 'ملاحظة',
-    oc_order_late: 'تأخر إرسال الطلبية', oc_store_late: 'تأخر البراد في التجهيز', oc_car_late: 'تأخر السيارة', oc_car_cancel: 'إلغاء السيارة', oc_other: 'سبب آخر',
-    ah_title: 'بعد آخر وقت للطلبيات ({last})', ah_text: 'إذا كان الاستلام اليوم فيجب أن تدخل السيارة البراد قبل {close}. بعدها وقت إضافي {ot} للساعة (الساعة التي تبدأ تُحسب كاملة).',
-    ah_later: 'الاستلام {d} (بلا وقت إضافي)', ah_today: 'اليوم رغم ذلك (خطر وقت إضافي)',
-    ar_title: '{d}: العمل بالاتفاق فقط', ar_text: 'البراد يعمل ذلك اليوم بالاتفاق وبتكلفة إضافية فقط. اكتب التكلفة المتفق عليها مع البراد.', ar_cost: 'التكلفة الإضافية المتفق عليها (روبية)', ar_send: 'أرسل بهذه التكلفة', ar_need: 'اكتب التكلفة المتفق عليها',
-    cl_title: 'البراد مغلق', cl_text: 'البراد مغلق {d}{n}.',
-    eta: 'لالاموف: تصل خلال (دقيقة)', eta_hint: 'الدقائق من تطبيق لالاموف، مع زيادة {m}% للزحمة.', eta_at: 'الوصول المتوقع {t}', eta_break: 'تصل وقت الاستراحة ({b}): ستنتظر السيارة. الأفضل حجزها لتصل {e}.',
-    eta_late: 'تصل بعد {close}: وقت إضافي {h} ساعة · {cost}.', eta_ok: 'تصل قبل {close}: بلا وقت إضافي.', late_q: 'الوصول المتوقع {t}: وقت إضافي {h} ساعة · {cost}. هل تقبل الوقت الإضافي؟', accept_ot: 'قبول الوقت الإضافي', driver_wa: 'هاتف / واتساب السائق',
-    extra: 'تكلفة إضافية', in_at: 'دخلت {t}', ot_line: 'وقت إضافي {h} ساعة · {cost} — {c}', cancels: 'ألغيت سيارة {n} مرة',
-    ta_no_car: 'لا توجد سيارة بعد — خطر وقت إضافي', ta_car_late: 'السيارة لم تدخل بعد', ta_overtime: 'بعد {close}: الوقت الإضافي يُحسب الآن',
-    ot_title: 'الوقت الإضافي والتكاليف الإضافية هذا الشهر', ot_none: 'لا وقت إضافي هذا الشهر.', ot_sum: 'وقت إضافي: {n} مرة · {h} ساعة · {cost}', ot_extra: 'أيام بالاتفاق: {n} مرة · {cost}',
-    s_hours: 'أوقات عمل البراد', h_open: 'يفتح', h_close: 'يغلق', h_brk: 'الاستراحة (فارغ = بلا)', h_last: 'آخر طلبية', h_days: 'أيام العمل', h_arr: 'يعمل بالاتفاق (تكلفة إضافية)', h_ot: 'الوقت الإضافي للساعة (روبية)',
-    s_hol: 'العطل الرسمية (البراد مغلق)', hol_hint: 'سطر لكل يوم، مثال: 2026-12-25 Natal', s_margin: 'زيادة على وقت لالاموف (%)', dow: 'الأحد,الاثنين,الثلاثاء,الأربعاء,الخميس,الجمعة,السبت',
-    depart_wa: 'رقم واتساب الزبون غير موجود في هذه الطلبية', door_need: 'اكتب رقم الباب وهاتف السائق أولًا'
+    cx_request: 'اطلب إذن الدخول (واتساب)', cx_ok: 'المخزن قبل', cx_no: 'المخزن رفض', cx_notice: 'أبلغ المخزن (واتساب)'
   }
 };
 const MON = { id: ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'], ar: ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'] };
@@ -415,7 +382,7 @@ function vDash() {
   return h('div', null,
     MOCK ? h('p', { class: 'muted' }, t('demo') + ' · ', h('button', { class: 'btn sm', type: 'button', id: 'demo-reset', onclick: async () => { await KColdMock.reset(); await load(); } }, t('demo_reset'))) : null,
     D.warehouses.length ? kpis : h('div', { class: 'card', text: t('need_wh') }),
-    needAction(), otCard(A.overtime),
+    needAction(),
     h('div', { class: 'row', style: 'margin-bottom:12px' }, h('button', { class: 'btn', type: 'button', id: 'rep-print', onclick: () => stockReport('print') }, t('rep_print')), h('button', { class: 'btn', type: 'button', id: 'rep-xls', onclick: () => stockReport('xls') }, t('rep_xls'))),
     h('div', { class: 'card' }, h('h2', { text: t('al_exp') }), exp),
     h('div', { class: 'card' }, h('h2', { text: t('al_check') }), chk),
@@ -423,24 +390,11 @@ function vDash() {
 }
 function needAction() {
   const os = {}, cs = {};
-  S.D.orders.forEach(o => { if (['sent', 'approved', 'ready', 'dispatch', 'driver', 'arrived', 'picked', 'rejected'].includes(o.status)) os[o.status] = (os[o.status] || 0) + 1; });
+  S.D.orders.forEach(o => { if (['sent', 'approved', 'ready', 'dispatch', 'driver', 'picked', 'rejected'].includes(o.status)) os[o.status] = (os[o.status] || 0) + 1; });
   S.D.containers.forEach(c => { if (['planned', 'requested', 'approved', 'rejected'].includes(c.status)) cs[c.status] = (cs[c.status] || 0) + 1; });
   const btn = (tab, f, label, n) => h('button', { class: 'btn sm', type: 'button', 'data-need': f, onclick: () => { S.tab = tab; if (tab === 'ord') S.f.ost = f; render(); } }, label + ' ', h('b', { text: n }));
   const items = Object.keys(os).map(k => btn('ord', k, t('st_' + k), os[k])).concat(Object.keys(cs).map(k => btn('cont', k, t('container') + ': ' + t('cs_' + k), cs[k])));
-  // v59: today's pickups at risk of overtime (no car yet, car not in, after closing) — the same rules as the server
-  const ta = KCold.timeAlerts(S.D.orders, S.D.warehouses, new Date().toISOString(), hols());
-  const taBox = ta.length ? h('div', { class: 'list', id: 'ta-list', style: 'margin-bottom:8px' }, ta.map(x => h('div', { class: 'row', 'data-ta': x.kind, 'data-no': x.order_no },
-    h('b', { class: x.kind === 'no_car' ? 'warn' : 'bad', text: t('ta_' + x.kind, { close: HRS(x.warehouse).close }) }), h('span', { text: WH(x.warehouse).name }),
-    h('button', { class: 'btn sm', type: 'button', onclick: () => { S.tab = 'ord'; S.f.ost = 'active'; render(); } }, x.order_no)))) : null;
-  return h('div', { class: 'card', id: 'need' }, h('h2', { text: t('need_action') }), taBox, items.length ? h('div', { class: 'row' }, items) : (taBox ? null : h('p', { class: 'muted', text: t('all_good') })));
-}
-/** v59: overtime and agreed extra costs this month (every role sees it: it is avoidable). */
-function otCard(OT) {
-  if (!OT) return null;
-  return h('div', { class: 'card', id: 'ot-card' }, h('h2', { text: t('ot_title') }),
-    OT.count ? h('p', { class: 'bad', id: 'ot-sum', text: t('ot_sum', { n: OT.count, h: OT.hours, cost: rp(OT.cost) }) }) : h('p', { class: 'muted', id: 'ot-none', text: t('ot_none') }),
-    OT.count ? h('div', { class: 'muted' }, Object.keys(OT.by_cause).map(c => h('div', { 'data-cause': c, text: t('oc_' + c) + ': ' + rp(OT.by_cause[c]) }))) : null,
-    OT.n_extra ? h('p', { id: 'ot-extra', text: t('ot_extra', { n: OT.n_extra, cost: rp(OT.extra) }) }) : null);
+  return h('div', { class: 'card', id: 'need' }, h('h2', { text: t('need_action') }), items.length ? h('div', { class: 'row' }, items) : h('p', { class: 'muted', text: t('all_good') }));
 }
 function explain(no) { ask(t('explain') + ' ' + no, t('explain_q'), v => v.length < 3 ? (toast(t('explain_q'), true), false) : act('check_note', { check_no: no, note: v }).then(r => !!r), { input: h('textarea', { id: 'ask-in', style: 'min-height:90px' }) }); }
 async function stockReport(kind) {
@@ -649,8 +603,8 @@ function checkResult() {
 
 /* ---------- pick orders ---------- */
 function orderFull(o) { return Object.assign({}, o, { lines: o.lines || [] }); }
-const ORDER_ST = ['open', 'sent', 'approved', 'ready', 'dispatch', 'driver', 'arrived', 'picked', 'delivered', 'rejected', 'cancelled'];
-const HOLD = ['open', 'sent', 'approved', 'ready', 'dispatch', 'driver', 'arrived'];
+const ORDER_ST = ['open', 'sent', 'approved', 'ready', 'dispatch', 'driver', 'picked', 'delivered', 'rejected', 'cancelled'];
+const HOLD = ['open', 'sent', 'approved', 'ready', 'dispatch', 'driver'];
 function goStatus(o, to, note) { return act('order_status', { order_no: o.order_no, to, note }); }
 /** Share the order's Excel file (Android: straight into WhatsApp); else download it. */
 async function shareOrder(o) {
@@ -659,91 +613,22 @@ async function shareOrder(o) {
   try { if (file && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], text: o.order_no }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
   orderXls(o);
 }
-/* ---------- v59: the cooler's hours on this device (the same rules as the server: KCold) ---------- */
-const HRS = code => KCold.hoursOf(WH(code));
-const hols = () => (S.D && S.D.holidays) || [];
-const dayName = d => (t('dow').split(',')[new Date(d + 'T00:00:00Z').getUTCDay()] || '') + ' ' + fd(d);
-/** What sending this order now needs: null (send), else the day kind, whether it is past the last order time, the next working day. */
-function sendNeeds(o) {
-  const H = HRS(o.warehouse), n = KCold.wibAt(new Date().toISOString()), pd = o.order_date || n.date;
-  const k = pd >= n.date ? KCold.dayKind(pd, H, hols()) : 'work', late = pd <= n.date && n.min > KCold.hm(H.last);
-  return k === 'work' && !late ? null : { k, late, H, pd, next: KCold.nextWorkDay(pd > n.date ? pd : n.date, H, hols()) };
-}
-/** Send to the cooler: straight away in its hours; else ask — the next working day (no overtime), today anyway (overtime risk),
-    or a day by arrangement with the agreed extra cost. The WhatsApp opens in the same tap (with the new date when it moves). */
-function sendFlow(o, sendWa) {
-  const need = sendNeeds(o);
-  if (!need) { sendWa(o); goStatus(o, 'sent'); return; }
-  const { k, late, H, pd, next } = need;
-  const go = async (extra, oo) => { closeModal(); sendWa(oo || o); await act('order_status', Object.assign({ order_no: o.order_no, to: 'sent' }, extra)); };
-  const laterBtn = h('button', { class: 'btn pri', type: 'button', id: 'sd-later', onclick: () => go({ when: 'later' }, Object.assign({}, o, { order_date: next })) }, t('ah_later', { d: dayName(next) }));
-  if (k === 'holiday' || k === 'closed') {
-    modal(t('cl_title'), h('p', { id: 'sd-text', text: t('cl_text', { d: dayName(pd), n: k === 'holiday' ? ' (' + KCold.holidayName(pd, hols()) + ')' : '' }) }), [laterBtn]);
-    return;
-  }
-  const cost = k === 'arrange' ? h('input', { id: 'sd-cost', inputmode: 'numeric' }) : null;
-  const body = h('div', { id: 'sd-box' },
-    cost ? h('div', null, h('p', { text: t('ar_text') }), field(t('ar_cost'), cost)) : null,
-    late ? h('div', null, cost ? h('p', null, h('b', { text: t('ah_title', { last: H.last }) })) : null, h('p', { id: 'sd-text', text: t('ah_text', { close: H.close, ot: rp(H.ot) }) })) : null);
-  const now = h('button', { class: 'btn', type: 'button', id: 'sd-today', onclick: () => {
-    const x = {};
-    if (cost) { const v = Number(String(cost.value).replace(/\D/g, '')); if (!cost.value.trim() || !(v >= 0)) { toast(t('ar_need'), true); cost.focus(); return; } x.extra_cost = v; }
-    if (late) x.when = 'overtime';
-    go(x);
-  } }, cost && !late ? t('ar_send') : t('ah_today'));
-  modal(cost ? t('ar_title', { d: dayName(pd) }) : t('ah_title', { last: H.last }), body, [laterBtn, now]);
-}
-/** The car entered and registered: the time (now by default) and the door; after closing, the overtime and its cause. Once in, only the door. */
-function arrivedForm(o) {
-  const H = HRS(o.warehouse), n = KCold.wibAt(new Date().toISOString()), inAlready = o.status === 'arrived';
-  const time = h('input', { id: 'ar-time', type: 'time', value: KCold.hmStr(n.min) }), door = h('input', { id: 'ar-door', value: o.door || '', style: 'text-transform:uppercase;max-width:140px' });
-  const cause = sel('ar-cause', [['', '—']].concat((S.D.ot_causes || KCold.OT_CAUSES).map(c => [c, t('oc_' + c)])), ''), note = h('input', { id: 'ar-note' }), otBox = h('div', { id: 'ar-ot' });
-  const upd = () => {
-    otBox.replaceChildren();
-    if (!/^\d\d:\d\d$/.test(time.value)) return;
-    const ov = KCold.overtimeAt(new Date(Date.parse(n.date + 'T' + time.value + ':00+07:00')).toISOString(), H);
-    if (ov.hours > 0) otBox.append(h('p', { class: 'bad', id: 'ar-ot-text', text: t('arr_ot', { close: H.close, h: ov.hours, cost: rp(ov.cost) }) }), field(t('ot_cause'), cause), field(t('ot_note'), note));
-  };
-  time.addEventListener('input', upd); upd();
-  modal(t('arr_title') + ' · ' + o.order_no, h('div', null, inAlready ? null : field(t('arr_time'), time), field(t('door'), door), inAlready ? null : otBox),
-    [h('button', { class: 'btn pri', type: 'button', id: 'ar-save', onclick: async () => {
-      const d = { order_no: o.order_no, door: door.value };
-      if (!inAlready) Object.assign(d, { time: time.value, cause: cause.value, note: note.value });
-      if (await act('order_arrived', d)) closeModal();
-    } }, t('save'))]);
-}
-/** The car was cancelled: back to "book a car" (late in the day with the overtime warning), and the car form opens again. */
-function carCancel(o) {
-  ask(t('nx_car_cancel') + ' · ' + o.order_no, t('car_cancel_q'), async v => {
-    if (v.length < 3) { toast(t('car_cancel_q'), true); return false; }
-    try {
-      const r = await api('trip_cancel', { order_no: o.order_no, reason: v }); await load();
-      const H = HRS(o.warehouse); toast(r.risk ? t('car_risk', { close: H.close, ot: rp(H.ot) }) : t('saved'), !!r.risk);
-      setTimeout(() => { const x = S.D.orders.find(y => y.order_no === o.order_no); if (x) truckForm(x); }, 60);
-      return true;
-    } catch (e) { toast(e.message || e.error, true); return false; }
-  });
-}
 function orderNext(o) {
   if (!can()) return [];
   const w = WH(o.warehouse), B = (act2, label, fn, cls) => h('button', { class: 'btn sm ' + (cls || ''), type: 'button', 'data-act': act2, onclick: fn }, label);
-  const sendWa = x => { if (!w.pic_wa) toast(t('no_wa'), true); window.open(waLink(w.pic_wa, KColdDocs.waOrder(x && x.order_no ? x : o, ctx())), '_blank', 'noopener'); };
-  const out = [], tr = o.trip || {};
-  if (o.status === 'open') out.push(B('send', t('nx_send'), () => sendFlow(o, sendWa), 'pri'));
-  if (o.status === 'sent') out.push(B('ok', t('nx_ok'), () => goStatus(o, 'approved'), 'pri'), B('no', t('nx_no'), () => ask(t('nx_no') + ' ' + o.order_no, t('reject_q'), v => goStatus(o, 'rejected', v).then(r => !!r))), B('resend', t('nx_resend'), () => sendWa()));
+  const sendWa = () => { if (!w.pic_wa) toast(t('no_wa'), true); window.open(waLink(w.pic_wa, KColdDocs.waOrder(o, ctx())), '_blank', 'noopener'); };
+  const out = [];
+  if (o.status === 'open') out.push(B('send', t('nx_send'), async () => { sendWa(); await goStatus(o, 'sent'); }, 'pri'));
+  if (o.status === 'sent') out.push(B('ok', t('nx_ok'), () => goStatus(o, 'approved'), 'pri'), B('no', t('nx_no'), () => ask(t('nx_no') + ' ' + o.order_no, t('reject_q'), v => goStatus(o, 'rejected', v).then(r => !!r))), B('resend', t('nx_resend'), sendWa));
   if (o.status === 'approved') out.push(B('ready', t('nx_ready'), () => goStatus(o, 'ready'), 'pri'));
   if (o.status === 'ready') {
     const C = ctx(), sug = KCold.vehicleFor(KColdDocs.orderTotals(o, C).kg);
     out.push(B('dispatch', t('nx_dispatch'), () => goStatus(o, 'dispatch'), 'pri'), B('ask', t('nx_ask'), () => window.open(waLink((S.D.wa || {}).owner, KColdDocs.waDispatch(o, ctx(), sug)), '_blank', 'noopener')));
   }
   if (o.status === 'dispatch') out.push(B('truck', t('truck'), () => truckForm(o), 'pri'));
-  if (o.status === 'driver') out.push(B('arrived', t('nx_arrived'), () => arrivedForm(o), 'pri'), B('car-cancel', t('nx_car_cancel'), () => carCancel(o)));
-  if (o.status === 'arrived') out.push(B('door-wa', t('nx_door_wa'), () => { if (!o.door || !tr.driver_wa) { toast(t('door_need'), true); arrivedForm(o); return; } window.open(waLink(tr.driver_wa, KColdDocs.waDoor(o, ctx())), '_blank', 'noopener'); }, 'pri'),
-    B('door', t('door'), () => arrivedForm(o)));
-  if (o.status === 'driver' || o.status === 'arrived') out.push(B('driver-wa', t('nx_driver_wa'), () => window.open(waLink(w.pic_wa, KColdDocs.waDriver(o, ctx())), '_blank', 'noopener')),
+  if (o.status === 'driver') out.push(B('driver-wa', t('nx_driver_wa'), () => window.open(waLink(w.pic_wa, KColdDocs.waDriver(o, ctx())), '_blank', 'noopener')),
     B('pick', t('mark_picked'), () => ask(t('mark_picked') + ' ' + o.order_no, t('pick_q') + ' ' + t('pick_date'), v => act('order_pick', { order_no: o.order_no, pick_date: v || today() }).then(r => !!r), { input: h('input', { id: 'ask-in', type: 'date', value: today(), max: today() }) }), 'pri'));
-  if (o.status === 'picked') out.push(B('delivered', t('nx_delivered'), () => goStatus(o, 'delivered'), 'pri'),
-    B('depart-wa', t('nx_depart_wa'), () => { if (!o.dest_phone) { toast(t('depart_wa'), true); return; } window.open(waLink(o.dest_phone, KColdDocs.waDepart(o, ctx())), '_blank', 'noopener'); }));
+  if (o.status === 'picked') out.push(B('delivered', t('nx_delivered'), () => goStatus(o, 'delivered'), 'pri'));
   if (o.status === 'open' || o.status === 'rejected') out.push(B('edit', o.status === 'rejected' ? t('nx_fix') : t('edit'), () => orderForm(o)));
   if (HOLD.includes(o.status) || o.status === 'rejected') out.push(B('cancel', t('cancel_order'), () => ask(t('cancel_order') + ' ' + o.order_no, t('cancel_q'), async v => {
     const r = await act('order_cancel', { order_no: o.order_no, reason: v });
@@ -767,12 +652,6 @@ function vOrd() {
         l.full ? h('b', { text: t('full_pal') + ' (' + n0(l.cartons) + ' ' + t('ctn') + ')' }) : n0(l.cartons) + ' ' + t('ctn') + (l.full === false ? ' (' + t('part_pal') + ')' : '')))),
       !o.trip && (o.plate || o.vehicle) ? h('div', { class: 'muted', 'data-plate': '' }, t('vehicle') + ': ' + [o.vehicle, o.plate].filter(Boolean).join(' · ')) : null,
       o.trip ? h('div', { class: 'muted', 'data-trip': '' }, t('trip') + ': ' + [o.trip.vehicle, o.trip.driver, o.trip.plate].filter(Boolean).join(' · ') + (o.trip.cost ? ' · ' + rp(o.trip.cost) : '')) : null,
-      // v59: the agreed extra cost, the car's expected / real arrival and door, overtime, cars cancelled
-      Number(o.extra_cost) > 0 ? h('div', { class: 'muted', 'data-extra': '' }, t('extra') + ': ' + rp(o.extra_cost) + (o.extra_note ? ' · ' + o.extra_note : '')) : null,
-      o.status === 'driver' && o.eta_at ? h('div', { class: 'muted', 'data-eta': '' }, t('eta_at', { t: KCold.hmStr(KCold.wibAt(o.eta_at).min) })) : null,
-      o.arrived_at ? h('div', { class: 'muted', 'data-arrived': '' }, t('in_at', { t: KCold.hmStr(KCold.wibAt(o.arrived_at).min) }) + (o.door ? ' · ' + t('door') + ' ' + o.door : '')) : null,
-      Number(o.ot_cost) > 0 ? h('div', { class: 'bad', 'data-ot': '' }, t('ot_line', { h: o.ot_hours, cost: rp(o.ot_cost), c: t('oc_' + (o.ot_cause || 'other')) + (o.ot_note ? ' · ' + o.ot_note : '') })) : null,
-      Number(o.trip_cancels) > 0 ? h('div', { class: 'muted', 'data-cancels': '' }, t('cancels', { n: o.trip_cancels })) : null,
       (o.status === 'cancelled' || o.status === 'rejected') && (o.log || []).length ? h('div', { class: 'bad', text: (o.log[o.log.length - 1] || {}).note || o.cancel_reason || '' }) : null,
       h('div', { class: 'row', style: 'margin-top:8px' }, orderNext(o)),
       h('div', { class: 'row', style: 'margin-top:6px' },
@@ -865,34 +744,7 @@ function truckForm(o) {
   const drv = sel('tk-drv', [['', '—']].concat((S.D.drivers || []).map((d, i) => [String(i), d.name + ' · ' + (d.vehicle || '') + ' · ' + (d.plate || '')])), '');
   const via = sel('tk-via', [['lalamove', t('via_lala')], ['sopir', t('via_drv')]], tr.via || 'lalamove'), veh = h('input', { id: 'tk-veh', value: tr.vehicle || sug, list: 'veh-list2' }),
     dn = h('input', { id: 'tk-driver', value: tr.driver || '' }), pl = h('input', { id: 'tk-plate', value: tr.plate || '' }), cost = h('input', { id: 'tk-cost', inputmode: 'numeric', value: tr.cost || '' });
-  // v59: the driver's phone (for the door number) and Lalamove's minutes + the margin → the real arrival, checked against the break and closing
-  const dwa = h('input', { id: 'tk-dwa', inputmode: 'tel', value: tr.driver_wa || '' }), H = HRS(o.warehouse), margin = S.D.eta_margin != null ? S.D.eta_margin : KCold.ETA_MARGIN;
-  const eta = h('input', { id: 'tk-eta', inputmode: 'numeric', value: tr.eta_min != null ? tr.eta_min : '', style: 'max-width:120px' }), etaInfo = h('div', { id: 'tk-eta-info' });
-  const etaCalc = () => {
-    const m = Number(eta.value); if (eta.value.trim() === '' || !(m >= 0)) return null;
-    const at = KCold.etaOf(new Date().toISOString(), m, margin), a = KCold.wibAt(at), todayPick = (o.order_date || today()) <= today();
-    return { a, ov: todayPick ? KCold.overtimeAt(at, H) : { hours: 0, cost: 0 }, brk: todayPick && KCold.inBreak(a.min, H) };
-  };
-  const etaShow = () => {
-    const e = etaCalc(); etaInfo.replaceChildren(); if (!e) return;
-    etaInfo.append(h('div', { id: 'tk-eta-at', text: t('eta_at', { t: KCold.hmStr(e.a.min) }) }),
-      e.ov.hours ? h('div', { class: 'bad', id: 'tk-eta-late', text: t('eta_late', { close: H.close, h: e.ov.hours, cost: rp(e.ov.cost) }) })
-        : e.brk ? h('div', { class: 'warn', id: 'tk-eta-break', text: t('eta_break', { b: H.brk, e: H.brk.split('-')[1] }) }) : h('div', { class: 'ok', id: 'tk-eta-ok', text: t('eta_ok', { close: H.close }) }));
-  };
-  eta.addEventListener('input', etaShow); etaShow();
-  drv.addEventListener('change', () => { const d = (S.D.drivers || [])[Number(drv.value)]; if (d) { via.value = 'sopir'; dn.value = d.name; pl.value = d.plate || ''; dwa.value = d.wa || ''; if (d.vehicle) veh.value = d.vehicle; } });
-  const saveTrip = async acceptOt => {
-    const e = etaCalc();
-    if (e && e.ov.hours > 0 && !acceptOt) { // overtime: say what it costs and ask first
-      modal(t('accept_ot') + ' · ' + o.order_no, h('p', { class: 'bad', id: 'tk-late-q', text: t('late_q', { t: KCold.hmStr(e.a.min), h: e.ov.hours, cost: rp(e.ov.cost) }) }),
-        [h('button', { class: 'btn pri', type: 'button', id: 'tk-accept', onclick: () => saveTrip(true) }, t('accept_ot'))]);
-      return;
-    }
-    const r = await act('trip_save', { order_no: o.order_no, via: via.value, vehicle: veh.value, driver: dn.value, driver_wa: dwa.value.trim() || ((S.D.drivers || [])[Number(drv.value)] || {}).wa, plate: pl.value, cost: Number(String(cost.value).replace(/\D/g, '')) || 0, eta_min: eta.value.trim() === '' ? '' : Number(eta.value), accept_ot: !!acceptOt });
-    if (!r) return;
-    closeModal();
-    if (r.warn === 'BREAK') toast(t('eta_break', { b: H.brk, e: H.brk.split('-')[1] }), true);
-  };
+  drv.addEventListener('change', () => { const d = (S.D.drivers || [])[Number(drv.value)]; if (d) { via.value = 'sopir'; dn.value = d.name; pl.value = d.plate || ''; if (d.vehicle) veh.value = d.vehicle; } });
   modal(t('truck') + ' · ' + o.order_no, h('div', { id: 'truck' },
     h('datalist', { id: 'veh-list2' }, S.D.vehicles.map(v => h('option', { value: v.name }))),
     h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:200px' }, h('label', { text: t('pickup_addr') }), h('pre', { class: 'copy', id: 'tk-pickup', text: pickup }), h('button', { class: 'btn sm', type: 'button', onclick: () => copyText(pickup.replace('\n', ', ')) }, t('copy'))),
@@ -902,10 +754,8 @@ function truckForm(o) {
     h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', id: 'tk-lala', onclick: () => { copyText(text); window.open(CONFIG.LALAMOVE_URL, '_blank', 'noopener'); } }, t('open_lala')),
       drv, h('button', { class: 'btn', type: 'button', id: 'tk-wa', onclick: () => { const d = (S.D.drivers || [])[Number(drv.value)]; window.open(waLink(d ? d.wa : '', text), '_blank', 'noopener'); } }, t('wa_driver'))),
     can() ? h('div', null, h('h3', { style: 'margin-top:12px', text: t('trip') }), h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:130px' }, field(t('via'), via)), h('div', { style: 'flex:1;min-width:130px' }, field(t('vehicle'), veh))),
-      h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:130px' }, field(t('driver'), dn)), h('div', { style: 'flex:1;min-width:110px' }, field(t('plate'), pl)), h('div', { style: 'flex:1;min-width:110px' }, field(t('cost'), cost))),
-      h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:150px' }, field(t('driver_wa'), dwa)), h('div', { style: 'flex:1;min-width:150px' }, field(t('eta'), eta))),
-      h('p', { class: 'muted', id: 'tk-eta-hint', text: t('eta_hint', { m: margin }) }), etaInfo) : null),
-    can() ? [h('button', { class: 'btn pri', type: 'button', id: 'tk-save', onclick: () => saveTrip(false) }, t('save'))] : []);
+      h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:130px' }, field(t('driver'), dn)), h('div', { style: 'flex:1;min-width:110px' }, field(t('plate'), pl)), h('div', { style: 'flex:1;min-width:110px' }, field(t('cost'), cost)))) : null),
+    can() ? [h('button', { class: 'btn pri', type: 'button', id: 'tk-save', onclick: async () => { if (await act('trip_save', { order_no: o.order_no, via: via.value, vehicle: veh.value, driver: dn.value, driver_wa: ((S.D.drivers || [])[Number(drv.value)] || {}).wa, plate: pl.value, cost: Number(String(cost.value).replace(/\D/g, '')) || 0 })) closeModal(); } }, t('save'))] : []);
 }
 
 /* ---------- settings (owner) ---------- */
@@ -918,15 +768,7 @@ function vSet() {
   const addDrv = d => drvBox.append(h('tr', null, ['name', 'wa', 'vehicle', 'plate'].map(k => h('td', null, h('input', { 'data-f': k, value: (d && d[k]) || '' }))), h('td', null, h('button', { class: 'btn sm bad', type: 'button', onclick: e => e.target.closest('tr').remove() }, '×'))));
   (D.drivers || []).forEach(addDrv);
   const company = h('input', { id: 'set-company', value: D.company.name });
-  // v59: public holidays (every cooler closed) and the margin on Lalamove's minutes
-  const hol = h('textarea', { id: 'set-hol', style: 'min-height:110px', placeholder: t('hol_hint') }); hol.value = (D.holidays || []).map(x => (x.date + ' ' + (x.name || '')).trim()).join('\n');
-  const mar = h('input', { id: 'set-margin', inputmode: 'numeric', value: D.eta_margin != null ? D.eta_margin : KCold.ETA_MARGIN, style: 'max-width:120px' });
-  const holCard = h('div', { class: 'card', id: 'set-hol-card' }, h('h2', { text: t('s_hol') }), h('p', { class: 'muted', text: t('hol_hint') }), hol, field(t('s_margin'), mar),
-    h('button', { class: 'btn pri', type: 'button', id: 'hol-save', style: 'margin-top:8px', onclick: () => {
-      const holidays = hol.value.split('\n').map(l => l.trim()).filter(Boolean).map(l => { const m = /^(\d{4}-\d{2}-\d{2})\s*(.*)$/.exec(l); return m ? { date: m[1], name: m[2] } : { date: l, name: '' }; });
-      act('settings_save', { holidays, eta_margin: Number(String(mar.value).replace(/[^\d.]/g, '')) || 0 });
-    } }, t('save')));
-  return h('div', null, holCard,
+  return h('div', null,
     h('div', { class: 'card' }, h('div', { class: 'row' }, h('h2', { text: t('s_wh'), style: 'flex:1' }), h('button', { class: 'btn pri', type: 'button', id: 'wh-add', onclick: () => whForm(null) }, '+ ' + t('add'))), table([t('code'), t('name'), [t('pic'), 'hp'], [t('rate'), 'hp'], [t('parser'), 'hp'], ''], whRows, { id: 'set-wh' })),
     h('div', { class: 'card' }, h('div', { class: 'row' }, h('h2', { text: t('s_pr'), style: 'flex:1' }), h('button', { class: 'btn pri', type: 'button', id: 'pr-add', onclick: () => prForm(null) }, '+ ' + t('add'))), table([t('code'), t('name'), [t('kg_ctn'), 'n'], [t('ctn_pallet'), 'n'], [t('aliases'), 'hp'], ''], prRows, { id: 'set-pr' })),
     h('div', { class: 'card' }, h('h2', { text: t('s_drv') }), h('div', { class: 'tw' }, h('table', { class: 'lines' }, h('thead', null, h('tr', null, [t('name'), 'WhatsApp', t('vehicle'), t('plate'), ''].map(x => h('th', { text: x })))), drvBox)),
@@ -941,20 +783,11 @@ function whForm(w) {
   const unit = sel('wf-unit', [['month', t('per_month')], ['day', t('per_day')]], w ? w.rate_unit : 'month'), parser = sel('wf-parser', Object.keys(KColdParsers.parsers).map(k => [k, k]), w ? w.parser : 'generic');
   const mode = sel('wf-mode', [['', t('mode_none')]].concat((KCold.MODES || []).map(m => [m, t('mode_' + m)])), w ? w.mode : ''); // Batch C: cooler mode
   const active = h('input', { id: 'wf-active', type: 'checkbox', checked: w ? w.active : true, style: 'width:auto;min-height:0' });
-  // v59: the cooler's hours (the owner's defaults until changed here)
-  const H0 = w && w.hours ? w.hours : KCold.hoursOf({}), DOW = t('dow').split(',');
-  const hIn = (k, v, ph) => h('input', { id: 'wf-h-' + k, value: v, placeholder: ph || '', style: 'max-width:120px' });
-  const ho = hIn('open', H0.open, '09:00'), hc = hIn('close', H0.close, '17:00'), hb = hIn('brk', H0.brk, '12:00-13:00'), hl = hIn('last', H0.last, '16:00'), hot = hIn('ot', H0.ot);
-  const dayBox = (id, list) => h('div', { class: 'row', id: 'wf-h-' + id }, DOW.map((d, i) => h('label', { style: 'min-width:auto' }, h('input', { type: 'checkbox', 'data-dow': i, checked: list.includes(i), style: 'width:auto;min-height:0' }), ' ' + d)));
-  const hd = dayBox('days', H0.days), ha = dayBox('arr', H0.arrange), dowOf = box => Array.from(box.querySelectorAll('[data-dow]')).filter(x => x.checked).map(x => Number(x.dataset.dow));
   modal(w ? t('edit') + ' ' + w.code : t('s_wh'), h('div', null, field(w ? t('code') : t('code_auto'), inp('code', w ? { readonly: true } : { placeholder: 'DPP' })), field(t('name'), inp('name')), field(t('mode'), mode), field(t('address'), inp('address')),
     h('div', { class: 'row' }, h('div', { style: 'flex:1' }, field(t('pic'), inp('pic_name'))), h('div', { style: 'flex:1' }, field(t('pic_wa'), inp('pic_wa', { inputmode: 'tel' })))), field(t('cust_id'), inp('customer_id')),
-    h('div', { class: 'row' }, KCold.ZONES.map(z => h('div', { style: 'flex:1;min-width:120px' }, field(t('rate_z', { z: t('z_' + z) }), inp('rate_' + z.toLowerCase(), { inputmode: 'numeric' }))))), field(t('unit'), unit), field(t('parser'), parser), h('label', null, active, ' ' + t('active')),
-    h('h3', { style: 'margin-top:12px', text: t('s_hours') }), h('div', { class: 'row' }, [[t('h_open'), ho], [t('h_close'), hc], [t('h_brk'), hb], [t('h_last'), hl]].map(x => h('div', { style: 'flex:1;min-width:120px' }, field(x[0], x[1])))),
-    field(t('h_days'), hd), field(t('h_arr'), ha), field(t('h_ot'), hot)),
+    h('div', { class: 'row' }, KCold.ZONES.map(z => h('div', { style: 'flex:1;min-width:120px' }, field(t('rate_z', { z: t('z_' + z) }), inp('rate_' + z.toLowerCase(), { inputmode: 'numeric' }))))), field(t('unit'), unit), field(t('parser'), parser), h('label', null, active, ' ' + t('active'))),
     [h('button', { class: 'btn pri', type: 'button', id: 'wf-save', onclick: async () => {
       const d = {}; Object.keys(f).forEach(k => { d[k] = f[k].value; }); KCold.ZONES.forEach(z => { const k = 'rate_' + z.toLowerCase(); d[k] = Number(String(d[k]).replace(/\D/g, '')) || 0; }); d.rate_unit = unit.value; d.parser = parser.value; d.mode = mode.value; d.active = active.checked;
-      d.hours = { open: ho.value.trim(), close: hc.value.trim(), brk: hb.value.trim(), last: hl.value.trim(), days: dowOf(hd), arrange: dowOf(ha), ot: Number(String(hot.value).replace(/\D/g, '')) || 0 };
       if (await act('warehouse_save', d)) closeModal();
     } }, t('save'))]);
 }
