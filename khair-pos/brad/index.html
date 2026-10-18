@@ -109,7 +109,7 @@
 <script src="../shared/app-update.js"></script>
 <script>
 'use strict';
-const APP_VERSION = '1.0.0'; // the update signal (shared/app-update.js): bump with every change of this app
+const APP_VERSION = '1.1.0'; // the update signal (shared/app-update.js): bump with every change of this app
 if (window.top !== window.self) { try { window.top.location = window.location.href; } catch (e) { document.documentElement.innerHTML = ''; } }
 // Backend = the Khair Mart Jumla Worker (code, no monthly execution cap).
 const CONFIG = { BRAD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-brad', LALAMOVE_URL: 'https://web.lalamove.com/' };
@@ -168,7 +168,15 @@ const I18N = {
     ot_title: 'Lembur & biaya tambahan bulan ini', ot_none: 'Belum ada lembur bulan ini.', ot_sum: 'Lembur: {n} kali · {h} jam · {cost}', ot_extra: 'Biaya hari perjanjian: {n} kali · {cost}', ot_list: 'Order dengan lembur',
     s_coolers: 'Gudang: WhatsApp & jam kerja', s_wa: 'WhatsApp gudang (untuk order)', s_wa_hint: 'Kosong = nomor PIC dari aplikasi Gudang', h_open: 'Buka', h_close: 'Tutup', h_brk: 'Istirahat (kosong = tanpa)',
     h_last: 'Order terakhir', h_days: 'Hari kerja', h_arr: 'Buka dengan perjanjian (biaya tambahan)', h_ot: 'Lembur per jam (Rp)', s_hol: 'Libur nasional (gudang tutup)',
-    hol_hint: 'Satu baris per hari, contoh: 2026-12-25 Natal', s_margin: 'Tambahan waktu Lalamove (%)', s_load: 'Menit muat per palet', s_rules: 'Libur & waktu', dow: 'Min,Sen,Sel,Rab,Kam,Jum,Sab'
+    hol_hint: 'Satu baris per hari, contoh: 2026-12-25 Natal', s_margin: 'Tambahan waktu Lalamove (%)', s_load: 'Menit muat per palet', s_rules: 'Libur & waktu', dow: 'Min,Sen,Sel,Rab,Kam,Jum,Sab',
+    wa_auto_ok: 'Terkirim otomatis lewat WhatsApp ✓', wa_failed: 'WhatsApp otomatis gagal ({e}) — kirim manual', wa_cap_hit: 'Batas WhatsApp bulan ini tercapai — kirim manual',
+    wa_k_order: 'Order ke gudang', wa_k_car: 'Data mobil ke gudang', wa_k_door: 'Pintu ke sopir', wa_k_depart: 'Info berangkat ke pelanggan', wa_k_test: 'Tes',
+    wa_ap_approved: 'gudang setuju (otomatis)', wa_ap_ready: 'barang siap (otomatis)', wa_ap_rejected: 'ditolak (otomatis)', wa_ap_arrived: 'mobil masuk (otomatis)', wa_ap_door: 'pintu dicatat (otomatis)',
+    wa_ap_not_cooler: 'bukan nomor gudang — tidak diterapkan', wa_ap_not_now: 'tidak cocok dengan langkah sekarang', wa_ap_after_close: 'lewat jam tutup — isi sebab lembur di aplikasi',
+    s_wa_auto: 'WhatsApp otomatis', wa_hint: 'Pesan ke gudang, sopir dan pelanggan dikirim sendiri oleh server lewat WhatsApp resmi (Meta). Kalau belum aktif atau gagal, aplikasi menyiapkan pesannya untuk dikirim manual.',
+    wa_on: 'Aktif', wa_off: 'Belum aktif — pesan dikirim manual', wa_set_token: 'Token', wa_set_phone: 'Phone ID', wa_set_waba: 'WABA ID', wa_set_secret: 'App secret', wa_set_verify: 'Verify token',
+    wa_count: 'Bulan ini: {n} dari {cap} pesan', wa_tpl_none: 'Template belum bisa dibaca', wa_hook: 'Alamat webhook untuk Meta: {u}', wa_check: 'Cek status', wa_reg: 'Daftarkan template ke Meta',
+    wa_reg_done: 'Template dikirim ke Meta untuk ditinjau', wa_test_to: 'Kirim tes ke nomor', wa_test: 'Kirim tes', wa_test_ok: 'Pesan tes terkirim', wa_cap: 'Batas pesan per bulan', wa_unassigned: 'WhatsApp masuk tanpa order'
   },
   ar: {
     title: 'طلبيات البراد', login: 'دخول', key: 'مفتاح المتجر', key_hint: 'يُكتب مرة واحدة على هذا الجهاز', change_key: 'تغيير المفتاح', user: 'اسم المستخدم', pin: 'الرمز السري', logout: 'خروج',
@@ -212,7 +220,15 @@ const I18N = {
     ot_title: 'الوقت الإضافي والتكاليف الإضافية هذا الشهر', ot_none: 'لا يوجد وقت إضافي هذا الشهر.', ot_sum: 'وقت إضافي: {n} مرة · {h} ساعة · {cost}', ot_extra: 'تكاليف أيام الاتفاق: {n} مرة · {cost}', ot_list: 'طلبيات بوقت إضافي',
     s_coolers: 'البرادات: الواتساب وساعات العمل', s_wa: 'واتساب البراد (للطلبيات)', s_wa_hint: 'فارغ = رقم المسؤول من تطبيق البراد', h_open: 'يفتح', h_close: 'يغلق', h_brk: 'الاستراحة (فارغ = بدون)',
     h_last: 'آخر طلبية', h_days: 'أيام العمل', h_arr: 'يعمل باتفاق (تكلفة إضافية)', h_ot: 'الوقت الإضافي لكل ساعة (روبية)', s_hol: 'العطل الرسمية (البراد مغلق)',
-    hol_hint: 'سطر لكل يوم، مثال: 2026-12-25 Natal', s_margin: 'زيادة وقت لالاموف (%)', s_load: 'دقائق تحميل البلات', s_rules: 'العطل والأوقات', dow: 'الأحد,الاثنين,الثلاثاء,الأربعاء,الخميس,الجمعة,السبت'
+    hol_hint: 'سطر لكل يوم، مثال: 2026-12-25 Natal', s_margin: 'زيادة وقت لالاموف (%)', s_load: 'دقائق تحميل البلات', s_rules: 'العطل والأوقات', dow: 'الأحد,الاثنين,الثلاثاء,الأربعاء,الخميس,الجمعة,السبت',
+    wa_auto_ok: 'أُرسلت تلقائيًا عبر واتساب ✓', wa_failed: 'تعذّر الإرسال التلقائي ({e}) — أرسلها يدويًا', wa_cap_hit: 'وصلنا حد رسائل واتساب لهذا الشهر — أرسلها يدويًا',
+    wa_k_order: 'الطلبية للبراد', wa_k_car: 'بيانات السيارة للبراد', wa_k_door: 'رقم الباب للسائق', wa_k_depart: 'خبر الانطلاق للزبون', wa_k_test: 'تجربة',
+    wa_ap_approved: 'وافق البراد (تلقائي)', wa_ap_ready: 'البضاعة جاهزة (تلقائي)', wa_ap_rejected: 'رفض (تلقائي)', wa_ap_arrived: 'دخلت السيارة (تلقائي)', wa_ap_door: 'سُجّل الباب (تلقائي)',
+    wa_ap_not_cooler: 'ليس رقم البراد — لم يُطبّق', wa_ap_not_now: 'لا يناسب الخطوة الحالية', wa_ap_after_close: 'بعد الإغلاق — اختر سبب الوقت الإضافي في التطبيق',
+    s_wa_auto: 'واتساب تلقائي', wa_hint: 'الرسائل للبراد والسائق والزبون يرسلها الخادم بنفسه عبر واتساب الرسمي (Meta). إذا لم يكن مفعّلًا أو تعذّر الإرسال، يجهّز التطبيق الرسالة لترسلها يدويًا.',
+    wa_on: 'مفعّل', wa_off: 'غير مفعّل — الرسائل تُرسل يدويًا', wa_set_token: 'Token', wa_set_phone: 'Phone ID', wa_set_waba: 'WABA ID', wa_set_secret: 'App secret', wa_set_verify: 'Verify token',
+    wa_count: 'هذا الشهر: {n} من {cap} رسالة', wa_tpl_none: 'تعذّر قراءة القوالب بعد', wa_hook: 'عنوان webhook لـ Meta: {u}', wa_check: 'فحص الحالة', wa_reg: 'تسجيل القوالب لدى Meta',
+    wa_reg_done: 'أُرسلت القوالب إلى Meta للمراجعة', wa_test_to: 'إرسال تجربة إلى رقم', wa_test: 'إرسال تجربة', wa_test_ok: 'أُرسلت رسالة التجربة', wa_cap: 'حد الرسائل في الشهر', wa_unassigned: 'رسائل واتساب بلا طلبية'
   }
 };
 const MON = { id: ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'], ar: ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'] };
@@ -355,7 +371,9 @@ function alertsCard() {
 function vToday() {
   const live = S.D.orders.filter(o => KBrad.LIVE.includes(o.status) || (o.status === 'departed' && o.departed_at && KBrad.wibAt(o.departed_at).date === today()))
     .sort((a, b) => String(a.order_date).localeCompare(String(b.order_date)) || b.step - a.step);
+  const lost = (S.D.wa_log || []).filter(x => x.dir === 'in' && !x.order_no && Date.parse(x.at) > Date.now() - 86400000).slice(-5);
   return h('div', null, h('div', { class: 'trial', id: 'trial', text: t('trial') }), alertsCard(),
+    lost.length ? h('div', { class: 'card', id: 'wa-lost' }, h('h2', { text: t('wa_unassigned') }), lost.map(x => h('div', { class: 'warn', text: hmOf(x.at) + ' · ' + x.peer + ': “' + x.text + '”' }))) : null,
     can() ? h('div', { class: 'card row' }, h('button', { class: 'btn pri', type: 'button', id: 'or-new', onclick: () => orderForm(null) }, '+ ' + t('or_new'))) : null,
     h('div', { id: 'or-list' }, live.length ? live.map(card) : h('div', { class: 'card muted', text: t('none') })));
 }
@@ -375,7 +393,7 @@ function card(o) {
     o.ot_cost > 0 ? h('div', { class: 'bad', 'data-ot': '', text: t('lbl_ot') + ' ' + o.ot_hours + ' · ' + rp(o.ot_cost) + ' (' + t('cause_' + (o.ot_cause || 'other')) + ')' }) : null,
     o.extra_cost > 0 ? h('div', { class: 'warn', 'data-extra': '', text: t('lbl_extra') + ': ' + rp(o.extra_cost) }) : null,
     o.car_cancels > 0 ? h('div', { class: 'muted', 'data-cancels': '', text: t('cancels', { n: o.car_cancels }) }) : null,
-    o.stock_note ? h('div', { class: 'warn', text: t('dep_short', { s: o.stock_note }) }) : null];
+    o.stock_note ? h('div', { class: 'warn', text: t('dep_short', { s: o.stock_note }) }) : null, waLines(o)];
   const hist = h('details', { class: 'muted', 'data-log': '' }, h('summary', { text: t('history') + ' (' + (o.log || []).length + ')' }),
     (o.log || []).slice().reverse().map(l => h('div', { text: fd(KBrad.wibAt(l.at).date) + ' ' + hmOf(l.at) + ' · ' + l.by + ' · ' + t('st_' + l.to) + (l.note ? ' — ' + l.note : '') })));
   return h('div', { class: 'card order' + (alertNos ? ' alert' : ''), 'data-no': o.order_no, 'data-status': o.status },
@@ -541,7 +559,7 @@ async function sendFlow(o, extra) {
   }
   await load();
   const sent = S.D.orders.find(x => x.order_no === o.order_no) || r.order;
-  waModal(t('wa_order'), CO(sent.warehouse).wa, KBrad.msgOrder(sent, ctx(sent)));
+  if (!waAuto(r)) waModal(t('wa_order'), CO(sent.warehouse).wa, KBrad.msgOrder(sent, ctx(sent)), waWhy(r));
 }
 function reSave(o, date) { return { order_no: o.order_no, warehouse: o.warehouse, order_date: date, dest_type: o.dest_type, dest_name: o.dest_name, dest_phone: o.dest_phone, dest_address: o.dest_address,
   customer_id: o.customer_id, note: o.note, source: o.source, read_by: o.read_by, lines: o.lines.map(l => ({ pallet_code: l.pallet_code, cartons: l.cartons })) }; }
@@ -590,7 +608,9 @@ function carForm(o) {
     try {
       const r = await api('car_save', { order_no: o.order_no, via: via.value, vehicle: veh.value, driver: dn.value, driver_wa: dwa.value, plate: pl.value, cost: Number(cost.value) || 0, eta_min: eta.value.trim() === '' ? '' : Number(eta.value), accept_ot: !!acceptOt });
       await load(); const x = S.D.orders.find(y => y.order_no === o.order_no) || r.order;
-      waModal(t('wa_car'), CO(x.warehouse).wa, KBrad.msgCar(x, ctx(x)), r.warn === 'BREAK' ? h('p', { class: 'warn', text: t('eta_break', { b: H.brk }) }) : null);
+      const brk = r.warn === 'BREAK' ? h('p', { class: 'warn', text: t('eta_break', { b: H.brk }) }) : null;
+      if (waAuto(r)) { closeModal(); if (brk) toast(t('eta_break', { b: H.brk }), true); }
+      else waModal(t('wa_car'), CO(x.warehouse).wa, KBrad.msgCar(x, ctx(x)), [brk, waWhy(r)]);
     } catch (e) {
       if (e.error === 'LATE_CAR') {
         modal(t('late_q'), h('p', { class: 'bad', id: 'tk-late-q', text: e.message }), [h('button', { class: 'btn pri', type: 'button', id: 'tk-accept', onclick: () => { closeModal(); save(true); } }, t('late_ok'))]);
@@ -629,10 +649,22 @@ function arrivedForm(o, door) {
       const r = await act('order_arrived', { order_no: o.order_no, time: tm.value, door: dr.value, cause: cause.value, note: nt.value }, false);
       if (!r) return;
       closeModal();
-      if (r.order.door) doorWa(r.order); else toast(t('saved'));
+      if (r.order.door) { if (!waAuto(r)) doorWa(r.order, waWhy(r)); } else toast(t('saved'));
     } }, t('save'))]);
 }
-function doorWa(o) { const x = S.D.orders.find(y => y.order_no === o.order_no) || o; waModal(t('wa_door'), (x.car || {}).driver_wa, KBrad.msgDoor(x, ctx(x))); }
+function doorWa(o, extra) { const x = S.D.orders.find(y => y.order_no === o.order_no) || o; waModal(t('wa_door'), (x.car || {}).driver_wa, KBrad.msgDoor(x, ctx(x)), extra); }
+/** stage 2: the server sent the step's WhatsApp itself → say so (true); else the app prepares it to send by hand (false). */
+function waAuto(r) { const s = (r && r.wa_sent) || []; if (s.length && s.every(x => x.ok)) { toast(t('wa_auto_ok')); return true; } return false; }
+function waWhy(r) { const f = ((r && r.wa_sent) || []).find(x => !x.ok && x.error !== 'WA_OFF'); return f ? h('p', { class: 'warn', id: 'wa-why', text: f.error === 'WA_CAP' ? t('wa_cap_hit') : t('wa_failed', { e: f.error }) }) : null; }
+const WA_ST = { accepted: '✓', sent: '✓', delivered: '✓✓', read: '✓✓ 👁', failed: '✗', not_sent: '✗' };
+/** The order's WhatsApp messages: what went out and how far it got (✓ sent, ✓✓ delivered, 👁 read, ✗ failed), what came back. */
+function waLines(o) {
+  const L = (S.D.wa_log || []).filter(x => x.order_no === o.order_no).slice(-6);
+  if (!L.length) return null;
+  return h('div', { class: 'muted', 'data-wa': '' }, L.map(x => h('div', { 'data-wa-dir': x.dir, 'data-wa-status': x.status, class: x.status === 'failed' || x.status === 'not_sent' ? 'bad' : '',
+    text: hmOf(x.at) + ' ' + (x.dir === 'out' ? '→ ' + t('wa_k_' + x.kind) + ' ' + (WA_ST[x.status] || '') + (x.error ? ' (' + x.error + ')' : '')
+      : '← “' + x.text + '”' + (x.applied ? ' · ' + t('wa_ap_' + x.applied) : '')) })));
+}
 function doorForm(o) {
   const dr = h('input', { id: 'dr-no', value: o.door || '' });
   modal(t('door_title', { no: o.order_no }), field(t('door'), dr), [h('button', { class: 'btn pri', type: 'button', id: 'dr-save', onclick: async () => {
@@ -643,7 +675,9 @@ function doorForm(o) {
 function departFlow(o) {
   modal(t('a_depart') + ' — ' + o.order_no, h('p', { id: 'dep-q', text: t('dep_q') }), [h('button', { class: 'btn pri', type: 'button', id: 'dep-ok', onclick: async () => {
     const r = await act('depart', { order_no: o.order_no }, false); if (!r) return;
-    closeModal(); departWa(r.order, r.short && r.short.length ? h('p', { class: 'warn', id: 'dep-short', text: t('dep_short', { s: r.short.join(', ') }) }) : null);
+    closeModal();
+    const sh = r.short && r.short.length ? h('p', { class: 'warn', id: 'dep-short', text: t('dep_short', { s: r.short.join(', ') }) }) : null;
+    if (waAuto(r)) { if (sh) toast(t('dep_short', { s: r.short.join(', ') }), true); } else departWa(r.order, [sh, waWhy(r)]);
   } }, t('yes'))]);
 }
 function departWa(o, extra) {
@@ -660,6 +694,28 @@ function vOt() {
     by.map(c => h('div', { 'data-cause': c, text: t('cause_' + c) + ': ' + rp(s.by_cause[c]) })),
     s.n_extra ? h('div', { class: 'warn', id: 'ot-extra', text: t('ot_extra', { n: s.n_extra, cost: rp(s.extra) }) }) : null),
     list.length ? h('div', null, h('h3', { text: t('ot_list') }), list.map(card)) : null);
+}
+
+/* ---------- stage 2 (owner): automatic WhatsApp — is it set up, the templates at Meta, a test, the month's cap ---------- */
+function waCard() {
+  const box = h('div', { id: 'wa-status' }), cap = h('input', { id: 'wa-cap', inputmode: 'numeric', value: S.D.wa_cap, style: 'max-width:120px' }), to = h('input', { id: 'wa-test-to', inputmode: 'tel', placeholder: '08…' });
+  const hook = CONFIG.BRAD_URL.replace(/\/webhook\/khair-brad$/, '/webhook/wa'), s0 = S.D.wa || { on: false, count: 0, cap: S.D.wa_cap };
+  const show = r => box.replaceChildren(
+    h('div', { class: r.on ? 'ok' : 'warn', id: 'wa-on', text: r.on ? t('wa_on') : t('wa_off') }),
+    r.set ? h('div', { class: 'muted', id: 'wa-set', text: ['token', 'phone', 'waba', 'secret', 'verify'].map(k => (r.set[k] ? '✓ ' : '✗ ') + t('wa_set_' + k)).join(' · ') }) : null,
+    r.count !== undefined ? h('div', { id: 'wa-count', text: t('wa_count', { n: r.count, cap: r.cap }) }) : null,
+    (r.templates || []).length ? h('div', { id: 'wa-tpl' }, r.templates.map(x => h('div', { 'data-tpl': x.name, class: x.status === 'APPROVED' ? 'ok' : x.status === 'REJECTED' || x.status === 'ERROR' ? 'bad' : 'warn', text: x.name + ': ' + x.status + (x.error ? ' — ' + x.error : '') })))
+      : r.templates_error ? h('div', { class: 'muted', text: t('wa_tpl_none') }) : null);
+  show(s0);
+  const run = async (data, then) => { try { then(await api('wa_admin', data)); } catch (e) { toast(e.message || e.error, true); } };
+  return h('div', { class: 'card', id: 'wa-card' }, h('h2', { text: t('s_wa_auto') }), h('p', { class: 'muted', text: t('wa_hint') }), box,
+    h('p', { class: 'muted', id: 'wa-hook', text: t('wa_hook', { u: hook }) }),
+    h('div', { class: 'row' }, h('button', { class: 'btn sm', type: 'button', id: 'wa-check', onclick: () => run({ op: 'status' }, show) }, t('wa_check')),
+      h('button', { class: 'btn sm', type: 'button', id: 'wa-reg', onclick: () => run({ op: 'templates' }, r => { show(Object.assign({}, s0, r)); toast(t('wa_reg_done')); }) }, t('wa_reg'))),
+    h('div', { class: 'row', style: 'margin-top:8px;align-items:flex-end' }, h('div', null, field(t('wa_test_to'), to)),
+      h('button', { class: 'btn sm', type: 'button', id: 'wa-test', onclick: () => run({ op: 'test', to: to.value }, r => { const x = (r.wa_sent || [])[0] || {}; toast(x.ok ? t('wa_test_ok') : t('wa_failed', { e: x.error || '' }), !x.ok); }) }, t('wa_test'))),
+    h('div', { class: 'row', style: 'margin-top:8px;align-items:flex-end' }, h('div', null, field(t('wa_cap'), cap)),
+      h('button', { class: 'btn sm pri', type: 'button', id: 'wa-cap-save', onclick: () => act('settings_save', { wa_cap: Number(cap.value) }) }, t('save'))));
 }
 
 /* ---------- settings (owner): each cooler's WhatsApp and hours, holidays, the margins ---------- */
@@ -681,7 +737,7 @@ function vSet() {
   });
   const hol = h('textarea', { id: 'set-hol', rows: 4, style: 'min-height:90px' }, S.D.holidays.map(x => x.date + ' ' + (x.name || '')).join('\n'));
   const mg = h('input', { id: 'set-margin', inputmode: 'numeric', value: S.D.eta_margin, style: 'max-width:110px' }), lm = h('input', { id: 'set-load', inputmode: 'numeric', value: S.D.load_min, style: 'max-width:110px' });
-  return h('div', null, h('h2', { text: t('s_coolers') }), coolers,
+  return h('div', null, waCard(), h('h2', { text: t('s_coolers') }), coolers,
     h('div', { class: 'card' }, h('h2', { text: t('s_rules') }), field(t('s_hol'), hol), h('p', { class: 'muted', text: t('hol_hint') }),
       h('div', { class: 'row' }, h('div', null, field(t('s_margin'), mg)), h('div', null, field(t('s_load'), lm))),
       h('button', { class: 'btn pri', type: 'button', id: 'set-save', onclick: () => {
@@ -695,7 +751,15 @@ $('#logout').addEventListener('click', logout);
 $('#home').addEventListener('click', () => { location.href = '../' + location.search; });
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 // the home page's warnings follow the clock: redrawn every minute while nothing is open (no server call)
-setInterval(() => { if (S.D && $('#modal').hidden && document.visibilityState === 'visible' && S.tab === 'today') render(); }, 60000);
+// stage 2: the cold store answers by WhatsApp while the app is open — a light check every minute (only when on screen and nothing
+// is open) reloads when something changed; the home page's warnings follow the clock too
+let polling = false;
+setInterval(async () => {
+  if (!S.D || !$('#modal').hidden || document.visibilityState !== 'visible' || polling) return;
+  polling = true;
+  try { const r = await api('poll', {}); if (r.stamp && r.stamp !== S.D.stamp) await load(); else if (S.tab === 'today') render(); }
+  catch (e) { } finally { polling = false; }
+}, 60000);
 (async function start() {
   render();
   try { if (window.KUpdate) KUpdate.start({ version: APP_VERSION, idle: () => !S.D }); } catch (e) { } // a new version reaches every phone by itself

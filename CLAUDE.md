@@ -57,6 +57,11 @@ the worker tests + the three Playwright suites on every PR. This removed n8n's m
   message (`claude-haiku-5-5`, unclear photo lines once more by `claude-sonnet-5-5`; no key → rules), the coolers' hours (last order 16:00,
   overtime Rp 300k per started hour after 17:00, Sunday by arrangement with an agreed cost, holidays, Lalamove minutes + 20 %, loading
   30 min a pallet). Time-dependent, so its Playwright tests (`tests/brad.spec.js`) fix the page clock. Own `APP_VERSION` in `brad/index.html`.
+  **Stage 2 (v61): automatic WhatsApp** through Meta's official Cloud API (`worker/src/wa.js`, webhook `/webhook/wa`, log `brad_wa_log`):
+  the order / car / door / departure go out as approved templates; the cold store's quick-reply buttons and replies ("pintu 12") move the
+  order only from its own number (`KBrad.waEvent`, fixed rules). Secrets `WA_TOKEN`, `WA_PHONE_ID`, `WA_WABA_ID`, `WA_APP_SECRET`,
+  `WA_VERIFY_TOKEN` (owner, Cloudflare dashboard — never in the repo); without them, over the monthly cap (`brad_wa_cap`, default 3,000)
+  or on a refusal, the app sends by hand (wa.me) as in stage 1. Setup steps: `worker/docs/whatsapp-setup.md`.
 
 ## Owner standing rules — ALWAYS honor
 

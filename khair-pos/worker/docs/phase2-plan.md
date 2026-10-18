@@ -90,7 +90,8 @@ driver → picked → delivered, `backend/cold/cold-core.js` FLOW); every step i
    above (16:00 cut-off → next morning, break, 17:00 deadline alerts, overtime recorded), door
    number, car cancelled → another car, departure message to the customer; messages stay one-tap.
 2. **After the owner's WhatsApp business number is verified (Meta):** automatic sends, buttons,
-   replies read.
+   replies read. **Built in v61** (owner 2026-10-18: «ابدأ المرحلة الثانية: إرسال الواتساب تلقائيًا»), inactive until the owner adds the
+   five secrets — setup steps in `worker/docs/whatsapp-setup.md`.
 3. **After Lalamove grants API access:** car booked, tracked and re-booked automatically.
 
 ## Owner's requirements (verbatim intent)
