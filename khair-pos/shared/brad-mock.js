@@ -8,7 +8,10 @@
    server's fixed rules. KBradMock.reset() starts again (the gudang demo too).
    v61 (stage 2): window.KBradMockWA = true plays automatic WhatsApp as if it were set up (every message "sent", logged);
    KBradMock.waIn({ from, type, payload | text, ctx_order_no }) plays a message from WhatsApp (the cold store's button or reply)
-   through the server's own rules (KBrad.waEvent). Off (default) = not set up: the app sends by hand, as in stage 1. */
+   through the server's own rules (KBrad.waEvent). Off (default) = not set up: the app sends by hand, as in stage 1.
+   v61.1: the page's demo switch (home card, or ?wa=1 / ?wa=0; remembered as 'kbrad.mock.wa') sets KBradMockWA; each order then
+   shows the phone that got its step's message (the cold store / the driver / the customer), the cold store's buttons going
+   through waIn — the whole process can be tried without WhatsApp. */
 (function (root) {
   var KEY = 'kbrad.mock.db', COLD_KEY = 'kcold.mock.db';
   function load() { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return null; } }

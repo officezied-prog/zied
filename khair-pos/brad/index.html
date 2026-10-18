@@ -83,6 +83,8 @@
   .ok { color: var(--ok, #15803d); font-weight: 600; }
   .trial { background: var(--warn-l); border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 12px; }
   a.btn { display: inline-flex; align-items: center; text-decoration: none; }
+  .dm-phone { border: 1px dashed var(--inp-bd); border-radius: 10px; padding: 8px 10px; margin-top: 8px; background: var(--soft); }
+  .dm-phone .bubble { white-space: pre-wrap; background: var(--ok-l); border-radius: 8px; padding: 8px; font-size: 13px; margin: 6px 0; }
 </style>
 <script>
   /* Follow the owner app's manual light/dark choice (shared localStorage, same origin); 'auto' falls back to the media query above. */
@@ -109,7 +111,7 @@
 <script src="../shared/app-update.js"></script>
 <script>
 'use strict';
-const APP_VERSION = '1.1.0'; // the update signal (shared/app-update.js): bump with every change of this app
+const APP_VERSION = '1.1.1'; // the update signal (shared/app-update.js): bump with every change of this app
 if (window.top !== window.self) { try { window.top.location = window.location.href; } catch (e) { document.documentElement.innerHTML = ''; } }
 // Backend = the Khair Mart Jumla Worker (code, no monthly execution cap).
 const CONFIG = { BRAD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-brad', LALAMOVE_URL: 'https://web.lalamove.com/' };
@@ -119,6 +121,13 @@ const LS = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } }
 };
+// demo: automatic WhatsApp played (?wa=1 on, ?wa=0 off, remembered on this device; the switch on the home page) — each order then
+// shows the phone that got its message, with the cold store's buttons to tap
+if (MOCK) {
+  const q = location.search.match(/[?&]wa=([01])\b/);
+  if (q) LS.set('kbrad.mock.wa', q[1] === '1');
+  if (window.KBradMockWA === undefined) window.KBradMockWA = LS.get('kbrad.mock.wa', false) === true;
+}
 const SS = {
   get(k) { try { return JSON.parse(sessionStorage.getItem(k) || 'null'); } catch (e) { return null; } },
   set(k, v) { try { if (v) sessionStorage.setItem(k, JSON.stringify(v)); else sessionStorage.removeItem(k); } catch (e) { } }
@@ -176,7 +185,12 @@ const I18N = {
     s_wa_auto: 'WhatsApp otomatis', wa_hint: 'Pesan ke gudang, sopir dan pelanggan dikirim sendiri oleh server lewat WhatsApp resmi (Meta). Kalau belum aktif atau gagal, aplikasi menyiapkan pesannya untuk dikirim manual.',
     wa_on: 'Aktif', wa_off: 'Belum aktif — pesan dikirim manual', wa_set_token: 'Token', wa_set_phone: 'Phone ID', wa_set_waba: 'WABA ID', wa_set_secret: 'App secret', wa_set_verify: 'Verify token',
     wa_count: 'Bulan ini: {n} dari {cap} pesan', wa_tpl_none: 'Template belum bisa dibaca', wa_hook: 'Alamat webhook untuk Meta: {u}', wa_check: 'Cek status', wa_reg: 'Daftarkan template ke Meta',
-    wa_reg_done: 'Template dikirim ke Meta untuk ditinjau', wa_test_to: 'Kirim tes ke nomor', wa_test: 'Kirim tes', wa_test_ok: 'Pesan tes terkirim', wa_cap: 'Batas pesan per bulan', wa_unassigned: 'WhatsApp masuk tanpa order'
+    wa_reg_done: 'Template dikirim ke Meta untuk ditinjau', wa_test_to: 'Kirim tes ke nomor', wa_test: 'Kirim tes', wa_test_ok: 'Pesan tes terkirim', wa_cap: 'Batas pesan per bulan', wa_unassigned: 'WhatsApp masuk tanpa order',
+    dm_title: 'Demo · WhatsApp otomatis:', dm_off: 'mati — pesan dikirim manual', dm_turn_on: 'Nyalakan', dm_turn_off: 'Matikan',
+    dm_hint_on: 'Seperti setelah WhatsApp resmi diaktifkan: setiap pesan terkirim sendiri. Di setiap order ada HP simulasi — tekan tombol gudang seperti petugas gudang, lalu lihat order bergerak sendiri.',
+    dm_hint_off: 'Nyalakan untuk mencoba pengiriman otomatis dan tombol balasan gudang.',
+    dm_cooler: '📱 HP gudang {n} menerima:', dm_driver: '📱 HP sopir {n} menerima:', dm_customer: '📱 HP pelanggan {n} menerima:',
+    dm_tap: 'Tekan seperti petugas gudang:', dm_door: 'Balas nomor pintu', dm_door_ph: 'mis. 12', dm_nothing: 'Tidak ada perubahan'
   },
   ar: {
     title: 'طلبيات البراد', login: 'دخول', key: 'مفتاح المتجر', key_hint: 'يُكتب مرة واحدة على هذا الجهاز', change_key: 'تغيير المفتاح', user: 'اسم المستخدم', pin: 'الرمز السري', logout: 'خروج',
@@ -228,7 +242,12 @@ const I18N = {
     s_wa_auto: 'واتساب تلقائي', wa_hint: 'الرسائل للبراد والسائق والزبون يرسلها الخادم بنفسه عبر واتساب الرسمي (Meta). إذا لم يكن مفعّلًا أو تعذّر الإرسال، يجهّز التطبيق الرسالة لترسلها يدويًا.',
     wa_on: 'مفعّل', wa_off: 'غير مفعّل — الرسائل تُرسل يدويًا', wa_set_token: 'Token', wa_set_phone: 'Phone ID', wa_set_waba: 'WABA ID', wa_set_secret: 'App secret', wa_set_verify: 'Verify token',
     wa_count: 'هذا الشهر: {n} من {cap} رسالة', wa_tpl_none: 'تعذّر قراءة القوالب بعد', wa_hook: 'عنوان webhook لـ Meta: {u}', wa_check: 'فحص الحالة', wa_reg: 'تسجيل القوالب لدى Meta',
-    wa_reg_done: 'أُرسلت القوالب إلى Meta للمراجعة', wa_test_to: 'إرسال تجربة إلى رقم', wa_test: 'إرسال تجربة', wa_test_ok: 'أُرسلت رسالة التجربة', wa_cap: 'حد الرسائل في الشهر', wa_unassigned: 'رسائل واتساب بلا طلبية'
+    wa_reg_done: 'أُرسلت القوالب إلى Meta للمراجعة', wa_test_to: 'إرسال تجربة إلى رقم', wa_test: 'إرسال تجربة', wa_test_ok: 'أُرسلت رسالة التجربة', wa_cap: 'حد الرسائل في الشهر', wa_unassigned: 'رسائل واتساب بلا طلبية',
+    dm_title: 'تجربة · الواتساب التلقائي:', dm_off: 'متوقف — الرسائل تُرسل يدويًا', dm_turn_on: 'تشغيل', dm_turn_off: 'إيقاف',
+    dm_hint_on: 'كما بعد تفعيل الواتساب الرسمي: كل رسالة تُرسل وحدها. في كل طلبية هاتف تجريبي — اضغط أزرار البراد كأنك موظف البراد، وشاهد الطلبية تتحرك وحدها.',
+    dm_hint_off: 'شغّله لتجربة الإرسال التلقائي وأزرار رد البراد.',
+    dm_cooler: '📱 هاتف البراد {n} استلم:', dm_driver: '📱 هاتف السائق {n} استلم:', dm_customer: '📱 هاتف الزبون {n} استلم:',
+    dm_tap: 'اضغط كأنك موظف البراد:', dm_door: 'الرد برقم الباب', dm_door_ph: 'مثلًا 12', dm_nothing: 'لا تغيير'
   }
 };
 const MON = { id: ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'], ar: ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'] };
@@ -372,7 +391,7 @@ function vToday() {
   const live = S.D.orders.filter(o => KBrad.LIVE.includes(o.status) || (o.status === 'departed' && o.departed_at && KBrad.wibAt(o.departed_at).date === today()))
     .sort((a, b) => String(a.order_date).localeCompare(String(b.order_date)) || b.step - a.step);
   const lost = (S.D.wa_log || []).filter(x => x.dir === 'in' && !x.order_no && Date.parse(x.at) > Date.now() - 86400000).slice(-5);
-  return h('div', null, h('div', { class: 'trial', id: 'trial', text: t('trial') }), alertsCard(),
+  return h('div', null, h('div', { class: 'trial', id: 'trial', text: t('trial') }), MOCK ? demoWaCard() : null, alertsCard(),
     lost.length ? h('div', { class: 'card', id: 'wa-lost' }, h('h2', { text: t('wa_unassigned') }), lost.map(x => h('div', { class: 'warn', text: hmOf(x.at) + ' · ' + x.peer + ': “' + x.text + '”' }))) : null,
     can() ? h('div', { class: 'card row' }, h('button', { class: 'btn pri', type: 'button', id: 'or-new', onclick: () => orderForm(null) }, '+ ' + t('or_new'))) : null,
     h('div', { id: 'or-list' }, live.length ? live.map(card) : h('div', { class: 'card muted', text: t('none') })));
@@ -401,7 +420,7 @@ function card(o) {
     h('div', { text: w.name + (S.lang === 'ar' ? ' ← ' : ' → ') + o.dest_name + ' · ' + fd(o.order_date) + ' · ' + n0(o.cartons) + ' ' + t('ctn') + ' · ' + o.pallets + ' ' + t('pallets') + (o.source && o.source !== 'manual' ? ' · ' + t('src_' + o.source) : '') }),
     dots,
     h('div', { class: 'muted' }, (o.lines || []).map(l => h('div', { text: 'PLT ' + l.pallet_code + ' · ' + (l.product_name || PR(l.product).name) + ' · ' + n0(l.cartons) + ' ' + t('ctn') + (l.full ? ' (utuh)' : '') }))),
-    info, can() ? h('div', { class: 'row next' }, nextButtons(o)) : null, hist);
+    info, MOCK && window.KBradMockWA === true ? demoPhone(o) : null, can() ? h('div', { class: 'row next' }, nextButtons(o)) : null, hist);
 }
 function B(act, label, onclick, pri) { return h('button', { class: 'btn sm' + (pri ? ' pri' : ''), type: 'button', 'data-act': act, onclick }, label); }
 function nextButtons(o) {
@@ -683,6 +702,36 @@ function departFlow(o) {
 function departWa(o, extra) {
   const x = S.D.orders.find(y => y.order_no === o.order_no) || o, to = x.dest_type === 'pelanggan' ? x.dest_phone : (S.D.company.phone || '').replace(/\D/g, '').replace(/^0/, '62');
   waModal(t('wa_depart'), to, KBrad.msgDepart(x, ctx(x)), extra);
+}
+
+/* ---------- demo only: automatic WhatsApp played — the switch, and the phone that got each step's message ---------- */
+function demoWaCard() {
+  const on = window.KBradMockWA === true;
+  return h('div', { class: 'card', id: 'demo-wa' }, h('div', { class: 'row', style: 'justify-content:space-between' },
+    h('div', null, h('b', { text: t('dm_title') }), ' ', h('span', { class: on ? 'ok' : 'muted', id: 'demo-wa-st', text: on ? t('wa_on') : t('dm_off') })),
+    h('button', { class: 'btn sm' + (on ? '' : ' pri'), type: 'button', id: 'demo-wa-toggle', onclick: () => { window.KBradMockWA = !on; LS.set('kbrad.mock.wa', !on); load(); } }, on ? t('dm_turn_off') : t('dm_turn_on'))),
+    h('p', { class: 'muted', text: on ? t('dm_hint_on') : t('dm_hint_off') }));
+}
+/** The message this step sent (the same template and values as the server), as the cold store / the driver / the customer sees it;
+    the cold store's buttons and its "pintu N" reply go through the server's own rules (KBradMock.waIn → KBrad.waEvent). */
+function demoPhone(o) {
+  const st = o.status, kind = ['sent', 'approved'].includes(st) ? 'order' : ['car', 'arrived'].includes(st) ? 'car' : ['door', 'loading'].includes(st) ? 'door' : st === 'departed' ? 'depart' : '';
+  const m = kind ? KBrad.waOut(o, kind, ctx(o)) : null;
+  if (!m) return null;
+  const T = KBrad.WA_TEMPLATES[kind], body = T.body.replace(/\{\{(\d+)\}\}/g, (x, i) => m.params[i - 1]), w = CO(o.warehouse);
+  const who = kind === 'door' ? t('dm_driver', { n: (o.car || {}).driver || '' }) : kind === 'depart' ? t('dm_customer', { n: o.dest_name }) : t('dm_cooler', { n: w.name });
+  const tap = async ev => {
+    try {
+      const r = await KBradMock.waIn(Object.assign({ from: w.wa }, ev)); await load();
+      toast(r.applied ? t('wa_ap_' + r.applied) : r.note ? t('wa_ap_' + r.note) : t('dm_nothing'), !r.applied);
+    } catch (e) { toast(e.message || String(e), true); }
+  };
+  const acts = ['approve', 'reject', 'ready'], btns = kind === 'order' ? T.buttons.map((b, i) => B('dm-' + acts[i], b, () => tap({ type: 'button', payload: m.payloads[i], text: b })))
+    : kind === 'car' && st === 'car' ? [B('dm-in', T.buttons[0], () => tap({ type: 'button', payload: m.payloads[0], text: T.buttons[0] }))] : [];
+  const dr = kind === 'car' ? h('input', { 'data-dm': 'door', inputmode: 'numeric', placeholder: t('dm_door_ph'), style: 'max-width:90px;min-height:34px' }) : null;
+  if (dr) btns.push(dr, B('dm-door', t('dm_door'), () => { const d = dr.value.trim(); if (!d) { dr.focus(); return; } tap({ type: 'text', text: 'pintu ' + d, ctx_order_no: o.order_no }); }));
+  return h('div', { class: 'dm-phone', 'data-dm': kind }, h('div', { class: 'muted', text: who }), h('div', { class: 'bubble', 'data-dm-text': '', text: body }),
+    btns.length ? h('div', null, h('div', { class: 'muted', text: t('dm_tap') }), h('div', { class: 'row', style: 'margin-top:4px' }, btns)) : null);
 }
 
 /* ---------- overtime this month ---------- */
