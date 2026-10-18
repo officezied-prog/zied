@@ -33,6 +33,9 @@ test('no built-in reader (PC / iPhone): the camera button is there and reads an 
   await setDb(page, `const p = db.products.find(x => x.active !== false && x.stock > 5 && !x.repack_from); p.sku = arg; db.__name = p.name;`, EAN);
   const name = await page.evaluate(() => JSON.parse(localStorage.getItem('kmock.db')).__name);
   await page.reload();
+  // the app draws from its cached list first and refreshes it right after: scan only once the new barcode is in it
+  // (a scan that wins that race says "not found" — on a loaded CI machine it did, now and then)
+  await page.waitForFunction(ean => S.products.some(p => p.sku === ean), EAN);
   await expect(page.locator('#cam')).toBeVisible();
   await page.click('#cam');
   await expect(page.locator('#cart')).toContainText(name, { timeout: 15000 });
@@ -55,6 +58,7 @@ test('a phone whose built-in reader knows no barcode kinds falls back to ZXing',
   await setDb(page, `const p = db.products.find(x => x.active !== false && x.stock > 5 && !x.repack_from); p.sku = arg; db.__name = p.name;`, EAN);
   const name = await page.evaluate(() => JSON.parse(localStorage.getItem('kmock.db')).__name);
   await page.reload();
+  await page.waitForFunction(ean => S.products.some(p => p.sku === ean), EAN); // the refreshed list (see above)
   await page.click('#cam');
   await expect(page.locator('#cart')).toContainText(name, { timeout: 15000 });
   expect(await page.evaluate(() => !!window.ZXing)).toBe(true);

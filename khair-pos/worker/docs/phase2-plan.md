@@ -16,8 +16,9 @@ separate trial app, Khair Order Brad (`khair-pos/brad/`)** — owner 2026-10-18:
 - **The cold stores accept nothing but WhatsApp** (no link page for them). So stage 1 prepares every message for one tap
   (`wa.me`), stage 2 sends them automatically through the WhatsApp Cloud API.
 - Many cold stores, about **40 doors** each; loading **25–35 minutes a pallet** (the app counts 30, owner setting).
-- Working days: Monday–Saturday; Sunday only by arrangement at a cost agreed each time; closed on public holidays (my reading of
-  «البراد يعمل الايوم الأحد …», to be confirmed; each cooler's days are a setting). A started overtime hour counts in full.
+- Working days: Monday–Saturday (confirmed by the owner 2026-10-18: «نعم البراد يعمل من الاثنين إلى السبت»); Sunday only by
+  arrangement at a cost agreed each time; closed on public holidays (each cooler's days are a setting). A started overtime hour
+  counts in full.
   Lalamove's minutes + 15–20 % (the app adds 20 %, owner setting).
 - Cost at 25 orders a day: WhatsApp Cloud API ≈ 5 sends an order × Rp 357 ≈ Rp 1.2 M a month (stage 2); AI reading ≈ US$1–7 a
   month; an n8n agent (~15 executions an order ≈ 9,750 a month) would sit at the n8n Pro wall (10,000) — still ruled out.
