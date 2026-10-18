@@ -109,3 +109,71 @@ test('not set up: the settings say so and every step is sent by hand, as before'
   await page.locator('.order[data-status="sent"] [data-act="rewa"]').first().click();
   await expect(page.locator('#wa-go')).toBeVisible(); // the hand-sent window, as in stage 1
 });
+
+// v61.1 (owner 2026-10-18: «اريد تجربة افتراضي لعملية كاملة») — the demo plays the whole automatic process: a switch (?wa=1 / ?wa=0,
+// remembered on the device) and on each order the phone that got the step's message, with the cold store's buttons to tap.
+test('demo: the switch, and the simulated phones — the cold store taps Setuju and Barang siap, answers "pintu 9"; the driver and the customer get theirs', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-10-14T10:00:00+07:00'));
+  await page.goto('brad/index.html?mock=1');
+  await page.evaluate(() => { try { ['kbrad.mock.db', 'kcold.mock.db', 'kbrad.mock.wa'].forEach(k => localStorage.removeItem(k)); } catch (e) { } });
+  await page.reload();
+  await page.fill('#lg-user', 'Jihan'); await page.fill('#lg-pin', '2222'); await page.click('#lg-go');
+  // off at first: sent by hand, no phone on the cards
+  await expect(page.locator('#demo-wa-st')).toHaveText('mati — pesan dikirim manual');
+  await expect(page.locator('.dm-phone')).toHaveCount(0);
+  await page.click('#demo-wa-toggle');
+  await expect(page.locator('#demo-wa-st')).toHaveText('Aktif');
+  // the seeded order waiting at Kawanishi: its phone has the order with the three buttons
+  const k = page.locator('.order[data-status="sent"]').first();
+  await expect(k.locator('.dm-phone')).toContainText('📱 HP gudang Kawanishi menerima:');
+  await expect(k.locator('[data-act^="dm-"]')).toHaveText(['Setuju', 'Tolak', 'Barang siap']);
+  // remembered on the device; ?wa=0 turns it off, ?wa=1 on again
+  await page.goto('brad/index.html?mock=1'); await expect(page.locator('#demo-wa-st')).toHaveText('Aktif');
+  await page.goto('brad/index.html?mock=1&wa=0'); await expect(page.locator('#demo-wa-st')).toHaveText('mati — pesan dikirim manual');
+  await page.goto('brad/index.html?mock=1&wa=1'); await expect(page.locator('#demo-wa-st')).toHaveText('Aktif');
+  // a new order, sent by itself: DPP's phone shows the template with its values
+  await page.click('#or-new');
+  await page.selectOption('#of-lines [data-f="pallet_code"]', '2274537');
+  await page.fill('#of-lines [data-f="cartons"]', '10');
+  await page.selectOption('#of-cust', await page.locator('#of-cust option', { hasText: 'Toko Barokah' }).getAttribute('value'));
+  await page.click('#of-save');
+  const no = await page.evaluate(() => S.D.orders[0].order_no), c = card(page, no);
+  await c.locator('[data-act="send"]').click();
+  await expect(page.locator('#toast')).toHaveText('Terkirim otomatis lewat WhatsApp ✓');
+  await expect(c.locator('.dm-phone')).toContainText('📱 HP gudang DPP Cold Storage menerima:');
+  await expect(c.locator('[data-dm-text]')).toContainText('Order ambil Khair Mart ' + no + '\nTanggal ambil: Rabu, 14 Oktober 2026\nGudang: DPP Cold Storage\nTujuan: Toko Barokah (pelanggan)');
+  // the cold store taps Setuju, then Barang siap
+  await c.locator('[data-act="dm-approve"]').click();
+  await expect(page.locator('#toast')).toHaveText('gudang setuju (otomatis)');
+  await expect(c.locator('[data-chip]')).toHaveText('3/9 Gudang setuju');
+  await c.locator('[data-act="dm-ready"]').click();
+  await expect(c.locator('[data-chip]')).toHaveText('4/9 Barang siap');
+  await expect(c.locator('.dm-phone')).toHaveCount(0); // now it is our turn: the car
+  // the car goes to the cold store by itself; it answers "pintu 9" → in at door 9, and the door goes on to the driver
+  await c.locator('[data-act="car"]').click();
+  await page.fill('#tk-driver', 'Pak Budi'); await page.fill('#tk-dwa', '081299990000'); await page.fill('#tk-plate', 'B 1234 XYZ'); await page.fill('#tk-eta', '30');
+  await page.click('#tk-save');
+  await expect(page.locator('#modal')).toBeHidden();
+  await expect(c.locator('[data-dm-text]')).toContainText('No. polisi: B 1234 XYZ\nSopir: Pak Budi (081299990000)');
+  await expect(c.locator('[data-act="dm-in"]')).toHaveText('Mobil sudah masuk');
+  await c.locator('[data-act="dm-door"]').click(); // no door typed: nothing sent
+  await expect(c.locator('[data-chip]')).toHaveText('5/9 Mobil dipesan');
+  await c.locator('[data-dm="door"]').fill('9');
+  await c.locator('[data-act="dm-door"]').click();
+  await expect(page.locator('#toast')).toHaveText('pintu dicatat (otomatis)');
+  await expect(c.locator('[data-chip]')).toHaveText('7/9 Ke pintu');
+  await expect(c.locator('.dm-phone')).toContainText('📱 HP sopir Pak Budi menerima:');
+  await expect(c.locator('[data-dm-text]')).toContainText('PINTU 9');
+  await page.screenshot({ path: path.join(SHOTS, 'brad-demo-phone.png') });
+  // loading, then gone: the customer's phone
+  await c.locator('[data-act="load"]').click();
+  await c.locator('[data-act="depart"]').click();
+  await page.click('#dep-ok');
+  await expect(c.locator('[data-chip]')).toHaveText('9/9 Berangkat');
+  await expect(c.locator('.dm-phone')).toContainText('📱 HP pelanggan Toko Barokah menerima:');
+  await expect(c.locator('[data-dm-text]')).toContainText('sudah berangkat dari DPP Cold Storage jam 10:00. Mobil B 1234 XYZ');
+  // in Arabic too
+  await page.click('#lang');
+  await expect(c.locator('.dm-phone')).toContainText('📱 هاتف الزبون Toko Barokah استلم:');
+  await expect(page.locator('#demo-wa-toggle')).toHaveText('إيقاف');
+});

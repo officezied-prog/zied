@@ -18,6 +18,10 @@ order. Cost: Meta charges each business-sent message (Indonesia utility ≈ Rp 3
 messages and button taps are free. ≈ 4 messages an order → ≈ Rp 1,1 juta a month at 25 orders a day. Monthly cap
 (Pengaturan, default 3,000) → above it, the app sends by hand.
 
+**Try it first in the demo** (no WhatsApp needed): https://officezied-prog.github.io/zied/khair-pos/brad/?mock=1&wa=1 — Jihan 2222.
+Each order shows the phone that got its message; tap the cold store's buttons (Setuju / Tolak / Barang siap, Mobil sudah masuk,
+"pintu N") and the order moves by itself, as it will once the steps below are done. The home card switches it off (= by hand).
+
 ## The owner's steps (once)
 1. **A new phone number** for the business (a SIM that is not used in the WhatsApp app), able to receive an SMS or a call.
 2. **Meta Business account** (business.facebook.com) for PT. SAIDA REZEKI ABADI → **Business verification** (documents;
