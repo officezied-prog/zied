@@ -63,6 +63,10 @@ const COLD_INDEXES = [
 export const COLD_MIGRATIONS = [
   'ALTER TABLE cold_orders ADD COLUMN plate TEXT',
   'ALTER TABLE cold_orders ADD COLUMN dest_phone TEXT',
+  // v59 (owner 2026-10-18): the cooler's hours, the car's arrival, overtime
+  'ALTER TABLE cold_warehouses ADD COLUMN hours TEXT',
+  ...['extra_cost REAL', 'extra_note TEXT', 'eta_at TEXT', 'arrived_at TEXT', 'door TEXT', 'ot_hours REAL', 'ot_cost REAL', 'ot_cause TEXT', 'ot_note TEXT', 'trip_cancels REAL']
+    .map((c) => `ALTER TABLE cold_orders ADD COLUMN ${c}`),
 ];
 function createSql(table) {
   const cols = ['id INTEGER PRIMARY KEY AUTOINCREMENT'];

@@ -47,7 +47,9 @@ the worker tests + the three Playwright suites on every PR. This removed n8n's m
   Cloudflare dashboard — never in the repo/apps); hard cap 4,500 calls/month (`pos_api_usage`) < Google's free 5,000 →
   bill 0; over the cap / no key → the apps keep the free OpenStreetMap search. Only "Pro" fields (no phone/rating/hours).
 - `gudang/` (cold storage, `/webhook/khair-cold`) moved to the Worker in Batch C (PR #22) and is shown inside the owner
-  app; Phase 2 proper (WhatsApp + Lalamove) is still to do (plan in `khair-pos/worker/docs/phase2-plan.md`).
+  app; Phase 2 proper (WhatsApp + Lalamove) is still to do (plan in `khair-pos/worker/docs/phase2-plan.md`). v59 stage 1: the coolers'
+  hours in `backend/cold/cold-core.js` (last order 16:00, overtime Rp 300k per started hour after 17:00, Sunday by arrangement with an
+  agreed cost, public holidays closed, Lalamove minutes + 20 %) — time-dependent, so cold Playwright tests fix the page clock.
 
 ## Owner standing rules — ALWAYS honor
 

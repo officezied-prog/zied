@@ -246,3 +246,44 @@ test('cold v36: the self-migration adds plate / dest_phone to an older cold_orde
   const cols = a.all('PRAGMA table_info(cold_orders)', []).map((c) => c.name);
   assert.ok(cols.includes('plate') && cols.includes('dest_phone'), cols.join(','));
 });
+
+// v59 (owner 2026-10-18): the cooler's hours; a car entering after 17:00 records a full hour of overtime and its cause.
+async function at(iso, fn) {
+  const RealDate = Date, FIXED = RealDate.parse(iso);
+  class FrozenDate extends RealDate { constructor(...a) { if (a.length === 0) super(FIXED); else super(...a); } static now() { return FIXED; } }
+  globalThis.Date = FrozenDate;
+  try { return await fn(); } finally { globalThis.Date = RealDate; }
+}
+test('cold v59: the self-migration adds the hours / arrival / overtime columns to older tables (idempotent)', async () => {
+  const db = newDb();
+  db.exec('DROP TABLE cold_orders');
+  db.exec('CREATE TABLE cold_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, order_no TEXT, status TEXT, lines TEXT)');
+  db.exec('DROP TABLE cold_warehouses');
+  db.exec('CREATE TABLE cold_warehouses (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, name TEXT)');
+  const a = sqliteAdapter(db);
+  for (let i = 0; i < 2; i++) for (const sql of COLD_MIGRATIONS) { try { await a.run(sql, []); } catch (e) { /* already there */ } }
+  const oc = a.all('PRAGMA table_info(cold_orders)', []).map((c) => c.name), wc = a.all('PRAGMA table_info(cold_warehouses)', []).map((c) => c.name);
+  for (const c of ['extra_cost', 'extra_note', 'eta_at', 'arrived_at', 'door', 'ot_hours', 'ot_cost', 'ot_cause', 'ot_note', 'trip_cancels']) assert.ok(oc.includes(c), c);
+  assert.ok(wc.includes('hours'));
+});
+test('cold v59: hours saved on a cooler; after 16:00 a same-day pickup asks first; the car at 17:10 = 1 hour Rp 300.000 with its cause, in D1', async () => {
+  const db = seed(), a = sqliteAdapter(db);
+  const call = async (iso, action, user, pin, data) => at(iso, () => handleCold(a, base(action, user, pin, data), {}, KEY));
+  const W = '2026-10-14T03:00:00Z'; // Wednesday 10:00 WIB
+  assert.equal((await call(W, 'warehouse_save', 'Pemilik', '1234', { code: 'BOSCO', name: 'Bosco', hours: { open: '09:00', close: '17:00', brk: '12:00-13:00', last: '16:00', days: [1, 2, 3, 4, 5, 6], arrange: [0], ot: 300000 } })).ok, true);
+  assert.deepEqual(JSON.parse(a.all("SELECT hours FROM cold_warehouses WHERE code = 'BOSCO'", [])[0].hours).days, [1, 2, 3, 4, 5, 6]);
+  assert.equal((await call(W, 'pallet_in', 'Mgr', '2222', { warehouse: 'BOSCO', date: '2026-10-14', pallets: [{ pallet_code: 'P-59', product: 'AJWA', cartons: 40, exp_date: '2027-03-01' }] })).ok, true);
+  const o = (await call(W, 'order_save', 'Mgr', '2222', { warehouse: 'BOSCO', order_date: '2026-10-14', dest_type: 'toko', lines: [{ pallet_code: 'P-59', cartons: 10 }] })).order;
+  const late = '2026-10-14T09:20:00Z'; // 16:20 WIB
+  assert.equal((await call(late, 'order_status', 'Mgr', '2222', { order_no: o.order_no, to: 'sent' })).error, 'AFTER_HOURS');
+  assert.equal((await call(late, 'order_status', 'Mgr', '2222', { order_no: o.order_no, to: 'sent', when: 'overtime' })).ok, true);
+  for (const to of ['approved', 'ready', 'dispatch']) assert.equal((await call(late, 'order_status', 'Mgr', '2222', { order_no: o.order_no, to })).ok, true);
+  assert.equal((await call(late, 'trip_save', 'Mgr', '2222', { order_no: o.order_no, via: 'lalamove', driver: 'Pak Budi', plate: 'B 1 AB', eta_min: 40 })).error, 'LATE_CAR');
+  assert.equal((await call(late, 'trip_save', 'Mgr', '2222', { order_no: o.order_no, via: 'lalamove', driver: 'Pak Budi', plate: 'B 1 AB', eta_min: 40, accept_ot: true })).ok, true);
+  const r = await call('2026-10-14T10:15:00Z', 'order_arrived', 'Mgr', '2222', { order_no: o.order_no, time: '17:10', door: '2', cause: 'car_late' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const row = a.all('SELECT status, door, ot_hours, ot_cost, ot_cause, arrived_at, eta_at FROM cold_orders WHERE order_no = ?', [o.order_no])[0];
+  assert.deepEqual({ ...row }, { status: 'arrived', door: '2', ot_hours: 1, ot_cost: 300000, ot_cause: 'car_late', arrived_at: '2026-10-14T10:10:00.000Z', eta_at: '2026-10-14T10:08:00.000Z' });
+  const ot = (await call('2026-10-14T10:20:00Z', 'bootstrap', 'Mgr', '2222', {})).alerts.overtime;
+  assert.deepEqual([ot.count, ot.hours, ot.cost], [1, 1, 300000]);
+});

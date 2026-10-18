@@ -661,7 +661,8 @@ CREATE TABLE IF NOT EXISTS cold_warehouses (
   rate_frozen REAL,
   rate_chiller REAL,
   rate_dry REAL,
-  mode TEXT
+  mode TEXT,
+  hours TEXT
 );
 
 CREATE TABLE IF NOT EXISTS cold_products (
@@ -773,7 +774,17 @@ CREATE TABLE IF NOT EXISTS cold_orders (
   log TEXT,
   customer_id REAL,
   plate TEXT,
-  dest_phone TEXT
+  dest_phone TEXT,
+  extra_cost REAL,
+  extra_note TEXT,
+  eta_at TEXT,
+  arrived_at TEXT,
+  door TEXT,
+  ot_hours REAL,
+  ot_cost REAL,
+  ot_cause TEXT,
+  ot_note TEXT,
+  trip_cancels REAL
 );
 CREATE INDEX IF NOT EXISTS idx_cold_orders_status ON cold_orders (status);
 CREATE INDEX IF NOT EXISTS idx_cold_orders_order_date ON cold_orders (order_date);
