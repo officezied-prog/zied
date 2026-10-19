@@ -119,6 +119,30 @@ test('cold: the accountant is read-only', async () => {
   assert.equal(no.error, 'FORBIDDEN');
 });
 
+// v62 (owner 2026-10-19: «المدير يعدل و المحاسب بإذن من المدير»): the manager edits products; the accountant proposes, the manager decides
+test('cold v62: the manager saves a product; the accountant\'s proposal waits in cold_product_requests until the manager approves it', async () => {
+  const a = sqliteAdapter(seed());
+  const m = await handleCold(a, base('product_save', 'Mgr', '2222', { code: 'AJWA', name: 'Ajwa', kg_per_ctn: 10, ctn_per_pallet: 60 }), {}, KEY);
+  assert.equal(m.ok, true, JSON.stringify(m));
+  assert.equal(a.all("SELECT ctn_per_pallet FROM cold_products WHERE code = 'AJWA'", [])[0].ctn_per_pallet, 60);
+  const p = await handleCold(a, base('product_request', 'Akun', '3333', { code: 'AJWA', name: 'Ajwa Jumbo', kg_per_ctn: 10, ctn_per_pallet: 64, note: 'Nama di gudang' }), {}, KEY);
+  assert.equal(p.ok, true, JSON.stringify(p));
+  const rows = a.all('SELECT * FROM cold_product_requests', []);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'pending'); assert.equal(rows[0].requested_by, 'Akun'); assert.equal(JSON.parse(rows[0].data).ctn_per_pallet, 64);
+  assert.equal(a.all("SELECT name FROM cold_products WHERE code = 'AJWA'", [])[0].name, 'Ajwa'); // nothing changed yet
+  const b = await handleCold(a, base('bootstrap', 'Mgr', '2222'), {}, KEY);
+  assert.equal(b.alerts.product_requests, 1); assert.equal(b.requests[0].is_new, false); assert.equal(b.requests[0].id, rows[0].id);
+  const no = await handleCold(a, base('request_decide', 'Akun', '3333', { id: rows[0].id, approve: true }), {}, KEY);
+  assert.equal(no.error, 'FORBIDDEN');
+  const d = await handleCold(a, base('request_decide', 'Mgr', '2222', { id: rows[0].id, approve: true }), {}, KEY);
+  assert.equal(d.ok, true, JSON.stringify(d));
+  const pr = a.all("SELECT * FROM cold_products WHERE code = 'AJWA'", []);
+  assert.equal(pr.length, 1); assert.equal(pr[0].name, 'Ajwa Jumbo'); assert.equal(pr[0].ctn_per_pallet, 64);
+  const after = a.all('SELECT * FROM cold_product_requests', []);
+  assert.equal(after.length, 1); assert.equal(after[0].status, 'approved'); assert.equal(after[0].decided_by, 'Mgr'); assert.equal(after[0].result_code, 'AJWA');
+});
+
 // ---- Batch C features ----
 
 test('cold C: warehouse_save stores the cooler mode (home page)', async () => {

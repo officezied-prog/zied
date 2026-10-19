@@ -36,6 +36,7 @@ function coldSpecs() {
     'Get Checks': Q.all('cold_checks'), // the core itself only keeps recent checks; full load is fine on D1
     'Get Orders': Q.all('cold_orders'),
     'Get Customers': Q.all('pos_customers'), // Batch C: the reusable customer registry (shared table)
+    'Get Requests': Q.all('cold_product_requests'), // v62: the accountant's product proposals (a few a month)
   };
 }
 
@@ -51,7 +52,7 @@ export async function loadColdNodes(adapter, req) {
 // EXISTS is idempotent, never destructive, and the module flag keeps the ongoing cost nil.
 // Derived from tables.js so the runtime schema never drifts from schema.sql.
 const SQL_TYPE = { string: 'TEXT', number: 'REAL', boolean: 'INTEGER' };
-const COLD_TABLES = ['cold_warehouses', 'cold_products', 'cold_containers', 'cold_pallets', 'cold_movements', 'cold_checks', 'cold_orders'];
+const COLD_TABLES = ['cold_warehouses', 'cold_products', 'cold_containers', 'cold_pallets', 'cold_movements', 'cold_checks', 'cold_orders', 'cold_product_requests'];
 const COLD_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_cold_checks_check_date ON cold_checks (check_date)',
   'CREATE INDEX IF NOT EXISTS idx_cold_movements_pallet_code ON cold_movements (pallet_code)',

@@ -4,7 +4,7 @@
    Seed: DPP, Bosko and Kawanishi, one container, 15 date pallets (some near expiry), 10 days of movements, one open pick order,
    one daily check with a difference. KColdMock.reset() starts again. */
 (function (root) {
-  var DBKEY = 'kcold.mock.db', TABLES = ['warehouses', 'products', 'containers', 'pallets', 'movements', 'checks', 'orders', 'customers'];
+  var DBKEY = 'kcold.mock.db', TABLES = ['warehouses', 'products', 'containers', 'pallets', 'movements', 'checks', 'orders', 'customers', 'requests'];
   function hex(buf) { return Array.from(new Uint8Array(buf)).map(function (b) { return ('0' + b.toString(16)).slice(-2); }).join(''); }
   function sha(s) { return crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)).then(hex); }
   function load() { try { return JSON.parse(localStorage.getItem(DBKEY) || 'null'); } catch (e) { return null; } }
@@ -12,7 +12,7 @@
   function apply(db, writes) {
     writes.forEach(function (w) {
       if (w.table === 'settings') { db.settings[w.row.skey] = JSON.parse(w.row.svalue); return; }
-      var row = JSON.parse(JSON.stringify(w.row)), list = db[w.table];
+      var row = JSON.parse(JSON.stringify(w.row)), list = db[w.table] || (db[w.table] = []); // a demo saved before a table existed (v62: requests)
       if (row.id === undefined) { row.id = db.nid++; list.push(row); } else { var i = list.findIndex(function (x) { return x.id === row.id; }); if (i >= 0) list[i] = row; }
     });
   }

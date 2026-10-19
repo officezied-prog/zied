@@ -8,7 +8,7 @@ const sha = s => crypto.createHash('sha256').update(s).digest('hex');
 const ph = (n, pin) => sha('demo:' + n.toLowerCase() + ':' + pin);
 
 // tables like n8n: rows with ids; writes with an id update, without are inserted
-const T = { warehouses: [], products: [], containers: [], pallets: [], movements: [], checks: [], orders: [], customers: [], settings: {},
+const T = { warehouses: [], products: [], containers: [], pallets: [], movements: [], checks: [], orders: [], customers: [], requests: [], settings: {},
   users: [{ id: 1, name: 'Pemilik', role: 'owner', pin_hash: ph('Pemilik', '1234'), active: true },
     { id: 2, name: 'Jihan', role: 'manager', pin_hash: ph('Jihan', '2222'), active: true },
     { id: 3, name: 'Akun', role: 'akuntan', pin_hash: ph('Akun', '3333'), active: true },
@@ -61,7 +61,7 @@ assert.strictEqual(ok(call('product_save', { code: 'تمر', name: 'تمر خل�
 assert.strictEqual(ok(call('product_save', { name: 'Kurma Medjool 5kg' })).product.code, 'KURMA-MEDJOOL-5KG');
 assert.strictEqual(ok(call('warehouse_save', { name: 'Gudang Baru' })).warehouse.code, 'GUDANG-BARU');
 err(call('product_save', { name: 'x', ctn_per_pallet: -1 }), 'INVALID');
-err(call('product_save', { code: 'X', name: 'x' }, 'manager'), 'FORBIDDEN');
+err(call('product_save', { code: 'X', name: 'x' }, 'akuntan'), 'FORBIDDEN'); // v62: the manager may (below); the accountant only proposes
 err(call('settings_save', { drivers: [] }, 'manager'), 'FORBIDDEN');
 ok(call('settings_save', { drivers: [{ name: 'Pak Udin', wa: '0813-2222-3333', vehicle: 'Engkel', plate: 'b 1234 xyz' }] }));
 assert.deepStrictEqual(T.settings.cold_drivers[0], { name: 'Pak Udin', wa: '6281322223333', vehicle: 'Engkel', plate: 'B 1234 XYZ' });
@@ -249,6 +249,44 @@ assert.strictEqual(boot.alerts.unexplained.length, 0);
 assert(boot.orders.some(o => o.status === 'cancelled'));
 assert.strictEqual(KCold.vehicleFor(500), 'Pickup (bak)'); assert.strictEqual(KCold.vehicleFor(2000), 'Engkel (CDE)');
 err(call('nope', {}), 'INVALID');
+// ---------- v62 (owner 2026-10-19: «المدير يعدل و المحاسب بإذن من المدير»): products — the manager edits, the accountant proposes ----------
+const pCount = T.products.length;
+const mp = ok(call('product_save', { code: 'AJWA-5', name: 'Kurma Ajwa Jumbo 5kg', kg_per_ctn: 5, ctn_per_pallet: 120, aliases: 'ajwa, 157-019' }, 'manager')).product;
+assert.strictEqual(mp.ctn_per_pallet, 120); assert.strictEqual(T.products.find(p => p.code === 'AJWA-5').ctn_per_pallet, 120);
+err(call('product_request', { code: 'AJWA-5', name: 'x' }, 'manager'), 'FORBIDDEN'); // the manager and the owner save directly
+err(call('product_request', { code: 'AJWA-5', name: '' }, 'akuntan'), 'INVALID');
+// the accountant proposes a change: nothing changes yet; asking again replaces the open proposal
+const rq1 = ok(call('product_request', { code: 'AJWA-5', name: 'Kurma Ajwa Jumbo 5kg', kg_per_ctn: 5, ctn_per_pallet: 125, aliases: 'ajwa', note: 'Label baru' }, 'akuntan')).request;
+assert.deepStrictEqual([rq1.status, rq1.code, rq1.is_new, rq1.requested_by, rq1.note], ['pending', 'AJWA-5', false, 'Akun', 'Label baru']);
+assert.strictEqual(T.products.find(p => p.code === 'AJWA-5').ctn_per_pallet, 120);
+const rq1b = ok(call('product_request', { code: 'AJWA-5', name: 'Kurma Ajwa Jumbo 5kg', kg_per_ctn: 5, ctn_per_pallet: 126, aliases: 'ajwa' }, 'akuntan')).request;
+const id1 = T.requests[0].id; // a new row gets its id from the table (here: the test's), like D1
+assert.strictEqual(rq1b.id, id1); assert.strictEqual(T.requests.length, 1); assert.strictEqual(rq1b.data.ctn_per_pallet, 126);
+// a new product, no code yet: the code is made when it is approved
+const rq2 = ok(call('product_request', { name: 'Kurma Safawi 1kg', kg_per_ctn: 1, ctn_per_pallet: 400 }, 'akuntan')).request;
+assert.deepStrictEqual([rq2.is_new, rq2.code], [true, '']); const id2 = T.requests[1].id;
+// the manager sees them (the dashboard counts the open ones); the accountant cannot decide
+let bq = ok(call('bootstrap', {}, 'manager'));
+assert.strictEqual(bq.alerts.product_requests, 2); assert.strictEqual(bq.requests.length, 2);
+assert.strictEqual(ok(call('bootstrap', {}, 'akuntan')).requests[0].requested_by, 'Akun');
+err(call('request_decide', { id: id1, approve: true }, 'akuntan'), 'FORBIDDEN');
+err(call('request_decide', { id: 9999, approve: true }, 'manager'), 'NOT_FOUND');
+// approved → saved as proposed, by the manager
+const d1 = ok(call('request_decide', { id: id1, approve: true }, 'manager'));
+assert.deepStrictEqual([d1.request.status, d1.request.decided_by, d1.request.result_code], ['approved', 'Jihan', 'AJWA-5']);
+assert.strictEqual(T.products.find(p => p.code === 'AJWA-5').ctn_per_pallet, 126);
+err(call('request_decide', { id: id1, approve: false }, 'manager'), 'INVALID'); // already decided
+// the owner rejects the new one, with a reason: no product is made
+const d2 = ok(call('request_decide', { id: id2, approve: false, note: 'Belum dijual' }));
+assert.deepStrictEqual([d2.request.status, d2.request.decide_note, d2.product], ['rejected', 'Belum dijual', null]);
+assert.strictEqual(T.products.length, pCount); assert.strictEqual(ok(call('bootstrap', {}, 'manager')).alerts.product_requests, 0);
+// proposed again and approved: the code comes from the name
+ok(call('product_request', { name: 'Kurma Safawi 1kg', kg_per_ctn: 1, ctn_per_pallet: 400 }, 'akuntan'));
+assert.strictEqual(T.requests.length, 3); assert.strictEqual(T.requests[1].status, 'rejected'); // the rejected one stays as it was
+assert.strictEqual(ok(call('request_decide', { id: T.requests[2].id, approve: true }, 'manager')).product.code, 'KURMA-SAFAWI-1KG');
+assert.strictEqual(T.products.length, pCount + 1);
+err(call('warehouse_save', { code: 'DPP', name: 'DPP' }, 'manager'), 'FORBIDDEN'); // the rest of the settings stay the owner's
+
 // nothing was ever deleted and no movement changed
 assert(T.movements.every(m => m.by_user && m.at));
 console.log('test-cold: all passed (' + T.movements.length + ' movements, ' + T.orders.length + ' orders)');

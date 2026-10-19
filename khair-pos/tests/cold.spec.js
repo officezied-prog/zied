@@ -173,11 +173,14 @@ test('movements: transfer, then reverse it; reversed rows stay', async ({ page }
   await expect(page.locator('#st-tbl tr[data-pallet="K-77003"] [data-ctn]')).toHaveText('250');
 });
 
-test('roles: akuntan reads everything but cannot change; manager has no settings or costs; kasir is refused', async ({ page }) => {
+test('roles: akuntan reads everything but cannot change (products: only a proposal); manager has no settings or costs (products: yes); kasir is refused', async ({ page }) => {
   await coldLogin(page, 'Akuntan', '3333');
   await expect(page.locator('#who')).toContainText('Hanya lihat');
   await expect(page.locator('#al-cost')).toBeVisible();
-  await expect(page.locator('[data-tab="set"]')).toHaveCount(0);
+  await expect(page.locator('[data-tab="set"]')).toHaveText('Produk'); // v62: the products only, to propose a change
+  await page.click('[data-tab="set"]');
+  await expect(page.locator('#set-wh')).toHaveCount(0);
+  await expect(page.locator('#set-pr [data-act="pr-propose"]').first()).toHaveText('Usulkan');
   await page.click('[data-tab="stok"]');
   await expect(page.locator('#st-in')).toHaveCount(0);
   await expect(page.locator('[data-act="transfer"]')).toHaveCount(0);
@@ -191,8 +194,11 @@ test('roles: akuntan reads everything but cannot change; manager has no settings
 
   await page.click('#logout');
   await page.fill('#lg-user', 'Jihan'); await page.fill('#lg-pin', '2222'); await page.click('#lg-go');
-  await expect(page.locator('[data-tab="set"]')).toHaveCount(0);
+  await expect(page.locator('[data-tab="set"]')).toHaveText('Produk'); // v62: the manager edits the products — not the rest of the settings
   await expect(page.locator('#al-cost')).toHaveCount(0);
+  await page.click('[data-tab="set"]');
+  await expect(page.locator('#set-wh')).toHaveCount(0); await expect(page.locator('#set-drv')).toHaveCount(0);
+  await expect(page.locator('#set-pr [data-act="pr-edit"]').first()).toHaveText('Ubah');
 
   await page.click('#logout');
   await page.fill('#lg-user', 'Siti'); await page.fill('#lg-pin', '1111'); await page.click('#lg-go');
@@ -286,4 +292,57 @@ test('inbound: a container asks to enter, the warehouse accepts, pallets in → 
   await expect(inp).toHaveCount(1);
   await inp.locator('[data-act="c-notice"]').click();
   expect(decodeURIComponent(await page.evaluate(() => window.__opened))).toContain('PEMBELIAN BARANG DI GUDANG');
+});
+
+// v62 (owner 2026-10-19: «المدير يعدل و المحاسب بإذن من المدير»): the manager edits the products; the accountant proposes, the manager decides
+test('products: the manager edits; the accountant proposes a change and a new product; the manager approves one and rejects the other', async ({ page }) => {
+  await coldLogin(page, 'Jihan', '2222');
+  await page.click('[data-tab="set"]');
+  await page.locator('#set-pr tr[data-pr="AJWA-5"] [data-act="pr-edit"]').click();
+  await page.fill('#pf-cpp', '125');
+  await page.click('#pf-save');
+  await expect(page.locator('#set-pr tr[data-pr="AJWA-5"] [data-cpp]')).toHaveText('125');
+  // the accountant: a change of Medjool, and a new product — sent to the manager, nothing changes yet
+  await page.click('#logout');
+  await page.fill('#lg-user', 'Akuntan'); await page.fill('#lg-pin', '3333'); await page.click('#lg-go');
+  await page.click('[data-tab="set"]');
+  await expect(page.locator('#rq-hint')).toHaveText('Usulan Anda dikirim ke manajer. Produk baru berubah setelah manajer menyetujui.');
+  await page.locator('#set-pr tr[data-pr="MEDJOOL-5"] [data-act="pr-propose"]').click();
+  await page.fill('#pf-name', 'Kurma Medjool Large 5kg'); await page.fill('#pf-note', 'Nama di laporan DPP');
+  await expect(page.locator('#pf-save')).toHaveText('Kirim ke manajer');
+  await page.click('#pf-save');
+  await expect(page.locator('#toast')).toHaveText('Usulan terkirim — menunggu persetujuan manajer');
+  await expect(page.locator('#set-pr tr[data-pr="MEDJOOL-5"]')).toContainText('Kurma Medjool 5kg');
+  await page.click('#pr-add');
+  await page.fill('#pf-name', 'Kurma Safawi 1kg'); await page.fill('#pf-kg', '1'); await page.fill('#pf-cpp', '400');
+  await page.click('#pf-save');
+  await expect(page.locator('#rq-card [data-rq]')).toHaveCount(2);
+  await expect(page.locator('#rq-card [data-rq] [data-rq-st]').first()).toHaveText('Menunggu persetujuan');
+  await expect(page.locator('#rq-card [data-act="rq-approve"]')).toHaveCount(0); // the accountant cannot decide
+  // the manager: the home page and the tab say so; old → new is shown
+  await page.click('#logout');
+  await page.fill('#lg-user', 'Jihan'); await page.fill('#lg-pin', '2222'); await page.click('#lg-go');
+  await page.click('[data-tab="dash"]');
+  await expect(page.locator('#need [data-need="rq"]')).toHaveText('Usulan produk dari akuntan 2');
+  await expect(page.locator('[data-tab="set"] [data-rq-count]')).toHaveText(' (2)');
+  await page.click('#need [data-need="rq"]');
+  const med = page.locator('#rq-card [data-rq]', { hasText: 'Ubah MEDJOOL-5' });
+  await expect(med.locator('[data-f="name"]')).toHaveText('Nama: Kurma Medjool 5kg → Kurma Medjool Large 5kg');
+  await expect(med).toContainText('“Nama di laporan DPP”');
+  await page.screenshot({ path: path.join(SHOTS, 'cold-product-requests.png'), fullPage: true });
+  await med.locator('[data-act="rq-approve"]').click();
+  await expect(page.locator('#toast')).toHaveText('Disetujui — produk tersimpan');
+  await expect(page.locator('#set-pr tr[data-pr="MEDJOOL-5"]')).toContainText('Kurma Medjool Large 5kg');
+  const neu = page.locator('#rq-card [data-rq]', { hasText: 'Produk baru: Kurma Safawi 1kg' });
+  await neu.locator('[data-act="rq-reject"]').click();
+  await page.fill('#ask-in', 'Belum dijual');
+  await page.click('#ask-ok');
+  await expect(page.locator('#toast')).toHaveText('Usulan ditolak');
+  await expect(neu.locator('[data-rq-st]')).toHaveText('Ditolak');
+  await expect(page.locator('#set-pr tr', { hasText: 'Safawi' })).toHaveCount(0);
+  await expect(page.locator('[data-tab="set"] [data-rq-count]')).toHaveCount(0);
+  // Arabic
+  await page.click('#lang');
+  await expect(page.locator('#rq-card h2')).toHaveText('اقتراحات تعديل المنتجات');
+  await expect(page.locator('#rq-card [data-rq][data-status="rejected"] [data-rq-st]')).toHaveText('مرفوض');
 });

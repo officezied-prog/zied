@@ -153,7 +153,11 @@ const I18N = {
     nx_driver_wa: 'Info sopir ke gudang (WA)', nx_delivered: 'Sudah sampai', nx_fix: 'Ubah & kirim ulang', reject_q: 'Alasan gudang menolak', share: 'Bagikan file', history: 'Riwayat', need_action: 'Perlu tindakan',
     cold_chain: 'Barang beku/dingin: pesan truk berpendingin (Lalamove biasa tidak berpendingin).', cancel_wa: 'Beri tahu gudang (WA)',
     kind: 'Jenis', kind_container: 'Kontainer', kind_in_place: 'Beli di gudang (tanpa kontainer)', in_no: 'Nomor (kosong = otomatis)', cs_planned: 'Direncanakan', cs_requested: 'Minta izin masuk', cs_approved: 'Diizinkan gudang', cs_rejected: 'Ditolak gudang', cs_stored: 'Tersimpan',
-    cx_request: 'Minta izin masuk (WA)', cx_ok: 'Gudang terima', cx_no: 'Gudang tolak', cx_notice: 'Beri tahu gudang (WA)'
+    cx_request: 'Minta izin masuk (WA)', cx_ok: 'Gudang terima', cx_no: 'Gudang tolak', cx_notice: 'Beri tahu gudang (WA)',
+    rq_title: 'Usulan perubahan produk', rq_hint_ak: 'Usulan Anda dikirim ke manajer. Produk baru berubah setelah manajer menyetujui.', rq_propose: 'Usulkan',
+    rq_propose_new: 'Usulkan produk baru', rq_send: 'Kirim ke manajer', rq_sent: 'Usulan terkirim — menunggu persetujuan manajer', rq_note: 'Alasan / catatan untuk manajer',
+    rq_new: 'Produk baru', rq_change: 'Ubah {c}', rq_approve: 'Setujui', rq_reject: 'Tolak', rq_reject_q: 'Alasan menolak (boleh kosong)',
+    rq_pending: 'Menunggu persetujuan', rq_approved: 'Disetujui', rq_rejected: 'Ditolak', rq_ok: 'Disetujui — produk tersimpan', rq_no: 'Usulan ditolak', need_rq: 'Usulan produk dari akuntan'
   },
   ar: {
     title: 'مخازن خير المبرّدة', login: 'دخول', key: 'مفتاح المتجر', key_hint: 'يُكتب مرة واحدة على هذا الجهاز', change_key: 'تغيير المفتاح', user: 'اسم المستخدم', pin: 'الرمز السري', logout: 'خروج',
@@ -191,7 +195,11 @@ const I18N = {
     nx_driver_wa: 'أرسل بيانات السائق للمخزن', nx_delivered: 'وصلت', nx_fix: 'عدّل وأعد الإرسال', reject_q: 'سبب رفض المخزن', share: 'مشاركة الملف', history: 'السجل', need_action: 'يحتاج إجراء',
     cold_chain: 'بضاعة مجمّدة/مبرّدة: اطلب شاحنة مبرّدة (Lalamove العادي غير مبرّد).', cancel_wa: 'أبلغ المخزن (واتساب)',
     kind: 'النوع', kind_container: 'حاوية', kind_in_place: 'شراء داخل المخزن (بلا حاوية)', in_no: 'الرقم (فارغ = تلقائي)', cs_planned: 'مخطط', cs_requested: 'طُلب إذن الدخول', cs_approved: 'وافق المخزن', cs_rejected: 'رفض المخزن', cs_stored: 'مخزّنة',
-    cx_request: 'اطلب إذن الدخول (واتساب)', cx_ok: 'المخزن قبل', cx_no: 'المخزن رفض', cx_notice: 'أبلغ المخزن (واتساب)'
+    cx_request: 'اطلب إذن الدخول (واتساب)', cx_ok: 'المخزن قبل', cx_no: 'المخزن رفض', cx_notice: 'أبلغ المخزن (واتساب)',
+    rq_title: 'اقتراحات تعديل المنتجات', rq_hint_ak: 'يُرسل اقتراحك إلى المدير، ولا يتغير المنتج إلا بعد موافقته.', rq_propose: 'اقتراح',
+    rq_propose_new: 'اقتراح منتج جديد', rq_send: 'إرسال إلى المدير', rq_sent: 'أُرسل الاقتراح — بانتظار موافقة المدير', rq_note: 'السبب / ملاحظة للمدير',
+    rq_new: 'منتج جديد', rq_change: 'تعديل {c}', rq_approve: 'موافقة', rq_reject: 'رفض', rq_reject_q: 'سبب الرفض (اختياري)',
+    rq_pending: 'بانتظار الموافقة', rq_approved: 'تمت الموافقة', rq_rejected: 'مرفوض', rq_ok: 'تمت الموافقة — حُفظ المنتج', rq_no: 'رُفض الاقتراح', need_rq: 'اقتراحات منتجات من المحاسب'
   }
 };
 const MON = { id: ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'], ar: ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'] };
@@ -335,10 +343,11 @@ function render() {
   if (!S.D) return;
   $('#who').textContent = S.user + (S.role === 'akuntan' ? ' (' + t('ro') + ')' : '') + (MOCK ? ' · demo' : '');
   $('#logout').hidden = false; $('#logout').textContent = t('logout');
-  const tabs = TABS.filter(x => x !== 'set' || isOwner());
+  const tabs = TABS; // v62: the settings tab for everyone — the owner's full settings; the manager and the accountant see the products only
   if (!tabs.includes(S.tab)) S.tab = 'dash';
-  const nav = $('#nav'); nav.hidden = false;
-  nav.replaceChildren(...tabs.map(x => h('button', { type: 'button', 'data-tab': x, class: S.tab === x ? 'on' : '', onclick: () => { S.tab = x; render(); } }, t('t_' + x))));
+  const nav = $('#nav'), nRq = can() ? (S.D.alerts.product_requests || 0) : 0; nav.hidden = false;
+  nav.replaceChildren(...tabs.map(x => h('button', { type: 'button', 'data-tab': x, class: S.tab === x ? 'on' : '', onclick: () => { S.tab = x; render(); } },
+    x === 'set' && !isOwner() ? t('s_pr') : t('t_' + x), x === 'set' && nRq ? h('b', { class: 'bad', 'data-rq-count': '', text: ' (' + nRq + ')' }) : null)));
   const v = ({ dash: vDash, stok: vStok, cont: vCont, mut: vMut, cek: vCek, ord: vOrd, cust: vCust, set: vSet })[S.tab]();
   v.id = 'v-' + S.tab;
   $('#app').replaceChildren(v);
@@ -394,6 +403,7 @@ function needAction() {
   S.D.containers.forEach(c => { if (['planned', 'requested', 'approved', 'rejected'].includes(c.status)) cs[c.status] = (cs[c.status] || 0) + 1; });
   const btn = (tab, f, label, n) => h('button', { class: 'btn sm', type: 'button', 'data-need': f, onclick: () => { S.tab = tab; if (tab === 'ord') S.f.ost = f; render(); } }, label + ' ', h('b', { text: n }));
   const items = Object.keys(os).map(k => btn('ord', k, t('st_' + k), os[k])).concat(Object.keys(cs).map(k => btn('cont', k, t('container') + ': ' + t('cs_' + k), cs[k])));
+  if (can() && S.D.alerts.product_requests) items.push(btn('set', 'rq', t('need_rq'), S.D.alerts.product_requests)); // v62
   return h('div', { class: 'card', id: 'need' }, h('h2', { text: t('need_action') }), items.length ? h('div', { class: 'row' }, items) : h('p', { class: 'muted', text: t('all_good') }));
 }
 function explain(no) { ask(t('explain') + ' ' + no, t('explain_q'), v => v.length < 3 ? (toast(t('explain_q'), true), false) : act('check_note', { check_no: no, note: v }).then(r => !!r), { input: h('textarea', { id: 'ask-in', style: 'min-height:90px' }) }); }
@@ -758,19 +768,19 @@ function truckForm(o) {
     can() ? [h('button', { class: 'btn pri', type: 'button', id: 'tk-save', onclick: async () => { if (await act('trip_save', { order_no: o.order_no, via: via.value, vehicle: veh.value, driver: dn.value, driver_wa: ((S.D.drivers || [])[Number(drv.value)] || {}).wa, plate: pl.value, cost: Number(String(cost.value).replace(/\D/g, '')) || 0 })) closeModal(); } }, t('save'))] : []);
 }
 
-/* ---------- settings (owner) ---------- */
+/* ---------- settings (owner); the products also for the manager (edits) and the accountant (proposes, v62) ---------- */
 function vSet() {
   const D = S.D;
+  if (!isOwner()) return h('div', null, prCard(), rqCard());
   const whRows = D.warehouses.map(w => h('tr', { 'data-wh': w.code, class: w.active ? '' : 'muted' }, h('td', null, h('b', { text: w.code })), h('td', null, w.name, h('div', { class: 'muted', text: w.address })), h('td', { class: 'hp', text: [w.pic_name, w.pic_wa].filter(Boolean).join(' · ') }),
     h('td', { class: 'hp', text: KCold.ZONES.map(z => t('z_' + z).split(' ')[0] + ' ' + rp(w['rate_' + z.toLowerCase()])).join(' · ') + (w.rate_unit === 'day' ? t('per_day') : t('per_month')) }), h('td', { class: 'hp', text: w.parser }), h('td', null, h('button', { class: 'btn sm', type: 'button', 'data-act': 'wh-edit', onclick: () => whForm(w) }, t('edit')))));
-  const prRows = D.products.map(p => h('tr', { 'data-pr': p.code, class: p.active ? '' : 'muted' }, h('td', null, h('b', { text: p.code })), h('td', { text: p.name }), h('td', { class: 'n', text: kgf(p.kg_per_ctn) }), h('td', { class: 'n', 'data-cpp': '', text: p.ctn_per_pallet ? n0(p.ctn_per_pallet) : '' }), h('td', { class: 'hp', text: p.aliases }), h('td', null, h('button', { class: 'btn sm', type: 'button', onclick: () => prForm(p) }, t('edit')))));
   const drvBox = h('tbody', { id: 'set-drv' });
   const addDrv = d => drvBox.append(h('tr', null, ['name', 'wa', 'vehicle', 'plate'].map(k => h('td', null, h('input', { 'data-f': k, value: (d && d[k]) || '' }))), h('td', null, h('button', { class: 'btn sm bad', type: 'button', onclick: e => e.target.closest('tr').remove() }, '×'))));
   (D.drivers || []).forEach(addDrv);
   const company = h('input', { id: 'set-company', value: D.company.name });
   return h('div', null,
     h('div', { class: 'card' }, h('div', { class: 'row' }, h('h2', { text: t('s_wh'), style: 'flex:1' }), h('button', { class: 'btn pri', type: 'button', id: 'wh-add', onclick: () => whForm(null) }, '+ ' + t('add'))), table([t('code'), t('name'), [t('pic'), 'hp'], [t('rate'), 'hp'], [t('parser'), 'hp'], ''], whRows, { id: 'set-wh' })),
-    h('div', { class: 'card' }, h('div', { class: 'row' }, h('h2', { text: t('s_pr'), style: 'flex:1' }), h('button', { class: 'btn pri', type: 'button', id: 'pr-add', onclick: () => prForm(null) }, '+ ' + t('add'))), table([t('code'), t('name'), [t('kg_ctn'), 'n'], [t('ctn_pallet'), 'n'], [t('aliases'), 'hp'], ''], prRows, { id: 'set-pr' })),
+    prCard(), rqCard(),
     h('div', { class: 'card' }, h('h2', { text: t('s_drv') }), h('div', { class: 'tw' }, h('table', { class: 'lines' }, h('thead', null, h('tr', null, [t('name'), 'WhatsApp', t('vehicle'), t('plate'), ''].map(x => h('th', { text: x })))), drvBox)),
       h('div', { class: 'row' }, h('button', { class: 'btn sm', type: 'button', id: 'drv-add', onclick: () => addDrv() }, t('add_row')), h('button', { class: 'btn pri', type: 'button', id: 'drv-save', onclick: () => {
         const drivers = Array.from(drvBox.querySelectorAll('tr')).map(tr => { const o = {}; tr.querySelectorAll('[data-f]').forEach(i => { o[i.dataset.f] = i.value.trim(); }); return o; }).filter(d => d.name || d.wa);
@@ -791,12 +801,45 @@ function whForm(w) {
       if (await act('warehouse_save', d)) closeModal();
     } }, t('save'))]);
 }
+/** The products: the owner and the manager edit them; the accountant proposes (v62). */
+function prCard() {
+  const ak = S.role === 'akuntan';
+  const rows = S.D.products.map(p => h('tr', { 'data-pr': p.code, class: p.active ? '' : 'muted' }, h('td', null, h('b', { text: p.code })), h('td', { text: p.name }), h('td', { class: 'n', text: kgf(p.kg_per_ctn) }), h('td', { class: 'n', 'data-cpp': '', text: p.ctn_per_pallet ? n0(p.ctn_per_pallet) : '' }), h('td', { class: 'hp', text: p.aliases }),
+    h('td', null, h('button', { class: 'btn sm', type: 'button', 'data-act': ak ? 'pr-propose' : 'pr-edit', onclick: () => prForm(p) }, ak ? t('rq_propose') : t('edit')))));
+  return h('div', { class: 'card' }, h('div', { class: 'row' }, h('h2', { text: t('s_pr'), style: 'flex:1' }), h('button', { class: 'btn pri', type: 'button', id: 'pr-add', onclick: () => prForm(null) }, '+ ' + (ak ? t('rq_propose_new') : t('add')))),
+    ak ? h('p', { class: 'muted', id: 'rq-hint', text: t('rq_hint_ak') }) : null,
+    table([t('code'), t('name'), [t('kg_ctn'), 'n'], [t('ctn_pallet'), 'n'], [t('aliases'), 'hp'], ''], rows, { id: 'set-pr' }));
+}
+/** The accountant's proposals: open ones first; the manager / owner approves or rejects each; the accountant sees where they stand. */
+function rqCard() {
+  const list = (S.D.requests || []).slice().sort((a, b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1) || String(b.requested_at).localeCompare(String(a.requested_at))).slice(0, 30);
+  if (!list.length) return null;
+  const F = [['name', 'name'], ['kg_per_ctn', 'kg_ctn'], ['ctn_per_pallet', 'ctn_pallet'], ['aliases', 'aliases'], ['active', 'active']];
+  const val = (k, v) => k === 'active' ? (v ? '✓' : '✗') : k === 'kg_per_ctn' ? kgf(v) : String(v === undefined || v === null ? '' : v);
+  return h('div', { class: 'card', id: 'rq-card' }, h('h2', { text: t('rq_title') }), list.map(r => {
+    const p = r.is_new ? null : S.D.products.find(x => x.code === r.code), d = r.data || {};
+    const lines = F.filter(([k]) => r.is_new || !p || val(k, p[k]) !== val(k, d[k])).map(([k, lb]) => h('div', { 'data-f': k, text: t(lb) + ': ' + (p && !r.is_new ? val(k, p[k]) + ' → ' : '') + val(k, d[k]) }));
+    const st = r.status === 'pending' ? 'warn' : r.status === 'approved' ? 'ok' : 'bad';
+    return h('div', { 'data-rq': r.id, 'data-status': r.status, style: 'border-top:1px solid var(--bd);padding:8px 0' },
+      h('div', { class: 'row', style: 'justify-content:space-between' }, h('b', { text: r.is_new ? t('rq_new') + ': ' + d.name : t('rq_change', { c: r.code }) }), h('span', { class: st, 'data-rq-st': '', text: t('rq_' + r.status) })),
+      h('div', { class: 'muted', text: r.requested_by + ' · ' + fdt(r.requested_at) + (r.decided_by ? ' — ' + r.decided_by + ' · ' + fdt(r.decided_at) : '') }),
+      lines, r.note ? h('div', { class: 'muted', text: '“' + r.note + '”' }) : null, r.decide_note ? h('div', { class: 'bad', text: t('rq_rejected') + ': ' + r.decide_note }) : null,
+      r.status === 'pending' && can() ? h('div', { class: 'row', style: 'margin-top:6px' },
+        h('button', { class: 'btn sm pri', type: 'button', 'data-act': 'rq-approve', onclick: () => act('request_decide', { id: r.id, approve: true }, t('rq_ok')) }, t('rq_approve')),
+        h('button', { class: 'btn sm bad', type: 'button', 'data-act': 'rq-reject', onclick: () => ask(t('rq_reject') + ' — ' + (r.is_new ? d.name : r.code), t('rq_reject_q'), v => act('request_decide', { id: r.id, approve: false, note: v }, t('rq_no')).then(x => !!x)) }, t('rq_reject'))) : null);
+  }));
+}
 function prForm(p) {
   const code = h('input', { id: 'pf-code', value: p ? p.code : '', readonly: !!p }), name = h('input', { id: 'pf-name', value: p ? p.name : '' }), kg = h('input', { id: 'pf-kg', inputmode: 'decimal', value: p ? p.kg_per_ctn : '' }), al = h('input', { id: 'pf-al', value: p ? p.aliases : '' });
   const cpp = h('input', { id: 'pf-cpp', inputmode: 'numeric', value: p && p.ctn_per_pallet ? p.ctn_per_pallet : '' });
   const active = h('input', { id: 'pf-active', type: 'checkbox', checked: p ? p.active : true, style: 'width:auto;min-height:0' });
-  modal(p ? t('edit') + ' ' + p.code : t('s_pr'), h('div', null, field(p ? t('code') : t('code_auto'), code), field(t('name'), name), h('div', { class: 'row' }, h('div', { style: 'flex:1' }, field(t('kg_ctn'), kg)), h('div', { style: 'flex:1' }, field(t('ctn_pallet'), cpp))), field(t('aliases'), al), h('label', null, active, ' ' + t('active'))),
-    [h('button', { class: 'btn pri', type: 'button', id: 'pf-save', onclick: async () => { if (await act('product_save', { code: code.value, name: name.value, kg_per_ctn: Number(String(kg.value).replace(',', '.')) || 0, ctn_per_pallet: Number(String(cpp.value).replace(/\D/g, '')) || 0, aliases: al.value, active: active.checked })) closeModal(); } }, t('save'))]);
+  const ak = S.role === 'akuntan', note = ak ? h('input', { id: 'pf-note' }) : null; // v62: the accountant's form is a proposal to the manager
+  modal((p ? (ak ? t('rq_propose') : t('edit')) + ' ' + p.code : (ak ? t('rq_propose_new') : t('s_pr'))), h('div', null, field(p ? t('code') : t('code_auto'), code), field(t('name'), name), h('div', { class: 'row' }, h('div', { style: 'flex:1' }, field(t('kg_ctn'), kg)), h('div', { style: 'flex:1' }, field(t('ctn_pallet'), cpp))), field(t('aliases'), al), h('label', null, active, ' ' + t('active')), ak ? field(t('rq_note'), note) : null),
+    [h('button', { class: 'btn pri', type: 'button', id: 'pf-save', onclick: async () => {
+      const d = { code: code.value, name: name.value, kg_per_ctn: Number(String(kg.value).replace(',', '.')) || 0, ctn_per_pallet: Number(String(cpp.value).replace(/\D/g, '')) || 0, aliases: al.value, active: active.checked };
+      if (ak) d.note = note.value;
+      if (await act(ak ? 'product_request' : 'product_save', d, ak ? t('rq_sent') : null)) closeModal();
+    } }, ak ? t('rq_send') : t('save'))]);
 }
 
 /* ---------- customers (Batch C: reusable registry, shared pos_customers) ---------- */
