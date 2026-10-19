@@ -778,6 +778,22 @@ CREATE TABLE IF NOT EXISTS cold_orders (
 CREATE INDEX IF NOT EXISTS idx_cold_orders_status ON cold_orders (status);
 CREATE INDEX IF NOT EXISTS idx_cold_orders_order_date ON cold_orders (order_date);
 
+CREATE TABLE IF NOT EXISTS cold_product_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT,
+  code TEXT,
+  is_new INTEGER,
+  data TEXT,
+  status TEXT,
+  note TEXT,
+  requested_by TEXT,
+  requested_at TEXT,
+  decided_by TEXT,
+  decided_at TEXT,
+  decide_note TEXT,
+  result_code TEXT
+);
+
 CREATE TABLE IF NOT EXISTS brad_orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   order_no TEXT,
