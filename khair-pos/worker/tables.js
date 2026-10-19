@@ -256,6 +256,11 @@ export const TABLES = {
     cancelled_at: 'string', cancelled_by: 'string', trip: 'string', log: 'string', customer_id: 'number',
     plate: 'string', dest_phone: 'string', // v36: truck plate on the order + the customer's phone
   },
+  // v62 (owner 2026-10-19: «المدير يعدل و المحاسب بإذن من المدير»): the accountant's product proposals, decided by the manager / owner.
+  cold_product_requests: {
+    kind: 'string', code: 'string', is_new: 'boolean', data: 'string', status: 'string', note: 'string',
+    requested_by: 'string', requested_at: 'string', decided_by: 'string', decided_at: 'string', decide_note: 'string', result_code: 'string',
+  },
   // v60 (owner 2026-10-18): Khair Order Brad — the cold-store order process as its own app until it is proven. Its own
   // orders; the gudang tables are only read (the goods go out of cold_movements when the car leaves).
   brad_orders: {
@@ -315,7 +320,7 @@ export const OPS_TABLE_ATT = {
 export const OPS_TABLE_COLD = {
   warehouses: 'cold_warehouses', products: 'cold_products', containers: 'cold_containers',
   pallets: 'cold_pallets', movements: 'cold_movements', checks: 'cold_checks',
-  orders: 'cold_orders', customers: 'pos_customers', settings: 'pos_settings',
+  orders: 'cold_orders', customers: 'pos_customers', settings: 'pos_settings', requests: 'cold_product_requests',
 };
 
 // Khair Order Brad (v60) ops key → table: its own orders, the brad_* settings, and the goods out of the gudang ledger

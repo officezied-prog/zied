@@ -7,13 +7,16 @@
    Stock is never stored: the balance of a pallet in a warehouse is the sum of its movements (cartons, signed).
    Movements are append-only. A mistake is fixed with movement_reverse, which writes REVERSE rows that point (ref_seq)
    to the original. Roles: owner = everything; manager = everything except settings and storage costs; akuntan = read-only.
+   v62 (owner 2026-10-19: «المدير يعدل و المحاسب بإذن من المدير»): the manager edits the products too; the accountant only proposes a
+   product change (product_request), which the manager or the owner approves or rejects (request_decide) — nothing changes before.
    Users are the POS users (pos_users): same name, PIN, master code, lock and "must change PIN" rules as the POS. */
 var KCold = (function () {
   'use strict';
   var P = typeof KColdParsers !== 'undefined' ? KColdParsers : (typeof window !== 'undefined' ? window.KColdParsers : null);
   var ROLES = ['owner', 'manager', 'akuntan'];
-  var OWNER_ONLY = { warehouse_save: 1, product_save: 1, settings_save: 1 };
+  var OWNER_ONLY = { warehouse_save: 1, settings_save: 1 };
   var READ = { login: 1, bootstrap: 1, report: 1, fefo: 1, check_preview: 1 };
+  var AKUNTAN_WRITE = { product_request: 1 }; // v62: the one thing the accountant writes — a proposal, applied only once approved
   var EXPIRY_DAYS = 60;
   /* Order flow (every step is logged with who and when; status is never written outside these tables):
      open → sent (to the warehouse) → approved | rejected → ready → dispatch (owner/manager approve sending) → driver → picked (stock out) → delivered.
@@ -174,7 +177,7 @@ var KCold = (function () {
   /* ---------- the request ---------- */
   function core(state, req, nowIso) {
     var st = {};
-    ['warehouses', 'products', 'containers', 'pallets', 'movements', 'checks', 'orders', 'users', 'customers'].forEach(function (k) { st[k] = (state[k] || []).slice(); });
+    ['warehouses', 'products', 'containers', 'pallets', 'movements', 'checks', 'orders', 'users', 'customers', 'requests'].forEach(function (k) { st[k] = (state[k] || []).slice(); });
     st.settings = state.settings || {};
     st.movements.forEach(function (m) { m.seq = num(m.seq); m.cartons = num(m.cartons); });
     st.movements.sort(function (a, b) { return a.seq - b.seq; });
@@ -194,7 +197,7 @@ var KCold = (function () {
     if (bool(me.must_change) && !viaMaster) return fail('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu di aplikasi Khair Mart');
     var role = str(me.role), by = str(me.name);
     if (ROLES.indexOf(role) < 0) return fail('FORBIDDEN', 'Hanya pemilik, manajer dan akuntan');
-    if (!READ[action] && role === 'akuntan') return fail('FORBIDDEN', 'Akuntan hanya bisa melihat');
+    if (!READ[action] && !AKUNTAN_WRITE[action] && role === 'akuntan') return fail('FORBIDDEN', 'Akuntan hanya bisa melihat');
     if (OWNER_ONLY[action] && role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik');
     var seesCost = role === 'owner' || role === 'akuntan';
 
@@ -203,6 +206,21 @@ var KCold = (function () {
     function pallet(c) { var k = code(c); return st.pallets.find(function (p) { return p.pallet_code === k; }); }
     function order(no) { return st.orders.find(function (o) { return o.order_no === str(no).toUpperCase(); }); }
     function cust(id) { return st.customers.find(function (c) { return c.id === int(id); }); } // Batch C: customer registry (pos_customers)
+    /** A product row from the form's values (product_save, and an accountant's proposal when it is approved): { row, existed } or { error }. */
+    function productRow(d) {
+      var pn = clean(d.name, 60), kpc = num(d.kg_per_ctn), cpp = d.ctn_per_pallet === undefined || d.ctn_per_pallet === '' ? 0 : int(d.ctn_per_pallet);
+      if (!pn) return { error: 'Nama produk wajib' };
+      var pc = code(d.code) || autoCode(pn, st.products.map(function (x) { return x.code; }), 'P');
+      if (kpc < 0 || kpc > 100) return { error: 'Kg per karton 0–100' };
+      if (!(cpp >= 0 && cpp <= 5000)) return { error: 'Karton per palet 0–5000' };
+      var pe = product(pc);
+      return { existed: !!pe, row: Object.assign({}, pe || { created_at: now, created_by: by }, { code: pc, name: pn, kg_per_ctn: kpc, ctn_per_pallet: cpp,
+        aliases: str(d.aliases).split(',').map(function (a) { return clean(a, 40); }).filter(Boolean).slice(0, 12).join(', '), active: d.active === undefined ? true : bool(d.active) }) };
+    }
+    function reqOut(r) {
+      return { id: r.id, kind: str(r.kind) || 'product', code: str(r.code), is_new: bool(r.is_new), data: json(r.data, {}), status: str(r.status), note: str(r.note),
+        requested_by: str(r.requested_by), requested_at: str(r.requested_at), decided_by: str(r.decided_by), decided_at: str(r.decided_at), decide_note: str(r.decide_note), result_code: str(r.result_code) };
+    }
     function nextSeq() { return st.movements.reduce(function (m, x) { return Math.max(m, x.seq); }, 0) + 1; }
     function move(o) {
       var row = { seq: nextSeq(), move_date: o.move_date || today, at: now, type: o.type, pallet_code: o.pallet_code, warehouse: o.warehouse, cartons: o.cartons,
@@ -258,7 +276,8 @@ var KCold = (function () {
       var checked = {}; st.checks.forEach(function (c) { if (c.check_date === today || wib(str(c.at) || now).slice(0, 10) === today) checked[c.warehouse] = true; });
       var withStock = {}; rows.forEach(function (r) { if (r.cartons > 0) withStock[r.warehouse] = true; });
       var a = { expiring: exp, no_check_today: st.warehouses.filter(function (w) { return active(w) && withStock[w.code] && !checked[w.code]; }).map(function (w) { return w.code; }),
-        unexplained: st.checks.filter(function (c) { return num(c.n_diff) > 0 && !str(c.explained_note); }).map(function (c) { return checkOut(c); }).slice(-20) };
+        unexplained: st.checks.filter(function (c) { return num(c.n_diff) > 0 && !str(c.explained_note); }).map(function (c) { return checkOut(c); }).slice(-20),
+        product_requests: st.requests.filter(function (r) { return str(r.status) === 'pending'; }).length };
       if (seesCost) a.storage = st.warehouses.filter(active).map(function (w) { return storage(st, w, today.slice(0, 7), today); });
       return a;
     }
@@ -276,7 +295,7 @@ var KCold = (function () {
           warehouses: st.warehouses.map(whOut), products: st.products.map(function (p) { return { id: p.id, code: p.code, name: p.name, kg_per_ctn: num(p.kg_per_ctn), ctn_per_pallet: num(p.ctn_per_pallet), aliases: str(p.aliases), active: active(p) }; }),
           containers: st.containers.map(contOut), pallets: st.pallets, stock: stockRows(st, ''),
           movements: st.movements.slice(-500).reverse(), checks: st.checks.slice(-60).reverse().map(function (c) { return checkOut(c, true); }),
-          orders: st.orders.slice(-100).reverse().map(orderOut), alerts: alerts(), vehicles: VEHICLES.map(function (v) { return { max_kg: v[0] === Infinity ? null : v[0], name: v[1] }; })
+          orders: st.orders.slice(-100).reverse().map(orderOut), requests: st.requests.slice(-60).reverse().map(reqOut), alerts: alerts(), vehicles: VEHICLES.map(function (v) { return { max_kg: v[0] === Infinity ? null : v[0], name: v[1] }; })
         });
       }
       case 'warehouse_save': {
@@ -295,17 +314,34 @@ var KCold = (function () {
         put('warehouses', row);
         return done({ warehouse: whOut(row) });
       }
-      case 'product_save': {
-        var pn = clean(data.name, 60), kpc = num(data.kg_per_ctn), cpp = data.ctn_per_pallet === undefined || data.ctn_per_pallet === '' ? 0 : int(data.ctn_per_pallet);
-        if (!pn) return fail('INVALID', 'Nama produk wajib');
-        var pc = code(data.code) || autoCode(pn, st.products.map(function (x) { return x.code; }), 'P');
-        if (kpc < 0 || kpc > 100) return fail('INVALID', 'Kg per karton 0–100');
-        if (!(cpp >= 0 && cpp <= 5000)) return fail('INVALID', 'Karton per palet 0–5000');
-        var pe = product(pc);
-        var prow = Object.assign({}, pe || { created_at: now, created_by: by }, { code: pc, name: pn, kg_per_ctn: kpc, ctn_per_pallet: cpp,
-          aliases: str(data.aliases).split(',').map(function (a) { return clean(a, 40); }).filter(Boolean).slice(0, 12).join(', '), active: data.active === undefined ? true : bool(data.active) });
-        put('products', prow);
-        return done({ product: prow });
+      case 'product_save': { // owner and manager (v62); the accountant proposes instead (product_request)
+        var pf = productRow(data);
+        if (pf.error) return fail('INVALID', pf.error);
+        put('products', pf.row);
+        return done({ product: pf.row });
+      }
+      case 'product_request': { // v62: the accountant's proposal — a new product or a change; nothing changes until it is approved
+        if (role !== 'akuntan') return fail('FORBIDDEN', 'Pemilik dan manajer menyimpan langsung');
+        var pq = productRow(data);
+        if (pq.error) return fail('INVALID', pq.error);
+        var fields = { code: pq.existed ? pq.row.code : code(data.code), name: pq.row.name, kg_per_ctn: pq.row.kg_per_ctn, ctn_per_pallet: pq.row.ctn_per_pallet, aliases: pq.row.aliases, active: pq.row.active };
+        var tgt = pq.existed ? pq.row.code : '', nm = pq.row.name.toLowerCase();
+        // one open proposal per product (a new one: per name) — asking again replaces it
+        var same = st.requests.find(function (r) { return str(r.status) === 'pending' && (tgt ? str(r.code) === tgt : !str(r.code) && str(json(r.data, {}).name).toLowerCase() === nm); });
+        var rrow = Object.assign({}, same || { kind: 'product', status: 'pending', decided_by: '', decided_at: '', decide_note: '', result_code: '' },
+          { code: tgt, is_new: !pq.existed, data: JSON.stringify(fields), note: clean(data.note, 200), requested_by: by, requested_at: now });
+        put('requests', rrow);
+        return done({ request: reqOut(rrow) });
+      }
+      case 'request_decide': { // v62: the manager (or the owner) approves → the product is saved as proposed; or rejects, with a reason if given
+        var rr = st.requests.find(function (r) { return r.id === int(data.id); });
+        if (!rr) return fail('NOT_FOUND', 'Permintaan tidak ditemukan');
+        if (str(rr.status) !== 'pending') return fail('INVALID', 'Permintaan ini sudah diputuskan');
+        var yes = bool(data.approve), applied = null;
+        if (yes) { applied = productRow(json(rr.data, {})); if (applied.error) return fail('INVALID', applied.error); put('products', applied.row); }
+        var drow = Object.assign({}, rr, { status: yes ? 'approved' : 'rejected', decided_by: by, decided_at: now, decide_note: clean(data.note, 200), result_code: yes ? applied.row.code : '' });
+        put('requests', drow);
+        return done({ request: reqOut(drow), product: yes ? applied.row : null });
       }
       case 'settings_save': {
         if (data.drivers !== undefined) {

@@ -49,6 +49,9 @@ the worker tests + the three Playwright suites on every PR. This removed n8n's m
   bill 0; over the cap / no key → the apps keep the free OpenStreetMap search. Only "Pro" fields (no phone/rating/hours).
 - `gudang/` (cold storage, `/webhook/khair-cold`) moved to the Worker in Batch C (PR #22) and is shown inside the owner
   app; Phase 2 proper (WhatsApp + Lalamove) is still to do (plan in `khair-pos/worker/docs/phase2-plan.md`).
+  Products (v62, owner 2026-10-19: «المدير يعدل و المحاسب بإذن من المدير»): owner and manager edit them (`product_save`); the accountant
+  only proposes (`product_request` → table `cold_product_requests`), applied when the manager / owner approves (`request_decide`). The
+  manager and the accountant see a "Produk" tab (products only — the rest of the settings stay the owner's).
 - **Khair Order Brad (`brad/`, v60) = stage 1 of that plan as its OWN app until the owner has proven it** (owner 2026-10-18: «في تطبيق
   اخر الان منفصل حتى نتأكد منه قبل دمجه مع القديم»; the gudang app stays exactly as before — do not add the order process to it until he
   says so). Logic `backend/brad/brad-core.js` (KBrad, loaded after cold-parsers + cold-core), Worker `/webhook/khair-brad` (`worker/src/brad.js`).
