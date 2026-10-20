@@ -71,6 +71,7 @@ export function loaderSpecs(req, opts = {}) {
 
   return {
     ...tamper,
+    ...(req.action === 'finance_position' ? financeSpecs(data) : {}), // v67
     'Get Users': all('pos_users'),
     'Get Settings': all('pos_settings'),
     ...(!opts.full && LIGHT_ACTIONS.indexOf(req.action) >= 0 ? {} : { 'Get Products': all('pos_products'), 'Get Customers': all('pos_customers') }),
@@ -135,6 +136,46 @@ export function loaderSpecs(req, opts = {}) {
       sql: 'SELECT * FROM pos_bank_lines WHERE account_id = ? AND period = ? ORDER BY id',
       params: [req.bank_account, req.bank_period],
     },
+  };
+}
+
+// v67 (owner 2026-10-20, majoo screenshots: «اضف هذه المميزات»): the Keuangan screen's sums (process.js finance_position), read only by
+// that action and only as aggregates — SUM … GROUP BY over the indexed date columns, a handful of rows back whatever the size of
+// the tables. Money on a store account since its opening balance (pos_settings 'acct_opening' = {account_id: {date, …}}) is joined
+// to that date in SQL (json_each), so each account is read from its own date only. Supplier balances are all-time by nature
+// (goods-in − payments per supplier, as party_ledger), grouped by supplier.
+function financeSpecs(data) {
+  const isD = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s == null ? '' : s));
+  const from = isD(data.from) ? String(data.from) : '9999-12-31', to = isD(data.to) ? String(data.to) : '0000-01-01';
+  const today = new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
+  // the Jakarta days from..to as UTC instants (approvals keep decided_at in UTC ISO)
+  const utc = (d, h) => (isD(d) && d !== '9999-12-31' && d !== '0000-01-01' ? new Date(Date.parse(d + 'T00:00:00Z') + h * 3600000).toISOString() : d);
+  const OPEN = "WITH o AS (SELECT j.key AS acc, json_extract(j.value, '$.date') AS d FROM pos_settings s, json_each(CASE WHEN json_valid(s.svalue) THEN s.svalue ELSE '{}' END) j WHERE s.skey = 'acct_opening') ";
+  const METHOD = "CASE WHEN payment_method IN ('transfer', 'qris', 'kartu') THEN payment_method ELSE 'tunai' END";
+  const PAID = 'SUM(MIN(COALESCE(paid_amount, 0), COALESCE(total, 0)))';
+  return {
+    'Get Fin Sales': { table: 'pos_sales', params: [from, to],
+      sql: `SELECT MIN(id) AS id, ${METHOD} AS m, COALESCE(account_id, '') AS acc, CASE WHEN COALESCE(shift_id, '') = '' THEN 0 ELSE 1 END AS drawer, COUNT(*) AS n, ${PAID} AS amt FROM pos_sales WHERE sale_date >= ? AND sale_date <= ? AND COALESCE(status, '') != 'void' AND COALESCE(payment_method, '') != 'campur' GROUP BY m, acc, drawer` },
+    'Get Fin Split Sales': { table: 'pos_sales', params: [from, to],
+      sql: "SELECT id, sale_date, account_id, shift_id, payment_method, pay_parts, paid_amount, total FROM pos_sales WHERE sale_date >= ? AND sale_date <= ? AND payment_method = 'campur' AND COALESCE(status, '') != 'void' ORDER BY id" },
+    'Get Fin Pays': { table: 'pos_payments', params: [from, to],
+      sql: "SELECT MIN(id) AS id, CASE WHEN direction = 'out' THEN 'out' ELSE 'in' END AS dir, COALESCE(party_type, '') AS pt, COALESCE(method, '') AS m, COALESCE(account_id, '') AS acc, CASE WHEN note LIKE '%[dari kas]%' THEN 1 ELSE 0 END AS kas, COUNT(*) AS n, SUM(amount) AS amt FROM pos_payments WHERE pay_date >= ? AND pay_date <= ? GROUP BY dir, pt, m, acc, kas" },
+    'Get Fin Expenses': { table: 'pos_expenses', params: [from, to],
+      sql: "SELECT MIN(id) AS id, COALESCE(paid_from, '') AS pf, COUNT(*) AS n, SUM(amount) AS amt FROM pos_expenses WHERE expense_date >= ? AND expense_date <= ? GROUP BY pf" },
+    'Get Fin Acct Sales': { table: 'pos_sales', params: [today],
+      sql: OPEN + "SELECT MIN(x.id) AS id, o.acc AS acc, COUNT(*) AS n, SUM(MIN(COALESCE(x.paid_amount, 0), COALESCE(x.total, 0))) AS amt FROM o JOIN pos_sales x ON x.sale_date >= o.d AND x.sale_date <= ? AND x.account_id = o.acc WHERE x.payment_method = 'transfer' AND COALESCE(x.status, '') != 'void' GROUP BY o.acc" },
+    'Get Fin Acct Split Sales': { table: 'pos_sales', params: [today],
+      sql: OPEN + "SELECT x.id, x.sale_date, x.account_id, x.shift_id, x.payment_method, x.pay_parts, x.paid_amount, x.total FROM o JOIN pos_sales x ON x.sale_date >= o.d AND x.sale_date <= ? AND x.account_id = o.acc WHERE x.payment_method = 'campur' AND COALESCE(x.status, '') != 'void' ORDER BY x.id" },
+    'Get Fin Acct Pays': { table: 'pos_payments', params: [today],
+      sql: OPEN + "SELECT MIN(p.id) AS id, o.acc AS acc, CASE WHEN p.direction = 'out' THEN 'out' ELSE 'in' END AS dir, COUNT(*) AS n, SUM(p.amount) AS amt FROM o JOIN pos_payments p ON p.pay_date >= o.d AND p.pay_date <= ? AND p.account_id = o.acc WHERE p.method IN ('transfer', 'qris') GROUP BY o.acc, dir" },
+    'Get Fin Supplier Notes': { table: 'pos_purchases', params: [],
+      sql: "SELECT MIN(id) AS id, COALESCE(supplier, '') AS supplier, COUNT(DISTINCT purchase_no) AS n, SUM(total) AS amt, MAX(purchase_date) AS last FROM pos_purchases GROUP BY COALESCE(supplier, '')" },
+    'Get Fin Supplier Pays': { table: 'pos_payments', params: [],
+      sql: "SELECT MIN(id) AS id, supplier, COUNT(*) AS n, SUM(amount) AS amt FROM pos_payments WHERE direction = 'out' AND supplier > '' GROUP BY supplier" },
+    'Get Fin Returns': { table: 'pos_returns', params: [from, to],
+      sql: "SELECT * FROM pos_returns WHERE return_date >= ? AND return_date <= ? AND status = 'approved' AND COALESCE(kind, '') != 'pemasok' ORDER BY id" },
+    'Get Fin Collected': { table: 'pos_approvals', params: [utc(from, -7), utc(to, 17)],
+      sql: "SELECT MIN(id) AS id, COUNT(*) AS n, SUM(total) AS amt FROM pos_approvals WHERE status = 'approved' AND kind = 'konsultasi' AND decided_at >= ? AND decided_at < ?" },
   };
 }
 

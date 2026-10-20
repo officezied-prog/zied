@@ -4,7 +4,7 @@ const MockServer = (() => {
   const DBKEY = 'kmock.db';
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
-  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_transfers', 'list_photos', 'photo_file', 'field_bootstrap', 'list_field', 'product_images', 'orders_map', 'shop_photos', 'street_returns', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon', 'profit_loss', 'list_invoice_changes'];
+  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_transfers', 'list_photos', 'photo_file', 'field_bootstrap', 'list_field', 'product_images', 'orders_map', 'shop_photos', 'street_returns', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon', 'profit_loss', 'list_invoice_changes', 'finance_position'];
   class MockErr extends Error { constructor(code, message, extra) { super(message || code); this.code = code; this.extra = extra || null; } }
   const E = (code, msg, extra) => new MockErr(code, msg, extra);
   let ready = null;
@@ -337,6 +337,7 @@ const MockServer = (() => {
     const st = Object.assign({}, V16_DEFAULTS, db.settings);
     st.repack_materials = window.KRepackMock ? window.KRepackMock.catalogOut(db, role) : []; // v50: names only for the cashier / rep
     st.supplier_dir = (Array.isArray(db.settings.supplier_dir) ? db.settings.supplier_dir : []).map(x => ['owner', 'manager', 'akuntan'].includes(role) ? x : { n: x.n }); // v56
+    delete st.acct_opening; // v67: the accounts' opening balances reach the Keuangan screen only (finance_position)
     if (st.opname_state && typeof st.opname_state === 'object') { const o = Object.assign({}, st.opname_state); o.counted_n = Array.isArray(o.counted) ? o.counted.length : 0; delete o.counted; st.opname_state = o; }
     return st;
   }
@@ -1164,7 +1165,7 @@ const MockServer = (() => {
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
-    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'confirm_purchase', 'repack_finish', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
+    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'confirm_purchase', 'repack_finish', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank', 'finance_position'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
     if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'scan_expense', 'list_photos', 'photo_file'].includes(action)) deviceTouch(db, u, data.device, false);
 
@@ -2741,13 +2742,98 @@ const MockServer = (() => {
         pl.net_profit = gross - expTotal + retNet + stockDiff + collected;
         return { pl };
       }
+      case 'finance_position': { // v67 (as backend/process.js): the Keuangan screen — drawers, accounts, money with no account, position, P&L extras
+        if (!(owner || u.role === 'akuntan' || (u.role === 'manager' && mockCostOk(db, u)))) throw E('FORBIDDEN', 'Hanya pemilik, akuntan, atau manajer yang boleh melihat modal');
+        const ff = strv(data.from), ft = strv(data.to);
+        if (!isYmd(ff) || !isYmd(ft) || ff > ft) throw E('INVALID', 'Rentang tanggal tidak valid');
+        const seeCost = mockCostOk(db, u), T = jktDate(), accs = bankAccounts(db), known = new Set(accs.map(a => strv(a.id)));
+        const zero = () => ({ in: 0, out: 0, n: 0 }), period = {}, since = {};
+        accs.forEach(a => { period[strv(a.id)] = zero(); since[strv(a.id)] = zero(); });
+        const accOf = id => known.has(strv(id)) ? strv(id) : '';
+        const opv = db.settings.acct_opening, opening = opv && typeof opv === 'object' && !Array.isArray(opv) ? opv : {};
+        const opDate = id => opening[id] && typeof opening[id] === 'object' && isYmd(strv(opening[id].date)) ? strv(opening[id].date) : '';
+        const none = { tf_sales: 0, qris_sales: 0, card_sales: 0, cash_nodrawer: 0, bank_in: 0, bank_out: 0, sup_cash: 0, exp_other: 0 };
+        const inP = d => strv(d) >= ff && strv(d) <= ft;
+        const add = (acc, date, dir, amt) => { if (!acc) return; if (inP(date)) { period[acc][dir] += amt; period[acc].n++; } const od = opDate(acc); if (od && strv(date) >= od && strv(date) <= T) { since[acc][dir] += amt; since[acc].n++; } };
+        db.sales.filter(x => x.status !== 'void').forEach(x => {
+          const sp = window.KPay.of(x), acc = accOf(x.account_id);
+          if (sp.transfer) add(acc, x.sale_date, 'in', sp.transfer);
+          if (!inP(x.sale_date)) return;
+          if (sp.transfer && !acc) none.tf_sales += sp.transfer;
+          none.qris_sales += sp.qris; none.card_sales += sp.kartu;
+          if (!strv(x.shift_id)) none.cash_nodrawer += sp.tunai;
+        });
+        db.payments.forEach(p => {
+          const amt = int(p.amount), acc = accOf(p.account_id), out = payDir(p) === 'out';
+          if (p.method === 'transfer' || p.method === 'qris') { add(acc, p.pay_date, out ? 'out' : 'in', amt); if (!acc && inP(p.pay_date)) none[out ? 'bank_out' : 'bank_in'] += amt; }
+          else if (out && strv(p.party_type) === 'supplier' && inP(p.pay_date) && !(p.paid_from === 'kas' || /\[dari kas\]/.test(strv(p.note)))) none.sup_cash += amt;
+        });
+        db.expenses.filter(x => inP(x.expense_date) && strv(x.paid_from) !== 'kas').forEach(x => { none.exp_other += int(x.amount); });
+        const accounts = accs.map(a => {
+          const id = strv(a.id), o = { id, bank: strv(a.bank), account_no: strv(a.account_no), holder: strv(a.holder), active: a.active !== false, period: period[id], opening: null };
+          if (opDate(id)) { const op = opening[id]; o.opening = { date: strv(op.date), amount: int(op.amount), by: strv(op.by), at: strv(op.at) }; o.since = since[id]; o.balance = o.opening.amount + since[id].in - since[id].out; }
+          return o;
+        });
+        const drawers = db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)).map(x => ({ shift_id: strv(x.shift_id), cashier: strv(x.cashier), shift_date: strv(x.shift_date), opened_at: strv(x.opened_at), opening_cash: int(x.opening_cash),
+          cash_sales: int(x.cash_sales), cash_payments: int(x.cash_payments), cash_in: int(x.cash_in), cash_out: int(x.cash_out), expected: int(x.opening_cash) + int(x.cash_sales) + int(x.cash_payments) + int(x.cash_in) - int(x.cash_out) }));
+        const owing = db.customers.filter(c => int(c.debt_balance) > 0).map(c => ({ id: c.id, name: strv(c.name), debt: int(c.debt_balance) })).sort((a, b) => b.debt - a.debt);
+        let stock = null;
+        if (seeCost) {
+          const cat = {}, isMat = p => window.KRepackMock ? window.KRepackMock.isMaterial(p) : strv(p.category).toLowerCase() === 'bahan kemasan';
+          stock = { value: 0, items: 0, materials: 0, materials_n: 0 };
+          db.products.filter(p => p.active !== false).forEach(p => { const v = Math.max(0, num(p.stock)) * int(p.cost_price), k = strv(p.category) || '—'; stock.value += v; stock.items++; cat[k] = (cat[k] || 0) + v; if (isMat(p)) { stock.materials += v; stock.materials_n++; } });
+          stock.value = Math.round(stock.value); stock.materials = Math.round(stock.materials);
+          stock.by_cat = Object.keys(cat).map(k => ({ category: k, value: Math.round(cat[k]) })).sort((a, b) => b.value - a.value).slice(0, 30);
+        }
+        const sup = {}, supOf = k => sup[k] || (sup[k] = { supplier: k, notes: 0, bought: 0, paid: 0, last: '', _no: new Set() });
+        db.purchases.forEach(r => { const k = strv(r.supplier); if (INTERNAL_SUP.includes(k.toUpperCase())) return; const x = supOf(k); x.bought += int(r.total); x._no.add(strv(r.purchase_no)); if (strv(r.purchase_date) > x.last) x.last = strv(r.purchase_date); });
+        db.payments.forEach(p => { const k = strv(p.supplier); if (k && payDir(p) === 'out') supOf(k).paid += int(p.amount); });
+        Object.values(sup).forEach(x => { x.notes = [...x._no].filter(Boolean).length; delete x._no; x.balance = x.bought - x.paid; });
+        const nameless = sup[''] || null; delete sup[''];
+        const owed = Object.values(sup).filter(x => x.balance > 0).sort((a, b) => b.balance - a.balance), ahead = Object.values(sup).filter(x => x.balance < 0).sort((a, b) => a.balance - b.balance);
+        const rets = (db.returns || []).filter(x => x.status === 'approved' && x.kind !== 'pemasok' && inP(x.return_date)).map(x => {
+          let lines = []; try { lines = typeof x.lines === 'string' ? JSON.parse(x.lines || '[]') : (x.lines || []); } catch (e) { lines = []; }
+          let back = 0; (Array.isArray(lines) ? lines : []).forEach(l => { if (l && l.condition !== 'rusak') { const p = prodById(l.product_id); back += Math.round(num(l.qty) * int(p ? p.cost_price : 0)); } });
+          return Object.assign({ date: strv(x.return_date), refund: int(x.refund) }, seeCost ? { restock: back } : {});
+        });
+        const wibDay = iso => iso ? new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(0, 10) : '';
+        const col = db.approvals.filter(a => a.kind === 'konsultasi' && a.status === 'approved' && inP(wibDay(a.decided_at)));
+        return { as_of: T, from: ff, to: ft, see_cost: seeCost, drawers, accounts, none,
+          receivables: { total: sum(db.customers, c => int(c.debt_balance)), count: owing.length, top: owing.slice(0, 30) }, stock,
+          suppliers: { payable: sum(owed, x => x.balance), prepaid: -sum(ahead, x => x.balance), owed_n: owed.length, ahead_n: ahead.length, owed: owed.slice(0, 50), ahead: ahead.slice(0, 50), nameless: nameless ? { bought: nameless.bought, paid: nameless.paid, notes: nameless.notes } : null },
+          pl_extra: { returns: Object.assign({ count: rets.length, refund: sum(rets, x => x.refund), list: rets }, seeCost ? { restock: sum(rets, x => x.restock) } : {}), collected: { count: col.length, total: sum(col, a => int(a.total)) } } };
+      }
+      case 'set_account_opening': { // v67 (as backend/process.js): the owner's opening balance of a store account; the accountant is told
+        needOwner();
+        const accId = strv(data.account_id), acc = bankAccounts(db).find(x => strv(x.id) === accId);
+        if (!acc) throw E('INVALID', 'Rekening toko tidak dikenal');
+        const cur0 = db.settings.acct_opening, cur = cur0 && typeof cur0 === 'object' && !Array.isArray(cur0) ? Object.assign({}, cur0) : {};
+        const before = cur[accId] && typeof cur[accId] === 'object' ? cur[accId] : null, label = strv(acc.bank) + ' ' + strv(acc.account_no);
+        let txt;
+        if (data.clear === true) {
+          if (!before) return { unchanged: true, account_id: accId, opening: null };
+          delete cur[accId];
+          txt = 'Saldo awal ' + label + ' dihapus (sebelumnya ' + rpTxt(before.amount) + ' per ' + strv(before.date) + ') — oleh pemilik ' + u.name;
+        } else {
+          const date = strv(data.date), amt = Number(data.amount);
+          if (!isYmd(date) || date > jktDate() || date < '2000-01-01') throw E('INVALID', 'Tanggal saldo awal: paling lambat hari ini');
+          if (data.amount === null || data.amount === undefined || String(data.amount).trim() === '' || !isFinite(amt) || amt < 0 || amt > 1e13) throw E('INVALID', 'Saldo awal tidak valid (0 atau lebih)');
+          if (before && strv(before.date) === date && int(before.amount) === Math.round(amt)) return { unchanged: true, account_id: accId, opening: before };
+          cur[accId] = { date, amount: Math.round(amt), by: u.name, at: new Date().toISOString() };
+          txt = 'Saldo awal ' + label + ': ' + rpTxt(amt) + ' per awal ' + date + (before ? ' (sebelumnya ' + rpTxt(before.amount) + ' per ' + strv(before.date) + ')' : '') + ' — oleh pemilik ' + u.name;
+        }
+        db.settings.acct_opening = cur;
+        logAct(db, u, 'atur_bank', txt, accId, data.clear === true ? 0 : Math.round(Number(data.amount)), 'info');
+        notifyR(db, u, ['akuntan'], txt, 'info');
+        return { account_id: accId, opening: cur[accId] || null };
+      }
       case 'get_sales': {
         if (!isYmd(data.from) || !isYmd(data.to)) throw E('INVALID', 'from/to');
         const inR = d => d >= data.from && d <= data.to;
         const sales = db.sales.filter(s => inR(s.sale_date));
         const inv = new Set(sales.map(s => s.invoice_no));
         return { sales, items: db.items.filter(i => inv.has(i.invoice_no)), payments: db.payments.filter(p => inR(p.pay_date)), purchases: db.purchases.filter(p => inR(p.purchase_date)).map(p => { if (mockCostOk(db, u)) return p; const o = Object.assign({}, p); delete o.cost_price; if (!mockNoteOk(db, u)) delete o.total; return o; }), expenses: db.expenses.filter(x => inR(x.expense_date)), shifts: db.shifts.filter(x => inR(x.shift_date)).map(x => blind(shiftSummary(db, x), u.role)),
-          repacks: (db.repacks || []).filter(r => inR(r.repack_date)).map(r => window.KRepackMock.out(r, u.role)) };
+          repacks: (db.repacks || []).filter(r => inR(r.repack_date)).map(r => window.KRepackMock.out(r, mockCostOk(db, u) ? 'owner' : u.role)) }; // v67: + the manager / accountant the owner lets see costs
       }
       case 'save_settings': {
         needOwner();

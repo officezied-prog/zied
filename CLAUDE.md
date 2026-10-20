@@ -40,6 +40,15 @@ out of the day; "from my drawer" only with an open shift) or on credit until an 
 lines = the supplier's debt; due ≤ 3 days / late in Perhatian and in the supplier's ledger; a later payment covering it marks it 'lunas').
 An older note already paid and recorded is confirmed "Sudah dibayar sebelumnya" (`paid_before`: no second payment). Not an expense (the goods' cost counts when sold). Paying a debt later still goes through the owner's pay plan.
 
+**majoo-like screens (v67, owner app 3.0.0; owner 2026-10-20, four majoo screenshots: «اضف هذه المميزات»):** Laporan modes "Detail"
+(every invoice of a range: cards total / transaksi / bersih / pembayaran / piutang, search, filters, eye → the receipt, CSV) and "Grafik"
+(sales / transaksi / produk per day / week / month, SVG line chart + table + CSV) — owner, manager, accountant, from `get_sales` only.
+View "Keuangan" (owner + accountant; the manager only with the owner's cost setting): laba rugi chart + table (same numbers as Laporan),
+saldo kas & bank (open drawers' cash; each store account = the owner's "saldo awal" `acct_opening` via `set_account_opening` + money in −
+out on that account since; money tied to no account shown apart), neraca (receivables, stock at cost, supplier debt / prepaid) — one
+aggregate-SQL call `finance_position`. Gudang tabs "Bahan baku" (bulk goods + packaging materials + price list, CSV, import) and "Produksi
+stok" (repacks of a range incl. open / cancelled, CSV, "Tambah" → Kemas ulang). A repack's costs follow the owner's cost setting.
+
 **New versions reach phones by themselves (v49):** `shared/app-update.js` (KUpdate) re-reads the app's own page
 (`cache:'no-cache'`, a 304 when unchanged) on open, on return to the screen (≥5 min) and every 30 min; another
 `APP_VERSION` there → it reloads itself on the login screen / when untouched since it opened, otherwise a green
