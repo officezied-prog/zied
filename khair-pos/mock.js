@@ -683,7 +683,7 @@ const MockServer = (() => {
     db.purchases.forEach(r => { const ref = strv(r.purchase_no); if (left[ref] !== undefined && left[ref] <= 0 && strv(r.check_status) && strv(r.pay_status) !== 'lunas') Object.assign(r, { pay_status: 'lunas', paid_at: payDate }); });
   }
   function purchaseChecks(db) {
-    const t0 = jktDate(), since = [new Date(Date.parse(t0) - 30 * 86400000).toISOString().slice(0, 10), '2026-10-20'].sort().pop();
+    const t0 = jktDate(), since = new Date(Date.parse(t0) - 30 * 86400000).toISOString().slice(0, 10);
     const due3 = new Date(Date.parse(t0) + 3 * 86400000).toISOString().slice(0, 10), by = {}, due = {};
     db.purchases.forEach(r => {
       const no = strv(r.purchase_no); if (!no || INTERNAL_SUP.includes(strv(r.supplier))) return;
@@ -2117,7 +2117,7 @@ const MockServer = (() => {
         const kind = data.pay === 'tempo' ? 'tempo' : data.pay === 'lunas' ? 'lunas' : '';
         if (!kind) throw E('INVALID', 'Pilih: sudah dibayar, atau bayar nanti (tempo)');
         const today = jktDate(), nowIso = new Date().toISOString(), total = lines.reduce((a, r) => a + int(r.total), 0);
-        let due = '', method = '', pay = null, fromKas = false;
+        let due = '', method = '', pay = null, fromKas = false, before = false;
         if (kind === 'tempo') {
           due = strv(data.due_date);
           const maxDue = new Date(Date.parse(today) + 180 * 86400000).toISOString().slice(0, 10);
@@ -2126,10 +2126,11 @@ const MockServer = (() => {
           method = ['tunai', 'transfer', 'qris'].includes(data.method) ? data.method : '';
           if (!method) throw E('INVALID', 'Pilih cara bayar: tunai, transfer atau QRIS');
           const myShift = openShiftOf(db, u.name);
-          fromKas = data.paid_from === 'kas' && method === 'tunai';
+          before = data.paid_before === true; // v66: paid and recorded earlier (a note from before the confirmation existed)
+          fromKas = !before && data.paid_from === 'kas' && method === 'tunai';
           if (fromKas && !myShift) throw E('SHIFT_REQUIRED', 'Buka kasir (shift) dulu untuk bayar dari kas');
-          if (dupRef(partyPays(db, 'supplier', sup), data.transfer_ref)) throw E('INVALID', 'Nomor transfer ini sudah pernah dipakai: ' + strv(data.transfer_ref));
-          const docs = partyDocs(db, 'supplier', sup, ''), doc = docs[no], amount = doc ? doc.remaining : total;
+          if (!before && dupRef(partyPays(db, 'supplier', sup), data.transfer_ref)) throw E('INVALID', 'Nomor transfer ini sudah pernah dipakai: ' + strv(data.transfer_ref));
+          const docs = partyDocs(db, 'supplier', sup, ''), doc = docs[no], amount = before ? 0 : doc ? doc.remaining : total;
           if (amount > 0) {
             const sc = slipCheck(db, data, amount);
             pay = { id: nextId(db, 'payment'), pay_id: 'PY' + randId(7), pay_date: today, pay_time: nowIso, direction: 'out', party_type: 'supplier', customer_id: 0, customer_name: '', supplier: sup, amount, method,
@@ -2144,7 +2145,7 @@ const MockServer = (() => {
         lines.forEach(r => Object.assign(r, { check_status: 'dikonfirmasi', checked_by: u.name, checked_at: nowIso, pay_status: kind, pay_method: method, due_date: due, paid_at: kind === 'lunas' ? today : '' }));
         const who = (owner ? 'pemilik ' : u.role === 'manager' ? 'manajer ' : 'akuntan ') + u.name;
         const txt = 'Barang masuk ' + no + ' dari ' + sup + ' (' + strv(lines[0].purchase_date) + ', diterima ' + strv(lines[0].user) + ', ' + rpTxt(total) + ') dikonfirmasi ' + who + ': ' +
-          (kind === 'tempo' ? 'BAYAR NANTI — jatuh tempo ' + due + ' (hutang ke pemasok)' : 'sudah dibayar ' + method + (fromKas ? ' dari kas' : '') + (pay ? ' ' + rpTxt(pay.amount) + (pay.bank ? ' ' + pay.bank : '') + (pay.transfer_ref ? ' ref ' + pay.transfer_ref : '') : ' (sudah lunas sebelumnya)')) +
+          (kind === 'tempo' ? 'BAYAR NANTI — jatuh tempo ' + due + ' (hutang ke pemasok)' : 'sudah dibayar ' + method + (fromKas ? ' dari kas' : '') + (pay ? ' ' + rpTxt(pay.amount) + (pay.bank ? ' ' + pay.bank : '') + (pay.transfer_ref ? ' ref ' + pay.transfer_ref : '') : before ? ' (dibayar sebelumnya, tanpa pembayaran baru)' : ' (sudah lunas sebelumnya)')) +
           (strv(data.note) ? ' | ' + strv(data.note).slice(0, 200) : '');
         logAct(db, u, 'konfirmasi_masuk', txt, no, total, 'info');
         notifyR(db, u, ['owner', 'manager', 'akuntan'].filter(x => x !== roleOf(u)), txt, kind === 'tempo' ? 'warn' : 'info');

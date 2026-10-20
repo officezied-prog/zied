@@ -19,7 +19,7 @@ test('the manager confirms one note as paid by transfer, the accountant the othe
   const hash = await page.evaluate(() => KPOS.pinHash('demo', 'Lestari', '5555'));
   await editDb(page, `if (!db.users.some(u => u.name === 'Lestari')) db.users.push({ name: 'Lestari', role: 'akuntan', pin_hash: arg, active: true });`, hash);
   await login(page, 'Jihan', '2222', '', { stay: true });
-  await expect.poll(() => page.evaluate(() => KPOS.S.pchecks ? KPOS.S.pchecks.waiting.map(x => x.purchase_no).sort() : null)).toEqual(['PBT-0001', 'PBT-0002']);
+  await expect.poll(() => page.evaluate(() => KPOS.S.pchecks ? KPOS.S.pchecks.waiting.map(x => x.purchase_no).filter(x => /^PBT-/.test(x)).sort() : null)).toEqual(['PBT-0001', 'PBT-0002']);
   await nav(page, 'purchases');
   const r1 = page.locator('#pu-hist tr[data-no="PBT-0001"]');
   await expect(r1.locator('[data-check="wait"]')).toBeVisible();
@@ -62,9 +62,41 @@ test('the manager confirms one note as paid by transfer, the accountant the othe
   await staffSession(page, 'Lestari', '5555');
   await expect(page.locator('#app')).toBeVisible();
   await expect.poll(() => page.evaluate(() => KPOS.S.pchecks && KPOS.S.pchecks.due.map(x => [x.purchase_no, x.days, x.total]))).toEqual([['PBT-0002', 2, 600000]]);
-  expect(await page.evaluate(() => KPOS.S.pchecks.waiting.length)).toBe(0);
+  expect(await page.evaluate(() => KPOS.S.pchecks.waiting.filter(x => /^PBT-/.test(x.purchase_no)).length)).toBe(0);
   // Arabic
   await page.evaluate(() => setLang('ar'));
   await nav(page, 'purchases');
   await expect(page.locator('#pu-hist tr[data-no="PBT-0002"] [data-check="tempo"]')).toContainText('آجل حتى');
+});
+
+// v66 (owner 2026-10-20, a screenshot of his notes of 14–17/10: «لا يوجد»): the notes from before the confirmation existed wait for it too
+// (the last 30 days); one paid earlier is confirmed "sudah dibayar sebelumnya" — no second payment.
+test('an older note (before 20/10) waits too; "already paid earlier" confirms it without a second payment', async ({ page }) => {
+  const old = jktToday(-5);
+  await openApp(page);
+  await editDb(page, `
+    const pr = db.products.find(x => x.active !== false && !x.repack_from);
+    const id = Math.max(db.seq && db.seq.purchase || 0, ...db.purchases.map(r => r.id || 0)) + 1;
+    db.seq = db.seq || {}; db.seq.purchase = id;
+    if (!db.purchases.some(r => r.purchase_no === 'PBT-OLD1')) db.purchases.push({ id, purchase_date: arg, supplier: 'CV Timur Tengah Food', product_id: pr.id, name: pr.name, qty: 5, cost_price: 40000, total: 200000, note: '', user: 'Siti', photo_id: '', exp_date: '', purchase_no: 'PBT-OLD1', match_status: 'cocok', match_notes: '' });`, old);
+  await login(page, 'Jihan', '2222', '', { stay: true });
+  await expect.poll(() => page.evaluate(() => KPOS.S.pchecks ? KPOS.S.pchecks.waiting.some(x => x.purchase_no === 'PBT-OLD1') : null)).toBe(true);
+  const pays0 = (await getDb(page)).payments.length;
+  await nav(page, 'purchases');
+  const r = page.locator('#pu-hist tr[data-no="PBT-OLD1"]');
+  await expect(r.locator('[data-check="wait"]')).toBeVisible();
+  await r.locator('[data-act="pu-confirm"]').click();
+  await expect(page.locator('#pc-before-row')).toContainText('jangan catat pembayaran lagi');
+  await page.click('#pc-m [data-m="tunai"]');
+  await expect(page.locator('#pc-kas-row')).toBeVisible();
+  await page.check('#pc-before');
+  await expect(page.locator('#pc-kas-row')).toBeHidden();
+  await page.click('#pc-ok');
+  await expect(page.locator('#pc-modal')).toHaveCount(0);
+  await expect(r.locator('[data-check="lunas"]')).toContainText('Lunas · Tunai');
+  await expect.poll(async () => (await getDb(page)).purchases.filter(x => x.purchase_no === 'PBT-OLD1').map(x => [x.check_status, x.pay_status, x.pay_method])).toEqual([['dikonfirmasi', 'lunas', 'tunai']]);
+  const db = await getDb(page);
+  expect(db.payments.length).toBe(pays0); // no second payment
+  expect(db.activity.filter(a => a.kind === 'notifikasi').slice(-1)[0].summary).toMatch(/PBT-OLD1 .* sudah dibayar tunai \(dibayar sebelumnya, tanpa pembayaran baru\)$/);
+  expect(await page.evaluate(() => { setLang('ar'); return t('pc.before'); })).toContain('لا تسجّل دفعة');
 });
