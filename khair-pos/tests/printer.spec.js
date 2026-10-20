@@ -98,3 +98,24 @@ test('the store logo prints on top of the receipt and the test print (58 / 80 mm
   expect(rasters(dec(await page.evaluate(() => window.__rawbt[2]))).bands).toEqual([]);
   expect(await page.evaluate(() => KPrint.text('ar', 'logo'))).toBe('طباعة شعار المتجر أعلى الإيصال');
 });
+
+// v68 (owner 2026-10-20: «اريد عدم اضاعة الورق حاول ان تكون مقتضبة الفاتورة»): a short receipt — the number with the employee's name, the
+// date with the customer (no line for "Umum"), one line an item when it fits, the address and the phone on one line.
+test('the printed receipt is short: one line an item, the number with the employee, no "Umum" / Kasir lines', async ({ page }) => {
+  await login(page, 'Jihan', '2222', '', { stay: true });
+  const lines = await page.evaluate(() => {
+    KPrint.save(Object.assign(KPrint.cfg(), { mode: 'rawbt', width: 58, logo: false }));
+    const b = KPrint.receipt({ invoice_no: '20/10/2026/1542/12', sale_time: '2026-10-20T15:42:00+07:00', cashier: 'Siti', customer_name: 'Umum',
+      lines: [{ name: 'Kurma Ajwa 1kg', qty: 1, unit_price: 150000, line_total: 150000 }, { name: 'Gula Pasir 1 kg', qty: 2, unit_price: 17000, line_total: 34000 },
+        { name: 'Minyak Goreng Bimoli Spesial 2 Liter Pouch', qty: 3, unit_price: 38000, line_total: 114000 }],
+      subtotal: 298000, total: 298000, method: 'tunai', paid: 300000, change: 2000 }, { store_name: 'Khair Mart', address: 'Jl. Raya Condet 12', phone: '0812' });
+    return Array.from(b).map(c => String.fromCharCode(c)).join('').split('\n').slice(0, -1).map(l => l.replace(/\x1b@|\x1b[taE3d][\s\S]|\x1d![\s\S]|\x1dVB[\s\S]/g, '').trim()); // (the ESC / GS commands out)
+  });
+  expect(lines.some(l => /^No +20\/10\/2026\/1542\/12 Siti$/.test(l))).toBe(true);
+  expect(lines.some(l => /Kasir|Pelanggan|Umum/.test(l))).toBe(false);
+  expect(lines.some(l => /^Kurma Ajwa 1kg +150\.000$/.test(l))).toBe(true); // one piece: no "1 x"
+  expect(lines.some(l => /^Gula Pasir 1 kg 2x17\.000 +34\.000$/.test(l))).toBe(true);
+  expect(lines.some(l => /^3 x 38\.000 +114\.000$/.test(l))).toBe(true); // a long name: the name (wrapped), then the quantity line
+  expect(lines.some(l => /Jl\. Raya Condet 12 - Telp 0812/.test(l))).toBe(true);
+  expect(lines.length).toBeLessThanOrEqual(15);
+});

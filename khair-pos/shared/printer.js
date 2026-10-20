@@ -271,16 +271,26 @@
     var d = new Date(iso || day || Date.now()); if (isNaN(d)) return String(day || '');
     try { return new Intl.DateTimeFormat('id-ID', { timeZone: 'Asia/Jakarta', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(d); } catch (e) { return d.toISOString().slice(0, 16).replace('T', ' '); }
   }
+  /* v68 (owner 2026-10-20: «اريد عدم اضاعة الورق حاول ان تكون مقتضبة الفاتورة»): a short receipt — the name in normal size, the address
+     and the phone on one line, the number with the employee's name, the date with the customer (none for "Umum"), one line an item
+     when it fits (no "1 x" for one piece), a slightly tighter line spacing (ESC 3), three rules instead of four. */
   function receipt(rc, st) {
     st = st || {}; var c = cfg(), d = doc(c.width), pm = function (m) { return R.pm[m] || m || ''; };
     addLogo(d, c);
-    d.center().bold(true).big(true).text(st.store_name || 'Khair Mart').big(false).bold(false);
-    if (st.address) d.text(st.address);
-    if (st.phone) d.text(R.phone + ' ' + st.phone);
+    d.raw([0x1b, 0x33, 26]); // ESC 3 26: line spacing 26 dots (the printers' default is about 30)
+    d.center().bold(true).text(st.store_name || 'Khair Mart').bold(false);
+    var where = [st.address, st.phone ? R.phone + ' ' + st.phone : ''].filter(Boolean).join(' - ');
+    if (where) d.text(where);
     d.hr();
     if (rc.pending) d.bold(true).text(R.pending).bold(false);
-    d.left().pair(R.no, (rc.invoice_no || '-') + (rc.invoice_no && rc.cashier ? ' ' + rc.cashier : '')) // v68: the employee's name with the number.pair(R.date, when(rc.sale_time, rc.sale_date)).pair(R.cashier, rc.cashier || '').pair(R.customer, rc.customer_name || '').hr();
-    (rc.lines || []).forEach(function (l) { d.text((l.name || '') + (l.price_type === 'grosir' ? ' (G)' : '')); d.pair('  ' + qty(l.qty) + ' x ' + N(l.unit_price), N(l.line_total)); });
+    var cust = rc.customer_name && !/^umum$/i.test(String(rc.customer_name).trim()) ? rc.customer_name : '';
+    d.left().pair(R.no, (rc.invoice_no || '-') + (rc.invoice_no && rc.cashier ? ' ' + rc.cashier : '')).pair(when(rc.sale_time, rc.sale_date), cust).hr();
+    (rc.lines || []).forEach(function (l) {
+      var name = (l.name || '') + (l.price_type === 'grosir' ? ' (G)' : ''), one = num(l.qty) === 1, q = one ? '' : qty(l.qty) + 'x' + N(l.unit_price), tot = N(l.line_total);
+      var left = name + (q ? ' ' + q : '');
+      if (ascii(left).length + 1 + tot.length <= d.cols) d.pair(left, tot);
+      else { d.text(name); d.pair('  ' + qty(l.qty) + ' x ' + N(l.unit_price), tot); }
+    });
     d.hr();
     if (num(rc.discount)) d.pair(R.subtotal, N(rc.subtotal));
     if (num(rc.member_disc)) d.pair(R.mdisc + (rc.member && rc.member.pct ? ' ' + rc.member.pct + '%' : ''), '-' + N(rc.member_disc));
@@ -288,16 +298,15 @@
     if (num(rc.send_fee)) d.pair(R.fee, N(rc.send_fee));
     if (rc.promo_code) d.pair(R.promo, rc.promo_code);
     d.bold(true).pair(R.total, 'Rp ' + N(rc.total)).bold(false);
-    d.pair(R.paid + ' (' + pm(rc.method) + ')', N(rc.paid));
-    (rc.parts || []).forEach(function (x) { d.pair('  ' + pm(x.m), N(x.a)); });
+    if ((rc.parts || []).length) (rc.parts || []).forEach(function (x) { d.pair(R.paid + ' ' + pm(x.m), N(x.a)); }); // a split: each part (no "Campur" line)
+    else d.pair(R.paid + ' (' + pm(rc.method) + ')', N(rc.paid));
     if (num(rc.change)) d.bold(true).pair(R.change, N(rc.change)).bold(false);
     if (num(rc.debt)) d.bold(true).pair(R.debt, N(rc.debt)).bold(false);
     if (num(rc.debt) && num(rc.debt_after)) d.pair(R.debt_total, N(rc.debt_after));
     if (num(rc.debt) && rc.approved_by) d.pair(R.approved, rc.approved_by);
-    if (rc.member) d.hr().center().text(R.member.replace('{no}', rc.member.member_no || '').replace('{n}', rc.member.purchase_no || ''));
-    d.hr().center();
-    String(st.receipt_footer || '').split('\n').filter(function (x) { return x.trim(); }).forEach(function (x) { d.text(x); });
-    if (rc.recorded) d.text(R.recorded);
+    if (rc.member) d.center().text(R.member.replace('{no}', rc.member.member_no || '').replace('{n}', rc.member.purchase_no || ''));
+    var foot = String(st.receipt_footer || '').split('\n').filter(function (x) { return x.trim(); });
+    if (foot.length || rc.recorded) { d.center(); foot.forEach(function (x) { d.text(x); }); if (rc.recorded) d.text(R.recorded); }
     d.feed(3); if (c.cut) d.cut();
     return d.bytes();
   }
