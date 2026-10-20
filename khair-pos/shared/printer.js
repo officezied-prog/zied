@@ -10,7 +10,7 @@
      usb     a USB cable straight from Chrome (WebUSB) — Android with an OTG cable, Chromebook, Mac, Linux (Windows keeps the
              printer for its own driver: there use "system" or "serial")
      serial  a COM port from Chrome on a computer (Web Serial) — USB-serial printers and paired Bluetooth printers (SPP)
-   KPrint.cfg() / KPrint.save(cfg) — {mode, width: 58 | 80, cut} kept on this device (localStorage kprint.cfg)
+   KPrint.cfg() / KPrint.save(cfg) — {mode, width: 58 | 80, cut} kept on this device (localStorage kprint.cfg; inside the app kprint.cfg.app)
    KPrint.doc(width) — an ESC/POS builder: .center() .left() .bold(on) .big(on) .text(s) .line(s) .pair(l, r) .hr() .feed(n) .cut() .bytes()
    KPrint.send(bytes) → Promise (rejects with Error(code): NO_SUPPORT | CANCELLED | NOT_FOUND | WRITE_FAILED | NO_RAWBT)
    KPrint.receipt(rc, store) → the sale receipt as ESC/POS bytes (labels in Indonesian: receipt printers have no Arabic letters)
@@ -23,13 +23,22 @@
 (function () {
   'use strict';
   if (window.KPrint) return;
-  var KEY = 'kprint.cfg', MODES = ['app', 'system', 'rawbt', 'ble', 'usb', 'serial'];
+  var MODES = ['app', 'system', 'rawbt', 'ble', 'usb', 'serial'];
   // v58: inside the Khair Android app (a Trusted Web Activity) the page is opened with the referrer android-app://<package>; kept for
   // the reloads of this app (the update check reloads the page)
+  // v64 (owner 2026-10-20: «لا يمكن تواصل التطبيق بآلة استخراج فاتورة الدفع الصغيرة»): kept per app — the owner app and Khair Kasir share
+  // this site's storage, so the app opened last sent the other one's prints to its own package (or to one not installed)
   var APP = (function () {
+    var want = /\/kasir(\/|$)/.test(location.pathname) ? 'com.khairmart.kasir' : 'com.khairmart.owner';
     var m = /^android-app:\/\/(com\.khairmart\.(?:owner|kasir))/.exec(document.referrer || '');
-    try { if (m) localStorage.setItem('kprint.app', m[1]); return m ? m[1] : (localStorage.getItem('kprint.app') || ''); } catch (e) { return m ? m[1] : ''; }
+    try {
+      if (m) { localStorage.setItem('kprint.app:' + m[1], '1'); return m[1]; }
+      return localStorage.getItem('kprint.app:' + want) || localStorage.getItem('kprint.app') === want ? want : '';
+    } catch (e) { return m ? m[1] : ''; }
   })();
+  // v64: the way chosen in a Chrome tab no longer carries into the app (they share this site's storage): the app keeps its own, and
+  // starts on its own Bluetooth printing
+  var KEY = APP ? 'kprint.cfg.app' : 'kprint.cfg';
   function cfg() {
     var c = {};
     try { c = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { c = {}; }
@@ -113,7 +122,8 @@
   }
   // Web Bluetooth: the GATT services receipt printers use for their "serial over BLE"
   var BLE_SERVICES = ['000018f0-0000-1000-8000-00805f9b34fb', 'e7810a71-73ae-499d-8c15-faa9aef0c3f2', '49535343-fe7d-4ae5-8fa9-9fafd205e455',
-    '0000ff00-0000-1000-8000-00805f9b34fb', '0000fee7-0000-1000-8000-00805f9b34fb', '0000ffe0-0000-1000-8000-00805f9b34fb', '0000ae30-0000-1000-8000-00805f9b34fb'];
+    '0000ff00-0000-1000-8000-00805f9b34fb', '0000fee7-0000-1000-8000-00805f9b34fb', '0000ffe0-0000-1000-8000-00805f9b34fb', '0000ae30-0000-1000-8000-00805f9b34fb',
+    '0000fff0-0000-1000-8000-00805f9b34fb']; // v64: FFF0, used by many cheap BLE printers
   var ble = { dev: null, ch: null };
   function bleChar(server) {
     return server.getPrimaryServices().then(function (svcs) {
@@ -247,7 +257,8 @@
   /* ---- the settings panel and its texts ---- */
   var TEXT = {
     id: { title: 'Printer struk', hint: 'Pilih cara mencetak struk dari perangkat ini, lalu tekan "Tes cetak". Printer struk kecil 58 / 80 mm (POS-58, VSC, RPP02 …).',
-      mode_app: 'Bluetooth (aplikasi Khair)', desc_app: 'Langsung dari aplikasi Khair di HP ini, tanpa aplikasi lain: printer Bluetooth yang sudah dipasangkan. Pertama kali pilih printernya.',
+      mode_app: 'Bluetooth (aplikasi Khair)', desc_app: 'Langsung dari aplikasi Khair di HP ini, tanpa aplikasi lain. Pasangkan printer dulu di Setelan Bluetooth HP (PIN biasanya 0000 / 1234), lalu pilih printernya di sini.',
+      test_sent_app: 'Dikirim ke aplikasi Khair — hasilnya muncul di layar: "Struk tercetak", atau kenapa gagal dan tombol "Coba lagi" / "Pilih printer lain".',
       choose: 'Pilih / ganti printer', apk: 'Di Android: pasang aplikasi Khair (APK) — mencetak sendiri ke printer Bluetooth, tanpa RawBT.',
       mode_system: 'Jendela cetak (driver)', mode_rawbt: 'RawBT (Android)', mode_ble: 'Bluetooth langsung (BLE)', mode_usb: 'Kabel USB langsung', mode_serial: 'Port COM (komputer)',
       desc_system: 'Seperti sebelumnya: jendela cetak browser. Di komputer pasang driver printernya dulu.',
@@ -260,7 +271,8 @@
       sent: 'Struk dikirim ke printer', e_cancel: 'Tidak ada printer yang dipilih', e_support: 'Cara cetak ini tidak didukung di browser ini — pilih cara lain di Printer struk',
       e_notfound: 'Printer tidak dikenali — coba cara lain (RawBT / Port COM)', e_fail: 'Gagal mengirim ke printer: {msg}' },
     ar: { title: 'طابعة الإيصالات', hint: 'اختر طريقة طباعة الإيصال من هذا الجهاز، ثم اضغط «طباعة تجربة». طابعات الإيصالات الصغيرة 58 / 80 مم.',
-      mode_app: 'بلوتوث (تطبيق خير)', desc_app: 'مباشرة من تطبيق خير في هذا الهاتف، بدون أي تطبيق آخر: طابعة بلوتوث مقترنة. في المرة الأولى اختر الطابعة.',
+      mode_app: 'بلوتوث (تطبيق خير)', desc_app: 'مباشرة من تطبيق خير في هذا الهاتف، بدون أي تطبيق آخر. اقرن الطابعة أولًا من إعدادات البلوتوث في الهاتف (الرمز غالبًا 0000 / 1234)، ثم اخترها هنا.',
+      test_sent_app: 'أُرسل إلى تطبيق خير — تظهر النتيجة على الشاشة: «تمت الطباعة»، أو سبب الفشل مع زر «أعد المحاولة» / «اختر طابعة أخرى».',
       choose: 'اختر / غيّر الطابعة', apk: 'في أندرويد: ثبّت تطبيق خير (APK) — يطبع بنفسه على طابعة البلوتوث بدون RawBT.',
       mode_system: 'نافذة الطباعة (التعريف)', mode_rawbt: 'RawBT (أندرويد)', mode_ble: 'بلوتوث مباشر (BLE)', mode_usb: 'كابل USB مباشر', mode_serial: 'منفذ COM (الحاسوب)',
       desc_system: 'كما كان: نافذة الطباعة في المتصفح. في الحاسوب ثبّت تعريف الطابعة أولًا.',
@@ -301,7 +313,7 @@
         var btn = e.currentTarget, st = el.querySelector('#prn-status'), cc = cfg();
         if (cc.mode === 'system') { if (opts.printHTML) opts.printHTML('<div class="receipt w' + cc.width + '" id="receipt"><div class="c b big">' + h((opts.store || {}).store_name || 'Khair Mart') + '</div><div class="c">Tes printer OK</div></div>'); return; }
         btn.disabled = true; st.className = 'small'; st.textContent = text(lang, 'sending');
-        send(testBytes(opts.store)).then(function () { st.className = 'small okc'; st.textContent = text(lang, 'test_sent'); }, function (er) { st.className = 'small red'; st.textContent = errText(lang, er); })
+        send(testBytes(opts.store)).then(function () { st.className = 'small okc'; st.textContent = text(lang, cc.mode === 'app' ? 'test_sent_app' : 'test_sent'); }, function (er) { st.className = 'small red'; st.textContent = errText(lang, er); })
           .then(function () { btn.disabled = false; });
       };
     };

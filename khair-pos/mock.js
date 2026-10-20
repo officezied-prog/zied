@@ -2702,6 +2702,19 @@ const MockServer = (() => {
         if (changedKeys.length) logAct(db, u, 'pengaturan', 'Pengaturan diubah: ' + changedKeys.join(', '), '', 0, 'info');
         return { settings: db.settings };
       }
+      case 'set_discount_limit': { // v64: the manager sets it too; the owner is told (as on the server)
+        if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
+        const pct = Math.round(num(data.max_discount_pct) * 10) / 10;
+        if (!(pct > 0 && pct <= 50)) throw E('INVALID', 'Batas diskon 0,1–50 %');
+        const before = maxDiscountPct(db);
+        db.settings.max_discount_pct = pct;
+        if (pct !== before) {
+          const txt = 'Batas diskon tanpa persetujuan diubah oleh ' + (owner ? 'pemilik ' : 'manajer ') + u.name + ': ' + fmtN(before) + '% → ' + fmtN(pct) + '%';
+          logAct(db, u, 'pengaturan', txt, 'max_discount_pct', 0, 'warn');
+          if (!owner) notifyR(db, u, ['owner'], txt, 'warn');
+        }
+        return { settings: db.settings };
+      }
       case 'report_tamper': {
         // v36: with the front-camera photo (two calls, same shot_id) — shared/tamper-guard.js keeps the demo servers identical
         if (!window.KGuard) throw E('SERVER', 'tamper-guard not loaded');

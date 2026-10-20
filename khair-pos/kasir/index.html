@@ -99,6 +99,7 @@
 <script src="../shared/pay-split.js"></script>
 <script src="../shared/bank-slip.js"></script>
 <script src="../shared/printer.js"></script>
+<script src="../shared/scan-wedge.js"></script>
 <script src="../shared/install-btn.js" data-host="#login:not([hidden]) > .screen-card"></script>
 <script src="../shared/app-update.js"></script>
 <script src="../shared/field-mock.js"></script>
@@ -112,7 +113,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.7.7';
+const APP_VERSION = 'kasir-1.7.8';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1274,7 +1275,8 @@ function addToCart(p, qty = 1, set = false) {
 function findBySku(code) {
   const c = String(code || '').trim().toLowerCase();
   if (!c) return null;
-  return S.products.find(p => p.active !== false && String(p.sku || '').trim().toLowerCase() === c) || null;
+  return S.products.find(p => p.active !== false && String(p.sku || '').trim().toLowerCase() === c)
+    || (window.KWedge ? S.products.find(p => p.active !== false && String(p.sku || '').trim() && KWedge.sameCode(p.sku, c)) : null) || null; // v64: UPC-A ↔ EAN-13
 }
 function filterProducts(q) {
   const toks = norm(q).split(' ').filter(Boolean);
@@ -2442,6 +2444,47 @@ async function printReceipt(rc, btn) {
   catch (e) { toast(KPrint.errText(S.lang, e), 'err', 8000); }
   finally { if (btn) btn.disabled = false; }
 }
+/* v64 (owner 2026-10-20: «لا يمكن التواصل مع قارئ الباركود»): a scanner that types like a keyboard works on every screen that takes
+   barcodes, with nothing focused (phones, tablets), over the last receipt and the quantity sheet, and in goods-in one item after another
+   (shared/scan-wedge.js). "Pemindai barcode" in Lainnya: how to connect one, and a test that says what arrives. */
+function wedgeTop() { const m = modalStack.length ? modalStack[modalStack.length - 1].el : null; return { el: m, id: m ? ((m.querySelector('.modal') || {}).id || '') : '' }; }
+function feedScan(inp, code) {
+  if (!isTouch()) inp.focus({ preventScroll: true });
+  inp.value = code;
+  inp.dispatchEvent(new Event('input', { bubbles: true }));
+  inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+}
+function wedgeScan(code) {
+  const top = wedgeTop();
+  // a window with its own barcode box (stock count, stock move, returns …): the code goes there
+  const box = top.el ? top.el.querySelector('input[type="search"], input[data-scan]') : null;
+  if (box) return feedScan(box, code);
+  if (S.view === 'sell') {
+    if (top.id === 'rc-modal') closeModal(); // the last sale's receipt: a scan starts the next sale
+    else if (top.id === 'qty-sheet') { const ok = $('#qs-ok', top.el); if (ok) ok.click(); } // the item waiting for its quantity goes in first
+    if (modalOpen()) { beep(); toast(t('scan.close_first'), 'warn'); return; }
+    onSearchEnter(code, true);
+    return;
+  }
+  if (top.el) { beep(); toast(t('scan.close_first'), 'warn'); return; }
+  if (S.view === 'masuk') {
+    const q = $('#pu-q');
+    if (q) { feedScan(q, code); if (!findBySku(code)) { beep(); toast(t('pu.scan_nf', { code }), 'warn', 5000); } return; }
+  }
+  const q = $(`#v-${S.view} input[type="search"]`);
+  if (q) return feedScan(q, code);
+  beep(); toast(t('scan.where'), 'warn');
+}
+if (window.KWedge) KWedge.attach({
+  active: () => S.inApp && !$('#app').hidden && $('#gate').hidden,
+  isScanField: el => !!el && (el.id === 'q' || el.id === 'qs-qty' || el.type === 'search' || el.hasAttribute('data-scan') || /sku|barcode/i.test(el.id || '')),
+  onScan: code => wedgeScan(code)
+});
+function openScanner() {
+  let stop = null;
+  const el = openModal({ title: KWedge.text(S.lang, 'title'), id: 'scanner', focus: false, body: '<div id="wedge-box"></div>', foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button>`, onClose: () => { if (stop) stop(); } });
+  stop = KWedge.panel($('#wedge-box', el), S.lang, code => { const p = findBySku(code); return p ? p.name : ''; });
+}
 function openPrinter() {
   const el = openModal({ title: KPrint.text(S.lang, 'title'), id: 'printer', body: '<div id="prn-panel"></div>', foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button>` });
   KPrint.panel($('#prn-panel', el), S.lang, { store: settings(), printHTML, apk: 'https://github.com/officezied-prog/zied/releases/download/android/khair-kasir.apk' });
@@ -2962,7 +3005,7 @@ function openNewProduct(init, after) {
       <div id="np-sale-f"><div class="field"><label class="f" for="np-cat">${esc(t('newp.category'))} *</label><input class="input" data-rule="pname" id="np-cat" maxlength="40" list="np-cats" autocomplete="off"><datalist id="np-cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
       <div class="field"><label class="f" for="np-size">${esc(t('newp.size'))} *</label><div class="row" style="gap:6px"><input class="input num grow" data-rule="num" inputmode="decimal" id="np-size" placeholder="500" style="min-width:0"><select class="input" id="np-measure" style="width:auto;flex:0 0 auto" aria-label="${esc(t('newp.measure'))}">${NP_MEASURES.map(m => `<option value="${m}">${esc(m === 'isi' ? t('newp.m_isi') : m)}</option>`).join('')}</select></div><div class="small muted">${esc(t('newp.size_hint'))}</div></div>
       <div class="grid2"><div class="field"><label class="f" for="np-unit">${esc(t('newp.unit'))}</label><select class="input" id="np-unit">${NP_UNITS.map(u => `<option value="${u}" ${u === (NP_UNITS.includes(unit0) ? unit0 : 'pcs') ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></div>
-      <div class="field"><label class="f" for="np-sku">${esc(t('newp.barcode'))}</label><div class="row" style="gap:6px"><input class="input grow" id="np-sku" maxlength="40" inputmode="text" autocomplete="off" style="min-width:0">${camOk() ? `<button type="button" class="icon-btn" id="np-sku-cam" aria-label="${esc(t('sell.camera'))}" style="flex:0 0 auto">${ic('scan')}</button>` : ''}</div></div></div>
+      <div class="field"><label class="f" for="np-sku">${esc(t('newp.barcode'))}</label><div class="row" style="gap:6px"><input class="input grow" id="np-sku" maxlength="40" inputmode="text" autocomplete="off" style="min-width:0" value="${esc(init.sku || '')}">${camOk() ? `<button type="button" class="icon-btn" id="np-sku-cam" aria-label="${esc(t('sell.camera'))}" style="flex:0 0 auto">${ic('scan')}</button>` : ''}</div></div></div>
       <div class="grid2"><div class="field"><label class="f" for="np-retail">${esc(t('newp.retail'))} *</label><input class="input num" data-rule="num" inputmode="numeric" id="np-retail"></div>
       <div class="field"><label class="f" for="np-whole">${esc(t('newp.wholesale'))}</label><input class="input num" data-rule="num" inputmode="numeric" id="np-whole"></div></div>
       <div class="field"><label class="f" for="np-wmin">${esc(t('newp.wmin'))}</label><input class="input num" data-rule="num" inputmode="decimal" id="np-wmin"></div></div>
@@ -3905,6 +3948,7 @@ RENDER.more = function () {
       <div class="li">${ic('speaker')}<div class="grow"><div class="t">${esc(t('more.voice'))}</div><div class="s">${esc(t('more.voice_s'))}</div></div><div class="seg" style="min-width:150px"><button class="${VOICE.on ? 'on' : ''}" data-act="voice-on" data-v="1" id="voice-on">${esc(t('on'))}</button><button class="${VOICE.on ? '' : 'on'}" data-act="voice-on" data-v="0" id="voice-off">${esc(t('off'))}</button></div></div>
       <div class="li">${ic('hash')}<div class="grow"><div class="t">${esc(t('more.ask_qty'))}</div><div class="s">${esc(t('more.ask_qty_s'))}</div></div><div class="seg" style="min-width:150px"><button class="${askQty() ? 'on' : ''}" data-act="ask-qty" data-v="1" id="askqty-on">${esc(t('on'))}</button><button class="${askQty() ? '' : 'on'}" data-act="ask-qty" data-v="0" id="askqty-off">${esc(t('off'))}</button></div></div>
       <button class="li" data-act="printer-open" id="m-printer">${ic('print')}<div class="grow"><div class="t">${esc(KPrint.text(S.lang, 'title'))}</div><div class="s">${esc(KPrint.text(S.lang, 'mode_' + KPrint.cfg().mode))} · ${KPrint.cfg().width} mm</div></div></button>
+      <button class="li" data-act="scanner-open" id="m-scanner">${ic('scan')}<div class="grow"><div class="t">${esc(KWedge.text(S.lang, 'title'))}</div><div class="s">${esc(t('more.scanner_s'))}</div></div></button>
       <button class="li" data-act="lock" id="m-lock">${ic('lock')}<div class="grow t">${esc(t('more.lock'))}</div></button>
       <button class="li" data-act="logout" id="m-logout">${ic('logout')}<div class="grow t">${esc(t('more.logout'))}</div></button>
     </div>
@@ -4581,6 +4625,7 @@ const ACT = {
   'voice-on': el => { VOICE.on = el.dataset.v === '1'; store.set('voice_on', VOICE.on); if (!VOICE.on) { try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) { } } RENDER.more(); toast(t('saved'), 'ok'); },
   'gate-open': () => showGate(),
   'printer-open': () => openPrinter(),
+  'scanner-open': () => openScanner(),
   'ask-qty': el => { store.set('ask_qty', el.dataset.v === '1'); RENDER.more(); toast(t('saved'), 'ok'); },
 
   /* login */
@@ -4643,7 +4688,7 @@ const ACT = {
   /* masuk */
   'pu-add': el => puAdd(prodById(el.dataset.id)),
   'pu-newprod': el => { const l = PU.lines[+el.dataset.i]; if (l) openNewProduct({ name: l.ext ? l.ext.name : l.name, unit: l.ext && l.ext.unit, cost: l.cost }, p => { l.product_id = p.id; savePuDraft(); RENDER.masuk(); }); },
-  'pu-newprod-q': () => openNewProduct({ name: PU.q }, p => puAdd(p)),
+  'pu-newprod-q': () => openNewProduct(/^\d{6,14}$/.test(String(PU.q || '').trim()) ? { sku: String(PU.q).trim() } : { name: PU.q }, p => puAdd(p)), // v64: a scanned barcode is the new product's barcode
   'pu-del': el => { PU.lines.splice(+el.dataset.i, 1); savePuDraft(); RENDER.masuk(); },
   'pu-clear': () => { Object.assign(PU, { lines: [], photo_id: '', thumb: '', scan: null, result: null, scanErr: '', carrier: { type: '' } }); savePuDraft(); RENDER.masuk(); },
   'pu-retur': el => openSupReturn(el.dataset.no),
@@ -4814,7 +4859,8 @@ const I18N = {
     'excat.sewa': 'Sewa', 'excat.gaji': 'Gaji', 'excat.listrik_air': 'Listrik & air', 'excat.transport': 'Transport', 'excat.iklan': 'Iklan', 'excat.kemasan': 'Kemasan', 'excat.perawatan': 'Perawatan', 'excat.lain': 'Lain-lain',
     'more.debt_pay': 'Terima bayar hutang', 'more.debt_pay_s': 'Pelanggan membayar cicilan', 'more.void': 'Batalkan nota hari ini', 'more.void_s': 'Kirim permintaan ke manajer / akuntan',
     'more.price': 'Ubah harga', 'more.price_s': 'Kirim permintaan ubah harga', 'more.price_s_mgr': 'Harga eceran / grosir', 'more.myreq': 'Permintaan saya', 'more.myreq_s': 'Status persetujuan',
-    'mgmt.field': 'Lapangan: peta sales & hasil kunjungan', 'mgmt.field_s': 'Hijau pesan · oranye tanpa pesanan · biru tidak mau · hitam tutup', 'more.shoplist': 'Daftar toko untuk sales', 'more.shoplist_s': 'Dari Google Maps → langsung ke rencana sales (gratis)', 'more.last_rc': 'Struk terakhir', 'more.lang': 'Bahasa', 'more.voice': 'Suara barang', 'more.voice_s': 'Sebut nama & jumlah barang (tanpa harga)', 'more.lock': 'Kunci layar', 'more.logout': 'Keluar / ganti kasir',
+    'mgmt.field': 'Lapangan: peta sales & hasil kunjungan', 'mgmt.field_s': 'Hijau pesan · oranye tanpa pesanan · biru tidak mau · hitam tutup', 'more.shoplist': 'Daftar toko untuk sales', 'more.shoplist_s': 'Dari Google Maps → langsung ke rencana sales (gratis)', 'more.last_rc': 'Struk terakhir', 'more.lang': 'Bahasa', 'more.voice': 'Suara barang', 'more.voice_s': 'Sebut nama & jumlah barang (tanpa harga)', 'more.lock': 'Kunci layar', 'more.logout': 'Keluar / ganti kasir', 'more.scanner_s': 'Cara menyambung + tes pindai',
+    'scan.close_first': 'Selesaikan jendela yang terbuka dulu, lalu pindai lagi', 'scan.where': 'Pindai di layar Jual, Barang masuk atau Stok opname', 'pu.scan_nf': 'Barcode {code} belum ada di aplikasi — pilih barangnya atau "Produk baru"',
     'more.amount_exceeds': 'Melebihi hutang', 'more.paid_ok': 'Diterima {amount}. Sisa hutang {rest}',
     'void.hint': 'Pilih nota hari ini yang mau dibatalkan. Manajer atau akuntan menyetujui (pemilik diberi tahu).', 'void.confirm': 'Minta pembatalan nota {inv}?', 'void.send': 'Kirim permintaan', 'void.sent': 'Permintaan {id} terkirim ke manajer / akuntan',
     'price.now': 'Sekarang', 'price.retail': 'Harga eceran baru', 'price.wholesale': 'Harga grosir baru', 'price.reason_ph': 'mis. harga supplier naik', 'price.hint_kasir': 'Perubahan harga dikirim ke manajer & akuntan; pemilik diberi tahu.',
@@ -4929,7 +4975,8 @@ const I18N = {
     'excat.sewa': 'الإيجار', 'excat.gaji': 'الرواتب', 'excat.listrik_air': 'الكهرباء والماء', 'excat.transport': 'النقل', 'excat.iklan': 'الإعلانات', 'excat.kemasan': 'التغليف', 'excat.perawatan': 'الصيانة', 'excat.lain': 'أخرى',
     'more.debt_pay': 'استلام سداد دَين', 'more.debt_pay_s': 'العميل يدفع قسطًا', 'more.void': 'إلغاء فاتورة اليوم', 'more.void_s': 'إرسال طلب إلى المدير / المحاسب',
     'more.price': 'تغيير السعر', 'more.price_s': 'إرسال طلب تغيير سعر', 'more.price_s_mgr': 'سعر التجزئة / الجملة', 'more.myreq': 'طلباتي', 'more.myreq_s': 'حالة الموافقات',
-    'mgmt.field': 'الميدان: خريطة المندوبين ونتائج الزيارات', 'mgmt.field_s': 'أخضر طلبية · برتقالي بلا طلبية · أزرق لا يرغب · أسود مغلق', 'more.shoplist': 'قائمة محلات للمندوب', 'more.shoplist_s': 'من خرائط جوجل ← مباشرة إلى خطة المندوب (مجانًا)', 'more.last_rc': 'آخر إيصال', 'more.lang': 'اللغة', 'more.voice': 'صوت الأصناف', 'more.voice_s': 'نطق اسم الصنف والكمية (بدون سعر)', 'more.lock': 'قفل الشاشة', 'more.logout': 'خروج / تغيير الكاشير',
+    'mgmt.field': 'الميدان: خريطة المندوبين ونتائج الزيارات', 'mgmt.field_s': 'أخضر طلبية · برتقالي بلا طلبية · أزرق لا يرغب · أسود مغلق', 'more.shoplist': 'قائمة محلات للمندوب', 'more.shoplist_s': 'من خرائط جوجل ← مباشرة إلى خطة المندوب (مجانًا)', 'more.last_rc': 'آخر إيصال', 'more.lang': 'اللغة', 'more.voice': 'صوت الأصناف', 'more.voice_s': 'نطق اسم الصنف والكمية (بدون سعر)', 'more.lock': 'قفل الشاشة', 'more.logout': 'خروج / تغيير الكاشير', 'more.scanner_s': 'طريقة التوصيل + تجربة المسح',
+    'scan.close_first': 'أكمل النافذة المفتوحة أولًا ثم امسح مرة أخرى', 'scan.where': 'امسح في شاشة البيع أو البضاعة الواردة أو جرد المخزون', 'pu.scan_nf': 'الباركود {code} غير موجود في التطبيق — اختر الصنف أو «صنف جديد»',
     'more.amount_exceeds': 'أكبر من الدَّين', 'more.paid_ok': 'استُلم {amount}. المتبقي {rest}',
     'void.hint': 'اختر فاتورة اليوم المراد إلغاؤها. يوافق المدير أو المحاسب (ويُبلَّغ المالك).', 'void.confirm': 'طلب إلغاء الفاتورة {inv}؟', 'void.send': 'إرسال الطلب', 'void.sent': 'أُرسل الطلب {id} إلى المدير / المحاسب',
     'price.now': 'الحالي', 'price.retail': 'سعر التجزئة الجديد', 'price.wholesale': 'سعر الجملة الجديد', 'price.reason_ph': 'مثل: ارتفاع سعر المورد', 'price.hint_kasir': 'طلب تغيير السعر يُرسَل إلى المدير والمحاسب، ويُبلَّغ المالك.',
