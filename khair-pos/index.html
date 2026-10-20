@@ -51,6 +51,7 @@
     <section class="view" id="view-history" hidden></section>
     <section class="view" id="view-expenses" hidden></section>
     <section class="view" id="view-reports" hidden></section>
+    <section class="view" id="view-finance" hidden></section>
     <section class="view" id="view-approvals" hidden></section>
     <section class="view" id="view-orders" hidden></section>
     <section class="view" id="view-field" hidden></section>
@@ -448,8 +449,8 @@ const isApprover = () => S.role === 'owner' || S.role === 'manager';
 const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
 // v36 (owner 2026-10-11: "the visits table … a copy for the manager, the accountant and the owner"): + the field page, read-only
-const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'invchg', 'approvals', 'shoplist', 'field', 'settings'];
-const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|printer-open|scanner-open|pu-confirm|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
+const AUDIT_VIEWS = ['reports', 'finance', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'invchg', 'approvals', 'shoplist', 'field', 'settings'];
+const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|printer-open|scanner-open|pu-confirm|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*|fin-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
@@ -547,6 +548,7 @@ const VIEWS = [
   { id: 'bank', icon: 'bank', label: 'nav.bank', approver: true },
   { id: 'history', icon: 'clock', label: 'nav.history' },
   { id: 'reports', icon: 'chart', label: 'nav.reports' },
+  { id: 'finance', icon: 'bank', label: 'nav.finance', approver: true, get owner() { return !canSeeCost(); } }, // v67 Keuangan: owner, accountant (AUDIT_VIEWS), the manager only when she may see costs
   { id: 'approvals', icon: 'check', label: 'nav.approvals', approver: true },
   { id: 'orders', icon: 'clip', label: 'nav.orders', approver: true },
   { id: 'field', icon: 'pin', label: 'nav.field', approver: true },
@@ -10512,6 +10514,339 @@ Object.assign(I18N.ar, {
   'newp.need_cat': 'الفئة مطلوبة', 'newp.need_size': 'الحجم أو الوزن مطلوب', 'newp.cost_from_note': 'سعر الشراء من الفاتورة',
   'newp.badge': 'جديد — قيد التدقيق', 'newp.badge_hint': 'أضافه الكاشير عند الاستلام؛ بانتظار المدير / المحاسب',
   'dr.exp_check': 'تدقيق فواتير المصاريف', 'dr.exp_check_v': '{f} بانتظار · {a} مقبول · {r} مرفوض'
+});
+
+/* ========== v67 (owner 2026-10-20, majoo screenshots: «اضف هذه المميزات»): Keuangan — laba rugi, saldo kas & bank, neraca ==========
+   One screen for the owner and the accountant (the manager only when the owner lets her see costs — canSeeCost(); the server checks
+   the same in finance_position):
+   1. Laba rugi of a period (presets like Laporan, default this month; per day / week / month): a line chart — Pendapatan (sales after
+      discounts and customer returns, minus HPP), Total beban (expenses), Laba bersih (= Pendapatan − Beban, below zero when it is a
+      loss) — and the profit & loss table. Built from loadSales (the same get_sales rows as Laporan, cached) plus the two lines get_sales
+      does not carry (customer returns, undercharges collected), so its Laba bersih is the owner's Laba rugi in Laporan (profit_loss).
+   2. Saldo kas & bank as of now: the cash expected in each open drawer; each store account = the saldo awal the owner set + money in
+      − money out on that account since; the period's money tied to no account apart ("Tanpa akun") so no total pretends to know it.
+   3. Neraca as of today: cash & bank (only what is known), receivables, stock at cost, paid ahead to suppliers; supplier debt;
+      equity = assets − liabilities. Each line opens to its parts.
+   Positions and account flows come from ONE server call (finance_position, aggregate SQL); nothing polls. */
+const FIN = { preset: 'month', from: '', to: '', group: 'day', data: null, pos: null, err: '', posErr: '', seq: 0, cache: {}, pt: -1 };
+const FIN_PRESETS = ['today', 'yesterday', '7d', 'month', 'lastmonth', 'year'];
+const FIN_POS_TTL = 120000; // the position of the same period is read again after 2 minutes (or with "Muat ulang")
+const finRange = p => p === 'year' ? [today().slice(0, 4) + '-01-01', today()] : presetRange(p);
+const finCost = () => canSeeCost(); // HPP, laba and stock value: the owner, and the manager / accountant when the owner allows costs
+const finShort = n => (n < 0 ? '−' : '') + fmtShort(Math.abs(Math.round(n)));
+const finWeek = ymd => addDays(ymd, -((new Date(ymd + 'T00:00:00Z').getUTCDay() + 6) % 7)); // the Monday of its week
+RENDER.finance = function () {
+  const v = $('#view-finance');
+  if (FIN.preset !== 'custom' || !FIN.from || !FIN.to) [FIN.from, FIN.to] = finRange(FIN.preset === 'custom' ? 'month' : FIN.preset);
+  v.innerHTML = `<div class="view-head"><h1>${esc(t('nav.finance'))}</h1>
+      <button class="btn sm" data-act="fin-refresh">${ic('refresh')} ${esc(t('refresh'))}</button><button class="btn sm" data-act="fin-csv" id="fin-csv">${ic('download')} ${esc(t('fin.csv'))}</button></div>
+    <div class="toolbar"><div class="chips" id="fin-presets">${FIN_PRESETS.map(p => `<button class="chip ${FIN.preset === p ? 'on' : ''}" data-act="fin-preset" data-p="${p}">${esc(t(p === 'year' ? 'fin.pr_year' : 'pr.' + p))}</button>`).join('')}</div>
+      <label class="f" style="margin:0">${esc(t('from'))} <input class="input" type="date" id="fin-from" value="${esc(FIN.from)}" style="width:auto"></label>
+      <label class="f" style="margin:0">${esc(t('to'))} <input class="input" type="date" id="fin-to" value="${esc(FIN.to)}" style="width:auto"></label></div>
+    <div id="fin-body"><div class="empty">${esc(t('loading'))}</div></div>`;
+  const setDate = (k, el) => { FIN[k] = el.value || today(); FIN.preset = 'custom'; $$('#fin-presets .chip').forEach(c => c.classList.remove('on')); finLoad(); };
+  $('#fin-from', v).onchange = e => setDate('from', e.target);
+  $('#fin-to', v).onchange = e => setDate('to', e.target);
+  if (FIN.data && FIN.pos && FIN.pos.from === FIN.from && FIN.pos.to === FIN.to) finDraw();
+  finLoad();
+};
+/** The period's sales (shared cache with Laporan / Bank) and the position (one call, kept 2 minutes per period). */
+async function finLoad(force) {
+  if (FIN.from > FIN.to) [FIN.from, FIN.to] = [FIN.to, FIN.from];
+  const seq = ++FIN.seq, from = FIN.from, to = FIN.to, k = from + '|' + to, c = FIN.cache[k];
+  const body = $('#fin-body'); if (body) body.style.opacity = '.55';
+  const posP = !force && c && Date.now() - c.at < FIN_POS_TTL ? Promise.resolve(c.data) : api('finance_position', { from, to }).then(r => { FIN.cache[k] = { at: Date.now(), data: r }; return r; });
+  const [a, b] = await Promise.allSettled([loadSales(from, to, !force), posP]);
+  if (seq !== FIN.seq) return;
+  FIN.data = a.status === 'fulfilled' ? a.value : null; FIN.err = a.status === 'rejected' ? errMsg(a.reason) : '';
+  FIN.pos = b.status === 'fulfilled' ? b.value : null; FIN.posErr = b.status === 'rejected' ? errMsg(b.reason) : '';
+  FIN.pt = -1;
+  finDraw();
+}
+/** Laba rugi of the period: buckets for the chart and the P&L lines (definitions as Laporan / profit_loss). */
+function finCompute(d, P, from, to, group) {
+  const ok = d.sales.filter(s => s.status !== 'void');
+  const cost = finCost() && (P ? P.see_cost !== false : true) && ok.every(s => s.profit != null || s.total_cost != null);
+  const gp = s => s.profit != null ? int(s.profit) : int(s.total) - int(s.total_cost); // the owner's sale profit; total − HPP for the others
+  const keyOf = dt => group === 'month' ? String(dt).slice(0, 7) : group === 'week' ? finWeek(String(dt).slice(0, 10)) : String(dt).slice(0, 10);
+  const B = [];
+  if (group === 'month') { let m = monthStart(from); while (m <= to) { B.push({ key: m.slice(0, 7), from: m < from ? from : m, label: m.slice(5, 7) + '/' + m.slice(2, 4) }); m = addDays(monthEnd(m), 1); } }
+  else if (group === 'week') { let w = finWeek(from); while (w <= to) { const s0 = w < from ? from : w; B.push({ key: w, from: s0, label: s0.slice(8, 10) + '/' + s0.slice(5, 7) }); w = addDays(w, 7); } }
+  else for (let i = 0, n = daysBetween(from, to) + 1; i < n; i++) { const dt = addDays(from, i); B.push({ key: dt, from: dt, label: dt.slice(8, 10) + '/' + dt.slice(5, 7) }); }
+  B.forEach((b, i) => { b.to = i < B.length - 1 ? addDays(B[i + 1].from, -1) : to; Object.assign(b, { sales: 0, gp: 0, refund: 0, restock: 0, exp: 0 }); });
+  const at = new Map(B.map(b => [b.key, b])), inR = dt => String(dt || '') >= from && String(dt || '') <= to;
+  ok.forEach(s => { const b = at.get(keyOf(s.sale_date)); if (b) { b.sales += int(s.total); b.gp += gp(s); } });
+  const exps = (d.expenses || []).filter(x => inR(x.expense_date));
+  exps.forEach(x => { const b = at.get(keyOf(x.expense_date)); if (b) b.exp += int(x.amount); });
+  const rets = P && P.pl_extra ? P.pl_extra.returns : null;
+  ((rets && rets.list) || []).forEach(r => { const b = at.get(keyOf(r.date)); if (b) { b.refund += int(r.refund); b.restock += int(r.restock); } });
+  B.forEach(b => { b.netSales = b.sales - b.refund; b.rev = b.gp - b.refund + b.restock; b.net = b.rev - b.exp; });
+  const byCat = {}; exps.forEach(x => { const k = x.category || 'lain'; byCat[k] = (byCat[k] || 0) + int(x.amount); });
+  const omzet = sum(ok, s => int(s.total)), disc = sum(ok, s => int(s.discount)), laba = sum(ok, gp);
+  const refund = rets ? int(rets.refund) : 0, restock = rets ? int(rets.restock) : 0;
+  const stockDiff = sum((d.purchases || []).filter(r => isAdjustRow(r) && inR(r.purchase_date)), r => Math.round(num(r.qty) * int(r.cost_price)));
+  const collected = P && P.pl_extra ? int(P.pl_extra.collected.total) : 0, expTotal = sum(exps, x => int(x.amount));
+  const L = { cost, count: ok.length, gross: omzet + disc, disc, refund, retCount: rets ? rets.count : 0, netSales: omzet - refund, omzet, laba,
+    hpp: omzet - laba - restock, restock, grossProfit: laba - refund + restock, byCat, expTotal, stockDiff, collected };
+  L.op = L.grossProfit - expTotal;
+  L.net = L.op + stockDiff + collected;
+  return { B, L, extraOk: !!P };
+}
+/** The P&L table rows [key, label, value, kind] — kind '' line, 'sub' subtotal, 'total' the result, 'muted' a hint line. */
+function finPLRows(L) {
+  const rows = [['gross_sales', t('fin.r_gross_sales'), L.gross, ''], ['disc', t('fin.r_disc'), -L.disc, ''], ['ret', t('fin.r_ret', { n: fmtNum(L.retCount) }), -L.refund, ''], ['net_sales', t('fin.r_net_sales'), L.netSales, 'sub']];
+  if (L.cost) rows.push(['hpp', t('fin.r_hpp'), -L.hpp, ''], ['gross', t('fin.r_gross'), L.grossProfit, 'sub']);
+  EXP_CATS.filter(c => L.byCat[c]).concat(Object.keys(L.byCat).filter(c => !EXP_CATS.includes(c))).forEach(c => rows.push(['exp_' + c, '· ' + t('excat.' + c), -L.byCat[c], '']));
+  rows.push(['exp_total', t('fin.r_exp_total'), -L.expTotal, 'sub']);
+  if (!L.cost) return rows;
+  if (L.stockDiff || L.collected) {
+    rows.push(['op', t('fin.r_op'), L.op, 'sub']);
+    if (L.stockDiff) rows.push(['stock', t('fin.r_stock'), L.stockDiff, '']);
+    if (L.collected) rows.push(['collected', t('fin.r_collected'), L.collected, '']);
+  }
+  rows.push(['net', L.net < 0 ? t('fin.r_loss') : t('fin.r_net'), L.net, 'total']);
+  return rows;
+}
+const FIN_SERIES = { // colour from the theme variables; the line style and the marker tell them apart without colour too
+  rev: { v: 'var(--brand)', dash: '', mark: 'circle' }, sales: { v: 'var(--brand)', dash: '', mark: 'circle' },
+  exp: { v: 'var(--warn)', dash: '6 4', mark: 'square' }, net: { v: 'var(--ok)', dash: '', mark: 'diamond', w: 3 }
+};
+const finSeriesKeys = cost => cost ? ['rev', 'exp', 'net'] : ['sales', 'exp'];
+const finSeriesVal = (b, k) => k === 'sales' ? b.netSales : b[k];
+function finMark(k, x, y, title, i) {
+  const S0 = FIN_SERIES[k], st = `fill:${S0.v};stroke:var(--card);stroke-width:1.5`;
+  const tt = `<title>${esc(title)}</title>`, tap = i == null ? '' : ` data-act="fin-pt" data-i="${i}"`;
+  if (S0.mark === 'square') return `<rect x="${x - 3.5}" y="${y - 3.5}" width="7" height="7" rx="1" style="${st}" data-fin-mark="${k}"${tap}>${tt}</rect>`;
+  if (S0.mark === 'diamond') return `<polygon points="${x},${y - 5} ${x + 5},${y} ${x},${y + 5} ${x - 5},${y}" style="${st}" data-fin-mark="${k}"${tap}>${tt}</polygon>`;
+  return `<circle cx="${x}" cy="${y}" r="4" style="${st}" data-fin-mark="${k}"${tap}>${tt}</circle>`;
+}
+function finLegendIcon(k) { const S0 = FIN_SERIES[k]; return `<svg width="26" height="12" viewBox="0 0 26 12" aria-hidden="true" style="vertical-align:-1px;margin-inline-end:5px"><line x1="1" y1="6" x2="25" y2="6" style="stroke:${S0.v}" stroke-width="${S0.w || 2}" ${S0.dash ? `stroke-dasharray="${S0.dash}"` : ''}/>${finMark(k, 13, 6, '').replace(/<title><\/title>/, '')}</svg>`; }
+/** Inline-SVG line chart, in the style of chartSVG / hourlySVG: one y axis with the zero line, thinned x labels on phones,
+ *  a <title> on every point and a tap column per period (its three numbers under the chart). */
+function finChartSVG(B, cost) {
+  const phone = isPhone(), keys = finSeriesKeys(cost), n = B.length;
+  const W = phone ? 360 : 820, H = phone ? 230 : 260, padL = phone ? 46 : 58, padR = phone ? 12 : 92, padT = 14, padB = 26, fs = phone ? 12 : 11;
+  const vals = [0].concat(...B.map(b => keys.map(k => finSeriesVal(b, k))));
+  const hi = Math.max(...vals), lo = Math.min(...vals), span = Math.max(1, hi - lo);
+  const step = (() => { const raw = span / 4, p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p; })();
+  const top = Math.max(step, Math.ceil(hi / step) * step), bot = Math.min(0, Math.floor(lo / step) * step);
+  const y = v => padT + (H - padT - padB) * (top - v) / (top - bot), x = i => padL + (W - padL - padR) * (n <= 1 ? 0.5 : i / (n - 1));
+  const every = Math.max(1, Math.ceil(n / (phone ? 5 : 14))), cw = (W - padL - padR) / Math.max(1, n);
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(t('fin.chart'))}" id="fin-chart" style="direction:ltr">`;
+  for (let v = bot; v <= top + step / 2; v += step) s += `<line x1="${padL}" x2="${W - padR}" y1="${y(v)}" y2="${y(v)}" class="c-grid"/><text x="${padL - 6}" y="${y(v) + 4}" text-anchor="end" font-size="${fs}" class="c-txt">${esc(finShort(v))}</text>`;
+  s += `<line x1="${padL}" x2="${W - padR}" y1="${y(0)}" y2="${y(0)}" style="stroke:var(--muted)" stroke-width="1.5" data-fin-zero/>`;
+  B.forEach((b, i) => {
+    const tip = `${b.label} · ` + keys.map(k => `${t('fin.s_' + k)} ${fmtRp(finSeriesVal(b, k))}`).join(' · ');
+    s += `<rect x="${x(i) - cw / 2}" y="${padT}" width="${cw}" height="${H - padT - padB}" fill="transparent" data-fin-hit data-act="fin-pt" data-i="${i}"><title>${esc(tip)}</title></rect>`;
+    if (i % every === 0) s += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" font-size="${fs}" class="c-txt">${esc(b.label)}</text>`;
+  });
+  keys.forEach(k => { const S0 = FIN_SERIES[k]; s += `<polyline points="${B.map((b, i) => `${x(i).toFixed(1)},${y(finSeriesVal(b, k)).toFixed(1)}`).join(' ')}" fill="none" style="stroke:${S0.v}" stroke-width="${S0.w || 2}" stroke-linejoin="round" stroke-linecap="round" ${S0.dash ? `stroke-dasharray="${S0.dash}"` : ''} data-fin-line="${k}" pointer-events="none"/>`; });
+  if (n <= 62) keys.forEach(k => B.forEach((b, i) => { s += finMark(k, x(i), y(finSeriesVal(b, k)), `${b.label} · ${t('fin.s_' + k)} ${fmtRp(finSeriesVal(b, k))}`, i); }));
+  if (!phone && n) { // direct labels at the end of each line, kept apart
+    const ends = keys.map(k => ({ k, y: y(finSeriesVal(B[n - 1], k)) })).sort((a, b) => a.y - b.y);
+    ends.forEach((e, i) => { if (i && e.y - ends[i - 1].y < 13) e.y = ends[i - 1].y + 13; });
+    ends.forEach(e => { s += `<text x="${x(n - 1) + 8}" y="${e.y + 4}" font-size="11" class="c-txt" font-weight="700">${esc(t('fin.sl_' + e.k))}</text>`; });
+  }
+  return s + '</svg>';
+}
+function finReadout(B, cost) {
+  const b = B[FIN.pt]; if (!b) return `<span class="muted">${esc(t('fin.tap_hint'))}</span>`;
+  return `<b>${esc(b.from === b.to ? fmtDate(b.from) : fmtDate(b.from) + ' – ' + fmtDate(b.to))}</b> · ` + finSeriesKeys(cost).map(k => `${esc(t('fin.s_' + k))} <b dir="ltr" class="num ${finSeriesVal(b, k) < 0 ? 'red' : ''}">${fmtRp(finSeriesVal(b, k))}</b>`).join(' · ');
+}
+const finAmt = (v, kind) => `<span dir="ltr" class="num ${kind && v < 0 ? 'red' : ''}">${kind ? `<b>${fmtRp(v)}</b>` : fmtRp(v)}</span>`;
+function finPLHTML(C) {
+  const L = C.L;
+  const line = ([k, label, v, kind]) => `<tr data-fin-pl="${esc(k)}" class="${kind === 'total' ? 'b' : ''}"><td>${kind ? `<b>${esc(label)}</b>` : esc(label)}</td><td class="r">${finAmt(v, kind)}</td></tr>`;
+  return `<div class="panel" style="margin-bottom:14px" id="fin-pl"><h3>${ic('report')} ${esc(t('fin.pl_table'))}</h3><div class="pb">
+    <div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl" id="fin-pl-table"><tbody>${finPLRows(L).map(line).join('')}</tbody></table></div>
+    <div class="small muted" style="margin-top:6px">${esc(t('fin.pl_counts', { n: fmtNum(L.count) }))}${C.extraOk ? '' : ` · <span class="red">${esc(t('fin.extra_missing'))}</span>`}</div>
+    <div class="small muted" style="margin-top:4px">${esc(t(L.cost ? 'fin.pl_hint' : 'fin.no_cost'))}</div></div></div>`;
+}
+function finChartHTML(C) {
+  const keys = finSeriesKeys(C.L.cost);
+  return `<div class="panel chart" style="margin-bottom:14px" id="fin-chart-panel"><h3>${ic('chart')} ${esc(t('fin.pl_title'))}</h3>
+    <div class="pb" style="padding-bottom:4px"><div class="seg" style="max-width:320px;margin-bottom:10px" role="tablist" id="fin-groups">${['day', 'week', 'month'].map(g => `<button role="tab" aria-selected="${FIN.group === g}" class="${FIN.group === g ? 'on' : ''}" data-act="fin-group" data-g="${g}">${esc(t('fin.g_' + g))}</button>`).join('')}</div>
+      ${finChartSVG(C.B, C.L.cost)}<div class="small" id="fin-readout" style="min-height:20px;margin-top:4px">${finReadout(C.B, C.L.cost)}</div></div>
+    <div class="legend" id="fin-legend" style="flex-wrap:wrap">${keys.map(k => `<span data-fin-lg="${k}">${finLegendIcon(k)}${esc(t('fin.s_' + k))}: <b dir="ltr" class="num">${fmtRp(sum(C.B, b => finSeriesVal(b, k)))}</b></span>`).join('')}</div>
+    <div class="small muted" style="padding:0 14px 12px">${esc(t(C.L.cost ? 'fin.chart_hint' : 'fin.chart_hint_nc'))}</div></div>`;
+}
+const finNoneParts = P => [['in', ['tf_sales', 'qris_sales', 'card_sales', 'cash_nodrawer', 'bank_in']], ['out', ['bank_out', 'sup_cash', 'exp_other']]].map(([dir, ks]) => [dir, ks.map(k => [k, int(P.none[k])]), sum(ks, k => int(P.none[k]))]);
+function finCashHTML(P) {
+  const drawers = P.drawers || [], dTotal = sum(drawers, x => int(x.expected)), own = isOwner();
+  const accs = (P.accounts || []).filter(a => a.active || a.opening || a.period.in || a.period.out);
+  const known = dTotal + sum(accs.filter(a => a.opening), a => int(a.balance));
+  const rowBox = (attrs, left, right, body) => `<details class="fin-row" ${attrs} style="border-bottom:1px solid var(--border);padding:8px 0"><summary style="cursor:pointer;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap"><div class="grow" style="min-width:0;flex:1 1 180px">${left}</div><div style="text-align:end;margin-inline-start:auto">${right}</div></summary>${body ? `<div class="small" style="padding:6px 0 0">${body}</div>` : ''}</details>`;
+  const drawerRows = drawers.length ? drawers.map(x => `<div class="row wrap" data-fin-drawer="${esc(x.shift_id)}" style="justify-content:space-between;gap:8px;padding:2px 0"><span>${esc(x.cashier)} <span class="muted">· ${esc(t('fin.drawer_since', { at: fmtDateTime(x.opened_at, x.shift_date), o: fmtRp(x.opening_cash) }))}</span>${x.shift_date < today() ? ` <span class="badge red">${esc(t('shift.stale'))}</span>` : ''}</span><b dir="ltr" class="num">${fmtRp(x.expected)}</b></div>`).join('') : `<span class="muted">${esc(t('fin.drawers_none'))}</span>`;
+  let h = rowBox('id="fin-drawers"', `<b>${ic('cash')} ${esc(t('fin.drawers', { n: fmtNum(drawers.length) }))}</b><div class="small muted">${esc(t('fin.drawers_hint'))}</div>`, `<b dir="ltr" class="num" data-fin-v="drawers">${fmtRp(dTotal)}</b>`, drawerRows);
+  accs.forEach(a => {
+    const op = a.opening, fl = op ? a.since : a.period;
+    const left = `<b>${ic('bank')} ${esc(accLabel(a))}</b>${a.active ? '' : ` <span class="badge gray">${esc(t('inactive'))}</span>`}
+      <div class="small ${op ? 'muted' : 'amber'}">${op ? esc(t('fin.opening', { date: fmtDate(op.date), amt: fmtRp(op.amount) })) : esc(t('fin.no_opening'))}</div>
+      <div class="small"><span dir="ltr" class="green num">+${fmtRp(fl.in)}</span> · <span dir="ltr" class="red num">−${fmtRp(fl.out)}</span> <span class="muted">${esc(op ? t('fin.since_d', { date: fmtDate(op.date) }) : t('fin.in_period'))}</span></div>`;
+    const right = op ? `<div class="small muted">${esc(t('fin.balance'))}</div><b dir="ltr" class="num ${a.balance < 0 ? 'red' : ''}" style="font-size:17px" data-fin-v="bal">${fmtRp(a.balance)}</b>` : `<span class="muted">—</span>`;
+    const body = `${op ? `<div>${esc(t('fin.period_flow', { i: fmtRp(a.period.in), o: fmtRp(a.period.out) }))}</div><div class="muted">${esc(t('fin.op_by', { by: op.by || '—', at: op.at ? fmtDateTime(op.at) : '—' }))}</div>` : ''}
+      ${own ? `<button class="btn xs ${op ? '' : 'primary'}" style="margin-top:6px" data-act="fin-open-set" data-acc="${esc(a.id)}">${ic('edit')} ${esc(t(op ? 'fin.op_edit' : 'fin.op_set'))}</button>` : (op ? '' : `<div class="muted">${esc(t('fin.op_owner'))}</div>`)}`;
+    h += rowBox(`data-fin-acc="${esc(a.id)}" ${op ? '' : 'open'}`, left, right, body);
+  });
+  const parts = finNoneParts(P), nIn = parts[0][2], nOut = parts[1][2];
+  h += rowBox('id="fin-none"', `<b>${ic('wallet')} ${esc(t('fin.none_title'))}</b><div class="small"><span dir="ltr" class="green num">+${fmtRp(nIn)}</span> · <span dir="ltr" class="red num">−${fmtRp(nOut)}</span> <span class="muted">${esc(t('fin.in_period'))}</span></div>`, `<span class="badge ${nIn || nOut ? 'amber' : 'gray'}">${esc(t('fin.none_badge'))}</span>`,
+    parts.map(([dir, list]) => `<div style="margin-top:4px"><b>${esc(t('fin.' + dir))}</b>${list.filter(([, v]) => v).map(([k, v]) => `<div class="row wrap" data-fin-none="${k}" style="justify-content:space-between;gap:8px"><span class="muted">${esc(t('fin.n_' + k))}</span><span dir="ltr" class="num">${fmtRp(v)}</span></div>`).join('') || `<div class="muted">—</div>`}</div>`).join('') + `<div class="muted" style="margin-top:6px">${esc(t('fin.none_hint'))}</div>`);
+  return `<div class="panel" id="fin-cash"><h3>${ic('wallet')} ${esc(t('fin.cash_title'))} <span class="small muted" style="font-weight:400">${esc(t('fin.as_of', { date: fmtDate(P.as_of) }))}</span></h3><div class="pb" style="padding-top:2px">
+    ${h}<div class="row wrap" style="justify-content:space-between;gap:8px;padding-top:10px"><b>${esc(t('fin.cash_known'))}</b><b dir="ltr" class="num" data-fin-v="known" style="font-size:17px">${fmtRp(known)}</b></div>
+    ${accs.some(a => !a.opening) ? `<div class="small amber" style="margin-top:4px">${esc(t('fin.cash_partial'))}</div>` : ''}</div></div>`;
+}
+function finBalanceHTML(P) {
+  const cost = finCost() && P.see_cost !== false && !!P.stock;
+  const accs = P.accounts || [], cashKnown = sum(P.drawers || [], x => int(x.expected)) + sum(accs.filter(a => a.opening), a => int(a.balance));
+  const R0 = P.receivables || { total: 0, top: [] }, SP = P.suppliers || { payable: 0, prepaid: 0, owed: [], ahead: [] };
+  const assets = cashKnown + int(R0.total) + (cost ? int(P.stock.value) : 0) + int(SP.prepaid), liab = int(SP.payable);
+  const list = (rows, f) => rows.length ? rows.map(f).join('') : `<div class="muted">${esc(t('no_data'))}</div>`;
+  const kv = (label, v, attrs = '') => `<div class="row wrap" ${attrs} style="justify-content:space-between;gap:8px;padding:1px 0"><span class="muted ellipsis" style="max-width:70%">${esc(label)}</span><span dir="ltr" class="num">${v}</span></div>`;
+  const line = (id, label, v, body) => `<details class="fin-bs" data-fin-bs="${id}" style="border-bottom:1px solid var(--border);padding:8px 0"><summary style="cursor:pointer;display:flex;gap:10px;justify-content:space-between"><span>${esc(label)}</span><b dir="ltr" class="num">${v}</b></summary><div class="small" style="padding:6px 0 0">${body}</div></details>`;
+  const sub = (id, label, v) => `<div class="row wrap" data-fin-bs="${id}" style="justify-content:space-between;gap:8px;padding:9px 0;border-bottom:2px solid var(--border-d)"><b>${esc(label)}</b><b dir="ltr" class="num ${v < 0 ? 'red' : ''}">${v == null ? '—' : fmtRp(v)}</b></div>`;
+  const cashBody = (P.drawers || []).map(x => kv(t('fin.drawer_of', { n: x.cashier }), fmtRp(x.expected))).join('') + accs.filter(a => a.opening).map(a => kv(accLabel(a), fmtRp(a.balance))).join('')
+    + (accs.some(a => !a.opening) ? `<div class="amber" style="margin-top:4px">${esc(t('fin.bs_cash_partial', { n: fmtNum(accs.filter(a => !a.opening && a.active).length) }))}</div>` : '');
+  const stockBody = cost ? list(P.stock.by_cat.slice(0, 12), c => kv(c.category, fmtRp(c.value))) + (P.stock.materials_n ? `<div class="muted" style="margin-top:4px">${esc(t('fin.stock_mat', { v: fmtRp(P.stock.materials), n: fmtNum(P.stock.materials_n) }))}</div>` : '') : '';
+  return `<div class="panel" id="fin-bs"><h3>${ic('report')} ${esc(t('fin.bs_title'))} <span class="small muted" style="font-weight:400">${esc(t('fin.as_of', { date: fmtDate(P.as_of) }))}</span></h3><div class="pb" style="padding-top:2px">
+    <div class="small muted" style="margin:6px 0 2px;font-weight:700;text-transform:uppercase;letter-spacing:.3px">${esc(t('fin.assets'))}</div>
+    ${line('cash', t('fin.a_cash'), fmtRp(cashKnown), cashBody || `<div class="muted">${esc(t('no_data'))}</div>`)}
+    ${line('recv', t('fin.a_recv'), fmtRp(R0.total), `<div class="muted" style="margin-bottom:4px">${esc(t('fin.cust_n', { n: fmtNum(R0.count) }))}</div>` + list(R0.top.slice(0, 10), c => kv(c.name, fmtRp(c.debt), `data-fin-cust="${esc(c.id)}"`)))}
+    ${cost ? line('stock', t('fin.a_stock'), fmtRp(P.stock.value), stockBody) : `<div class="row wrap" data-fin-bs="stock" style="justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)"><span>${esc(t('fin.a_stock'))}</span><span class="muted">${esc(t('fin.hidden'))}</span></div>`}
+    ${line('prepaid', t('fin.a_prepaid'), fmtRp(SP.prepaid), list(SP.ahead.slice(0, 10), x => kv(x.supplier, fmtRp(-x.balance), `data-fin-sup="${esc(x.supplier)}"`)))}
+    ${sub('assets', t('fin.total_assets'), cost ? assets : null)}
+    <div class="small muted" style="margin:12px 0 2px;font-weight:700;text-transform:uppercase;letter-spacing:.3px">${esc(t('fin.liab'))}</div>
+    ${line('payable', t('fin.l_payable'), fmtRp(SP.payable), `<div class="muted" style="margin-bottom:4px">${esc(t('fin.sup_n', { n: fmtNum(SP.owed_n) }))}</div>` + list(SP.owed.slice(0, 10), x => kv(x.supplier + (x.last ? ' · ' + fmtDate(x.last) : ''), fmtRp(x.balance), `data-fin-sup="${esc(x.supplier)}"`)))}
+    ${sub('liab', t('fin.total_liab'), liab)}
+    ${sub('equity', t('fin.equity'), cost ? assets - liab : null)}
+    ${SP.nameless && SP.nameless.bought ? `<div class="small muted" style="margin-top:6px">${esc(t('fin.nameless', { v: fmtRp(SP.nameless.bought - SP.nameless.paid), n: fmtNum(SP.nameless.notes) }))}</div>` : ''}
+    ${cost ? '' : `<div class="small muted" style="margin-top:6px">${esc(t('fin.no_cost'))}</div>`}
+    <div class="small muted" style="margin-top:8px" id="fin-bs-note">${esc(t('fin.bs_note'))}</div></div></div>`;
+}
+function finDraw() {
+  const body = $('#fin-body'); if (!body || S.view !== 'finance') return;
+  body.style.opacity = '';
+  $$('#fin-presets .chip').forEach(c => c.classList.toggle('on', c.dataset.p === FIN.preset));
+  const f = $('#fin-from'), to = $('#fin-to'); if (f && to) { f.value = FIN.from; to.value = FIN.to; }
+  if (!FIN.data) { body.innerHTML = `<div class="empty red">${esc(FIN.err || t('err.SERVER'))}</div>`; return; }
+  const P = FIN.pos && FIN.pos.from === FIN.from && FIN.pos.to === FIN.to ? FIN.pos : null;
+  const C = finCompute(FIN.data, P, FIN.from, FIN.to, FIN.group); FIN.last = C;
+  body.innerHTML = `<p class="muted" style="margin-top:0" id="fin-period">${esc(fmtDate(FIN.from))}${FIN.from !== FIN.to ? ' – ' + esc(fmtDate(FIN.to)) : ''}</p>
+    <div class="kpis" id="fin-kpis">${C.L.cost ? kpi('fin-rev', t('fin.s_rev'), fmtRp(C.L.grossProfit), '', 'hl') + kpi('fin-exp', t('fin.s_exp'), fmtRp(C.L.expTotal)) + kpi('fin-net', C.L.net < 0 ? t('fin.r_loss') : t('fin.r_net'), `<span dir="ltr" class="${C.L.net < 0 ? 'red' : 'green'}">${fmtRp(C.L.net)}</span>`)
+      : kpi('fin-sales', t('fin.s_sales'), fmtRp(C.L.netSales), '', 'hl') + kpi('fin-exp', t('fin.s_exp'), fmtRp(C.L.expTotal))}</div>
+    ${finChartHTML(C)}${finPLHTML(C)}
+    ${P ? `<div class="rgrid">${finCashHTML(P)}${finBalanceHTML(P)}</div>` : `<div class="panel"><div class="pb ${FIN.posErr ? 'red' : 'muted'}" id="fin-pos-err">${esc(FIN.posErr || t('loading'))}</div></div>`}`;
+}
+/** The owner's saldo awal of one store account: the balance at the START of the date (e.g. yesterday's closing from m-banking). */
+function finOpeningModal(id) {
+  const a = FIN.pos && (FIN.pos.accounts || []).find(x => x.id === id); if (!a || !isOwner()) return;
+  const op = a.opening;
+  const el = openModal({
+    title: t('fin.op_title'), cls: 'narrow', id: 'fin-op',
+    body: `<p style="margin-top:0"><b>${esc(accLabel(a))}</b></p><p class="small muted">${esc(t('fin.op_hint'))}</p>
+      <div class="field"><label class="f" for="fin-op-date">${esc(t('fin.op_date'))}</label><input class="input" type="date" id="fin-op-date" max="${today()}" value="${esc(op ? op.date : today())}"></div>
+      <div class="field"><label class="f" for="fin-op-amt">${esc(t('fin.op_amount'))}</label><input class="input num" id="fin-op-amt" inputmode="numeric" value="${op ? esc(fmtNum(op.amount)) : ''}" style="font-size:18px;font-weight:800" autofocus></div>
+      <div class="red small" id="fin-op-err" role="alert"></div>`,
+    foot: `${op ? `<button class="btn danger" id="fin-op-clear">${esc(t('fin.op_clear'))}</button>` : ''}<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="fin-op-save">${esc(t('save'))}</button>`
+  });
+  const send = async (data, btn, msg) => {
+    btn.disabled = true;
+    try { await api('set_account_opening', Object.assign({ account_id: a.id }, data)); closeModal(); toast(t(msg), 'ok'); FIN.cache = {}; finLoad(); } // the sales stay cached; the position is read again
+    catch (e) { $('#fin-op-err', el).textContent = errMsg(e); btn.disabled = false; }
+  };
+  $('#fin-op-save', el).onclick = e => {
+    const date = $('#fin-op-date', el).value, raw = $('#fin-op-amt', el).value.trim();
+    if (!date || date > today()) { $('#fin-op-err', el).textContent = t('fin.op_bad_date'); return; }
+    if (!raw) { $('#fin-op-err', el).textContent = t('required'); return; }
+    send({ date, amount: moneyVal(raw) }, e.currentTarget, 'fin.op_saved');
+  };
+  const clr = $('#fin-op-clear', el); if (clr) clr.onclick = async e => { const b = e.currentTarget; const c = await confirmBox(t('fin.op_clear_q'), { danger: true, ok: t('fin.op_clear') }); if (c.ok) send({ clear: true }, b, 'fin.op_cleared'); };
+}
+/** CSV (Excel): the chart's periods and the P&L lines of the shown period. */
+function finCSV() {
+  const C = FIN.last; if (!C) { toast(t('loading'), 'warn'); return; }
+  const q = v => { const x = String(v == null ? '' : v); return /[",;\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
+  const keys = finSeriesKeys(C.L.cost), tl = (k, v) => tid(k, v);
+  const lines = [[tl('fin.csv_period'), tl('from'), tl('to')].concat(keys.map(k => tl('fin.s_' + k))).map(q).join(';')]
+    .concat(C.B.map(b => [b.label, b.from, b.to].concat(keys.map(k => finSeriesVal(b, k))).map(q).join(';')), '', [tl('fin.pl_table'), FIN.from + ' – ' + FIN.to].map(q).join(';'));
+  const save = S.lang; S.lang = 'id';
+  try { finPLRows(C.L).forEach(([, label, v]) => lines.push([label.replace(/^· /, ''), v].map(q).join(';'))); } finally { S.lang = save; }
+  const url = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a'); a.href = url; a.download = `laba-rugi-${FIN.from}-${FIN.to}.csv`; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+Object.assign(ACT, {
+  'fin-preset': el => { FIN.preset = el.dataset.p; [FIN.from, FIN.to] = finRange(FIN.preset); finLoad(); },
+  'fin-group': el => { FIN.group = ['day', 'week', 'month'].includes(el.dataset.g) ? el.dataset.g : 'day'; FIN.pt = -1; finDraw(); },
+  'fin-refresh': () => { FIN.cache = {}; finLoad(true); },
+  'fin-csv': () => finCSV(),
+  'fin-open-set': el => finOpeningModal(el.dataset.acc),
+  'fin-pt': el => { FIN.pt = +el.dataset.i; const r = $('#fin-readout'); if (r && FIN.last) r.innerHTML = finReadout(FIN.last.B, FIN.last.L.cost); }
+});
+Object.assign(I18N.id, {
+  'nav.finance': 'Keuangan', 'navs.finance': 'Keuangan', 'fin.pr_year': 'Tahun ini', 'fin.csv': 'CSV', 'fin.csv_period': 'periode',
+  'fin.pl_title': 'Laba rugi', 'fin.chart': 'Grafik laba rugi', 'fin.g_day': 'Hari', 'fin.g_week': 'Minggu', 'fin.g_month': 'Bulan',
+  'fin.s_rev': 'Pendapatan (setelah promo & HPP)', 'fin.s_exp': 'Total beban', 'fin.s_net': 'Laba bersih', 'fin.s_sales': 'Penjualan bersih',
+  'fin.sl_rev': 'Pendapatan', 'fin.sl_exp': 'Beban', 'fin.sl_net': 'Laba bersih', 'fin.sl_sales': 'Penjualan',
+  'fin.tap_hint': 'Ketuk grafik untuk melihat angka satu hari / minggu / bulan.',
+  'fin.chart_hint': 'Pendapatan = penjualan setelah diskon dan retur − HPP. Laba bersih = Pendapatan − Beban (di bawah garis nol = rugi). Selisih stok opname dan koreksi harga hanya di tabel.',
+  'fin.chart_hint_nc': 'Penjualan bersih (setelah diskon dan retur) dan beban. HPP dan laba hanya untuk yang diizinkan pemilik melihat modal.',
+  'fin.pl_table': 'Laporan laba rugi', 'fin.r_gross_sales': 'Penjualan kotor', 'fin.r_disc': 'Diskon / promo', 'fin.r_ret': 'Retur pelanggan — uang kembali ({n})',
+  'fin.r_net_sales': 'Penjualan bersih', 'fin.r_hpp': 'HPP (harga pokok penjualan)', 'fin.r_gross': 'Laba kotor', 'fin.r_exp_total': 'Total beban',
+  'fin.r_op': 'Laba usaha', 'fin.r_stock': 'Selisih stok (opname / penyesuaian)', 'fin.r_collected': 'Koreksi harga yang ditagih', 'fin.r_net': 'Laba bersih', 'fin.r_loss': 'Rugi bersih',
+  'fin.pl_counts': '{n} transaksi (tanpa yang batal)', 'fin.extra_missing': 'retur & koreksi harga belum terbaca — muat ulang',
+  'fin.pl_hint': 'Sama dengan Laporan → Laba rugi untuk periode yang sama. HPP sudah dikurangi barang retur yang kembali ke rak (harga modal hari ini).',
+  'fin.no_cost': 'HPP, laba, nilai stok dan ekuitas hanya untuk pemilik dan yang diizinkan pemilik melihat harga modal.',
+  'fin.cash_title': 'Saldo kas & bank', 'fin.as_of': 'per {date}', 'fin.drawers': 'Kas laci kasir ({n} terbuka)', 'fin.drawers_hint': 'Uang tunai yang seharusnya ada di laci sekarang',
+  'fin.drawers_none': 'Tidak ada laci kasir yang terbuka.', 'fin.drawer_since': 'sejak {at}, modal {o}', 'fin.drawer_of': 'Laci {n}',
+  'fin.opening': 'Saldo awal {date}: {amt}', 'fin.no_opening': 'Saldo awal belum diisi', 'fin.since_d': 'sejak {date}', 'fin.in_period': 'periode ini', 'fin.balance': 'Saldo',
+  'fin.period_flow': 'Periode ini: masuk {i} · keluar {o}', 'fin.op_by': 'Diisi {by} · {at}', 'fin.op_set': 'Isi saldo awal', 'fin.op_edit': 'Ubah saldo awal', 'fin.op_owner': 'Saldo awal diisi oleh pemilik.',
+  'fin.none_title': 'Tanpa akun', 'fin.none_badge': 'tidak masuk saldo', 'fin.in': 'Masuk', 'fin.out': 'Keluar',
+  'fin.n_tf_sales': 'Penjualan transfer tanpa rekening', 'fin.n_qris_sales': 'Penjualan QRIS', 'fin.n_card_sales': 'Penjualan kartu (EDC)', 'fin.n_cash_nodrawer': 'Penjualan tunai tanpa laci kasir',
+  'fin.n_bank_in': 'Pembayaran masuk transfer / QRIS tanpa rekening', 'fin.n_bank_out': 'Pembayaran keluar transfer / QRIS tanpa rekening', 'fin.n_sup_cash': 'Bayar pemasok tunai di luar laci', 'fin.n_exp_other': 'Pengeluaran bukan dari laci',
+  'fin.none_hint': 'Uang yang tidak tercatat di rekening toko mana pun dan tidak lewat laci kasir — tidak dihitung di saldo mana pun. Pilih rekeningnya di Bank → Transfer per rekening supaya masuk saldo. Tunai yang lewat laci kasir ada di Kas laci.',
+  'fin.cash_known': 'Kas & bank yang diketahui', 'fin.cash_partial': 'Rekening tanpa saldo awal tidak dihitung di total.',
+  'fin.op_title': 'Saldo awal rekening', 'fin.op_date': 'Tanggal', 'fin.op_amount': 'Saldo di awal tanggal itu (Rp)',
+  'fin.op_hint': 'Isi saldo rekening di AWAL tanggal ini, sebelum transaksi hari itu — misalnya saldo akhir kemarin dari m-banking, dengan tanggal hari ini. Sesudahnya aplikasi menambah uang masuk dan mengurangi uang keluar yang tercatat di rekening ini.',
+  'fin.op_bad_date': 'Tanggal paling lambat hari ini', 'fin.op_saved': 'Saldo awal tersimpan', 'fin.op_clear': 'Hapus saldo awal', 'fin.op_clear_q': 'Hapus saldo awal rekening ini?', 'fin.op_cleared': 'Saldo awal dihapus',
+  'fin.bs_title': 'Neraca', 'fin.assets': 'Aset', 'fin.liab': 'Kewajiban', 'fin.equity': 'Ekuitas (aset − kewajiban)',
+  'fin.a_cash': 'Kas & bank (yang diketahui)', 'fin.a_recv': 'Piutang pelanggan', 'fin.a_stock': 'Persediaan (stok × harga modal)', 'fin.a_prepaid': 'Uang muka ke pemasok', 'fin.l_payable': 'Hutang ke pemasok',
+  'fin.total_assets': 'Total aset', 'fin.total_liab': 'Total kewajiban', 'fin.hidden': 'tersembunyi', 'fin.cust_n': '{n} pelanggan berhutang', 'fin.sup_n': '{n} pemasok belum dibayar penuh',
+  'fin.stock_mat': 'Termasuk bahan kemasan {v} ({n} barang).', 'fin.bs_cash_partial': '{n} rekening belum punya saldo awal — tidak dihitung.',
+  'fin.nameless': 'Barang masuk tanpa nama pemasok {v} ({n} nota) tidak dihitung sebagai hutang.',
+  'fin.bs_note': 'Dihitung dari catatan di aplikasi ini (laci kasir, rekening dengan saldo awal, hutang pelanggan, stok × harga modal, barang masuk, retur dan pembayaran pemasok) — bukan pembukuan resmi. Uang di luar laci dan rekening tidak terlihat di sini.'
+});
+Object.assign(I18N.ar, {
+  'nav.finance': 'المالية', 'navs.finance': 'المالية', 'fin.pr_year': 'هذه السنة', 'fin.csv': 'ملف CSV', 'fin.csv_period': 'الفترة',
+  'fin.pl_title': 'الأرباح والخسائر', 'fin.chart': 'رسم الأرباح والخسائر', 'fin.g_day': 'يوم', 'fin.g_week': 'أسبوع', 'fin.g_month': 'شهر',
+  'fin.s_rev': 'الإيراد (بعد العروض وتكلفة البضاعة)', 'fin.s_exp': 'إجمالي المصاريف', 'fin.s_net': 'صافي الربح', 'fin.s_sales': 'صافي المبيعات',
+  'fin.sl_rev': 'الإيراد', 'fin.sl_exp': 'المصاريف', 'fin.sl_net': 'صافي الربح', 'fin.sl_sales': 'المبيعات',
+  'fin.tap_hint': 'اضغط على الرسم لترى أرقام يوم / أسبوع / شهر.',
+  'fin.chart_hint': 'الإيراد = المبيعات بعد الخصم والمرتجعات − تكلفة البضاعة. صافي الربح = الإيراد − المصاريف (تحت خط الصفر = خسارة). فروقات الجرد وتصحيح الأسعار في الجدول فقط.',
+  'fin.chart_hint_nc': 'صافي المبيعات (بعد الخصم والمرتجعات) والمصاريف. تكلفة البضاعة والربح فقط لمن سمح له المالك برؤية سعر الشراء.',
+  'fin.pl_table': 'قائمة الأرباح والخسائر', 'fin.r_gross_sales': 'إجمالي المبيعات', 'fin.r_disc': 'الخصومات والعروض', 'fin.r_ret': 'مرتجعات الزبائن — المبالغ المعادة ({n})',
+  'fin.r_net_sales': 'صافي المبيعات', 'fin.r_hpp': 'تكلفة البضاعة المباعة', 'fin.r_gross': 'مجمل الربح', 'fin.r_exp_total': 'إجمالي المصاريف',
+  'fin.r_op': 'الربح التشغيلي', 'fin.r_stock': 'فروقات المخزون (الجرد / التسوية)', 'fin.r_collected': 'فروقات أسعار تم تحصيلها', 'fin.r_net': 'صافي الربح', 'fin.r_loss': 'صافي الخسارة',
+  'fin.pl_counts': '{n} عملية (بدون الملغاة)', 'fin.extra_missing': 'لم تُقرأ المرتجعات وتصحيحات الأسعار بعد — أعد التحميل',
+  'fin.pl_hint': 'مطابق لصفحة التقارير ← الأرباح والخسائر لنفس الفترة. تكلفة البضاعة مخصوم منها ما رجع إلى الرف من المرتجعات (بسعر الشراء اليوم).',
+  'fin.no_cost': 'تكلفة البضاعة والربح وقيمة المخزون وحقوق الملكية تظهر فقط للمالك ولمن سمح له المالك برؤية سعر الشراء.',
+  'fin.cash_title': 'أرصدة النقد والبنوك', 'fin.as_of': 'حتى {date}', 'fin.drawers': 'نقد أدراج الكاشير ({n} مفتوح)', 'fin.drawers_hint': 'النقد الذي يجب أن يكون في الدرج الآن',
+  'fin.drawers_none': 'لا يوجد درج كاشير مفتوح.', 'fin.drawer_since': 'منذ {at}، رصيد البداية {o}', 'fin.drawer_of': 'درج {n}',
+  'fin.opening': 'الرصيد الافتتاحي {date}: {amt}', 'fin.no_opening': 'لم يُدخل الرصيد الافتتاحي بعد', 'fin.since_d': 'منذ {date}', 'fin.in_period': 'في هذه الفترة', 'fin.balance': 'الرصيد',
+  'fin.period_flow': 'هذه الفترة: داخل {i} · خارج {o}', 'fin.op_by': 'أدخله {by} · {at}', 'fin.op_set': 'إدخال الرصيد الافتتاحي', 'fin.op_edit': 'تعديل الرصيد الافتتاحي', 'fin.op_owner': 'المالك يُدخل الرصيد الافتتاحي.',
+  'fin.none_title': 'بدون حساب', 'fin.none_badge': 'خارج الأرصدة', 'fin.in': 'داخل', 'fin.out': 'خارج',
+  'fin.n_tf_sales': 'مبيعات بالتحويل بدون حساب', 'fin.n_qris_sales': 'مبيعات كيو آر', 'fin.n_card_sales': 'مبيعات بالبطاقة (جهاز الدفع)', 'fin.n_cash_nodrawer': 'مبيعات نقدية بدون درج كاشير',
+  'fin.n_bank_in': 'دفعات واردة بالتحويل / كيو آر بدون حساب', 'fin.n_bank_out': 'دفعات صادرة بالتحويل / كيو آر بدون حساب', 'fin.n_sup_cash': 'دفع نقدي للموردين من خارج الدرج', 'fin.n_exp_other': 'مصاريف ليست من الدرج',
+  'fin.none_hint': 'أموال غير مسجلة على أي حساب للمتجر ولم تمر بدرج الكاشير — لا تدخل في أي رصيد. اختر حسابها في البنك ← التحويلات حسب الحساب لتدخل الرصيد. النقد الذي مر بدرج الكاشير موجود في نقد الأدراج.',
+  'fin.cash_known': 'النقد والبنوك المعروفة', 'fin.cash_partial': 'الحسابات بدون رصيد افتتاحي غير محسوبة في المجموع.',
+  'fin.op_title': 'الرصيد الافتتاحي للحساب', 'fin.op_date': 'التاريخ', 'fin.op_amount': 'الرصيد في بداية ذلك اليوم (روبية)',
+  'fin.op_hint': 'أدخل رصيد الحساب في بداية هذا التاريخ قبل عمليات ذلك اليوم — مثلًا رصيد نهاية الأمس من تطبيق البنك مع تاريخ اليوم. بعدها يضيف التطبيق الأموال الداخلة ويطرح الخارجة المسجلة على هذا الحساب.',
+  'fin.op_bad_date': 'التاريخ لا يتجاوز اليوم', 'fin.op_saved': 'تم حفظ الرصيد الافتتاحي', 'fin.op_clear': 'حذف الرصيد الافتتاحي', 'fin.op_clear_q': 'حذف الرصيد الافتتاحي لهذا الحساب؟', 'fin.op_cleared': 'تم حذف الرصيد الافتتاحي',
+  'fin.bs_title': 'الميزانية', 'fin.assets': 'الأصول', 'fin.liab': 'الالتزامات', 'fin.equity': 'حقوق الملكية (الأصول − الالتزامات)',
+  'fin.a_cash': 'النقد والبنوك (المعروفة)', 'fin.a_recv': 'ديون الزبائن', 'fin.a_stock': 'المخزون (الكمية × سعر الشراء)', 'fin.a_prepaid': 'دفعات مقدمة للموردين', 'fin.l_payable': 'ديون الموردين',
+  'fin.total_assets': 'إجمالي الأصول', 'fin.total_liab': 'إجمالي الالتزامات', 'fin.hidden': 'مخفي', 'fin.cust_n': '{n} زبون عليه دين', 'fin.sup_n': '{n} مورد لم يُدفع له كاملًا',
+  'fin.stock_mat': 'يشمل مواد التغليف {v} ({n} صنف).', 'fin.bs_cash_partial': '{n} حساب بدون رصيد افتتاحي — غير محسوب.',
+  'fin.nameless': 'بضاعة واردة بدون اسم مورد {v} ({n} فاتورة) غير محسوبة كدين.',
+  'fin.bs_note': 'محسوبة من سجلات هذا التطبيق (أدراج الكاشير، الحسابات ذات الرصيد الافتتاحي، ديون الزبائن، المخزون × سعر الشراء، البضاعة الواردة والمرتجعات ومدفوعات الموردين) — ليست دفاتر محاسبية رسمية. الأموال خارج الأدراج والحسابات لا تظهر هنا.'
 });
 
 /* ========== v37 (owner 2026-10-12) ==========
