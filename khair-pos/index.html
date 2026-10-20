@@ -449,8 +449,8 @@ const isApprover = () => S.role === 'owner' || S.role === 'manager';
 const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
 // v36 (owner 2026-10-11: "the visits table … a copy for the manager, the accountant and the owner"): + the field page, read-only
-const AUDIT_VIEWS = ['reports', 'finance', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'invchg', 'approvals', 'shoplist', 'field', 'settings'];
-const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|printer-open|scanner-open|pu-confirm|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*|fin-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
+const AUDIT_VIEWS = ['reports', 'finance', 'gudang', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'invchg', 'approvals', 'shoplist', 'field', 'settings'];
+const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|printer-open|scanner-open|pu-confirm|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*|fin-.*|gd-tab|gd-refresh)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
@@ -5732,6 +5732,8 @@ let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); re
    computed backwards from the current stock. Expiry uses purchase rows with exp_date (last 12 months) and assumes
    the current stock consists of the most recent purchases (FIFO). */
 const GD = { group: store.get('gd_group', '') || '', tab: 'overview', q: '', cat: '', status: '', sort: 'name', expMax: 60, d30: null, d30At: 0, year: null, yearAt: 0, yearP: null, gen: 0, bootAt: 0, err: '', result: '' };
+// v68 (owner 2026-10-20: «اجعل المحاسب يرى المواد الخام وإنتاج المخزون»): the accountant opens Gudang with these two tabs only
+const gdTabs = () => (isAudit() ? ['bahan', 'produksi'] : GD_TABS);
 const GD_TTL = 5 * 60000, GD_TABS = ['overview', 'list', 'sold', 'expiry', 'repack', 'bahan', 'produksi', 'opname'], GD_STATUS = ['', 'menipis', 'habis', 'lebih', 'kedaluwarsa', 'rak_kosong'];
 const GDO = Object.assign({ lines: [], note: '', show: false }, store.get('gd_opname', null) || {});
 const saveGdo = () => store.set('gd_opname', { lines: GDO.lines, note: GDO.note, show: GDO.show });
@@ -5812,10 +5814,10 @@ RENDER.cold = function () {
   host.querySelector('iframe').dataset.user = S.user;
 };
 RENDER.gudang = function () {
-  if (!isApprover()) { go('pos'); return; }
-  if (!GD_TABS.includes(GD.tab)) GD.tab = 'overview';
+  if (!isApprover() && !isAudit()) { go('pos'); return; }
+  if (!gdTabs().includes(GD.tab)) GD.tab = gdTabs()[0];
   $('#view-gudang').innerHTML = `<div class="view-head"><h1>${esc(t('nav.gudang'))}</h1><button class="btn sm" data-act="gd-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
-    <div class="chips gd-tabs" role="tablist" id="gd-tabs">${GD_TABS.map(k => `<button class="chip ${GD.tab === k ? 'on' : ''}" role="tab" aria-selected="${GD.tab === k}" data-act="gd-tab" data-tab="${k}">${esc(t('gd.tab_' + k))}${k === 'opname' && GDO.lines.length ? ` <span class="gd-n">${GDO.lines.length}</span>` : ''}</button>`).join('')}</div>
+    <div class="chips gd-tabs" role="tablist" id="gd-tabs">${gdTabs().map(k => `<button class="chip ${GD.tab === k ? 'on' : ''}" role="tab" aria-selected="${GD.tab === k}" data-act="gd-tab" data-tab="${k}">${esc(t('gd.tab_' + k))}${k === 'opname' && GDO.lines.length ? ` <span class="gd-n">${GDO.lines.length}</span>` : ''}</button>`).join('')}</div>
     <div id="gd-body"></div>`;
   gdDraw(true);
   gdLoad();
@@ -5832,6 +5834,7 @@ async function gdLoad(force) {
       if (seq !== gdSeq) return;
       gdDraw();
     }
+    if (isAudit()) return; // v68: her two tabs (Bahan baku, Produksi stok) read their own data
     if (!GD.d30 || Date.now() - GD.d30At > GD_TTL) {
       const gen = GD.gen, d = await loadSales(addDays(T, -29), T, !force);
       if (seq !== gdSeq) return;
@@ -6188,7 +6191,7 @@ async function gudangAttention() {
 }
 Object.assign(ACT, {
   'gd-refresh': () => gdLoad(true),
-  'gd-tab': el => { GD.tab = el.dataset.tab; GD.result = GD.tab === 'opname' ? GD.result : ''; RENDER.gudang(); },
+  'gd-tab': el => { if (!gdTabs().includes(el.dataset.tab)) return; GD.tab = el.dataset.tab; GD.result = GD.tab === 'opname' ? GD.result : ''; RENDER.gudang(); },
   'gd-filter': el => { GD.tab = 'list'; GD.status = el.dataset.status || ''; RENDER.gudang(); },
   'gd-status': el => { GD.status = el.dataset.status || ''; gdDrawListRows(); },
   'gd-cat': el => { GD.tab = 'list'; GD.cat = el.dataset.cat || ''; GD.status = ''; RENDER.gudang(); },
@@ -7518,6 +7521,7 @@ Object.assign(ACT, {
     const r = (S.repacksOpen || []).find(x => x.repack_id === el.dataset.id);
     closeModal(true);
     if (!r) { toast(t('prd.gone'), 'warn'); return; }
+    if (isAudit()) { go('approvals'); return; } // v68: the accountant confirms the packs made from her approvals screen (#rp-open)
     prdToRepack(() => openRepackFinish(r)); // confirmed there: the result shows on the Kemas ulang tab
   }
 });
