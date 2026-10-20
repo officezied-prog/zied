@@ -116,12 +116,13 @@ const MockServer = (() => {
     if (sh.status === 'closed') return sh;
     const sales = db.sales.filter(x => x.shift_id === sh.shift_id && x.status !== 'void');
     const cash_sales = sum(sales, x => window.KPay.of(x).tunai); // v51: a split sale's cash part only
-    const cash_payments = sum(db.payments.filter(x => x.shift_id === sh.shift_id && x.method === 'tunai'), x => int(x.amount));
+    const cash_payments = sum(db.payments.filter(x => x.shift_id === sh.shift_id && x.method === 'tunai' && (x.direction || 'in') === 'in'), x => int(x.amount));
+    const supKas = db.payments.filter(x => x.shift_id === sh.shift_id && x.direction === 'out' && x.paid_from === 'kas'); // v68: a supplier paid from the drawer
     const moves = db.cash_moves.filter(x => x.shift_id === sh.shift_id);
     const kasExp = db.expenses.filter(x => x.shift_id === sh.shift_id && x.paid_from === 'kas');
     const cash_in = sum(moves.filter(x => x.type === 'in'), x => int(x.amount));
-    const cash_out = sum(moves.filter(x => x.type === 'out'), x => int(x.amount)) + sum(kasExp, x => int(x.amount));
-    const list = moves.map(m => ({ type: m.type, amount: m.amount, note: m.note, time: m.time })).concat(kasExp.map(x => ({ type: 'out', amount: x.amount, note: 'Pengeluaran: ' + x.category + (x.note ? ' — ' + x.note : ''), time: x.expense_date })));
+    const cash_out = sum(moves.filter(x => x.type === 'out'), x => int(x.amount)) + sum(kasExp, x => int(x.amount)) + sum(supKas, x => int(x.amount));
+    const list = moves.map(m => ({ type: m.type, amount: m.amount, note: m.note, time: m.time })).concat(kasExp.map(x => ({ type: 'out', amount: x.amount, note: 'Pengeluaran: ' + x.category + (x.note ? ' — ' + x.note : ''), time: x.expense_date })), supKas.map(x => ({ type: 'out', amount: x.amount, note: 'Bayar pemasok ' + x.supplier + (x.purchase_no ? ' (' + x.purchase_no + ')' : ''), time: x.pay_time })));
     // v15: sales per method + pieces sold (transfer / QRIS = what was paid that way, hutang = the debt part)
     const invs = new Set(sales.map(x => x.invoice_no));
     return Object.assign({}, sh, { sales_count: sales.length, sales_total: sum(sales, x => int(x.total)), cash_sales, cash_payments, cash_in, cash_out, moves: JSON.stringify(list),
@@ -554,6 +555,67 @@ const MockServer = (() => {
     for (const d of list) { if (free <= 0) break; const left = Math.max(0, d.total - d.paid); const x = Math.min(free, left); if (x > 0) { d.paid += x; d.auto = true; free -= x; } }
     Object.keys(docs).forEach(k => { docs[k].remaining = Math.max(0, docs[k].total - docs[k].paid); });
     return docs;
+  }
+  /* v68 (owner 2026-10-20: «يكتب في مصاريف الكاشير التي دفعها وخرجت من الكاشير، ويقوم التطبيق بوضعها في المكان المناسب في الإدارة المالية»): cash
+     the cashier paid from his own drawer when the goods arrived, saved with the note in the same save_purchase — mirror of backend/process.js
+     drawerPayIn / drawerPayApply (and of the owner app's mock.js): the goods' price = a supplier payment from the drawer allocated to the
+     new note ('lunas' when it covers it, still waiting for its confirmation); a delivery fee / porters / other = a cashier expense from
+     the drawer. The note keeps the summary (drawer_pay); one notice to the owner / manager / accountant. */
+  const DRAWER_PURPOSES = { barang: 'Bayar barang (ke pemasok/sopir)', ongkir: 'Ongkos kirim / sopir', kuli: 'Bongkar muat / kuli', lain: 'Lainnya' };
+  const DRAWER_EXP_CAT = { ongkir: 'transport', kuli: 'transport', lain: 'lain' };
+  const DRAWER_INTERNAL = ['STOK OPNAME', 'PENYESUAIAN STOK', 'KEMAS ULANG'];
+  const rpTxtD = v => 'Rp ' + String(Math.round(Math.abs(num(v)))).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  const wibD = iso => new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(0, 16).replace('T', ' ') + ' WIB';
+  function drawerPayIn(db, u, x, supplier) {
+    const sh = openShiftOf(db, u.name);
+    if (!sh) throw E('SHIFT_REQUIRED', 'Buka laci kasir (shift) dulu untuk mencatat uang yang keluar dari laci');
+    const amount = int(x.amount), purpose = Object.prototype.hasOwnProperty.call(DRAWER_PURPOSES, x.purpose) ? x.purpose : '';
+    if (!(amount > 0)) throw E('INVALID', 'Jumlah yang dibayar dari laci tidak valid');
+    if (!purpose) throw E('INVALID', 'Pilih untuk apa uang laci dibayar');
+    const note = str(x.note).replace(/\s+/g, ' ').slice(0, 200);
+    if (!note) throw E('INVALID', 'Tulis kenapa / untuk apa uang laci dibayar');
+    const photoId = str(x.photo_id).slice(0, 40);
+    if (!photoId) throw E('INVALID', 'Foto wajib: mobil, nota atau yang dibayar');
+    if (!db.photos.some(p => p.photo_id === photoId && ['biaya', 'bayar'].includes(p.kind))) throw E('INVALID', 'Foto pembayaran dari laci tidak ditemukan');
+    const sup = str(supplier);
+    if (purpose === 'barang' && (!sup || DRAWER_INTERNAL.includes(sup.toUpperCase()))) throw E('INVALID', 'Nama pemasok wajib untuk bayar barang dari laci');
+    return { amount, purpose, note, photo_id: photoId, sh };
+  }
+  function drawerPayApply(db, u, dp, no, supplier) {
+    const lines = db.purchases.filter(r => r.purchase_no === no), total = sum(lines, r => int(r.total)), known = lines.every(r => int(r.cost_price) > 0);
+    if (dp.purpose === 'barang' && known && dp.amount > total) throw E('INVALID', 'Bayar barang dari laci ' + rpTxtD(dp.amount) + ' melebihi total nota ' + rpTxtD(total));
+    const nowIso = new Date().toISOString(), today0 = jktDate(), sup = str(supplier), label = DRAWER_PURPOSES[dp.purpose];
+    const info = { amount: dp.amount, purpose: dp.purpose, note: dp.note, by: u.name, at: nowIso, photo_id: dp.photo_id };
+    let pay = null, exp = null, full = false;
+    if (dp.purpose === 'barang') {
+      const alloc = Math.min(dp.amount, total);
+      full = total > 0 && alloc >= total;
+      pay = { id: nextId(db, 'payment'), pay_id: 'PY' + rand(7), pay_date: today0, pay_time: nowIso, direction: 'out', party_type: 'supplier', customer_id: 0, customer_name: '', supplier: sup, amount: dp.amount, method: 'tunai',
+        account_id: '', slip_date: '', bank: '', transfer_ref: '', proof_photo_id: dp.photo_id, alloc: JSON.stringify(alloc > 0 ? [{ ref: no, amount: alloc }] : []),
+        match_status: alloc <= 0 ? 'belum_dialokasi' : alloc < total ? 'sebagian' : alloc < dp.amount ? 'lebih' : 'lunas',
+        note: ('Barang masuk ' + no + ' dibayar tunai oleh kasir ' + u.name + ' [dari kas] | ' + dp.note).slice(0, 500), cashier: u.name, paid_from: 'kas', shift_id: dp.sh.shift_id, purchase_no: no };
+      db.payments.push(pay);
+      info.pay_id = pay.pay_id;
+      logAct(db, u, 'bayar_keluar', 'Bayar pemasok ' + sup + ' Rp ' + dp.amount + ' (tunai, dari kas ' + u.name + ' saat barang masuk) untuk ' + no + (alloc > 0 ? ' Rp ' + alloc : ' — belum dialokasi') + ' | ' + dp.note, pay.pay_id, dp.amount, 'info');
+    } else {
+      exp = { id: nextId(db, 'expense'), expense_date: today0, category: DRAWER_EXP_CAT[dp.purpose], amount: dp.amount, note: ('Barang masuk ' + no + ' — ' + label + ': ' + dp.note).slice(0, 500), user: u.name,
+        photo_id: dp.photo_id, paid_from: 'kas', shift_id: dp.sh.shift_id, lines: '', check_status: '', request_id: '', checked_by: '' };
+      db.expenses.push(exp);
+      info.category = exp.category;
+      logAct(db, u, 'biaya', 'Pengeluaran ' + exp.category + ' Rp ' + dp.amount + ': ' + exp.note + ' (kas)', '', dp.amount, 'info');
+    }
+    const json = JSON.stringify(info);
+    lines.forEach(r => { r.drawer_pay = json; if (full) Object.assign(r, { pay_status: 'lunas', pay_method: 'tunai', paid_at: today0 }); });
+    notifyR(db, u, ['owner', 'manager', 'akuntan'].filter(x => x !== u.role), 'Tunai dari laci ' + u.name + ' ' + rpTxtD(dp.amount) + ' saat barang masuk ' + no + (sup ? ' dari ' + sup : '') +
+      ' — ' + label + ': "' + dp.note + '" (' + wibD(nowIso) + ', foto terlampir) — ' + (pay ? 'dicatat sebagai pembayaran ke pemasok' + (full ? ', nota lunas (tetap menunggu konfirmasi)' : total > 0 && dp.amount < total ? ', sisa ' + rpTxtD(total - dp.amount) : '')
+      : 'dicatat sebagai pengeluaran ' + exp.category + ' dari laci'), 'info');
+    return { purpose: dp.purpose, amount: dp.amount, at: nowIso, full, payment: pay, expense: exp, shift: blind(shiftSummary(db, dp.sh), u.role) };
+  }
+  /** A cashier sees another cashier's cash-on-delivery for the goods without its amount (it is the note's total), as the server. */
+  function drawerPayView(s, name) {
+    let o = null; try { o = JSON.parse(s || 'null'); } catch (e) { o = null; }
+    if (!o || o.purpose !== 'barang' || str(o.by).toLowerCase() === str(name).toLowerCase()) return s;
+    delete o.amount; return JSON.stringify(o);
   }
   function checkAlloc(list, docs, amount) {
     const out = [], seen = {};
@@ -1293,8 +1355,9 @@ const MockServer = (() => {
         if (!ex) ex = { vendor: 'Toko Plastik Jaya', date: jktDate(), items: [{ name: 'Kantong plastik besar', qty: 10, unit_price: 5000, total: 50000 }, { name: 'Lakban coklat', qty: 5, unit_price: 7000, total: 35000 }], total: 85000, amount: 85000, readable: true, notes: '' };
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'biaya', ref: '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted: ex,
           match_status: ex.readable === false || (ex.amount == null && ex.total == null) ? 'perlu_cek' : '', match_notes: String(ex.notes || '') };
+        keepPhotoImg(db, photo, data); // v68: kept like every scanned photo (the owner / manager open it from the note)
         db.photos.push(photo);
-        return { photo_id: photo.photo_id, extracted: ex, drive_url: '' };
+        return { photo_id: photo.photo_id, extracted: ex, drive_url: photo.drive_url };
       }
       case 'scan_exit': {
         if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
@@ -1650,6 +1713,7 @@ const MockServer = (() => {
         // v16 who brought the goods: public transport (+ its number), a friend (name), the supplier's driver or our staff
         const carrier = readCarrier(data.carrier, Object.assign({}, V16_DEFAULTS, db.settings).require_carrier !== false);
         if (carrier.error) throw E('CARRIER_REQUIRED', carrier.error);
+        const drawerPay = data.drawer_pay && typeof data.drawer_pay === 'object' ? drawerPayIn(db, u, data.drawer_pay, data.supplier) : null; // v68
         const photo = data.photo_id ? db.photos.find(x => x.photo_id === data.photo_id && x.kind === 'masuk') : null;
         if (data.photo_id && !photo) throw E('INVALID', 'photo_id not found');
         if (!photo && db.settings.require_purchase_photo !== false) throw E('INVALID', 'Purchase photo (photo_id) required');
@@ -1688,7 +1752,9 @@ const MockServer = (() => {
         }
         if (photo) photo.ref = [photo.ref, String(data.supplier || '')].filter(Boolean).join(' ') || 'masuk';
         logAct(db, u, 'masuk', 'Barang masuk ' + purchase_no + (str(data.supplier) ? ' dari ' + str(data.supplier) : '') + ': ' + data.items.length + ' baris, Rp ' + sumTotal + ' — nota: ' + match.status + (matchNotes ? ' (' + matchNotes + ')' : '') + (carrier.type ? ' — dibawa ' + ({ umum: 'kendaraan umum', teman: 'teman', pemasok: 'sopir pemasok', karyawan: 'karyawan' })[carrier.type] + (carrier.name ? ' ' + carrier.name : '') + (carrier.vehicle ? ' ' + carrier.vehicle : '') : ''), purchase_no, sumTotal, match.status === 'cocok' ? 'info' : 'warn');
-        return { stock: out, purchase_no, match };
+        const res0 = { stock: out, purchase_no, match };
+        if (drawerPay) res0.drawer_pay = drawerPayApply(db, u, drawerPay, purchase_no, data.supplier); // v68: in the same request (a refusal writes nothing)
+        return res0;
       }
       case 'request_purchase_fix': {
         // a saved goods-in can only be corrected with the manager's (or owner's) approval; the owner sees it in the log
@@ -1720,7 +1786,7 @@ const MockServer = (() => {
         const inR = d => d >= data.from && d <= data.to;
         const sales = db.sales.filter(s => inR(s.sale_date));
         const inv = new Set(sales.map(s => s.invoice_no));
-        return { sales, items: db.items.filter(i => inv.has(i.invoice_no)), payments: db.payments.filter(p => inR(p.pay_date)), purchases: db.purchases.filter(p => inR(p.purchase_date)).map(p => { if (u.role === 'owner') return p; const o = Object.assign({}, p); delete o.total; return o; }), expenses: db.expenses.filter(x => inR(x.expense_date)), shifts: db.shifts.filter(x => inR(x.shift_date)).map(x => blind(shiftSummary(db, x), u.role)) };
+        return { sales, items: db.items.filter(i => inv.has(i.invoice_no)), payments: db.payments.filter(p => inR(p.pay_date)), purchases: db.purchases.filter(p => inR(p.purchase_date)).map(p => { if (u.role === 'owner') return p; const o = Object.assign({}, p); delete o.total; if (u.role === 'kasir') o.drawer_pay = drawerPayView(o.drawer_pay, u.name); return o; }), expenses: db.expenses.filter(x => inR(x.expense_date)), shifts: db.shifts.filter(x => inR(x.shift_date)).map(x => blind(shiftSummary(db, x), u.role)) };
       }
       case 'save_settings': {
         needOwner();

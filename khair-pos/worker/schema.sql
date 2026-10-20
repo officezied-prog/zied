@@ -180,7 +180,8 @@ CREATE TABLE IF NOT EXISTS pos_purchases (
   pay_status TEXT,
   pay_method TEXT,
   due_date TEXT,
-  paid_at TEXT
+  paid_at TEXT,
+  drawer_pay TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pos_purchases_purchase_date ON pos_purchases (purchase_date);
 CREATE INDEX IF NOT EXISTS idx_pos_purchases_purchase_no ON pos_purchases (purchase_no);

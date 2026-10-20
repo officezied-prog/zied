@@ -87,6 +87,7 @@ export function loaderSpecs(req, opts = {}) {
     'Get Sale By Invoice': eq('pos_sales', 'invoice_no', saleInvoice),
     'Get Items By Invoice': eq('pos_sale_items', 'invoice_no', saleInvoice),
     'Get Photo': eq('pos_photos', 'photo_id', photoId),
+    'Get Pay Photo': eq('pos_photos', 'photo_id', req.pay_photo_id || SENTINEL_NONE), // v68: a goods-in's drawer payment photo
     'Get Open Shifts': eq('pos_shifts', 'status', 'open'),
     'Get Purchase By No': eq('pos_purchases', 'purchase_no', purchaseNo),
     // v65: for the owner / manager / accountant at bootstrap — the goods-in notes not confirmed yet (the last 30 days) and the

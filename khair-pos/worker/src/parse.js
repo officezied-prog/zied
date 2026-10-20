@@ -49,6 +49,8 @@ export function parseRequest(body, headers) {
     // v39: a direct repack reads the repacks of yesterday + today (a resend by its client id; "someone just repacked this bulk").
     rp_from: action === 'repack' || action === 'request_repack' || action === 'repack_start' ? new Date(Date.now() + 7 * 3600000 - 86400000).toISOString().slice(0, 10) : '9999-12-31',
     approval_client: action === 'request_repack' && data.client_id ? String(data.client_id).slice(0, 60) : '__none__',
+    // v68: the photo of the cash a goods-in paid from the drawer (the car, the receipt or what was paid)
+    pay_photo_id: action === 'save_purchase' && data.drawer_pay && typeof data.drawer_pay === 'object' && data.drawer_pay.photo_id ? String(data.drawer_pay.photo_id).slice(0, 40) : '__none__',
     photo_id: ['save_purchase', 'receive_payment', 'pay_supplier', 'save_expense', 'save_sale', 'record_transfer', 'confirm_purchase'].indexOf(action) >= 0 && data.photo_id ? String(data.photo_id) : '__none__', // v57: + a sale's / transfer's slip
     ip: String(headers['x-forwarded-for'] || headers['x-real-ip'] || '').split(',')[0].trim(),
     ua: String(headers['user-agent'] || '').slice(0, 300),

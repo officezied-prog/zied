@@ -77,6 +77,8 @@ export const POS_MIGRATIONS = [
   // v68: the invoice no. DD/MM/YYYY/HHmm/N — N = the sale's number in its day, unique per day (two cashiers can never share one)
   'ALTER TABLE pos_sales ADD COLUMN day_seq INTEGER',
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_pos_sales_day_seq ON pos_sales (sale_date, day_seq)',
+  // v68: cash paid from the cashier's drawer when the goods arrived (the note keeps how much, why, by whom, when, the photo)
+  'ALTER TABLE pos_purchases ADD COLUMN drawer_pay TEXT',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;
