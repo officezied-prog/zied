@@ -3761,7 +3761,7 @@ switch (req.action) {
     // v68: cash paid from the cashier's drawer at delivery (checked before anything is saved; written below with the note)
     const drawerPay = data.drawer_pay && typeof data.drawer_pay === 'object' ? drawerPayIn(data.drawer_pay) : null;
     if (drawerPay && drawerPay.error) return fail(drawerPay.error, drawerPay.message);
-    const date = isDate(data.purchase_date) ? data.purchase_date : new Date().toISOString().slice(0, 10);
+    const date = isDate(data.purchase_date) ? data.purchase_date : jkDate(); // (Jakarta's day, like every other default — not UTC's)
     const photoId = str(data.photo_id);
     if (photoId) {
       const ph = rows('Get Photo').find(function (x) { return x.photo_id === photoId; });
