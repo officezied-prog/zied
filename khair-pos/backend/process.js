@@ -145,7 +145,8 @@ const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' 
 // void today's invoice, price change) — list_approvals + decide_approval, limited to approver_role 'mgr_akuntan'
 // by canDecide — and may register a member (save_customer); the cashier may no longer create members.
 // v63 (owner 2026-10-20: «المدير و المحاسب»): and confirm the packs a repack really made (repack_finish), like the manager.
-const AKUNTAN_READ = ['repack_finish', 'login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank'];
+// v65 (owner 2026-10-20: «المدير و المحاسب يصادق عليها»): and confirm a goods-in note with how it was paid (confirm_purchase).
+const AKUNTAN_READ = ['confirm_purchase', 'repack_finish', 'login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank'];
 if (role === 'akuntan' && AKUNTAN_READ.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
 // v36: report_tamper too — the field app reports a code attempt here (it was refused before, so the rep's account was never locked).
 if (role === 'sales' && ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
@@ -924,6 +925,7 @@ function partyDocs(partyType, key, excludePayId) {
       const ref = str(x.purchase_no) || ('PB-' + str(x.purchase_date));
       if (!docs[ref]) docs[ref] = { ref: ref, date: str(x.purchase_date), total: 0, paid: 0 };
       docs[ref].total += money(x.total);
+      if (str(x.pay_status) === 'tempo' && str(x.due_date)) docs[ref].due_date = str(x.due_date); // v65: the agreed date
       if (str(x.purchase_date) < docs[ref].date) docs[ref].date = str(x.purchase_date);
     });
   }
@@ -953,6 +955,24 @@ function checkAlloc(list, docs, amount) {
   }
   if (sum > amount) return { error: 'Total alokasi melebihi jumlah pembayaran' };
   return { alloc: out, sum: sum };
+}
+/* v65 (owner 2026-10-20: «عند استقبال البضاعة و التأكد منها من الموظف، المدير و المحاسب يصادق عليها و يكتب هل تم الدفع و بأي وسيلة دفع او
+   تاريخ الدفع المتفق عليه و يدخل في المصاريف او الدين»): a goods-in note confirmed "on credit" carries its agreed date on its lines
+   (pay_status 'tempo', due_date); once supplier payments cover the whole note it becomes 'lunas' with the day it was paid. */
+const INTERNAL_SUPPLIERS = ['STOK OPNAME', 'PENYESUAIAN STOK', 'KEMAS ULANG'];
+function markNotesPaid(docs, alloc, payDate) {
+  const left = {};
+  alloc.forEach(function (a1) { if (docs[a1.ref]) left[a1.ref] = docs[a1.ref].remaining - money(a1.amount); });
+  rows('Get Party Purchases').forEach(function (r) {
+    const ref = str(r.purchase_no);
+    if (left[ref] === undefined || left[ref] > 0 || str(r.pay_status) === 'lunas' || !str(r.check_status)) return;
+    ops.purchases.push(forWrite(Object.assign({}, r, { pay_status: 'lunas', paid_at: payDate }), r.id));
+  });
+}
+function noteDue(rowsOfNote, today) {
+  const r0 = rowsOfNote[0] || {}, due = str(r0.due_date);
+  return { purchase_no: str(r0.purchase_no), supplier: str(r0.supplier), purchase_date: str(r0.purchase_date), due_date: due, days: due ? Math.round((Date.parse(due) - Date.parse(today)) / 86400000) : 0,
+    total: rowsOfNote.reduce(function (a1, r) { return a1 + money(r.total); }, 0) };
 }
 function allocStatus(amount, chk, docs) {
   if (!chk.alloc.length) return 'belum_dialokasi';
@@ -1471,6 +1491,15 @@ switch (req.action) {
       customers: customers.map(clean),
       settings: settingsOut(),
       opname: opnameStatus(),
+      // v65: goods-in waiting for the manager / accountant, and notes on credit due within 3 days or late
+      purchase_checks: canAudit ? (function () {
+        const by = {}, due = {};
+        rows('Get Unchecked Purchases').forEach(function (r) { if (INTERNAL_SUPPLIERS.indexOf(str(r.supplier)) < 0 && str(r.purchase_no)) (by[str(r.purchase_no)] = by[str(r.purchase_no)] || []).push(r); });
+        rows('Get Due Purchases').forEach(function (r) { if (str(r.purchase_no)) (due[str(r.purchase_no)] = due[str(r.purchase_no)] || []).push(r); });
+        const t0 = jkDate();
+        return { waiting: Object.keys(by).map(function (k) { return noteDue(by[k], t0); }).map(function (x) { return { purchase_no: x.purchase_no, supplier: x.supplier, purchase_date: x.purchase_date }; }),
+          due: Object.keys(due).map(function (k) { return noteDue(due[k], t0); }).map(function (x) { return { purchase_no: x.purchase_no, supplier: x.supplier, due_date: x.due_date, days: x.days, total: x.total }; }) };
+      })() : null,
       // v50: the repacks being packed now (started, not yet confirmed by the manager)
       repacks_open: ['owner', 'manager', 'kasir', 'akuntan'].indexOf(role) >= 0 ? rows('Get Open Repacks').map(repackOut) : [],
       users: users.map(function (u) { return role === 'owner' ? { name: u.name, role: u.role, active: u.active !== false, must_change: u.must_change === true, locked: Date.parse(u.locked_until) > Date.now(), tamper: isLocked(u.name), has_master: u.role === 'owner' && isHash(u.master_hash) } : { name: u.name, role: u.role, active: u.active !== false }; }),
@@ -3091,6 +3120,65 @@ switch (req.action) {
     return done({ ok: true, payment: Object.assign({ id: null }, payOut(pay)), customer: clean(nc) });
   }
 
+  // v65: the manager / accountant (or the owner) confirms a goods-in note the employee received and checked, with how it was paid:
+  // "lunas" — paid now (cash / transfer / QRIS): a supplier payment allocated to the note, money out of the day (from the confirmer's
+  // own drawer only when chosen); or "tempo" — on credit until the agreed date: the supplier's debt, shown as due and late. Paying a
+  // debt later still goes through the owner's pay plan (pay_supplier). It is not an expense: the goods' cost counts when they are sold.
+  case 'confirm_purchase': {
+    if (!canAudit) return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+    const no = str(data.purchase_no);
+    const lines = rows('Get Purchase By No').filter(function (r) { return str(r.purchase_no) === no; });
+    if (!no || !lines.length) return fail('NOT_FOUND', 'Nota barang masuk tidak ditemukan');
+    const done0 = lines.find(function (r) { return str(r.check_status); });
+    if (done0) return fail('INVALID', 'Nota ' + no + ' sudah dikonfirmasi oleh ' + str(done0.checked_by));
+    const sup = str(lines[0].supplier);
+    if (INTERNAL_SUPPLIERS.indexOf(sup) >= 0) return fail('INVALID', 'Bukan nota pemasok');
+    if (str(data.supplier) !== sup) return fail('INVALID', 'Pemasok tidak cocok dengan nota ' + no); // (the supplier's notes and payments are read by its name)
+    const kind = data.pay === 'tempo' ? 'tempo' : data.pay === 'lunas' ? 'lunas' : '';
+    if (!kind) return fail('INVALID', 'Pilih: sudah dibayar, atau bayar nanti (tempo)');
+    const today = jkDate(), nowIso = new Date().toISOString(), total = lines.reduce(function (a1, r) { return a1 + money(r.total); }, 0);
+    let due = '', method = '', pay = null, fromKas = false;
+    if (kind === 'tempo') {
+      due = str(data.due_date);
+      const maxDue = new Date(Date.parse(today) + 180 * 86400000).toISOString().slice(0, 10);
+      if (!isDate(due) || due < today || due > maxDue) return fail('INVALID', 'Tanggal bayar yang disepakati: hari ini sampai 180 hari lagi');
+    } else {
+      method = ['tunai', 'transfer', 'qris'].indexOf(data.method) >= 0 ? data.method : '';
+      if (!method) return fail('INVALID', 'Pilih cara bayar: tunai, transfer atau QRIS');
+      fromKas = data.paid_from === 'kas' && method === 'tunai';
+      if (fromKas && !myShift) return fail('SHIFT_REQUIRED', 'Buka kasir (shift) dulu untuk bayar dari kas');
+      if (dupRef(data.transfer_ref)) return fail('INVALID', 'Nomor transfer ini sudah pernah dipakai: ' + str(data.transfer_ref));
+      const docs = partyDocs('supplier', sup, ''), doc = docs[no], amount = doc ? doc.remaining : total;
+      if (amount > 0) {
+        const sc = slipCheck(amount);
+        if (sc && sc.fail) return sc.fail;
+        pay = {
+          pay_id: 'PY' + rand(7), pay_date: today, pay_time: nowIso, direction: 'out', party_type: 'supplier', customer_id: 0, customer_name: '', supplier: sup,
+          amount: amount, method: method, account_id: payAccount(method), slip_date: sc && sc.ex && sc.ex.date ? str(sc.ex.date) : '',
+          bank: str(data.bank).slice(0, 60), transfer_ref: str(data.transfer_ref).slice(0, 80), proof_photo_id: str(data.photo_id).slice(0, 40),
+          alloc: JSON.stringify(doc ? [{ ref: no, amount: amount }] : []), match_status: doc ? 'lunas' : 'belum_dialokasi',
+          note: ('Barang masuk ' + no + ' dikonfirmasi ' + me.name + (fromKas ? ' [dari kas]' : '') + (str(data.note) ? ' | ' + str(data.note) : '')).slice(0, 500), cashier: me.name
+        };
+        ops.payments.push(forWrite(pay, -1));
+        if (fromKas) {
+          const sh = Object.assign({}, myShift, { cash_out: money(myShift.cash_out) + amount });
+          addMove(sh, 'out', amount, 'Bayar pemasok ' + sup + ' (' + no + ')');
+          ops.shifts.push(forWrite(sh, myShift.id));
+        }
+      }
+    }
+    lines.forEach(function (r) {
+      ops.purchases.push(forWrite(Object.assign({}, r, { check_status: 'dikonfirmasi', checked_by: me.name, checked_at: nowIso, pay_status: kind, pay_method: method, due_date: due, paid_at: kind === 'lunas' ? today : '' }), r.id));
+    });
+    const who = (role === 'owner' ? 'pemilik ' : role === 'manager' ? 'manajer ' : 'akuntan ') + me.name;
+    const txt = 'Barang masuk ' + no + ' dari ' + sup + ' (' + str(lines[0].purchase_date) + ', diterima ' + str(lines[0].user) + ', ' + rpTxt(total) + ') dikonfirmasi ' + who + ': ' +
+      (kind === 'tempo' ? 'BAYAR NANTI — jatuh tempo ' + due + ' (hutang ke pemasok)' : 'sudah dibayar ' + method + (fromKas ? ' dari kas' : '') + (pay ? ' ' + rpTxt(pay.amount) + (pay.bank ? ' ' + pay.bank : '') + (pay.transfer_ref ? ' ref ' + pay.transfer_ref : '') : ' (sudah lunas sebelumnya)')) +
+      (str(data.note) ? ' | ' + str(data.note).slice(0, 200) : '');
+    logAct('konfirmasi_masuk', txt, no, total, 'info');
+    notify(['owner', 'manager', 'akuntan'].filter(function (x) { return x !== role; }), txt, kind === 'tempo' ? 'warn' : 'info');
+    return done({ ok: true, purchase_no: no, check: { check_status: 'dikonfirmasi', checked_by: me.name, checked_at: nowIso, pay_status: kind, pay_method: method, due_date: due }, payment: pay ? payOut(pay) : null });
+  }
+
   case 'pay_supplier': {
     if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
     const sup = safeName(data.supplier, 80);
@@ -3130,6 +3218,7 @@ switch (req.action) {
       note: (str(data.note) + (fromKas ? ' [dari kas]' : '') + (str(data.mismatch_reason) ? ' | beda dengan bukti: ' + str(data.mismatch_reason) : '')).slice(0, 500), cashier: me.name
     };
     ops.payments.push(forWrite(pay, -1));
+    markNotesPaid(docs, chk.alloc, pay.pay_date); // v65: a note on credit fully paid is no longer due
     if (fromKas) {
       const sh = Object.assign({}, myShift, { cash_out: money(myShift.cash_out) + amount });
       addMove(sh, 'out', amount, 'Bayar pemasok ' + sup);
@@ -3341,6 +3430,7 @@ switch (req.action) {
     const np = Object.assign({}, p0, { alloc: JSON.stringify(chk.alloc), match_status: allocStatus(money(p0.amount), chk, docs),
       note: (str(p0.note) + (str(data.note) ? ' | alokasi: ' + str(data.note) : '')).slice(0, 500) });
     ops.payments.push(forWrite(np, p0.id));
+    if (pt === 'supplier') markNotesPaid(docs, chk.alloc, str(p0.pay_date) || jkDate()); // v65
     logAct('alokasi', 'Alokasi pembayaran ' + p0.pay_id + ' (' + (pt === 'customer' ? str(p0.customer_name) : str(p0.supplier)) + ' Rp ' + money(p0.amount) + '): ' +
       (chk.alloc.length ? chk.alloc.map(function (a1) { return 'bagian dari ' + a1.ref + ' Rp ' + a1.amount; }).join(', ') : 'dikosongkan') + (str(data.note) ? ' | ' + str(data.note) : ''), p0.pay_id, money(p0.amount), 'info');
     return done({ ok: true, payment: payOut(np) });

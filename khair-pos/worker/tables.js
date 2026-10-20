@@ -67,6 +67,8 @@ export const TABLES = {
     photo_id: 'string', exp_date: 'string', purchase_no: 'string', match_status: 'string',
     match_notes: 'string', carrier_type: 'string', carrier_name: 'string',
     carrier_vehicle: 'string', carrier_phone: 'string',
+    // v65: the manager's / accountant's confirmation of the note and how it was paid (on every line of the note)
+    check_status: 'string', checked_by: 'string', checked_at: 'string', pay_status: 'string', pay_method: 'string', due_date: 'string', paid_at: 'string',
   },
   pos_approvals: {
     request_id: 'string', client_id: 'string', created_at: 'string', cashier: 'string',
