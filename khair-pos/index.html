@@ -4630,7 +4630,7 @@ RENDER.reports = function () {
   if (RP.mode === 'daily' && (isApprover() || isAudit())) { renderDaily(v); return; } // v65: the accountant too
   if ((RP.mode === 'detail' || RP.mode === 'chart') && (isApprover() || isAudit())) { rsxRender(v); return; } // v67: Detail penjualan / Penjualan per periode
   if (!isOwner()) {
-    v.innerHTML = `<div class="view-head"><h1>${esc(t('rep.today_title'))}</h1><button class="btn" data-act="rep-load">${ic('refresh')} ${esc(t('refresh'))}</button>${isApprover() || isAudit() ? `<button class="btn primary" data-act="rp-mode" data-m="daily" id="rp-daily-btn">${ic('report')} ${esc(t('dr.title'))}</button>` : ''}</div><div id="rp-body"><div class="empty">${esc(t('loading'))}</div></div>`;
+    v.innerHTML = `<div class="view-head"><h1>${esc(t('rep.today_title'))}</h1><button class="btn" data-act="rep-load">${ic('refresh')} ${esc(t('refresh'))}</button>${isApprover() || isAudit() ? `<button class="btn primary" data-act="rp-mode" data-m="daily" id="rp-daily-btn">${ic('report')} ${esc(t('dr.title'))}</button>` : ''}</div>${isApprover() || isAudit() ? rpModeSeg() : ''}<div id="rp-body"><div class="empty">${esc(t('loading'))}</div></div>`;
     RP.from = RP.to = today(); loadReport(); return;
   }
   if (!RP.from) [RP.from, RP.to] = presetRange(RP.preset);
