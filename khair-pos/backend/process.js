@@ -1301,7 +1301,8 @@ function applyRepack(P, o) {
   return { rp: rp, out: out, stock: stock };
 }
 /** v50: a repack row as each role may see it (the cost figures are the owner's). */
-function repackOut(r) { const o = clean(r); if (role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; delete o.materials_cost; delete o.bulk_cost; } return o; }
+// v67: a repack's costs follow the owner's cost setting (the manager / accountant he lets see costs), like the products' costs
+function repackOut(r) { const o = clean(r); if (!costOk()) { delete o.unit_cost; delete o.packaging_cost; delete o.materials_cost; delete o.bulk_cost; } return o; }
 /** The pending repack request that holds the lock on this bulk product (one at a time). */
 function pendingRepackFor(fromId) { return approvalRows.find(function (a) { return a.kind === 'repack' && a.status === 'pending' && str(a.ref) === String(fromId); }) || null; }
 function repackBusy(p) {

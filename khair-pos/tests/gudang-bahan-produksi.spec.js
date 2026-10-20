@@ -222,7 +222,7 @@ test('Produksi stok: the range with its sources / results / materials, open + ca
   await expect(page.locator('#rp-bulk-q')).toBeFocused();
 });
 
-test('manager: no Impor, no cost per pack (the server sends it to the owner only), bulk cost only with the cost setting; the accountant has no Gudang', async ({ page }) => {
+test('manager: no Impor; the bulk cost and the cost per pack only with the owner\'s cost setting; the accountant has no Gudang', async ({ page }) => {
   await openApp(page);
   await addAkuntan(page);
   await enterKey(page);
@@ -245,7 +245,7 @@ test('manager: no Impor, no cost per pack (the server sends it to the owner only
   await expect(bbRow(page, rabia.name).locator('[data-col="cost"]')).toHaveText(rp(rabia.cost_price));
   await page.click('#gd-tabs [data-tab="produksi"]');
   await expect(page.locator('#prd-table tbody tr[data-id]').first()).toBeVisible();
-  await expect(page.locator('#prd-table th[data-col="cost"]')).toHaveCount(0);
+  await expect(page.locator('#prd-table th[data-col="cost"]')).toHaveCount(1); // v67: a repack's costs follow the owner's cost setting
   // the accountant: Gudang is not one of her pages (unchanged), so neither tab is reachable
   await staffSession(page, 'Lestari', '5555');
   await expect(page.locator('#app')).toBeVisible();
