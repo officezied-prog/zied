@@ -107,7 +107,7 @@ test('inside the Khair Kasir Android app: "Bluetooth (aplikasi Khair)" is the de
   await expect(page.locator('#prn-m-app')).toContainText('Bluetooth (aplikasi Khair)');
   await expect(page.locator('#prn-apk')).toHaveCount(0);
   await page.click('#prn-test');
-  await expect(page.locator('#prn-status')).toContainText('Terkirim ke printer');
+  await expect(page.locator('#prn-status')).toContainText('Dikirim ke aplikasi Khair'); // v64: the app itself shows the result
   const u = await page.evaluate(() => window.__go[0]);
   expect(u).toMatch(/^intent:base64,[A-Za-z0-9+/=]+#Intent;scheme=khairprint;package=com\.khairmart\.kasir;end;$/);
   expect(appBytes(u)).toContain('Tes printer OK');
@@ -146,4 +146,21 @@ test.describe('Chrome on an Android phone', () => {
     await openPrinter(page);
     await expect(page.locator('#prn-apk')).toContainText('بدون RawBT');
   });
+});
+
+// v64 (owner 2026-10-20: «لا يمكن تواصل التطبيق بآلة استخراج فاتورة الدفع الصغيرة»): the owner app and Khair Kasir share this site's
+// storage with Chrome. A way chosen once in a Chrome tab ("Jendela cetak") no longer carries into the app, and the package of the other
+// Khair app left behind no longer sends Khair Kasir's prints to it.
+test('v64 the app keeps its own printer way: a Chrome tab\'s choice does not carry in; the other Khair app\'s package is not used', async ({ page, context }) => {
+  await page.addInitScript(() => { try { if (!sessionStorage.getItem('v64seed')) { sessionStorage.setItem('v64seed', '1'); localStorage.setItem('kprint.cfg', JSON.stringify({ mode: 'system', width: 58, cut: true })); localStorage.setItem('kprint.app', 'com.khairmart.owner'); } } catch (e) { } });
+  await H.login(page);
+  // Khair Kasir in a tab, the owner APK opened last on this phone: not "the app", the tab's own choice stays
+  expect(await page.evaluate(() => [KPrint.support().app, KPrint.cfg().mode])).toEqual([false, 'system']);
+  // the Khair Kasir APK (it opened the page once): its own Bluetooth printing, whatever the tab chose
+  await page.evaluate(() => localStorage.setItem('kprint.app:com.khairmart.kasir', '1'));
+  await page.reload();
+  await page.waitForFunction(() => !!window.KPrint);
+  expect(await page.evaluate(() => [KPrint.support().app, KPrint.cfg().mode])).toEqual([true, 'app']);
+  expect(await page.evaluate(() => KPrint.appLink('choose'))).toBe('intent:choose#Intent;scheme=khairprint;package=com.khairmart.kasir;end;');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('kprint.cfg')).mode)).toBe('system'); // the tab's choice is untouched
 });

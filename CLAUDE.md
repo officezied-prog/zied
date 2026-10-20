@@ -22,6 +22,16 @@ The owner APK (also the manager's and the accountant's app) and the kasir APK al
 added by `build.mjs`; the page opens `intent:…;scheme=khairprint`; v59: `intent:site-settings…` opens Chrome's site settings, where the
 attendance camera is allowed again after a refusal); a Chrome install prints through RawBT / BLE / USB instead.
 
+**Printer + scanner fix (v64, owner 2026-10-20: «لا يمكن تواصل التطبيق بآلة استخراج فاتورة الدفع الصغيرة ولا يمكن التواصل مع قارئ الباركود»):**
+the APK print activity called `isDiscovering()` / `cancelDiscovery()`, which need `BLUETOOTH_SCAN` on Android 12+ (not declared, not
+needed: it never searches) — every print failed before the printer was called; now best effort, a failed print shows why with "Coba
+lagi" / "Pilih printer lain", a refused permission opens the app's settings. **The APKs must be reinstalled once** (same key: over the
+old one, data kept). `printer.js` keeps the APK's own printer way (`kprint.cfg.app`) and its package per app (`kprint.app:<package>`), so
+a Chrome tab's choice or the other Khair app no longer hijacks it. Scanners: `shared/scan-wedge.js` (KWedge) reads keyboard-type
+(USB / Bluetooth HID) scanners on every screen with nothing focused, over the last receipt / quantity sheet, in goods-in one item after
+another (a burst typed into a number box is put back and read as a scan); UPC-A ↔ EAN-13 leading zeros match; "Pemindai barcode"
+(Lainnya / Pengaturan) = the steps + a test scan.
+
 **New versions reach phones by themselves (v49):** `shared/app-update.js` (KUpdate) re-reads the app's own page
 (`cache:'no-cache'`, a 304 when unchanged) on open, on return to the screen (≥5 min) and every 30 min; another
 `APP_VERSION` there → it reloads itself on the login screen / when untouched since it opened, otherwise a green
