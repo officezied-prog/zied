@@ -155,7 +155,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '3.1.0';
+const APP_VERSION = '3.1.1';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -566,7 +566,8 @@ const RENDER = {};
 function renderShell() {
   $('#nav').innerHTML = VIEWS.filter(v => viewAllowed(v) && !v.tab).map(v => `<button class="nav-btn ${S.view === v.id ? 'on' : ''} ${phoneViews().includes(v.id) ? '' : 'hide-phone'}" data-act="go" data-view="${v.id}" ${S.view === v.id ? 'aria-current="page"' : ''}>${ic(v.icon)}<span class="l-long">${esc(t(v.label))}</span><span class="l-short" aria-hidden="true">${esc(t(v.label.replace('nav.', 'navs.')))}</span>${v.id === 'orders' && FO.newCount ? `<b class="dot" data-orders-new>${FO.newCount}</b>` : ''}</button>`).join('') + `<button class="nav-btn show-phone ${phoneViews().includes(S.view) ? '' : 'on'}" id="nav-more" data-act="nav-more">${ic('menu')}<span>${esc(t('nav.more'))}</span>${canAudit() && AP.count ? `<b class="dot">${AP.count}</b>` : ''}</button>`;
   $('#tb-store').textContent = settings().store_name || 'Khair Mart';
-  $('#tb-sub').textContent = 'POS · v' + APP_VERSION + ' · ' + (MOCK ? 'demo' : maskKey(S.key));
+  // v69 (owner 2026-10-20: «عند فتح التطبيق اريد ان ارى عدد الإصدار»): the version also on phones, where the store key is left out
+  $('#tb-sub').innerHTML = 'POS · v' + esc(APP_VERSION) + '<span class="hide-phone"> · ' + esc(MOCK ? 'demo' : maskKey(S.key)) + '</span>';
   $('#tb-user').textContent = S.user;
   $('#tb-role').textContent = ''; // names only (owner's decision 07 Oct)
   const tbm = $('#tb-master'); if (tbm) { tbm.hidden = !S.viaMaster; tbm.textContent = t('mc.via'); }

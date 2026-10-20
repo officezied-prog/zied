@@ -65,6 +65,11 @@ second payment.
 `APP_VERSION` there → it reloads itself on the login screen / when untouched since it opened, otherwise a green
 "Perbarui / تحديث" bar (one tap, the session stays); never twice for the same version. The service workers fetch pages
 and code with `cache:'no-cache'` too. So **always bump `APP_VERSION`** with every app change: it is the update signal.
+**The version is always on screen (v69, owner 2026-10-20: «عند فتح التطبيق اريد ان ارى عدد الإصدار»):** on every login screen and in
+every app's top bar, phones included (owner `#tb-sub` "POS · v…", the store key only on computers; kasir `#tb-ver`; sales `#tb-user`;
+gudang (now `APP_VERSION` + KUpdate too) and Brad `#hd-ver` under the title). The first time a new version opens on a phone, KUpdate
+shows a short green note "Aplikasi diperbarui ke versi …" (`#kupd-ok`, `localStorage kupd.seen:<app folder>`; never on a first
+install, never blocks a tap).
 
 **Backend = "Khair Mart Jumla" (الخير مارت جملة) — LIVE since 2026-10-10.** The owner, cashier
 and field-sales apps point at the Cloudflare Worker `https://khair-mart-jumla.officezied.workers.dev`
