@@ -1743,7 +1743,7 @@ function receiptLinesHTML(rc) {
     <div class="ln"></div>
     ${rc.status === 'void' ? `<div class="stamp">${esc(t('rc.void'))}</div>` : ''}
     ${rc.pending ? `<div class="stamp">${esc(t('rc.pending'))}</div>` : ''}
-    <div class="r2"><span>${esc(t('rc.no'))}</span><span class="b">${esc(rc.invoice_no)}</span></div>
+    <div class="r2"><span>${esc(t('rc.no'))}</span><span class="b" data-rc-no>${esc(rc.invoice_no)}${rc.cashier && rc.invoice_no ? ` · ${esc(rc.cashier)}` : ''}</span></div>
     <div class="r2"><span>${esc(t('rc.date'))}</span><span>${esc(fmtDateTime(rc.sale_time, rc.sale_date))}</span></div>
     <div class="r2"><span>${esc(t('rc.cashier'))}</span><span>${esc(rc.cashier)}</span></div>
     <div class="r2"><span>${esc(t('rc.customer'))}</span><span>${esc(rc.customer_name)}</span></div>
@@ -11098,7 +11098,7 @@ function ntServerRowHTML(a) {
   const id = 'a:' + a.act_id;
   return `<div class="li nt-li" data-nt-row="${esc(id)}" style="min-height:0;padding:8px 12px"><span class="badge ${a.level === 'warn' ? 'amber' : 'blue'}">!</span><div class="grow"><div class="t" style="font-weight:600">${esc(a.summary)}</div><div class="s">${esc(fmtDateTime(a.at))} · ${esc(a.user)}</div></div>${ntActs(id, ntActInfo(a))}</div>`;
 }
-const NT_DOC_RE = /\b(?:KM\d{6}-[A-Z0-9]{3,}|PB-[A-Z0-9-]{4,}|[A-Z]{2,4}-\d[\w-]{2,})\b/;
+const NT_DOC_RE = /\b(?:\d{2}\/\d{2}\/\d{4}\/\d{4}\/\d+|KM\d{6}-[A-Z0-9]{3,}|PB-[A-Z0-9-]{4,}|[A-Z]{2,4}-\d[\w-]{2,})\b/;
 function ntActInfo(a) {
   const roleRef = /^(owner|manager|kasir|sales|akuntan)(,|$)/.test(String(a.ref || ''));
   const m = NT_DOC_RE.exec(String(a.summary || ''));

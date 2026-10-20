@@ -44,6 +44,7 @@ export const TABLES = {
     survey: 'string', notes: 'string', client_id: 'string', approved_by: 'string',
     exit_photo: 'string', exit_match: 'string', channel: 'string', promo_code: 'string',
     shift_id: 'string', survey_transcript: 'string', send_fee: 'number',
+    day_seq: 'number', // v68: the sale's number in its day (the invoice no. DD/MM/YYYY/HHmm/N)
     // v57: a sale paid (partly) by transfer — the store account it went to, the sender's bank, the transfer no. and the slip photo
     account_id: 'string', bank: 'string', transfer_ref: 'string', proof_photo_id: 'string',
   },

@@ -2393,7 +2393,7 @@ function receiptLinesHTML(rc) {
     ${st.address ? `<div class="c">${esc(st.address)}</div>` : ''}${st.phone ? `<div class="c">${esc(t('rc.phone'))} ${esc(st.phone)}</div>` : ''}
     <div class="ln"></div>
     ${rc.pending ? `<div class="stamp">${esc(t('rc.pending'))}</div>` : ''}
-    <div class="r2"><span>${esc(t('rc.no'))}</span><span class="b">${esc(rc.invoice_no)}</span></div>
+    <div class="r2"><span>${esc(t('rc.no'))}</span><span class="b" data-rc-no>${esc(rc.invoice_no)}${rc.cashier && rc.invoice_no ? ` · ${esc(rc.cashier)}` : ''}</span></div>
     <div class="r2"><span>${esc(t('rc.date'))}</span><span>${esc(fmtDateTime(rc.sale_time, rc.sale_date))}</span></div>
     <div class="r2"><span>${esc(t('rc.cashier'))}</span><span>${esc(rc.cashier)}</span></div>
     <div class="r2"><span>${esc(t('rc.customer'))}</span><span>${esc(rc.customer_name)}</span></div>
@@ -2422,7 +2422,7 @@ function receiptText(rc) {
   if (st.address) out.push(st.address);
   out.push(L2);
   if (rc.pending) out.push(`*${t('rc.pending')}*`);
-  out.push(`${t('rc.no')}: ${rc.invoice_no}`, `${t('rc.date')}: ${fmtDateTime(rc.sale_time, rc.sale_date)}`, `${t('rc.cashier')}: ${rc.cashier}`, `${t('rc.customer')}: ${rc.customer_name}`, L2);
+  out.push(`${t('rc.no')}: ${rc.invoice_no}${rc.cashier ? ' · ' + rc.cashier : ''}`, `${t('rc.date')}: ${fmtDateTime(rc.sale_time, rc.sale_date)}`, `${t('rc.cashier')}: ${rc.cashier}`, `${t('rc.customer')}: ${rc.customer_name}`, L2);
   rc.lines.forEach(l => out.push(`${l.name}${l.price_type === 'grosir' ? ' (grosir)' : ''}`, `  ${fmtQty(l.qty)} x ${fmtRp(l.unit_price)} = ${fmtRp(l.line_total)}`));
   if (int(rc.send_fee)) out.push(`${t('rs.fee_line')}: ${fmtRp(rc.send_fee)}`);
   out.push(L2, `*${t('total')}: ${fmtRp(rc.total)}*`, `${t('rc.paid')} (${t('pm.' + rc.method)}): ${fmtRp(rc.paid)}`);
@@ -2577,7 +2577,7 @@ function openLastReceipts() {
 function receiptPlain(rc) {
   const st = settings(), L2 = '------------------------------', out = [st.store_name || 'Khair Mart'];
   if (st.address) out.push(st.address);
-  out.push(L2, `${tid('rc.no')}: ${rc.invoice_no}`, `${tid('rc.date')}: ${fmtDateTime(rc.sale_time, rc.sale_date)}`, `${tid('rc.cashier')}: ${rc.cashier}`, `${tid('rc.customer')}: ${rc.customer_name}`, L2);
+  out.push(L2, `${tid('rc.no')}: ${rc.invoice_no}${rc.cashier ? ' · ' + rc.cashier : ''}`, `${tid('rc.date')}: ${fmtDateTime(rc.sale_time, rc.sale_date)}`, `${tid('rc.cashier')}: ${rc.cashier}`, `${tid('rc.customer')}: ${rc.customer_name}`, L2);
   rc.lines.forEach(l => out.push(l.name, `  ${fmtQty(l.qty)} x ${fmtRp(l.unit_price)} = ${fmtRp(l.line_total)}`));
   out.push(L2);
   if (rc.discount) out.push(`${tid('rc.subtotal')}: ${fmtRp(rc.subtotal)}`);

@@ -279,7 +279,7 @@
     if (st.phone) d.text(R.phone + ' ' + st.phone);
     d.hr();
     if (rc.pending) d.bold(true).text(R.pending).bold(false);
-    d.left().pair(R.no, rc.invoice_no || '-').pair(R.date, when(rc.sale_time, rc.sale_date)).pair(R.cashier, rc.cashier || '').pair(R.customer, rc.customer_name || '').hr();
+    d.left().pair(R.no, (rc.invoice_no || '-') + (rc.invoice_no && rc.cashier ? ' ' + rc.cashier : '')) // v68: the employee's name with the number.pair(R.date, when(rc.sale_time, rc.sale_date)).pair(R.cashier, rc.cashier || '').pair(R.customer, rc.customer_name || '').hr();
     (rc.lines || []).forEach(function (l) { d.text((l.name || '') + (l.price_type === 'grosir' ? ' (G)' : '')); d.pair('  ' + qty(l.qty) + ' x ' + N(l.unit_price), N(l.line_total)); });
     d.hr();
     if (num(rc.discount)) d.pair(R.subtotal, N(rc.subtotal));

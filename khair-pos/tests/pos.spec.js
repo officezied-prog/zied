@@ -16,7 +16,7 @@ test('sell a retail item via search; receipt shows and stock decreases', async (
   await expect(rc).toContainText('Khair Mart');
   await expect(rc).toContainText(before.name);
   await expect(rc).toContainText(rp(before.retail_price));
-  const inv = (await rc.innerText()).match(/KM\d{6}-\d{4}/)[0];
+  const inv = (await rc.innerText()).match(/\d{2}\/\d{2}\/\d{4}\/\d{4}\/\d+/)[0];
 
   const db = await getDb(page);
   const sale = db.sales.find(s => s.invoice_no === inv);
@@ -222,7 +222,7 @@ test('receipt: copy text, WhatsApp link, print-only receipt', async ({ page }) =
   await page.click('#cart-cust');
   await page.locator('#cp-list [data-pick]').filter({ hasText: 'Ibu Fatimah' }).click();
   await checkoutSkip(page);
-  const inv = (await page.locator('.modal #receipt').innerText()).match(/KM\d{6}-\d{4}/)[0];
+  const inv = (await page.locator('.modal #receipt').innerText()).match(/\d{2}\/\d{2}\/\d{4}\/\d{4}\/\d+/)[0];
   await page.click('[data-act="rc-copy"]');
   await expect(page.locator('.toast.ok')).toHaveText('Tersalin');
   const clip = await page.evaluate(() => navigator.clipboard.readText());

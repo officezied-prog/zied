@@ -83,7 +83,7 @@ test('large sale requires an exit photo; match result cocok / tidak cocok; missi
   await expect(page.locator('#cart-exit')).toBeVisible();
   await checkoutSkip(page);
   await expect(page.locator('#exit-box')).toContainText('Foto barang keluar (wajib)');
-  let inv = (await page.locator('.modal #receipt').innerText()).match(/KM\d{6}-\d{4}/)[0];
+  let inv = (await page.locator('.modal #receipt').innerText()).match(/\d{2}\/\d{2}\/\d{4}\/\d{4}\/\d+/)[0];
   expect((await getDb(page)).sales.find(s => s.invoice_no === inv).exit_photo).toBe('required');
   await page.setInputFiles('#exit-photo', await photoFile(page, 'keluar.png'));
   await expect(page.locator('#exit-box[data-match="cocok"]')).toContainText('Cocok');
@@ -114,7 +114,7 @@ test('large sale requires an exit photo; match result cocok / tidak cocok; missi
   await page.locator('.cline input[data-qty]').fill('25');
   await page.locator('.cline input[data-qty]').press('Enter');
   await checkoutSkip(page);
-  inv = (await page.locator('.modal #receipt').innerText()).match(/KM\d{6}-\d{4}/)[0];
+  inv = (await page.locator('.modal #receipt').innerText()).match(/\d{2}\/\d{2}\/\d{4}\/\d{4}\/\d+/)[0];
   await closeModals(page);
   await nav(page, 'history');
   const missing = page.locator('#exit-missing');

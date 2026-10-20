@@ -74,6 +74,9 @@ export const POS_MIGRATIONS = [
   'ALTER TABLE pos_purchases ADD COLUMN due_date TEXT',
   'ALTER TABLE pos_purchases ADD COLUMN paid_at TEXT',
   'CREATE INDEX IF NOT EXISTS idx_pos_purchases_pay_status ON pos_purchases (pay_status)',
+  // v68: the invoice no. DD/MM/YYYY/HHmm/N — N = the sale's number in its day, unique per day (two cashiers can never share one)
+  'ALTER TABLE pos_sales ADD COLUMN day_seq INTEGER',
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_pos_sales_day_seq ON pos_sales (sale_date, day_seq)',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;
@@ -84,7 +87,19 @@ export async function ensurePosSchema(adapter) {
 }
 export function _resetPosSchemaForTests() { posSchemaEnsured = false; }
 
+// v68: a sale's invoice number counts the day's sales (DD/MM/YYYY/HHmm/N); two cashiers saving at the same moment both read the same
+// count, and the database's unique (sale_date, day_seq) refuses the later one — its whole request then runs again (its writes are one
+// all-or-nothing batch, so nothing of it was kept) and takes the next number.
+const DAY_SEQ_TAKEN = /UNIQUE constraint failed: pos_sales\.sale_date, pos_sales\.day_seq/;
 export async function handleRequest(adapter, body, headers, STORE_KEY) {
+  for (let i = 0; ; i++) {
+    try { return await handleOnce(adapter, body, headers, STORE_KEY); } catch (e) {
+      if (i < 4 && DAY_SEQ_TAKEN.test(String((e && e.message) || ''))) continue;
+      throw e;
+    }
+  }
+}
+async function handleOnce(adapter, body, headers, STORE_KEY) {
   await ensurePosSchema(adapter); // before loading: 'Get Expense By Request' reads pos_expenses.request_id
   const req = parseRequest(body, headers);
   const nodes = await loadNodes(adapter, req);

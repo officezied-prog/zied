@@ -68,9 +68,10 @@ const MockServer = (() => {
   }
   const isYmd = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
   const nextId = (db, k) => (db.seq[k] = (db.seq[k] || 0) + 1);
-  function invoiceNo(db, ymd) {
-    const n = db.sales.filter(s => s.sale_date === ymd).length + 1;
-    return `KM${ymd.slice(2).replace(/-/g, '')}-${String(n).padStart(4, '0')}`;
+  // v68 (owner 2026-10-20, «20/10/2026/1542/12»): DD/MM/YYYY/HHmm/N — the sale's day and time, N = its number in that day (all cashiers)
+  function invoiceNo(db, ymd, iso) {
+    const n = db.sales.filter(s => s.sale_date === ymd).length + 1, t0 = Date.parse(iso || ''), d = new Date((isFinite(t0) ? t0 : Date.now()) + 7 * 3600000);
+    return `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}/${ymd.slice(0, 4)}/${String(d.getUTCHours()).padStart(2, '0')}${String(d.getUTCMinutes()).padStart(2, '0')}/${n}`;
   }
   function productFields(src, base) {
     const p = Object.assign({}, base);
@@ -1279,7 +1280,7 @@ const MockServer = (() => {
         const exitReq = (minTotal > 0 && P.total >= minTotal) || (minQty > 0 && P.lines.some(l => l.qty >= minQty));
         const { cust, lines, subtotal, discount, total, total_cost, paid, debt, sale_date } = P;
         const sale = {
-          id: nextId(db, 'sale'), invoice_no: invoiceNo(db, sale_date), sale_date, sale_time: data.sale_time || jktISO(),
+          id: nextId(db, 'sale'), invoice_no: invoiceNo(db, sale_date, data.sale_time || jktISO()), day_seq: db.sales.filter(s => s.sale_date === sale_date).length + 1, sale_date, sale_time: data.sale_time || jktISO(),
           cashier: u.name, customer_id: cust ? cust.id : null, customer_name: cust ? cust.name : (data.customer_name || 'Umum'),
           customer_type: cust ? cust.type : 'eceran', subtotal, discount, send_fee: P.sendFee, total, total_cost, profit: total - total_cost,
           payment_method: P.method, pay_parts: P.parts ? JSON.stringify(P.parts) : '', paid_amount: paid, debt_amount: debt, status: 'ok',
@@ -3137,7 +3138,7 @@ const MockServer = (() => {
         const nLines = d >= 60 ? (grosir ? ri(1, 3) : ri(1, 2)) : grosir ? ri(2, 5) : ri(1, 3);
         const chosen = new Map();
         for (let k = 0; k < nLines; k++) chosen.set(pickProduct().id, true);
-        const invoice_no = `KM${date.slice(2).replace(/-/g, '')}-${String(++inv).padStart(4, '0')}`;
+        const invoice_no = `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}/${String(hh).padStart(2, '0')}${String(mm).padStart(2, '0')}/${++inv}`; // v68
         let subtotal = 0, totalCost = 0;
         const lines = [...chosen.keys()].map(pid => {
           const p = products[pid - 1];

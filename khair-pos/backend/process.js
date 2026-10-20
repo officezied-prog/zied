@@ -1524,7 +1524,13 @@ switch (req.action) {
     }
     // The cash drawer belongs to the cashier: only kasir accounts need an open shift (owner / manager sell without one).
     if (!myShift && role === 'kasir' && readSettings().require_shift !== false) return fail('SHIFT_REQUIRED', 'Buka kasir (shift) dulu');
-    const invoice = 'KM' + str(data.sale_date).replace(/-/g, '').slice(2) + '-' + rand(5);
+    // v68 (owner 2026-10-20: «every invoice should have number … date/month/years/ anytime minute and hours no space all/number of invoice
+    // this date/», his choice «20/10/2026/1542/12», counted for the whole store): DD/MM/YYYY/HHmm/N — the sale's day and time (Jakarta)
+    // and N = its number in that day, all cashiers together (a void keeps its number; the day's older KM… sales count too). Unique per
+    // day on the database itself (sale_date, day_seq): when two cashiers save at the same moment the Worker runs the later one again.
+    const dseq = rows('Get Day Seq')[0] || {}, daySeq = Math.max(num(dseq.mx), num(dseq.n)) + 1;
+    const hhmm = (function () { const t0 = Date.parse(str(data.sale_time)), d = new Date((isFinite(t0) ? t0 : Date.now()) + 7 * 3600000); return ('0' + d.getUTCHours()).slice(-2) + ('0' + d.getUTCMinutes()).slice(-2); })();
+    const sd = str(data.sale_date), invoice = sd.slice(8, 10) + '/' + sd.slice(5, 7) + '/' + sd.slice(0, 4) + '/' + hhmm + '/' + daySeq;
     const c = computeSale(invoice);
     if (c.error) return c.error;
     // Only goods already moved from the warehouse to the shelf can be sold (they came in with a supplier note first).
@@ -1581,7 +1587,7 @@ switch (req.action) {
     const exitRequired = c.total >= minTotal || c.lines.some(function (l) { return l.qty >= minQty; });
     const survey = Array.isArray(data.survey) && data.survey_consent === true ? data.survey.slice(0, 10).map(function (x) { return { q: str(x.q), a: str(x.a) }; }).filter(function (x) { return x.a; }) : [];
     const sale = {
-      invoice_no: invoice, sale_date: data.sale_date, sale_time: str(data.sale_time) || new Date().toISOString(),
+      invoice_no: invoice, day_seq: daySeq, sale_date: data.sale_date, sale_time: str(data.sale_time) || new Date().toISOString(),
       cashier: me.name, customer_id: c.customer ? c.customer.id : 0,
       customer_name: c.customer ? str(c.customer.name) : (str(data.customer_name) || 'Umum'),
       customer_type: c.customer ? str(c.customer.type) : (data.customer_type === 'grosir' ? 'grosir' : 'eceran'),

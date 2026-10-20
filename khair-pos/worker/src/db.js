@@ -81,6 +81,9 @@ export function loaderSpecs(req, opts = {}) {
       ? range('pos_api_usage', 'month', new Date(Date.now() - 86400000).toISOString().slice(0, 10), new Date().toISOString().slice(0, 10))
       : eq('pos_api_usage', 'month', SENTINEL_NONE),
     'Get Sale By Client': eq('pos_sales', 'client_id', req.client_id),
+    // v68: the day's last invoice number and its count (the next one is N + 1) — one indexed aggregate, only for a new sale
+    'Get Day Seq': { table: 'pos_sales', sql: 'SELECT COALESCE(MIN(id), 0) AS id, MAX(day_seq) AS mx, COUNT(*) AS n FROM pos_sales WHERE sale_date = ?', // (an id: process.js keeps rows with one)
+      params: [req.action === 'save_sale' && /^\d{4}-\d{2}-\d{2}$/.test(String(data.sale_date || '')) ? String(data.sale_date) : '0000-00-00'] },
     'Get Sale By Invoice': eq('pos_sales', 'invoice_no', saleInvoice),
     'Get Items By Invoice': eq('pos_sale_items', 'invoice_no', saleInvoice),
     'Get Photo': eq('pos_photos', 'photo_id', photoId),
