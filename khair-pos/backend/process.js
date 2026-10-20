@@ -3816,6 +3816,23 @@ switch (req.action) {
     return done({ ok: true, settings: merged });
   }
 
+  // v64 (owner 2026-10-20, to «من يحدد نسبة القصوى للتخفيض؟ — المالك»: «و المدير أيضا»): the manager sets the highest discount a cashier
+  // gives without asking too; the owner is told every change (the other settings stay the owner's).
+  case 'set_discount_limit': {
+    if (!isApprover) return fail('FORBIDDEN', 'Hanya pemilik atau manajer');
+    const pct = Math.round(num(data.max_discount_pct) * 10) / 10;
+    if (!(pct > 0 && pct <= 50)) return fail('INVALID', 'Batas diskon 0,1–50 %');
+    const before = maxDiscountPct();
+    const row = settingRows.find(function (r) { return r.skey === 'max_discount_pct'; });
+    ops.settings.push({ _id: row ? row.id : -1, skey: 'max_discount_pct', svalue: JSON.stringify(pct) });
+    if (pct !== before) {
+      const txt = 'Batas diskon tanpa persetujuan diubah oleh ' + (role === 'owner' ? 'pemilik ' : 'manajer ') + me.name + ': ' + fmtN(before) + '% → ' + fmtN(pct) + '%';
+      logAct('pengaturan', txt, 'max_discount_pct', 0, 'warn');
+      if (role !== 'owner') notify(['owner'], txt, 'warn');
+    }
+    return done({ ok: true, settings: Object.assign(readSettings(), { max_discount_pct: pct }) });
+  }
+
   // v28 (owner's decision): the owner AND the manager may SUSPEND (deactivate) any non-owner staff account at once;
   // only the OWNER re-enables. No one suspends their own account; a manager never touches an owner account.
   // This action is the single source of truth for "who may set a user active true/false".

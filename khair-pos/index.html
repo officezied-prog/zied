@@ -141,6 +141,7 @@
 <script src="shared/pay-split.js"></script>
 <script src="shared/bank-slip.js"></script>
 <script src="shared/printer.js"></script>
+<script src="shared/scan-wedge.js"></script>
 <script src="shared/install-btn.js" data-host="#login:not([hidden]) .login-card"></script>
 <script src="shared/app-update.js"></script>
 <script src="mock.js"></script>
@@ -153,7 +154,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.9.6';
+const APP_VERSION = '2.9.7';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -448,7 +449,7 @@ const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
 // v36 (owner 2026-10-11: "the visits table … a copy for the manager, the accountant and the owner"): + the field page, read-only
 const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'invchg', 'approvals', 'shoplist', 'field', 'settings'];
-const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|printer-open|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
+const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|printer-open|scanner-open|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
@@ -888,7 +889,8 @@ function addToCart(p, qty = 1, set = false) {
 function findBySku(code) {
   const c = String(code || '').trim().toLowerCase();
   if (!c) return null;
-  return S.products.find(p => p.active !== false && String(p.sku || '').trim().toLowerCase() === c) || null;
+  return S.products.find(p => p.active !== false && String(p.sku || '').trim().toLowerCase() === c)
+    || (window.KWedge ? S.products.find(p => p.active !== false && String(p.sku || '').trim() && KWedge.sameCode(p.sku, c)) : null) || null; // v64: UPC-A ↔ EAN-13
 }
 function filterProducts(q, cat, opts = {}) {
   const toks = norm(q).split(' ').filter(Boolean);
@@ -1827,6 +1829,42 @@ const printReceiptWindow = html => printHTML(html, `size:${settings().paper === 
 function printReceipt(rc) {
   if (window.KPrint && KPrint.cfg().mode !== 'system') { KPrint.send(KPrint.receipt(rc, settings())).then(() => toast(KPrint.text(S.lang, 'sent'), 'ok', 2500), e => toast(KPrint.errText(S.lang, e), 'err', 8000)); return; }
   printReceiptWindow(receiptHTML(rc));
+}
+/* v64 (owner 2026-10-20: «لا يمكن التواصل مع قارئ الباركود»): a scanner that types like a keyboard works on the sale screen, in goods-in
+   (one item after another — a scan into a quantity box is put back and read as a scan) and in the stock count, with nothing focused
+   and over the last receipt / the quantity sheet (shared/scan-wedge.js). Pengaturan → "Pemindai barcode": how to connect one + a test. */
+function wedgeTop() { const m = modalStack.length ? modalStack[modalStack.length - 1].el : null; return { el: m, id: m ? ((m.querySelector('.modal') || {}).id || '') : '' }; }
+function feedScan(inp, code) {
+  if (!isTouch()) inp.focus({ preventScroll: true });
+  inp.value = code;
+  inp.dispatchEvent(new Event('input', { bubbles: true }));
+  inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+}
+function wedgeScan(code) {
+  const top = wedgeTop();
+  const box = top.el ? top.el.querySelector('input[type="search"], input[data-scan]') : null;
+  if (box) return feedScan(box, code);
+  if (S.view === 'pos' && !isOwner()) {
+    if (top.el && top.el.querySelector('#rc-new')) closeModal(); // the last sale's receipt: a scan starts the next sale
+    else if (top.id === 'qty-sheet') { const ok = $('#qs-ok', top.el); if (ok) ok.click(); } // the item waiting for its quantity goes in first
+    if (modalStack.length) { beep(); toast(t('scan.close_first'), 'warn'); return; }
+    onSearchEnter(code, true);
+    return;
+  }
+  if (top.el) { beep(); toast(t('scan.close_first'), 'warn'); return; }
+  const q = $(`#view-${S.view} #pu-q`) || $$(`#view-${S.view} input[type="search"]`).find(i => i.offsetParent !== null);
+  if (q) { feedScan(q, code); if (q.id === 'pu-q' && !findBySku(code)) { beep(); toast(t('pu.scan_nf', { code }), 'warn', 5000); } return; }
+  beep(); toast(t('scan.where'), 'warn');
+}
+if (window.KWedge) KWedge.attach({
+  active: () => S.inApp && !$('#app').hidden,
+  isScanField: el => !!el && (el.id === 'pos-search' || el.id === 'qs-qty' || el.type === 'search' || el.hasAttribute('data-scan') || /sku|barcode/i.test(el.id || '')),
+  onScan: code => wedgeScan(code)
+});
+function openScanner() {
+  let stop = null;
+  const el = openModal({ title: KWedge.text(S.lang, 'title'), id: 'scanner', body: '<div id="wedge-box"></div>', foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button>`, onClose: () => { if (stop) stop(); } });
+  stop = KWedge.panel($('#wedge-box', el), S.lang, code => { const p = findBySku(code); return p ? p.name : ''; });
 }
 function openPrinter() {
   const el = openModal({ title: KPrint.text(S.lang, 'title'), body: '<div id="prn-panel"></div>', foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button>` });
@@ -4901,6 +4939,8 @@ const I18N = {
     'set.survey_auto': 'Mulai rekam otomatis saat bayar (tanpa bertanya)', 'set.survey_voice': 'Survei suara saat bayar', 'set.survey_voice_hint': 'Rekaman mulai sendiri saat Bayar, dengan tanda "Rekaman aktif" dan catatan di struk; hanya teks yang disimpan, suara tidak. Butuh Chrome di Android.', 'set.wa_shop': 'Nomor WhatsApp toko', 'set.wa_shop_hint': 'Tombol “Kirim ke WA toko” di struk mengirim nomor pelanggan baru ke nomor ini.', 'set.survey_new': 'Pertanyaan baru…', 'set.survey_reset': 'Kembalikan ke bawaan', 'set.users': 'Pengguna', 'set.add_user': 'Tambah pengguna',
     'set.role': 'Peran', 'set.reset_pin': 'Ganti PIN', 'set.activate': 'Aktifkan', 'set.deactivate': 'Nonaktifkan', 'set.deactivate_confirm': 'Nonaktifkan {name}? Ia tidak bisa masuk lagi.', 'set.user_exists': 'Nama sudah dipakai',
     'set.suspend': 'Nonaktifkan', 'set.reenable': 'Aktifkan kembali',
+    'set.scanner_s': 'Cara menyambung + tes pindai', 'scan.close_first': 'Selesaikan jendela yang terbuka dulu, lalu pindai lagi', 'scan.where': 'Pindai di layar Kasir, Barang masuk atau Stok opname',
+    'pu.scan_nf': 'Barcode {code} belum ada di aplikasi — pilih barangnya atau "Produk baru"',
     'set.app': 'Aplikasi', 'app.version': 'Versi', 'set.language': 'Bahasa', 'set.autolock': 'Kunci otomatis jika tidak dipakai', 'set.reload_data': 'Muat ulang data', 'set.data_reloaded': 'Data diperbarui',
     'set.logout_store': 'Keluar dari toko', 'set.logout_confirm': 'Keluar dan hapus kode toko dari perangkat ini?', 'set.outbox': 'Antrian offline',
     'set.mock_hint': 'Mode DEMO: data hanya tersimpan di browser ini (kode toko: demo, Pemilik PIN 1234, Siti PIN 1111).', 'set.mock_reset': 'Reset data demo'
@@ -4981,6 +5021,8 @@ const I18N = {
     'set.survey_auto': 'بدء التسجيل تلقائيًا عند الدفع (دون سؤال)', 'set.survey_voice': 'استبيان صوتي أثناء الدفع', 'set.survey_voice_hint': 'يبدأ التسجيل وحده عند الدفع مع إشارة «التسجيل يعمل» وسطر على الإيصال؛ يُحفظ النص فقط دون الصوت. يحتاج Chrome على أندرويد.', 'set.wa_shop': 'رقم واتساب المتجر', 'set.wa_shop_hint': 'زر «إرسال إلى واتساب المتجر» في الإيصال يرسل رقم العميل الجديد إلى هذا الرقم.', 'set.survey_new': 'سؤال جديد…', 'set.survey_reset': 'استعادة الأسئلة الافتراضية', 'set.users': 'المستخدمون', 'set.add_user': 'إضافة مستخدم',
     'set.role': 'الدور', 'set.reset_pin': 'تغيير الرقم السري', 'set.activate': 'تفعيل', 'set.deactivate': 'تعطيل', 'set.deactivate_confirm': 'تعطيل {name}؟ لن يستطيع الدخول.', 'set.user_exists': 'الاسم مستخدم',
     'set.suspend': 'إيقاف', 'set.reenable': 'تفعيل',
+    'set.scanner_s': 'طريقة التوصيل + تجربة المسح', 'scan.close_first': 'أكمل النافذة المفتوحة أولًا ثم امسح مرة أخرى', 'scan.where': 'امسح في شاشة الكاشير أو البضاعة الواردة أو جرد المخزون',
+    'pu.scan_nf': 'الباركود {code} غير موجود في التطبيق — اختر الصنف أو «صنف جديد»',
     'set.app': 'التطبيق', 'app.version': 'النسخة', 'set.language': 'اللغة', 'set.autolock': 'القفل التلقائي عند عدم الاستخدام', 'set.reload_data': 'تحديث البيانات', 'set.data_reloaded': 'تم تحديث البيانات',
     'set.logout_store': 'الخروج من المتجر', 'set.logout_confirm': 'الخروج وحذف رمز المتجر من هذا الجهاز؟', 'set.outbox': 'العمليات غير المرسلة',
     'set.mock_hint': 'وضع تجريبي: البيانات محفوظة في هذا المتصفح فقط (الرمز: demo، المالك 1234، سيتي 1111).', 'set.mock_reset': 'إعادة ضبط البيانات التجريبية'
@@ -5293,7 +5335,7 @@ RENDER.settings = function () {
     ${settingsReturHTML()}
     ${settingsReceiptHTML()}
     ${usersPanelHTML()}` : ''}
-    ${!own && S.role === 'manager' ? usersPanelHTML() + bankPanelHTML() : ''}
+    ${!own && S.role === 'manager' ? usersPanelHTML() + bankPanelHTML() + settingsV16HTML() : ''}
 
     ${!own && isApprover() ? `<div class="panel" id="st-retur"><h3>${ic('return')} ${esc(t('set.rt_title'))}</h3><div class="pb">${agreementCardHTML()}</div></div>` : ''}
     <div class="panel"><h3>${esc(t('set.app'))}</h3><div class="pb">
@@ -5303,6 +5345,7 @@ RENDER.settings = function () {
         <div class="small muted" style="margin-top:4px">${esc(t('voice.hint'))}</div></div>
       <div class="field"><label class="f">${esc(t('set.ask_qty'))}</label><div class="seg" style="max-width:360px">${[['1', 'voice.on'], ['0', 'voice.off']].map(([v, k]) => `<button type="button" data-act="ask-qty" data-v="${v}" id="askqty-${v === '1' ? 'on' : 'off'}" class="${(askQty() ? '1' : '0') === v ? 'on' : ''}">${esc(t(k))}</button>`).join('')}</div>
         <div class="small muted" style="margin-top:4px">${esc(t('set.ask_qty_hint'))}</div></div>
+      <div class="field"><label class="f">${esc(KWedge.text(S.lang, 'title'))}</label><button type="button" class="btn" data-act="scanner-open" id="st-scanner" style="max-width:360px">${ic('scan')} ${esc(t('set.scanner_s'))}</button></div>
       <div class="field"><label class="f">${esc(KPrint.text(S.lang, 'title'))}</label><button type="button" class="btn" data-act="printer-open" id="st-printer" style="max-width:360px">${ic('print')} ${esc(KPrint.text(S.lang, 'mode_' + KPrint.cfg().mode))} · ${KPrint.cfg().width} mm</button></div>
       <div class="field"><label class="f" for="st-theme">${esc(t('set.theme'))}</label><select class="input" id="st-theme" style="max-width:360px">${['auto', 'light', 'dark'].map(m => `<option value="${m}" ${store.get('theme', 'auto') === m ? 'selected' : ''}>${esc(t('theme.' + m))}</option>`).join('')}</select></div>
       <div class="field"><label class="f" for="st-lock">${esc(t('set.autolock'))}</label><select class="input" id="st-lock">${[5, 10, 15, 30, 60, 120, 0].map(m => `<option value="${m}" ${S.lockMinutes === m || (!S.lockMinutes && !m) ? 'selected' : ''}>${m ? esc(t('minutes', { n: m })) : esc(t('never'))}</option>`).join('')}</select></div>
@@ -5462,6 +5505,7 @@ const ACT = {
   'held-resume': el => resumeHeld(el.dataset.id),
   'held-del': el => deleteHeld(el.dataset.id),
   'printer-open': () => openPrinter(),
+  'scanner-open': () => openScanner(),
   'ask-qty': el => { store.set('ask_qty', el.dataset.v === '1'); $$('[data-act="ask-qty"]').forEach(b => b.classList.toggle('on', b === el)); toast(t('saved'), 'ok'); },
   'pos-cat': el => { POS.cat = el.dataset.cat; POS.limit = 60; renderGrid(); focusSearch(); },
   'pos-more': () => { POS.limit += 120; renderGrid(); },
@@ -8867,6 +8911,11 @@ const tierRowHTML = (x, i) => `<div class="row st-tier" data-tier="${i}" style="
   <span class="small">${esc(t('mem.tier_pct'))}</span><input class="input num" style="width:80px" data-tier-pct inputmode="decimal" value="${esc(x.pct)}" aria-label="${esc(t('mem.tier_pct'))}"><span>%</span>
   <button class="icon-btn ghost sm" data-act="st-tier-del" data-i="${i}" aria-label="${esc(t('delete'))}">${ic('trash')}</button></div>`;
 function settingsV16HTML() {
+  // v64 (owner 2026-10-20: «المالك → و المدير ايضا»): the manager sets the highest discount without approval too (the owner is told)
+  if (S.role === 'manager') return `<div class="panel" id="st-disc"><h3>${ic('tag')} ${esc(t('set.disc_title_mgr'))}</h3><div class="pb">
+      <div class="field"><label class="f" for="st-maxdisc">${esc(t('set.max_disc'))}</label><div class="row"><input class="input num" id="st-maxdisc" style="max-width:110px" inputmode="decimal" value="${esc(settings().max_discount_pct ?? 3)}"><span>%</span></div>
+        <div class="small muted" style="margin-top:4px">${esc(t('set.max_disc_hint'))} ${esc(t('set.max_disc_mgr'))}</div></div>
+      <div class="red" id="st-disc-err"></div><button class="btn primary" data-act="set-save-maxdisc" id="st-maxdisc-save">${esc(t('save'))}</button></div></div>`;
   if (!isOwner()) return '';
   const st = settings(), me = (S.users || []).find(u => u.name.toLowerCase() === String(S.user).toLowerCase()) || {};
   return `<div class="panel" id="st-disc"><h3>${ic('tag')} ${esc(t('set.disc_title'))}</h3><div class="pb">
@@ -8919,6 +8968,13 @@ Object.assign(ACT, {
     saveSettings({ max_discount_pct: Math.round(max * 10) / 10, member_enabled: $('#st-mem-on').checked, member_tiers: tr.tiers }, err);
   },
   'set-save-shelf': () => saveSettings({ sell_from_shop_only: $('#st-shelf-only').checked }, $('#st-shelf-err')),
+  'set-save-maxdisc': async () => { // v64: the manager's own discount limit
+    const err = $('#st-disc-err'), max = Number($('#st-maxdisc').value.trim().replace(',', '.'));
+    if (!(max > 0 && max <= 50)) { err.textContent = t('set.max_disc_bad50'); return; }
+    err.textContent = '';
+    try { const r = await api('set_discount_limit', { max_discount_pct: Math.round(max * 10) / 10 }); S.settings = Object.assign({}, S.settings, r.settings || {}); saveCache(); toast(t('saved'), 'ok'); }
+    catch (e) { err.textContent = errMsg(e); }
+  },
   'set-save-master': async () => {
     const err = $('#st-mc-err'), a = $('#st-mc1').value.trim(), b = $('#st-mc2').value.trim();
     if (S.viaMaster) { err.textContent = t('mc.via_refuse'); return; }
@@ -8961,6 +9017,7 @@ Object.assign(I18N.id, {
   'mem.consent_req': 'Centang persetujuan pelanggan dulu', 'mem.email_bad': 'Alamat e-mail tidak valid', 'mem.added': '{name} sekarang member ({no})', 'mem.remove_confirm': 'Hapus keanggotaan {name} ({no})? Diskon member tidak berlaku lagi.', 'mem.removed': '{name} bukan member lagi',
   'mem.cart_disc': 'Diskon member {pct}% · pembelian ke-{n}', 'mem.form': 'Pelanggan member (diskon otomatis)',
   'mem.tier_from': 'Mulai pembelian ke-', 'mem.tier_pct': 'diskon', 'mem.tier_add': 'Tambah tingkat', 'mem.tier_bad_from': 'Pembelian ke- harus angka bulat ≥ 1', 'mem.tier_bad_pct': 'Diskon tingkat harus 0,1–50%', 'mem.tier_dup': 'Tingkat pembelian ke-{n} dobel',
+  'set.disc_title_mgr': 'Batas diskon', 'set.max_disc_mgr': 'Setiap perubahan diberitahukan ke pemilik.', 'set.max_disc_bad50': 'Isi persen antara 0,1 dan 50',
   'set.disc_title': 'Batas diskon & member', 'set.max_disc': 'Diskon maksimal tanpa persetujuan', 'set.max_disc_hint': 'Dihitung dari harga normal (eceran, atau grosir bila berlaku). Kasir yang memberi lebih harus minta persetujuan manajer / pemilik. Diskon member boleh ditambahkan di atas batas ini.',
   'set.max_disc_bad': 'Isi persen antara 0,1 dan 100', 'set.mem_on': 'Program member aktif', 'set.mem_hint': 'Diskon menurut pembelian ke- (kunjungan + 1):',
   'set.shelf_title': 'Gudang & rak toko', 'set.shelf_only': 'Jual hanya dari stok rak toko', 'set.shelf_hint': 'Barang masuk (dengan foto nota) masuk ke gudang dulu. Barang baru bisa dijual setelah dipindah ke rak toko ("Pindah ke rak" di Gudang). Ini mencegah barang dijual tanpa nota masuk. Penjualan yang tersimpan offline tetap diterima dan dicatat untuk pemilik.',
@@ -9001,6 +9058,7 @@ Object.assign(I18N.ar, {
   'mem.consent_req': 'ضع علامة موافقة العميل أولاً', 'mem.email_bad': 'البريد الإلكتروني غير صحيح', 'mem.added': '{name} أصبح عضواً ({no})', 'mem.remove_confirm': 'إلغاء عضوية {name} ({no})؟ لن يُطبَّق خصم العضوية بعد الآن.', 'mem.removed': '{name} لم يعد عضواً',
   'mem.cart_disc': 'خصم العضو {pct}% · الشراء رقم {n}', 'mem.form': 'عميل عضو (خصم تلقائي)',
   'mem.tier_from': 'من الشراء رقم', 'mem.tier_pct': 'خصم', 'mem.tier_add': 'إضافة درجة', 'mem.tier_bad_from': 'رقم الشراء عدد صحيح ≥ 1', 'mem.tier_bad_pct': 'خصم الدرجة بين 0.1 و50%', 'mem.tier_dup': 'الدرجة {n} مكررة',
+  'set.disc_title_mgr': 'حد الخصم', 'set.max_disc_mgr': 'كل تغيير يُبلَّغ إلى المالك.', 'set.max_disc_bad50': 'أدخل نسبة بين 0.1 و50',
   'set.disc_title': 'حد الخصم والعضوية', 'set.max_disc': 'أقصى خصم دون موافقة', 'set.max_disc_hint': 'يُحسب من السعر العادي (التجزئة، أو الجملة عند انطباقها). الكاشير الذي يعطي أكثر يطلب موافقة المدير / المالك. يضاف خصم العضو فوق هذا الحد.',
   'set.max_disc_bad': 'أدخل نسبة بين 0.1 و100', 'set.mem_on': 'برنامج العضوية مفعّل', 'set.mem_hint': 'الخصم حسب رقم الشراء (الزيارات + 1):',
   'set.shelf_title': 'المستودع ورف المحل', 'set.shelf_only': 'البيع من مخزون الرف فقط', 'set.shelf_hint': 'البضاعة الواردة (مع صورة الفاتورة) تدخل المستودع أولاً، ولا تُباع إلا بعد نقلها إلى رف المحل ("نقل إلى الرف" في المستودع). هذا يمنع بيع بضاعة دون فاتورة وارد. المبيعات المحفوظة دون اتصال تُقبل دائماً وتُسجَّل للمالك.',
@@ -10428,6 +10486,6 @@ async function init() {
   if (S.key) { if (sess && sess.user) { L.sel = sess.user; } showLogin('pin'); return; }
   showLogin('key');
 }
-window.KPOS = { DEV, devicePayload, deviceLabel, devicePingTick, noteCompare, bankAmount, bankDate, dailyText, S, MOCK, computeReport, parseCSV, guessMapping, parseNum, syncOutbox, cartView, pinHash, sha256Fallback, checkMyRequests, refreshAttention, brandOf };
+window.KPOS = { PU, DEV, devicePayload, deviceLabel, devicePingTick, noteCompare, bankAmount, bankDate, dailyText, S, MOCK, computeReport, parseCSV, guessMapping, parseNum, syncOutbox, cartView, pinHash, sha256Fallback, checkMyRequests, refreshAttention, brandOf };
 init();
 </script>

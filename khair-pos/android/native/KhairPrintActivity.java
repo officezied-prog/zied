@@ -37,6 +37,8 @@ import java.util.UUID;
  *   intent:site-settings#Intent;scheme=khairprint;package=<this app>;end    → Chrome's settings of this site (v59: the camera)
  * The printer chosen once is remembered on this phone; the first print (or "choose") shows the paired devices, printers first.
  * Copied into the owner and cashier apps by ../build.mjs (the package line is filled in there).
+ * v64: no Bluetooth search call any more (it needed a permission this app does not have and stopped every print on Android 12+);
+ * a failed print says why, with "Coba lagi" / "Pilih printer lain"; a refused permission opens the app's settings.
  */
 public class KhairPrintActivity extends Activity {
     private static final UUID SPP = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
@@ -86,7 +88,19 @@ public class KhairPrintActivity extends Activity {
         super.onRequestPermissionsResult(code, perms, res);
         if (code != REQ_PERM) return;
         if (res.length > 0 && res[0] == PackageManager.PERMISSION_GRANTED) step();
+        else if (Build.VERSION.SDK_INT >= 31 && !shouldShowRequestPermissionRationale(Manifest.permission.BLUETOOTH_CONNECT)) askAppSettings(); // refused for good
         else { toast("Izinkan \"Perangkat sekitar\" (Bluetooth) agar bisa mencetak"); finish(); }
+    }
+
+    /** v64: "Nearby devices" refused for good — Android asks no more; only the app's settings can allow it again. */
+    private void askAppSettings() {
+        new AlertDialog.Builder(this)
+            .setTitle("Izin Bluetooth")
+            .setMessage("Aplikasi perlu izin \"Perangkat sekitar\" untuk mencetak. Buka Setelan → Izin → Perangkat sekitar → Izinkan.\n\nيحتاج التطبيق إذن \"الأجهزة المجاورة\" للطباعة. افتح الإعدادات ← الأذونات ← الأجهزة المجاورة ← سماح.")
+            .setPositiveButton("Buka Setelan", (d, w) -> { try { startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))); } catch (Exception ignored) { } finish(); })
+            .setNegativeButton("Batal", (d, w) -> finish())
+            .setOnCancelListener(d -> finish())
+            .show();
     }
 
     @Override
@@ -130,43 +144,72 @@ public class KhairPrintActivity extends Activity {
         new Thread(() -> {
             String error = null;
             BluetoothSocket sock = null;
+            boolean linked = false;
             try {
-                BluetoothAdapter ad = adapter();
-                if (ad != null && ad.isDiscovering()) ad.cancelDiscovery();
+                // v64 (owner 2026-10-20: «لا يمكن تواصل التطبيق بآلة استخراج فاتورة الدفع الصغيرة»): isDiscovering() / cancelDiscovery()
+                // need BLUETOOTH_SCAN on Android 12+, which this app neither has nor needs (it never searches) — the SecurityException
+                // stopped EVERY print before the printer was even called. Only a search started elsewhere slows the link, so: best effort.
+                try { BluetoothAdapter ad = adapter(); if (ad != null && ad.isDiscovering()) ad.cancelDiscovery(); } catch (SecurityException ignored) { }
                 sock = connect(dev);
+                linked = true;
                 OutputStream out = sock.getOutputStream();
                 for (int i = 0; i < data.length; i += 512) { out.write(data, i, Math.min(512, data.length - i)); out.flush(); Thread.sleep(15); }
-                Thread.sleep(400); // the printer takes the last bytes before the link closes
+                Thread.sleep(Math.min(3000, 700 + data.length / 6)); // the printer takes the last bytes (feed, cut) before the link closes
+            } catch (SecurityException e) {
+                error = "izin";
             } catch (Exception e) {
                 error = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             } finally {
                 try { if (sock != null) sock.close(); } catch (Exception ignored) { }
             }
             final String err = error;
+            final boolean wasLinked = linked;
             new Handler(Looper.getMainLooper()).post(() -> {
-                if (err == null) toast("Struk tercetak di " + who);
-                else toast("Gagal mencetak ke " + who + " — pastikan printer menyala dan dekat. (" + err + ")");
-                finish();
+                if (err == null) { toast("Struk tercetak di " + who); finish(); }
+                else if ("izin".equals(err)) askAppSettings();
+                else failed(dev, who, wasLinked, err);
             });
         }).start();
     }
 
-    /** The serial-port socket; some printers only answer the insecure one, or channel 1 directly. */
+    /** v64: what went wrong, in words the cashier can act on — try again, or pick another paired device (often the wrong one was chosen). */
+    private void failed(final BluetoothDevice dev, String who, boolean linked, String err) {
+        String why = linked
+            ? "Printer " + who + " tersambung tetapi data terputus. Coba lagi.\n\nاتصلت الطابعة لكن انقطع الإرسال. أعد المحاولة."
+            : "Printer " + who + " tidak menjawab. Nyalakan printer, dekatkan ke HP, dan pastikan tidak sedang tersambung ke HP lain. Kalau masih gagal, pilih printer lain.\n\nالطابعة لا تستجيب. شغّلها وقرّبها من الهاتف وتأكد أنها غير متصلة بهاتف آخر. إن استمر الفشل اختر طابعة أخرى.";
+        new AlertDialog.Builder(this)
+            .setTitle("Gagal mencetak / فشلت الطباعة")
+            .setMessage(why + "\n\n(" + err + ")")
+            .setPositiveButton("Coba lagi", (d, w) -> print(dev))
+            .setNeutralButton("Pilih printer lain", (d, w) -> { choose = true; step(); })
+            .setNegativeButton("Tutup", (d, w) -> finish())
+            .setOnCancelListener(d -> finish())
+            .show();
+    }
+
+    /** The serial-port socket; some printers only answer the insecure one, or channel 1 directly. A socket that failed is closed first. */
     private BluetoothSocket connect(BluetoothDevice dev) throws Exception {
         Exception last;
-        try { BluetoothSocket s = dev.createRfcommSocketToServiceRecord(SPP); s.connect(); return s; } catch (Exception e) { last = e; }
-        try { BluetoothSocket s = dev.createInsecureRfcommSocketToServiceRecord(SPP); s.connect(); return s; } catch (Exception e) { last = e; }
+        BluetoothSocket s = null;
+        try { s = dev.createRfcommSocketToServiceRecord(SPP); s.connect(); return s; } catch (SecurityException e) { throw e; } catch (Exception e) { last = e; close(s); }
+        try { s = dev.createInsecureRfcommSocketToServiceRecord(SPP); s.connect(); return s; } catch (SecurityException e) { throw e; } catch (Exception e) { last = e; close(s); }
+        s = null;
         try {
             Method m = dev.getClass().getMethod("createRfcommSocket", int.class);
-            BluetoothSocket s = (BluetoothSocket) m.invoke(dev, 1);
+            s = (BluetoothSocket) m.invoke(dev, 1);
             s.connect();
             return s;
-        } catch (Exception e) { last = e; }
+        } catch (SecurityException e) { throw e; } catch (Exception e) { last = e; close(s); }
         throw last;
     }
 
+    private static void close(BluetoothSocket s) { try { if (s != null) s.close(); } catch (Exception ignored) { } }
+
+    /** A receipt printer: Bluetooth class "imaging", or a name cheap printers carry (POS-58, MPT-II, RPP02N, PT-210, VSC …). */
     private boolean isPrinter(BluetoothDevice d) {
-        try { BluetoothClass c = d.getBluetoothClass(); return c != null && c.getMajorDeviceClass() == BluetoothClass.Device.Major.IMAGING; } catch (Exception e) { return false; }
+        try { BluetoothClass c = d.getBluetoothClass(); if (c != null && c.getMajorDeviceClass() == BluetoothClass.Device.Major.IMAGING) return true; } catch (Exception ignored) { }
+        String n = name(d).toLowerCase();
+        return n.matches(".*(print|pos|mpt|rpp|pt-?2|ptp|thermal|vsc|tm-|xp-|58mm|80mm|bluetooth p|inner|blueprint|zjiang|goojprt|epson|bixolon|star).*");
     }
 
     private String name(BluetoothDevice d) {
