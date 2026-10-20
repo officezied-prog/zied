@@ -6,16 +6,18 @@
    - nobody is working in the app (login screen, or not touched since it opened) → it reloads itself, quietly;
    - someone is working → a green bar at the top: "Versi baru … sudah siap — Perbarui" (one tap; the login stays).
    It never reloads twice for the same version (a stale copy somewhere → the bar instead) and never while offline.
+   v69 (owner 2026-10-20: «عند فتح التطبيق اريد ان ارى عدد الإصدار»): the first time a new version opens on this phone, a short
+   green note at the bottom says so for a few seconds (the version itself stays in the app's top bar and on its login screen).
      KUpdate.start({ version: APP_VERSION, idle: () => the login screen is shown })
      KUpdate.check() → Promise<'same' | 'new' | 'none'> */
 (function () {
   'use strict';
   if (window.KUpdate) return;
   var T = {
-    id: { title: 'Versi baru {v} sudah siap', btn: 'Perbarui', later: 'Nanti' },
-    ar: { title: 'نسخة جديدة {v} جاهزة', btn: 'تحديث', later: 'لاحقًا' }
+    id: { title: 'Versi baru {v} sudah siap', btn: 'Perbarui', later: 'Nanti', done: 'Aplikasi diperbarui ke versi {v}' },
+    ar: { title: 'نسخة جديدة {v} جاهزة', btn: 'تحديث', later: 'لاحقًا', done: 'تم تحديث التطبيق إلى النسخة {v}' }
   };
-  var KEY = 'kupd.to', EVERY_MS = 30 * 60e3, AGAIN_MS = 5 * 60e3, QUIET_MS = 20e3, LATER_MS = 30 * 60e3;
+  var KEY = 'kupd.to', SEEN = 'kupd.seen:' + location.pathname.replace(/[^\/]*$/, ''), DONE_MS = 6000, EVERY_MS = 30 * 60e3, AGAIN_MS = 5 * 60e3, QUIET_MS = 20e3, LATER_MS = 30 * 60e3;
   var framed = true; try { framed = window.top !== window.self; } catch (e) { }
   var cur = '', idle = null, started = false, last = 0, busy = null, found = '', touched = 0, later = 0, bar = null, drawn = '', tick = null;
 
@@ -31,7 +33,10 @@
       + 'background:#15803D;color:#fff;font:600 14px/1.3 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.25);text-align:start}'
       + '#kupd .ku-t{flex:1;min-width:0}#kupd .ku-go{flex:none;background:#fff;color:#14532D;border:0;border-radius:10px;padding:9px 16px;font:inherit;font-weight:800;cursor:pointer}'
       + '#kupd .ku-x{flex:none;background:transparent;border:1px solid rgba(255,255,255,.6);color:#fff;border-radius:10px;padding:8px 10px;font:inherit;cursor:pointer}'
-      + '@media print{#kupd{display:none}}';
+      + '#kupd-ok{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom));z-index:2147483000;max-width:calc(100% - 32px);'
+      + 'padding:10px 16px;border-radius:12px;background:#15803D;color:#fff;font:600 14px/1.3 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;'
+      + 'box-shadow:0 4px 14px rgba(0,0,0,.25);text-align:center;pointer-events:none}'
+      + '@media print{#kupd,#kupd-ok{display:none}}';
     (document.head || document.documentElement).appendChild(st);
   }
   function hide() { if (bar && bar.parentNode) bar.parentNode.removeChild(bar); }
@@ -44,7 +49,7 @@
       bar.addEventListener('click', function (e) {
         var b = e.target.closest && e.target.closest('button'); if (!b) return;
         e.preventDefault(); e.stopPropagation();
-        if (b.id === 'kupd-go') location.reload(); // the session of this tab survives a reload in every app
+        if (b.id === 'kupd-go') { setTried(found); location.reload(); } // the session of this tab survives a reload in every app
         else { later = Date.now() + LATER_MS; hide(); }
       });
     }
@@ -54,6 +59,17 @@
         + '<button type="button" class="ku-go" id="kupd-go">' + esc(L.btn) + '</button><button type="button" class="ku-x" id="kupd-x">' + esc(L.later) + '</button>';
     }
     if (bar.parentNode !== document.body) document.body.appendChild(bar);
+  }
+  /** A short note the first time this version opens here (never on a first install; it never blocks a tap). */
+  function noteNew(reloaded) {
+    var prev = '';
+    try { prev = localStorage.getItem(SEEN) || ''; localStorage.setItem(SEEN, cur); } catch (e) { return; }
+    if (!(prev ? prev !== cur : reloaded) || !document.body) return; // reloaded = this app just reloaded itself into the new version
+    css();
+    var el = document.createElement('div'); el.id = 'kupd-ok'; el.setAttribute('role', 'status');
+    el.textContent = '\u2705 ' + T[lang()].done.replace('{v}', cur);
+    document.body.appendChild(el);
+    setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, DONE_MS);
   }
   function free() { try { return !!(idle && idle()); } catch (e) { return false; } }
   function canReload() {
@@ -86,7 +102,9 @@
   function start(o) {
     if (started || framed || !o || !o.version) return;
     started = true; cur = String(o.version); idle = o.idle || null;
-    if (tried() === cur) setTried(''); // the reload brought the new version
+    var reloaded = tried() === cur;
+    if (reloaded) setTried(''); // the reload brought the new version
+    noteNew(reloaded);
     var mark = function () { touched = Date.now(); };
     window.addEventListener('pointerdown', mark, true);
     window.addEventListener('keydown', mark, true);

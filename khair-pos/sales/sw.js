@@ -2,7 +2,7 @@
    Network-first for the app files (+ the shared shop-type list, the shared mock script and Leaflet from ../vendor/leaflet),
    cache fallback when offline. API calls (POST to n8n) and map tiles are never cached here.
    Only old "khair-sales-*" caches are removed on activate. */
-const CACHE = 'khair-sales-v24';
+const CACHE = 'khair-sales-v25';
 const SHELL = ['./', './index.html', './styles.css', './mock.js', './manifest.webmanifest', './icon.svg', '../logo.png', '../shared/shop-types.js', '../shared/gmaps-import.js', '../shared/field-mock.js', '../shared/chat-ui.js', '../shared/tamper-guard.js', '../shared/install-btn.js', '../shared/app-update.js', '../vendor/leaflet/leaflet.js', '../vendor/leaflet/leaflet.css'];
 // v49 (owner 2026-10-14: «لم تظهرت النسخة الجديدة»): pages and code are checked with the site on every fetch ("no-cache":
 // a few bytes, "304", when unchanged), so the phone's 10-minute copy (GitHub Pages) never hides a new version. Images as before.
