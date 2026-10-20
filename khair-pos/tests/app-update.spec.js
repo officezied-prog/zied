@@ -27,10 +27,12 @@ test('login screen: a new version on the site → the app reloads itself into it
   expect(await page.evaluate(() => KUpdate.check())).toBe('none');
   await context.setOffline(false);
   await expect(page.locator('#kupd')).toHaveCount(0);
+  await page.evaluate(() => { for (const k of Object.keys(localStorage)) if (k.startsWith('kupd.seen:')) localStorage.removeItem(k); }); // a phone from before v69
   await siteHas(page, '9.9.9');
   await check(page);
   await expect(page.locator('#login-ver')).toContainText('9.9.9'); // reloaded by itself, nobody had to touch it
   await expect(page.locator('#kupd')).toHaveCount(0);
+  await expect(page.locator('#kupd-ok')).toHaveText('✅ Aplikasi diperbarui ke versi 9.9.9'); // v69: it says so once
   expect(await page.evaluate(() => sessionStorage.getItem('kupd.to'))).toBeNull();
 });
 

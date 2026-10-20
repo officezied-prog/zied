@@ -26,6 +26,8 @@
   header { background: var(--pri); color: #fff; padding: 10px 16px; display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 5; }
   header h1 { font-size: 17px; margin: 0; flex: 1; }
   header small { opacity: .85; }
+  /* v69 (owner 2026-10-20: «عند فتح التطبيق اريد ان ارى عدد الإصدار»): the version under the title, on every screen */
+  header h1 { line-height: 1.2; } header h1 small { display: block; font-size: 12px; font-weight: 500; white-space: nowrap; }
   header button { background: rgba(255,255,255,.15); color: #fff; border: 0; border-radius: 6px; padding: 8px 10px; min-height: 40px; cursor: pointer; }
   nav { display: flex; gap: 4px; overflow-x: auto; background: var(--card); border-bottom: 1px solid var(--bd); padding: 6px 8px; position: sticky; top: 60px; z-index: 4; }
   nav button { border: 0; background: none; padding: 10px 12px; border-radius: 6px; white-space: nowrap; font-size: 14px; min-height: 42px; cursor: pointer; color: var(--tx); }
@@ -83,7 +85,7 @@
 </script>
 </head>
 <body>
-<header><button id="home" type="button" hidden></button><img id="hd-logo" src="../logo.png" alt="Khair Mart" width="54" height="32" style="height:32px;width:auto;background:#fff;border-radius:6px;padding:2px 4px;box-sizing:border-box;flex:none"><h1 id="title">Khair Gudang Dingin</h1><small id="who"></small><button id="lang" type="button">AR</button><button id="logout" type="button" hidden></button></header>
+<header><button id="home" type="button" hidden></button><img id="hd-logo" src="../logo.png" alt="Khair Mart" width="54" height="32" style="height:32px;width:auto;background:#fff;border-radius:6px;padding:2px 4px;box-sizing:border-box;flex:none"><h1><span id="title">Khair Gudang Dingin</span><small id="hd-ver"></small></h1><small id="who"></small><button id="lang" type="button">AR</button><button id="logout" type="button" hidden></button></header>
 <nav id="nav" hidden></nav>
 <main id="app"></main>
 <div id="toast" role="status" aria-live="polite"></div>
@@ -95,8 +97,10 @@
 <script src="../shared/docs-cold.js"></script>
 <script src="../shared/chat-ui.js"></script>
 <script src="../shared/install-btn.js" data-host="#app > .card:has(#lg-key)"></script>
+<script src="../shared/app-update.js"></script>
 <script>
 'use strict';
+const APP_VERSION = '1.1.0'; // v69: shown in the header; the update signal (shared/app-update.js): bump with every change of this app
 // Same-site framing is allowed: the owner app shows البرادات as one of its own pages. Any other framer is refused.
 const EMBED = (() => { if (window.top === window.self) return false; try { return window.top.location.origin === location.origin; } catch (e) { return false; } })();
 if (window.top !== window.self && !EMBED) { try { window.top.location = window.location.href; } catch (e) { document.documentElement.innerHTML = ''; } }
@@ -118,7 +122,7 @@ const SS = {
 /* ---------- texts ---------- */
 const I18N = {
   id: {
-    title: 'Khair Gudang Dingin', login: 'Masuk', key: 'Kunci toko', key_hint: 'Diisi sekali di perangkat ini', change_key: 'Ganti kunci', user: 'Nama pengguna', pin: 'PIN', logout: 'Keluar',
+    title: 'Khair Gudang Dingin', ver: 'Versi', login: 'Masuk', key: 'Kunci toko', key_hint: 'Diisi sekali di perangkat ini', change_key: 'Ganti kunci', user: 'Nama pengguna', pin: 'PIN', logout: 'Keluar',
     demo: 'Mode demo — data contoh. Kunci: demo · Pemilik 1234 · Jihan 2222 · Akuntan 3333', demo_reset: 'Ulang data demo',
     t_dash: 'Brad (ruang dingin)', t_stok: 'Stok', t_cont: 'Kontainer', t_mut: 'Mutasi', t_cek: 'Cek stok harian', t_ord: 'Order ambil', t_cust: 'Pelanggan', t_set: 'Pengaturan',
     role_owner: 'Pemilik', role_manager: 'Manajer', role_akuntan: 'Akuntan', ro: 'Hanya lihat',
@@ -160,7 +164,7 @@ const I18N = {
     rq_pending: 'Menunggu persetujuan', rq_approved: 'Disetujui', rq_rejected: 'Ditolak', rq_ok: 'Disetujui — produk tersimpan', rq_no: 'Usulan ditolak', need_rq: 'Usulan produk dari akuntan'
   },
   ar: {
-    title: 'مخازن خير المبرّدة', login: 'دخول', key: 'مفتاح المتجر', key_hint: 'يُكتب مرة واحدة على هذا الجهاز', change_key: 'تغيير المفتاح', user: 'اسم المستخدم', pin: 'الرمز السري', logout: 'خروج',
+    title: 'مخازن خير المبرّدة', ver: 'النسخة', login: 'دخول', key: 'مفتاح المتجر', key_hint: 'يُكتب مرة واحدة على هذا الجهاز', change_key: 'تغيير المفتاح', user: 'اسم المستخدم', pin: 'الرمز السري', logout: 'خروج',
     demo: 'وضع تجريبي — بيانات مثال. المفتاح: demo · Pemilik 1234 · Jihan 2222 · Akuntan 3333', demo_reset: 'إعادة البيانات التجريبية',
     t_dash: 'البرّادات', t_stok: 'المخزون', t_cont: 'الحاويات', t_mut: 'الحركات', t_cek: 'الجرد اليومي', t_ord: 'أوامر السحب', t_cust: 'الزبائن', t_set: 'الإعدادات',
     role_owner: 'المالك', role_manager: 'المدير', role_akuntan: 'المحاسب', ro: 'عرض فقط',
@@ -336,9 +340,12 @@ async function doLogin() {
 
 /* ---------- shell ---------- */
 const TABS = ['dash', 'stok', 'cont', 'mut', 'cek', 'ord', 'cust', 'set'];
+// v69: the tabs stick right under the header, however tall it is on a narrow phone (the title wraps)
+function fitNav() { const hd = document.querySelector('header'), nav = $('#nav'); if (hd && nav) nav.style.top = hd.offsetHeight + 'px'; }
+try { new ResizeObserver(fitNav).observe(document.querySelector('header')); } catch (e) { window.addEventListener('resize', fitNav); }
 function render() {
   document.documentElement.lang = S.lang; document.documentElement.dir = S.lang === 'ar' ? 'rtl' : 'ltr';
-  $('#title').textContent = t('title'); $('#lang').textContent = S.lang === 'ar' ? 'ID' : 'AR';
+  $('#title').textContent = t('title'); $('#hd-ver').textContent = t('ver') + ' ' + APP_VERSION; fitNav(); $('#lang').textContent = S.lang === 'ar' ? 'ID' : 'AR';
   const hb = $('#home'); hb.hidden = EMBED; hb.textContent = (S.lang === 'ar' ? '→ ' : '← ') + t('to_admin');
   if (!S.D) return;
   $('#who').textContent = S.user + (S.role === 'akuntan' ? ' (' + t('ro') + ')' : '') + (MOCK ? ' · demo' : '');
@@ -875,6 +882,7 @@ if (EMBED) window.addEventListener('storage', e => {
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 (async function start() {
   render();
+  try { if (window.KUpdate) KUpdate.start({ version: APP_VERSION, idle: () => !S.D }); } catch (e) { } // v69: a new version reaches every phone by itself (not inside the owner app: it reloads itself)
   S.key = LS.get('kcold.key', '') || LS.get(KP + 'key', '') || (MOCK ? 'demo' : '');
   // this tab's session: our own, or the owner app's (same site, same tab) — the PIN hash is never kept in localStorage
   // inside the owner app its login always wins (whoever is logged in there is who uses this page)
