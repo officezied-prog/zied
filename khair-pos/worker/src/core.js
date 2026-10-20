@@ -65,6 +65,15 @@ export const POS_MIGRATIONS = [
   'ALTER TABLE pos_payments ADD COLUMN payee TEXT',
   // v63 (owner 2026-10-20): a packaging material received at goods-in says which packs it is used for
   'ALTER TABLE pos_products ADD COLUMN use_for TEXT',
+  // v65: goods-in confirmed by the manager / accountant with how it was paid (paid now, or on credit until the agreed date)
+  'ALTER TABLE pos_purchases ADD COLUMN check_status TEXT',
+  'ALTER TABLE pos_purchases ADD COLUMN checked_by TEXT',
+  'ALTER TABLE pos_purchases ADD COLUMN checked_at TEXT',
+  'ALTER TABLE pos_purchases ADD COLUMN pay_status TEXT',
+  'ALTER TABLE pos_purchases ADD COLUMN pay_method TEXT',
+  'ALTER TABLE pos_purchases ADD COLUMN due_date TEXT',
+  'ALTER TABLE pos_purchases ADD COLUMN paid_at TEXT',
+  'CREATE INDEX IF NOT EXISTS idx_pos_purchases_pay_status ON pos_purchases (pay_status)',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;

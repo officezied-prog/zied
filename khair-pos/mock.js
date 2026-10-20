@@ -674,6 +674,26 @@ const MockServer = (() => {
   const payAlloc = p => { let a = []; try { a = typeof p.alloc === 'string' ? JSON.parse(p.alloc || '[]') : (p.alloc || []); } catch (e) { a = []; } return Array.isArray(a) ? a : []; };
   const payDir = p => strv(p.direction) || 'in';
   const payOut = p => { const o = Object.assign({}, p); delete o.id; o.alloc = payAlloc(p); return o; };
+  // v65: goods-in confirmed by the manager / accountant with how it was paid (as on the server)
+  const INTERNAL_SUP = ['STOK OPNAME', 'PENYESUAIAN STOK', 'KEMAS ULANG'];
+  const rpTxt = v => 'Rp ' + String(Math.round(Math.abs(num(v)))).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  function markNotesPaid(db, docs, alloc, payDate) {
+    const left = {};
+    alloc.forEach(a => { if (docs[a.ref]) left[a.ref] = docs[a.ref].remaining - int(a.amount); });
+    db.purchases.forEach(r => { const ref = strv(r.purchase_no); if (left[ref] !== undefined && left[ref] <= 0 && strv(r.check_status) && strv(r.pay_status) !== 'lunas') Object.assign(r, { pay_status: 'lunas', paid_at: payDate }); });
+  }
+  function purchaseChecks(db) {
+    const t0 = jktDate(), since = [new Date(Date.parse(t0) - 30 * 86400000).toISOString().slice(0, 10), '2026-10-20'].sort().pop();
+    const due3 = new Date(Date.parse(t0) + 3 * 86400000).toISOString().slice(0, 10), by = {}, due = {};
+    db.purchases.forEach(r => {
+      const no = strv(r.purchase_no); if (!no || INTERNAL_SUP.includes(strv(r.supplier))) return;
+      if (strv(r.purchase_date) >= since && !strv(r.check_status)) (by[no] = by[no] || []).push(r);
+      if (strv(r.pay_status) === 'tempo' && strv(r.due_date) <= due3) (due[no] = due[no] || []).push(r);
+    });
+    const one = rs => ({ purchase_no: strv(rs[0].purchase_no), supplier: strv(rs[0].supplier), purchase_date: strv(rs[0].purchase_date), due_date: strv(rs[0].due_date), total: rs.reduce((a, r) => a + int(r.total), 0) });
+    return { waiting: Object.values(by).map(one).map(x => ({ purchase_no: x.purchase_no, supplier: x.supplier, purchase_date: x.purchase_date })),
+      due: Object.values(due).map(one).map(x => ({ purchase_no: x.purchase_no, supplier: x.supplier, due_date: x.due_date, days: Math.round((Date.parse(x.due_date) - Date.parse(t0)) / 86400000), total: x.total })) };
+  }
   const partyPays = (db, pt, key) => db.payments.filter(p => pt === 'customer' ? (Number(p.customer_id) === Number(key) && payDir(p) === 'in') : (strv(p.supplier) === key && payDir(p) === 'out'));
   function partyDocs(db, pt, key, excludePayId) {
     const docs = {};
@@ -684,6 +704,7 @@ const MockServer = (() => {
         const ref = strv(x.purchase_no) || ('PB-' + strv(x.purchase_date));
         if (!docs[ref]) docs[ref] = { ref, date: strv(x.purchase_date), total: 0, paid: 0 };
         docs[ref].total += int(x.total);
+        if (strv(x.pay_status) === 'tempo' && strv(x.due_date)) docs[ref].due_date = strv(x.due_date); // v65: the agreed date
         if (strv(x.purchase_date) < docs[ref].date) docs[ref].date = strv(x.purchase_date);
       });
     }
@@ -1143,7 +1164,7 @@ const MockServer = (() => {
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
-    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'repack_finish', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
+    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'confirm_purchase', 'repack_finish', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
     if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'scan_expense', 'list_photos', 'photo_file'].includes(action)) deviceTouch(db, u, data.device, false);
 
@@ -1196,7 +1217,7 @@ const MockServer = (() => {
         logAct(db, u, 'pindah_stok', (toShop ? 'Gudang → toko: ' : 'Toko → gudang: ') + mv.map(x => x.p.name + ' ' + fmtN(x.q) + ' ' + strv(x.p.unit)).join('; ') + (mnote ? ' | ' + mnote : ''), '', 0, 'info');
         return { stock: mv.map(x => ({ product_id: x.p.id, stock: num(x.p.stock), shop_stock: x.sh, gudang_stock: roundQty(num(x.p.stock) - x.sh) })) };
       }
-      case 'bootstrap': return { opname: opnameBoot(db), user: { name: u.name, role: roleOf(u) }, products: db.products.map(p => costNamesFor(db, prodOut(p), u.role)), customers: db.customers, settings: settingsOut(db, u.role), ai_reader: (() => { try { return localStorage.getItem('kmock.ai') !== 'off'; } catch (e) { return true; } })(), repacks_open: window.KRepackMock.openList(db, u.role), via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
+      case 'bootstrap': return { opname: opnameBoot(db), user: { name: u.name, role: roleOf(u) }, products: db.products.map(p => costNamesFor(db, prodOut(p), u.role)), customers: db.customers, settings: settingsOut(db, u.role), ai_reader: (() => { try { return localStorage.getItem('kmock.ai') !== 'off'; } catch (e) { return true; } })(), repacks_open: window.KRepackMock.openList(db, u.role), purchase_checks: isAppr(u) || u.role === 'akuntan' ? purchaseChecks(db) : null, via_master: viaMaster, must_change: u.must_change === true && !viaMaster,
         users: db.users.map(x => owner ? { name: x.name, role: x.role, active: x.active, must_change: x.must_change === true, locked: Date.parse(x.locked_until) > Date.now(), tamper: isLockedAcct(x.name), has_master: x.role === 'owner' && isHash(x.master_hash) } : { name: x.name, role: x.role, active: x.active }), server_time: new Date().toISOString(), approvals_pending: ['owner', 'manager'].includes(u.role) ? db.approvals.filter(x => x.status === 'pending').length : 0,
         shift: blind(shiftSummary(db, openShiftOf(db, u.name)), u.role), open_shifts: ['owner', 'manager'].includes(u.role) ? db.shifts.filter(x => x.status === 'open').map(x => shiftSummary(db, x)) : [],
         activity_recent: owner ? db.activity.filter(a => a.act_date >= addDays(jktDate(), -7) && a.act_date <= jktDate()).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 100) : [],
@@ -2084,6 +2105,51 @@ const MockServer = (() => {
           (dateOff ? ' | tanggal bukti ' + payment.slip_date + ' ≠ dicatat ' + payment.pay_date : ''), payment.pay_id, amount, strv(data.mismatch_reason) || dateOff || payment.match_status === 'belum_dialokasi' ? 'warn' : 'info');
         return { payment: payOut(payment), customer: c };
       }
+      case 'confirm_purchase': { // v65 (owner 2026-10-20: «المدير و المحاسب يصادق عليها و يكتب هل تم الدفع … او تاريخ الدفع المتفق عليه»)
+        if (!(isAppr(u) || u.role === 'akuntan')) throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+        const no = strv(data.purchase_no), lines = db.purchases.filter(r => strv(r.purchase_no) === no);
+        if (!no || !lines.length) throw E('NOT_FOUND', 'Nota barang masuk tidak ditemukan');
+        const done0 = lines.find(r => strv(r.check_status));
+        if (done0) throw E('INVALID', 'Nota ' + no + ' sudah dikonfirmasi oleh ' + strv(done0.checked_by));
+        const sup = strv(lines[0].supplier);
+        if (INTERNAL_SUP.includes(sup)) throw E('INVALID', 'Bukan nota pemasok');
+        if (strv(data.supplier) !== sup) throw E('INVALID', 'Pemasok tidak cocok dengan nota ' + no);
+        const kind = data.pay === 'tempo' ? 'tempo' : data.pay === 'lunas' ? 'lunas' : '';
+        if (!kind) throw E('INVALID', 'Pilih: sudah dibayar, atau bayar nanti (tempo)');
+        const today = jktDate(), nowIso = new Date().toISOString(), total = lines.reduce((a, r) => a + int(r.total), 0);
+        let due = '', method = '', pay = null, fromKas = false;
+        if (kind === 'tempo') {
+          due = strv(data.due_date);
+          const maxDue = new Date(Date.parse(today) + 180 * 86400000).toISOString().slice(0, 10);
+          if (!isYmd(due) || due < today || due > maxDue) throw E('INVALID', 'Tanggal bayar yang disepakati: hari ini sampai 180 hari lagi');
+        } else {
+          method = ['tunai', 'transfer', 'qris'].includes(data.method) ? data.method : '';
+          if (!method) throw E('INVALID', 'Pilih cara bayar: tunai, transfer atau QRIS');
+          const myShift = openShiftOf(db, u.name);
+          fromKas = data.paid_from === 'kas' && method === 'tunai';
+          if (fromKas && !myShift) throw E('SHIFT_REQUIRED', 'Buka kasir (shift) dulu untuk bayar dari kas');
+          if (dupRef(partyPays(db, 'supplier', sup), data.transfer_ref)) throw E('INVALID', 'Nomor transfer ini sudah pernah dipakai: ' + strv(data.transfer_ref));
+          const docs = partyDocs(db, 'supplier', sup, ''), doc = docs[no], amount = doc ? doc.remaining : total;
+          if (amount > 0) {
+            const sc = slipCheck(db, data, amount);
+            pay = { id: nextId(db, 'payment'), pay_id: 'PY' + randId(7), pay_date: today, pay_time: nowIso, direction: 'out', party_type: 'supplier', customer_id: 0, customer_name: '', supplier: sup, amount, method,
+              account_id: payAccount(db, data, method, sc && sc.ex, 'out'), slip_date: sc && sc.ex && sc.ex.date ? strv(sc.ex.date) : '',
+              bank: strv(data.bank).slice(0, 60), transfer_ref: strv(data.transfer_ref).slice(0, 80), proof_photo_id: strv(data.photo_id).slice(0, 40),
+              alloc: JSON.stringify(doc ? [{ ref: no, amount }] : []), match_status: doc ? 'lunas' : 'belum_dialokasi',
+              note: ('Barang masuk ' + no + ' dikonfirmasi ' + u.name + (fromKas ? ' [dari kas]' : '') + (strv(data.note) ? ' | ' + strv(data.note) : '')).slice(0, 500), cashier: u.name,
+              paid_from: fromKas ? 'kas' : 'lain', shift_id: fromKas ? myShift.shift_id : '' };
+            db.payments.push(pay);
+          }
+        }
+        lines.forEach(r => Object.assign(r, { check_status: 'dikonfirmasi', checked_by: u.name, checked_at: nowIso, pay_status: kind, pay_method: method, due_date: due, paid_at: kind === 'lunas' ? today : '' }));
+        const who = (owner ? 'pemilik ' : u.role === 'manager' ? 'manajer ' : 'akuntan ') + u.name;
+        const txt = 'Barang masuk ' + no + ' dari ' + sup + ' (' + strv(lines[0].purchase_date) + ', diterima ' + strv(lines[0].user) + ', ' + rpTxt(total) + ') dikonfirmasi ' + who + ': ' +
+          (kind === 'tempo' ? 'BAYAR NANTI — jatuh tempo ' + due + ' (hutang ke pemasok)' : 'sudah dibayar ' + method + (fromKas ? ' dari kas' : '') + (pay ? ' ' + rpTxt(pay.amount) + (pay.bank ? ' ' + pay.bank : '') + (pay.transfer_ref ? ' ref ' + pay.transfer_ref : '') : ' (sudah lunas sebelumnya)')) +
+          (strv(data.note) ? ' | ' + strv(data.note).slice(0, 200) : '');
+        logAct(db, u, 'konfirmasi_masuk', txt, no, total, 'info');
+        notifyR(db, u, ['owner', 'manager', 'akuntan'].filter(x => x !== roleOf(u)), txt, kind === 'tempo' ? 'warn' : 'info');
+        return { purchase_no: no, check: { check_status: 'dikonfirmasi', checked_by: u.name, checked_at: nowIso, pay_status: kind, pay_method: method, due_date: due }, payment: pay ? payOut(pay) : null };
+      }
       case 'pay_supplier': {
         if (!isAppr(u)) throw E('FORBIDDEN', 'Hanya pemilik atau manajer');
         const sup = safeName(data.supplier, 80);
@@ -2119,6 +2185,7 @@ const MockServer = (() => {
           note: (strv(data.note) + (fromKas ? ' [dari kas]' : '') + (strv(data.mismatch_reason) ? ' | beda dengan bukti: ' + strv(data.mismatch_reason) : '')).slice(0, 500), cashier: u.name,
           paid_from: fromKas ? 'kas' : 'lain', shift_id: fromKas ? myShift.shift_id : '' };
         db.payments.push(pay);
+        markNotesPaid(db, docs, chk.alloc, pay.pay_date); // v65
         const dateOff = pay.slip_date && pay.slip_date !== pay.pay_date;
         logAct(db, u, 'bayar_keluar', 'Bayar pemasok ' + sup + ' Rp ' + amount + ' (' + method + (pay.bank ? ' ' + pay.bank : '') + (pay.transfer_ref ? ', ref ' + pay.transfer_ref : '') + (fromKas ? ', dari kas' : '') + ')' +
           (chk.alloc.length ? ' untuk ' + chk.alloc.map(a => a.ref + ' Rp ' + a.amount).join(', ') : ' — belum dialokasi') + (strv(data.mismatch_reason) ? ' | beda dengan bukti: ' + strv(data.mismatch_reason) : '') +
@@ -2293,6 +2360,7 @@ const MockServer = (() => {
         const pt = payDir(p0) === 'out' ? 'supplier' : 'customer';
         const docs = partyDocs(db, pt, pt === 'customer' ? p0.customer_id : strv(p0.supplier), p0.pay_id);
         const chk = checkAlloc(data.alloc, docs, int(p0.amount));
+        if (pt === 'supplier') markNotesPaid(db, docs, chk.alloc, strv(p0.pay_date) || jktDate()); // v65
         Object.assign(p0, { alloc: JSON.stringify(chk.alloc), match_status: allocStatus(int(p0.amount), chk, docs), note: (strv(p0.note) + (strv(data.note) ? ' | alokasi: ' + strv(data.note) : '')).slice(0, 500) });
         logAct(db, u, 'alokasi', 'Alokasi pembayaran ' + p0.pay_id + ' (' + (pt === 'customer' ? p0.customer_name : p0.supplier) + ' Rp ' + int(p0.amount) + '): ' +
           (chk.alloc.length ? chk.alloc.map(a => 'bagian dari ' + a.ref + ' Rp ' + a.amount).join(', ') : 'dikosongkan') + (strv(data.note) ? ' | ' + strv(data.note) : ''), p0.pay_id, int(p0.amount), 'info');

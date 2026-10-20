@@ -171,7 +171,14 @@ CREATE TABLE IF NOT EXISTS pos_purchases (
   carrier_type TEXT,
   carrier_name TEXT,
   carrier_vehicle TEXT,
-  carrier_phone TEXT
+  carrier_phone TEXT,
+  check_status TEXT,
+  checked_by TEXT,
+  checked_at TEXT,
+  pay_status TEXT,
+  pay_method TEXT,
+  due_date TEXT,
+  paid_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pos_purchases_purchase_date ON pos_purchases (purchase_date);
 CREATE INDEX IF NOT EXISTS idx_pos_purchases_purchase_no ON pos_purchases (purchase_no);
