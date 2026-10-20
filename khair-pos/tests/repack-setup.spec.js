@@ -5,7 +5,7 @@
 // packaging materials list (name + price per piece) is kept here.
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { SHOTS, login, getDb, productByName, nav, asUser, pick } = require('./helpers');
+const { SHOTS, login, getDb, productByName, nav, asUser, pick, editDb } = require('./helpers');
 
 async function openRepackTab(page) {
   await nav(page, 'gudang');
@@ -119,4 +119,31 @@ test('the materials list (owner): add, change a price, remove — the manager an
   await page.click('#tb-lang');
   await expect(page.locator('#rp-setup h3')).toContainText('ضبط بضائع إعادة التعبئة');
   await expect(page.locator('#rp-setup')).toContainText('قائمة مستلزمات التعبئة');
+});
+
+// v66 (owner 2026-10-20, the set-up list: «التطبيق لا يحسب جملة الثمن مع البضاعة. اضف ثمن البضاعة ايضا»): each pack shows its whole cost per
+// piece — the bulk's share (cost price × size) + the materials; a cost above the selling price (a size typed wrong) is flagged.
+test('the set-up list: the pack\'s whole cost = the bulk\'s share + the materials; above the selling price it is flagged; Arabic', async ({ page }) => {
+  await login(page, 'Pemilik', '1234', '', { stay: true }); // (the demo's packs are seeded on the first open)
+  await editDb(page, `
+    const b = db.products.find(p => p.name === 'Kurma Rabia Kemas 500 g'), bulk = db.products.find(p => String(p.id) === String(b.repack_from));
+    bulk.cost_price = 48000;
+    b.repack_costs = JSON.stringify([{ n: 'Toples', q: 1, c: 3000 }, { n: 'Stiker', q: 1, c: 500 }]);
+    const w = db.products.find(p => p.name === 'Kurma Rabia Kemas 250 g'); w.repack_qty = 70000;`);
+  await page.reload();
+  await expect(page.locator('#app')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (KPOS.S.products.find(p => p.name === 'Kurma Rabia Kemas 250 g') || {}).repack_qty)).toBe(70000);
+  await openRepackTab(page);
+  const db = await getDb(page), pk = productByName(db, /Kurma Rabia Kemas 500 g/), w = productByName(db, /Kurma Rabia Kemas 250 g/), bulk = db.products.find(p => p.id === pk.repack_from);
+  const row = page.locator(`#rs-list tr[data-rs="${pk.id}"]`);
+  await expect(row.locator('[data-rs-costs]')).toContainText('Toples Rp 3.000 + Stiker Rp 500 = Rp 3.500 / pak');
+  await expect(row.locator('[data-rs-total]')).toHaveAttribute('data-rs-total', '27500');
+  await expect(row.locator('[data-rs-total]')).toContainText(`Modal per pak: barang Rp 24.000 (0,5 ${bulk.unit} × Rp 48.000) + bahan Rp 3.500 = Rp 27.500`);
+  await expect(row.locator('[data-rs-over]')).toHaveCount(0);
+  // a size typed wrong: the cost is far above the selling price
+  await expect(page.locator(`#rs-list tr[data-rs="${w.id}"] [data-rs-over]`)).toContainText('Modal di atas harga jual (Rp 19.000)');
+  await page.evaluate(() => setLang('ar'));
+  await openRepackTab(page);
+  await expect(page.locator(`#rs-list tr[data-rs="${pk.id}"] [data-rs-total]`)).toContainText('التكلفة لكل pak: البضاعة Rp 24.000');
+  await expect(page.locator(`#rs-list tr[data-rs="${w.id}"] [data-rs-over]`)).toContainText('التكلفة أعلى من سعر البيع');
 });

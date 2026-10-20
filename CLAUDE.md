@@ -34,11 +34,11 @@ another (a burst typed into a number box is put back and read as a scan); UPC-A 
 
 **Daily summary + goods-in confirmation (v65, owner 2026-10-20):** Laporan → Harian lists EVERY invoice of the day (each opens with all its
 lines, discount, fee, how it was paid, the debt) and EVERY product sold, with "Cetak / PDF" and two CSV files; the accountant sees it too.
-Sales are kept for good (nothing deletes a sale; a void only marks it). Goods-in: every supplier note from 2026-10-20 waits for the manager /
+Sales are kept for good (nothing deletes a sale; a void only marks it). Goods-in: every supplier note of the last 30 days (v66: also the ones from before 2026-10-20) waits for the manager /
 accountant (`confirm_purchase`, Perhatian), who mark it paid now (cash / transfer / QRIS → a supplier payment allocated to the note, money
 out of the day; "from my drawer" only with an open shift) or on credit until an agreed date (`pay_status 'tempo'`, `due_date` on the note's
 lines = the supplier's debt; due ≤ 3 days / late in Perhatian and in the supplier's ledger; a later payment covering it marks it 'lunas').
-Not an expense (the goods' cost counts when sold). Paying a debt later still goes through the owner's pay plan.
+An older note already paid and recorded is confirmed "Sudah dibayar sebelumnya" (`paid_before`: no second payment). Not an expense (the goods' cost counts when sold). Paying a debt later still goes through the owner's pay plan.
 
 **New versions reach phones by themselves (v49):** `shared/app-update.js` (KUpdate) re-reads the app's own page
 (`cache:'no-cache'`, a 304 when unchanged) on open, on return to the screen (≥5 min) and every 30 min; another

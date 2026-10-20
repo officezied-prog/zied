@@ -3137,7 +3137,7 @@ switch (req.action) {
     const kind = data.pay === 'tempo' ? 'tempo' : data.pay === 'lunas' ? 'lunas' : '';
     if (!kind) return fail('INVALID', 'Pilih: sudah dibayar, atau bayar nanti (tempo)');
     const today = jkDate(), nowIso = new Date().toISOString(), total = lines.reduce(function (a1, r) { return a1 + money(r.total); }, 0);
-    let due = '', method = '', pay = null, fromKas = false;
+    let due = '', method = '', pay = null, fromKas = false, before = false;
     if (kind === 'tempo') {
       due = str(data.due_date);
       const maxDue = new Date(Date.parse(today) + 180 * 86400000).toISOString().slice(0, 10);
@@ -3145,10 +3145,11 @@ switch (req.action) {
     } else {
       method = ['tunai', 'transfer', 'qris'].indexOf(data.method) >= 0 ? data.method : '';
       if (!method) return fail('INVALID', 'Pilih cara bayar: tunai, transfer atau QRIS');
-      fromKas = data.paid_from === 'kas' && method === 'tunai';
+      before = data.paid_before === true; // v66: paid and recorded earlier (a note from before the confirmation existed): no second payment
+      fromKas = !before && data.paid_from === 'kas' && method === 'tunai';
       if (fromKas && !myShift) return fail('SHIFT_REQUIRED', 'Buka kasir (shift) dulu untuk bayar dari kas');
-      if (dupRef(data.transfer_ref)) return fail('INVALID', 'Nomor transfer ini sudah pernah dipakai: ' + str(data.transfer_ref));
-      const docs = partyDocs('supplier', sup, ''), doc = docs[no], amount = doc ? doc.remaining : total;
+      if (!before && dupRef(data.transfer_ref)) return fail('INVALID', 'Nomor transfer ini sudah pernah dipakai: ' + str(data.transfer_ref));
+      const docs = partyDocs('supplier', sup, ''), doc = docs[no], amount = before ? 0 : doc ? doc.remaining : total;
       if (amount > 0) {
         const sc = slipCheck(amount);
         if (sc && sc.fail) return sc.fail;
@@ -3172,7 +3173,7 @@ switch (req.action) {
     });
     const who = (role === 'owner' ? 'pemilik ' : role === 'manager' ? 'manajer ' : 'akuntan ') + me.name;
     const txt = 'Barang masuk ' + no + ' dari ' + sup + ' (' + str(lines[0].purchase_date) + ', diterima ' + str(lines[0].user) + ', ' + rpTxt(total) + ') dikonfirmasi ' + who + ': ' +
-      (kind === 'tempo' ? 'BAYAR NANTI — jatuh tempo ' + due + ' (hutang ke pemasok)' : 'sudah dibayar ' + method + (fromKas ? ' dari kas' : '') + (pay ? ' ' + rpTxt(pay.amount) + (pay.bank ? ' ' + pay.bank : '') + (pay.transfer_ref ? ' ref ' + pay.transfer_ref : '') : ' (sudah lunas sebelumnya)')) +
+      (kind === 'tempo' ? 'BAYAR NANTI — jatuh tempo ' + due + ' (hutang ke pemasok)' : 'sudah dibayar ' + method + (fromKas ? ' dari kas' : '') + (pay ? ' ' + rpTxt(pay.amount) + (pay.bank ? ' ' + pay.bank : '') + (pay.transfer_ref ? ' ref ' + pay.transfer_ref : '') : before ? ' (dibayar sebelumnya, tanpa pembayaran baru)' : ' (sudah lunas sebelumnya)')) +
       (str(data.note) ? ' | ' + str(data.note).slice(0, 200) : '');
     logAct('konfirmasi_masuk', txt, no, total, 'info');
     notify(['owner', 'manager', 'akuntan'].filter(function (x) { return x !== role; }), txt, kind === 'tempo' ? 'warn' : 'info');

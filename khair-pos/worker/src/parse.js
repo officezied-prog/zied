@@ -53,8 +53,8 @@ export function parseRequest(body, headers) {
     ip: String(headers['x-forwarded-for'] || headers['x-real-ip'] || '').split(',')[0].trim(),
     ua: String(headers['user-agent'] || '').slice(0, 300),
     purchase_no: ['request_purchase_fix', 'decide_approval', 'confirm_purchase'].indexOf(action) >= 0 && data.purchase_no ? String(data.purchase_no) : '__none__',
-    // v65: goods-in waiting for its confirmation (the last 30 days, never before the feature started) / on credit due within 3 days
-    check_since: [shift(today, -30), '2026-10-20'].sort().pop(),
+    // v65: goods-in waiting for its confirmation (the last 30 days; v66: also the notes from before the feature) / on credit due within 3 days
+    check_since: shift(today, -30),
     due_until: shift(today, 3),
     act_from: action === 'list_activity' && isDate(data.from) ? data.from : (action === 'bootstrap' ? weekAgo : '9999-12-31'),
     act_to: action === 'list_activity' && isDate(data.to) ? data.to : (action === 'bootstrap' ? today : '0000-01-01'),
