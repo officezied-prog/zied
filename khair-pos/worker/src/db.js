@@ -85,6 +85,18 @@ export function loaderSpecs(req, opts = {}) {
     'Get Photo': eq('pos_photos', 'photo_id', photoId),
     'Get Open Shifts': eq('pos_shifts', 'status', 'open'),
     'Get Purchase By No': eq('pos_purchases', 'purchase_no', purchaseNo),
+    // v65: for the owner / manager / accountant at bootstrap — the goods-in notes not confirmed yet (since the feature started) and the
+    // ones bought on credit whose agreed date is near or past (a handful of rows; the light polls never read them)
+    'Get Unchecked Purchases': {
+      table: 'pos_purchases',
+      sql: "SELECT * FROM pos_purchases WHERE purchase_date >= ? AND (check_status IS NULL OR check_status = '') ORDER BY id",
+      params: [req.action === 'bootstrap' ? req.check_since : '9999-12-31'],
+    },
+    'Get Due Purchases': {
+      table: 'pos_purchases',
+      sql: "SELECT * FROM pos_purchases WHERE pay_status = 'tempo' AND due_date <= ? ORDER BY id",
+      params: [req.action === 'bootstrap' ? req.due_until : '0000-01-01'],
+    },
     'Get Party Sales': eq('pos_sales', 'customer_id', req.party_cid),
     'Get Party Purchases': eq('pos_purchases', 'supplier', req.party_supplier),
     'Get Returns By Ref': eq('pos_returns', 'ref', returnsRef),

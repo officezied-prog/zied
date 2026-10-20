@@ -32,6 +32,14 @@ a Chrome tab's choice or the other Khair app no longer hijacks it. Scanners: `sh
 another (a burst typed into a number box is put back and read as a scan); UPC-A ↔ EAN-13 leading zeros match; "Pemindai barcode"
 (Lainnya / Pengaturan) = the steps + a test scan.
 
+**Daily summary + goods-in confirmation (v65, owner 2026-10-20):** Laporan → Harian lists EVERY invoice of the day (each opens with all its
+lines, discount, fee, how it was paid, the debt) and EVERY product sold, with "Cetak / PDF" and two CSV files; the accountant sees it too.
+Sales are kept for good (nothing deletes a sale; a void only marks it). Goods-in: every supplier note from 2026-10-20 waits for the manager /
+accountant (`confirm_purchase`, Perhatian), who mark it paid now (cash / transfer / QRIS → a supplier payment allocated to the note, money
+out of the day; "from my drawer" only with an open shift) or on credit until an agreed date (`pay_status 'tempo'`, `due_date` on the note's
+lines = the supplier's debt; due ≤ 3 days / late in Perhatian and in the supplier's ledger; a later payment covering it marks it 'lunas').
+Not an expense (the goods' cost counts when sold). Paying a debt later still goes through the owner's pay plan.
+
 **New versions reach phones by themselves (v49):** `shared/app-update.js` (KUpdate) re-reads the app's own page
 (`cache:'no-cache'`, a 304 when unchanged) on open, on return to the screen (≥5 min) and every 30 min; another
 `APP_VERSION` there → it reloads itself on the login screen / when untouched since it opened, otherwise a green
@@ -82,7 +90,10 @@ the worker tests + the three Playwright suites on every PR. This removed n8n's m
   `WA_VERIFY_TOKEN` (owner, Cloudflare dashboard — never in the repo); without them, over the monthly cap (`brad_wa_cap`, default 3,000)
   or on a refusal, the app sends by hand (wa.me) as in stage 1. Setup steps: `worker/docs/whatsapp-setup.md`. Demo of the whole
   automatic process: `brad/?mock=1&wa=1` (v61.1: on each order a simulated phone of the cold store / driver / customer, with the
-  cold store's buttons and a "pintu N" reply to tap).
+  cold store's buttons and a "pintu N" reply to tap). **v62 (app 1.2.0):** the customer books the car himself ("Dipesan pelanggan",
+  `via 'pelanggan'`): his WhatsApp message is pasted, `KBrad.parseCarMsg` proposes driver / plate / WhatsApp / vehicle / minutes /
+  tracking link (fixed rules), the trip keeps `customer_msg` + `track_url`; the hand-sent car text carries the link, the approved car
+  template keeps its six values (no link).
 
 ## Owner standing rules — ALWAYS honor
 

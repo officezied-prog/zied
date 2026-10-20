@@ -154,7 +154,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.9.7';
+const APP_VERSION = '2.9.8';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -449,7 +449,7 @@ const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
 // v36 (owner 2026-10-11: "the visits table … a copy for the manager, the accountant and the owner"): + the field page, read-only
 const AUDIT_VIEWS = ['reports', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'invchg', 'approvals', 'shoplist', 'field', 'settings'];
-const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|printer-open|scanner-open|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
+const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|printer-open|scanner-open|pu-confirm|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
@@ -786,6 +786,7 @@ function applyData(d) {
   if (Array.isArray(d.open_shifts)) S.openShifts = d.open_shifts;
   if (typeof d.ai_reader === 'boolean') S.aiReader = d.ai_reader; // v50: the photo reader (AI key in the Worker) on / off
   if (Array.isArray(d.repacks_open)) S.repacksOpen = d.repacks_open; // v50: started repacks waiting for the manager's confirmation
+  if (d.purchase_checks !== undefined) S.pchecks = d.purchase_checks; // v65: goods-in waiting for its confirmation / on credit and due
   if (Array.isArray(d.activity_recent)) { ACTV.recent = d.activity_recent; if (S.inApp) updateActBadge(); }
   if (Array.isArray(d.notifications)) { S.notices = d.notifications; if (S.inApp) updateBell(); } // v38: role-addressed notices (bell)
   if (d.must_change === true && S.inApp && typeof showPinChange === 'function') setTimeout(() => showPinChange(), 0);
@@ -2900,6 +2901,13 @@ function computeAttention(d) {
   if (isApprover() && AP.count) items.push({ key: 'apr', level: 'warn', icon: 'check', text: t('att.approvals', { n: AP.count }), go: 'approvals' });
   const bk = isApprover() ? (AP.list || []).filter(a => a.kind === 'buka_kas' && (!a.status || a.status === 'pending')).length : 0;
   if (bk) items.push({ key: 'bukakas', level: 'warn', icon: 'cash', text: t('att.bukakas', { n: bk }), go: 'approvals' });
+  // v65: goods-in the manager / accountant still has to confirm (with how it was paid), and notes on credit near or past their date
+  const pc = S.pchecks;
+  if (pc && (pc.waiting || []).length) items.push({ key: 'pucheck', level: 'warn', icon: 'box', text: t('att.pu_check', { n: pc.waiting.length }), go: 'purchases' });
+  if (pc && (pc.due || []).length) {
+    const late = pc.due.filter(x => x.days < 0);
+    items.push({ key: 'pudue', level: late.length ? 'err' : 'warn', icon: 'supplier', text: t(late.length ? 'att.pu_late' : 'att.pu_due', { n: (late.length || pc.due.length), amount: fmtRp(sum(late.length ? late : pc.due, x => int(x.total))) }), go: 'suppliers' });
+  }
 
   if (d) {
     const miss = d.sales.filter(s => s.exit_photo === 'required' && s.status !== 'void' && (isApprover() || s.cashier === S.user));
@@ -4612,9 +4620,9 @@ function computeReport(d, from, to) {
 }
 RENDER.reports = function () {
   const v = $('#view-reports');
-  if (RP.mode === 'daily' && isApprover()) { renderDaily(v); return; }
+  if (RP.mode === 'daily' && (isApprover() || isAudit())) { renderDaily(v); return; } // v65: the accountant too
   if (!isOwner()) {
-    v.innerHTML = `<div class="view-head"><h1>${esc(t('rep.today_title'))}</h1><button class="btn" data-act="rep-load">${ic('refresh')} ${esc(t('refresh'))}</button>${isApprover() ? `<button class="btn primary" data-act="rp-mode" data-m="daily" id="rp-daily-btn">${ic('report')} ${esc(t('dr.title'))}</button>` : ''}</div><div id="rp-body"><div class="empty">${esc(t('loading'))}</div></div>`;
+    v.innerHTML = `<div class="view-head"><h1>${esc(t('rep.today_title'))}</h1><button class="btn" data-act="rep-load">${ic('refresh')} ${esc(t('refresh'))}</button>${isApprover() || isAudit() ? `<button class="btn primary" data-act="rp-mode" data-m="daily" id="rp-daily-btn">${ic('report')} ${esc(t('dr.title'))}</button>` : ''}</div><div id="rp-body"><div class="empty">${esc(t('loading'))}</div></div>`;
     RP.from = RP.to = today(); loadReport(); return;
   }
   if (!RP.from) [RP.from, RP.to] = presetRange(RP.preset);
@@ -7159,6 +7167,7 @@ Object.assign(ACT, {
     try { const r = await matSave(RM.list); toast(t(r.unchanged ? 'rpm.unchanged' : 'rpm.saved'), 'ok'); RENDER.gudang(); } catch (e) { if (err) err.textContent = errMsg(e); if (btn) btn.disabled = false; }
   },
   'rp-start': () => rpStart(),
+  'pu-confirm': el => openPurchaseConfirm(el.dataset.no), // v65
   'rp-fin': el => { const r = (S.repacksOpen || []).find(x => x.repack_id === el.dataset.id); if (r) openRepackFinish(r); },
   'rp-pick': el => { RPK.bulk = String(el.dataset.bulk || ''); RPK.pack = String(el.dataset.id || ''); RPK.bulkPick.set(RPK.bulk, true); rpPackSync(true); RPK.pack = String(el.dataset.id || ''); RPK.packPick.set(RPK.pack, true); rpPackSync(false); rpCalc(); const a = $('#rp-amount'); if (a) { a.scrollIntoView({ block: 'nearest' }); a.focus(); } }
 });
@@ -7286,6 +7295,7 @@ function purchaseNotes(purchases) {
     if (!n) m.set(k, n = { key: k, no: r.purchase_no || '', date: '', supplier: r.supplier || '', rows: [], status: '', notes: '', user: '', fixed: false, total: 0, id: 0, carrier: carrierText(r), hidden: false });
     // v50: no total from the server = hidden for this account, never "Rp 0" (v59: the owner, manager and accountant always get it)
     n.rows.push(r); n.total += int(r.total); if (r.total === undefined || r.total === null) n.hidden = true; n.id = Math.max(n.id, num(r.id));
+    if (r.check_status && !n.check) n.check = { by: r.checked_by, at: r.checked_at, pay: r.pay_status, method: r.pay_method, due: r.due_date, paid_at: r.paid_at }; // v65
     if (r.match_status === 'koreksi') n.fixed = true;
     else { if (!n.date || r.purchase_date < n.date) n.date = r.purchase_date; n.status = r.match_status || n.status || (r.photo_id ? '' : 'tanpa_foto'); n.notes = r.match_notes || n.notes; n.user = r.user || n.user; }
   });
@@ -7303,9 +7313,70 @@ function drawPurchaseHistory() {
   el.innerHTML = notes.length ? `<div class="tbl-wrap"><table class="tbl" id="pu-hist"><thead><tr><th>${esc(t('date'))}</th><th>${esc(t('pu.no'))}</th><th>${esc(t('pu.supplier'))}</th><th class="hide-phone">${esc(t('items'))}</th><th class="r">${esc(t('total'))}</th><th>${esc(t('status'))}</th><th></th></tr></thead><tbody>
     ${notes.map(n => `<tr data-no="${esc(n.no)}"><td class="num">${esc(fmtDate(n.date))}</td><td class="small"><b>${esc(n.no || '—')}</b></td><td>${esc(n.supplier || '—')}${n.carrier ? `<div class="small muted" data-carrier>${ic('truck')} ${esc(n.carrier)}</div>` : ''}</td>
       <td class="hide-phone small">${noteProducts(n).slice(0, 4).map(a => `${esc(a.name)} <b class="num">×${fmtQty(a.qty)}</b>`).join(', ')}${noteProducts(n).length > 4 ? ' …' : ''}</td>
-      <td class="r num">${n.hidden ? `<span class="muted" data-cost-hidden title="${esc(t('pu.cost_hidden_hint'))}">${esc(t('pu.cost_hidden'))}</span>` : fmtRp(n.total)}</td><td>${matchBadge(n.status)}${n.fixed ? ' ' + matchBadge('koreksi') : ''}${n.notes && n.status === 'tidak_cocok' ? `<div class="small muted">${esc(n.notes)}</div>` : ''}</td>
+      <td class="r num">${n.hidden ? `<span class="muted" data-cost-hidden title="${esc(t('pu.cost_hidden_hint'))}">${esc(t('pu.cost_hidden'))}</span>` : fmtRp(n.total)}</td><td>${matchBadge(n.status)}${n.fixed ? ' ' + matchBadge('koreksi') : ''}${puCheckHTML(n)}${n.notes && n.status === 'tidak_cocok' ? `<div class="small muted">${esc(n.notes)}</div>` : ''}</td>
       <td class="r" style="white-space:nowrap">${n.no && n.status !== 'retur' && isApprover() && !isOwner() ? `<button class="btn xs" data-act="pu-fix" data-no="${esc(n.no)}">${ic('edit')} ${esc(t('fix.button'))}</button> <button class="btn xs" data-act="pu-retur" data-no="${esc(n.no)}">${ic('return')} ${esc(t('rt.btn'))}</button>` : ''}${n.no ? ` <button class="btn xs" data-act="pu-doc" data-no="${esc(n.no)}">${ic('print')} ${esc(t('doc.goods_in'))}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
     <p class="small muted">${esc(t('pu.locked_hint'))}${notes.some(n => n.hidden) ? ' ' + esc(t('pu.cost_hidden_hint')) : ''}</p>` : `<div class="muted">${esc(t('no_data'))}</div>`;
+}
+/* v65 (owner 2026-10-20: «عند استقبال البضاعة و التأكد منها من الموظف، المدير و المحاسب يصادق عليها و يكتب هل تم الدفع و بأي وسيلة دفع او
+   تاريخ الدفع المتفق عليه و يدخل في المصاريف او الدين»): every supplier note waits for the manager / accountant, who confirm it with how it
+   was paid — now (cash, transfer, QRIS: a supplier payment, money out of the day) or later by the agreed date (the supplier's debt, due /
+   late in Perhatian). Not an expense: the goods' cost counts when they are sold. */
+const canConfirmPu = () => isApprover() || isAudit();
+const PC_SINCE = '2026-10-20'; // notes from before the confirmation existed are left as they were
+function puCheckHTML(n) {
+  if (!n.no || n.status === 'retur' || (!n.check && String(n.date) < PC_SINCE)) return '';
+  const c = n.check;
+  if (!c) return ` <span class="badge amber" data-check="wait">${esc(t('pc.wait'))}</span>${canConfirmPu() ? ` <button class="btn xs primary" data-act="pu-confirm" data-no="${esc(n.no)}">${ic('check')} ${esc(t('pc.btn'))}</button>` : ''}`;
+  if (c.pay === 'tempo') {
+    const late = c.due && c.due < today();
+    return ` <span class="badge ${late ? 'red' : 'amber'}" data-check="tempo" title="${esc(t('pc.by', { name: c.by || '' }))}">${esc(t(late ? 'pc.late' : 'pc.tempo', { d: fmtDate(c.due) }))}</span>`;
+  }
+  return ` <span class="badge ok" data-check="lunas" title="${esc(t('pc.by', { name: c.by || '' }))}">${esc(t('pc.paid', { m: c.method ? t('pm.' + c.method) : '' }))}</span>`;
+}
+function openPurchaseConfirm(no) {
+  const n = PH.data && purchaseNotes(PH.data.purchases).find(x => x.no === no); if (!n) return;
+  const shiftOpen = !!(S.shift && S.shift.status === 'open'), due0 = new Date(Date.parse(today()) + int(settings().invoice_due_days || 14) * 86400000).toISOString().slice(0, 10);
+  const el = openModal({
+    title: `${t('pc.title')} · ${no}`, id: 'pc-modal',
+    body: `<p style="margin-top:0"><b>${esc(n.supplier || '—')}</b> · ${esc(fmtDate(n.date))}${n.user ? ' · ' + esc(t('pc.received_by', { name: n.user })) : ''}<br>
+        <span class="small">${esc(t('items'))}: ${noteProducts(n).map(a => `${esc(a.name)} ×${fmtQty(a.qty)}`).join(', ')}</span>${n.hidden ? '' : `<br><b class="num" id="pc-total">${fmtRp(n.total)}</b>`}</p>
+      <p class="small muted">${esc(t('pc.hint'))}</p>
+      <div class="seg" id="pc-kind" role="radiogroup" style="margin-bottom:10px"><button type="button" data-k="lunas" id="pc-k-lunas" class="on">${esc(t('pc.k_paid'))}</button><button type="button" data-k="tempo" id="pc-k-tempo">${esc(t('pc.k_later'))}</button></div>
+      <div id="pc-paid">
+        <div class="field"><label class="f">${esc(t('pc.method'))}</label><div class="seg" id="pc-m">${['tunai', 'transfer', 'qris'].map((m, i) => `<button type="button" data-m="${m}" class="${i === 1 ? 'on' : ''}">${esc(t('pm.' + m))}</button>`).join('')}</div></div>
+        <label class="check" id="pc-kas-row" hidden><input type="checkbox" id="pc-kas" ${shiftOpen ? '' : 'disabled'}> <span>${esc(t(shiftOpen ? 'pc.from_kas' : 'pc.from_kas_none'))}</span></label>
+        <div class="grid2" id="pc-tf"><div class="field"><label class="f" for="pc-bank">${esc(t('pc.bank'))}</label><input class="input" id="pc-bank" maxlength="60" autocomplete="off"></div>
+          <div class="field"><label class="f" for="pc-ref">${esc(t('pc.ref'))}</label><input class="input" id="pc-ref" maxlength="80" autocomplete="off"></div></div></div>
+      <div id="pc-later" hidden><div class="field"><label class="f" for="pc-due">${esc(t('pc.due'))} *</label><input class="input" type="date" id="pc-due" min="${today()}" value="${esc(due0)}" style="max-width:200px"></div></div>
+      <div class="field"><label class="f" for="pc-note">${esc(t('notes'))}</label><input class="input" id="pc-note" maxlength="200" autocomplete="off"></div>
+      <div class="red" id="pc-err" role="alert"></div>`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="pc-ok">${ic('check')} ${esc(t('pc.save'))}</button>`
+  });
+  let kind = 'lunas', method = 'transfer';
+  const sync = () => {
+    $$('#pc-kind [data-k]', el).forEach(b => b.classList.toggle('on', b.dataset.k === kind));
+    $$('#pc-m [data-m]', el).forEach(b => b.classList.toggle('on', b.dataset.m === method));
+    $('#pc-paid', el).hidden = kind !== 'lunas'; $('#pc-later', el).hidden = kind !== 'tempo';
+    $('#pc-kas-row', el).hidden = method !== 'tunai'; $('#pc-tf', el).hidden = method === 'tunai';
+  };
+  $$('#pc-kind [data-k]', el).forEach(b => b.onclick = () => { kind = b.dataset.k; sync(); });
+  $$('#pc-m [data-m]', el).forEach(b => b.onclick = () => { method = b.dataset.m; sync(); });
+  sync();
+  $('#pc-ok', el).onclick = async e => {
+    const err = $('#pc-err', el), btn = e.currentTarget;
+    const data = { purchase_no: no, supplier: n.supplier, pay: kind, note: $('#pc-note', el).value.trim() };
+    if (kind === 'tempo') { data.due_date = $('#pc-due', el).value; if (!/^\d{4}-\d{2}-\d{2}$/.test(data.due_date) || data.due_date < today()) { err.textContent = t('pc.need_due'); return; } }
+    else { data.method = method; if (method === 'tunai' && $('#pc-kas', el).checked) data.paid_from = 'kas'; if (method !== 'tunai') { data.bank = $('#pc-bank', el).value.trim(); data.transfer_ref = $('#pc-ref', el).value.trim(); } }
+    btn.disabled = true; err.textContent = '';
+    try {
+      const r = await api('confirm_purchase', data), c = r.check || {};
+      n.rows.forEach(row => Object.assign(row, c));
+      if (S.pchecks) { S.pchecks.waiting = (S.pchecks.waiting || []).filter(x => x.purchase_no !== no); if (c.pay_status === 'tempo') S.pchecks.due = S.pchecks.due || []; }
+      Object.keys(salesCache).forEach(k => delete salesCache[k]);
+      saveCache(); closeModal(); drawPurchaseHistory(); refreshAttention();
+      toast(t(c.pay_status === 'tempo' ? 'pc.saved_later' : 'pc.saved_paid'), 'ok', 4000);
+    } catch (x) { err.textContent = errMsg(x); btn.disabled = false; }
+  };
 }
 function openPurchaseFix(no) {
   const n = PH.data && purchaseNotes(PH.data.purchases).find(x => x.no === no); if (!n) return;
@@ -7392,7 +7463,7 @@ function ledgerHTML(L, kind) {
   const open = L.docs.filter(d => d.remaining > 0), done = L.docs.filter(d => d.remaining <= 0);
   const unalloc = sum(L.payments, p => Math.max(0, p.amount - sum(p.alloc, a => a.amount)));
   const docsTbl = (list, id) => `<div class="tbl-wrap"><table class="tbl" id="${id}"><thead><tr><th>${esc(t(kind === 'customer' ? 'led.invoice' : 'led.note'))}</th><th>${esc(t('date'))}</th><th class="r">${esc(t(kind === 'customer' ? 'led.debt' : 'total'))}</th><th class="r">${esc(t('led.paid'))}</th><th class="r">${esc(t('led.remaining'))}</th></tr></thead><tbody>
-    ${list.map(d => `<tr data-ref="${esc(d.ref)}"><td><b>${esc(d.ref)}</b></td><td class="num">${esc(fmtDate(d.date))}</td><td class="r num">${fmtRp(d.total)}</td><td class="r num">${fmtRp(d.paid + d.auto)}${d.auto ? `<div class="small muted" data-auto title="${esc(t('led.auto_hint'))}">${esc(t('led.auto', { n: fmtRp(d.auto) }))}</div>` : ''}</td><td class="r num" data-rem><b class="${d.remaining ? 'red' : 'green'}">${fmtRp(d.remaining)}</b></td></tr>`).join('') || `<tr><td colspan="5" class="empty">${esc(t('led.none_open'))}</td></tr>`}</tbody></table></div>`;
+    ${list.map(d => `<tr data-ref="${esc(d.ref)}"><td><b>${esc(d.ref)}</b>${d.due_date && d.remaining > 0 ? `<div class="small ${d.due_date < today() ? 'red' : 'muted'}" data-due="${esc(d.due_date)}">${esc(t(d.due_date < today() ? 'pc.late' : 'pc.tempo', { d: fmtDate(d.due_date) }))}</div>` : ''}</td><td class="num">${esc(fmtDate(d.date))}</td><td class="r num">${fmtRp(d.total)}</td><td class="r num">${fmtRp(d.paid + d.auto)}${d.auto ? `<div class="small muted" data-auto title="${esc(t('led.auto_hint'))}">${esc(t('led.auto', { n: fmtRp(d.auto) }))}</div>` : ''}</td><td class="r num" data-rem><b class="${d.remaining ? 'red' : 'green'}">${fmtRp(d.remaining)}</b></td></tr>`).join('') || `<tr><td colspan="5" class="empty">${esc(t('led.none_open'))}</td></tr>`}</tbody></table></div>`;
   return `<div class="row wrap small" style="margin-bottom:8px;gap:6px 16px"><span>${esc(t(kind === 'customer' ? 'led.open_total' : 'led.open_total_sup'))}: <b class="num red" id="led-open-total">${fmtRp(sum(open, d => d.remaining))}</b></span>
       <span>${esc(t('led.unalloc_total'))}: <b class="num" id="led-unalloc">${fmtRp(unalloc)}</b></span>${kind === 'supplier' ? `<span>${esc(t('sp.balance'))}: <b class="num" id="led-balance">${fmtRp(L.balance)}</b></span>` : ''}</div>
     <h4 style="margin:8px 0 6px">${esc(t(kind === 'customer' ? 'led.open_invoices' : 'led.open_notes'))} <span class="badge ${open.length ? 'amber' : 'green'}">${open.length}</span></h4>${docsTbl(open, 'led-docs')}
@@ -8042,11 +8113,12 @@ async function bankAttention() {
 }
 
 /* ========== Laporan harian (v15): one day in numbers, sent to WhatsApp with one tap per number ========== */
-const DR = { date: '', data: null, err: '', withProfit: false, seq: 0 };
+const DR = { date: '', data: null, err: '', withProfit: false, seq: 0, day: null };
 function renderDaily(v) {
   if (!DR.date) DR.date = today();
   const modes = isOwner() ? ['period', 'year', 'kas', 'daily'] : ['period', 'daily'];
-  v.innerHTML = `<div class="view-head"><h1>${esc(t('dr.title'))}</h1><button class="btn sm" data-act="dr-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
+  v.innerHTML = `<div class="view-head"><h1>${esc(t('dr.title'))}</h1><button class="btn sm" data-act="dr-refresh">${ic('refresh')} ${esc(t('refresh'))}</button>
+      <button class="btn sm" data-act="dr-print" id="dr-print">${ic('print')} ${esc(t('ds.print'))}</button><button class="btn sm" data-act="dr-csv" data-k="inv" id="dr-csv-inv">${ic('download')} ${esc(t('ds.csv_inv'))}</button><button class="btn sm" data-act="dr-csv" data-k="prod" id="dr-csv-prod">${ic('download')} ${esc(t('ds.csv_prod'))}</button></div>
     <div class="seg" style="max-width:520px;margin-bottom:12px" role="tablist">${modes.map(m => `<button role="tab" aria-selected="${RP.mode === m}" class="${RP.mode === m ? 'on' : ''}" data-act="rp-mode" data-m="${m}">${esc(t(isOwner() || m === 'daily' ? 'rp.mode_' + m : 'rep.today_title'))}</button>`).join('')}</div>
     <div class="toolbar"><label class="f" style="margin:0">${esc(t('date'))} <input class="input" type="date" id="dr-date" value="${esc(DR.date)}" max="${today()}" style="width:auto"></label></div>
     <div id="dr-body"><div class="empty">${esc(t('loading'))}</div></div>`;
@@ -8056,7 +8128,7 @@ function renderDaily(v) {
 async function loadDaily() {
   const seq = ++DR.seq, b = $('#dr-body'); if (b) b.style.opacity = '.55';
   try { const r = await api('daily_report', { date: DR.date }); if (seq !== DR.seq) return; DR.data = r; DR.err = ''; } catch (e) { if (seq !== DR.seq) return; DR.data = null; DR.err = errMsg(e); }
-  try { const d = await loadSales(DR.date, DR.date, true); if (seq === DR.seq && DR.data) { const ok = d.sales.filter(x => x.status !== 'void' && x.sale_date === DR.date); DR.data.send_fees = { count: ok.filter(x => int(x.send_fee) > 0).length, total: sum(ok, x => int(x.send_fee)) }; } } catch (e) { }
+  try { const d = await loadSales(DR.date, DR.date, true); if (seq === DR.seq) DR.day = d; if (seq === DR.seq && DR.data) { const ok = d.sales.filter(x => x.status !== 'void' && x.sale_date === DR.date); DR.data.send_fees = { count: ok.filter(x => int(x.send_fee) > 0).length, total: sum(ok, x => int(x.send_fee)) }; } } catch (e) { }
   drawDaily();
 }
 function drawDaily() {
@@ -8080,6 +8152,7 @@ function drawDaily() {
     <div class="panel" style="margin-bottom:14px" id="dr-shifts"><h3>${ic('cash')} ${esc(t('dr.drawers'))}</h3><div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl"><thead><tr><th>${esc(t('rc.cashier'))}</th><th class="r">${esc(t('shift.opening'))}</th><th class="r">${esc(t('shift.expected'))}</th><th class="r">${esc(t('shift.counted'))}</th><th class="r">${esc(t('shift.difference'))}</th></tr></thead><tbody>
       ${(R.shifts || []).map(x => `<tr data-shift="${esc(x.shift_id || x.cashier)}"><td>${esc(x.cashier)} ${x.status === 'open' ? `<span class="badge amber">${esc(t('shift.status_open'))}</span>` : ''}</td><td class="r num">${fmtRp(x.opening_cash)}</td><td class="r num">${fmtRp(x.expected_cash)}</td><td class="r num">${x.counted_cash == null ? '—' : fmtRp(x.counted_cash)}</td><td class="r num ${x.difference ? 'red' : ''}">${x.difference == null ? '—' : (x.difference > 0 ? '+' : '') + fmtRp(x.difference)}</td></tr>`).join('') || `<tr><td colspan="5" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div></div>
     <div class="panel" style="margin-bottom:14px" id="dr-top"><h3>${esc(t('home.top'))}</h3><div class="pb">${homeTopRows((R.top_items || []).map(x => ({ name: x.name, qty: x.qty, omzet: x.total, unit: '' })), 10)}</div></div>
+    ${dsProductsHTML()}${dsInvoicesHTML()}
     <div class="card pad" id="dr-send"><h3 style="margin:0 0 8px;font-size:16px">${ic('wa')} ${esc(t('dr.send_title'))}</h3>
       ${own ? `<label class="check" style="min-height:0"><input type="checkbox" id="dr-profit" ${DR.withProfit ? 'checked' : ''}> ${esc(t('dr.with_profit'))}</label>` : ''}
       <div class="wa-btns" id="dr-wa">${nums.map(([k, n]) => `<a class="btn wa-send" target="_blank" rel="noopener" data-wa="${k}" id="dr-wa-${k}" href="${esc(waLink(n, dailyText(R, own && DR.withProfit)))}">${ic('wa')} ${esc(t('dr.send_' + k))}</a>`).join('')}
@@ -8127,6 +8200,84 @@ function dailyCashierLines(R) {
   });
   if (!(R.cashiers || []).length) L.push('Belum ada transaksi.');
   return L;
+}
+/* v65 (owner 2026-10-20: «يجب أن يكون هناك ملخص يومي بالفواتير وكل فاتورة فيها كل المعطيات وتخزن دائمًا في التطبيق، وملخص للبيع اليومي لكل
+   البضائع»): under the day's numbers, EVERY invoice of the day (open one: all its lines, discount, fee, how it was paid, the debt, who and
+   when) and EVERY product sold that day (not only the top 10); printed / saved as PDF, or downloaded as CSV. The invoices themselves are
+   kept on the server for good (nothing deletes a sale; a void only marks it). Owner, manager and accountant. */
+function dsDay() {
+  const d = DR.day; if (!d) return null;
+  const sales = d.sales.filter(x => x.sale_date === DR.date).sort((a, b) => String(a.sale_time || '').localeCompare(String(b.sale_time || '')));
+  const inv = {}; sales.forEach(x => { inv[x.invoice_no] = x; });
+  const items = d.items.filter(i => inv[i.invoice_no]);
+  const ok = {}; sales.forEach(x => { if (x.status !== 'void') ok[x.invoice_no] = true; });
+  const prod = {};
+  items.filter(i => ok[i.invoice_no]).forEach(i => {
+    const k = String(i.product_id), p = prodById(i.product_id);
+    const r = prod[k] || (prod[k] = { name: i.name || (p && p.name) || '?', unit: (p && p.unit) || '', qty: 0, total: 0, inv: {}, profit: 0, hasProfit: false });
+    r.qty = roundQty(r.qty + num(i.qty)); r.total += int(i.line_total); r.inv[i.invoice_no] = 1;
+    if ('line_profit' in i) { r.profit += int(i.line_profit); r.hasProfit = true; }
+  });
+  const products = Object.values(prod).map(r => Object.assign(r, { n: Object.keys(r.inv).length })).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+  return { sales, items, products, ok };
+}
+const dsTime = x => String(x.sale_time || '').slice(11, 16);
+function dsMethod(x) {
+  if (x.payment_method === 'campur' && window.KPay) return KPay.lines(x).map(pp => t('pm.' + pp.m) + ' ' + fmtRp(pp.a)).join(' + '); // a split payment: its parts
+  return t('pm.' + (x.payment_method || 'tunai'));
+}
+function dsProductsHTML() {
+  const D = dsDay(); if (!D) return '';
+  const own = D.products.some(r => r.hasProfit);
+  return `<div class="panel" style="margin-bottom:14px" id="dr-products"><h3>${ic('box')} ${esc(t('ds.products', { n: fmtNum(D.products.length) }))}</h3>
+    ${D.products.length ? `<div class="tbl-wrap" style="border:0;border-radius:0"><table class="tbl"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('qty'))}</th><th class="r">${esc(t('rep.omzet'))}</th><th class="r">${esc(t('ds.n_inv'))}</th>${own ? `<th class="r">${esc(t('rep.profit'))}</th>` : ''}</tr></thead><tbody>
+      ${D.products.map(r => `<tr data-ds-prod="${esc(r.name)}"><td>${esc(r.name)}</td><td class="r num">${fmtQty(r.qty)} ${esc(r.unit)}</td><td class="r num">${fmtRp(r.total)}</td><td class="r num">${fmtNum(r.n)}</td>${own ? `<td class="r num">${fmtRp(r.profit)}</td>` : ''}</tr>`).join('')}
+      <tr class="tot"><td><b>${esc(t('total'))}</b></td><td></td><td class="r num"><b data-ds-total>${fmtRp(sum(D.products, r => r.total))}</b></td><td></td>${own ? `<td class="r num"><b>${fmtRp(sum(D.products, r => r.profit))}</b></td>` : ''}</tr></tbody></table></div>
+      <p class="small muted" style="margin:6px 12px 10px">${esc(t('ds.products_hint'))}</p>` : `<div class="pb muted">${esc(t('ds.none'))}</div>`}</div>`;
+}
+function dsInvoiceBody(x, D) {
+  const lines = D.items.filter(i => i.invoice_no === x.invoice_no);
+  return `<table class="tbl" style="margin:6px 0"><tbody>${lines.map(i => `<tr><td>${esc(i.name)}${i.price_type === 'grosir' ? ` <span class="badge">${esc(t('type.grosir'))}</span>` : ''}</td><td class="r num">${fmtQty(i.qty)} × ${fmtRp(i.unit_price)}</td><td class="r num">${fmtRp(i.line_total)}</td></tr>`).join('')}</tbody></table>
+    <div class="small">${int(x.discount) ? `${esc(t('discount'))} −${fmtRp(x.discount)} · ` : ''}${int(x.send_fee) ? `${esc(t('rs.fee_line'))} ${fmtRp(x.send_fee)} · ` : ''}<b>${esc(t('total'))} ${fmtRp(int(x.total) + int(x.send_fee))}</b> · ${esc(dsMethod(x))}${int(x.debt_amount) ? ` · <span class="red">${esc(t('pm.hutang'))} ${fmtRp(x.debt_amount)}</span>` : ''}</div>
+    <div class="row wrap" style="gap:6px;margin-top:6px"><button class="btn xs" data-act="hist-open" data-inv="${esc(x.invoice_no)}">${ic('list')} ${esc(t('ds.open_rc'))}</button></div>`;
+}
+function dsInvoicesHTML() {
+  const D = dsDay(); if (!D) return '';
+  const nOk = Object.keys(D.ok).length;
+  return `<div class="panel" style="margin-bottom:14px" id="dr-invoices"><h3>${ic('report')} ${esc(t('ds.invoices', { n: fmtNum(nOk) }))}${D.sales.length > nOk ? ` <span class="badge red">${esc(t('ds.n_void', { n: fmtNum(D.sales.length - nOk) }))}</span>` : ''}</h3><div class="pb">
+    ${D.sales.length ? D.sales.map(x => `<details class="ds-inv" data-ds-inv="${esc(x.invoice_no)}" style="border-bottom:1px solid var(--border);padding:6px 0"><summary style="cursor:pointer" class="row wrap"><span class="num">${esc(dsTime(x))}</span> <b class="num">${esc(x.invoice_no)}</b> <span class="grow small muted">${esc(x.cashier || '')}${x.customer_name ? ' · ' + esc(x.customer_name) : ''}</span>
+        ${x.status === 'void' ? `<span class="badge red">${esc(t('ds.void'))}</span>` : int(x.debt_amount) ? `<span class="badge amber">${esc(t('pm.hutang'))}</span>` : ''}<b class="num">${fmtRp(int(x.total) + int(x.send_fee))}</b></summary>${dsInvoiceBody(x, D)}</details>`).join('')
+      : `<div class="muted">${esc(t('ds.none'))}</div>`}
+    <p class="small muted" style="margin:8px 0 0">${esc(t('ds.kept'))}</p></div></div>`;
+}
+/** Print / save as PDF: the day's numbers, every product, every invoice with its lines. */
+function dsPrint() {
+  const D = dsDay(), R = (DR.data && DR.data.report) || {}, s0 = R.sales || {}, bm = s0.by_method || {}, st = settings();
+  if (!D) { toast(t('loading'), 'warn'); return; }
+  const html = `<div class="report" dir="${S.lang === 'ar' ? 'rtl' : 'ltr'}"><h1>${esc(t('ds.print_title'))} — ${esc(st.store_name)}</h1><p>${esc(fmtDate(DR.date))}</p>
+    <table><tr><td>${esc(t('dr.sales_total'))}</td><td class="r">${fmtRp(s0.total)}</td><td>${esc(t('rep.tx_count'))}</td><td class="r">${fmtNum(s0.count)}</td></tr>
+      <tr><td>${esc(t('pm.tunai'))}</td><td class="r">${fmtRp(bm.tunai)}</td><td>${esc(t('pm.transfer'))}</td><td class="r">${fmtRp(bm.transfer)}</td></tr>
+      <tr><td>${esc(t('pm.qris'))}</td><td class="r">${fmtRp(bm.qris)}</td><td>${esc(t('pm.kartu'))}</td><td class="r">${fmtRp(bm.kartu || 0)}</td></tr>
+      <tr><td>${esc(t('pm.hutang'))}</td><td class="r">${fmtRp(s0.debt)}</td><td>${esc(t('discount'))}</td><td class="r">${fmtRp(s0.discount)}</td></tr></table>
+    <h3>${esc(t('ds.products', { n: fmtNum(D.products.length) }))}</h3><table><tr><th>${esc(t('product'))}</th><th>${esc(t('qty'))}</th><th>${esc(t('rep.omzet'))}</th><th>${esc(t('ds.n_inv'))}</th></tr>
+      ${D.products.map(r => `<tr><td>${esc(r.name)}</td><td class="r">${fmtQty(r.qty)} ${esc(r.unit)}</td><td class="r">${fmtRp(r.total)}</td><td class="r">${fmtNum(r.n)}</td></tr>`).join('')}</table>
+    <h3>${esc(t('ds.invoices', { n: fmtNum(Object.keys(D.ok).length) }))}</h3>
+    ${D.sales.map(x => `<table style="margin-bottom:8px"><tr><th colspan="3" style="text-align:start">${esc(dsTime(x))} · ${esc(x.invoice_no)} · ${esc(x.cashier || '')}${x.customer_name ? ' · ' + esc(x.customer_name) : ''}${x.status === 'void' ? ' · ' + esc(t('ds.void')) : ''}</th></tr>
+      ${D.items.filter(i => i.invoice_no === x.invoice_no).map(i => `<tr><td>${esc(i.name)}</td><td class="r">${fmtQty(i.qty)} × ${fmtRp(i.unit_price)}</td><td class="r">${fmtRp(i.line_total)}</td></tr>`).join('')}
+      <tr><td>${int(x.discount) ? esc(t('discount')) + ' −' + fmtRp(x.discount) : ''}${int(x.send_fee) ? ' · ' + esc(t('rs.fee_line')) + ' ' + fmtRp(x.send_fee) : ''}</td><td class="r">${esc(dsMethod(x))}${int(x.debt_amount) ? ' · ' + esc(t('pm.hutang')) + ' ' + fmtRp(x.debt_amount) : ''}</td><td class="r"><b>${fmtRp(int(x.total) + int(x.send_fee))}</b></td></tr></table>`).join('')}</div>`;
+  printHTML(html, 'size:A4;margin:12mm');
+}
+/** CSV (Excel): every invoice line of the day, or every product of the day. */
+function dsCSV(kind) {
+  const D = dsDay(); if (!D) { toast(t('loading'), 'warn'); return; }
+  const q = v => { const x = String(v == null ? '' : v); return /[",;\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
+  const lines = kind === 'prod'
+    ? [['tanggal', 'barang', 'jumlah', 'satuan', 'omzet', 'nota'].join(';')].concat(D.products.map(r => [DR.date, r.name, String(r.qty).replace('.', ','), r.unit, r.total, r.n].map(q).join(';')))
+    : [['tanggal', 'jam', 'nota', 'status', 'kasir', 'pelanggan', 'bayar', 'barang', 'jumlah', 'harga', 'total_baris', 'diskon_nota', 'ongkir', 'total_nota', 'hutang'].join(';')]
+      .concat([].concat(...D.sales.map(x => D.items.filter(i => i.invoice_no === x.invoice_no).map(i => [DR.date, dsTime(x), x.invoice_no, x.status === 'void' ? 'batal' : 'ok', x.cashier || '', x.customer_name || '', dsMethod(x), i.name, String(num(i.qty)).replace('.', ','), int(i.unit_price), int(i.line_total), int(x.discount), int(x.send_fee), int(x.total) + int(x.send_fee), int(x.debt_amount)].map(q).join(';')))));
+  const url = URL.createObjectURL(new Blob(['\ufeff' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a'); a.href = url; a.download = `${kind === 'prod' ? 'barang' : 'nota'}-${DR.date}.csv`; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 /** Compact plain-text message (Indonesian), numbers like Rp 1.250.000; profit only when asked. */
 function dailyText(R, withProfit) {
@@ -8221,6 +8372,8 @@ Object.assign(ACT, {
   'bk-ignore': el => bkIgnoreLine(el.dataset.line),
   'bk-reopen': el => bkReopenLine(el.dataset.line),
   'dr-refresh': () => loadDaily(),
+  'dr-print': () => dsPrint(),
+  'dr-csv': el => dsCSV(el.dataset.k),
   'dr-copy': async () => { if (!DR.data) return; const ok = await copyText(dailyText(DR.data.report || {}, isOwner() && DR.withProfit)); toast(ok ? t('copied') : t('copy_failed'), ok ? 'ok' : 'err'); },
   'home-daily': () => { RP.mode = 'daily'; DR.date = today(); go('reports'); },
   'st-loc-here': () => {
@@ -8329,6 +8482,17 @@ Object.assign(I18N.id, {
   'bi.date': 'Tanggal', 'bi.description': 'Keterangan', 'bi.debit': 'Debit (keluar)', 'bi.credit': 'Kredit (masuk)', 'bi.amount': 'Jumlah (+/−)', 'bi.ref': 'Referensi', 'bi.balance': 'Saldo',
   'br.cocok': 'Cocok', 'br.manual': 'Dicocokkan manual', 'br.beda_tanggal': 'Beda tanggal', 'br.beda_jumlah': 'Beda jumlah', 'br.tidak_tercatat': 'Tidak tercatat di aplikasi', 'br.missing': 'Tercatat tapi tidak ada di rekening', 'br.diabaikan': 'Diabaikan',
   'br.match': 'Cocokkan manual', 'br.ignore': 'Abaikan', 'br.reopen': 'Buka lagi', 'br.ignore_q': 'Abaikan baris ini (biaya bank, bunga…)? Tulis catatannya.', 'br.pick_pay': 'Pilih pembayaran', 'br.days': 'beda {n} hari',
+  'pc.wait': 'Menunggu konfirmasi', 'pc.btn': 'Konfirmasi', 'pc.title': 'Konfirmasi barang masuk', 'pc.received_by': 'diterima {name}',
+  'pc.hint': 'Barang sudah dicek oleh penerima. Tulis apakah sudah dibayar dan caranya, atau tanggal bayar yang disepakati (jadi hutang ke pemasok). Pemilik diberi tahu.',
+  'pc.k_paid': 'Sudah dibayar', 'pc.k_later': 'Bayar nanti (tempo)', 'pc.method': 'Cara bayar', 'pc.from_kas': 'Dibayar dari laci kasir saya (kas keluar)', 'pc.from_kas_none': 'Dari laci kasir: buka kasir (shift) dulu — atau biarkan (uang dari luar laci)',
+  'pc.bank': 'Bank / rekening', 'pc.ref': 'No. transfer / referensi', 'pc.due': 'Tanggal bayar yang disepakati', 'pc.need_due': 'Isi tanggal bayar yang disepakati (hari ini atau nanti)',
+  'pc.save': 'Konfirmasi', 'pc.saved_paid': 'Barang masuk dikonfirmasi — pembayaran tercatat', 'pc.saved_later': 'Barang masuk dikonfirmasi — hutang ke pemasok sampai tanggal itu',
+  'pc.paid': 'Lunas · {m}', 'pc.tempo': 'Tempo s/d {d}', 'pc.late': 'TERLAMBAT · jatuh tempo {d}', 'pc.by': 'dikonfirmasi {name}',
+  'att.pu_check': '{n} barang masuk menunggu konfirmasi & pembayaran', 'att.pu_due': '{n} nota pemasok jatuh tempo ≤ 3 hari ({amount})', 'att.pu_late': '{n} nota pemasok LEWAT jatuh tempo ({amount})',
+  'ds.print': 'Cetak / PDF', 'ds.csv_inv': 'CSV nota', 'ds.csv_prod': 'CSV barang', 'ds.print_title': 'Ringkasan harian',
+  'ds.products': 'Penjualan per barang ({n} barang)', 'ds.n_inv': 'Nota', 'ds.products_hint': 'Semua barang yang terjual pada hari ini (nota batal tidak dihitung). Omzet = total baris sebelum diskon nota.',
+  'ds.invoices': 'Semua nota hari ini ({n})', 'ds.n_void': '{n} batal', 'ds.void': 'Batal', 'ds.open_rc': 'Buka struk', 'ds.none': 'Belum ada penjualan pada hari ini',
+  'ds.kept': 'Semua nota tersimpan permanen di server — tidak ada yang terhapus; nota batal hanya ditandai.',
   'dr.title': 'Laporan harian', 'rp.mode_daily': 'Harian', 'dr.sales_total': 'Total penjualan', 'dr.n_tx': '{n} transaksi', 'dr.items': 'Barang terjual', 'dr.bank_in': 'Masuk rekening bank', 'dr.by_method': 'Per cara bayar', 'dr.discount': 'Diskon', 'dr.voids': 'Batal',
   'dr.bank': 'Rekening bank', 'dr.b_sales_tf': 'Penjualan transfer', 'dr.b_sales_qris': 'Penjualan QRIS', 'dr.b_pay_tf': 'Bayar hutang (transfer)', 'dr.b_pay_qris': 'Bayar hutang (QRIS)', 'dr.b_in_total': 'Total masuk bank', 'dr.b_out': 'Keluar (bayar pemasok)',
   'dr.corrections': 'Koreksi harga', 'dr.cor_count': 'Jumlah koreksi', 'dr.cor_net': 'Selisih (rugi−/laba+)', 'dr.cor_refund': 'Refund dibayar', 'dr.cor_writeoff': 'Kurang bayar direlakan',
@@ -8408,6 +8572,17 @@ Object.assign(I18N.ar, {
   'bi.date': 'التاريخ', 'bi.description': 'البيان', 'bi.debit': 'مدين (صادر)', 'bi.credit': 'دائن (وارد)', 'bi.amount': 'المبلغ (+/−)', 'bi.ref': 'المرجع', 'bi.balance': 'الرصيد',
   'br.cocok': 'مطابق', 'br.manual': 'مطابق يدويًا', 'br.beda_tanggal': 'اختلاف التاريخ', 'br.beda_jumlah': 'اختلاف المبلغ', 'br.tidak_tercatat': 'غير مسجل في التطبيق', 'br.missing': 'مسجل وليس في الكشف', 'br.diabaikan': 'متجاهل',
   'br.match': 'مطابقة يدوية', 'br.ignore': 'تجاهل', 'br.reopen': 'إعادة فتح', 'br.ignore_q': 'تجاهل هذا السطر (رسوم بنك، فائدة…)؟ اكتب ملاحظة.', 'br.pick_pay': 'اختر الدفعة', 'br.days': 'فرق {n} يوم',
+  'pc.wait': 'بانتظار التصديق', 'pc.btn': 'تصديق', 'pc.title': 'تصديق البضاعة الواردة', 'pc.received_by': 'استلمها {name}',
+  'pc.hint': 'البضاعة دقّقها المستلم. اكتب هل تم الدفع وبأي وسيلة، أو تاريخ الدفع المتفق عليه (تصبح دينًا للمورد). يُبلَّغ المالك.',
+  'pc.k_paid': 'تم الدفع', 'pc.k_later': 'الدفع لاحقًا (آجل)', 'pc.method': 'وسيلة الدفع', 'pc.from_kas': 'دُفع من صندوق الكاشير الخاص بي (خروج نقد)', 'pc.from_kas_none': 'من صندوق الكاشير: افتح الصندوق أولًا — أو اتركه (مال من خارج الصندوق)',
+  'pc.bank': 'البنك / الحساب', 'pc.ref': 'رقم التحويل / المرجع', 'pc.due': 'تاريخ الدفع المتفق عليه', 'pc.need_due': 'أدخل تاريخ الدفع المتفق عليه (اليوم أو بعده)',
+  'pc.save': 'تصديق', 'pc.saved_paid': 'صُدّقت البضاعة الواردة — سُجّل الدفع', 'pc.saved_later': 'صُدّقت البضاعة الواردة — دين للمورد حتى ذلك التاريخ',
+  'pc.paid': 'مدفوعة · {m}', 'pc.tempo': 'آجل حتى {d}', 'pc.late': 'متأخر · الاستحقاق {d}', 'pc.by': 'صدّقها {name}',
+  'att.pu_check': '{n} بضاعة واردة بانتظار التصديق والدفع', 'att.pu_due': '{n} فاتورة مورد تستحق خلال 3 أيام ({amount})', 'att.pu_late': '{n} فاتورة مورد متأخرة عن الاستحقاق ({amount})',
+  'ds.print': 'طباعة / PDF', 'ds.csv_inv': 'CSV الفواتير', 'ds.csv_prod': 'CSV الأصناف', 'ds.print_title': 'الملخص اليومي',
+  'ds.products': 'المبيعات حسب الصنف ({n} صنف)', 'ds.n_inv': 'فواتير', 'ds.products_hint': 'كل الأصناف المباعة في هذا اليوم (الفواتير الملغاة لا تُحسب). المبيعات = مجموع السطور قبل خصم الفاتورة.',
+  'ds.invoices': 'كل فواتير اليوم ({n})', 'ds.n_void': '{n} ملغاة', 'ds.void': 'ملغاة', 'ds.open_rc': 'فتح الإيصال', 'ds.none': 'لا توجد مبيعات في هذا اليوم',
+  'ds.kept': 'كل الفواتير محفوظة دائمًا في الخادم — لا يُحذف شيء؛ الفاتورة الملغاة تُعلَّم فقط.',
   'dr.title': 'التقرير اليومي', 'rp.mode_daily': 'يومي', 'dr.sales_total': 'إجمالي المبيعات', 'dr.n_tx': '{n} عملية', 'dr.items': 'الأصناف المباعة', 'dr.bank_in': 'الداخل للحساب البنكي', 'dr.by_method': 'حسب طريقة الدفع', 'dr.discount': 'الخصم', 'dr.voids': 'الملغاة',
   'dr.bank': 'الحساب البنكي', 'dr.b_sales_tf': 'مبيعات بالتحويل', 'dr.b_sales_qris': 'مبيعات QRIS', 'dr.b_pay_tf': 'سداد ديون (تحويل)', 'dr.b_pay_qris': 'سداد ديون (QRIS)', 'dr.b_in_total': 'إجمالي الداخل للبنك', 'dr.b_out': 'الخارج (دفع للموردين)',
   'dr.corrections': 'تصحيح الأسعار', 'dr.cor_count': 'عدد التصحيحات', 'dr.cor_net': 'الفرق (خسارة− / ربح+)', 'dr.cor_refund': 'إرجاع مدفوع', 'dr.cor_writeoff': 'نقص مُتنازَل عنه',

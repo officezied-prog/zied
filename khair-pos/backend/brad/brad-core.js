@@ -281,6 +281,101 @@ var KBrad = (function () {
       lines: lines, unmatched: unmatched, warn: warn, unclear: unclear + (items.length ? 0 : 1), n_items: items.length };
   }
 
+  /* ---------- v62: the car the customer booked himself ----------
+     Owner 2026-10-20: «كثير من الأحيان يقوم الزبون هو باختيار السيارة للموف لإرسال البضاعة من المخزن التبريد مباشرة، فيجب أن تكون هناك مكان
+     لكتابة رسائل الزبون»: the customer books the Lalamove car and sends its details by WhatsApp — in his own words or as Lalamove's
+     share text. His message is kept with the trip; these fixed rules only PROPOSE the driver, the plate, the driver's WhatsApp,
+     the vehicle, the minutes and the tracking link, which staff check in the form (nothing is saved from here). */
+  var PLATE_AREAS = ('A B D E F G H K L M N P R S T W Z AA AB AD AE AG BA BB BD BE BG BH BK BL BM BN BP ' +
+    'DA DB DC DD DE DG DH DK DL DM DN DR DS DT DW EA EB ED KB KH KT KU PA PB').split(' '); // the region codes of Indonesian plates
+  var PLATE_NOT_END = ['YA', 'YG', 'OK', 'DAN', 'DGN', 'PAK', 'BU', 'JAM', 'MIN', 'MNT', 'KG', 'CTN', 'DUS', 'HP', 'WA', 'NO', 'KE', 'DI', 'SDH', 'OTW', 'LG', 'AJA']; // words, not plate letters
+  var RE_PLATE = /\b([A-Z]{1,2})[ \t.\-]{0,2}(\d{1,4})(?:[ \t.\-]{0,2}([A-Z]{1,3}))?\b(?![ \t.\-]*\d)/gi; // B 1234 XYZ · D 5678 AB · AB 12 C
+  var RE_PLATE_LBL = /(?:\bplate?(?:\s*(?:nomor|no\.?|number))?|\bnopol|\bno\.?\s*pol(?:isi)?|\bnomor\s*polisi|\b(?:no\.?|nomor)\s*kendaraan|\blicen[cs]e(?:\s*plate)?|\btnkb)\s*[:=#.\-]?\s*/gi;
+  var RE_CPHONE = /(?:\(?\+62\)?|\b62|\b0)[ .\-]?8\d(?:[ .\-]?\d){6,11}/g; // 08…, +62…, 62…
+  var RE_LINK = /https?:\/\/[^\s<>"'`]+/gi;
+  var RE_DRV = /(?:\byour\s+driver|\b(?:nama\s+)?(?:pengemudi|driver|sopir|supir|kurir)(?:nya)?(?:\s+(?:anda|kamu|name))?)\s*(?:[:=\-–]|\badalah\b|\bbernama\b|\bnamanya\b|\bis\b)?\s*/gi;
+  var MINS = '(?:menit|mnt|mins?|minutes?)';
+  var RE_ETA = [new RegExp('\\b(\\d{1,3})\\s*(?:-|–|s\\.?\\/?d\\.?|sampai|hingga|to)\\s*(\\d{1,3})\\s*' + MINS + '\\b', 'i'), // a range: its upper end
+    new RegExp('\\b(\\d{1,2}(?:[.,]5)?)\\s*jam\\b(?:\\s*(?:dan\\s*)?(\\d{1,2})\\s*' + MINS + '\\b)?', 'i'), new RegExp('\\b(\\d{1,3})\\s*' + MINS + '\\b', 'i')];
+  var VEHICLE_WORDS = [[/\bgr[ae]nd?\s*max\b/i, 'Grand Max'], [/\bl\s*-?\s*300\b/i, 'L300'], [/\bblind\s*van\b/i, 'Blind van'], [/\bcdd\b/i, 'CDD'], [/\b(?:engkel|cde)\b/i, 'Engkel (CDE)'],
+    [/\bpick\s*-?\s*up\b/i, 'Pickup'], [/\bvan\b/i, 'Van'], [/\b(?:truck|truk|fuso)\b/i, 'Truk'], [/\bmotor\b/i, 'Motor'],
+    [/\b(?:kendaraan|jenis|layanan|armada|vehicle|tipe|type)\s*[:=]?\s*mobil\b/i, 'Mobil']]; // "mobil" alone is any car ("mobil sudah dipesan"): only when named as the vehicle
+  var NAME_STOP = ('sudah udah sdh telah akan sedang lagi lg otw menuju meluncur dalam dlm tiba sampai smp datang jalan on the is ke di dari dr mau baru nanti belum blm ' +
+    'ya yg yang dengan dgn pakai pake naik plat plate nopol no nomor nmr hp wa whatsapp telp telepon tlp kontak phone mobil mobilnya motor kendaraan van blind pickup pick ' +
+    'engkel cdd cde truk truck fuso grand gran granmax l300 segera menit min mnt eta jam sekitar kira kurang lebih sekarang skrg tolong mohon harap bisa ok oke siap dan ' +
+    'atau untuk utk buat pesanan order lalamove anda kamu').split(' ');
+  var TITLES = ['pak', 'bpk', 'bapak', 'bu', 'ibu', 'mas', 'mbak', 'bang', 'kak'];
+  /** A tracking link as kept: http(s) only, one piece, at most 300 characters — else ''. */
+  function urlOf(v) { var s = str(v); return s.length <= 300 && /^https?:\/\/[^\s<>"'`\u0000-\u001f\u007f]+$/i.test(s) ? s : ''; }
+  /** A pasted message kept as written: its line breaks, no other control characters (nor < > or bidi overrides), at most `max`. */
+  function textOf(v, max) {
+    return str(v).replace(/\r\n?/g, '\n').replace(/[\u0000-\u0009\u000b-\u001f\u007f<>‪-‮⁦-⁩]/g, ' ').replace(/[  ]+/g, ' ')
+      .replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, max).trim();
+  }
+  /** The customer's message about the car → { driver, plate, phone, link, vehicle, eta_min } ('' / null when not in it). What was
+      read leaves the working text, so a plate's digits are never taken for minutes nor its letters for the driver's name. */
+  function parseCarMsg(text) {
+    var s = String(text === undefined || text === null ? '' : text).slice(0, 4000).replace(/\r\n?/g, '\n'), w, m, re;
+    var out = { driver: '', plate: '', phone: '', link: '', vehicle: '', eta_min: null };
+    function cut(a, b) { w = w.slice(0, a) + ' , ' + w.slice(b); }
+    function plateOf(a, n, z) { z = str(z).toUpperCase(); if (PLATE_NOT_END.indexOf(z) >= 0) z = ''; return { v: [a.toUpperCase(), n, z].filter(Boolean).join(' '), end: !!z }; }
+    // the tracking link: Lalamove's own first, else the first http(s) link
+    var links = (s.match(RE_LINK) || []).map(function (u) { return u.replace(/[.,;:!?)\]}»”’]+$/, ''); }).filter(urlOf);
+    out.link = links.filter(function (u) { return /lalamove/i.test(u); })[0] || links[0] || '';
+    w = s.replace(RE_LINK, ' , ');
+    // the plate: after its label ("Plat:", "Nopol", "No. kendaraan", "No. polisi"), else the first one that looks like a plate
+    // (a region code, the digits, the letters after them — "L300" is a car, "RT 05", "no 12 ya", "Blok B 12 A" are not plates)
+    var pl = null;
+    re = new RegExp(RE_PLATE_LBL.source, 'gi');
+    while (!pl && (m = re.exec(w))) {
+      var e = m.index + m[0].length, x = w.slice(e).match(new RegExp('^' + RE_PLATE.source, 'i'));
+      if (x) pl = { at: m.index, end: e + x[0].length, v: plateOf(x[1], x[2], x[3]).v };
+    }
+    re = new RegExp(RE_PLATE.source, 'gi');
+    while (!pl && (m = re.exec(w))) {
+      var p = plateOf(m[1], m[2], m[3]);
+      if (PLATE_AREAS.indexOf(m[1].toUpperCase()) < 0 || !p.end || /\b(?:blok|blk|no|nomor|kav|unit|lantai|lt|gedung|pintu|gate|door|rt|rw)\.?\s*$/i.test(w.slice(Math.max(0, m.index - 12), m.index))) continue;
+      pl = { at: m.index, end: m.index + m[0].length, v: p.v };
+    }
+    if (pl) { out.plate = pl.v; cut(pl.at, pl.end); }
+    // the driver's phone: the first mobile number; a group too many (more than 13 digits, or "… 25 menit" right after) is not his
+    m = new RegExp(RE_CPHONE.source, 'g').exec(w);
+    if (m) {
+      var raw = m[0], rest = w.slice(m.index + raw.length);
+      var drop = function () { var k = raw.search(/[ .\-]\d+$/); if (k > 0) raw = raw.slice(0, k); return k > 0; };
+      while (raw.replace(/\D/g, '').replace(/^62/, '0').length > 13 && drop()) { /* next group */ }
+      if (/^\s*(?:menit|mnt|mins?|minutes?|jam)\b/i.test(rest) && /\s\d+$/.test(raw)) drop();
+      var pn = normPhone(raw);
+      if (pn) { out.phone = pn; cut(m.index, m.index + raw.length); }
+    }
+    // the minutes until the car is there: the first of "25 menit", "± 30 mnt", "15-20 mins" (the upper end), "1 jam 10 menit"
+    var etas = RE_ETA.map(function (r, i) {
+      var y = w.match(r); if (!y) return null;
+      var v = i === 0 ? Math.max(Number(y[1]), Number(y[2])) : i === 1 ? Math.round(Number(y[1].replace(',', '.')) * 60) + (y[2] ? Number(y[2]) : 0) : Number(y[1]);
+      return v >= 0 && v <= 600 ? { at: y.index, i: i, v: v } : null;
+    }).filter(Boolean).sort(function (a, b) { return a.at - b.at || a.i - b.i; });
+    if (etas.length) out.eta_min = etas[0].v;
+    // the vehicle: the model with its body when both are named ("Grand Max blind van", "L300 pickup")
+    var hits = VEHICLE_WORDS.filter(function (v) { return v[0].test(w); }).map(function (v) { return v[1]; });
+    if (hits.length) {
+      var body = hits.filter(function (v) { return v === 'Blind van' || v === 'Pickup'; })[0];
+      out.vehicle = (hits[0] === 'Grand Max' || hits[0] === 'L300') && body ? hits[0] + ' ' + body.toLowerCase() : hits[0];
+    }
+    // the driver's name: the words after "Driver:", "Pengemudi Anda:", "Sopirnya", … up to a comma, a number or a word that is not a name
+    re = new RegExp(RE_DRV.source, 'gi');
+    while (!out.driver && (m = re.exec(w))) {
+      var seg = w.slice(m.index + m[0].length).split(/[,;:|·•\n()[\]\/+0-9]| - /)[0], words = [];
+      seg.trim().split(/\s+/).some(function (x) {
+        var k = x.toLowerCase().replace(/[.'’]+$/, '');
+        if (!/^[a-zÀ-ɏ][a-zÀ-ɏ.'’]*$/i.test(x) || NAME_STOP.indexOf(k) >= 0 || words.length >= 5) return true;
+        words.push(x); return false;
+      });
+      var nm = words.join(' ').replace(/\.+$/, '');
+      if (nm.replace(/[^a-zÀ-ɏ]/gi, '').length >= 2 && !words.every(function (x) { return TITLES.indexOf(x.toLowerCase().replace(/\.$/, '')) >= 0; })) out.driver = clean(nm, 40);
+    }
+    return out;
+  }
+
   /* ---------- the WhatsApp texts (Indonesian: the cold stores, the drivers and the customers are in Jakarta) ---------- */
   var ID_DAY = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
   var ID_MON = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
@@ -306,11 +401,13 @@ var KBrad = (function () {
     if (str(co.name)) out.push(str(co.name));
     return out.join('\n');
   }
-  /** To the cold store: the car that will take the goods (so they are handed to that exact car). */
+  /** To the cold store: the car that will take the goods (so they are handed to that exact car) — v62: with the Lalamove
+      tracking link when the customer sent one (the car template's six values stay as Meta approved them: the link is here only). */
   function msgCar(o, C) {
-    var c = car(o), w = (C && C.cooler) || {};
+    var c = car(o), w = (C && C.cooler) || {}, tu = urlOf(c.track_url);
     return ['Order ' + o.order_no + ' — mobil untuk ambil di ' + (str(w.name) || o.warehouse) + ':', 'Kendaraan: ' + (str(c.vehicle) || '-'), 'No. polisi: ' + str(c.plate),
-      'Sopir: ' + str(c.driver) + (str(c.driver_wa) ? ' (' + phoneLocal(c.driver_wa) + ')' : ''), str(o.eta_at) ? 'Perkiraan tiba: ' + hmStr(wibAt(o.eta_at).min) : '', 'Terima kasih.']
+      'Sopir: ' + str(c.driver) + (str(c.driver_wa) ? ' (' + phoneLocal(c.driver_wa) + ')' : ''), str(o.eta_at) ? 'Perkiraan tiba: ' + hmStr(wibAt(o.eta_at).min) : '',
+      tu ? 'Lacak mobil: ' + tu : '', 'Terima kasih.']
       .filter(Boolean).join('\n');
   }
   /** To the driver: the door to drive to. */
@@ -652,12 +749,21 @@ var KBrad = (function () {
         var srow = put('orders', step(row, to, note));
         return to === 'sent' ? doneWa({ order: orderOut(srow) }, srow, 'order') : done({ order: orderOut(srow) });
       }
-      case 'car_save': { // step 5: the car booked (Lalamove or own driver) — its plate and driver go to the cold store
+      case 'car_save': { // step 5: the car booked (Lalamove, own driver, or — v62 — the customer's own) — its plate and driver go to the cold store
         var co = order(data.order_no); if (!co) return fail('NOT_FOUND', 'Order tidak ada');
         if (co.status !== 'ready' && co.status !== 'car') return fail('INVALID', 'Pesan mobil setelah barang siap');
         var drv = clean(data.driver, 40), plate = clean(data.plate, 12).toUpperCase(), dwa = str(data.driver_wa) ? normPhone(data.driver_wa) : '';
         if (!drv || !plate) return fail('INVALID', 'Nama sopir dan nomor polisi wajib');
         if (str(data.driver_wa) && !dwa) return fail('INVALID', 'Nomor WhatsApp sopir tidak valid');
+        // v62 (owner 2026-10-20: «كثير من الأحيان يقوم الزبون هو باختيار السيارة للموف … فيجب أن تكون هناك مكان لكتابة رسائل الزبون»): the customer
+        // booked the car himself — his message is kept with the trip, with its tracking link (typed, else the one in the message);
+        // the cost is his (0 unless typed); the driver and the plate are still required (staff type what the message lacks)
+        var via = data.via === 'sopir' || data.via === 'pelanggan' ? data.via : 'lalamove', cmsg = '', turl = '';
+        if (via === 'pelanggan') {
+          cmsg = textOf(data.customer_msg, 1000);
+          if (str(data.track_url) && !urlOf(data.track_url)) return fail('INVALID', 'Link lacak tidak valid (http/https, maks. 300 karakter)');
+          turl = urlOf(data.track_url) || parseCarMsg(cmsg).link;
+        }
         var em = data.eta_min === undefined || data.eta_min === null || data.eta_min === '' ? null : int(data.eta_min);
         if (em !== null && !(em >= 0 && em <= 600)) return fail('INVALID', 'Menit Lalamove 0–600');
         var cH = H(co.warehouse), eta = em !== null && str(co.order_date) <= today ? etaOf(now, em, S.margin) : '', warn = '';
@@ -666,9 +772,10 @@ var KBrad = (function () {
           if (cov.hours > 0 && !bool(data.accept_ot)) return fail('LATE_CAR', 'Mobil diperkirakan tiba ' + hmStr(wibAt(eta).min) + ', lewat ' + cH.close + ': lembur ' + cov.hours + ' jam (' + rpS(cov.cost) + ').', { eta_at: eta, ot_hours: cov.hours, ot_cost: cov.cost });
           if (inBreak(wibAt(eta).min, cH)) warn = 'BREAK';
         }
-        var trip = { via: data.via === 'sopir' ? 'sopir' : 'lalamove', vehicle: clean(data.vehicle, 40), driver: drv, driver_wa: dwa, plate: plate, cost: Math.max(0, Math.round(num(data.cost))), eta_min: em, booked_at: now };
+        var trip = { via: via, vehicle: clean(data.vehicle, 40), driver: drv, driver_wa: dwa, plate: plate, cost: Math.max(0, Math.round(num(data.cost))), eta_min: em, booked_at: now };
+        if (via === 'pelanggan') { trip.customer_msg = cmsg; trip.track_url = turl; }
         var crow = Object.assign({}, co, { car: JSON.stringify(trip), eta_at: eta });
-        crow = step(crow, 'car', (co.status === 'car' ? 'Mobil diubah: ' : '') + plate + ' · ' + drv + (eta ? ' · tiba ± ' + hmStr(wibAt(eta).min) : '') + (bool(data.accept_ot) && eta && overtimeAt(eta, cH).hours ? ' · risiko lembur disetujui' : ''));
+        crow = step(crow, 'car', (co.status === 'car' ? 'Mobil diubah: ' : '') + plate + ' · ' + drv + (via === 'pelanggan' ? ' · dipesan pelanggan' : '') + (eta ? ' · tiba ± ' + hmStr(wibAt(eta).min) : '') + (bool(data.accept_ot) && eta && overtimeAt(eta, cH).hours ? ' · risiko lembur disetujui' : ''));
         return doneWa({ order: orderOut(put('orders', crow)), warn: warn }, crow, 'car');
       }
       case 'car_cancel': { // the car was cancelled: back to "book a car", counted; after the last order time that risks overtime
@@ -763,7 +870,7 @@ var KBrad = (function () {
   return { core: core, STEPS: STEPS, LIVE: LIVE, HOURS: HOURS, ETA_MARGIN: ETA_MARGIN, LOAD_MIN: LOAD_MIN, OT_CAUSES: OT_CAUSES,
     hoursOf: hoursOf, hm: hm, hmStr: hmStr, rpS: rpS, wibAt: wibAt, atWib: atWib, dayKind: dayKind, nextWorkDay: nextWorkDay, holidayName: holidayName,
     overtimeAt: overtimeAt, inBreak: inBreak, etaOf: etaOf, timeAlerts: timeAlerts, otSummary: otSummary, readReply: readReply, readJson: readJson,
-    readRules: readRules, draftOf: draftOf, readPrompt: readPrompt, msgOrder: msgOrder, msgCar: msgCar, msgDoor: msgDoor, msgDepart: msgDepart, dLong: dLong,
+    readRules: readRules, draftOf: draftOf, readPrompt: readPrompt, parseCarMsg: parseCarMsg, msgOrder: msgOrder, msgCar: msgCar, msgDoor: msgDoor, msgDepart: msgDepart, dLong: dLong,
     WA_TEMPLATES: WA_TEMPLATES, WA_LANG: WA_LANG, waOut: waOut, waEvent: waEvent, waTemplateDefs: waTemplateDefs, stampOf: stampOf };
 })();
 if (typeof window !== 'undefined') window.KBrad = KBrad;

@@ -142,6 +142,22 @@ test('wa webhook: the cold store answers the car message with "pintu 9" → the 
   assert.equal(db.prepare("SELECT n FROM pos_api_usage WHERE api = 'wa_send'").get().n, 3);
 });
 
+// v62 (owner 2026-10-20: «… فيجب أن تكون هناك مكان لكتابة رسائل الزبون»): the car the customer booked himself goes out with the same
+// approved template — its six values unchanged; the tracking link is only in the hand-sent (wa.me) text
+test('wa v62: a car booked by the customer — the car template keeps its six values, without the tracking link', async () => {
+  const db = seed(), a = sqliteAdapter(db), f = graph();
+  const { no, call } = await flow(a, ENV, f);
+  for (const to of ['approved', 'ready']) await call('order_status', { order_no: no, to });
+  const car = await call('car_save', { order_no: no, via: 'pelanggan', customer_msg: 'Driver: Budi Santoso, B 1234 XYZ https://share.lalamove.com/?ID=1', driver: 'Budi Santoso', driver_wa: '081234567890',
+    plate: 'B 1234 XYZ', vehicle: 'Grand Max', eta_min: 25, track_url: 'https://share.lalamove.com/?ID=1' });
+  assert.deepEqual(car.wa_sent, [{ kind: 'car', ok: true, error: '' }]);
+  const m = f.calls[1].body.template;
+  assert.equal(m.name, 'khair_mobil_brad');
+  assert.deepEqual(m.components[0].parameters.map((p) => p.text), [no, 'Bosco', 'Grand Max', 'B 1234 XYZ', 'Budi Santoso (081234567890)', '10:30']);
+  assert.deepEqual(m.components[1].parameters, [{ type: 'payload', payload: 'BRD|IN|' + no }]);
+  assert.equal(JSON.parse(db.prepare('SELECT car FROM brad_orders WHERE order_no = ?').get(no).car).track_url, 'https://share.lalamove.com/?ID=1');
+});
+
 test('wa admin: the status (manager) lists the templates; the owner registers the missing ones; a test message', async () => {
   const db = seed(), a = sqliteAdapter(db), f = graph();
   const call = (u, p, data) => at(W, () => handleBrad(a, base('wa_admin', u, p, data), {}, KEY, { env: ENV, fetch: f }));

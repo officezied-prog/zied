@@ -49,10 +49,13 @@ export function parseRequest(body, headers) {
     // v39: a direct repack reads the repacks of yesterday + today (a resend by its client id; "someone just repacked this bulk").
     rp_from: action === 'repack' || action === 'request_repack' || action === 'repack_start' ? new Date(Date.now() + 7 * 3600000 - 86400000).toISOString().slice(0, 10) : '9999-12-31',
     approval_client: action === 'request_repack' && data.client_id ? String(data.client_id).slice(0, 60) : '__none__',
-    photo_id: ['save_purchase', 'receive_payment', 'pay_supplier', 'save_expense', 'save_sale', 'record_transfer'].indexOf(action) >= 0 && data.photo_id ? String(data.photo_id) : '__none__', // v57: + a sale's / transfer's slip
+    photo_id: ['save_purchase', 'receive_payment', 'pay_supplier', 'save_expense', 'save_sale', 'record_transfer', 'confirm_purchase'].indexOf(action) >= 0 && data.photo_id ? String(data.photo_id) : '__none__', // v57: + a sale's / transfer's slip
     ip: String(headers['x-forwarded-for'] || headers['x-real-ip'] || '').split(',')[0].trim(),
     ua: String(headers['user-agent'] || '').slice(0, 300),
-    purchase_no: ['request_purchase_fix', 'decide_approval'].indexOf(action) >= 0 && data.purchase_no ? String(data.purchase_no) : '__none__',
+    purchase_no: ['request_purchase_fix', 'decide_approval', 'confirm_purchase'].indexOf(action) >= 0 && data.purchase_no ? String(data.purchase_no) : '__none__',
+    // v65: goods-in waiting for its confirmation (the last 30 days, never before the feature started) / on credit due within 3 days
+    check_since: [shift(today, -30), '2026-10-20'].sort().pop(),
+    due_until: shift(today, 3),
     act_from: action === 'list_activity' && isDate(data.from) ? data.from : (action === 'bootstrap' ? weekAgo : '9999-12-31'),
     act_to: action === 'list_activity' && isDate(data.to) ? data.to : (action === 'bootstrap' ? today : '0000-01-01'),
     // v37: invoice changes (activity kind 'ubah_faktur') for the audit list (its period) and the daily report (its day; there also
@@ -61,6 +64,6 @@ export function parseRequest(body, headers) {
     chg_to: action === 'list_invoice_changes' && isDate(data.to) ? data.to : (action === 'daily_report' && isDate(data.date) ? data.date : '0000-01-01'),
     chg_kind2: action === 'daily_report' ? 'masuk' : '__none__',
     party_cid: ['receive_payment', 'allocate_payment', 'party_ledger'].indexOf(action) >= 0 && Number(data.customer_id) > 0 ? Number(data.customer_id) : -1,
-    party_supplier: ['pay_supplier', 'allocate_payment', 'party_ledger'].indexOf(action) >= 0 && String(data.supplier || '').trim() ? String(data.supplier).trim().slice(0, 80) : '__none__',
+    party_supplier: ['pay_supplier', 'allocate_payment', 'party_ledger', 'confirm_purchase'].indexOf(action) >= 0 && String(data.supplier || '').trim() ? String(data.supplier).trim().slice(0, 80) : '__none__',
   };
 }
