@@ -90,7 +90,10 @@ the worker tests + the three Playwright suites on every PR. This removed n8n's m
   `WA_VERIFY_TOKEN` (owner, Cloudflare dashboard — never in the repo); without them, over the monthly cap (`brad_wa_cap`, default 3,000)
   or on a refusal, the app sends by hand (wa.me) as in stage 1. Setup steps: `worker/docs/whatsapp-setup.md`. Demo of the whole
   automatic process: `brad/?mock=1&wa=1` (v61.1: on each order a simulated phone of the cold store / driver / customer, with the
-  cold store's buttons and a "pintu N" reply to tap).
+  cold store's buttons and a "pintu N" reply to tap). **v62 (app 1.2.0):** the customer books the car himself ("Dipesan pelanggan",
+  `via 'pelanggan'`): his WhatsApp message is pasted, `KBrad.parseCarMsg` proposes driver / plate / WhatsApp / vehicle / minutes /
+  tracking link (fixed rules), the trip keeps `customer_msg` + `track_url`; the hand-sent car text carries the link, the approved car
+  template keeps its six values (no link).
 
 ## Owner standing rules — ALWAYS honor
 

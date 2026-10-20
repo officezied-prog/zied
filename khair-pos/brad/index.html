@@ -16,7 +16,9 @@
 <!-- Khair Order Brad (v60, owner 2026-10-18: «انطلق بالمرحلة الاولى و الاحسن في تطبيق اخر الان منفصل حتى نتأكد منه قبل دمجه مع القديم»):
      the cold-store order process as its own app until it is proven — the order read from a photo / a message, the owner's
      9 steps with one-tap WhatsApp (cold store, driver, customer), the cooler's hours and overtime, the car, the door, loading,
-     departure. Server: the Worker (/webhook/khair-brad), logic in ../backend/brad/brad-core.js. Demo: ?mock=1 (key "demo"). -->
+     departure. Server: the Worker (/webhook/khair-brad), logic in ../backend/brad/brad-core.js. Demo: ?mock=1 (key "demo").
+     v62 (1.2.0, owner 2026-10-20: «كثير من الأحيان يقوم الزبون هو باختيار السيارة للموف … فيجب أن تكون هناك مكان لكتابة رسائل الزبون»): a third
+     way to book the car — the customer's own — with his pasted message read into the car's fields and kept on the order. -->
 <style>
   /* Unified with the owner app (khair-pos/index.html): same blue brand, surfaces, and dark mode. */
   :root { --pri:#1E40AF; --pri2:#1E3A8A; --pri-l:#DBEAFE; --bg:#F4F6FA; --card:#FFFFFF; --soft:#F8FAFC; --tx:#0F172A; --mu:#526075; --bd:#DCE3EC; --inp:#FFFFFF; --inp-bd:#C3CDDA; --toast:#0F172A; --bad:#B91C1C; --bad-l:#FEE2E2; --warn:#B45309; --warn-l:#FEF3C7; --ok:#15803D; --ok-l:#DCFCE7; --font:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans","Noto Naskh Arabic","Geeza Pro",Tahoma,Arial,sans-serif; }
@@ -85,6 +87,9 @@
   a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   .dm-phone { border: 1px dashed var(--inp-bd); border-radius: 10px; padding: 8px 10px; margin-top: 8px; background: var(--soft); }
   .dm-phone .bubble { white-space: pre-wrap; background: var(--ok-l); border-radius: 8px; padding: 8px; font-size: 13px; margin: 6px 0; }
+  /* v62: the car the customer booked himself — his message as he wrote it */
+  .cmsg { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--soft); border: 1px solid var(--bd); border-radius: 6px; padding: 6px 8px; font-size: 13px; margin-top: 4px; color: var(--tx); }
+  [data-cust-car] a { color: var(--pri2); }
 </style>
 <script>
   /* Follow the owner app's manual light/dark choice (shared localStorage, same origin); 'auto' falls back to the media query above. */
@@ -111,7 +116,7 @@
 <script src="../shared/app-update.js"></script>
 <script>
 'use strict';
-const APP_VERSION = '1.1.1'; // the update signal (shared/app-update.js): bump with every change of this app
+const APP_VERSION = '1.2.0'; // the update signal (shared/app-update.js): bump with every change of this app
 if (window.top !== window.self) { try { window.top.location = window.location.href; } catch (e) { document.documentElement.innerHTML = ''; } }
 // Backend = the Khair Mart Jumla Worker (code, no monthly execution cap).
 const CONFIG = { BRAD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-brad', LALAMOVE_URL: 'https://web.lalamove.com/' };
@@ -190,7 +195,10 @@ const I18N = {
     dm_hint_on: 'Seperti setelah WhatsApp resmi diaktifkan: setiap pesan terkirim sendiri. Di setiap order ada HP simulasi — tekan tombol gudang seperti petugas gudang, lalu lihat order bergerak sendiri.',
     dm_hint_off: 'Nyalakan untuk mencoba pengiriman otomatis dan tombol balasan gudang.',
     dm_cooler: '📱 HP gudang {n} menerima:', dm_driver: '📱 HP sopir {n} menerima:', dm_customer: '📱 HP pelanggan {n} menerima:',
-    dm_tap: 'Tekan seperti petugas gudang:', dm_door: 'Balas nomor pintu', dm_door_ph: 'mis. 12', dm_nothing: 'Tidak ada perubahan'
+    dm_tap: 'Tekan seperti petugas gudang:', dm_door: 'Balas nomor pintu', dm_door_ph: 'mis. 12', dm_nothing: 'Tidak ada perubahan',
+    via_cust: 'Dipesan pelanggan', cmsg: 'Pesan dari pelanggan (tempel di sini)', cmsg_read: 'Baca pesan', cmsg_need: 'Tempel pesan pelanggan dulu',
+    cmsg_got: 'Terbaca: {f} — periksa, lalu Simpan', cmsg_none: 'Data mobil tidak ditemukan di pesan — isi sendiri', track_url: 'Link lacak (Lalamove)', cost_cust: 'Dibayar pelanggan',
+    cust_car: 'Mobil dari pelanggan', cmsg_show: 'Pesan pelanggan', track: 'Lacak mobil'
   },
   ar: {
     title: 'طلبيات البراد', login: 'دخول', key: 'مفتاح المتجر', key_hint: 'يُكتب مرة واحدة على هذا الجهاز', change_key: 'تغيير المفتاح', user: 'اسم المستخدم', pin: 'الرمز السري', logout: 'خروج',
@@ -247,7 +255,10 @@ const I18N = {
     dm_hint_on: 'كما بعد تفعيل الواتساب الرسمي: كل رسالة تُرسل وحدها. في كل طلبية هاتف تجريبي — اضغط أزرار البراد كأنك موظف البراد، وشاهد الطلبية تتحرك وحدها.',
     dm_hint_off: 'شغّله لتجربة الإرسال التلقائي وأزرار رد البراد.',
     dm_cooler: '📱 هاتف البراد {n} استلم:', dm_driver: '📱 هاتف السائق {n} استلم:', dm_customer: '📱 هاتف الزبون {n} استلم:',
-    dm_tap: 'اضغط كأنك موظف البراد:', dm_door: 'الرد برقم الباب', dm_door_ph: 'مثلًا 12', dm_nothing: 'لا تغيير'
+    dm_tap: 'اضغط كأنك موظف البراد:', dm_door: 'الرد برقم الباب', dm_door_ph: 'مثلًا 12', dm_nothing: 'لا تغيير',
+    via_cust: 'حجزها الزبون', cmsg: 'رسالة الزبون (الصقها هنا)', cmsg_read: 'اقرأ الرسالة', cmsg_need: 'الصق رسالة الزبون أولًا',
+    cmsg_got: 'قُرئ: {f} — راجعها ثم اضغط حفظ', cmsg_none: 'لم تُوجد بيانات السيارة في الرسالة — اكتبها بنفسك', track_url: 'رابط التتبع (لالاموف)', cost_cust: 'يدفعها الزبون',
+    cust_car: 'سيارة من الزبون', cmsg_show: 'رسالة الزبون', track: 'تتبع السيارة'
   }
 };
 const MON = { id: ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'], ar: ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'] };
@@ -408,6 +419,7 @@ function card(o) {
   const info = [
     o.status === 'rejected' && o.rejected_reason ? h('div', { class: 'bad', text: t('st_rejected') + ': ' + o.rejected_reason }) : null,
     c.plate ? h('div', { 'data-car': '', text: t('lbl_car') + ': ' + c.plate + ' · ' + c.driver + (c.vehicle ? ' · ' + c.vehicle : '') + (o.eta_at && ['car'].includes(o.status) ? ' · ' + t('lbl_eta') + ' ' + hmOf(o.eta_at) : '') }) : null,
+    c.via === 'pelanggan' ? custCar(c) : null,
     o.door ? h('div', { 'data-door': '', text: t('lbl_door') + ' ' + o.door + (o.load_end_est && o.status === 'loading' ? ' · ' + t('load_est', { t: hmOf(o.load_end_est) }) : '') }) : null,
     o.ot_cost > 0 ? h('div', { class: 'bad', 'data-ot': '', text: t('lbl_ot') + ' ' + o.ot_hours + ' · ' + rp(o.ot_cost) + ' (' + t('cause_' + (o.ot_cause || 'other')) + ')' }) : null,
     o.extra_cost > 0 ? h('div', { class: 'warn', 'data-extra': '', text: t('lbl_extra') + ': ' + rp(o.extra_cost) }) : null,
@@ -421,6 +433,12 @@ function card(o) {
     dots,
     h('div', { class: 'muted' }, (o.lines || []).map(l => h('div', { text: 'PLT ' + l.pallet_code + ' · ' + (l.product_name || PR(l.product).name) + ' · ' + n0(l.cartons) + ' ' + t('ctn') + (l.full ? ' (utuh)' : '') }))),
     info, MOCK && window.KBradMockWA === true ? demoPhone(o) : null, can() ? h('div', { class: 'row next' }, nextButtons(o)) : null, hist);
+}
+/** v62: the car the customer booked himself — his message (folded) and the tracking link (a new tab; http(s) only). */
+function custCar(c) {
+  const url = /^https?:\/\//i.test(c.track_url || '') ? c.track_url : '';
+  return h('div', { 'data-cust-car': '' }, h('div', null, h('b', { text: t('cust_car') }), url ? [' · ', h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', 'data-track': '' }, t('track') + ' ↗')] : null),
+    c.customer_msg ? h('details', { 'data-cmsg': '' }, h('summary', { class: 'muted', text: t('cmsg_show') }), h('div', { class: 'cmsg', text: c.customer_msg })) : null);
 }
 function B(act, label, onclick, pri) { return h('button', { class: 'btn sm' + (pri ? ' pri' : ''), type: 'button', 'data-act': act, onclick }, label); }
 function nextButtons(o) {
@@ -606,11 +624,31 @@ function carForm(o) {
   const tr = o.car || {}, H = CO(o.warehouse).hours, margin = S.D.eta_margin;
   const kg = (o.lines || []).reduce((s, l) => s + Number(l.cartons) * (Number(PR(l.product).kg_per_ctn) || 0), 0), sug = KCold.vehicleFor(kg);
   const drv = sel('tk-drv', [['', t('drv_pick')]].concat((S.D.drivers || []).map((d, i) => [String(i), d.name + ' · ' + (d.vehicle || '') + ' · ' + (d.plate || '')])), '');
-  const via = sel('tk-via', [['lalamove', t('via_lala')], ['sopir', t('via_drv')]], tr.via || 'lalamove');
+  const via = sel('tk-via', [['lalamove', t('via_lala')], ['sopir', t('via_drv')], ['pelanggan', t('via_cust')]], tr.via || 'lalamove');
   const veh = h('input', { id: 'tk-veh', value: tr.vehicle || sug }), dn = h('input', { id: 'tk-driver', value: tr.driver || '' }), dwa = h('input', { id: 'tk-dwa', inputmode: 'tel', value: tr.driver_wa || '' });
   const pl = h('input', { id: 'tk-plate', value: tr.plate || '', style: 'text-transform:uppercase' }), cost = h('input', { id: 'tk-cost', inputmode: 'numeric', value: tr.cost || '' });
   const eta = h('input', { id: 'tk-eta', inputmode: 'numeric', value: tr.eta_min != null ? tr.eta_min : '', style: 'max-width:120px' }), info = h('div', { id: 'tk-eta-info' });
-  drv.addEventListener('change', () => { const d = (S.D.drivers || [])[Number(drv.value)]; if (d) { via.value = 'sopir'; dn.value = d.name; dwa.value = d.wa || ''; pl.value = d.plate || ''; veh.value = d.vehicle || veh.value; } });
+  // v62 (owner 2026-10-20: «كثير من الأحيان يقوم الزبون هو باختيار السيارة للموف … فيجب أن تكون هناك مكان لكتابة رسائل الزبون»): the customer booked
+  // the car himself — his WhatsApp message is pasted here (kept on the order), "Baca pesan" reads it with the server's fixed rules
+  // (KBrad.parseCarMsg) into the fields below, which stay editable; the cost is his (0 unless typed)
+  const cmsg = h('textarea', { id: 'tk-cmsg', rows: 4, value: tr.customer_msg || '', style: 'min-height:90px' }), cout = h('div', { id: 'tk-cmsg-out' });
+  const link = h('input', { id: 'tk-link', inputmode: 'url', value: tr.track_url || '', placeholder: 'https://share.lalamove.com/…' });
+  const cread = h('button', { class: 'btn sm', type: 'button', id: 'tk-cmsg-read', onclick: () => {
+    if (!cmsg.value.trim()) { toast(t('cmsg_need'), true); return; }
+    const p = KBrad.parseCarMsg(cmsg.value), got = [];
+    if (p.driver) { dn.value = p.driver; got.push(t('driver')); }
+    if (p.plate) { pl.value = p.plate; got.push(t('plate')); }
+    if (p.phone) { dwa.value = p.phone; got.push(t('driver_wa')); }
+    if (p.vehicle) { veh.value = p.vehicle; got.push(t('vehicle')); }
+    if (p.eta_min !== null) { eta.value = String(p.eta_min); got.push(t('eta')); show(); }
+    if (p.link) { link.value = p.link; got.push(t('track_url')); }
+    cout.className = got.length ? 'ok' : 'warn';
+    cout.textContent = got.length ? t('cmsg_got', { f: got.join(', ') }) : t('cmsg_none');
+  } }, t('cmsg_read'));
+  const cbox = h('div', { id: 'tk-cust' }, field(t('cmsg'), cmsg), h('div', { class: 'row', style: 'margin-top:6px' }, cread), cout, field(t('track_url'), link));
+  const onVia = () => { const c = via.value === 'pelanggan'; cbox.hidden = !c; cost.placeholder = c ? t('cost_cust') : ''; };
+  via.addEventListener('change', onVia); onVia();
+  drv.addEventListener('change', () => { const d = (S.D.drivers || [])[Number(drv.value)]; if (d) { via.value = 'sopir'; onVia(); dn.value = d.name; dwa.value = d.wa || ''; pl.value = d.plate || ''; veh.value = d.vehicle || veh.value; } });
   const calc = () => {
     const m = Number(eta.value); if (eta.value.trim() === '' || !(m >= 0)) return null;
     const at = KBrad.etaOf(nowIso(), m, margin), a = KBrad.wibAt(at), sameDay = String(o.order_date) <= today();
@@ -625,7 +663,9 @@ function carForm(o) {
   eta.addEventListener('input', show); show();
   const save = async (acceptOt) => {
     try {
-      const r = await api('car_save', { order_no: o.order_no, via: via.value, vehicle: veh.value, driver: dn.value, driver_wa: dwa.value, plate: pl.value, cost: Number(cost.value) || 0, eta_min: eta.value.trim() === '' ? '' : Number(eta.value), accept_ot: !!acceptOt });
+      const cu = via.value === 'pelanggan';
+      const r = await api('car_save', { order_no: o.order_no, via: via.value, vehicle: veh.value, driver: dn.value, driver_wa: dwa.value, plate: pl.value, cost: Number(cost.value) || 0, eta_min: eta.value.trim() === '' ? '' : Number(eta.value), accept_ot: !!acceptOt,
+        customer_msg: cu ? cmsg.value : '', track_url: cu ? link.value.trim() : '' });
       await load(); const x = S.D.orders.find(y => y.order_no === o.order_no) || r.order;
       const brk = r.warn === 'BREAK' ? h('p', { class: 'warn', text: t('eta_break', { b: H.brk }) }) : null;
       if (waAuto(r)) { closeModal(); if (brk) toast(t('eta_break', { b: H.brk }), true); }
@@ -642,6 +682,7 @@ function carForm(o) {
     h('p', { class: 'muted', id: 'tk-sug', text: t('sug_vehicle', { v: sug, kg: n0(kg) }) }),
     (S.D.drivers || []).length ? field(t('drv_pick'), drv) : null,
     h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('via'), via)), h('div', { style: 'flex:1;min-width:140px' }, field(t('vehicle'), veh))),
+    cbox,
     h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:140px' }, field(t('driver'), dn)), h('div', { style: 'flex:1;min-width:140px' }, field(t('driver_wa'), dwa))),
     h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:120px' }, field(t('plate'), pl)), h('div', { style: 'flex:1;min-width:120px' }, field(t('cost'), cost)), h('div', { style: 'flex:1;min-width:120px' }, field(t('eta'), eta))),
     info), [h('button', { class: 'btn pri', type: 'button', id: 'tk-save', onclick: () => save(false) }, t('save'))]);

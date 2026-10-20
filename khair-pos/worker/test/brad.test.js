@@ -128,6 +128,25 @@ test('brad: the order reader — no key: rules, never the AI; a photo: haiku, un
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM brad_orders').get().n, 0);
 });
 
+// v62 (owner 2026-10-20: «كثير من الأحيان يقوم الزبون هو باختيار السيارة للموف … فيجب أن تكون هناك مكان لكتابة رسائل الزبون»)
+test('brad v62: a car the customer booked himself — through the Worker his message and its tracking link land with the trip in brad_orders (cost 0); driver and plate still required', async () => {
+  const db = seed(), DB = d1Mock(db, { maxCalls: 50 }), env = { DB, STORE_KEY: KEY }, W = '2026-10-14T03:00:00Z';
+  const post = (action, data) => at(W, async () => (await worker.fetch(new Request('https://w.test/webhook/khair-brad', { method: 'POST', body: JSON.stringify(base(action, 'Mgr', '2222', data)) }), env)).json());
+  const no = (await post('order_save', { warehouse: 'BOSCO', order_date: '2026-10-14', dest_type: 'pelanggan', dest_name: 'Toko Zahra', customer_id: 7, lines: [{ pallet_code: 'AJ-1', cartons: 5 }] })).order.order_no;
+  for (const to of ['sent', 'approved', 'ready']) assert.equal((await post('order_status', { order_no: no, to })).ok, true, to);
+  const LINK = 'https://share.lalamove.com/?ID100221014123456&lang=id_ID';
+  const MSG = 'Driver: Budi Santoso, B 1234 XYZ, 0812-3456-7890, Grand Max, sampai 25 menit\nLacak: ' + LINK;
+  assert.equal((await post('car_save', { order_no: no, via: 'pelanggan', customer_msg: MSG, driver: '', plate: '' })).error, 'INVALID');
+  const r = await post('car_save', { order_no: no, via: 'pelanggan', customer_msg: MSG, driver: 'Budi Santoso', plate: 'B 1234 XYZ', driver_wa: '081234567890', vehicle: 'Grand Max', eta_min: 25 });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.wa_sent, [{ kind: 'car', ok: false, error: 'WA_OFF' }]); // WhatsApp not set up: the app sends the text (with the link) by hand
+  const row = db.prepare('SELECT status, car, eta_at FROM brad_orders WHERE order_no = ?').get(no), car = JSON.parse(row.car);
+  assert.deepEqual([row.status, car.via, car.driver, car.plate, car.driver_wa, car.cost, car.eta_min, car.customer_msg, car.track_url, row.eta_at],
+    ['car', 'pelanggan', 'Budi Santoso', 'B 1234 XYZ', '6281234567890', 0, 25, MSG, LINK, '2026-10-14T03:30:00.000Z']); // the link from his message
+  const bs = await post('bootstrap', {});
+  assert.deepEqual([bs.orders[0].car.via, bs.orders[0].car.track_url], ['pelanggan', LINK]);
+});
+
 test('brad: the core suite (backend/brad/test-brad.js) passes — it runs in CI with the Worker tests', () => {
   const r = spawnSync(process.execPath, [fileURLToPath(new URL('../../backend/brad/test-brad.js', import.meta.url))], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stdout + r.stderr);

@@ -254,6 +254,72 @@ assert.deepStrictEqual(['Ok pak siap', 'Pak, mobil masuk pintu 12 ya', 'Maaf sto
   ok(call('order_status', { order_no: p3.order_no, to: 'cancelled', note: 'uji stamp' })); // a change in the same second still shows
   assert.notStrictEqual(ok(call('poll', {}, 'akuntan')).stamp, stamp);
 }
+// ---------- v62: the car the customer booked himself — his message read by fixed rules; kept with the trip; the link to the cold store ----------
+{
+  const P = KBrad.parseCarMsg, none = { driver: '', plate: '', phone: '', link: '', vehicle: '', eta_min: null };
+  const LINK = 'https://share.lalamove.com/?ID100221014123456&lang=id_ID';
+  // a customer's own words, all on one line
+  assert.deepStrictEqual(P('Driver: Budi Santoso, B 1234 XYZ, 0812-3456-7890, Grand Max, sampai 25 menit, ' + LINK),
+    { driver: 'Budi Santoso', plate: 'B 1234 XYZ', phone: '6281234567890', link: LINK, vehicle: 'Grand Max', eta_min: 25 });
+  // Lalamove's share text (the full stop after the link is not part of it)
+  assert.deepStrictEqual(P('Pesanan Lalamove saya sedang dalam perjalanan.\nPengemudi Anda: Ahmad Fauzi\nPlat: D 5678 AB\nNo. HP: +62 813-1111-2222\nKendaraan: L300 Pick Up\nEstimasi tiba dalam 20 min\nLacak pesanan: https://share.lalamove.com/?ID=987654&lang=id_ID.'),
+    { driver: 'Ahmad Fauzi', plate: 'D 5678 AB', phone: '6281311112222', link: 'https://share.lalamove.com/?ID=987654&lang=id_ID', vehicle: 'L300 pickup', eta_min: 20 });
+  assert.deepStrictEqual(P('Assalamualaikum pak, mobilnya sudah saya pesan ya. Sopirnya Pak Joko, nopol AB 12 C, wa 6285711112222, motor, ± 30 mnt'),
+    { driver: 'Pak Joko', plate: 'AB 12 C', phone: '6285711112222', link: '', vehicle: 'Motor', eta_min: 30 });
+  assert.deepStrictEqual(P('Jenis kendaraan: Mobil\nNama pengemudi : SUPRIYADI\nTNKB: B-2345-UVW\nKontak: 0857 1234 5678'),
+    { driver: 'SUPRIYADI', plate: 'B 2345 UVW', phone: '6285712345678', link: '', vehicle: 'Mobil', eta_min: null });
+  assert.deepStrictEqual(P('Your driver: Rudi, License plate: F 1 XY, Blind Van, ETA 15-20 mins'), { driver: 'Rudi', plate: 'F 1 XY', phone: '', link: '', vehicle: 'Blind van', eta_min: 20 }); // a range: its upper end
+  assert.deepStrictEqual(P('Sopir pak Dedi (0813 9999 8888) mobil cdd box, b1234tuv, kira2 40-50 menit sampai'), { driver: 'pak Dedi', plate: 'B 1234 TUV', phone: '6281399998888', link: '', vehicle: 'CDD', eta_min: 50 });
+  assert.deepStrictEqual(P('No. kendaraan B 9 ABC, engkel, 1 jam 10 menit'), Object.assign({}, none, { plate: 'B 9 ABC', vehicle: 'Engkel (CDE)', eta_min: 70 }));
+  assert.deepStrictEqual(P('Driver: Budi, plat B 1234 ya, sampai dalam 1,5 jam'), Object.assign({}, none, { driver: 'Budi', plate: 'B 1234', eta_min: 90 })); // after its label a plate may lack its letters
+  // what was read leaves the text: the plate is not part of the name, the minutes are not part of the phone
+  assert.deepStrictEqual(P('Driver: Budi Santoso B 1234 XYZ'), Object.assign({}, none, { driver: 'Budi Santoso', plate: 'B 1234 XYZ' }));
+  assert.deepStrictEqual(P('Driver Andi 0812 345 678 25 menit'), Object.assign({}, none, { driver: 'Andi', phone: '62812345678', eta_min: 25 }));
+  // not plates: a car model, an address; "mobil" alone is any car; "driver sudah otw" names nobody; "buka 24 jam" is not the trip
+  assert.deepStrictEqual(P('Kendaraan L300 B 1234 XYZ driver sudah otw'), Object.assign({}, none, { plate: 'B 1234 XYZ', vehicle: 'L300' }));
+  assert.deepStrictEqual(P('Alamat Jl. Melati RT 05 RW 03 no 12 ya, Blok B 12 A, pakai L300'), Object.assign({}, none, { vehicle: 'L300' }));
+  assert.deepStrictEqual(P('mobil sudah dipesan, sopir lalamove sudah jalan, 15mnt, buka 24 jam'), Object.assign({}, none, { eta_min: 15 }));
+  // links: http(s) only, Lalamove's first, at most 300 characters
+  assert.deepStrictEqual(P('lacak javascript:alert(1) atau www.lalamove.com/x ftp://a.b'), none);
+  assert.strictEqual(P('peta https://maps.app.goo.gl/abc lalu https://share.lalamove.com/?ID=1').link, 'https://share.lalamove.com/?ID=1');
+  assert.strictEqual(P('https://share.lalamove.com/?ID=' + '9'.repeat(300)).link, '');
+  // none of it
+  [null, undefined, '', 'Pak, nanti saya kabari ya. Terima kasih', 'Barang sudah siap?', 'Ok pak 👍'].forEach(s => assert.deepStrictEqual(P(s), none, String(s)));
+
+  NOW = '2026-10-15T03:00:00Z'; // Thursday 10:00 WIB (the ETA margin is 15 % since the owner's setting above)
+  const o = mk({ order_date: '2026-10-15', lines: [{ pallet_code: 'A-2001', cartons: 2 }] }), no = o.order_no;
+  for (const to of ['sent', 'approved', 'ready']) ok(call('order_status', { order_no: no, to }));
+  const MSG = 'Pak, mobil saya yang pesan ya.\r\nDriver: Budi Santoso, B 1234 XYZ, 0812-3456-7890, Grand Max, sampai 25 menit\n\n\n\nLacak: ' + LINK + '\u0007';
+  // the driver and the plate are still required, even with the message there
+  err(call('car_save', { order_no: no, via: 'pelanggan', customer_msg: MSG, driver: '', plate: '' }), 'INVALID');
+  err(call('car_save', { order_no: no, via: 'pelanggan', customer_msg: MSG, driver: 'Budi Santoso', plate: '' }), 'INVALID');
+  err(call('car_save', { order_no: no, via: 'pelanggan', customer_msg: MSG, driver: '', plate: 'B 1234 XYZ' }), 'INVALID');
+  err(call('car_save', { order_no: no, via: 'pelanggan', driver: 'Budi', plate: 'B 1 AB', track_url: 'javascript:alert(1)' }), 'INVALID'); // a link: http(s) only
+  err(call('car_save', { order_no: no, via: 'pelanggan', driver: 'Budi', plate: 'B 1 AB', track_url: 'https://x.y/' + 'a'.repeat(300) }), 'INVALID');
+  const p = KBrad.parseCarMsg(MSG);
+  const cp = ok(call('car_save', { order_no: no, via: 'pelanggan', customer_msg: MSG, driver: p.driver, plate: p.plate, driver_wa: p.phone, vehicle: p.vehicle, eta_min: p.eta_min, track_url: p.link })).order;
+  assert.deepStrictEqual([cp.status, cp.car.via, cp.car.driver, cp.car.plate, cp.car.driver_wa, cp.car.vehicle, cp.car.cost, cp.car.eta_min, cp.car.track_url, cp.eta_at],
+    ['car', 'pelanggan', 'Budi Santoso', 'B 1234 XYZ', '6281234567890', 'Grand Max', 0, 25, LINK, '2026-10-15T03:29:00.000Z']); // the customer pays: cost 0; 25 min + 15 %
+  // his message as he wrote it: its lines, no control characters, at most 1000 characters
+  assert.strictEqual(cp.car.customer_msg, 'Pak, mobil saya yang pesan ya.\nDriver: Budi Santoso, B 1234 XYZ, 0812-3456-7890, Grand Max, sampai 25 menit\n\nLacak: ' + LINK);
+  assert.match(cp.log[cp.log.length - 1].note, /^B 1234 XYZ · Budi Santoso · dipesan pelanggan · tiba ± 10:29$/);
+  // to the cold store: the car, and the tracking link (the hand-sent text) — the car template keeps its six values, without it
+  assert.strictEqual(KBrad.msgCar(cp, C), 'Order ' + no + ' — mobil untuk ambil di DPP Cold Storage:\nKendaraan: Grand Max\nNo. polisi: B 1234 XYZ\nSopir: Budi Santoso (081234567890)\nPerkiraan tiba: 10:29\nLacak mobil: ' + LINK + '\nTerima kasih.');
+  const wm = KBrad.waOut(T.orders.find(x => x.order_no === no), 'car', C);
+  assert.deepStrictEqual(wm.params, [no, 'DPP Cold Storage', 'Grand Max', 'B 1234 XYZ', 'Budi Santoso (081234567890)', '10:29']);
+  assert.strictEqual((KBrad.WA_TEMPLATES.car.body.match(/\{\{\d+\}\}/g) || []).length, wm.params.length);
+  // changed: no link typed → the one in his message; a cost he left to us is kept; a long message is cut at 1000
+  const cq = ok(call('car_save', { order_no: no, via: 'pelanggan', customer_msg: 'Driver: Joko, B 2 CD ' + LINK + ' ' + 'x'.repeat(1200), driver: 'Joko', plate: 'B 2 CD', cost: 150000 })).order;
+  assert.deepStrictEqual([cq.car.track_url, cq.car.cost, cq.car.customer_msg.length, cq.eta_at], [LINK, 150000, 1000, '']);
+  assert.match(cq.log[cq.log.length - 1].note, /^Mobil diubah: B 2 CD · Joko · dipesan pelanggan$/);
+  // Lalamove / own driver: as before — no message, no link kept (even if sent), the cost as typed
+  const cl = ok(call('car_save', { order_no: no, via: 'lalamove', driver: 'Pak Andi', plate: 'B 7 XY', cost: 85000, customer_msg: MSG, track_url: LINK })).order;
+  assert.deepStrictEqual([cl.car.via, cl.car.cost, 'customer_msg' in cl.car, 'track_url' in cl.car], ['lalamove', 85000, false, false]);
+  assert.doesNotMatch(KBrad.msgCar(cl, C), /Lacak/);
+  assert.strictEqual(ok(call('car_save', { order_no: no, via: 'sopir', driver: 'Pak C', plate: 'B 3 EF' })).order.car.via, 'sopir');
+  assert.strictEqual(ok(call('car_save', { order_no: no, via: 'kapal', driver: 'Pak C', plate: 'B 3 EF' })).order.car.via, 'lalamove'); // unknown → Lalamove, as before
+  ok(call('order_status', { order_no: no, to: 'cancelled', note: 'uji mobil pelanggan' }));
+}
 // nothing of the gudang data but OUT movements was ever written (checked in call())
 assert(T.movements.filter(m => m.type === 'OUT').every(m => /^BRD-/.test(m.order_no)));
 console.log('test-brad: all passed (' + T.orders.length + ' orders, ' + T.movements.length + ' movements)');
