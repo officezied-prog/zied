@@ -59,7 +59,10 @@ test('overview numbers match the mock DB; urgent list and Beranda expiry item li
   // Beranda: expiring batches (≤ 30 days, FIFO) → "N barang hampir kedaluwarsa"
   const exp30 = new Set(fifo(db, 30).map(b => b.p.id));
   expect(exp30.size).toBeGreaterThanOrEqual(2);
-  const att = page.locator('#home-att [data-act="att-go"][data-go="gudang"][data-tab="expiry"]');
+  // (v66: Beranda shows the first 5 items; with the goods-in notes waiting for confirmation it may be in "Semua")
+  await expect.poll(() => page.evaluate(() => { const all = document.querySelector('#home-att [data-act="home-all"]'); return !!document.querySelector('#home-att [data-act="att-go"][data-tab="expiry"]') || !!(all && !all.hidden); })).toBe(true);
+  let att = page.locator('#home-att [data-act="att-go"][data-go="gudang"][data-tab="expiry"]');
+  if (!(await att.count())) { await page.click('#home-att [data-act="home-all"]'); att = page.locator('#home-all-body [data-act="att-go"][data-go="gudang"][data-tab="expiry"]'); }
   await expect(att).toContainText(`${exp30.size} barang hampir kedaluwarsa`);
   await att.click();
   await expect(page.locator('#view-gudang')).toBeVisible();

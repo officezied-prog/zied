@@ -2969,6 +2969,7 @@ function laterAttention() {
 }
 function attentionHTML(items, limit) {
   items = attOpen(items); // v38: closed / answered notices leave the list
+  if (limit) { const lv = x => (x.level === 'err' ? 0 : x.level === 'warn' ? 1 : 2); items = items.slice().sort((a, b) => lv(a) - lv(b)); } // v66: the urgent (red) ones first on Beranda
   if (!items.length) return `<div class="muted" style="padding:6px 2px">${ic('check')} ${esc(t('att.none'))}</div>`;
   return `<div class="list">${items.slice(0, limit || items.length).map(x => `<div class="nt-wrap" data-nt-row="${esc(attNid(x))}"><button class="li att ${x.level}" data-act="att-go" data-go="${x.go}" data-key="${esc(x.key)}" ${x.low ? 'data-low="1"' : ''} ${x.daily ? 'data-daily="1"' : ''} ${x.tab ? `data-tab="${x.tab}"` : ''} ${x.kasRep ? 'data-kasrep="1"' : ''} style="min-height:48px;padding:8px 12px">${ic(x.icon)}<div class="grow t" style="font-weight:600">${esc(x.text)}</div><span class="muted">›</span></button>${ntActs(attNid(x), { text: x.text, actor: x.who || '' })}</div>`).join('')}</div>`;
 }
@@ -3068,7 +3069,13 @@ function hourlySVG(hours) {
 function blockHTML(id, title, inner, more) { return `<div class="panel" id="${id}"><h3>${esc(title)}${more ? `<button class="btn xs" style="margin-inline-start:auto" data-act="home-all" data-block="${id}">${esc(t('home.all'))}</button>` : ''}</h3><div class="pb">${inner}</div></div>`; }
 function homeTopRows(top, n) { return `<table class="tbl" data-rows><tbody>${top.slice(0, n).map((p, i) => `<tr><td class="muted">${i + 1}</td><td>${esc(p.name)}</td><td class="r num">${fmtQty(p.qty)} <span class="small muted">${esc(p.unit)}</span></td><td class="r num">${fmtRp(p.omzet)}</td></tr>`).join('') || `<tr><td class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table>`; }
 function homeCashierRows(list, n) { return `<table class="tbl" data-rows><thead><tr><th>${esc(t('rc.cashier'))}</th><th class="r">${esc(t('home.tx'))}</th><th class="r">${esc(t('rep.omzet'))}</th><th class="r">${esc(t('void'))}</th><th class="r">${esc(t('shift.difference'))}</th></tr></thead><tbody>${list.slice(0, n).map(c => `<tr><td>${esc(c.name)}</td><td class="r num">${fmtNum(c.n)}</td><td class="r num">${fmtRp(c.omzet)}</td><td class="r num ${c.voids ? 'red' : ''}">${fmtNum(c.voids)}</td><td class="r num ${c.diff < 0 ? 'red' : c.diff > 0 ? 'amber' : ''}">${c.diff ? (c.diff > 0 ? '+' : '') + fmtRp(c.diff) : '—'}</td></tr>`).join('') || `<tr><td colspan="5" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table>`; }
-function drawAttention() { const b = $('#home-att .pb'); if (b) b.innerHTML = attentionHTML(ATT.items, 5); const btn = $('#home-att [data-act="home-all"]'); if (btn) btn.hidden = attOpen(ATT.items).length <= 5; } // v38: open notices only
+function drawAttention() { // v38: open notices only
+  const b = $('#home-att .pb'); if (b) b.innerHTML = attentionHTML(ATT.items, 5);
+  const more = attOpen(ATT.items).length > 5, h = $('#home-att h3');
+  // v66: the list can grow after Beranda was drawn (gudang, field, bank items come later): "Semua" must appear then too
+  if (more && h && !$('#home-att [data-act="home-all"]')) h.insertAdjacentHTML('beforeend', `<button class="btn xs" style="margin-inline-start:auto" data-act="home-all" data-block="home-att">${esc(t('home.all'))}</button>`);
+  const btn = $('#home-att [data-act="home-all"]'); if (btn) btn.hidden = !more;
+}
 function drawHome() {
   const body = $('#home-body'); if (!body) return;
   body.style.opacity = '';
