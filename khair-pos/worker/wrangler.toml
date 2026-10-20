@@ -20,3 +20,10 @@ keep_vars = true
 binding = "DB"
 database_name = "khair_mart_jumla"
 database_id = "9330a847-d474-45bd-9400-ebad5bf01a27"
+
+# v63 (Khair Order Brad, stage 3 — the Lalamove car booked automatically): every 2 minutes the Worker reads the open Lalamove
+# trips again (src/index.js scheduled → src/brad.js handleLalaCron). Without the secrets LALAMOVE_KEY / LALAMOVE_SECRET it does
+# nothing; with them and no open trip it is one small D1 read. LALAMOVE_ENV ('production' to go live) is a plain variable set in
+# the dashboard, NOT here: a [vars] value in this file would be put back on every deploy.
+[triggers]
+crons = ["*/2 * * * *"]

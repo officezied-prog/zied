@@ -94,6 +94,20 @@ the worker tests + the three Playwright suites on every PR. This removed n8n's m
   `via 'pelanggan'`): his WhatsApp message is pasted, `KBrad.parseCarMsg` proposes driver / plate / WhatsApp / vehicle / minutes /
   tracking link (fixed rules), the trip keeps `customer_msg` + `track_url`; the hand-sent car text carries the link, the approved car
   template keeps its six values (no link).
+  **Stage 3 (v63 Brad 1.3.0): the Lalamove car booked automatically** (owner 2026-10-20: «ابدأ المرحلة الثالثة: طلب سيارة لالاموف تلقائيًا»),
+  Lalamove's official Partner API v3 (`worker/src/lalamove.js`, HMAC-signed like its SDK `@lalamove/lalamove-js` 1.1.0): a fourth
+  way in the car step, "Pesan Lalamove otomatis" — `lala_quote` (the cooler → `dest_lat`/`dest_lng` of the order, else the shop's
+  `brad_store_geo`) → `lala_book` (priced again; > 5 % above what staff saw = `PRICE_CHANGED`; the month's cap `brad_lala_cap`,
+  default Rp 10 jt, 0 = off; a booking lock `brad_lala_locks`) → the trip in `car` (`via 'lalamove_api'`, `lala_order_id`,
+  `share_link`, `lala_status` …). The pure core decides everything (`lala_plan`, and system requests `req.__sys === 'lalamove'`
+  that only the Worker sets: `lala_booked`, `lala_sync`, `lala_cancelled`, `lala_due`, `lala_services`); the Worker only talks to
+  Lalamove. Followed by a cron every 2 min (`wrangler.toml [triggers]`, no-op without keys), the app's refresh (≥ 90 s, ≤ 5 trips)
+  and `/webhook/lalamove` (body never trusted: it only triggers a signed re-read): driver found → driver/plate to the cold store
+  (the stage-2 car template); picked up at door/loading → `depart`; completed → delivered; cancelled/expired → back to ready.
+  "Batalkan Lalamove" = DELETE at Lalamove first. Places pasted as Maps links / WhatsApp locations / "lat,lng" (`KBrad.geoOf`;
+  short links via `gmaps.js`). Secrets `LALAMOVE_KEY`, `LALAMOVE_SECRET`; plain var `LALAMOVE_ENV=production` to go live
+  (sandbox by default) — dashboard only, never `[vars]` in `wrangler.toml`. Without them / over the cap / refused → the three
+  manual ways. Setup: `worker/docs/lalamove-setup.md`; demo `brad/?mock=1` (a simulated Lalamove on the card's demo phone).
 
 ## Owner standing rules — ALWAYS honor
 
