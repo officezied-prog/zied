@@ -85,7 +85,7 @@ export function loaderSpecs(req, opts = {}) {
     'Get Photo': eq('pos_photos', 'photo_id', photoId),
     'Get Open Shifts': eq('pos_shifts', 'status', 'open'),
     'Get Purchase By No': eq('pos_purchases', 'purchase_no', purchaseNo),
-    // v65: for the owner / manager / accountant at bootstrap — the goods-in notes not confirmed yet (since the feature started) and the
+    // v65: for the owner / manager / accountant at bootstrap — the goods-in notes not confirmed yet (the last 30 days) and the
     // ones bought on credit whose agreed date is near or past (a handful of rows; the light polls never read them)
     'Get Unchecked Purchases': {
       table: 'pos_purchases',

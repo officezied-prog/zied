@@ -154,7 +154,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.9.8';
+const APP_VERSION = '2.9.9';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -7322,9 +7322,10 @@ function drawPurchaseHistory() {
    was paid — now (cash, transfer, QRIS: a supplier payment, money out of the day) or later by the agreed date (the supplier's debt, due /
    late in Perhatian). Not an expense: the goods' cost counts when they are sold. */
 const canConfirmPu = () => isApprover() || isAudit();
-const PC_SINCE = '2026-10-20'; // notes from before the confirmation existed are left as they were
+// v66 (owner 2026-10-20, a screenshot of 14–17/10: «لا يوجد»): the notes from before the confirmation existed wait for it too (the last
+// 30 days); one already paid and recorded is confirmed "sudah dibayar sebelumnya" — no second payment.
 function puCheckHTML(n) {
-  if (!n.no || n.status === 'retur' || (!n.check && String(n.date) < PC_SINCE)) return '';
+  if (!n.no || n.status === 'retur') return '';
   const c = n.check;
   if (!c) return ` <span class="badge amber" data-check="wait">${esc(t('pc.wait'))}</span>${canConfirmPu() ? ` <button class="btn xs primary" data-act="pu-confirm" data-no="${esc(n.no)}">${ic('check')} ${esc(t('pc.btn'))}</button>` : ''}`;
   if (c.pay === 'tempo') {
@@ -7344,6 +7345,7 @@ function openPurchaseConfirm(no) {
       <div class="seg" id="pc-kind" role="radiogroup" style="margin-bottom:10px"><button type="button" data-k="lunas" id="pc-k-lunas" class="on">${esc(t('pc.k_paid'))}</button><button type="button" data-k="tempo" id="pc-k-tempo">${esc(t('pc.k_later'))}</button></div>
       <div id="pc-paid">
         <div class="field"><label class="f">${esc(t('pc.method'))}</label><div class="seg" id="pc-m">${['tunai', 'transfer', 'qris'].map((m, i) => `<button type="button" data-m="${m}" class="${i === 1 ? 'on' : ''}">${esc(t('pm.' + m))}</button>`).join('')}</div></div>
+        <label class="check" id="pc-before-row"><input type="checkbox" id="pc-before"> <span>${esc(t('pc.before'))}</span></label>
         <label class="check" id="pc-kas-row" hidden><input type="checkbox" id="pc-kas" ${shiftOpen ? '' : 'disabled'}> <span>${esc(t(shiftOpen ? 'pc.from_kas' : 'pc.from_kas_none'))}</span></label>
         <div class="grid2" id="pc-tf"><div class="field"><label class="f" for="pc-bank">${esc(t('pc.bank'))}</label><input class="input" id="pc-bank" maxlength="60" autocomplete="off"></div>
           <div class="field"><label class="f" for="pc-ref">${esc(t('pc.ref'))}</label><input class="input" id="pc-ref" maxlength="80" autocomplete="off"></div></div></div>
@@ -7357,8 +7359,10 @@ function openPurchaseConfirm(no) {
     $$('#pc-kind [data-k]', el).forEach(b => b.classList.toggle('on', b.dataset.k === kind));
     $$('#pc-m [data-m]', el).forEach(b => b.classList.toggle('on', b.dataset.m === method));
     $('#pc-paid', el).hidden = kind !== 'lunas'; $('#pc-later', el).hidden = kind !== 'tempo';
-    $('#pc-kas-row', el).hidden = method !== 'tunai'; $('#pc-tf', el).hidden = method === 'tunai';
+    const before = $('#pc-before', el).checked;
+    $('#pc-kas-row', el).hidden = method !== 'tunai' || before; $('#pc-tf', el).hidden = method === 'tunai' || before;
   };
+  $('#pc-before', el).onchange = sync;
   $$('#pc-kind [data-k]', el).forEach(b => b.onclick = () => { kind = b.dataset.k; sync(); });
   $$('#pc-m [data-m]', el).forEach(b => b.onclick = () => { method = b.dataset.m; sync(); });
   sync();
@@ -7366,6 +7370,7 @@ function openPurchaseConfirm(no) {
     const err = $('#pc-err', el), btn = e.currentTarget;
     const data = { purchase_no: no, supplier: n.supplier, pay: kind, note: $('#pc-note', el).value.trim() };
     if (kind === 'tempo') { data.due_date = $('#pc-due', el).value; if (!/^\d{4}-\d{2}-\d{2}$/.test(data.due_date) || data.due_date < today()) { err.textContent = t('pc.need_due'); return; } }
+    else if ($('#pc-before', el).checked) { data.method = method; data.paid_before = true; }
     else { data.method = method; if (method === 'tunai' && $('#pc-kas', el).checked) data.paid_from = 'kas'; if (method !== 'tunai') { data.bank = $('#pc-bank', el).value.trim(); data.transfer_ref = $('#pc-ref', el).value.trim(); } }
     btn.disabled = true; err.textContent = '';
     try {
@@ -8485,6 +8490,7 @@ Object.assign(I18N.id, {
   'pc.wait': 'Menunggu konfirmasi', 'pc.btn': 'Konfirmasi', 'pc.title': 'Konfirmasi barang masuk', 'pc.received_by': 'diterima {name}',
   'pc.hint': 'Barang sudah dicek oleh penerima. Tulis apakah sudah dibayar dan caranya, atau tanggal bayar yang disepakati (jadi hutang ke pemasok). Pemilik diberi tahu.',
   'pc.k_paid': 'Sudah dibayar', 'pc.k_later': 'Bayar nanti (tempo)', 'pc.method': 'Cara bayar', 'pc.from_kas': 'Dibayar dari laci kasir saya (kas keluar)', 'pc.from_kas_none': 'Dari laci kasir: buka kasir (shift) dulu — atau biarkan (uang dari luar laci)',
+  'pc.before': 'Sudah dibayar sebelumnya dan sudah dicatat (Pembayaran pemasok / rencana bayar) — jangan catat pembayaran lagi',
   'pc.bank': 'Bank / rekening', 'pc.ref': 'No. transfer / referensi', 'pc.due': 'Tanggal bayar yang disepakati', 'pc.need_due': 'Isi tanggal bayar yang disepakati (hari ini atau nanti)',
   'pc.save': 'Konfirmasi', 'pc.saved_paid': 'Barang masuk dikonfirmasi — pembayaran tercatat', 'pc.saved_later': 'Barang masuk dikonfirmasi — hutang ke pemasok sampai tanggal itu',
   'pc.paid': 'Lunas · {m}', 'pc.tempo': 'Tempo s/d {d}', 'pc.late': 'TERLAMBAT · jatuh tempo {d}', 'pc.by': 'dikonfirmasi {name}',
@@ -8575,6 +8581,7 @@ Object.assign(I18N.ar, {
   'pc.wait': 'بانتظار التصديق', 'pc.btn': 'تصديق', 'pc.title': 'تصديق البضاعة الواردة', 'pc.received_by': 'استلمها {name}',
   'pc.hint': 'البضاعة دقّقها المستلم. اكتب هل تم الدفع وبأي وسيلة، أو تاريخ الدفع المتفق عليه (تصبح دينًا للمورد). يُبلَّغ المالك.',
   'pc.k_paid': 'تم الدفع', 'pc.k_later': 'الدفع لاحقًا (آجل)', 'pc.method': 'وسيلة الدفع', 'pc.from_kas': 'دُفع من صندوق الكاشير الخاص بي (خروج نقد)', 'pc.from_kas_none': 'من صندوق الكاشير: افتح الصندوق أولًا — أو اتركه (مال من خارج الصندوق)',
+  'pc.before': 'دُفع سابقًا وسُجّل (دفعات الموردين / خطة الدفع) — لا تسجّل دفعة مرة أخرى',
   'pc.bank': 'البنك / الحساب', 'pc.ref': 'رقم التحويل / المرجع', 'pc.due': 'تاريخ الدفع المتفق عليه', 'pc.need_due': 'أدخل تاريخ الدفع المتفق عليه (اليوم أو بعده)',
   'pc.save': 'تصديق', 'pc.saved_paid': 'صُدّقت البضاعة الواردة — سُجّل الدفع', 'pc.saved_later': 'صُدّقت البضاعة الواردة — دين للمورد حتى ذلك التاريخ',
   'pc.paid': 'مدفوعة · {m}', 'pc.tempo': 'آجل حتى {d}', 'pc.late': 'متأخر · الاستحقاق {d}', 'pc.by': 'صدّقها {name}',

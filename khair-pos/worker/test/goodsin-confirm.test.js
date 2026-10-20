@@ -94,3 +94,26 @@ test('v65 paid in cash from the confirmer\'s own drawer: the drawer\'s cash out 
   assert.equal(sh.cash_out, 500000);
   assert.match(JSON.parse(sh.moves).at(-1).note || JSON.stringify(JSON.parse(sh.moves).at(-1)), /Bayar pemasok CV Timur Tengah/);
 });
+
+// v66 (owner 2026-10-20, a screenshot of his notes of 14–17/10: «لا يوجد»): the notes received before the confirmation existed wait for it
+// too (the last 30 days); one the supplier was already paid for (a payment recorded earlier, even unallocated) is confirmed "sudah
+// dibayar sebelumnya" — no second payment, nothing out of the day.
+test('v66 older notes (last 30 days) wait too; "paid before" confirms without a second payment', async () => {
+  const db = seed(), ad = sqliteAdapter(db);
+  const old = (id, no, date, sup, total) => insert(db, 'pos_purchases', { id, purchase_date: date, supplier: sup, product_id: 1, name: 'Kurma Sukari 1 kg', qty: total / 50000, cost_price: 50000, total, note: '', user: 'Siti', photo_id: '', purchase_no: no, match_status: 'cocok', match_notes: '' });
+  old(101, 'PB-OLD1', plus(-6), 'CV Timur Tengah', 500000);
+  old(102, 'PB-OLD2', plus(-3), 'PT Kurma Jaya', 250000);
+  old(103, 'PB-OLD3', plus(-45), 'PT Kurma Jaya', 100000); // older than 30 days: left as it was
+  insert(db, 'pos_payments', { id: 201, pay_id: 'PYOLD', pay_date: plus(-5), direction: 'out', party_type: 'supplier', customer_id: 0, supplier: 'CV Timur Tengah', amount: 500000, method: 'transfer', alloc: '[]', match_status: 'belum_dialokasi', cashier: 'Pemilik' });
+  const boot = await call(ad, 'Jihan', 'bootstrap', {});
+  assert.deepEqual(boot.purchase_checks.waiting.map(x => x.purchase_no).sort(), ['PB-OLD1', 'PB-OLD2']);
+  const c = await call(ad, 'Jihan', 'confirm_purchase', { purchase_no: 'PB-OLD1', supplier: 'CV Timur Tengah', pay: 'lunas', method: 'transfer', paid_before: true, transfer_ref: 'TRX-OLD' });
+  assert.equal(c.ok, true, JSON.stringify(c)); assert.equal(c.payment, null);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM pos_payments WHERE supplier = 'CV Timur Tengah'").get().n, 1);
+  assert.deepEqual(lines(db, 'PB-OLD1').map(r => [r.check_status, r.checked_by, r.pay_status, r.pay_method]), [['dikonfirmasi', 'Jihan', 'lunas', 'transfer']]);
+  assert.match(notices(db).at(-1).summary, /PB-OLD1 dari CV Timur Tengah .* dikonfirmasi manajer Jihan: sudah dibayar transfer \(dibayar sebelumnya, tanpa pembayaran baru\)$/);
+  // without it, "sudah dibayar" records the payment as for a new note
+  const c2 = await call(ad, 'Aqil', 'confirm_purchase', { purchase_no: 'PB-OLD2', supplier: 'PT Kurma Jaya', pay: 'lunas', method: 'tunai' });
+  assert.equal(c2.ok, true, JSON.stringify(c2)); assert.equal(c2.payment.amount, 250000);
+  assert.deepEqual((await call(ad, 'Jihan', 'bootstrap', {})).purchase_checks.waiting, []);
+});
