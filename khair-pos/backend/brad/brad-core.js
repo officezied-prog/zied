@@ -18,6 +18,8 @@ var KBrad = (function () {
   var K = typeof KCold !== 'undefined' ? KCold : (typeof window !== 'undefined' ? window.KCold : null);
   var P = typeof KColdParsers !== 'undefined' ? KColdParsers : (typeof window !== 'undefined' ? window.KColdParsers : null);
   var ROLES = ['owner', 'manager', 'akuntan'], READ = { login: 1, bootstrap: 1, poll: 1 }, OWNER_ONLY = { cooler_save: 1, settings_save: 1 };
+  // v63: what the Worker itself tells the core after talking to Lalamove (req.__sys === 'lalamove', never from a client)
+  var SYS_ONLY = { lala_booked: 1, lala_sync: 1, lala_cancelled: 1, lala_due: 1, lala_services: 1 };
   var STEPS = ['new', 'sent', 'approved', 'ready', 'car', 'arrived', 'door', 'loading', 'departed'];
   var LIVE = STEPS.slice(0, 8); // these hold their pallets; at 'departed' the goods leave the stock
   var NEXT = { new: ['sent'], sent: ['approved', 'rejected'], approved: ['ready'], departed: ['delivered'] };
@@ -83,14 +85,19 @@ var KBrad = (function () {
   function inBreak(min, H) { if (!H.brk) return false; var b = H.brk.split('-'); return min >= hm(b[0]) && min < hm(b[1]); }
   /** When the car will really be there: Lalamove's minutes plus the margin. */
   function etaOf(nowIso, etaMin, margin) { return new Date(Date.parse(nowIso) + Math.round(num(etaMin) * (1 + num(margin) / 100)) * 60000).toISOString(); }
-  /** The settings this app keeps (pos_settings, keys brad_*): per cooler { wa, hours }, holidays, ETA margin, minutes a pallet. */
+  /** The settings this app keeps (pos_settings, keys brad_*): per cooler { wa, hours, lat, lng }, holidays, ETA margin, minutes a
+      pallet; v63: the shop's location, the month's Lalamove cap (Rp) and the vehicles Lalamove offers in the city (cached). */
   function settingsOf(s) {
     s = s || {};
-    var c = json(s.brad_coolers, {}), h = json(s.brad_holidays, []), m = s.brad_eta_margin, l = s.brad_load_min, wc = s.brad_wa_cap;
+    var c = json(s.brad_coolers, {}), h = json(s.brad_holidays, []), m = s.brad_eta_margin, l = s.brad_load_min, wc = s.brad_wa_cap, lc = s.brad_lala_cap;
+    var sg = json(s.brad_store_geo, null), sv = json(s.brad_lala_services, null), g = geoNum(sg);
     return { coolers: c && typeof c === 'object' && !Array.isArray(c) ? c : {}, holidays: Array.isArray(h) ? h : [],
       margin: m !== undefined && m !== null && m !== '' && isFinite(Number(m)) ? Number(m) : ETA_MARGIN,
       load_min: l !== undefined && l !== null && l !== '' && Number(l) > 0 ? Number(l) : LOAD_MIN,
-      wa_cap: wc !== undefined && wc !== null && wc !== '' && isFinite(Number(wc)) && Number(wc) >= 0 ? Math.round(Number(wc)) : 3000 };
+      wa_cap: wc !== undefined && wc !== null && wc !== '' && isFinite(Number(wc)) && Number(wc) >= 0 ? Math.round(Number(wc)) : 3000,
+      lala_cap: lc !== undefined && lc !== null && lc !== '' && isFinite(Number(lc)) && Number(lc) >= 0 ? Math.round(Number(lc)) : LALA_CAP,
+      store_geo: g ? { lat: g.lat, lng: g.lng, address: str(sg.address) } : null,
+      lala_services: sv && typeof sv === 'object' && Array.isArray(sv.services) ? sv : null };
   }
   /** Today's pickups at risk of overtime (computed on the device too): no car yet from 30 min before the last order time,
       a car not in from 30 min before closing (or past its expected time), still not in after closing. */
@@ -549,6 +556,77 @@ var KBrad = (function () {
     }
     return { response: resp, writes: writes };
   }
+  /* ---------- stage 3: the Lalamove car booked by the server (Lalamove's official Partner API v3, called by the Worker) ----------
+     Owner 2026-10-20: «ابدأ المرحلة الثالثة: طلب سيارة لالاموف تلقائيًا». Staff choose the vehicle and the time; the server prices the trip
+     (the cooler → where the goods go), books it, and follows it: the driver found → his name, plate and WhatsApp go to the cold
+     store (the same car message as step 5); picked up while the car is at the door / loading → the departure (the goods out of the
+     stock, the customer told); completed → delivered; cancelled / rejected / no driver → back to "book a car". These rules are
+     here, with no network: the Worker reads Lalamove and tells the core what it said (req.__sys === 'lalamove', set by the Worker
+     alone). Not set up, over the month's cap, refused or unreachable → the manual ways stay (Lalamove's app, our own driver, the
+     customer's car): nothing stops. */
+  var LALA_CAP = 10000000; // Rp a month of booked trips (owner setting brad_lala_cap; 0 = no automatic booking)
+  var LALA_PICKUP_MIN = 40; // minutes until the car is at the cooler when nothing else is known (staff may type their own)
+  var LALA_STATUSES = ['ASSIGNING_DRIVER', 'ON_GOING', 'PICKED_UP', 'COMPLETED', 'CANCELED', 'REJECTED', 'EXPIRED'];
+  var LALA_FINAL = ['COMPLETED', 'CANCELED', 'REJECTED', 'EXPIRED'], LALA_GONE = ['CANCELED', 'REJECTED', 'EXPIRED'];
+  var LALA_WORD = { CANCELED: 'dibatalkan', REJECTED: 'ditolak', EXPIRED: 'tidak dapat sopir' };
+  var LALA_SYNC_STEPS = ['car', 'arrived', 'door', 'loading', 'departed']; // the trips worth reading again
+  var GEO_HINT = 'tempel link Google Maps, lokasi WhatsApp, atau "lat,lng" (contoh -6.2088,106.8456)';
+  function geoNum(o) {
+    if (!o || typeof o !== 'object' || [o.lat, o.lng].some(function (v) { return v === null || v === undefined || v === ''; })) return null;
+    var la = Number(o.lat), ln = Number(o.lng);
+    return isFinite(la) && isFinite(ln) && Math.abs(la) <= 90 && Math.abs(ln) <= 180 && !(la === 0 && ln === 0) ? { lat: la, lng: ln } : null;
+  }
+  /** A place as pasted → { lat, lng } (6 decimals), else null: "lat,lng"; a Google Maps link — the pin (…!3dLAT!4dLNG), ?q= / ll= /
+      query= / destination= / daddr=, the view (@lat,lng); a WhatsApp location (maps.google.com/?q=lat,lng); geo:lat,lng. A short
+      link (maps.app.goo.gl/…) carries no position: the Worker follows it first (worker/src/gmaps.js). */
+  function geoOf(text) {
+    var s = str(text).slice(0, 2000), N = '(-?\\d{1,3}(?:\\.\\d+)?)', m;
+    try { s = decodeURIComponent(s.replace(/\+/g, ' ')); } catch (e) { /* keep it as typed */ }
+    var pats = [/!3d(-?\d{1,2}(?:\.\d+)?)!4d(-?\d{1,3}(?:\.\d+)?)/, new RegExp('[?&](?:q|ll|sll|query|destination|daddr|center)=(?:loc:)?\\s*' + N + '\\s*,\\s*' + N),
+      /@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/, new RegExp('\\bgeo:' + N + ',' + N), /^\s*(-?\d{1,2}\.\d+)\s*[,;]\s*(-?\d{1,3}\.\d+)\s*$/,
+      /(?:^|[^\d.\-])(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})(?![\d.])/];
+    for (var i = 0; i < pats.length; i++) {
+      m = s.match(pats[i]);
+      var g = m ? geoNum({ lat: m[1], lng: m[2] }) : null;
+      if (g) return { lat: Math.round(g.lat * 1e6) / 1e6, lng: Math.round(g.lng * 1e6) / 1e6 };
+    }
+    return null;
+  }
+  /** The trip booked through the API (its car JSON), or null. */
+  function lalaTrip(o) { var c = car(o); return c.via === 'lalamove_api' && str(c.lala_order_id) ? c : null; }
+  /** A Lalamove trip still running (not completed, cancelled, rejected or expired). */
+  function lalaOpen(o) { var c = lalaTrip(o); return !!c && LALA_FINAL.indexOf(str(c.lala_status)) < 0; }
+  /** What the month's trips cost (booked through the API that month, Jakarta time; a cancelled one costs nothing). */
+  function lalaSpent(orders, month) {
+    return (orders || []).reduce(function (s, o) {
+      var c = lalaTrip(o);
+      return c && wib(str(c.booked_at) || '1970-01-01T00:00:00Z').slice(0, 7) === month && LALA_GONE.indexOf(str(c.lala_status)) < 0 ? s + Math.round(num(c.price)) : s;
+    }, 0);
+  }
+  /** The open trips to read again: not looked at for `ageSec`, the oldest look first, at most `max` (only `onlyId` when given).
+      A pickup booked for more than 2 hours later is looked at every 30 minutes; a trip left open 3 days after its pickup is no
+      longer read (staff close it by hand) — the reads stay few. */
+  function lalaDue(orders, nowMs, ageSec, max, onlyId) {
+    var at = function (o) { var t = Date.parse(lalaTrip(o).lala_synced_at); return isNaN(t) ? 0 : t; };
+    return (orders || []).filter(function (o) {
+      if (!lalaOpen(o) || LALA_SYNC_STEPS.indexOf(o.status) < 0) return false;
+      var c = lalaTrip(o), pick = Math.max(Date.parse(c.booked_at) || 0, Date.parse(c.schedule_at) || 0);
+      if ((onlyId && str(c.lala_order_id) !== onlyId) || pick < nowMs - 3 * 86400000) return false;
+      return !(at(o) > nowMs - (ageSec >= 90 && pick > nowMs + 2 * 3600000 ? 1800 : ageSec) * 1000); // (Lalamove's webhook: at once)
+    }).sort(function (a, b) { return at(a) - at(b); }).slice(0, max).map(function (o) {
+      var c = lalaTrip(o); return { order_no: o.order_no, lala_order_id: str(c.lala_order_id), driver_id: str(c.lala_driver_id), synced_at: str(c.lala_synced_at) };
+    });
+  }
+  /** The vehicle proposed for `kg` (+10 %, as KCold.vehicleFor): the smallest whose load (in kg) holds it, else the biggest. */
+  function lalaServiceFor(services, kg) {
+    var list = (services || []).map(function (s) { var l = s && s.load ? num(s.load.value) * (/^(lb|lbs)$/i.test(str(s.load.unit)) ? 0.4536 : 1) : 0; return { key: str(s && s.key), load: l }; })
+      .filter(function (s) { return s.key; }), need = num(kg) * 1.1;
+    if (!(need > 0)) return ''; // the weight unknown: staff choose
+    var known = list.filter(function (s) { return s.load > 0; }).sort(function (a, b) { return a.load - b.load; });
+    var fit = known.find(function (s) { return s.load >= need; });
+    return fit ? fit.key : known.length ? known[known.length - 1].key : list.length ? list[0].key : '';
+  }
+
   /** The newest change the app could not have seen yet (the light poll): the latest order log line or WhatsApp message, and how
       many there are — two changes in the same second still change it. */
   function stampOf(orders, log) {
@@ -570,18 +648,23 @@ var KBrad = (function () {
     function done(resp) { resp.ok = true; return { response: resp, writes: writes }; }
     function put(table, row) { writes.push({ table: table, row: row }); var list = st[table]; if (!Array.isArray(list)) return row; if (row.id !== undefined) { var i = list.findIndex(function (x) { return x.id === row.id; }); if (i >= 0) list[i] = row; } else list.push(row); return row; }
 
-    /* who is asking (same rules as the POS and the gudang app) */
-    var users = st.users.filter(active), ph = str(req && req.pin_hash), nowMs = Date.parse(now);
-    var me = users.find(function (u) { return str(u.name).toLowerCase() === str(req && req.user).toLowerCase(); });
-    if (!me || !/^[a-f0-9]{64}$/.test(ph)) return fail('BAD_PIN', 'Nama atau PIN salah');
-    if (Date.parse(me.locked_until) > nowMs) return fail('LOCKED', 'Akun dikunci sementara karena PIN salah berkali-kali');
-    var viaMaster = users.some(function (u) { return u.role === 'owner' && u.master_hash && u.master_hash === ph; });
-    if (me.pin_hash !== ph && !viaMaster) return fail('BAD_PIN', 'Nama atau PIN salah');
-    if (bool(me.must_change) && !viaMaster) return fail('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu di aplikasi Khair Mart');
-    var role = str(me.role), by = str(me.name);
-    if (ROLES.indexOf(role) < 0) return fail('FORBIDDEN', 'Hanya pemilik, manajer dan akuntan');
-    if (!READ[action] && role === 'akuntan') return fail('FORBIDDEN', 'Akuntan hanya bisa melihat');
-    if (OWNER_ONLY[action] && role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik');
+    /* who is asking (same rules as the POS and the gudang app) — v63: or the Worker itself, right after it talked to Lalamove
+       (req.__sys: a client's request can never carry it — parseBrad keeps only action / key / user / pin_hash / data) */
+    var users = st.users.filter(active), ph = str(req && req.pin_hash), nowMs = Date.parse(now), sys = !!(req && req.__sys === 'lalamove');
+    if (!!SYS_ONLY[action] !== sys) return fail('FORBIDDEN', 'Hanya server');
+    var me = null, viaMaster = false, role = 'system', by = sys ? clean(data.by, 60) || 'Lalamove' : '';
+    if (!sys) {
+      me = users.find(function (u) { return str(u.name).toLowerCase() === str(req && req.user).toLowerCase(); });
+      if (!me || !/^[a-f0-9]{64}$/.test(ph)) return fail('BAD_PIN', 'Nama atau PIN salah');
+      if (Date.parse(me.locked_until) > nowMs) return fail('LOCKED', 'Akun dikunci sementara karena PIN salah berkali-kali');
+      viaMaster = users.some(function (u) { return u.role === 'owner' && u.master_hash && u.master_hash === ph; });
+      if (me.pin_hash !== ph && !viaMaster) return fail('BAD_PIN', 'Nama atau PIN salah');
+      if (bool(me.must_change) && !viaMaster) return fail('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu di aplikasi Khair Mart');
+      role = str(me.role); by = str(me.name);
+      if (ROLES.indexOf(role) < 0) return fail('FORBIDDEN', 'Hanya pemilik, manajer dan akuntan');
+      if (!READ[action] && role === 'akuntan') return fail('FORBIDDEN', 'Akuntan hanya bisa melihat');
+      if (OWNER_ONLY[action] && role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik');
+    }
     var S = settingsOf(st.settings);
 
     function wh(c) { return st.warehouses.find(function (w) { return w.code === code(c) && active(w); }); }
@@ -592,12 +675,13 @@ var KBrad = (function () {
       var row = { seq: nextSeq(), move_date: o.move_date || today, at: now, type: o.type, pallet_code: o.pallet_code, warehouse: o.warehouse, cartons: o.cartons,
         ref_seq: 0, grp: o.grp || 0, order_no: o.order_no || '', reason: o.reason || '', by_user: by };
       if (!row.grp) row.grp = row.seq;
+      if (BAL) { var bk = row.pallet_code + '|' + row.warehouse; BAL[bk] = (BAL[bk] || 0) + num(row.cartons); } // v63: two departures in one request
       put('movements', row); return row;
     }
     function coolerOut(w) {
-      var cfg = S.coolers[w.code] || {};
+      var cfg = S.coolers[w.code] || {}, g = geoNum(cfg);
       return { code: w.code, name: str(w.name), address: str(w.address), pic_name: str(w.pic_name), wa: normPhone(cfg.wa) || str(w.pic_wa), wa_own: !!normPhone(cfg.wa),
-        hours: hoursOf(cfg), hours_set: !!(cfg.hours && typeof cfg.hours === 'object') };
+        hours: hoursOf(cfg), hours_set: !!(cfg.hours && typeof cfg.hours === 'object'), lat: g ? g.lat : null, lng: g ? g.lng : null };
     }
     var BAL = null;
     function bal(pc, w) { if (!BAL) { BAL = {}; st.movements.forEach(function (x) { var k = x.pallet_code + '|' + x.warehouse; BAL[k] = (BAL[k] || 0) + x.cartons; }); } return BAL[pc + '|' + w] || 0; }
@@ -607,6 +691,7 @@ var KBrad = (function () {
       x.car = json(o.car, null); x.log = json(o.log, []); x.step = STEPS.indexOf(o.status) + 1;
       var T = totals(o); x.pallets = T.pallets; x.cartons = T.cartons;
       ['extra_cost', 'ot_hours', 'ot_cost', 'car_cancels', 'customer_id'].forEach(function (k) { x[k] = num(o[k]); });
+      var dg = geoNum({ lat: o.dest_lat, lng: o.dest_lng }); x.dest_lat = dg ? dg.lat : null; x.dest_lng = dg ? dg.lng : null; // v63
       return x;
     }
     /** The row with a new status and one more log line {at, by, from, to, note}. */
@@ -635,6 +720,117 @@ var KBrad = (function () {
     /** done() for a step whose message goes out by WhatsApp (sent by the Worker when it is set up; else the app sends it by hand). */
     function doneWa(resp, row, kind) { var m = waOut(row, kind, ctxOf(row)); resp.wa = m ? [m] : []; return done(resp); }
     function closedMsg(w, d, k, Hx) { return 'Gudang ' + w.name + ' tutup tanggal ' + d + (k === 'holiday' ? ' (' + holidayName(d, S.holidays) + ')' : '') + '. Hari kerja berikutnya: ' + nextWorkDay(d, Hx, S.holidays); }
+    /** Step 9: what there is of each line goes out of the gudang ledger (a shortage is said, never blocks); the row has left. */
+    function departRow(dp, note) {
+      var og = nextSeq(), short = [];
+      var dl = json(dp.lines, []).map(function (l) {
+        var b = bal(l.pallet_code, dp.warehouse), take = Math.max(0, Math.min(b, num(l.cartons)));
+        if (take < num(l.cartons)) short.push(l.pallet_code + ' (stok ' + b + ', order ' + num(l.cartons) + ')');
+        if (take > 0) move({ type: 'OUT', pallet_code: l.pallet_code, warehouse: dp.warehouse, cartons: -take, grp: og, order_no: dp.order_no, reason: 'Ambil ke ' + str(dp.dest_name) + ' (Order Brad)' });
+        return Object.assign({}, l, { out: take, pallet_ctn: b, full: b > 0 && take >= b });
+      });
+      var prow = Object.assign({}, dp, { departed_at: now, lines: JSON.stringify(dl), stock_note: short.join(', ') });
+      return { row: put('orders', step(prow, 'departed', [note || '', short.length ? 'Stok kurang: ' + short.join(', ') : ''].filter(Boolean).join(' · '))), short: short };
+    }
+    /** The car is off: back to "book a car", counted; after the last order time that risks overtime. */
+    function carCancelRow(xo, note) {
+      var xrow = Object.assign({}, xo, { car: '', eta_at: '', car_cancels: num(xo.car_cancels) + 1 });
+      return { row: put('orders', step(xrow, 'ready', note)), risk: str(xo.order_date) <= today && wibAt(now).min >= hm(H(xo.warehouse).last) };
+    }
+    /** v63: what the app shows about automatic Lalamove (the Worker adds whether its keys are set). */
+    function lalaOut() {
+      var sv = S.lala_services || {};
+      return { cap: S.lala_cap, spent: lalaSpent(st.orders, today.slice(0, 7)), month: today.slice(0, 7), store_geo: S.store_geo, pickup_min: LALA_PICKUP_MIN,
+        services: Array.isArray(sv.services) ? sv.services : [], services_city: sv.city || null, services_at: str(sv.at) };
+    }
+    /** v63: the Lalamove booking of an order — the quotation (the cooler → where the goods go) and the order's sender / recipient,
+        after the same checks as a car typed by hand (the cooler's closing time: overtime asked first) and the month's cap. The
+        Worker passes `_price` (its own fresh quote, never the client's) for the cap and, with the staff's `seen_price`, a price
+        that rose more than 5 %. */
+    function lalaPlan(o, d) {
+      var w = st.warehouses.find(function (x) { return x.code === o.warehouse; }) || { code: o.warehouse, name: o.warehouse }, wn = str(w.name) || o.warehouse;
+      var cfg = S.coolers[o.warehouse] || {}, cg = geoNum(cfg), oH = H(o.warehouse), toko = o.dest_type !== 'pelanggan';
+      if (!cg) return { code: 'NO_GEO', err: 'Lokasi gudang ' + wn + ' belum diisi (Pengaturan → Lalamove otomatis)' };
+      var cph = normPhone(cfg.wa) || normPhone(w.pic_wa);
+      if (!cph) return { code: 'INVALID', err: 'Nomor WhatsApp gudang ' + wn + ' belum ada (untuk sopir Lalamove)' };
+      var dg = null;
+      if (str(d.dest_geo)) { dg = geoOf(d.dest_geo); if (!dg) return { code: 'INVALID', err: 'Lokasi tujuan tidak terbaca: ' + GEO_HINT }; }
+      else dg = geoNum({ lat: o.dest_lat, lng: o.dest_lng }) || (toko ? S.store_geo : null);
+      if (!dg) return { code: 'NO_GEO', err: toko ? 'Lokasi toko belum diisi (Pengaturan → Lalamove otomatis)' : 'Lokasi tujuan belum diisi: ' + GEO_HINT };
+      var daddr = clean(d.dest_address, 200) || str(o.dest_address) || (toko && S.store_geo ? str(S.store_geo.address) : '') || (dg.lat + ',' + dg.lng);
+      var rph = str(d.dest_phone) ? normPhone(d.dest_phone) : normPhone(toko ? st.settings.phone : o.dest_phone);
+      if (!rph) return { code: 'INVALID', err: 'Nomor HP penerima wajib untuk Lalamove' };
+      var svc = str(d.service).toUpperCase(), list = S.lala_services ? S.lala_services.services : [], sv = list.find(function (x) { return str(x.key) === svc; });
+      if (!/^[A-Z0-9_]{2,40}$/.test(svc)) return { code: 'INVALID', err: 'Pilih jenis kendaraan Lalamove' };
+      if (list.length && !sv) return { code: 'INVALID', err: 'Jenis kendaraan tidak ada di Lalamove kota ini: ' + svc };
+      // when: now (Lalamove's minutes + the margin), or a later pickup time (Lalamove's scheduled order)
+      var sch = '', eta = '', em = null;
+      if (str(d.schedule_at)) {
+        var sm = Date.parse(d.schedule_at);
+        if (isNaN(sm) || sm < nowMs - 60000 || sm > nowMs + 30 * 86400000) return { code: 'INVALID', err: 'Jam jemput tidak valid (sekarang sampai 30 hari lagi)' };
+        sch = new Date(Math.max(sm, nowMs)).toISOString(); eta = sch;
+        var sk = dayKind(wibAt(sch).date, oH, S.holidays);
+        if (sk === 'holiday' || sk === 'closed') return { code: 'CLOSED', err: closedMsg(w, wibAt(sch).date, sk, oH), extra: { next: nextWorkDay(wibAt(sch).date, oH, S.holidays), kind: sk } };
+      } else {
+        if (str(o.order_date) > today) return { code: 'INVALID', err: 'Order untuk tanggal ' + o.order_date + ': pilih jam jemput (dijadwalkan)' };
+        em = d.eta_min === undefined || d.eta_min === null || d.eta_min === '' ? LALA_PICKUP_MIN : int(d.eta_min);
+        if (!(em >= 0 && em <= 600)) return { code: 'INVALID', err: 'Menit Lalamove 0–600' };
+        eta = etaOf(now, em, S.margin);
+      }
+      var ov = overtimeAt(eta, oH);
+      if (ov.hours > 0 && !bool(d.accept_ot)) return { code: 'LATE_CAR', err: 'Mobil diperkirakan tiba ' + hmStr(wibAt(eta).min) + ', lewat ' + oH.close + ': lembur ' + ov.hours + ' jam (' + rpS(ov.cost) + ').', extra: { eta_at: eta, ot_hours: ov.hours, ot_cost: ov.cost } };
+      // the month's trips against the owner's cap; a price that rose since staff saw it is asked again
+      var spent = lalaSpent(st.orders, today.slice(0, 7)), price = Math.max(0, Math.round(num(d._price))), seen = Math.max(0, Math.round(num(d.seen_price)));
+      if (spent >= S.lala_cap || (price > 0 && spent + price > S.lala_cap)) return { code: 'LALA_CAP', err: 'Batas biaya Lalamove bulan ini (' + rpS(S.lala_cap) + ') tercapai: sudah ' + rpS(spent) + (price ? ', mobil ini ' + rpS(price) : '') + '. Pesan mobil dengan cara manual.', extra: { spent: spent, cap: S.lala_cap, price: price } };
+      if (price > 0 && seen > 0 && price > seen * 1.05) return { code: 'PRICE_CHANGED', err: 'Harga Lalamove naik: ' + rpS(price) + ' (tadi ' + rpS(seen) + '). Periksa, lalu pesan lagi.', extra: { price: price, seen_price: seen } };
+      var T = totals(o), kg = json(o.lines, []).reduce(function (s, l) { var p = st.products.find(function (x) { return x.code === l.product; }); return s + num(l.cartons) * (p ? num(p.kg_per_ctn) : 0); }, 0);
+      var remarks = clean('Order ' + o.order_no + ': ' + n0(T.cartons) + ' ctn, ' + T.pallets + ' palet' + (kg > 0 ? ', ± ' + n0(kg) + ' kg' : '') + ', ambil di ' + wn + (str(o.note) ? '. ' + str(o.note) : ''), 200);
+      var quote = { serviceType: svc, language: 'id_ID', stops: [{ coordinates: { lat: String(cg.lat), lng: String(cg.lng) }, address: clean(str(w.address) || wn, 200) },
+        { coordinates: { lat: String(dg.lat), lng: String(dg.lng) }, address: daddr }] };
+      if (sch) quote.scheduleAt = sch;
+      return { plan: { order_no: o.order_no, by: by, service: svc, service_name: sv ? clean(sv.description, 40) || svc : svc, schedule_at: sch, eta_at: eta, eta_min: em,
+        accept_ot: bool(d.accept_ot), warn: inBreak(wibAt(eta).min, oH) ? 'BREAK' : '', kg: Math.round(kg), price: price, spent: spent, cap: S.lala_cap,
+        dest: { lat: dg.lat, lng: dg.lng, address: daddr }, quote: quote,
+        order: { sender: { name: clean(wn, 50), phone: '+' + cph }, recipients: [{ name: clean(toko ? str(st.settings.store_name) || 'Khair Mart' : o.dest_name, 50), phone: '+' + rph, remarks: remarks }],
+          isPODEnabled: false, metadata: { order_no: o.order_no } } } };
+    }
+    /** v63: one trip as Lalamove reports it now ({ order_no, lala_order_id, ok, status, driver_id, driver: { name, phone, plate },
+        share_link, price }) → the order follows by fixed rules. The same report twice changes nothing (only the time of the look). */
+    function lalaSyncOne(it) {
+      var o = order(it.order_no), c = o ? lalaTrip(o) : null;
+      if (!c || str(c.lala_order_id) !== str(it.lala_order_id)) return { applied: 'not_trip', wa: [] };
+      var trip = Object.assign({}, c, { lala_synced_at: now }), s = str(it.status).toUpperCase(), prev = str(c.lala_status), st0 = o.status;
+      if (it.ok === false || LALA_STATUSES.indexOf(s) < 0) { // Lalamove did not answer: looked again later, nothing else changes
+        trip.lala_error = clean(it.error || 'status ' + s, 120);
+        put('orders', Object.assign({}, o, { car: JSON.stringify(trip) })); return { applied: 'error', wa: [] };
+      }
+      delete trip.lala_error;
+      if (urlOf(it.share_link)) trip.share_link = urlOf(it.share_link);
+      if (num(it.price) > 0) trip.price = trip.cost = Math.round(num(it.price));
+      var dv = it.driver && typeof it.driver === 'object' ? it.driver : null, did = clean(it.driver_id, 40), dn = dv ? clean(dv.name, 40) : '', dpl = dv ? clean(dv.plate, 12).toUpperCase() : '';
+      var newDrv = !!(dv && did && did !== str(c.lala_driver_id) && (dn || dpl)), changed = s !== prev, wa = [], applied = [], notes = [];
+      if (newDrv) {
+        Object.assign(trip, { driver: dn || 'Sopir Lalamove', plate: dpl, driver_wa: normPhone(dv.phone), lala_driver_id: did });
+        notes.push((str(c.lala_driver_id) ? 'Sopir Lalamove diganti: ' : 'Sopir Lalamove: ') + trip.driver + (dpl ? ' · ' + dpl : '')); applied.push('driver');
+      }
+      trip.lala_status = s;
+      var row = Object.assign({}, o, { car: JSON.stringify(trip) });
+      // each move below changes the order's step, so the same report twice moves it once
+      if (LALA_GONE.indexOf(s) >= 0 && st0 === 'car') { // no car after all: book again (counted, like a car cancelled by hand)
+        carCancelRow(row, 'Lalamove ' + LALA_WORD[s] + ': ' + (str(c.driver) ? str(c.driver) + ' · ' + str(c.plate) : 'belum ada sopir') + ' — pesan mobil lagi');
+        return { applied: 'cancelled', wa: [] };
+      }
+      if (changed && s === 'PICKED_UP' && st0 === 'car') notes.push('Lalamove: barang sudah diambil — catat mobil masuk lalu berangkat');
+      if (changed && LALA_GONE.indexOf(s) >= 0) notes.push('Lalamove: ' + LALA_WORD[s]);
+      if (notes.length) row = step(row, st0, notes.join(' · '));
+      if ((s === 'PICKED_UP' || s === 'COMPLETED') && ['arrived', 'door', 'loading'].indexOf(st0) >= 0) { // the goods are on the car
+        row = departRow(row, 'Lalamove: barang diambil').row; applied.push('departed');
+        var dm = waOut(row, 'depart', ctxOf(row)); if (dm) wa.push(dm);
+      } else put('orders', row);
+      if (s === 'COMPLETED' && row.status === 'departed') { row = put('orders', step(Object.assign({}, row, { delivered_at: now }), 'delivered', 'Lalamove: selesai')); applied.push('delivered'); }
+      if (newDrv && row.status === 'car') { var cm = waOut(row, 'car', ctxOf(row)); if (cm) wa.push(cm); } // the same car message as step 5
+      return { applied: applied.join('+') || (changed ? 'status' : 'same'), wa: wa };
+    }
 
     switch (action) {
       case 'login':
@@ -656,11 +852,14 @@ var KBrad = (function () {
           orders: st.orders.slice(-300).reverse().map(orderOut), overtime: otSummary(st.orders, today.slice(0, 7)),
           // stage 2: the WhatsApp messages of the last days (sent, delivered, read, failed; the cold store's replies), the monthly cap
           wa_log: st.wa_log.slice(-400).map(function (x) { return { at: str(x.at), dir: str(x.dir), kind: str(x.kind), order_no: str(x.order_no), peer: str(x.peer), text: str(x.text), status: str(x.status), error: str(x.error), applied: str(x.applied) }; }),
-          wa_cap: S.wa_cap, stamp: stampOf(st.orders, st.wa_log)
+          wa_cap: S.wa_cap, stamp: stampOf(st.orders, st.wa_log),
+          // stage 3: automatic Lalamove (the cap, this month's trips, the shop's place, the city's vehicles); lala_due = the open trips
+          // the Worker reads again now (it removes the list before answering)
+          lala: lalaOut(), lala_due: lalaDue(st.orders, nowMs, 90, 5, '')
         });
       }
       case 'poll': // the app's light check (every minute while it is on screen): has anything changed since its last look?
-        return done({ stamp: stampOf(st.orders, st.wa_log) });
+        return done({ stamp: stampOf(st.orders, st.wa_log), lala_due: lalaDue(st.orders, nowMs, 90, 5, '') });
       case 'wa_admin': { // automatic WhatsApp: status (owner, manager); register the templates / a test message (owner). The Worker does the calls.
         var wop = str(data.op);
         if (['status', 'templates', 'test'].indexOf(wop) < 0) return fail('INVALID', 'Aksi WhatsApp tidak dikenal');
@@ -707,11 +906,15 @@ var KBrad = (function () {
         var cid = int(data.customer_id), oc = dt === 'pelanggan' && cid > 0 ? st.customers.find(function (c) { return c.id === cid && norm(c.name) === norm(dn); }) : null;
         var ll = lineList(data.lines, ow.code, oe ? oe.order_no : '');
         if (ll.err) return fail(ll.code || 'INVALID', ll.err);
+        // v63: where the goods go, for Lalamove (a Maps link, a WhatsApp location or "lat,lng"; empty = none); not sent = kept
+        var dgs = data.dest_geo !== undefined && data.dest_geo !== null, dgo = dgs && str(data.dest_geo) ? geoOf(data.dest_geo) : null;
+        if (dgs && str(data.dest_geo) && !dgo) return fail('INVALID', 'Lokasi tujuan tidak terbaca: ' + GEO_HINT);
         var src = ['photo', 'message', 'manual'].indexOf(str(data.source)) >= 0 ? str(data.source) : 'manual';
         var nth = st.orders.filter(function (o) { return str(o.order_no).indexOf('BRD-' + yymmdd) === 0; }).length + 1;
         var orow = Object.assign({}, oe || { order_no: 'BRD-' + yymmdd + '-' + pad3(nth), status: 'new', created_at: now, created_by: by, source: src, read_by: clean(data.read_by, 40) }, {
           order_date: od, warehouse: ow.code, dest_type: dt, dest_name: dt === 'toko' ? (dn || str(st.settings.store_name) || 'Khair Mart') : dn, dest_phone: dph,
           dest_address: clean(data.dest_address, 200), customer_id: oc ? oc.id : 0, note: clean(data.note, 200), lines: JSON.stringify(ll.lines) });
+        if (dgs) { orow.dest_lat = dgo ? dgo.lat : null; orow.dest_lng = dgo ? dgo.lng : null; }
         if (!oe) orow = step(orow, 'new', src === 'manual' ? '' : 'Dibaca dari ' + (src === 'photo' ? 'foto' : 'pesan') + (str(orow.read_by) ? ' (' + orow.read_by + ')' : ''));
         else if (oe.status === 'rejected') orow = step(orow, 'new', 'Diubah setelah ditolak');
         put('orders', orow);
@@ -723,6 +926,10 @@ var KBrad = (function () {
         if (to === 'cancelled') {
           if (LIVE.indexOf(o.status) < 0 && o.status !== 'rejected') return fail('INVALID', 'Order sudah ' + o.status);
           if (note.length < 3) return fail('INVALID', 'Alasan wajib');
+          // v63: a Lalamove car still booked through the server is cancelled there first (else it comes, and is paid); when the
+          // server cannot reach Lalamove, staff who cancelled it in Lalamove's own app say so (manual)
+          if (lalaOpen(o) && !bool(data.manual)) return fail('LALA_ACTIVE', 'Mobil Lalamove otomatis masih dipesan: tekan "Batalkan Lalamove" dulu');
+          if (lalaOpen(o)) note += ' (Lalamove dibatalkan sendiri di aplikasinya)';
           return done({ order: orderOut(put('orders', step(Object.assign(row, { cancelled_at: now, cancel_reason: note }), 'cancelled', note))) });
         }
         if ((NEXT[o.status] || []).indexOf(to) < 0) return fail('INVALID', 'Langkah tidak valid: ' + o.status + ' → ' + to);
@@ -752,6 +959,7 @@ var KBrad = (function () {
       case 'car_save': { // step 5: the car booked (Lalamove, own driver, or — v62 — the customer's own) — its plate and driver go to the cold store
         var co = order(data.order_no); if (!co) return fail('NOT_FOUND', 'Order tidak ada');
         if (co.status !== 'ready' && co.status !== 'car') return fail('INVALID', 'Pesan mobil setelah barang siap');
+        if (lalaOpen(co)) return fail('LALA_ACTIVE', 'Mobil Lalamove otomatis masih dipesan: tekan "Batalkan Lalamove" dulu'); // v63: never two cars
         var drv = clean(data.driver, 40), plate = clean(data.plate, 12).toUpperCase(), dwa = str(data.driver_wa) ? normPhone(data.driver_wa) : '';
         if (!drv || !plate) return fail('INVALID', 'Nama sopir dan nomor polisi wajib');
         if (str(data.driver_wa) && !dwa) return fail('INVALID', 'Nomor WhatsApp sopir tidak valid');
@@ -782,9 +990,12 @@ var KBrad = (function () {
         var xo = order(data.order_no); if (!xo) return fail('NOT_FOUND', 'Order tidak ada');
         if (xo.status !== 'car') return fail('INVALID', 'Belum ada mobil');
         var xr = clean(data.reason, 120); if (xr.length < 3) return fail('INVALID', 'Alasan wajib');
-        var xc = car(xo), xrow = Object.assign({}, xo, { car: '', eta_at: '', car_cancels: num(xo.car_cancels) + 1 });
-        var risk = str(xo.order_date) <= today && wibAt(now).min >= hm(H(xo.warehouse).last);
-        return done({ order: orderOut(put('orders', step(xrow, 'ready', 'Mobil batal: ' + str(xc.driver) + ' · ' + str(xc.plate) + ' — ' + xr))), risk: risk });
+        // v63: a Lalamove car booked through the server is cancelled there ("Batalkan Lalamove"); by hand only when staff cancelled it
+        // in Lalamove's own app themselves (the server could not reach Lalamove)
+        if (lalaOpen(xo) && !bool(data.manual)) return fail('LALA_ACTIVE', 'Mobil dipesan lewat Lalamove otomatis: tekan "Batalkan Lalamove"');
+        var xc = car(xo), xm = lalaOpen(xo) ? ' (dibatalkan sendiri di aplikasi Lalamove)' : '';
+        var xx = carCancelRow(xo, 'Mobil batal: ' + str(xc.driver) + ' · ' + str(xc.plate) + ' — ' + xr + xm);
+        return done({ order: orderOut(xx.row), risk: xx.risk });
       }
       case 'order_arrived': { // step 6: the car is in (registered) — after closing every started hour is overtime, with its cause
         var ao = order(data.order_no); if (!ao) return fail('NOT_FOUND', 'Order tidak ada');
@@ -816,22 +1027,15 @@ var KBrad = (function () {
       case 'depart': { // step 9: the car has left — the goods go out of the stock (the gudang ledger), the customer is told
         var dp = order(data.order_no); if (!dp) return fail('NOT_FOUND', 'Order tidak ada');
         if (['arrived', 'door', 'loading'].indexOf(dp.status) < 0) return fail('INVALID', 'Mobil belum masuk');
-        var og = nextSeq(), short = [];
-        var dl = json(dp.lines, []).map(function (l) {
-          var b = bal(l.pallet_code, dp.warehouse), take = Math.max(0, Math.min(b, num(l.cartons)));
-          if (take < num(l.cartons)) short.push(l.pallet_code + ' (stok ' + b + ', order ' + num(l.cartons) + ')');
-          if (take > 0) move({ type: 'OUT', pallet_code: l.pallet_code, warehouse: dp.warehouse, cartons: -take, grp: og, order_no: dp.order_no, reason: 'Ambil ke ' + str(dp.dest_name) + ' (Order Brad)' });
-          return Object.assign({}, l, { out: take, pallet_ctn: b, full: b > 0 && take >= b });
-        });
-        var prow = Object.assign({}, dp, { departed_at: now, lines: JSON.stringify(dl), stock_note: short.join(', ') });
-        var prow2 = put('orders', step(prow, 'departed', short.length ? 'Stok kurang: ' + short.join(', ') : ''));
-        return doneWa({ order: orderOut(prow2), short: short }, prow2, 'depart');
+        var dpr = departRow(dp, '');
+        return doneWa({ order: orderOut(dpr.row), short: dpr.short }, dpr.row, 'depart');
       }
       case 'cooler_save': { // owner: a cooler's WhatsApp for orders and its hours (empty hours = the owner's defaults)
         var cw = wh(data.code); if (!cw) return fail('NOT_FOUND', 'Gudang tidak ada');
         var waRaw = str(data.wa), wa = waRaw ? normPhone(waRaw) : '';
         if (waRaw && !wa) return fail('INVALID', 'Nomor WhatsApp tidak valid');
-        var cfg = { wa: wa }, hx = data.hours && typeof data.hours === 'object' ? data.hours : null;
+        var cfg = { wa: wa }, hx = data.hours && typeof data.hours === 'object' ? data.hours : null, cg0 = geoNum(S.coolers[cw.code]);
+        if (cg0) { cfg.lat = cg0.lat; cfg.lng = cg0.lng; } // v63: its place (Pengaturan → Lalamove otomatis) stays
         if (hx) {
           var hb = str(hx.brk), hbp = hb.split('-');
           if (!hmOk(hx.open) || !hmOk(hx.close) || !hmOk(hx.last) || !(hm(hx.open) < hm(hx.last) && hm(hx.last) <= hm(hx.close))) return fail('INVALID', 'Jam kerja: buka < order terakhir ≤ tutup (JJ:MM)');
@@ -861,7 +1065,90 @@ var KBrad = (function () {
         if (data.eta_margin !== undefined) { var mg = num(data.eta_margin); if (!(mg >= 0 && mg <= 100)) return fail('INVALID', 'Tambahan waktu 0–100 %'); put('settings', { skey: 'brad_eta_margin', svalue: JSON.stringify(Math.round(mg)) }); }
         if (data.wa_cap !== undefined) { var wcap = num(data.wa_cap); if (!(wcap >= 0 && wcap <= 100000) || Math.floor(wcap) !== wcap) return fail('INVALID', 'Batas WhatsApp per bulan 0–100.000'); put('settings', { skey: 'brad_wa_cap', svalue: JSON.stringify(wcap) }); }
         if (data.load_min !== undefined) { var lm = num(data.load_min); if (!(lm >= 5 && lm <= 120)) return fail('INVALID', 'Menit muat per palet 5–120'); put('settings', { skey: 'brad_load_min', svalue: JSON.stringify(Math.round(lm)) }); }
+        // v63: automatic Lalamove — the month's cap (Rp; 0 = none booked by the server), the shop's place, each cooler's place
+        if (data.lala_cap !== undefined) { var lcap = num(data.lala_cap); if (!(lcap >= 0 && lcap <= 1000000000) || Math.floor(lcap) !== lcap) return fail('INVALID', 'Batas biaya Lalamove per bulan Rp 0–1.000.000.000'); put('settings', { skey: 'brad_lala_cap', svalue: JSON.stringify(lcap) }); }
+        if (data.store_geo !== undefined) {
+          var sgt = str(data.store_geo), sgo = sgt ? geoOf(sgt) : null;
+          if (sgt && !sgo) return fail('INVALID', 'Lokasi toko tidak terbaca: ' + GEO_HINT);
+          put('settings', { skey: 'brad_store_geo', svalue: JSON.stringify(sgo ? { lat: sgo.lat, lng: sgo.lng, address: clean(data.store_address, 200) } : null) });
+        }
+        if (data.cooler_geo !== undefined) {
+          var cgi = data.cooler_geo, cga = Object.assign({}, S.coolers);
+          if (!cgi || typeof cgi !== 'object' || Array.isArray(cgi)) return fail('INVALID', 'Lokasi gudang tidak valid');
+          var cgk = Object.keys(cgi).slice(0, 30);
+          for (var gi = 0; gi < cgk.length; gi++) {
+            var gw = wh(cgk[gi]); if (!gw) return fail('NOT_FOUND', 'Gudang tidak ada: ' + cgk[gi]);
+            var gt = str(cgi[cgk[gi]]), gg = gt ? geoOf(gt) : null, gc = Object.assign({}, cga[gw.code] || {});
+            if (gt && !gg) return fail('INVALID', 'Lokasi gudang ' + gw.name + ' tidak terbaca: ' + GEO_HINT);
+            if (gg) { gc.lat = gg.lat; gc.lng = gg.lng; } else { delete gc.lat; delete gc.lng; }
+            cga[gw.code] = gc;
+          }
+          put('settings', { skey: 'brad_coolers', svalue: JSON.stringify(cga) });
+        }
         return done({});
+      }
+      /* ---------- v63 stage 3: automatic Lalamove (the Worker calls Lalamove around these; see worker/src/brad.js) ---------- */
+      case 'lala_plan': { // staff: the booking to price (no network here) — from 'ready', or 'car' with a car typed by hand
+        var lo2 = order(data.order_no); if (!lo2) return fail('NOT_FOUND', 'Order tidak ada');
+        if (lo2.status !== 'ready' && lo2.status !== 'car') return fail('INVALID', 'Pesan mobil setelah barang siap');
+        if (lalaOpen(lo2)) return fail('LALA_ACTIVE', 'Mobil Lalamove sudah dipesan: batalkan dulu untuk memesan lagi');
+        var lp = lalaPlan(lo2, data);
+        return lp.err ? fail(lp.code, lp.err, lp.extra) : done({ plan: lp.plan });
+      }
+      case 'lala_booked': { // system: Lalamove took the order — the trip is kept; the driver comes later (lala_sync)
+        var bo = order(data.order_no); if (!bo) return fail('NOT_FOUND', 'Order tidak ada');
+        if (bo.status !== 'ready' && bo.status !== 'car') return fail('INVALID', 'Order sudah ' + bo.status);
+        if (lalaOpen(bo)) return fail('LALA_ACTIVE', 'Mobil Lalamove sudah dipesan untuk order ini');
+        var pl = data.placed && typeof data.placed === 'object' ? data.placed : {}, qt = data.quote && typeof data.quote === 'object' ? data.quote : {};
+        var lid = clean(pl.order_id, 64); if (!lid) return fail('INVALID', 'Order Lalamove tanpa nomor');
+        var lpr = Math.round(num(pl.price) || num(qt.price)), beta = str(data.eta_at) && !isNaN(Date.parse(data.eta_at)) ? new Date(Date.parse(data.eta_at)).toISOString() : '';
+        var bsch = str(data.schedule_at) && !isNaN(Date.parse(data.schedule_at)) ? new Date(Date.parse(data.schedule_at)).toISOString() : '';
+        var bem = data.eta_min === undefined || data.eta_min === null || data.eta_min === '' ? null : int(data.eta_min);
+        var trip0 = { via: 'lalamove_api', vehicle: clean(data.service_name, 40) || clean(data.service, 40), service: clean(data.service, 40), driver: '', driver_wa: '', plate: '',
+          cost: lpr, price: lpr, currency: clean(qt.currency, 5) || 'IDR', eta_min: bem >= 0 ? bem : null, booked_at: now, schedule_at: bsch, lala_order_id: lid,
+          lala_quote_id: clean(qt.id, 64), share_link: urlOf(pl.share_link), lala_status: LALA_STATUSES.indexOf(str(pl.status)) >= 0 ? str(pl.status) : 'ASSIGNING_DRIVER',
+          lala_synced_at: now, distance_m: Math.max(0, Math.round(num(qt.distance_m))) };
+        var brow = Object.assign({}, bo, { car: JSON.stringify(trip0), eta_at: beta }), bdg = geoNum(data.dest), bov = beta ? overtimeAt(beta, H(bo.warehouse)) : { hours: 0 };
+        if (bdg) { brow.dest_lat = bdg.lat; brow.dest_lng = bdg.lng; if (clean(data.dest.address, 200)) brow.dest_address = clean(data.dest.address, 200); }
+        brow = step(brow, 'car', (bo.status === 'car' ? 'Mobil diubah: ' : '') + 'Lalamove otomatis · ' + trip0.vehicle + ' · ' + rpS(lpr) + ' · mobil dipesan, mencari sopir' +
+          (bsch ? ' · jemput ' + hmStr(wibAt(bsch).min) : beta ? ' · tiba ± ' + hmStr(wibAt(beta).min) : '') + (bool(data.accept_ot) && bov.hours ? ' · risiko lembur disetujui' : ''));
+        return done({ order: orderOut(put('orders', brow)) });
+      }
+      case 'lala_sync': { // system: what Lalamove says now about each open trip (the Worker has just read it)
+        var lsr = (Array.isArray(data.items) ? data.items.slice(0, 20) : []).map(function (it) { return lalaSyncOne(it && typeof it === 'object' ? it : {}); });
+        var lsw = []; lsr.forEach(function (r) { r.wa.forEach(function (m) { lsw.push(m); }); });
+        return done({ applied: lsr.map(function (r) { return r.applied; }), wa: lsw });
+      }
+      case 'lala_cancel': { // staff: may this Lalamove car be cancelled? (the Worker then cancels it at Lalamove → lala_cancelled)
+        var co2 = order(data.order_no); if (!co2) return fail('NOT_FOUND', 'Order tidak ada');
+        var ct = lalaTrip(co2); if (!ct || !lalaOpen(co2)) return fail('INVALID', 'Tidak ada mobil Lalamove otomatis yang berjalan');
+        if (co2.status !== 'car' || ['PICKED_UP', 'COMPLETED'].indexOf(str(ct.lala_status)) >= 0) return fail('INVALID', 'Mobil sudah masuk / barang sudah diambil: tidak bisa dibatalkan');
+        var cr = clean(data.reason, 120); if (cr.length < 3) return fail('INVALID', 'Alasan wajib');
+        return done({ cancel: { order_no: co2.order_no, lala_order_id: str(ct.lala_order_id), reason: cr, by: by } });
+      }
+      case 'lala_cancelled': { // system: Lalamove has cancelled it — back to "book a car"
+        var lc = order(data.order_no), lct = lc ? lalaTrip(lc) : null;
+        if (!lct || str(lct.lala_order_id) !== str(data.lala_order_id)) return fail('NOT_FOUND', 'Mobil Lalamove tidak ada');
+        if (lc.status !== 'car') return fail('INVALID', 'Mobil sudah masuk');
+        var lcx = carCancelRow(lc, 'Lalamove dibatalkan: ' + (str(lct.driver) ? str(lct.driver) + ' · ' + str(lct.plate) : 'belum ada sopir') + ' — ' + clean(data.reason, 120));
+        return done({ order: orderOut(lcx.row), risk: lcx.risk });
+      }
+      case 'lala_due': { // system: the open trips to read again (the cron every 2 minutes, Lalamove's webhook)
+        var age = num(data.max_age) >= 10 ? num(data.max_age) : 90;
+        return done({ due: lalaDue(st.orders, nowMs, age, Math.min(10, Math.max(1, int(data.max) || 5)), clean(data.lala_order_id, 64)) });
+      }
+      case 'lala_admin': { // owner / manager: is it set up (the Worker adds its keys) · "Tes koneksi" (the Worker reads the cities)
+        var lop = str(data.op); if (['status', 'test'].indexOf(lop) < 0) return fail('INVALID', 'Aksi Lalamove tidak dikenal');
+        return done({ lala_admin: lop, lala: lalaOut() });
+      }
+      case 'lala_services': { // system: the vehicles Lalamove offers in the city, kept for the car form
+        var svl = (Array.isArray(data.services) ? data.services : []).slice(0, 30).map(function (x) {
+          x = x && typeof x === 'object' ? x : {}; var k = str(x.key).toUpperCase(), ld = x.load && typeof x.load === 'object' ? x.load : null;
+          return /^[A-Z0-9_]{2,40}$/.test(k) ? { key: k, description: clean(x.description, 60) || k, load: ld && num(ld.value) > 0 ? { value: num(ld.value), unit: clean(ld.unit, 6) || 'kg' } : null } : null;
+        }).filter(Boolean), cty = data.city && typeof data.city === 'object' ? { locode: clean(data.city.locode, 20), name: clean(data.city.name, 60) } : null;
+        put('settings', { skey: 'brad_lala_services', svalue: JSON.stringify({ at: now, city: cty, services: svl }) });
+        S.lala_services = { at: now, city: cty, services: svl };
+        return done({ lala: lalaOut() });
       }
       default:
         return fail('INVALID', 'Aksi tidak dikenal: ' + action);
@@ -871,6 +1158,8 @@ var KBrad = (function () {
     hoursOf: hoursOf, hm: hm, hmStr: hmStr, rpS: rpS, wibAt: wibAt, atWib: atWib, dayKind: dayKind, nextWorkDay: nextWorkDay, holidayName: holidayName,
     overtimeAt: overtimeAt, inBreak: inBreak, etaOf: etaOf, timeAlerts: timeAlerts, otSummary: otSummary, readReply: readReply, readJson: readJson,
     readRules: readRules, draftOf: draftOf, readPrompt: readPrompt, parseCarMsg: parseCarMsg, msgOrder: msgOrder, msgCar: msgCar, msgDoor: msgDoor, msgDepart: msgDepart, dLong: dLong,
-    WA_TEMPLATES: WA_TEMPLATES, WA_LANG: WA_LANG, waOut: waOut, waEvent: waEvent, waTemplateDefs: waTemplateDefs, stampOf: stampOf };
+    WA_TEMPLATES: WA_TEMPLATES, WA_LANG: WA_LANG, waOut: waOut, waEvent: waEvent, waTemplateDefs: waTemplateDefs, stampOf: stampOf,
+    LALA_CAP: LALA_CAP, LALA_PICKUP_MIN: LALA_PICKUP_MIN, LALA_STATUSES: LALA_STATUSES, LALA_FINAL: LALA_FINAL, geoOf: geoOf, geoNum: geoNum,
+    lalaTrip: lalaTrip, lalaOpen: lalaOpen, lalaSpent: lalaSpent, lalaDue: lalaDue, lalaServiceFor: lalaServiceFor };
 })();
 if (typeof window !== 'undefined') window.KBrad = KBrad;

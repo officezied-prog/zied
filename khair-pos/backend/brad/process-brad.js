@@ -3,6 +3,8 @@
 // and returns { response, ops } for the writers: brad_orders, the brad_* settings, the WhatsApp log and — only when a car
 // leaves — cold_movements (OUT). An incoming WhatsApp message (stage 2) comes as req.__wa, set only by the Worker after it
 // has checked Meta's signature (a client's request can never carry it: parseBrad keeps only action/key/user/pin_hash/data).
+// v63 (stage 3): likewise req.__sys = 'lalamove' — set only by the Worker right after it talked to Lalamove (booked, read or
+// cancelled a trip); the core then takes those few system actions without a user (KBrad SYS_ONLY).
 const req = $('Parse Brad').first().json;
 function rows(name) {
   try { return $(name).all().map(function (i) { return i.json; }).filter(function (r) { return r && r.id !== undefined && r.id !== null; }); } catch (e) { return []; }

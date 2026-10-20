@@ -841,7 +841,9 @@ CREATE TABLE IF NOT EXISTS brad_orders (
   stock_note TEXT,
   delivered_at TEXT,
   cancelled_at TEXT,
-  cancel_reason TEXT
+  cancel_reason TEXT,
+  dest_lat REAL,
+  dest_lng REAL
 );
 CREATE INDEX IF NOT EXISTS idx_brad_orders_status ON brad_orders (status);
 CREATE INDEX IF NOT EXISTS idx_brad_orders_order_date ON brad_orders (order_date);

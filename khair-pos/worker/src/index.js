@@ -8,7 +8,7 @@ import { handleChat } from './chat.js';
 import { handleAtt } from './attendance.js';
 import { handlePhoto, handlePhotoFile } from './photo.js';
 import { handleCold } from './cold.js';
-import { handleBrad, handleWaWebhook } from './brad.js';
+import { handleBrad, handleWaWebhook, handleLalaCron, handleLalaWebhook } from './brad.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*', // store-key auth, no cookies → safe
@@ -140,6 +140,20 @@ export default {
         return new Response('error', { status: 500 });
       }
     }
+    // v63: Lalamove's webhook (…/webhook/lalamove). Its signature format is not confirmed, so nothing in the body is trusted: the
+    // order it names is read again from Lalamove's API (src/brad.js handleLalaWebhook). Answered 200 at once (Lalamove retries
+    // anything else; its portal checks the URL with a test call); the reading goes on after the answer.
+    if (/\/webhook\/lalamove$/.test(url.pathname) && (request.method === 'POST' || request.method === 'GET')) {
+      const okText = () => new Response('ok', { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      if (request.method === 'GET' || !env || !env.DB) return okText();
+      const raw = await request.text().catch(() => '');
+      const adapter = d1Adapter(env.DB);
+      const job = handleLalaWebhook(adapter, raw, env)
+        .then((r) => (r && r.synced ? recordUsage(env.DB, adapter.use) : null))
+        .catch(() => { /* the cron reads it again within 2 minutes */ });
+      if (ctx && ctx.waitUntil) ctx.waitUntil(job); else await job;
+      return okText();
+    }
     if (request.method === 'GET' && /\/health\/batch$/.test(url.pathname)) {
       if (!env || !env.DB) return json({ ok: false, error: 'SERVER' }, 500);
       return json(await batchHealth(env.DB), 200);
@@ -182,5 +196,16 @@ export default {
       // "مشكلة في الخادم. حاول بعد قليل.").
       return json({ ok: false, error: 'SERVER', message: 'Server error' }, 500);
     }
+  },
+  // v63 (Order Brad stage 3): the cron trigger of wrangler.toml (every 2 minutes) — the open Lalamove trips are read again, so a
+  // driver found / goods picked up / a cancelled car reaches the order even when no app is open. Without the Lalamove keys it
+  // does nothing (no D1 read); with them and no open trip, one small D1 read. The rows it read are counted only when it worked.
+  async scheduled(event, env, ctx) {
+    if (!env || !env.DB) return;
+    const adapter = d1Adapter(env.DB);
+    const job = handleLalaCron(adapter, env)
+      .then((r) => (r && r.synced ? recordUsage(env.DB, adapter.use) : null))
+      .catch(() => { /* tried again in 2 minutes */ });
+    if (ctx && ctx.waitUntil) ctx.waitUntil(job); else await job;
   },
 };
