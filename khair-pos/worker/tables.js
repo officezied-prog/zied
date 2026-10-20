@@ -27,6 +27,8 @@ export const TABLES = {
     review: 'string',
     // v48: a pack product's materials (sticker, lid, jar …) with their cost per pack, JSON [{n, c}] — set in the repack setup
     repack_costs: 'string',
+    // v63: a packaging material (category "Bahan kemasan") received at goods-in: the packs it is used for, JSON [{p: pack id, q}]
+    use_for: 'string',
   },
   pos_customers: {
     name: 'string', phone: 'string', type: 'string', address: 'string', notes: 'string',

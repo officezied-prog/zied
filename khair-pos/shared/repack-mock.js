@@ -24,13 +24,55 @@
     return (Array.isArray(a) ? a : []).map(x => ({ name: strv(x && x.n).slice(0, 40), cost: Math.max(0, int(x && x.c)) })).filter(x => x.name).slice(0, 60);
   }
   function price(db, name) { const k = strv(name).toLowerCase(); const m = catalog(db).find(x => x.name.toLowerCase() === k); return m ? m.cost : null; }
+  // v63 (owner 2026-10-20): a packaging material (category "Bahan kemasan") comes in at goods-in with its price and the packs it
+  // is for (use_for [{p, q}]); a pack's cost carries it at its cost price; a confirmed repack takes the pieces used from its stock.
+  const MATERIAL_CAT = 'Bahan kemasan';
+  const isMaterial = p => !!p && strv(p.category).toLowerCase() === MATERIAL_CAT.toLowerCase();
+  function useForOf(p) {
+    let a = [];
+    try { a = JSON.parse(String((p && p.use_for) || '') || '[]'); } catch (e) { a = []; }
+    return (Array.isArray(a) ? a : []).map(x => ({ p: Number(x && x.p), q: num(x && x.q) > 0 ? r3(x.q) : 1 })).filter(x => x.p > 0);
+  }
+  const packMaterials = (db, pack) => (pack ? db.products.filter(m => isMaterial(m) && m.active !== false).map(m => { const u = useForOf(m).find(x => String(x.p) === String(pack.id)); return u ? { m, q: u.q } : null; }).filter(Boolean) : []);
+  /** use_for from a form ([{pack_id, qty}]) → {json, list} or {error}: only shop-made packs. */
+  function useForIn(db, list) {
+    if (!Array.isArray(list)) return { error: 'Pilih kemasan yang memakai bahan ini' };
+    const out = [];
+    for (const x0 of list) {
+      const x = x0 || {}, pk = db.products.find(p => String(p.id) === String(x.pack_id));
+      if (!pk || !(num(pk.repack_from) > 0)) return { error: 'Kemasan tidak ditemukan (pilih dari daftar kemasan kemas ulang)' };
+      const q = x.qty === undefined || x.qty === null || x.qty === '' ? 1 : Number(x.qty);
+      if (!Number.isFinite(q) || q <= 0 || q > 1000) return { error: 'Jumlah per kemasan untuk ' + pk.name + ' tidak valid' };
+      if (!out.some(o => o.p === pk.id)) out.push({ p: pk.id, q: r3(q) });
+    }
+    return out.length > 20 ? { error: 'Paling banyak 20 kemasan' } : { json: out.length ? JSON.stringify(out) : '', list: out };
+  }
+  function useMaterials(db, u, pack, made, tag, stock, date, X) {
+    const used = [];
+    if (!(made > 0)) return used;
+    packMaterials(db, pack).forEach(x => {
+      const need = r3(x.q * made), take = Math.min(Math.max(0, num(x.m.stock)), need);
+      if (take > 0) {
+        x.m.stock = r3(num(x.m.stock) - take); if (num(x.m.shop_stock) > x.m.stock) x.m.shop_stock = x.m.stock;
+        db.purchases.push({ id: X.nextId(db, 'purchase'), purchase_date: date, supplier: SUP, product_id: x.m.id, name: x.m.name, qty: -take, cost_price: int(x.m.cost_price), total: 0, note: ('→ ' + pack.name + ' x' + fmtN(made) + ' (' + tag + ')').slice(0, 300), user: u.name, photo_id: '', exp_date: '' });
+        stock.push({ product_id: x.m.id, stock: x.m.stock });
+      }
+      used.push({ name: x.m.name, need, take, short: need - take > 1e-9 });
+    });
+    return used;
+  }
+  function materialsText(used) {
+    if (!used.length) return '';
+    const short = used.filter(u => u.short);
+    return ' — bahan: ' + used.map(u => u.name + ' ' + fmtN(u.need)).join(', ') + (short.length ? ' (STOK KURANG: ' + short.map(u => u.name + ' ada ' + fmtN(u.take)).join(', ') + ')' : '');
+  }
   function costsOf(db, p) {
     let a = [];
     try { a = JSON.parse(String((p && p.repack_costs) || '') || '[]'); } catch (e) { a = []; }
     return (Array.isArray(a) ? a : []).map(x => {
       const name = strv(x && x.n).slice(0, 40), q = num(x && x.q) > 0 ? r3(x.q) : 1, pr = price(db, name);
       return { name, qty: q, cost: pr === null ? Math.max(0, int(x && x.c)) : Math.round(pr * q) };
-    }).filter(x => x.name).slice(0, 12);
+    }).filter(x => x.name).slice(0, 12).concat(packMaterials(db, p).map(x => ({ name: x.m.name, qty: x.q, cost: Math.round(int(x.m.cost_price) * x.q), pid: x.m.id, stock: num(x.m.stock) })));
   }
   const costPer = (db, p) => costsOf(db, p).reduce((t, x) => t + x.cost, 0);
   /** The pack's materials chosen from the list ([{name, qty}]) → {json, list} or {error}. */
@@ -58,7 +100,13 @@
   /** Settings as the role may see them: the cashier / rep get the materials' names only. */
   const catalogOut = (db, role) => catalog(db).map(x => (COST_ROLES.includes(role) ? { n: x.name, c: x.cost } : { n: x.name }));
   /** A product's materials as the role may see them (names only for the cashier / rep). */
-  const productCosts = (db, p, role) => (p.repack_costs && !COST_ROLES.includes(role) ? Object.assign({}, p, { repack_costs: JSON.stringify(costsOf(db, p).map(x => ({ n: x.name }))) }) : p);
+  const productCosts = (db, p, role) => {
+    let o = p.repack_costs && !COST_ROLES.includes(role) ? Object.assign({}, p, { repack_costs: JSON.stringify(costsOf(db, p).map(x => ({ n: x.name }))) }) : p;
+    const pm = num(p.repack_from) > 0 ? packMaterials(db, p) : []; // v63: the pack's materials from goods-in; a material says so
+    if (pm.length) o = Object.assign({}, o, { materials: pm.map(x => Object.assign({ id: x.m.id, name: x.m.name, q: x.q, stock: num(x.m.stock) }, COST_ROLES.includes(role) ? { cost: Math.round(int(x.m.cost_price) * x.q) } : {})) });
+    if (isMaterial(p)) o = Object.assign({}, o, { material: true });
+    return o;
+  };
   function out(r, role) { const o = Object.assign({}, r); delete o.id; if (role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; delete o.materials_cost; delete o.bulk_cost; } return o; }
   const openList = (db, role) => (['owner', 'manager', 'kasir', 'akuntan'].includes(role) ? (db.repacks || []).filter(r => r.status === 'proses').map(r => out(r, role)) : []);
 
@@ -135,14 +183,14 @@
     const txt = 'Mulai kemas ulang oleh ' + who + ' ' + u.name + ' (' + wib(now) + ', ' + rp.repack_id + '): ' + bulk.name + ' ' + fmtN(fromQty) + ' ' + strv(bulk.unit) +
       ' diambil → ' + to.name + ' (' + fmtN(size) + ' ' + strv(bulk.unit) + ' per ' + (strv(to.unit) || 'pcs') + ') = ' + planned + ' kemasan rencana' + (over > 0 ? ', sisa ' + fmtN(over) + ' ' + strv(bulk.unit) : '') +
       ' | stok ' + bulk.name + ' ' + fmtN(fromOld) + ' → ' + fmtN(bulk.stock) + ' ' + strv(bulk.unit) + (data.confirm_recent === true ? ' — dikonfirmasi bukan kemas ulang ganda' : '') +
-      '. Setelah selesai, manajer mengonfirmasi jumlah kemasan jadi.';
+      '. Setelah selesai, manajer atau akuntan mengonfirmasi jumlah kemasan jadi.';
     X.logAct(db, u, 'kemas_ulang', txt, rp.repack_id, 0, 'info');
-    X.notify(db, u, ['owner', 'manager'].filter(r => r !== u.role), txt, 'info');
+    X.notify(db, u, ['owner', 'manager', 'akuntan'].filter(r => r !== u.role), txt, 'info'); // v63: the accountant may confirm too
     return { repack: out(rp, u.role), stock: [{ product_id: bulk.id, stock: bulk.stock }] };
   }
 
   function finish(db, u, data, X) {
-    if (u.role !== 'owner' && u.role !== 'manager') throw X.E('FORBIDDEN', 'Hanya manajer / pemilik yang mengonfirmasi hasil kemas ulang');
+    if (!['owner', 'manager', 'akuntan'].includes(u.role)) throw X.E('FORBIDDEN', 'Hanya manajer, akuntan atau pemilik yang mengonfirmasi hasil kemas ulang'); // v63
     const r = (db.repacks || []).find(x => strv(x.repack_id) === strv(data.repack_id));
     if (!r) throw X.E('NOT_FOUND', 'Kemas ulang tidak ditemukan');
     if (r.status !== 'proses') throw X.E('INVALID', 'Kemas ulang ' + r.repack_id + ' sudah ' + (r.status === 'batal' ? 'dibatalkan' : 'dikonfirmasi') + (r.confirmed_by ? ' oleh ' + r.confirmed_by : ''));
@@ -174,21 +222,28 @@
         note: ('dari ' + bulk.name + ' ' + used + ' ' + strv(bulk.unit) + ' (' + r.repack_id + ', dikonfirmasi ' + u.name + ') ' + strv(r.note)).trim(), user: u.name, photo_id: '', exp_date: strv(r.exp_date) });
       stock.push(Object.assign({ product_id: to.id, stock: to.stock }, u.role === 'owner' ? { cost_price: to.cost_price } : {}));
     }
+    const mats = cancel ? [] : useMaterials(db, u, to, made, r.repack_id + ', dikonfirmasi ' + u.name, stock, date, X);
     Object.assign(r, {
       status: cancel ? 'batal' : 'selesai', repack_date: date, from_qty: used, to_qty: made, expected_qty: expected, yield_pct: yieldPct, loss_qty: cancel ? 0 : loss,
       remaining_qty: rem, packaging_cost: packCost, materials_cost: cancel ? 0 : matCost, unit_cost: unitCost, confirmed_by: u.name, confirmed_at: now,
       note: (strv(r.note) + (strv(data.note) ? (strv(r.note) ? ' | ' : '') + strv(data.note).slice(0, 200) : '')).slice(0, 500)
     });
-    const by = (u.role === 'manager' ? 'manajer ' : 'pemilik ') + u.name, st = 'dimulai ' + strv(r.started_by || r.user) + ' ' + wib(r.started_at || r.repack_time);
+    const by = (u.role === 'manager' ? 'manajer ' : u.role === 'akuntan' ? 'akuntan ' : 'pemilik ') + u.name, st = 'dimulai ' + strv(r.started_by || r.user) + ' ' + wib(r.started_at || r.repack_time);
     const rtxt = r.from_name + ' ' + fmtN(r.from_qty) + ' ' + strv(r.from_unit) + ' → ' + r.to_name + ' x' + fmtN(r.to_qty) + ' (hasil ' + r.yield_pct + '%, susut ' + fmtN(r.loss_qty) + ' ' + strv(r.from_unit) + ')';
     const txt = cancel
       ? 'Kemas ulang DIBATALKAN oleh ' + by + ' (' + r.repack_id + ', ' + st + '): ' + r.from_name + ' ' + fmtN(F) + ' ' + strv(r.from_unit) + ' kembali ke stok curah, tidak ada ' + r.to_name + ' yang dibuat.'
       : 'Kemas ulang selesai, dikonfirmasi ' + by + ' (' + r.repack_id + ', ' + st + '): ' + rtxt + ' — rencana ' + fmtN(r.planned_qty) + ', jadi ' + fmtN(made) +
-        (rem > 0 ? '; sisa curah ' + fmtN(rem) + ' ' + strv(r.from_unit) + ' kembali ke stok' : '') + (made < num(r.planned_qty) ? ' — KURANG ' + fmtN(r3(num(r.planned_qty) - made)) + ' dari rencana' : '');
-    X.logAct(db, u, 'kemas_ulang', txt, r.repack_id, 0, cancel || yieldPct < 95 || made < num(r.planned_qty) ? 'warn' : 'info');
-    X.notify(db, u, ['owner', 'manager', 'akuntan'].filter(x => x !== u.role), txt, cancel || yieldPct < 95 ? 'warn' : 'info');
+        (rem > 0 ? '; sisa curah ' + fmtN(rem) + ' ' + strv(r.from_unit) + ' kembali ke stok' : '') + (made < num(r.planned_qty) ? ' — KURANG ' + fmtN(r3(num(r.planned_qty) - made)) + ' dari rencana' : '') + materialsText(mats);
+    const matShort = mats.some(x => x.short), lvl = cancel || yieldPct < 95 || matShort ? 'warn' : 'info';
+    X.logAct(db, u, 'kemas_ulang', txt, r.repack_id, 0, cancel || yieldPct < 95 || made < num(r.planned_qty) || matShort ? 'warn' : 'info');
+    const costTxt = cancel || !(made > 0) ? '' : ' — biaya per ' + (strv(r.to_unit) || 'pcs') + ': ' + rpT(unitCost) + ' (curah ' + rpT(Math.round(used * bulkCost / made)) + ', bahan ' + rpT(Math.round(matCost / made)) + (other > 0 ? ', upah & lain ' + rpT(Math.round(other / made)) : '') + ')';
+    if (!costTxt) X.notify(db, u, ['owner', 'manager', 'akuntan'].filter(x => x !== u.role), txt, lvl); // a cancel: one notice for all
+    else {
+      if (u.role !== 'owner') X.notify(db, u, ['owner'], txt + costTxt, lvl);
+      X.notify(db, u, ['manager', 'akuntan'].filter(x => x !== u.role), txt, lvl);
+    }
     return { repack: out(r, u.role), stock };
   }
 
-  window.KRepackMock = { catalog, catalogOut, costsOf, costPer, matsIn, costsText, productCosts, out, openList, materials, start, finish };
+  window.KRepackMock = { catalog, catalogOut, costsOf, costPer, matsIn, costsText, productCosts, out, openList, materials, start, finish, isMaterial, useForIn, MATERIAL_CAT };
 })();

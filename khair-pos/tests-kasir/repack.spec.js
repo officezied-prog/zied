@@ -69,7 +69,7 @@ test('cashier: type the bulk, its packs only, amount → packs worked out; START
   expect(prod(db, 'RKB1').stock).toBe(14.8); // the bulk is on the packing table
   expect(prod(db, 'RKP1').stock).toBe(4); // the packs come in when the manager confirms
   const n = db.activity.filter(a => a.kind === 'notifikasi' && /Mulai kemas ulang oleh kasir Siti/.test(a.summary));
-  expect(n.map(a => a.ref)).toEqual(['owner,manager']);
+  expect(n.map(a => a.ref)).toEqual(['owner,manager,akuntan']);
   expect(n[0].summary).toContain('= 10 kemasan rencana, sisa 0.2 kg | stok Kurma Curah Karung 20 → 14.8 kg');
   // a resend of the same start (same client id) is not recorded again
   const again = await page.evaluate(c => api('repack_start', { client_id: c, from_product_id: 0, to_product_id: 0, from_qty: 1 }), mine[0].client_id);
@@ -109,7 +109,9 @@ test('cashier: type the bulk, its packs only, amount → packs worked out; START
   expect(prod(db, 'RKB1').stock).toBe(15.5);
   expect(prod(db, 'RKP1').stock).toBe(13);
   const fin = db.activity.filter(a => a.kind === 'notifikasi').slice(-1)[0];
-  expect(fin).toMatchObject({ ref: 'owner,akuntan', user: 'Jihan' });
+  expect(fin).toMatchObject({ ref: 'akuntan', user: 'Jihan' }); // v63: the owner has his own notice, with what one pack cost
+  expect(db.activity.filter(a => a.kind === 'notifikasi').slice(-2)[0]).toMatchObject({ ref: 'owner', user: 'Jihan' });
+  expect(db.activity.filter(a => a.kind === 'notifikasi').slice(-2)[0].summary).toContain(' — biaya per pak: Rp');
   expect(fin.summary).toContain('Kemas ulang selesai, dikonfirmasi manajer Jihan');
   expect(fin.summary).toContain('rencana 10, jadi 9; sisa curah 0.7 kg kembali ke stok — KURANG 1 dari rencana');
   // done: no longer in "Sedang dikemas"
@@ -197,7 +199,7 @@ test('manager in Khair Kasir starts it and confirms it herself (cancel puts the 
   let db = await H.getDb(page);
   expect(prod(db, 'RKB1').stock).toBe(18);
   expect(prod(db, 'RKP2').stock).toBe(0);
-  expect(db.activity.filter(a => a.kind === 'notifikasi').slice(-1)[0]).toMatchObject({ ref: 'owner', user: 'Jihan' });
+  expect(db.activity.filter(a => a.kind === 'notifikasi').slice(-1)[0]).toMatchObject({ ref: 'owner,akuntan', user: 'Jihan' }); // v63: the accountant may confirm it too
   // nothing was packed after all → cancel: the bulk goes back, no packs made
   const id = db.repacks.slice(-1)[0].repack_id;
   await page.locator(`#rk-open-list [data-rk-open="${id}"] [data-act="rk-fin"]`).click();

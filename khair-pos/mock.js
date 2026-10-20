@@ -98,6 +98,7 @@ const MockServer = (() => {
     const lines = data.items.map(it => {
       const p = db.products.find(x => x.id === Number(it.product_id));
       if (!p) throw E('NOT_FOUND', 'product ' + it.product_id);
+      if (window.KRepackMock && window.KRepackMock.isMaterial(p)) throw E('INVALID', p.name + ' adalah bahan kemasan — tidak dijual'); // v63
       const qty = roundQty(it.qty);
       if (!(qty > 0)) throw E('INVALID', 'qty must be > 0');
       const unit_price = Math.max(0, int(it.unit_price));
@@ -1142,7 +1143,7 @@ const MockServer = (() => {
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
-    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
+    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'repack_finish', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
     if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'scan_expense', 'list_photos', 'photo_file'].includes(action)) deviceTouch(db, u, data.device, false);
 
@@ -1810,10 +1811,17 @@ const MockServer = (() => {
         const name = safeName(data.name, 80);
         if (!name) throw E('INVALID', strv(data.name) ? 'Nama produk hanya boleh huruf, angka dan . , \' & ( ) / % + # -' : 'Nama produk wajib');
         // v36 (owner: "بضاعة جديدة في فاتورة المزود ← يسأل الحجم والوزن والفئة"): from a supplier invoice, category + size/weight are required
+        // v63: a packaging material (sticker, jar …): no selling price, no size — the packs it is used for instead (as on the server)
+        const RK = window.KRepackMock, existing = data.id ? prodById(data.id) : null;
+        const material = data.material === true || (data.material === undefined && (RK.isMaterial({ category: data.category }) || (!!existing && RK.isMaterial(existing) && data.category === undefined)));
+        const useFor = material && data.use_for !== undefined ? RK.useForIn(db, data.use_for) : null;
+        if (useFor && useFor.error) throw E('INVALID', useFor.error);
+        if (material && fromGoodsIn && !(useFor && useFor.list.length)) throw E('INVALID', 'Bahan kemasan: pilih kemasan yang memakainya');
+        if (material) Object.assign(data, { category: RK.MATERIAL_CAT, retail_price: 0, wholesale_price: 0, wholesale_min_qty: 0, loose: false });
         if (fromGoodsIn) {
-          if (!strv(data.category)) throw E('INVALID', 'Kategori wajib untuk produk baru');
-          if (!strv(data.size) && !strv(data.weight)) throw E('INVALID', 'Ukuran atau berat wajib untuk produk baru');
-          if (u.role === 'kasir' && !(int(data.retail_price) > 0)) throw E('INVALID', 'Harga jual wajib untuk produk baru');
+          if (!material && !strv(data.category)) throw E('INVALID', 'Kategori wajib untuk produk baru');
+          if (!material && !strv(data.size) && !strv(data.weight)) throw E('INVALID', 'Ukuran atau berat wajib untuk produk baru');
+          if (!material && u.role === 'kasir' && !(int(data.retail_price) > 0)) throw E('INVALID', 'Harga jual wajib untuk produk baru');
           if (db.products.some(p => strv(p.name).toLowerCase() === name.toLowerCase())) throw E('INVALID', 'Produk dengan nama ini sudah ada — pilih dari daftar');
         }
         const sku = String(data.sku || '').trim();
@@ -1836,6 +1844,7 @@ const MockServer = (() => {
           const { stock, ...rest } = data;
           const before = { retail_price: p.retail_price, wholesale_price: p.wholesale_price, cost_price: p.cost_price };
           Object.assign(p, productFields(rest, {}), { name }, rp);
+          if (useFor) p.use_for = useFor.json; // v63
           const changes = {}; for (const f in before) if (int(before[f]) !== int(p[f])) changes[f] = { from: int(before[f]), to: int(p[f]) };
           if (Object.keys(changes).length) newApproval(db, u, { kind: 'price', ref: p.id, summary: p.name, status: 'auto', decided_by: u.name, decided_at: jktISO(), payload: JSON.stringify({ changes, product_name: p.name, reason: 'save_product' }) });
           const ch = Object.keys(changes);
@@ -1843,6 +1852,7 @@ const MockServer = (() => {
           return { product: p };
         }
         const p = Object.assign(productFields(data, blankProduct()), { id: nextId(db, 'product'), name, stock: roundQty(data.stock || 0) }, rp);
+        if (useFor) p.use_for = useFor.json; // v63
         let rap = null;
         if (u.role === 'kasir') { // v36: a cashier's new product is flagged "new — check" for the manager / accountant
           p.stock = 0;

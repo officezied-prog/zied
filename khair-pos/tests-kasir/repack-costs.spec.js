@@ -29,7 +29,7 @@ test("cashier: the materials' names show (no prices); the confirmed repack carri
   await expect(page.locator('#rk-pack')).toHaveAttribute('data-value', String(pk.id)); // its only pack
   await expect(page.locator('#rk-mats')).toHaveText('Bahan kemasan: Toples, Stiker, Tutup segel (biayanya dihitung otomatis)');
   await expect(page.locator('#rk-mats')).not.toContainText('Rp');
-  await expect(page.locator('label[for="rk-cost"]')).toContainText('Biaya lain');
+  await expect(page.locator('label[for="rk-cost"]')).toContainText('Upah & biaya lain');
   await page.fill('#rk-amount', '3');
   await expect(page.locator('#rk-planned')).toHaveAttribute('data-planned', '6');
   await H.shot(page, 'phone-repack-materials', false, { noToasts: true });
@@ -45,6 +45,7 @@ test("cashier: the materials' names show (no prices); the confirmed repack carri
   await expect(p2.locator('#rkf-rem')).toHaveValue('0');
   await p2.click('#rkf-ok');
   await expect(p2.locator('.toast.ok', { hasText: 'Hasil kemas ulang dikonfirmasi' })).toBeVisible();
+  await expect.poll(async () => (await H.getDb(page)).repacks.slice(-1)[0].status).toBe('selesai'); // the demo stores it just after the answer
   const db = await H.getDb(page);
   const rp = db.repacks.slice(-1)[0];
   expect(rp).toMatchObject({ started_by: 'Siti', confirmed_by: 'Jihan', status: 'selesai', to_qty: 6, from_qty: 3, materials_cost: 21000, packaging_cost: 21000 });
