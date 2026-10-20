@@ -90,10 +90,10 @@ test('Detail penjualan: the cards equal the demo data and Periode; search, filte
   await expect(shown(page)).toHaveCount(100);
   const newest = sales.slice().sort((a, b) => String(b.sale_time).localeCompare(String(a.sale_time)))[0];
   await expect(shown(page).first()).toHaveAttribute('data-sx-inv', newest.invoice_no);
-  await page.click('#sx-more');
-  await expect(shown(page)).toHaveCount(200);
-  await page.click('#sx-more');
-  await expect(shown(page)).toHaveCount(sales.length);
+  for (let n = 200; n < sales.length + 100; n += 100) { // (the demo month grows during the day: as many pages as it has)
+    await page.click('#sx-more');
+    await expect(shown(page)).toHaveCount(Math.min(n, sales.length));
+  }
   await expect(page.locator('#sx-more')).toHaveCount(0);
 
   // the rows: void badge, split method with the account, the field order's rep
