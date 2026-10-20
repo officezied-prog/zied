@@ -5730,7 +5730,7 @@ let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); re
    computed backwards from the current stock. Expiry uses purchase rows with exp_date (last 12 months) and assumes
    the current stock consists of the most recent purchases (FIFO). */
 const GD = { group: store.get('gd_group', '') || '', tab: 'overview', q: '', cat: '', status: '', sort: 'name', expMax: 60, d30: null, d30At: 0, year: null, yearAt: 0, yearP: null, gen: 0, bootAt: 0, err: '', result: '' };
-const GD_TTL = 5 * 60000, GD_TABS = ['overview', 'list', 'sold', 'expiry', 'repack', 'opname'], GD_STATUS = ['', 'menipis', 'habis', 'lebih', 'kedaluwarsa', 'rak_kosong'];
+const GD_TTL = 5 * 60000, GD_TABS = ['overview', 'list', 'sold', 'expiry', 'repack', 'bahan', 'produksi', 'opname'], GD_STATUS = ['', 'menipis', 'habis', 'lebih', 'kedaluwarsa', 'rak_kosong'];
 const GDO = Object.assign({ lines: [], note: '', show: false }, store.get('gd_opname', null) || {});
 const saveGdo = () => store.set('gd_opname', { lines: GDO.lines, note: GDO.note, show: GDO.show });
 const isYmdStr = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
@@ -5847,6 +5847,8 @@ function gdDraw(full) {
   if (GD.tab === 'sold') { gdDrawSold(body, err); return; }
   if (GD.tab === 'expiry') { body.innerHTML = err + gdExpiryHTML(); return; }
   if (GD.tab === 'repack') { if (full || !$('#rp-form', body)) gdDrawRepack(body); else rpRefresh(); return; }
+  if (GD.tab === 'bahan') { gdDrawBahan(body, err); return; } // v67
+  if (GD.tab === 'produksi') { gdDrawProduksi(body, err, full); return; } // v67
   body.innerHTML = err + gdOverviewHTML();
 }
 
@@ -7253,6 +7255,328 @@ async function loadRepackHistory() {
       ${[...tot.entries()].map(([k, a]) => { const y = a.exp ? a.made / a.exp * 100 : 0; return `<tr class="${y < 95 ? 'low' : ''}" data-pack="${esc(k)}"><td>${esc(a.name)}<div class="small muted">${esc(a.from)} · ${esc(t('rp.n_times', { n: a.n }))}</div></td><td class="r num">${fmtQty(a.used)} ${esc(a.unit || '')}</td><td class="r num">${fmtQty(a.made)} ${esc(a.to_unit || '')}</td><td class="r num" data-avg><b>${NF1.format(y)}%</b></td></tr>`; }).join('')}</tbody></table></div>`
     : `<div class="muted">${esc(t('rp.no_history'))}</div>`;
 }
+
+/* ========== Gudang: Bahan baku + Produksi stok (v67) ========== */
+/* v67 (owner 2026-10-20, majoo screenshots: «اضف هذه المميزات»): majoo's "Daftar Bahan Baku" and "Daftar Produksi Stok" as two Gudang
+   tabs beside Kemas ulang. Bahan baku = everything a pack is made of: the bulk goods packed in the shop, the packaging materials
+   received at goods-in (category Bahan kemasan, v63) and the manager's materials price list (repack_materials: name + price per
+   piece, no stock). Produksi stok = the repacks (pos_repacks) of a date range + the open ones, newest first. No new server action:
+   Bahan baku is built from the products and settings the page holds; Produksi stok reads the range's get_sales through loadSales
+   (its 2-minute cache, one call per range, as Kemas ulang's history) + the open repacks of bootstrap. Owner + manager, like the
+   whole Gudang page (the accountant has no Gudang); purchase prices follow canSeeCost(); a repack's cost per pack is sent to the
+   owner only (repackOut). */
+const BBK = { q: '', kind: '' }, BBK_KINDS = ['', 'curah', 'kemasan', 'daftar'], BBK_BADGE = { curah: 'blue', kemasan: 'green', daftar: 'gray' };
+const isMatProd = p => !!p && (p.material === true || norm(p.category) === 'bahan kemasan');
+const bbWords = q => norm(q).split(' ').filter(Boolean);
+const bbHit = (words, parts) => { if (!words.length) return true; const h = norm(parts.filter(Boolean).join(' ')); return words.every(w => h.includes(w)); };
+/** A packaging material's price per piece: its cost price when the server sent it, else as the packs carry it (cost per pack ÷ pieces). */
+function bbMatPrice(p, packs) {
+  if ('cost_price' in p) return int(p.cost_price);
+  for (const pk of packs) { const m = (Array.isArray(pk.materials) ? pk.materials : []).find(x => x && String(x.id) === String(p.id) && x.cost != null && num(x.q) > 0); if (m) return Math.round(num(m.cost) / num(m.q)); }
+  return null;
+}
+/** The packs a material is used for: its use_for [{p, q}] and the packs that list it (as the server sees it). */
+function bbMatUses(p, packs) {
+  let a = []; try { a = JSON.parse(String(p.use_for || '') || '[]'); } catch (e) { a = []; }
+  const m = new Map(), put = (pk, q) => { if (pk && !m.has(String(pk.id))) m.set(String(pk.id), { name: pk.name, q: num(q) > 0 ? roundQty(q) : 1 }); };
+  (Array.isArray(a) ? a : []).forEach(x => put(prodById(x && x.p), x && x.q));
+  packs.forEach(pk => { const x = (Array.isArray(pk.materials) ? pk.materials : []).find(y => y && String(y.id) === String(p.id)); if (x) put(pk, x.q); });
+  return [...m.values()].map(x => ({ name: x.name, q: x.q, pcs: true }));
+}
+function bbRows() {
+  const packs = packProducts(), cost = canSeeCost(), out = [];
+  const st = (s, min) => s <= 0 ? 'habis' : s <= min ? 'menipis' : '';
+  const prodRow = (p, kind, price, uses) => ({ kind, id: p.id, sku: p.sku || '', name: p.name, unit: p.unit || '', stock: num(p.stock), min: num(p.min_stock), st: st(num(p.stock), num(p.min_stock)), cost: price, uses });
+  S.products.filter(p => p.active !== false && isBulkOfAny(p)).forEach(p => out.push(prodRow(p, 'curah', cost && 'cost_price' in p ? int(p.cost_price) : null,
+    packs.filter(x => String(x.repack_from) === String(p.id)).sort((a, b) => num(b.repack_qty) - num(a.repack_qty)).map(x => ({ name: x.name, q: num(x.repack_qty), u: p.unit || '' })))));
+  S.products.filter(p => p.active !== false && isMatProd(p) && !isBulkOfAny(p)).forEach(p => out.push(prodRow(p, 'kemasan', bbMatPrice(p, packs), bbMatUses(p, packs))));
+  matList().forEach(m => out.push({ kind: 'daftar', id: '', sku: '', name: m.name, unit: t('rp.piece'), stock: null, min: 0, st: '', cost: m.cost,
+    uses: packs.map(x => { const c = rpCostsOf(x).find(y => y.name.toLowerCase() === m.name.toLowerCase()); return c ? { name: x.name, q: c.qty, pcs: true } : null; }).filter(Boolean) }));
+  const ord = { curah: 0, kemasan: 1, daftar: 2 };
+  return out.sort((a, b) => ord[a.kind] - ord[b.kind] || String(a.name).localeCompare(String(b.name)));
+}
+const bbFiltered = all => { const w = bbWords(BBK.q); return all.filter(r => (!BBK.kind || r.kind === BBK.kind) && bbHit(w, [r.name, r.sku].concat(r.uses.map(u => u.name)))); };
+/** On a phone the tab row scrolls: keep the chosen tab (in the middle of the row) in sight. */
+const gdTabInView = () => { const on = $('#gd-tabs .chip.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'nearest' }); };
+const bbUseTxt = u => u.pcs ? t('bb.use_pcs', { name: u.name, q: fmtQty(u.q) }) : t('bb.use_size', { name: u.name, q: fmtQty(u.q), u: u.u });
+function gdDrawBahan(body, err) {
+  if (!$('#bb-q', body)) {
+    body.innerHTML = `<p class="muted small" style="margin-top:0">${esc(t('bb.hint'))}</p><div id="bb-err"></div>
+      <div class="toolbar">
+        <input class="input" id="bb-q" type="search" placeholder="${esc(t('bb.search_ph'))}" aria-label="${esc(t('bb.search_ph'))}" value="${esc(BBK.q)}">
+        <select class="input" id="bb-kind" aria-label="${esc(t('bb.col_kind'))}">${BBK_KINDS.map(k => `<option value="${k}" ${BBK.kind === k ? 'selected' : ''}>${esc(t(k ? 'bb.k_' + k : 'bb.kind_all'))}</option>`).join('')}</select>
+        <button class="btn" data-act="rp-bb-csv" id="bb-csv">${ic('download')} ${esc(t('bb.export'))}</button>
+        ${isOwner() ? `<button class="btn" data-act="rp-bb-imp" id="bb-imp">${ic('upload')} ${esc(t('bb.import'))}</button>` : ''}
+        ${canSetRepack() ? `<button class="btn primary" data-act="rp-bb-add" id="bb-add">${ic('plus')} ${esc(t('bb.add'))}</button>` : ''}</div>
+      <div id="bb-list"></div>`;
+    const q = $('#bb-q', body);
+    q.addEventListener('input', debounce(() => { BBK.q = q.value; bbDrawRows(); }, 120));
+    $('#bb-kind', body).onchange = e => { BBK.kind = e.target.value; bbDrawRows(); };
+    gdTabInView();
+  }
+  $('#bb-err', body).innerHTML = err;
+  bbDrawRows();
+}
+function bbRowHTML(r) {
+  const kb = `<span class="badge ${BBK_BADGE[r.kind]}">${esc(t('bb.k_' + r.kind))}</span>`, uses = r.uses.map(u => esc(bbUseTxt(u))).join('<br>');
+  return `<tr ${r.id !== '' ? `class="click" data-act="rp-bb-card" data-id="${esc(r.id)}"` : ''} data-bb="${r.kind}" data-name="${esc(r.name)}">
+    <td class="hide-phone num" data-col="sku">${r.sku ? esc(r.sku) : '<span class="muted">—</span>'}</td>
+    <td><b>${esc(r.name)}</b><div class="show-phone small muted">${kb}${r.sku ? ' · ' + esc(r.sku) : ''}</div>${uses ? `<div class="show-phone small muted">${uses}</div>` : ''}</td>
+    <td class="hide-phone" data-col="unit">${esc(r.unit)}</td><td class="hide-phone" data-col="kind">${kb}</td>
+    <td class="r num" data-col="stock">${r.stock == null ? `<span class="badge gray" title="${esc(t('bb.price_list_t'))}">${esc(t('bb.price_list'))}</span>`
+      : `<b class="${r.st === 'habis' ? 'red' : r.st === 'menipis' ? 'amber' : ''}" data-st="${r.st}">${fmtQty(r.stock)}</b> <span class="small muted">${esc(r.unit)}</span>${r.min > 0 ? `<div class="small muted">${esc(t('bb.min', { n: fmtQty(r.min) }))}</div>` : ''}`}</td>
+    <td class="r num" data-col="cost">${r.cost == null ? '<span class="muted">—</span>' : fmtRp(r.cost)}</td>
+    <td class="hide-phone small" data-col="uses">${uses || '<span class="muted">—</span>'}</td></tr>`;
+}
+function bbDrawRows() {
+  const box = $('#bb-list'); if (!box) return;
+  const all = bbRows(), rows = bbFiltered(all), n = k => all.filter(r => r.kind === k).length;
+  box.innerHTML = `<p class="muted small" id="bb-count">${esc(t('bb.n', { n: fmtNum(rows.length) }))} · ${BBK_KINDS.slice(1).map(k => `${esc(t('bb.k_' + k))} <span data-n="${k}">${fmtNum(n(k))}</span>`).join(' · ')}</p>
+    <div class="tbl-wrap"><table class="tbl" id="bb-table"><thead><tr><th class="hide-phone">${esc(t('bb.col_sku'))}</th><th>${esc(t('name'))}</th><th class="hide-phone">${esc(t('unit'))}</th><th class="hide-phone">${esc(t('bb.col_kind'))}</th><th class="r">${esc(t('stock'))}</th><th class="r">${esc(t('bb.col_cost'))}<span class="hide-phone"> ${esc(t('bb.col_cost_u'))}</span></th><th class="hide-phone">${esc(t('bb.col_uses'))}</th></tr></thead>
+    <tbody>${rows.map(bbRowHTML).join('') || `<tr><td colspan="7" class="empty">${esc(t(all.length ? 'no_data' : 'bb.none'))}</td></tr>`}</tbody></table></div>
+    <p class="small muted">${esc(t('bb.foot'))}</p>`;
+}
+/** CSV for Excel (as dsCSV: ';', BOM), fixed Indonesian headers; numbers with a decimal comma. */
+const gdCsvNum = v => '"' + String(roundQty(v)).replace('.', ',') + '"';
+function gdCsvSave(name, lines) {
+  const url = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+function bbCSV() {
+  const kind = { curah: 'Barang curah', kemasan: 'Bahan kemasan', daftar: 'Daftar bahan' };
+  gdCsvSave(`bahan-baku-${today()}.csv`, [['sku', 'nama', 'satuan', 'jenis', 'stok', 'stok_minimum', 'harga_modal_per_satuan', 'dipakai_untuk'].join(';')].concat(bbFiltered(bbRows()).map(r =>
+    [csvCell(r.sku), csvCell(r.name), csvCell(r.unit), csvCell(kind[r.kind]), r.stock == null ? csvCell('') : gdCsvNum(r.stock), r.stock == null ? csvCell('') : gdCsvNum(r.min), r.cost == null ? csvCell('') : csvCell(r.cost),
+      csvCell(r.uses.map(u => u.pcs ? `${u.name} x${String(roundQty(u.q)).replace('.', ',')}` : `${u.name} (${String(roundQty(u.q)).replace('.', ',')} ${u.u})`).join(', '))].join(';'))));
+}
+
+/* ---- Produksi stok ---- */
+const PRD = { from: '', to: '', days: 'month', st: '', q: '', data: null, key: '', gen: -1, at: 0, busy: '', err: '', errAt: '' }, PRD_ST = ['', 'proses', 'selesai', 'batal'], PRD_BADGE = { proses: 'amber', selesai: 'green', batal: 'red' };
+const prdStatus = r => { const s = String(r.status || ''); return s === 'proses' || s === 'menutup' ? 'proses' : s === 'batal' ? 'batal' : 'selesai'; }; // before v50 a repack was done at once (no status)
+const prdAt = r => r.confirmed_at || r.started_at || r.repack_time || '';
+const prdTs = r => Date.parse(prdAt(r)) || Date.parse(String(r.repack_date || '') + 'T00:00:00+07:00') || 0;
+const prdRange = n => { const T = today(); return n === 'month' ? [monthStart(T), T] : [addDays(T, -(int(n) - 1)), T]; };
+/** The range's get_sales (repacks + the KEMAS ULANG stock rows), loaded once per range; again after a refresh / stock change. */
+function prdData() {
+  const k = PRD.from + '|' + PRD.to, d = PRD.key === k && PRD.gen === GD.gen ? PRD.data : null;
+  if (!d && PRD.busy !== k && PRD.errAt !== k + '|' + GD.gen) prdLoad(k);
+  return d;
+}
+async function prdLoad(k) {
+  const gen = GD.gen; PRD.busy = k; PRD.err = '';
+  try { const d = await loadSales(PRD.from, PRD.to, true); if (k === PRD.from + '|' + PRD.to) { PRD.data = d; PRD.key = k; PRD.gen = gen; PRD.at = Date.now(); } }
+  catch (e) { PRD.err = errMsg(e); PRD.errAt = k + '|' + gen; }
+  if (PRD.busy === k) PRD.busy = '';
+  prdDrawRows();
+}
+/** Repacks of the range + the open ones (live from bootstrap; all of them while the range reaches today), newest first. */
+function prdRows(d) {
+  const T = today(), m = new Map(), inR = day => day >= PRD.from && day <= PRD.to;
+  (d.repacks || []).forEach(r => { if (inR(String(r.repack_date || '').slice(0, 10))) m.set(String(r.repack_id), r); });
+  (S.repacksOpen || []).forEach(r => { if (PRD.to >= T || inR(String(r.repack_date || '').slice(0, 10))) m.set(String(r.repack_id), r); });
+  return [...m.values()].sort((a, b) => prdTs(b) - prdTs(a));
+}
+const prdFiltered = all => { const w = bbWords(PRD.q); return all.filter(r => (!PRD.st || prdStatus(r) === PRD.st) && bbHit(w, [r.repack_id, r.from_name, r.to_name, r.started_by, r.user, r.requested_by, r.confirmed_by, r.approved_by, r.note])); };
+/** Material pieces really taken out of stock for a repack: the KEMAS ULANG rows of the materials (v63, note "… (RPxxxx, …)"). */
+function prdMatsMap(d) {
+  const m = new Map();
+  (d.purchases || []).forEach(x => {
+    if (String(x.supplier || '').trim().toUpperCase() !== REPACK_SUPPLIER || !(num(x.qty) < 0)) return;
+    const id = (/\((RP[^,)\s]+)/.exec(String(x.note || '')) || [])[1]; if (!id) return;
+    if (!m.has(id)) m.set(id, []); m.get(id).push(x);
+  });
+  return m;
+}
+/** The materials of a repack: the pieces taken from stock when it was confirmed (recorded; an open one: ≈ its pack's set-up × the packs
+    planned) + the price-list materials (no stock, never recorded per repack: ≈ the pack's set-up now × the packs); none for a cancel. */
+function prdMats(r, used) {
+  const st = prdStatus(r); if (st === 'batal') return [];
+  const n = st === 'proses' ? num(r.planned_qty) : num(r.to_qty), pack = prodById(r.to_product_id), out = [], g = new Map();
+  (used.get(String(r.repack_id)) || []).filter(x => String(x.product_id) !== String(r.from_product_id) && String(x.product_id) !== String(r.to_product_id)).forEach(x => {
+    const k = String(x.product_id), a = g.get(k) || { name: x.name, q: 0, u: (prodById(x.product_id) || {}).unit || 'pcs', est: false }; a.q = roundQty(a.q - num(x.qty)); g.set(k, a);
+  });
+  out.push(...g.values());
+  if (st === 'proses' && pack && n > 0) (Array.isArray(pack.materials) ? pack.materials : []).forEach(x => { if (x && x.name && num(x.q) > 0) out.push({ name: x.name, q: roundQty(num(x.q) * n), u: (prodById(x.id) || {}).unit || 'pcs', est: true }); });
+  if (pack && n > 0) rpCostsOf(pack).forEach(c => out.push({ name: c.name, q: roundQty(c.qty * n), u: t('rp.piece'), est: true })); // the price list has no stock: never recorded per repack
+  return out;
+}
+const prdShowCost = rows => canSeeCost() && (isOwner() || rows.some(r => r.unit_cost != null));
+function gdDrawProduksi(body, err, full) {
+  if (!PRD.from || (full && PRD.days)) [PRD.from, PRD.to] = prdRange(PRD.days || 'month'); // a preset follows the calendar (a new day / month)
+  if (!$('#prd-q', body)) {
+    body.innerHTML = `<p class="muted small" style="margin-top:0">${esc(t('prd.hint'))}</p><div id="prd-err"></div>
+      <div class="toolbar">
+        <label class="f" style="margin:0">${esc(t('from'))} <input class="input" type="date" id="prd-from" value="${esc(PRD.from)}" style="width:auto"></label>
+        <label class="f" style="margin:0">${esc(t('to'))} <input class="input" type="date" id="prd-to" value="${esc(PRD.to)}" style="width:auto"></label>
+        <div class="chips" id="prd-days">${['month', 7, 30, 90].map(n => `<button class="chip ${String(PRD.days) === String(n) ? 'on' : ''}" data-act="rp-prd-days" data-n="${n}">${esc(n === 'month' ? t('prd.this_month') : t('gd.days', { n }))}</button>`).join('')}</div></div>
+      <div class="toolbar">
+        <input class="input" id="prd-q" type="search" placeholder="${esc(t('prd.search_ph'))}" aria-label="${esc(t('prd.search_ph'))}" value="${esc(PRD.q)}">
+        <button class="btn" data-act="rp-prd-csv" id="prd-csv">${ic('download')} ${esc(t('bb.export'))}</button>
+        ${canSetRepack() ? `<button class="btn primary" data-act="rp-prd-add" id="prd-add">${ic('plus')} ${esc(t('prd.add'))}</button>` : ''}</div>
+      <div class="chips" id="prd-st" style="margin-bottom:8px">${PRD_ST.map(k => `<button class="chip ${PRD.st === k ? 'on' : ''}" data-act="rp-prd-st" data-st="${k}">${esc(t(k ? 'prd.st_' + k : 'all'))}</button>`).join('')}</div>
+      <div id="prd-list"></div>`;
+    const q = $('#prd-q', body), range = () => {
+      PRD.from = $('#prd-from').value || PRD.from; PRD.to = $('#prd-to').value || PRD.to;
+      if (PRD.from > PRD.to) { [PRD.from, PRD.to] = [PRD.to, PRD.from]; $('#prd-from').value = PRD.from; $('#prd-to').value = PRD.to; }
+      PRD.days = ''; $$('#prd-days .chip').forEach(c => c.classList.remove('on')); prdDrawRows();
+    };
+    q.addEventListener('input', debounce(() => { PRD.q = q.value; prdDrawRows(); }, 120));
+    $('#prd-from', body).onchange = range; $('#prd-to', body).onchange = range;
+    gdTabInView();
+  }
+  if (full) { PRD.errAt = ''; if (Date.now() - PRD.at > 120000) PRD.key = ''; } // the tab opened again: data older than the cache is read again
+  $('#prd-err', body).innerHTML = err;
+  prdDrawRows();
+}
+function prdRowHTML(r, mats, cost) {
+  const st = prdStatus(r), at = prdAt(r), u = r.from_unit || '', pu = r.to_unit || 'pcs';
+  const src = st === 'batal' ? num(r.planned_from_qty) || num(r.from_qty) : num(r.from_qty), res = st === 'proses' ? num(r.planned_qty) : num(r.to_qty);
+  const by = r.started_by || r.requested_by || r.user || '', conf = r.confirmed_by || r.approved_by || '', badge = `<span class="badge ${PRD_BADGE[st]}">${esc(t('prd.st_' + st))}</span>`;
+  return `<tr class="click" data-act="rp-prd-open" data-id="${esc(r.repack_id)}" data-st="${st}">
+    <td class="num" style="white-space:nowrap" data-col="date">${esc(fmtDate(r.repack_date))}${at ? `<div class="small muted">${esc(jktTime(at))}</div>` : ''}<div class="show-phone small muted">${esc(r.repack_id)}</div><div class="show-phone">${badge}</div></td>
+    <td class="hide-phone num" data-col="no">${esc(r.repack_id)}</td>
+    <td data-col="src"><b>${esc(r.from_name)}</b> × <b class="num" data-q>${fmtQty(src)}</b> ${esc(u)}${st === 'batal' ? `<div class="small muted">${esc(t('prd.returned'))}</div>` : ''}${mats.map(m => `<div class="small${m.est ? ' muted' : ''}" data-mat="${esc(m.name)}"${m.est ? ' data-est' : ''}>+ ${m.est ? '≈ ' : ''}${esc(m.name)} × <span class="num">${fmtQty(m.q)}</span> ${esc(m.u)}</div>`).join('')}</td>
+    <td data-col="res"><span class="${st === 'batal' ? 'muted' : ''}"><b>${esc(r.to_name)}</b> × <b class="num" data-q>${fmtQty(res)}</b> ${esc(pu)}</span>${st === 'proses' ? `<div class="small amber">${esc(t('prd.planned'))}</div>` : ''}</td>
+    <td class="hide-phone small" data-col="note">${r.note ? esc(r.note) : '<span class="muted">—</span>'}</td>
+    <td class="hide-phone small" data-col="by">${esc(by)}${conf ? `<div class="muted">${esc(t('prd.by_conf', { name: conf }))}</div>` : ''}</td>
+    <td class="hide-phone" data-col="status">${badge}</td>
+    ${cost ? `<td class="r num hide-phone" data-col="cost">${st === 'selesai' && r.unit_cost != null ? fmtRp(r.unit_cost) : '<span class="muted">—</span>'}</td>` : ''}</tr>`;
+}
+function prdDrawRows() {
+  const box = $('#prd-list'); if (!box || S.view !== 'gudang' || GD.tab !== 'produksi') return;
+  const d = prdData();
+  if (!d) { box.innerHTML = PRD.err ? `<div class="empty red" role="alert">${esc(PRD.err)}</div>` : `<div class="empty">${esc(t('loading'))}</div>`; return; }
+  const all = prdRows(d), rows = prdFiltered(all), used = prdMatsMap(d), cost = prdShowCost(rows), list = rows.map(r => ({ r, mats: prdMats(r, used) }));
+  $$('#prd-st .chip').forEach(c => { const k = c.dataset.st; c.classList.toggle('on', k === PRD.st); c.textContent = `${t(k ? 'prd.st_' + k : 'all')} (${fmtNum(k ? all.filter(r => prdStatus(r) === k).length : all.length)})`; });
+  box.innerHTML = `<p class="muted small" id="prd-count">${esc(t('prd.n', { n: fmtNum(rows.length), from: fmtDate(PRD.from), to: fmtDate(PRD.to) }))}</p>
+    <div class="tbl-wrap"><table class="tbl" id="prd-table"><thead><tr><th>${esc(t('date'))}</th><th class="hide-phone">${esc(t('prd.col_no'))}</th><th>${esc(t('prd.col_src'))}</th><th>${esc(t('prd.col_res'))}</th><th class="hide-phone">${esc(t('notes'))}</th><th class="hide-phone">${esc(t('prd.col_by'))}</th><th class="hide-phone">${esc(t('status'))}</th>${cost ? `<th class="r hide-phone" data-col="cost">${esc(t('prd.col_cost'))}</th>` : ''}</tr></thead>
+    <tbody>${list.map(x => prdRowHTML(x.r, x.mats, cost)).join('') || `<tr><td colspan="8" class="empty">${esc(t('prd.none'))}</td></tr>`}</tbody></table></div>
+    ${list.some(x => x.mats.some(m => m.est)) ? `<p class="small muted" id="prd-est-note">≈ ${esc(t('prd.est_t'))}</p>` : ''}`;
+}
+function prdCSV() {
+  const d = prdData(); if (!d) { toast(t('loading'), 'warn'); return; }
+  const rows = prdFiltered(prdRows(d)), used = prdMatsMap(d), cost = prdShowCost(rows), n = v => String(roundQty(v)).replace('.', ',');
+  gdCsvSave(`produksi-stok-${PRD.from}_${PRD.to}.csv`, [['tanggal', 'jam', 'no_produksi', 'status', 'stok_sumber', 'jumlah_sumber', 'satuan_sumber', 'bahan', 'stok_hasil', 'jumlah_hasil', 'satuan_hasil', 'catatan', 'dibuat_oleh', 'dikonfirmasi_oleh'].concat(cost ? ['biaya_per_kemasan'] : []).join(';')]
+    .concat(rows.map(r => {
+      const st = prdStatus(r), at = prdAt(r);
+      return [csvCell(r.repack_date), csvCell(at ? jktTime(at) : ''), csvCell(r.repack_id), csvCell(st), csvCell(r.from_name), gdCsvNum(st === 'batal' ? num(r.planned_from_qty) || num(r.from_qty) : num(r.from_qty)), csvCell(r.from_unit || ''),
+        csvCell(prdMats(r, used).map(m => `${m.name} ${n(m.q)} ${m.u}${m.est ? ' (perkiraan)' : ''}`).join(', ')), csvCell(r.to_name), gdCsvNum(st === 'proses' ? num(r.planned_qty) : num(r.to_qty)), csvCell(r.to_unit || ''),
+        csvCell(r.note || ''), csvCell(r.started_by || r.requested_by || r.user || ''), csvCell(r.confirmed_by || r.approved_by || '')].concat(cost ? [st === 'selesai' && r.unit_cost != null ? csvCell(int(r.unit_cost)) : csvCell('')] : []).join(';');
+    })));
+}
+/** One production: everything the row holds; an open one can be confirmed from here (the Kemas ulang tab's own dialog). */
+function openProduksi(r, used) {
+  const st = prdStatus(r), u = r.from_unit || '', pu = r.to_unit || 'pcs', mats = prdMats(r, used), cost = canSeeCost();
+  const by = r.started_by || r.requested_by || r.user || '', conf = r.confirmed_by || r.approved_by || '';
+  const line = (k, v, key) => v ? `<tr data-d="${key}"><td class="muted">${esc(k)}</td><td>${v}</td></tr>` : '';
+  openModal({
+    title: t('prd.detail', { no: r.repack_id }), id: 'prd-modal',
+    body: `<div class="row wrap" style="gap:6px;margin-bottom:10px"><span class="badge ${PRD_BADGE[st]}" data-status="${st}">${esc(t('prd.st_' + st))}</span><span class="badge gray num">${esc(r.repack_id)}</span></div>
+      <div class="tbl-wrap"><table class="tbl"><tbody>
+      ${line(t('prd.d_start'), esc(`${fmtDateTime(r.started_at || r.repack_time, r.started_at || r.repack_time ? '' : r.repack_date)}${by ? ' · ' + by : ''}`), 'start')}
+      ${line(t(st === 'batal' ? 'prd.st_batal' : 'prd.d_end'), conf || r.confirmed_at ? esc(`${r.confirmed_at ? fmtDateTime(r.confirmed_at) : fmtDate(r.repack_date)}${conf ? ' · ' + conf : ''}`) : '', 'end')}
+      ${line(t('prd.col_src'), `<b>${esc(r.from_name)}</b> × <b class="num">${fmtQty(st === 'batal' ? num(r.planned_from_qty) || num(r.from_qty) : r.from_qty)}</b> ${esc(u)}${st === 'batal' ? ` · ${esc(t('prd.returned'))}` : ''}`, 'src')}
+      ${line(t('prd.d_rem'), st !== 'batal' && num(r.remaining_qty) > 0 ? `<span class="num">${fmtQty(r.remaining_qty)}</span> ${esc(u)}` : '', 'rem')}
+      ${line(t('prd.d_mats'), mats.map(m => `<div${m.est ? ' class="muted"' : ''}>${m.est ? '≈ ' : ''}${esc(m.name)} × <span class="num">${fmtQty(m.q)}</span> ${esc(m.u)}</div>`).join(''), 'mats')}
+      ${line(t(st === 'proses' ? 'prd.d_plan' : 'rp.made'), st === 'batal' ? '' : `<b>${esc(r.to_name)}</b> × <b class="num">${fmtQty(st === 'proses' ? r.planned_qty : r.to_qty)}</b> ${esc(pu)}`, 'res')}
+      ${st === 'selesai' && num(r.expected_qty) > 0 ? line(t('rp.expected'), `<span class="num">${fmtQty(r.expected_qty)}</span> ${esc(pu)}`, 'exp') + line(t('rp.yield'), `<b class="num">${NF1.format(num(r.yield_pct))}%</b>`, 'yield') + line(t('rp.loss'), `<span class="num">${fmtQty(r.loss_qty)}</span> ${esc(u)}`, 'loss') : ''}
+      ${line(t('pu.exp'), isYmdStr(r.exp_date) ? esc(fmtDate(r.exp_date)) : '', 'expdate')}
+      ${line(t('notes'), r.note ? esc(r.note) : '', 'note')}
+      ${cost && st === 'selesai' && r.unit_cost != null ? line(t('prd.col_cost'), `<b class="num">${fmtRp(r.unit_cost)}</b>`, 'cost') : ''}
+      ${cost && st === 'selesai' && r.packaging_cost != null ? line(t('rp.pack_cost'), `<span class="num">${fmtRp(r.packaging_cost)}</span>`, 'pcost') : ''}
+      </tbody></table></div>${mats.some(m => m.est) ? `<p class="small muted">≈ ${esc(t('prd.est_t'))}</p>` : ''}`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button>${st === 'proses' && canFinRepack() ? `<button class="btn primary" data-act="rp-prd-fin" data-id="${esc(r.repack_id)}" id="prd-fin">${ic('check')} ${esc(t('rp.fin_btn'))}</button>` : ''}`
+  });
+}
+/** "Tambah …" leads to the real place: the Kemas ulang tab (its form, or its materials list). */
+function prdToRepack(focus) { GD.tab = 'repack'; RENDER.gudang(); focus(); }
+Object.assign(ACT, {
+  'rp-bb-card': el => { const p = prodById(el.dataset.id); if (p) openStockCard(p); },
+  'rp-bb-csv': () => bbCSV(),
+  'rp-bb-imp': () => { // the products import (owner): a material is a row with the category "Bahan kemasan"
+    openImport();
+    const m = topModal(), p = m && $('.modal-b > p', m);
+    if (p) p.insertAdjacentHTML('afterend', `<div class="small" id="bb-imp-hint" style="margin:0 0 10px;padding:8px 10px;border-radius:10px;background:var(--brand-ll)"><b>${esc(t('gd.tab_bahan'))}:</b> ${esc(t('bb.imp_hint'))}
+      <div style="margin-top:6px"><button type="button" class="btn xs" data-act="rp-bb-tpl" id="bb-tpl">${ic('download')} ${esc(t('bb.tpl'))}</button></div></div>`);
+  },
+  'rp-bb-tpl': () => gdCsvSave('bahan-baku-contoh.csv', [['nama', 'sku', 'kategori', 'satuan', 'harga modal', 'stok', 'stok minimum'].join(';'),
+    ['Stiker Kurma 500 g', '', 'Bahan kemasan', 'pcs', 350, 500, 100].map(csvCell).join(';'), ['Toples Plastik 1 kg', '', 'Bahan kemasan', 'pcs', 2500, 200, 50].map(csvCell).join(';')]),
+  'rp-bb-add': () => openModal({
+    title: t('bb.add'), id: 'bb-add-modal',
+    body: `<p style="margin-top:0">${esc(t('bb.add_hint'))}</p>${[1, 2, 3].map(i => `<div class="panel" style="margin-bottom:10px" data-way="${i}"><h3>${esc(t('bb.add_' + i + 't'))}</h3><div class="pb small">${esc(t('bb.add_' + i))}</div></div>`).join('')}`,
+    foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button><button class="btn primary" data-act="rp-bb-mats" id="bb-open-mats">${ic('repack')} ${esc(t('bb.open_mats'))}</button>`
+  }),
+  'rp-bb-mats': () => { closeModal(true); prdToRepack(() => { const h = $('#rm-list'); if (h) h.scrollIntoView({ block: 'center' }); const n = $('#rm-n-name'); if (n && !isTouch()) n.focus(); }); },
+  'rp-prd-days': el => { PRD.days = el.dataset.n; [PRD.from, PRD.to] = prdRange(PRD.days); $('#prd-from').value = PRD.from; $('#prd-to').value = PRD.to; $$('#prd-days .chip').forEach(c => c.classList.toggle('on', c === el)); prdDrawRows(); },
+  'rp-prd-st': el => { PRD.st = el.dataset.st || ''; prdDrawRows(); },
+  'rp-prd-csv': () => prdCSV(),
+  'rp-prd-add': () => prdToRepack(() => { const f = $('#rp-form'); if (f) f.scrollIntoView({ block: 'start' }); if (RPK.bulkPick) RPK.bulkPick.focus(); }),
+  'rp-prd-open': el => { const d = prdData(); const r = d && prdRows(d).find(x => String(x.repack_id) === el.dataset.id); if (r) openProduksi(r, prdMatsMap(d)); },
+  'rp-prd-fin': el => {
+    const r = (S.repacksOpen || []).find(x => x.repack_id === el.dataset.id);
+    closeModal(true);
+    if (!r) { toast(t('prd.gone'), 'warn'); return; }
+    prdToRepack(() => openRepackFinish(r)); // confirmed there: the result shows on the Kemas ulang tab
+  }
+});
+Object.assign(I18N.id, { // v67 Bahan baku + Produksi stok
+  'gd.tab_bahan': 'Bahan baku', 'gd.tab_produksi': 'Produksi stok',
+  'bb.hint': 'Semua yang dipakai untuk membuat kemasan: barang curah yang dikemas di toko, bahan kemasan dari barang masuk (ada stoknya) dan daftar harga bahan kemasan (tanpa stok).',
+  'bb.search_ph': 'Cari nama, SKU atau kemasan', 'bb.kind_all': 'Semua jenis', 'bb.k_curah': 'Barang curah', 'bb.k_kemasan': 'Bahan kemasan', 'bb.k_daftar': 'Daftar bahan',
+  'bb.col_sku': 'SKU', 'bb.col_kind': 'Jenis', 'bb.col_cost': 'Harga modal', 'bb.col_cost_u': '/ satuan', 'bb.col_uses': 'Dipakai untuk',
+  'bb.price_list': 'Daftar harga', 'bb.price_list_t': 'Tanpa stok: hanya nama dan harga per buah (Kemas ulang → Daftar bahan kemasan)',
+  'bb.min': 'min {n}', 'bb.n': '{n} bahan baku', 'bb.use_size': '{name} ({q} {u})', 'bb.use_pcs': '{name} × {q} buah',
+  'bb.export': 'Ekspor', 'bb.import': 'Impor', 'bb.add': 'Tambah bahan baku',
+  'bb.none': 'Belum ada bahan baku: atur kemasan dari barang curah di Kemas ulang, atau terima bahan kemasan di barang masuk.',
+  'bb.foot': 'Ketuk barang curah atau bahan kemasan untuk kartu stoknya. Harga bahan kemasan = harga modal rata-rata dari nota barang masuk.',
+  'bb.add_hint': 'Bahan baku tidak dibuat di layar ini. Ada tiga jalannya:',
+  'bb.add_1t': 'Bahan kemasan dengan stok (stiker, toples, dus…)',
+  'bb.add_1': 'Diterima di barang masuk aplikasi kasir: "Produk baru" → "Bahan kemasan", pilih kemasan yang memakainya dan jumlah per kemasan. Harga per buah = harga modal dari nota; stoknya berkurang setiap kemas ulang dikonfirmasi.',
+  'bb.add_2t': 'Bahan kemasan tanpa stok (daftar harga)',
+  'bb.add_2': 'Nama dan harga per buah di "Daftar bahan kemasan" (tab Kemas ulang). Kemasan memilih bahannya dari daftar ini dan biayanya ikut dihitung.',
+  'bb.add_3t': 'Barang curah', 'bb.add_3': 'Produk biasa dari barang masuk. Menjadi bahan baku begitu sebuah kemasan dibuat darinya di Kemas ulang.',
+  'bb.open_mats': 'Buka daftar bahan kemasan',
+  'bb.imp_hint': 'baris dengan Kategori "Bahan kemasan" menjadi bahan kemasan (tidak dijual; Harga modal = harga per buah). Kemasan yang memakainya tidak ikut impor: bahan yang dipakai saat kemas ulang sebaiknya diterima lewat barang masuk di aplikasi kasir.',
+  'bb.tpl': 'Contoh CSV',
+  'prd.hint': 'Kemas ulang = produksi stok: curah yang dipakai, bahannya, kemasan yang jadi, siapa yang membuat dan mengonfirmasi. Ketuk satu baris untuk rinciannya.',
+  'prd.this_month': 'Bulan ini', 'prd.search_ph': 'Cari kemasan, curah, no produksi atau nama',
+  'prd.st_proses': 'Proses', 'prd.st_selesai': 'Selesai', 'prd.st_batal': 'Batal',
+  'prd.col_no': 'No produksi', 'prd.col_src': 'Stok sumber', 'prd.col_res': 'Stok hasil', 'prd.col_by': 'Dibuat oleh', 'prd.col_cost': 'Biaya per kemasan',
+  'prd.by_conf': 'dikonfirmasi {name}', 'prd.planned': 'rencana, belum dikonfirmasi', 'prd.returned': 'dibatalkan, curah kembali ke stok',
+  'prd.est_t': 'perkiraan: bahan menurut pengaturan kemasan sekarang × jumlah kemasan (tidak tercatat pada produksi ini).',
+  'prd.n': '{n} produksi · {from} – {to}', 'prd.add': 'Tambah produksi stok', 'prd.none': 'Tidak ada produksi stok pada rentang ini.',
+  'prd.detail': 'Produksi stok {no}', 'prd.d_start': 'Mulai', 'prd.d_end': 'Selesai', 'prd.d_rem': 'Sisa curah kembali ke stok', 'prd.d_mats': 'Bahan', 'prd.d_plan': 'Rencana',
+  'prd.gone': 'Produksi ini sudah tidak dalam proses. Muat ulang.'
+});
+Object.assign(I18N.ar, {
+  'gd.tab_bahan': 'المواد الخام', 'gd.tab_produksi': 'إنتاج المخزون',
+  'bb.hint': 'كل ما يُستخدم لصنع العبوات: الأصناف السائبة التي تُعبّأ في المحل، ومستلزمات التعبئة المستلمة في الوارد (لها مخزون)، وقائمة أسعار مستلزمات التعبئة (بدون مخزون).',
+  'bb.search_ph': 'ابحث بالاسم أو الرمز أو العبوة', 'bb.kind_all': 'كل الأنواع', 'bb.k_curah': 'صنف سائب', 'bb.k_kemasan': 'مستلزم تعبئة', 'bb.k_daftar': 'قائمة المستلزمات',
+  'bb.col_sku': 'الرمز', 'bb.col_kind': 'النوع', 'bb.col_cost': 'سعر التكلفة', 'bb.col_cost_u': '/ للوحدة', 'bb.col_uses': 'يُستخدم في',
+  'bb.price_list': 'قائمة أسعار', 'bb.price_list_t': 'بدون مخزون: الاسم وسعر القطعة فقط (إعادة التعبئة ← قائمة مستلزمات التعبئة)',
+  'bb.min': 'الحد الأدنى {n}', 'bb.n': '{n} مادة خام', 'bb.use_size': '{name} (بحجم {q} {u})', 'bb.use_pcs': '{name} × {q} قطعة',
+  'bb.export': 'تصدير', 'bb.import': 'استيراد', 'bb.add': 'إضافة مادة خام',
+  'bb.none': 'لا توجد مواد خام بعد: اضبط عبوة من صنف سائب في إعادة التعبئة، أو استلم مستلزم تعبئة في الوارد.',
+  'bb.foot': 'اضغط على صنف سائب أو مستلزم تعبئة لفتح بطاقة مخزونه. سعر المستلزم = متوسط سعر التكلفة من فواتير الوارد.',
+  'bb.add_hint': 'لا تُنشأ المادة الخام في هذه الشاشة. لها ثلاث طرق:',
+  'bb.add_1t': 'مستلزم تعبئة له مخزون (ستيكر، علبة، كرتون…)',
+  'bb.add_1': 'يُستلم في الوارد في تطبيق الكاشير: «صنف جديد» ← «مادة تعبئة»، مع اختيار العبوات التي تستخدمه والعدد لكل عبوة. سعر القطعة = سعر التكلفة من الفاتورة، وينقص مخزونه مع كل تعبئة مؤكدة.',
+  'bb.add_2t': 'مستلزم تعبئة بدون مخزون (قائمة أسعار)',
+  'bb.add_2': 'الاسم وسعر القطعة في «قائمة مستلزمات التعبئة» (تبويب إعادة التعبئة). العبوات تختار مستلزماتها من هذه القائمة وتُحسب تكلفتها.',
+  'bb.add_3t': 'صنف سائب', 'bb.add_3': 'صنف عادي من الوارد. يصبح مادة خام عندما تُضبط منه عبوة في إعادة التعبئة.',
+  'bb.open_mats': 'افتح قائمة مستلزمات التعبئة',
+  'bb.imp_hint': 'السطر الذي فئته «Bahan kemasan» يصبح مستلزم تعبئة (لا يُباع؛ سعر التكلفة = سعر القطعة). العبوات التي تستخدمه لا تُستورد: المستلزم الذي يُستهلك في التعبئة يُفضَّل استلامه عبر الوارد في تطبيق الكاشير.',
+  'bb.tpl': 'نموذج CSV',
+  'prd.hint': 'إعادة التعبئة = إنتاج المخزون: السائب المستخدم، والمستلزمات، والعبوات الناتجة، ومن أنشأها ومن أكّدها. اضغط على سطر لعرض تفاصيله.',
+  'prd.this_month': 'هذا الشهر', 'prd.search_ph': 'ابحث بالعبوة أو السائب أو رقم الإنتاج أو الاسم',
+  'prd.st_proses': 'قيد التنفيذ', 'prd.st_selesai': 'مكتمل', 'prd.st_batal': 'ملغى',
+  'prd.col_no': 'رقم الإنتاج', 'prd.col_src': 'المخزون المصدر', 'prd.col_res': 'المخزون الناتج', 'prd.col_by': 'أنشأه', 'prd.col_cost': 'التكلفة لكل عبوة',
+  'prd.by_conf': 'أكّده {name}', 'prd.planned': 'مخطط، لم يُؤكَّد بعد', 'prd.returned': 'أُلغي، وعاد السائب إلى المخزون',
+  'prd.est_t': 'تقدير: المستلزمات حسب إعداد العبوة الحالي × عدد العبوات (غير مسجّلة في هذا الإنتاج).',
+  'prd.n': '{n} عملية إنتاج · {from} – {to}', 'prd.add': 'إضافة إنتاج مخزون', 'prd.none': 'لا يوجد إنتاج مخزون في هذه الفترة.',
+  'prd.detail': 'إنتاج المخزون {no}', 'prd.d_start': 'البداية', 'prd.d_end': 'الانتهاء', 'prd.d_rem': 'السائب المتبقي عاد إلى المخزون', 'prd.d_mats': 'المستلزمات', 'prd.d_plan': 'المخطط',
+  'prd.gone': 'هذا الإنتاج لم يعد قيد التنفيذ. حدّث الصفحة.'
+});
 
 /* ========== Barang Masuk vs the photographed note (v12) ========== */
 const PU_ST_CLS = { cocok: 'green', tidak_cocok: 'red', perlu_cek: 'amber', tanpa_foto: 'gray', koreksi: 'blue', retur: 'gold' };
