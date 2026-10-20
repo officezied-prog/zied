@@ -146,7 +146,7 @@ const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' 
 // by canDecide — and may register a member (save_customer); the cashier may no longer create members.
 // v63 (owner 2026-10-20: «المدير و المحاسب»): and confirm the packs a repack really made (repack_finish), like the manager.
 // v65 (owner 2026-10-20: «المدير و المحاسب يصادق عليها»): and confirm a goods-in note with how it was paid (confirm_purchase).
-const AKUNTAN_READ = ['confirm_purchase', 'repack_finish', 'login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank'];
+const AKUNTAN_READ = ['confirm_purchase', 'repack_finish', 'login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank', 'finance_position']; // v67: + the Keuangan screen (read only)
 if (role === 'akuntan' && AKUNTAN_READ.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
 // v36: report_tamper too — the field app reports a code attempt here (it was refused before, so the rep's account was never locked).
 if (role === 'sales' && ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
@@ -730,6 +730,7 @@ function settingsOut() {
   st.repack_materials = matCatalog().map(function (x) { return ['owner', 'manager', 'akuntan'].indexOf(role) >= 0 ? { n: x.name, c: x.cost } : { n: x.name }; });
   // v56: the supplier directory in full for the owner, manager and accountant; the names only for the others (goods-in pickers)
   st.supplier_dir = supDir().map(function (x) { return ['owner', 'manager', 'akuntan'].indexOf(role) >= 0 ? x : { n: x.n }; });
+  delete st.acct_opening; // v67: the accounts' opening balances reach the Keuangan screen only (finance_position)
   if (Object.keys(os).length) {
     const o = Object.assign({}, os);
     o.counted_n = Array.isArray(o.counted) ? o.counted.length : 0;
@@ -1301,7 +1302,8 @@ function applyRepack(P, o) {
   return { rp: rp, out: out, stock: stock };
 }
 /** v50: a repack row as each role may see it (the cost figures are the owner's). */
-function repackOut(r) { const o = clean(r); if (role !== 'owner') { delete o.unit_cost; delete o.packaging_cost; delete o.materials_cost; delete o.bulk_cost; } return o; }
+// v67: a repack's costs follow the owner's cost setting (the manager / accountant he lets see costs), like the products' costs
+function repackOut(r) { const o = clean(r); if (!costOk()) { delete o.unit_cost; delete o.packaging_cost; delete o.materials_cost; delete o.bulk_cost; } return o; }
 /** The pending repack request that holds the lock on this bulk product (one at a time). */
 function pendingRepackFor(fromId) { return approvalRows.find(function (a) { return a.kind === 'repack' && a.status === 'pending' && str(a.ref) === String(fromId); }) || null; }
 function repackBusy(p) {
@@ -3860,6 +3862,136 @@ switch (req.action) {
     };
     pl.net_profit = gross - expTotal + retNet + stockDiff + collected;
     return done({ ok: true, pl: pl });
+  }
+
+  // v67 (owner 2026-10-20, majoo screenshots: «اضف هذه المميزات»): the "Keuangan" screen in ONE call, read with aggregate SQL only
+  // (worker/src/db.js financeSpecs: SUM … GROUP BY over indexed date ranges — never every row):
+  //  - Kas laci: the cash expected now in each open drawer (opening + cash sales + cash payments + cash in − cash out, as close_shift);
+  //  - each store account (settings.bank_accounts): the opening balance the owner set (acct_opening) + money in − money out ON THAT
+  //    ACCOUNT since its date; for the chosen period its money in / out, and the money tied to NO account ("Tanpa akun"). On an
+  //    account: the transfer part of a sale filed under it, customer payments / payments out by transfer or QRIS filed under it
+  //    (supplier payments, customer refunds, transfers out). With no account: a sale's transfer part not filed, every QRIS and card
+  //    (EDC) part (a sale never names their account), cash sold with no drawer open, transfers / QRIS payments not filed, supplier
+  //    payments in cash not from a drawer, expenses not paid from the drawer. Cash through a drawer is in Kas laci;
+  //  - Neraca: what customers owe, the stock at cost (only for whoever may see costs), what we owe each supplier or paid ahead
+  //    (goods-in − returns − payments, as party_ledger; the internal stock rows excluded);
+  //  - the period's profit & loss lines get_sales does not carry: customer returns (money back, goods back on the shelf at today's
+  //    cost) and undercharges collected (as profit_loss).
+  // Owner and accountant; the manager when the owner lets her see costs (akuntan_sees_cost).
+  case 'finance_position': {
+    if (!(role === 'owner' || role === 'akuntan' || (role === 'manager' && costOk()))) return fail('FORBIDDEN', 'Hanya pemilik, akuntan, atau manajer yang boleh melihat modal');
+    const ff = str(data.from), ft = str(data.to);
+    if (!isDate(ff) || !isDate(ft) || ff > ft) return fail('INVALID', 'Rentang tanggal tidak valid');
+    const seeCost = costOk(), accs = bankAccounts(), known = {}, period = {}, since = {};
+    const zero = function () { return { in: 0, out: 0, n: 0 }; };
+    accs.forEach(function (a) { known[str(a.id)] = true; period[str(a.id)] = zero(); since[str(a.id)] = zero(); });
+    const accOf = function (id) { id = str(id); return known[id] ? id : ''; };
+    const opening = (function () { const v = readSettings().acct_opening; return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; })();
+    const none = { tf_sales: 0, qris_sales: 0, card_sales: 0, cash_nodrawer: 0, bank_in: 0, bank_out: 0, sup_cash: 0, exp_other: 0 };
+    rows('Get Fin Sales').forEach(function (r) { // one method a sale (a hutang down payment is cash, as saleParts)
+      const amt = money(r.amt), acc = accOf(r.acc);
+      if (r.m === 'transfer') { if (acc) { period[acc].in += amt; period[acc].n += num(r.n); } else none.tf_sales += amt; }
+      else if (r.m === 'qris') none.qris_sales += amt;
+      else if (r.m === 'kartu') none.card_sales += amt;
+      else if (!num(r.drawer)) none.cash_nodrawer += amt;
+    });
+    rows('Get Fin Split Sales').forEach(function (x) { // a split sale (campur) part by part; its account is its transfer part's
+      const sp = saleParts(x), acc = accOf(x.account_id);
+      if (sp.transfer) { if (acc) { period[acc].in += sp.transfer; period[acc].n++; } else none.tf_sales += sp.transfer; }
+      none.qris_sales += sp.qris; none.card_sales += sp.kartu;
+      if (!str(x.shift_id)) none.cash_nodrawer += sp.tunai;
+    });
+    rows('Get Fin Pays').forEach(function (r) {
+      const amt = money(r.amt), acc = accOf(r.acc), out = r.dir === 'out';
+      if (r.m === 'transfer' || r.m === 'qris') { if (acc) { period[acc][out ? 'out' : 'in'] += amt; period[acc].n += num(r.n); } else none[out ? 'bank_out' : 'bank_in'] += amt; }
+      else if (out && r.pt === 'supplier' && !num(r.kas)) none.sup_cash += amt;
+    });
+    rows('Get Fin Expenses').forEach(function (r) { if (str(r.pf) !== 'kas') none.exp_other += money(r.amt); });
+    rows('Get Fin Acct Sales').forEach(function (r) { const acc = accOf(r.acc); if (acc) { since[acc].in += money(r.amt); since[acc].n += num(r.n); } });
+    rows('Get Fin Acct Split Sales').forEach(function (x) { const acc = accOf(x.account_id), tr = saleParts(x).transfer; if (acc && tr) { since[acc].in += tr; since[acc].n++; } });
+    rows('Get Fin Acct Pays').forEach(function (r) { const acc = accOf(r.acc); if (acc) { since[acc][r.dir === 'out' ? 'out' : 'in'] += money(r.amt); since[acc].n += num(r.n); } });
+    const accounts = accs.map(function (a) {
+      const id = str(a.id), op = opening[id] && typeof opening[id] === 'object' && isDate(str(opening[id].date)) ? opening[id] : null;
+      const o = { id: id, bank: str(a.bank), account_no: str(a.account_no), holder: str(a.holder), active: a.active !== false, period: period[id], opening: null };
+      if (op) { o.opening = { date: str(op.date), amount: money(op.amount), by: str(op.by), at: str(op.at) }; o.since = since[id]; o.balance = o.opening.amount + since[id].in - since[id].out; }
+      return o;
+    });
+    const drawers = openShifts.map(function (x) {
+      return { shift_id: str(x.shift_id), cashier: str(x.cashier), shift_date: str(x.shift_date), opened_at: str(x.opened_at), opening_cash: money(x.opening_cash), cash_sales: money(x.cash_sales),
+        cash_payments: money(x.cash_payments), cash_in: money(x.cash_in), cash_out: money(x.cash_out), expected: money(x.opening_cash) + money(x.cash_sales) + money(x.cash_payments) + money(x.cash_in) - money(x.cash_out) };
+    });
+    const owing = customers.filter(function (c) { return money(c.debt_balance) > 0; }).map(function (c) { return { id: c.id, name: str(c.name), debt: money(c.debt_balance) }; }).sort(function (a1, b1) { return b1.debt - a1.debt; });
+    let stock = null;
+    if (seeCost) {
+      const cat = {};
+      stock = { value: 0, items: 0, materials: 0, materials_n: 0 };
+      products.filter(function (p) { return p.active !== false; }).forEach(function (p) {
+        const v = Math.max(0, num(p.stock)) * money(p.cost_price), k = str(p.category) || '—';
+        stock.value += v; stock.items++; cat[k] = (cat[k] || 0) + v;
+        if (isMaterial(p)) { stock.materials += v; stock.materials_n++; }
+      });
+      stock.value = Math.round(stock.value); stock.materials = Math.round(stock.materials);
+      stock.by_cat = Object.keys(cat).map(function (k) { return { category: k, value: Math.round(cat[k]) }; }).sort(function (a1, b1) { return b1.value - a1.value; }).slice(0, 30);
+    }
+    const sup = {}, supOf = function (k) { return sup[k] || (sup[k] = { supplier: k, notes: 0, bought: 0, paid: 0, last: '' }); };
+    rows('Get Fin Supplier Notes').forEach(function (r) {
+      const k = str(r.supplier); if (INTERNAL_SUPPLIERS.indexOf(k.toUpperCase()) >= 0) return;
+      const s = supOf(k); s.bought += money(r.amt); s.notes += num(r.n); if (str(r.last) > s.last) s.last = str(r.last);
+    });
+    rows('Get Fin Supplier Pays').forEach(function (r) { const k = str(r.supplier); if (k) supOf(k).paid += money(r.amt); });
+    const nameless = sup[''] || null; delete sup[''];
+    const sups = Object.keys(sup).map(function (k) { const s = sup[k]; s.balance = s.bought - s.paid; return s; });
+    const owed = sups.filter(function (s) { return s.balance > 0; }).sort(function (a1, b1) { return b1.balance - a1.balance; });
+    const ahead = sups.filter(function (s) { return s.balance < 0; }).sort(function (a1, b1) { return a1.balance - b1.balance; });
+    const rets = rows('Get Fin Returns').filter(function (x) { return x.status === 'approved' && x.kind !== 'pemasok' && str(x.return_date) >= ff && str(x.return_date) <= ft; }).map(function (x) {
+      let lines = []; try { lines = typeof x.lines === 'string' ? JSON.parse(x.lines || '[]') : (x.lines || []); } catch (e) { lines = []; }
+      let back = 0;
+      (Array.isArray(lines) ? lines : []).forEach(function (l) { if (l && l.condition !== 'rusak') { const p = productById[String(l.product_id)]; back += Math.round(num(l.qty) * money(p ? p.cost_price : 0)); } });
+      const o = { date: str(x.return_date), refund: money(x.refund) };
+      if (seeCost) o.restock = back;
+      return o;
+    });
+    const col = rows('Get Fin Collected')[0] || {};
+    const sumOf = function (arr, f) { return arr.reduce(function (a1, x) { return a1 + f(x); }, 0); };
+    return done({
+      ok: true, as_of: jkDate(), from: ff, to: ft, see_cost: seeCost,
+      drawers: drawers, accounts: accounts, none: none,
+      receivables: { total: sumOf(customers, function (c) { return money(c.debt_balance); }), count: owing.length, top: owing.slice(0, 30) },
+      stock: stock,
+      suppliers: { payable: sumOf(owed, function (s) { return s.balance; }), prepaid: -sumOf(ahead, function (s) { return s.balance; }), owed_n: owed.length, ahead_n: ahead.length,
+        owed: owed.slice(0, 50), ahead: ahead.slice(0, 50), nameless: nameless ? { bought: nameless.bought, paid: nameless.paid, notes: nameless.notes } : null },
+      pl_extra: { returns: Object.assign({ count: rets.length, refund: sumOf(rets, function (x) { return x.refund; }), list: rets }, seeCost ? { restock: sumOf(rets, function (x) { return x.restock; }) } : {}),
+        collected: { count: num(col.n), total: money(col.amt) } }
+    });
+  }
+
+  // v67: the owner sets an account's opening balance ("saldo awal", e.g. read from his bank app) — the balance at the START of that
+  // date; the Keuangan screen adds what came in and went out on that account from then on. Kept in pos_settings 'acct_opening'
+  // ({account_id: {date, amount, by, at}}); never sent with the settings (finance_position only). The accountant is told.
+  case 'set_account_opening': {
+    if (role !== 'owner') return fail('FORBIDDEN', 'Hanya pemilik');
+    const accId = str(data.account_id), acc = bankAccounts().find(function (x) { return str(x.id) === accId; });
+    if (!acc) return fail('INVALID', 'Rekening toko tidak dikenal');
+    const cur0 = readSettings().acct_opening, cur = cur0 && typeof cur0 === 'object' && !Array.isArray(cur0) ? Object.assign({}, cur0) : {};
+    const before = cur[accId] && typeof cur[accId] === 'object' ? cur[accId] : null, label = str(acc.bank) + ' ' + str(acc.account_no);
+    let txt;
+    if (data.clear === true) {
+      if (!before) return done({ ok: true, unchanged: true, account_id: accId, opening: null });
+      delete cur[accId];
+      txt = 'Saldo awal ' + label + ' dihapus (sebelumnya ' + rpTxt(before.amount) + ' per ' + str(before.date) + ') — oleh pemilik ' + me.name;
+    } else {
+      const date = str(data.date), amt = Number(data.amount);
+      if (!isDate(date) || date > jkDate() || date < '2000-01-01') return fail('INVALID', 'Tanggal saldo awal: paling lambat hari ini');
+      if (data.amount === null || data.amount === undefined || String(data.amount).trim() === '' || !isFinite(amt) || amt < 0 || amt > 1e13) return fail('INVALID', 'Saldo awal tidak valid (0 atau lebih)');
+      if (before && str(before.date) === date && money(before.amount) === Math.round(amt)) return done({ ok: true, unchanged: true, account_id: accId, opening: before });
+      cur[accId] = { date: date, amount: Math.round(amt), by: me.name, at: new Date().toISOString() };
+      txt = 'Saldo awal ' + label + ': ' + rpTxt(amt) + ' per awal ' + date + (before ? ' (sebelumnya ' + rpTxt(before.amount) + ' per ' + str(before.date) + ')' : '') + ' — oleh pemilik ' + me.name;
+    }
+    const r0 = settingRows.find(function (x) { return x.skey === 'acct_opening'; });
+    ops.settings.push({ _id: r0 ? r0.id : -1, skey: 'acct_opening', svalue: JSON.stringify(cur) });
+    logAct('atur_bank', txt, accId, data.clear === true ? 0 : Math.round(Number(data.amount)), 'info');
+    notify(['akuntan'], txt, 'info');
+    return done({ ok: true, account_id: accId, opening: cur[accId] || null });
   }
 
   case 'get_sales': {

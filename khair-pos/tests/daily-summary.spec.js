@@ -31,7 +31,7 @@ test('every invoice of the day with all its lines, every product sold; print and
   const row = inv.locator(`[data-ds-inv="${s0.invoice_no}"]`);
   await row.locator('summary').click();
   for (const l of lines) await expect(row).toContainText(l.name);
-  await expect(row).toContainText(rp(s0.total + (s0.send_fee || 0)));
+  await expect(row).toContainText(rp(s0.total)); // (the total already carries the receipt-sending fee)
   // every product of the day, the total = the lines of the valid invoices
   const okInv = new Set(ok.map(s => s.invoice_no)), its = db.items.filter(i => okInv.has(i.invoice_no));
   const names = [...new Set(its.map(i => String(i.product_id)))];
