@@ -11,7 +11,12 @@
    through the server's own rules (KBrad.waEvent). Off (default) = not set up: the app sends by hand, as in stage 1.
    v61.1: the page's demo switch (home card, or ?wa=1 / ?wa=0; remembered as 'kbrad.mock.wa') sets KBradMockWA; each order then
    shows the phone that got its step's message (the cold store / the driver / the customer), the cold store's buttons going
-   through waIn — the whole process can be tried without WhatsApp. */
+   through waIn — the whole process can be tried without WhatsApp.
+   v63 (stage 3): a simulated Lalamove (on by default; window.KBradMockLala = false plays "not set up": the app keeps its manual
+   ways). The same core rules as the Worker (lala_plan → a price → lala_booked / lala_cancelled); the price is a fixed demo formula
+   by distance, a booking gives a fake order (DEMO-…), and KBradMock.lalaStep(order_no, 'driver' | 'picked' | 'done' | 'cancel')
+   moves it the way Lalamove would — read back through the server's own lala_sync. The coolers', the shop's places and the city's
+   vehicles are seeded so it works at once. */
 (function (root) {
   var KEY = 'kbrad.mock.db', COLD_KEY = 'kcold.mock.db';
   function load() { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return null; } }
@@ -50,8 +55,17 @@
   function sentThisMonth(b) { var mo = new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 7); return (b.wa_log || []).filter(function (x) { return x.dir === 'out' && x.status !== 'not_sent' && String(x.at).slice(0, 7) === mo; }).length; }
   function wibDay(n) { var d = new Date(Date.now() + 7 * 3600000); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); }
   function at(n, hm) { return new Date(wibDay(n) + 'T' + hm + ':00+07:00').toISOString(); }
+  // v63: the demo places (near the real areas) and the demo vehicles (Lalamove's list for Jakarta is read by "Tes koneksi")
+  var LALA_DEMO = [{ key: 'MOTORCYCLE', description: 'Motor', load: { value: 20, unit: 'kg' }, base: 10000, km: 2500 },
+    { key: 'MPV', description: 'Mobil (MPV)', load: { value: 300, unit: 'kg' }, base: 40000, km: 4500 }, { key: 'VAN', description: 'Van / blind van', load: { value: 600, unit: 'kg' }, base: 65000, km: 5500 },
+    { key: 'TRUCK175', description: 'Pickup (bak)', load: { value: 1000, unit: 'kg' }, base: 90000, km: 6500 }, { key: 'TRUCK330', description: 'Engkel box', load: { value: 2500, unit: 'kg' }, base: 180000, km: 9500 }];
+  function lalaSeed() {
+    return { brad_coolers: { DPP: { lat: -6.1214, lng: 106.9021 }, BOSKO: { lat: -6.2383, lng: 106.9756 }, KAWANISHI: { lat: -6.3080, lng: 107.1520 } },
+      brad_store_geo: { lat: -6.2788, lng: 106.8631, address: 'Jl. Raya Condet No.4, Jakarta Timur' },
+      brad_lala_services: { at: new Date().toISOString(), city: { locode: 'ID_JKT', name: 'Jakarta (demo)' }, services: LALA_DEMO.map(function (x) { return { key: x.key, description: x.description, load: x.load }; }) } };
+  }
   function seed(c) {
-    var b = { nid: 1, orders: [], settings: {}, wa_log: [] }, hs = c.users.find(function (u) { return u.name === 'Jihan'; }).pin_hash;
+    var b = { nid: 1, orders: [], settings: lalaSeed(), wa_log: [], lala: { n: 0, orders: {} } }, hs = c.users.find(function (u) { return u.name === 'Jihan'; }).pin_hash;
     var M = function (action, data, n, hm) { var r = run(c, b, { action: action, user: 'Jihan', pin_hash: hs, data: data }, at(n, hm)); if (!r.ok) throw new Error(action + ': ' + r.message); return r; };
     // a day the coolers open only by arrangement (Sunday) goes with the agreed extra cost
     var X = function (n) { var K = root.KBrad; return K.dayKind(wibDay(n), K.hoursOf({}), []) === 'arrange' ? { extra_cost: 350000, extra_note: 'Buka Minggu (perjanjian)' } : {}; };
@@ -78,9 +92,87 @@
       { code: 'AJWA-5', product: 'Ajwa 5kg', qty: 1, unit: 'pallet', line: 'Ajwa 5kg · 1 palet' },
       { product: 'Zahidi', qty: 10, unit: 'ctn', unclear: true, line: 'Zahidi · 10 ctn' }] });
   }
+  /* ---------- v63: the simulated Lalamove ---------- */
+  function lalaOn() { return root.KBradMockLala !== false; }
+  function sysRun(d, action, data) { return run(d.c, d.b, { __sys: 'lalamove', action: action, data: data }); }
+  function km(a, b) { // straight line × 1.3 for the roads
+    var R = 6371, r = Math.PI / 180, la1 = Number(a.lat) * r, la2 = Number(b.lat) * r, dl = (Number(b.lng) - Number(a.lng)) * r;
+    var x = Math.sin((la2 - la1) / 2), y = Math.sin(dl / 2), q = x * x + Math.cos(la1) * Math.cos(la2) * y * y;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(q))) * 1.3;
+  }
+  function fakeQuote(d, qb) {
+    var sv = LALA_DEMO.find(function (x) { return x.key === qb.serviceType; }) || LALA_DEMO[2], k = km(qb.stops[0].coordinates, qb.stops[1].coordinates), L = d.b.lala = d.b.lala || { n: 0, orders: {} };
+    L.n++;
+    return { quotationId: 'DQ' + L.n, price: Math.ceil((sv.base + sv.km * k) / 1000) * 1000, currency: 'IDR', expiresAt: new Date(Date.now() + 5 * 60000).toISOString(), distance_m: Math.round(k * 1000),
+      stops: qb.stops.map(function (s, i) { return { stopId: 'DS' + L.n + '-' + i, address: s.address }; }) };
+  }
+  function quoteOut(plan, q) {
+    return { price: q.price, currency: q.currency, expires_at: q.expiresAt, distance_m: q.distance_m, service: plan.service, service_name: plan.service_name, schedule_at: plan.schedule_at,
+      eta_at: plan.eta_at, warn: plan.warn, kg: plan.kg, spent: plan.spent, cap: plan.cap, from: plan.quote.stops[0].address, to: plan.dest.address };
+  }
+  var LALA_OFF = { ok: false, error: 'LALA_OFF', message: 'Lalamove otomatis belum aktif: pesan mobil dengan cara manual (pemilik: Pengaturan → Lalamove otomatis)' };
+  function lalaState() { var on = lalaOn(); return { on: on, env: 'demo', market: 'ID', city: '', set: { key: on, secret: on } }; }
+  /** The Worker's lala_quote / lala_book / lala_cancel / lala_admin, played (worker/src/brad.js lalaStaff) against the fake Lalamove. */
+  function lalaApi(d, body) {
+    var data = Object.assign({}, body.data || {}), A = body.action;
+    Object.keys(data).forEach(function (k) { if (k.charAt(0) === '_') delete data[k]; });
+    var req = function (action, dt) { return Object.assign({}, body, { action: action, data: dt }); };
+    if (A === 'lala_admin') {
+      var a = run(d.c, d.b, req(A, data)); if (!a.ok) return a;
+      if (a.lala_admin === 'status') return Object.assign(a, lalaState());
+      if (!lalaOn()) return Object.assign({}, LALA_OFF, lalaState());
+      var sv = sysRun(d, 'lala_services', { city: { locode: 'ID_JKT', name: 'Jakarta (demo)' }, services: LALA_DEMO.map(function (x) { return { key: x.key, description: x.description, load: x.load }; }) });
+      return Object.assign(a, lalaState(), { lala: sv.lala, cities: [{ locode: 'ID_JKT', name: 'Jakarta (demo)', n: LALA_DEMO.length }], picked: 'ID_JKT' });
+    }
+    if (A === 'lala_cancel') {
+      var c1 = run(d.c, d.b, req(A, data)); if (!c1.ok) return c1;
+      if (!lalaOn()) return Object.assign({}, LALA_OFF, { manual: true });
+      var fo = ((d.b.lala || {}).orders || {})[c1.cancel.lala_order_id]; if (fo) fo.status = 'CANCELED';
+      return sysRun(d, 'lala_cancelled', c1.cancel);
+    }
+    var p1 = run(d.c, d.b, req('lala_plan', data)); if (!p1.ok) return p1;
+    if (!lalaOn()) return LALA_OFF;
+    if (A === 'lala_book' && !(Number(data.seen_price) > 0)) return { ok: false, error: 'INVALID', message: 'Cek harga dulu' };
+    var q = fakeQuote(d, p1.plan.quote), p2 = run(d.c, d.b, req('lala_plan', Object.assign({}, data, { _price: q.price })));
+    if (!p2.ok) return Object.assign(p2, { price: q.price });
+    var plan = p2.plan;
+    if (A === 'lala_quote') { save(d.b); return { ok: true, quote: quoteOut(plan, q) }; }
+    var id = 'DEMO-' + (1000 + d.b.lala.n), share = 'https://share.lalamove.com/?ID=' + id + '&lang=id_ID';
+    d.b.lala.orders[id] = { status: 'ASSIGNING_DRIVER', driverId: '', price: q.price, shareLink: share };
+    var bk = sysRun(d, 'lala_booked', { order_no: plan.order_no, by: plan.by, service: plan.service, service_name: plan.service_name, schedule_at: plan.schedule_at, eta_at: plan.eta_at,
+      eta_min: plan.eta_min, accept_ot: plan.accept_ot, dest: plan.dest, quote: { id: q.quotationId, price: q.price, currency: 'IDR', distance_m: q.distance_m },
+      placed: { order_id: id, share_link: share, status: 'ASSIGNING_DRIVER', price: q.price } });
+    if (!bk.ok) delete d.b.lala.orders[id];
+    save(d.b);
+    return bk.ok ? Object.assign(bk, { quote: quoteOut(plan, q) }) : bk;
+  }
+  /** Lalamove moves the demo trip (as its app would): a driver found, the goods picked up, done, or cancelled — then the server's
+      own lala_sync reads it, as the Worker does every 2 minutes (and on Lalamove's webhook). */
+  function lalaStep(no, kind) {
+    return dbs().then(function (d) {
+      var o = d.b.orders.find(function (x) { return x.order_no === no; }), c = o ? root.KBrad.lalaTrip(o) : null;
+      if (!c) return { ok: false, error: 'NOT_FOUND', message: 'Tidak ada Lalamove otomatis di order ini' };
+      var L = d.b.lala = d.b.lala || { n: 0, orders: {} }, f = L.orders[c.lala_order_id] = L.orders[c.lala_order_id] || { status: c.lala_status, driverId: '', price: c.price, shareLink: c.share_link };
+      if (kind === 'driver') { f.status = 'ON_GOING'; f.driverId = 'DRV' + (L.n + 7); f.driver = { name: 'Pak Slamet', phone: '+6281300000077', plate: 'B 9876 TKL' }; }
+      else if (kind === 'picked') f.status = 'PICKED_UP';
+      else if (kind === 'done') f.status = 'COMPLETED';
+      else if (kind === 'cancel') f.status = 'CANCELED';
+      var r = sysRun(d, 'lala_sync', { items: [{ order_no: no, lala_order_id: c.lala_order_id, ok: true, status: f.status, driver_id: f.driverId || '',
+        driver: f.driverId && f.driverId !== c.lala_driver_id ? f.driver : null, share_link: f.shareLink, price: f.price }] });
+      save(d.b);
+      return Object.assign({ status: f.status }, r);
+    });
+  }
   var ready = null;
   function dbs() {
-    if (!ready) ready = root.KColdMock.db().then(function (c) { var b = load(); return { c: c, b: b && b.orders ? b : seed(c) }; });
+    if (!ready) ready = root.KColdMock.db().then(function (c) {
+      var b = load();
+      if (b && b.orders) { // a demo from before v63: its places and vehicles added (what was set stays)
+        var ls = lalaSeed(); b.settings = b.settings || {}; b.lala = b.lala || { n: 0, orders: {} };
+        Object.keys(ls).forEach(function (k) { if (b.settings[k] === undefined) b.settings[k] = ls[k]; });
+      }
+      return { c: c, b: b && b.orders ? b : seed(c) };
+    });
     return ready;
   }
   function api(body) {
@@ -93,8 +185,10 @@
         if (!first.ok || !first.need_ai) return first;
         return run(d.c, d.b, Object.assign({}, body, { data: Object.assign({}, base, { _ai: { text: demoAI(), model: 'demo' } }) }));
       }
+      if (/^lala_(quote|book|cancel|admin)$/.test(body.action)) return lalaApi(d, body); // v63, as the Worker does around the core
       var r = run(d.c, d.b, body);
-      if (body.action === 'bootstrap' && r.ok) { r.ai_reader = root.KBradMockAI !== false; r.wa = { on: root.KBradMockWA === true, count: sentThisMonth(d.b), cap: r.wa_cap }; }
+      if (r && r.ok) delete r.lala_due; // (the Worker reads those trips; here lalaStep plays Lalamove)
+      if (body.action === 'bootstrap' && r.ok) { r.ai_reader = root.KBradMockAI !== false; r.wa = { on: root.KBradMockWA === true, count: sentThisMonth(d.b), cap: r.wa_cap }; r.lala = Object.assign({}, r.lala, lalaState()); }
       if (body.action === 'wa_admin' && r.ok) {
         var on = root.KBradMockWA === true;
         if (r.wa_admin === 'status') Object.assign(r, { on: on, set: { token: on, phone: on, waba: on, secret: on, verify: on }, count: sentThisMonth(d.b), cap: r.wa_cap || 3000,
@@ -120,5 +214,5 @@
     });
   }
   function reset() { try { localStorage.removeItem(KEY); } catch (e) { } ready = null; return root.KColdMock.reset().then(function () { return dbs(); }); }
-  root.KBradMock = { api: api, reset: reset, waIn: waIn };
+  root.KBradMock = { api: api, reset: reset, waIn: waIn, lalaStep: lalaStep };
 })(window);

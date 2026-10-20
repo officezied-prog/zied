@@ -43,7 +43,7 @@ test('the customer booked the car: his message pasted, "Baca pesan" fills the fi
   await expect(c.locator('[data-chip]')).toHaveText('4/9 Barang siap');
   // step 5: the third way, its box only when chosen; the cost is the customer's
   await c.locator('[data-act="car"]').click();
-  await expect(page.locator('#tk-via option')).toHaveText(['Lalamove', 'Sopir sendiri', 'Dipesan pelanggan']);
+  await expect(page.locator('#tk-via option')).toHaveText(['Lalamove', 'Sopir sendiri', 'Dipesan pelanggan', 'Pesan Lalamove otomatis']); // v63: the fourth, the server's
   await expect(page.locator('#tk-cust')).toBeHidden();
   await page.selectOption('#tk-via', 'pelanggan');
   await expect(page.locator('#tk-cust')).toBeVisible();

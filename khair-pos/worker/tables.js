@@ -275,6 +275,7 @@ export const TABLES = {
     car_cancels: 'number', arrived_at: 'string', door: 'string', ot_hours: 'number', ot_cost: 'number', ot_cause: 'string',
     ot_note: 'string', load_at: 'string', load_end_est: 'string', departed_at: 'string', stock_note: 'string',
     delivered_at: 'string', cancelled_at: 'string', cancel_reason: 'string',
+    dest_lat: 'number', dest_lng: 'number', // v63 (owner 2026-10-20: «طلب سيارة لالاموف تلقائيًا»): where the goods go, for Lalamove
   },
   // v61 (owner 2026-10-18: «ابدأ المرحلة الثانية: إرسال الواتساب تلقائيًا»): every WhatsApp message of the order flow — sent
   // (its wamid, then sent / delivered / read / failed from Meta's webhook) and received (the cold store's buttons and replies).

@@ -320,6 +320,210 @@ assert.deepStrictEqual(['Ok pak siap', 'Pak, mobil masuk pintu 12 ya', 'Maaf sto
   assert.strictEqual(ok(call('car_save', { order_no: no, via: 'kapal', driver: 'Pak C', plate: 'B 3 EF' })).order.car.via, 'lalamove'); // unknown → Lalamove, as before
   ok(call('order_status', { order_no: no, to: 'cancelled', note: 'uji mobil pelanggan' }));
 }
+// ---------- v63 stage 3: the Lalamove car booked by the server — places, the plan (hours, cap, a price that rose), Lalamove's reports ----------
+{
+  // where a place is: "lat,lng", Google Maps links (the pin first), a WhatsApp location, geo: — a short link only via the Worker
+  const G = KBrad.geoOf, at = (lat, lng) => ({ lat, lng });
+  assert.deepStrictEqual(G('-6.2088,106.8456'), at(-6.2088, 106.8456));
+  assert.deepStrictEqual(G('  -6.2088 , 106.8456 '), at(-6.2088, 106.8456));
+  assert.deepStrictEqual(G('https://maps.google.com/maps?q=-6.208800%2C106.845600&z=17&hl=en'), at(-6.2088, 106.8456)); // a WhatsApp location
+  assert.deepStrictEqual(G('https://www.google.com/maps/place/Toko+Zahra/@-6.25,106.85,17z/data=!3m1!4b1!4m6!3m5!1s0x0:0x0!8m2!3d-6.2512!4d106.8523!16s'), at(-6.2512, 106.8523));
+  assert.deepStrictEqual(G('https://www.google.com/maps/@-6.1214,106.9021,15z'), at(-6.1214, 106.9021));
+  assert.deepStrictEqual(G('https://www.google.com/maps/search/?api=1&query=-6.3,106.9'), at(-6.3, 106.9));
+  assert.deepStrictEqual(G('https://www.google.com/maps/dir/?api=1&destination=-6.3%2C106.95'), at(-6.3, 106.95));
+  assert.deepStrictEqual(G('geo:-6.2,106.8?z=19'), at(-6.2, 106.8));
+  assert.deepStrictEqual(G('Lokasi kami: -6.208812, 106.845634 ya pak'), at(-6.208812, 106.845634));
+  assert.deepStrictEqual(G('-6.20881234,106.84563456'), at(-6.208812, 106.845635)); // 6 decimals (≈ 10 cm)
+  ['https://maps.app.goo.gl/AbCdEf123', '106.8456,-6.2088', '0,0', '12, 30', '12 ctn, 30 dus', 'Jl. Melati 9', '', null, undefined].forEach(s => assert.strictEqual(G(s), null, String(s)));
+  // the vehicle proposed by the weight (+10 %): the smallest that holds it, else the biggest; unknown weight → staff choose
+  const SV = [{ key: 'MOTORCYCLE', load: { value: '20', unit: 'kg' } }, { key: 'TRUCK175', load: { value: '1000', unit: 'kg' } }, { key: 'VAN', load: { value: '600', unit: 'kg' } }, { key: 'X' }];
+  assert.deepStrictEqual([500, 545, 546, 900, 5000, 0].map(kg => KBrad.lalaServiceFor(SV, kg)), ['VAN', 'VAN', 'TRUCK175', 'TRUCK175', 'TRUCK175', '']);
+
+  // the system requests come only from the Worker: never from a client (not even with __sys in its data), and they run nothing else
+  const SYSRUN = (action, data) => KBrad.core(JSON.parse(JSON.stringify(T)), { __sys: 'lalamove', action, data: data || {} }, NOW), SYS = (a, d) => SYSRUN(a, d).response;
+  function sys(action, data) {
+    const res = SYSRUN(action, data);
+    res.writes.forEach(w => {
+      if (w.table === 'settings') { T.settings[w.row.skey] = JSON.parse(w.row.svalue); return; }
+      assert(['orders', 'movements'].includes(w.table), 'writes only its orders and the goods out: ' + w.table);
+      const row = JSON.parse(JSON.stringify(w.row));
+      if (row.id === undefined) { row.id = nid++; T[w.table].push(row); } else { const i = T[w.table].findIndex(x => x.id === row.id); assert(i >= 0); T[w.table][i] = row; }
+    });
+    return res.response;
+  }
+  ['lala_booked', 'lala_sync', 'lala_cancelled', 'lala_due', 'lala_services'].forEach(a => err(call(a, { __sys: 'lalamove', items: [] }), 'FORBIDDEN'));
+  err(SYS('order_save', { warehouse: 'DPP' }), 'FORBIDDEN');
+  err(SYS('bootstrap'), 'FORBIDDEN');
+
+  NOW = '2026-10-16T03:00:00Z'; // Friday 10:00 WIB (the ETA margin is the owner's 15 %)
+  // the owner's settings: the month's cap, the shop's place, each cooler's place (read from a Maps link / "lat,lng")
+  err(call('settings_save', { cooler_geo: { DPP: '-6.1214,106.9021' } }, 'manager'), 'FORBIDDEN');
+  err(call('settings_save', { store_geo: 'Jl. Raya Condet' }, 'owner'), 'INVALID');
+  err(call('settings_save', { cooler_geo: { NOPE: '-6.1,106.9' } }, 'owner'), 'NOT_FOUND');
+  err(call('settings_save', { lala_cap: -1 }, 'owner'), 'INVALID');
+  ok(call('settings_save', { lala_cap: 500000, store_geo: 'https://maps.google.com/?q=-6.2297,106.8679', store_address: 'Jl. Raya Condet No.4', cooler_geo: { DPP: '-6.1214, 106.9021' } }, 'owner'));
+  assert.deepStrictEqual([T.settings.brad_lala_cap, T.settings.brad_store_geo], [500000, { lat: -6.2297, lng: 106.8679, address: 'Jl. Raya Condet No.4' }]);
+  ok(call('cooler_save', { code: 'DPP', wa: '' }, 'owner')); // its WhatsApp / hours saved again: its place stays
+  const B3 = ok(call('bootstrap'));
+  const dpp = B3.coolers.find(c => c.code === 'DPP');
+  assert.deepStrictEqual([dpp.lat, dpp.lng, B3.coolers.find(c => c.code === 'BOSKO').lat], [-6.1214, 106.9021, null]);
+  assert.deepStrictEqual([B3.lala.cap, B3.lala.spent, B3.lala.month, B3.lala.store_geo.lat, B3.lala.pickup_min, B3.lala.services, B3.lala_due], [500000, 0, '2026-10', -6.2297, 40, [], []]);
+  // an order with where the goods go (unreadable → said; empty → none; not sent when changed → kept)
+  const lines = [{ pallet_code: 'A-2001', cartons: 10 }];
+  err(call('order_save', { warehouse: 'DPP', order_date: '2026-10-16', dest_type: 'pelanggan', dest_name: 'Toko Zahra', dest_geo: 'di sebelah masjid', lines }), 'INVALID');
+  const L1 = ok(call('order_save', { warehouse: 'DPP', order_date: '2026-10-16', dest_type: 'pelanggan', dest_name: 'Toko Zahra', customer_id: 50, dest_phone: '081300000099', dest_address: 'Jl. Melati 9',
+    dest_geo: 'https://www.google.com/maps/place/Toko+Zahra/@-6.25,106.85,17z/data=!3d-6.2512!4d106.8523', lines })).order;
+  assert.deepStrictEqual([L1.dest_lat, L1.dest_lng], [-6.2512, 106.8523]);
+  const no = L1.order_no;
+  for (const to of ['sent', 'approved', 'ready']) ok(call('order_status', { order_no: no, to }));
+  // the plan: staff only; a vehicle; the cooler's place; after closing asked first; a scheduled pickup; the cap; a price that rose
+  err(call('lala_plan', { order_no: no, service: 'VAN' }, 'akuntan'), 'FORBIDDEN');
+  err(call('lala_plan', { order_no: no, service: '' }), 'INVALID');
+  ok(call('settings_save', { cooler_geo: { DPP: '' } }, 'owner'));
+  assert.match(err(call('lala_plan', { order_no: no, service: 'VAN' }), 'NO_GEO').message, /Lokasi gudang DPP Cold Storage belum diisi/);
+  ok(call('settings_save', { cooler_geo: { DPP: '-6.1214,106.9021' } }, 'owner'));
+  const p = ok(call('lala_plan', { order_no: no, service: 'van', eta_min: 30 })).plan;
+  assert.deepStrictEqual(p.quote, { serviceType: 'VAN', language: 'id_ID', stops: [{ coordinates: { lat: '-6.1214', lng: '106.9021' }, address: 'Jakarta Utara' }, { coordinates: { lat: '-6.2512', lng: '106.8523' }, address: 'Jl. Melati 9' }] });
+  assert.deepStrictEqual(p.order, { sender: { name: 'DPP Cold Storage', phone: '+6281211112222' }, recipients: [{ name: 'Toko Zahra', phone: '+6281300000099', remarks: 'Order ' + no + ': 10 ctn, 1 palet, ± 50 kg, ambil di DPP Cold Storage' }],
+    isPODEnabled: false, metadata: { order_no: no } });
+  assert.deepStrictEqual([p.eta_at, p.eta_min, p.schedule_at, p.kg, p.by, p.spent, p.cap, p.warn], ['2026-10-16T03:35:00.000Z', 30, '', 50, 'Jihan', 0, 500000, '']); // 30 min + 15 %
+  assert.strictEqual(ok(call('lala_plan', { order_no: no, service: 'VAN' })).plan.eta_at, '2026-10-16T03:46:00.000Z'); // nothing typed: 40 min + 15 %
+  const ps = ok(call('lala_plan', { order_no: no, service: 'VAN', schedule_at: '2026-10-16T07:00:00Z' })).plan;
+  assert.deepStrictEqual([ps.quote.scheduleAt, ps.eta_at, ps.eta_min], ['2026-10-16T07:00:00.000Z', '2026-10-16T07:00:00.000Z', null]);
+  assert.strictEqual(ok(call('lala_plan', { order_no: no, service: 'VAN', schedule_at: '2026-10-16T05:30:00Z' })).plan.warn, 'BREAK'); // 12:30
+  err(call('lala_plan', { order_no: no, service: 'VAN', schedule_at: '2026-10-16T01:00:00Z' }), 'INVALID'); // the past
+  err(call('lala_plan', { order_no: no, service: 'VAN', schedule_at: '2026-10-20T03:00:00Z' }), 'CLOSED'); // the owner's holiday
+  const lt = err(call('lala_plan', { order_no: no, service: 'VAN', schedule_at: '2026-10-16T10:10:00Z' }), 'LATE_CAR'); // 17:10
+  assert.deepStrictEqual([lt.ot_hours, lt.ot_cost], [1, 300000]);
+  ok(call('lala_plan', { order_no: no, service: 'VAN', schedule_at: '2026-10-16T10:10:00Z', accept_ot: true }));
+  NOW = '2026-10-16T09:40:00Z'; // 16:40: 40 min + 15 % = 17:26 → overtime asked first
+  assert.match(err(call('lala_plan', { order_no: no, service: 'VAN' }), 'LATE_CAR').message, /tiba 17:26, lewat 17:00: lembur 1 jam \(Rp 300\.000\)/);
+  NOW = '2026-10-16T03:00:00Z';
+  const cp = err(call('lala_plan', { order_no: no, service: 'VAN', _price: 600000 }), 'LALA_CAP');
+  assert.deepStrictEqual([cp.spent, cp.cap, cp.price], [0, 500000, 600000]);
+  const pc = err(call('lala_plan', { order_no: no, service: 'VAN', _price: 100000, seen_price: 90000 }), 'PRICE_CHANGED'); // > 5 % up
+  assert.deepStrictEqual([pc.price, pc.seen_price], [100000, 90000]);
+  assert.strictEqual(ok(call('lala_plan', { order_no: no, service: 'VAN', _price: 100000, seen_price: 96000 })).plan.price, 100000); // ≤ 5 %: booked
+  // booked (the Worker, after Lalamove took it): status 'car', looking for a driver; no WhatsApp yet (no driver, no plate)
+  const SHARE = 'https://share.lalamove.com/?ID=3001&lang=id_ID';
+  const booked = d => Object.assign({ order_no: no, by: 'Jihan', service: 'VAN', service_name: 'Van', eta_at: p.eta_at, eta_min: 30, dest: p.dest,
+    quote: { id: 'Q1', price: 95000, currency: 'IDR', distance_m: 15200 }, placed: { order_id: '3001', share_link: SHARE, status: 'ASSIGNING_DRIVER', price: 95000 } }, d);
+  const b1 = ok(sys('lala_booked', booked())).order;
+  assert.deepStrictEqual([b1.status, b1.car.via, b1.car.lala_order_id, b1.car.lala_quote_id, b1.car.price, b1.car.cost, b1.car.share_link, b1.car.lala_status, b1.car.driver, b1.car.vehicle, b1.eta_at],
+    ['car', 'lalamove_api', '3001', 'Q1', 95000, 95000, SHARE, 'ASSIGNING_DRIVER', '', 'Van', '2026-10-16T03:35:00.000Z']);
+  const last = o => o.log[o.log.length - 1];
+  assert.deepStrictEqual([last(b1).by, last(b1).note], ['Jihan', 'Lalamove otomatis · Van · Rp 95.000 · mobil dipesan, mencari sopir · tiba ± 10:35']);
+  // one car at a time: no second booking, no car typed over it, no cancel by hand unless staff cancelled it in Lalamove's app
+  err(sys('lala_booked', booked({ placed: { order_id: '3009' } })), 'LALA_ACTIVE');
+  err(call('lala_plan', { order_no: no, service: 'VAN' }), 'LALA_ACTIVE');
+  err(call('car_save', { order_no: no, driver: 'Pak C', plate: 'B 3 EF' }), 'LALA_ACTIVE');
+  err(call('car_cancel', { order_no: no, reason: 'Sopir lama' }), 'LALA_ACTIVE');
+  err(call('order_status', { order_no: no, to: 'cancelled', note: 'Pelanggan batal' }), 'LALA_ACTIVE');
+  assert.strictEqual(ok(call('bootstrap')).lala.spent, 95000);
+  // read again when not looked at for 90 s: the oldest look first
+  assert.deepStrictEqual(ok(SYS('lala_due', {})).due, []);
+  NOW = '2026-10-16T03:02:00Z';
+  assert.deepStrictEqual(ok(call('bootstrap')).lala_due, [{ order_no: no, lala_order_id: '3001', driver_id: '', synced_at: '2026-10-16T03:00:00Z' }]);
+  assert.deepStrictEqual(ok(call('poll')).lala_due, [{ order_no: no, lala_order_id: '3001', driver_id: '', synced_at: '2026-10-16T03:00:00Z' }]);
+  // Lalamove's reports → the order. Still looking: only the time of the look (no log line); another trip: nothing; no answer: kept
+  const ord = () => ok(call('bootstrap')).orders.find(x => x.order_no === no), n0 = ord().log.length;
+  const rep = (d) => ok(sys('lala_sync', { items: [Object.assign({ order_no: no, lala_order_id: '3001', ok: true, status: 'ASSIGNING_DRIVER', driver_id: '', driver: null }, d)] }));
+  assert.deepStrictEqual(rep({}).applied, ['same']);
+  assert.deepStrictEqual([ord().log.length, ord().car.lala_synced_at], [n0, '2026-10-16T03:02:00Z']);
+  assert.deepStrictEqual(ok(SYS('lala_due', {})).due, []);
+  assert.deepStrictEqual(rep({ lala_order_id: '9999' }).applied, ['not_trip']);
+  assert.deepStrictEqual(rep({ ok: false, error: 'Lalamove: tidak menjawab (10 detik)' }).applied, ['error']);
+  assert.deepStrictEqual([ord().car.lala_error, ord().car.lala_status, ord().log.length], ['Lalamove: tidak menjawab (10 detik)', 'ASSIGNING_DRIVER', n0]);
+  // the driver found: in the car, and the same car message to the cold store as step 5 (the Worker sends it, else the app by hand)
+  const DRV = { status: 'ON_GOING', driver_id: 'D77', driver: { name: 'Slamet', phone: '+62 813-1111-2222', plate: 'b 9876 tkl' } };
+  let r = rep(DRV);
+  assert.deepStrictEqual(r.applied, ['driver']);
+  assert.deepStrictEqual([r.wa.length, r.wa[0].kind, r.wa[0].to, r.wa[0].template, r.wa[0].params], [1, 'car', '6281211112222', 'khair_mobil_brad', [no, 'DPP Cold Storage', 'Van', 'B 9876 TKL', 'Slamet (081311112222)', '10:35']]);
+  let o = ord();
+  assert.deepStrictEqual([o.status, o.car.driver, o.car.plate, o.car.driver_wa, o.car.lala_driver_id, o.car.lala_status, 'lala_error' in o.car], ['car', 'Slamet', 'B 9876 TKL', '6281311112222', 'D77', 'ON_GOING', false]);
+  assert.deepStrictEqual([last(o).by, last(o).note], ['Lalamove', 'Sopir Lalamove: Slamet · B 9876 TKL']);
+  assert.match(KBrad.msgCar(T.orders.find(x => x.order_no === no), C), /Kendaraan: Van\nNo\. polisi: B 9876 TKL\nSopir: Slamet \(081311112222\)/);
+  // the same report again: nothing (no log line, no message)
+  r = rep(DRV);
+  assert.deepStrictEqual([r.applied, r.wa, ord().log.length], [['same'], [], o.log.length]);
+  // in at door 3 (by hand or the cold store's WhatsApp, as before); Lalamove: picked up → the departure, the goods out of the stock
+  NOW = '2026-10-16T03:45:00Z';
+  ok(call('order_arrived', { order_no: no, time: '10:40', door: '3' }));
+  const mv = T.movements.length, stockA = () => T.movements.filter(m => m.pallet_code === 'A-2001' && m.warehouse === 'DPP').reduce((s, m) => s + m.cartons, 0), s0 = stockA();
+  r = rep(Object.assign({}, DRV, { status: 'PICKED_UP' }));
+  assert.deepStrictEqual([r.applied, r.wa.map(m => [m.kind, m.to])], [['departed'], [['depart', '6281300000099']]]);
+  o = ord();
+  assert.deepStrictEqual([o.status, o.departed_at, last(o).note, last(o).by, stockA()], ['departed', '2026-10-16T03:45:00Z', 'Lalamove: barang diambil', 'Lalamove', s0 - 10]);
+  assert.deepStrictEqual(T.movements.slice(mv).map(m => [m.type, m.pallet_code, m.cartons, m.order_no, m.by_user]), [['OUT', 'A-2001', -10, no, 'Lalamove']]);
+  r = rep(Object.assign({}, DRV, { status: 'PICKED_UP' }));
+  assert.deepStrictEqual([r.applied, r.wa, T.movements.length], [['same'], [], mv + 1]); // never twice
+  // completed → delivered; then nothing more to read
+  assert.deepStrictEqual(rep(Object.assign({}, DRV, { status: 'COMPLETED' })).applied, ['delivered']);
+  o = ord();
+  assert.deepStrictEqual([o.status, o.car.lala_status, last(o).note, KBrad.lalaOpen(T.orders.find(x => x.order_no === no))], ['delivered', 'COMPLETED', 'Lalamove: selesai', false]);
+  NOW = '2026-10-16T04:00:00Z';
+  assert.deepStrictEqual(ok(call('bootstrap')).lala_due, []);
+  assert.strictEqual(ok(call('bootstrap')).lala.spent, 95000); // a completed trip counts
+  // few reads: a pickup booked for later than 2 hours is looked at every 30 minutes (Lalamove's webhook: at once); 3 days after its
+  // pickup a trip left open is not read any more
+  const trip = (c) => ({ order_no: 'X', status: 'car', car: JSON.stringify(Object.assign({ via: 'lalamove_api', lala_order_id: '77', lala_status: 'ASSIGNING_DRIVER', booked_at: '2026-10-16T03:00:00Z', lala_synced_at: '2026-10-16T03:00:00Z' }, c)) });
+  const due = (o, iso, age) => KBrad.lalaDue([o], Date.parse(iso), age || 90, 5, '').length;
+  const later = trip({ schedule_at: '2026-10-17T02:00:00Z' });
+  assert.deepStrictEqual([due(later, '2026-10-16T03:02:00Z'), due(later, '2026-10-16T03:31:00Z'), due(later, '2026-10-16T03:01:00Z', 15), due(trip({}), '2026-10-16T03:02:00Z')], [0, 1, 1, 1]);
+  assert.deepStrictEqual([due(trip({}), '2026-10-19T02:59:00Z'), due(trip({}), '2026-10-19T03:01:00Z'), due(trip({ lala_status: 'COMPLETED' }), '2026-10-16T04:00:00Z')], [1, 0, 0]);
+  // no driver found (expired) / cancelled by Lalamove while the car is awaited → back to "book a car", counted; once
+  const mkReady = () => { const x = mk({ order_date: '2026-10-16', lines: [{ pallet_code: 'A-2001', cartons: 2 }] }); for (const to of ['sent', 'approved', 'ready']) ok(call('order_status', { order_no: x.order_no, to })); return x.order_no; };
+  const book = (n, id, price) => ok(sys('lala_booked', booked({ order_no: n, eta_at: '', eta_min: 40, placed: { order_id: id, share_link: '', status: 'ASSIGNING_DRIVER', price: price || 80000 } }))).order;
+  const no2 = mkReady(); book(no2, '3002');
+  const rep2 = (n, id, d) => ok(sys('lala_sync', { items: [Object.assign({ order_no: n, lala_order_id: id, ok: true }, d)] }));
+  assert.deepStrictEqual(rep2(no2, '3002', { status: 'EXPIRED' }).applied, ['cancelled']);
+  o = ok(call('bootstrap')).orders.find(x => x.order_no === no2);
+  assert.deepStrictEqual([o.status, o.car, o.car_cancels, last(o).note, last(o).by], ['ready', null, 1, 'Lalamove tidak dapat sopir: belum ada sopir — pesan mobil lagi', 'Lalamove']);
+  assert.deepStrictEqual(rep2(no2, '3002', { status: 'EXPIRED' }).applied, ['not_trip']);
+  // picked up while the car is still "booked" here: said on the order; it leaves once staff mark the car in
+  const no3 = mkReady(); book(no3, '3003', 70000);
+  assert.deepStrictEqual(rep2(no3, '3003', { status: 'PICKED_UP', driver_id: 'D1', driver: { name: 'Andi', phone: '', plate: 'B 1 A' } }).applied, ['driver']);
+  o = ok(call('bootstrap')).orders.find(x => x.order_no === no3);
+  assert.deepStrictEqual([o.status, last(o).note], ['car', 'Sopir Lalamove: Andi · B 1 A · Lalamove: barang sudah diambil — catat mobil masuk lalu berangkat']);
+  ok(call('order_arrived', { order_no: no3, time: '10:55' }));
+  assert.deepStrictEqual(rep2(no3, '3003', { status: 'PICKED_UP', driver_id: 'D1' }).applied, ['departed']);
+  // staff cancel it (the Worker cancels at Lalamove first, then tells the core); by hand only after cancelling it in Lalamove's app
+  const no4 = mkReady(); book(no4, '3004');
+  err(call('lala_cancel', { order_no: no4, reason: '' }), 'INVALID');
+  err(call('lala_cancel', { order_no: no4, reason: 'Batal' }, 'akuntan'), 'FORBIDDEN');
+  const nWrites = T.orders.find(x => x.order_no === no4).log;
+  const cc = ok(call('lala_cancel', { order_no: no4, reason: 'Pelanggan ambil sendiri' })).cancel;
+  assert.deepStrictEqual([cc, T.orders.find(x => x.order_no === no4).log], [{ order_no: no4, lala_order_id: '3004', reason: 'Pelanggan ambil sendiri', by: 'Jihan' }, nWrites]); // nothing written yet
+  err(sys('lala_cancelled', { order_no: no4, lala_order_id: '9999', reason: 'x' }), 'NOT_FOUND');
+  const cx2 = ok(sys('lala_cancelled', { order_no: no4, lala_order_id: '3004', reason: cc.reason, by: 'Jihan' })).order;
+  assert.deepStrictEqual([cx2.status, cx2.car, cx2.car_cancels, last(cx2).note, last(cx2).by], ['ready', null, 1, 'Lalamove dibatalkan: belum ada sopir — Pelanggan ambil sendiri', 'Jihan']);
+  err(call('lala_cancel', { order_no: no3, reason: 'Terlambat' }), 'INVALID'); // the goods are already on the car
+  book(no4, '3005');
+  const mc = ok(call('car_cancel', { order_no: no4, reason: 'Server tidak bisa hubungi Lalamove', manual: true })).order;
+  assert.deepStrictEqual([mc.status, mc.car_cancels], ['ready', 2]);
+  assert.match(last(mc).note, /\(dibatalkan sendiri di aplikasi Lalamove\)$/);
+  // the month's spend: the trips not cancelled (95.000 + 70.000) — over the cap nothing more is booked by the server
+  assert.strictEqual(KBrad.lalaSpent(T.orders, '2026-10'), 165000);
+  ok(call('settings_save', { lala_cap: 165000 }, 'owner'));
+  assert.match(err(call('lala_plan', { order_no: no4, service: 'VAN' }), 'LALA_CAP').message, /Batas biaya Lalamove bulan ini \(Rp 165\.000\) tercapai: sudah Rp 165\.000/);
+  ok(call('settings_save', { lala_cap: 10000000 }, 'owner'));
+  // the city's vehicles, kept for the car form (the Worker reads them: "Tes koneksi"); then only those can be booked
+  err(call('lala_admin', { op: 'status' }, 'akuntan'), 'FORBIDDEN');
+  err(call('lala_admin', { op: 'delete' }), 'INVALID');
+  assert.strictEqual(ok(call('lala_admin', { op: 'test' })).lala.cap, 10000000);
+  ok(sys('lala_services', { city: { locode: 'ID_JKT', name: 'Jakarta' }, services: [{ key: 'VAN', description: 'Van', load: { value: '600', unit: 'kg' } }, { key: 'bad key!' }, { key: 'truck175', description: 'Pickup', load: { value: '1000', unit: 'kg' } }] }));
+  assert.deepStrictEqual(T.settings.brad_lala_services.services, [{ key: 'VAN', description: 'Van', load: { value: 600, unit: 'kg' } }, { key: 'TRUCK175', description: 'Pickup', load: { value: 1000, unit: 'kg' } }]);
+  assert.deepStrictEqual(ok(call('bootstrap')).lala.services_city, { locode: 'ID_JKT', name: 'Jakarta' });
+  assert.match(err(call('lala_plan', { order_no: no4, service: 'HELICOPTER' }), 'INVALID').message, /tidak ada di Lalamove kota ini/);
+  assert.strictEqual(ok(call('lala_plan', { order_no: no4, service: 'TRUCK175' })).plan.service_name, 'Pickup');
+  // an order for the shop goes to the shop's place, to its phone
+  const ts = ok(call('order_save', { warehouse: 'DPP', order_date: '2026-10-16', dest_type: 'toko', lines: [{ pallet_code: 'A-2001', cartons: 1 }] })).order;
+  for (const to of ['sent', 'approved', 'ready']) ok(call('order_status', { order_no: ts.order_no, to }));
+  assert.match(err(call('lala_plan', { order_no: ts.order_no, service: 'VAN' }), 'INVALID').message, /Nomor HP penerima wajib/); // the shop has no phone in the test settings
+  const tp = ok(call('lala_plan', { order_no: ts.order_no, service: 'VAN', dest_phone: '0812 8000 2700' })).plan;
+  assert.deepStrictEqual([tp.quote.stops[1], tp.order.recipients[0].name, tp.order.recipients[0].phone], [{ coordinates: { lat: '-6.2297', lng: '106.8679' }, address: 'Jl. Raya Condet No.4' }, 'Khair Mart', '+6281280002700']);
+  [no2, no4, ts.order_no].forEach(n => ok(call('order_status', { order_no: n, to: 'cancelled', note: 'uji Lalamove' })));
+}
 // nothing of the gudang data but OUT movements was ever written (checked in call())
 assert(T.movements.filter(m => m.type === 'OUT').every(m => /^BRD-/.test(m.order_no)));
 console.log('test-brad: all passed (' + T.orders.length + ' orders, ' + T.movements.length + ' movements)');
