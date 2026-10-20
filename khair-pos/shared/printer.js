@@ -10,7 +10,7 @@
      usb     a USB cable straight from Chrome (WebUSB) — Android with an OTG cable, Chromebook, Mac, Linux (Windows keeps the
              printer for its own driver: there use "system" or "serial")
      serial  a COM port from Chrome on a computer (Web Serial) — USB-serial printers and paired Bluetooth printers (SPP)
-   KPrint.cfg() / KPrint.save(cfg) — {mode, width: 58 | 80, cut} kept on this device (localStorage kprint.cfg; inside the app kprint.cfg.app)
+   KPrint.cfg() / KPrint.save(cfg) — {mode, width: 58 | 80, cut, logo} kept on this device (localStorage kprint.cfg; inside the app kprint.cfg.app)
    KPrint.doc(width) — an ESC/POS builder: .center() .left() .bold(on) .big(on) .text(s) .line(s) .pair(l, r) .hr() .feed(n) .cut() .bytes()
    KPrint.send(bytes) → Promise (rejects with Error(code): NO_SUPPORT | CANCELLED | NOT_FOUND | WRITE_FAILED | NO_RAWBT)
    KPrint.receipt(rc, store) → the sale receipt as ESC/POS bytes (labels in Indonesian: receipt printers have no Arabic letters)
@@ -18,6 +18,7 @@
    KPrint.text(lang, key, vars) / KPrint.errText(lang, e) — this file's own texts (id / ar)
    KPrint.support() → {app, ble, usb, serial, android}
    KPrint.go(url) opens the RawBT / Khair app link (replaceable, e.g. by the tests)
+   KPrint.prepLogo() → Promise(true when the store logo is ready to print); KPrint.logoBytes(width) its ESC/POS raster (v68)
    KPrint.appLink(what) the Khair app link (intent:…;scheme=khairprint) inside the Khair Android app, else '' (v59: 'site-settings' for the camera)
    Only ASCII reaches the printer (receipt printers have no Arabic or emoji): accents are dropped, other characters become '?'. */
 (function () {
@@ -43,9 +44,9 @@
     var c = {};
     try { c = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { c = {}; }
     var mode = MODES.indexOf(c.mode) >= 0 && (c.mode !== 'app' || APP) ? c.mode : APP ? 'app' : 'system';
-    return { mode: mode, width: Number(c.width) === 80 ? 80 : 58, cut: c.cut !== false };
+    return { mode: mode, width: Number(c.width) === 80 ? 80 : 58, cut: c.cut !== false, logo: c.logo !== false };
   }
-  function save(c) { try { localStorage.setItem(KEY, JSON.stringify({ mode: c.mode, width: c.width, cut: c.cut })); } catch (e) { } return cfg(); }
+  function save(c) { try { localStorage.setItem(KEY, JSON.stringify({ mode: c.mode, width: c.width, cut: c.cut, logo: c.logo !== false })); } catch (e) { } return cfg(); }
   var android = /Android/i.test(navigator.userAgent || '');
   function support() { return { app: !!APP, ble: !!(navigator.bluetooth && navigator.bluetooth.requestDevice), usb: !!(navigator.usb && navigator.usb.requestDevice), serial: !!(navigator.serial && navigator.serial.requestPort), android: android }; }
 
@@ -98,9 +99,63 @@
       hr: function (ch) { put(new Array(n() + 1).join(ch || '-')); buf.push(10); return d; },
       feed: function (k) { return b(0x1b, 0x64, Math.max(0, Math.min(10, k || 1))); }, // ESC d n
       cut: function () { return b(0x1d, 0x56, 0x42, 0x00); }, // GS V 66 0 — feed + cut (ignored by printers without a cutter)
+      raw: function (arr) { for (var i = 0; i < arr.length; i++) buf.push(arr[i]); return d; },
       bytes: function () { return new Uint8Array(buf); }
     };
     return d.init();
+  }
+
+  /* ---- v68 (owner 2026-10-20: «تم إصلاح المطبعة الصغيرة، ولكن لا يوجد فيها اللوجو حق الشركة»): the store logo on top of the receipt.
+     The site's logo.png is drawn once in a canvas and made black / white (a thermal printer prints dots — no colour, no grey: the red
+     and the blue print black, the white stays paper), cropped to its ink and sent as a GS v 0 raster image: 256 dots wide on 58 mm
+     paper (384 dots), 288 on 80 mm (576), centred by blank dots on its left (so no printer has to centre an image itself), in bands of
+     48 rows (small printer buffers). Ready a moment after the page opens; a print before that goes without it and readies it. */
+  var LOGO = { src: '', bytes: {}, p: null }, LOGO_W = { 58: [384, 256], 80: [576, 288] };
+  try {
+    var me = document.currentScript || document.querySelector('script[src*="shared/printer.js"]');
+    LOGO.src = me && me.src ? new URL('../logo.png', me.src).href : '';
+  } catch (e) { LOGO.src = ''; }
+  function logoRaster(img, paper, w) {
+    var h = Math.max(1, Math.round(img.naturalHeight * w / img.naturalWidth)), cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    var g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.drawImage(img, 0, 0, w, h);
+    var px = g.getImageData(0, 0, w, h).data;
+    var ink = function (x, y) { var i = (y * w + x) * 4; return 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2] < 170; };
+    var rowInk = function (y) { for (var x = 0; x < w; x++) if (ink(x, y)) return true; return false; };
+    var top = 0, bot = h - 1;
+    while (top < h && !rowInk(top)) top++;
+    while (bot > top && !rowInk(bot)) bot--;
+    if (top >= h) return [];
+    var pad = Math.floor((paper - w) / 16) * 8, bpr = (pad + w) / 8, out = [0x1b, 0x61, 0]; // left: the blank dots centre it
+    for (var y0 = top; y0 <= bot; y0 += 48) {
+      var rows = Math.min(48, bot - y0 + 1);
+      out.push(0x1d, 0x76, 0x30, 0, bpr & 255, bpr >> 8, rows & 255, rows >> 8);
+      for (var y = y0; y < y0 + rows; y++) for (var bx = 0; bx < bpr; bx++) {
+        var v = 0;
+        for (var k = 0; k < 8; k++) { var x = bx * 8 + k - pad; if (x >= 0 && x < w && ink(x, y)) v |= 0x80 >> k; }
+        out.push(v);
+      }
+    }
+    out.push(0x1b, 0x64, 1); // a line of paper under it
+    return out;
+  }
+  function prepLogo() {
+    if (LOGO.p) return LOGO.p;
+    LOGO.p = new Promise(function (res) {
+      if (!LOGO.src || typeof Image === 'undefined') { res(false); return; }
+      var img = new Image();
+      img.onload = function () {
+        try { [58, 80].forEach(function (k) { LOGO.bytes[k] = logoRaster(img, LOGO_W[k][0], LOGO_W[k][1]); }); res(true); } catch (e) { LOGO.p = null; res(false); }
+      };
+      img.onerror = function () { LOGO.p = null; res(false); }; // tried again with the next print
+      img.src = LOGO.src;
+    });
+    return LOGO.p;
+  }
+  setTimeout(function () { try { var c = cfg(); if (c.logo && c.mode !== 'system') prepLogo(); } catch (e) { } }, 1200);
+  function addLogo(d, c) {
+    var lg = c.logo ? LOGO.bytes[c.width] : null;
+    if (lg && lg.length) d.raw(lg); else if (c.logo) prepLogo();
   }
 
   /* ---- transports ---- */
@@ -218,6 +273,7 @@
   }
   function receipt(rc, st) {
     st = st || {}; var c = cfg(), d = doc(c.width), pm = function (m) { return R.pm[m] || m || ''; };
+    addLogo(d, c);
     d.center().bold(true).big(true).text(st.store_name || 'Khair Mart').big(false).bold(false);
     if (st.address) d.text(st.address);
     if (st.phone) d.text(R.phone + ' ' + st.phone);
@@ -247,6 +303,7 @@
   }
   function testBytes(st) {
     var c = cfg(), d = doc(c.width);
+    addLogo(d, c);
     d.center().bold(true).big(true).text((st && st.store_name) || 'Khair Mart').big(false).text('Tes printer OK').bold(false)
       .text(when()).text(TEXT.id['mode_' + c.mode] + ' - ' + c.width + ' mm').left().hr()
       .line('1234567890123456789012345678901234567890123456789').pair('Total', 'Rp 123.456').hr('=').feed(3);
@@ -266,7 +323,7 @@
       desc_ble: 'Tanpa aplikasi tambahan, dari Chrome: hanya printer Bluetooth BLE. Pertama kali pilih printernya.',
       desc_usb: 'Kabel USB (OTG di HP Android). Di Windows pakai "Jendela cetak" atau "Port COM".',
       desc_serial: 'Chrome di komputer: printer USB-serial atau Bluetooth yang sudah dipasangkan (COM).',
-      no_support: 'Tidak tersedia di browser / perangkat ini', width: 'Lebar kertas', cut: 'Potong kertas di akhir (jika printer punya pemotong)',
+      no_support: 'Tidak tersedia di browser / perangkat ini', width: 'Lebar kertas', cut: 'Potong kertas di akhir (jika printer punya pemotong)', logo: 'Cetak logo toko di atas struk',
       test: 'Tes cetak', sending: 'Mengirim ke printer…', test_sent: 'Terkirim ke printer. Kalau kertas tidak keluar: cek printer menyala, sudah dipasangkan, dan pilih cara lain.',
       sent: 'Struk dikirim ke printer', e_cancel: 'Tidak ada printer yang dipilih', e_support: 'Cara cetak ini tidak didukung di browser ini — pilih cara lain di Printer struk',
       e_notfound: 'Printer tidak dikenali — coba cara lain (RawBT / Port COM)', e_fail: 'Gagal mengirim ke printer: {msg}' },
@@ -280,7 +337,7 @@
       desc_ble: 'بدون تطبيق إضافي من Chrome: طابعات البلوتوث BLE فقط. في المرة الأولى اختر الطابعة.',
       desc_usb: 'كابل USB (OTG في هاتف أندرويد). في Windows استعمل «نافذة الطباعة» أو «منفذ COM».',
       desc_serial: 'Chrome في الحاسوب: طابعة USB تسلسلية أو بلوتوث مقترنة (COM).',
-      no_support: 'غير متاح في هذا المتصفح / الجهاز', width: 'عرض الورق', cut: 'قصّ الورق في النهاية (إن كان في الطابعة قاطع)',
+      no_support: 'غير متاح في هذا المتصفح / الجهاز', width: 'عرض الورق', cut: 'قصّ الورق في النهاية (إن كان في الطابعة قاطع)', logo: 'طباعة شعار المتجر أعلى الإيصال',
       test: 'طباعة تجربة', sending: 'جارٍ الإرسال إلى الطابعة…', test_sent: 'أُرسل إلى الطابعة. إذا لم تخرج الورقة: تأكد أن الطابعة تعمل ومقترنة، أو اختر طريقة أخرى.',
       sent: 'أُرسل الإيصال إلى الطابعة', e_cancel: 'لم يتم اختيار طابعة', e_support: 'هذه الطريقة غير مدعومة في هذا المتصفح — اختر طريقة أخرى في طابعة الإيصالات',
       e_notfound: 'لم يتم التعرف على الطابعة — جرّب طريقة أخرى (RawBT / منفذ COM)', e_fail: 'تعذّر الإرسال إلى الطابعة: {msg}' }
@@ -302,22 +359,24 @@
       }).join('') + '</div>'
         + '<div class="li" style="margin-top:10px"><div class="grow t">' + T('width') + '</div><div class="seg" style="min-width:150px" id="prn-w"><button type="button" class="' + (c.width === 58 ? 'on' : '') + '" data-w="58">58 mm</button><button type="button" class="' + (c.width === 80 ? 'on' : '') + '" data-w="80">80 mm</button></div></div>'
         + '<label class="check" style="margin-top:8px"><input type="checkbox" id="prn-cut"' + (c.cut ? ' checked' : '') + '> ' + T('cut') + '</label>'
+        + '<label class="check" style="margin-top:8px"><input type="checkbox" id="prn-logo"' + (c.logo ? ' checked' : '') + '> ' + T('logo') + '</label>'
         + (c.mode === 'app' ? '<button type="button" class="btn block" id="prn-choose" style="margin-top:10px">' + T('choose') + '</button>' : '')
         + '<button type="button" class="btn primary block" id="prn-test" style="margin-top:12px">' + T('test') + '</button><div class="small" id="prn-status" role="status" style="margin-top:8px"></div>';
       Array.prototype.forEach.call(el.querySelectorAll('#prn-m [data-m]'), function (b) { b.onclick = function () { save(Object.assign(cfg(), { mode: b.dataset.m })); ble.dev = null; ble.ch = null; draw(); }; });
       Array.prototype.forEach.call(el.querySelectorAll('#prn-w [data-w]'), function (b) { b.onclick = function () { save(Object.assign(cfg(), { width: Number(b.dataset.w) })); draw(); }; });
       el.querySelector('#prn-cut').onchange = function (e) { save(Object.assign(cfg(), { cut: e.target.checked })); };
+      el.querySelector('#prn-logo').onchange = function (e) { save(Object.assign(cfg(), { logo: e.target.checked })); if (e.target.checked) prepLogo(); };
       var chooseBtn = el.querySelector('#prn-choose');
       if (chooseBtn) chooseBtn.onclick = function () { save(cfg()); (window.KPrint.go || function (u) { window.location.href = u; })(appLink('choose')); };
       el.querySelector('#prn-test').onclick = function (e) {
         var btn = e.currentTarget, st = el.querySelector('#prn-status'), cc = cfg();
         if (cc.mode === 'system') { if (opts.printHTML) opts.printHTML('<div class="receipt w' + cc.width + '" id="receipt"><div class="c b big">' + h((opts.store || {}).store_name || 'Khair Mart') + '</div><div class="c">Tes printer OK</div></div>'); return; }
         btn.disabled = true; st.className = 'small'; st.textContent = text(lang, 'sending');
-        send(testBytes(opts.store)).then(function () { st.className = 'small okc'; st.textContent = text(lang, cc.mode === 'app' ? 'test_sent_app' : 'test_sent'); }, function (er) { st.className = 'small red'; st.textContent = errText(lang, er); })
+        (cc.logo ? prepLogo() : Promise.resolve(false)).then(function () { return send(testBytes(opts.store)); }).then(function () { st.className = 'small okc'; st.textContent = text(lang, cc.mode === 'app' ? 'test_sent_app' : 'test_sent'); }, function (er) { st.className = 'small red'; st.textContent = errText(lang, er); })
           .then(function () { btn.disabled = false; });
       };
     };
     draw();
   }
-  window.KPrint = { MODES: MODES, cfg: cfg, save: save, support: support, doc: doc, send: send, receipt: receipt, testBytes: testBytes, panel: panel, text: text, errText: errText, ascii: ascii, wrap: wrap, appLink: function (what) { return APP ? appLink(what) : ''; }, forget: function () { ble.dev = null; ble.ch = null; } };
+  window.KPrint = { MODES: MODES, cfg: cfg, save: save, support: support, doc: doc, send: send, receipt: receipt, testBytes: testBytes, panel: panel, prepLogo: prepLogo, logoBytes: function (w) { return LOGO.bytes[Number(w) === 80 ? 80 : 58] || null; }, text: text, errText: errText, ascii: ascii, wrap: wrap, appLink: function (what) { return APP ? appLink(what) : ''; }, forget: function () { ble.dev = null; ble.ch = null; } };
 })();
