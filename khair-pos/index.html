@@ -153,7 +153,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '2.9.5';
+const APP_VERSION = '2.9.6';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -2102,7 +2102,8 @@ async function pollApprovals() {
 setInterval(pollApprovals, 60000);
 RENDER.approvals = function () {
   $('#view-approvals').innerHTML = `<div class="view-head"><h1>${esc(t('nav.approvals'))}</h1><button class="btn" data-act="apr-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
-    <p class="muted" style="margin-top:0">${esc(t('apr.inbox_hint'))}</p><div id="apr-list"><div class="empty">${esc(t('loading'))}</div></div>`;
+    <p class="muted" style="margin-top:0">${esc(t('apr.inbox_hint'))}</p>${isAudit() && (S.repacksOpen || []).length ? `<div class="panel" id="rp-open"><h3>${ic('repack')} ${esc(t('rp.open_title'))}</h3><div class="pb" id="rp-open-body"></div></div>` : ''}<div id="apr-list"><div class="empty">${esc(t('loading'))}</div></div>`;
+  rpDrawOpen(); // v63: the accountant (no stock screen) confirms the packs made here
   if (AP.loaded) drawApprovals();
   pollApprovals();
 };
@@ -6728,6 +6729,15 @@ const packProducts = () => S.products.filter(p => p.active !== false && num(p.re
 const isBulkOfAny = p => packProducts().some(x => String(x.repack_from) === String(p.id));
 /* v43: the manager (and the owner) sets up which product is packed from which bulk; the server tells the owner and the accountant. */
 const canSetRepack = () => isOwner() || S.role === 'manager';
+const canFinRepack = () => canSetRepack() || isAudit(); // v63 (owner 2026-10-20: «المدير و المحاسب»): the accountant may confirm the packs made too
+/** v63: the pack's packaging materials received at goods-in (sticker, jar…) — pieces for `made` packs against their stock. */
+function rpGoodsMatsHTML(pack, made, id) {
+  const gm = (pack && Array.isArray(pack.materials) ? pack.materials : []).filter(m => m && m.name && num(m.q) > 0)
+    .map(m => { const live = prodById(m.id); return Object.assign({}, m, live ? { stock: num(live.stock) } : {}); }); // the stock as it is now
+  if (!gm.length) return '';
+  return `<div id="${id || 'rf-gmats'}" class="small" style="margin-top:6px"><b>${esc(t('rp.gmats_use'))}</b>${gm.map(m => { const need = roundQty(num(m.q) * made), short = need > num(m.stock) + 1e-9;
+    return `<div data-gmat="${esc(m.id)}"${short ? ' data-mat-short' : ''}>${esc(m.name)}: <b class="num">${fmtQty(need)}</b> · ${esc(t('stock'))} <span class="num">${fmtQty(m.stock)}</span>${m.cost != null ? ` · ${fmtRp(m.cost)} / ${esc(t('rp.piece'))}` : ''}${short ? ` — <b class="red">${esc(t('rp.gmat_short', { q: fmtQty(m.stock) }))}</b>` : ''}</div>`; }).join('')}</div>`;
+}
 /* v50 (owner 2026-10-15: «عندما نختار مثلا الستيكر أو التوبليس … لا يمكن كتابة شيء بعد كلمة توبليس أو ستيكر … فهي تكون عنصر للاختيار بس»):
    the packaging materials are a LIST (name + price per piece) the manager keeps; a pack chooses its materials from it, with the pieces
    per pack; their cost follows the list's price (server: repackCostsOf). A v48 line typed before the list keeps its own cost. */
@@ -6940,7 +6950,7 @@ function rpCalc() {
   pv.className = 'rp-preview' + (over || !R.packs ? ' bad' : '');
   pv.innerHTML = `<div class="row wrap" style="gap:6px 12px"><span>${esc(fmtQty(R.amount))} ${esc(u)} ÷ ${esc(fmtQty(R.size))} ${esc(u)} =</span><b style="font-size:20px" id="rp-planned" data-planned="${R.packs}">${esc(t('rp.calc_packs', { n: fmtNum(R.packs), u: pu }))}</b></div>
     ${R.left > 0 ? `<div data-left>${esc(t('rp.calc_left', { q: fmtQty(R.left), u }))}</div>` : ''}
-    ${!R.packs ? `<div><b>${esc(t('rp.calc_less', { s: fmtQty(R.size), u }))}</b></div>` : ''}${over ? `<div><b>${esc(t('rp.not_enough', { q: fmtQty(R.b.stock), u }))}</b></div>` : ''}`;
+    ${!R.packs ? `<div><b>${esc(t('rp.calc_less', { s: fmtQty(R.size), u }))}</b></div>` : ''}${over ? `<div><b>${esc(t('rp.not_enough', { q: fmtQty(R.b.stock), u }))}</b></div>` : ''}${R.p && R.packs > 0 ? rpGoodsMatsHTML(R.p, R.packs, 'rp-gmats') : ''}`;
 }
 async function rpStart(confirmRecent) {
   const R = rpRead(), err = $('#rp-err'), btn = $('#rp-start');
@@ -6991,7 +7001,7 @@ async function rpStart(confirmRecent) {
 function rpDrawOpen() {
   const box = $('#rp-open-body'); if (!box) return;
   const list = (S.repacksOpen || []).slice().sort((a, b) => String(a.started_at || a.repack_time).localeCompare(String(b.started_at || b.repack_time)));
-  const can = canSetRepack();
+  const can = canFinRepack();
   box.innerHTML = list.length ? list.map(r => `<div class="rp-open-row" data-rp-open="${esc(r.repack_id)}" style="padding:8px 0;border-bottom:1px solid var(--border)">
       <div><b>${esc(r.from_name)}</b> ${fmtQty(r.from_qty)} ${esc(r.from_unit || '')} → <b>${esc(r.to_name)}</b> · ${esc(t('rp.plan_n', { n: fmtNum(num(r.planned_qty)), u: r.to_unit || 'pcs' }))}</div>
       <div class="small muted">${esc(t('rp.fin_by', { name: r.started_by || r.user || '', time: fmtDateTime(r.started_at || r.repack_time) }))}${r.note ? ' · ' + esc(r.note) : ''}</div>
@@ -7017,7 +7027,7 @@ function openRepackFinish(r) {
     const m = qtyVal(made.value || ''), lf = qtyVal(rem.value || ''), used = roundQty(F - lf), exp = s > 0 ? roundQty(used / s) : 0, y = exp > 0 ? Math.round(m / exp * 1000) / 10 : 0, loss = roundQty(used - m * s);
     pv.className = 'rp-preview' + (m < N || y < 95 ? ' low' : '');
     pv.innerHTML = `<div>${esc(t('rp.pv_used', { q: fmtQty(used), u, e: fmtQty(exp) }))}</div><div><b data-yield>${esc(t('rp.pv_yield', { n: fmtQty(m), p: NF1.format(y) }))}</b> · <span data-loss>${esc(t('rp.pv_loss', { q: fmtQty(loss), u }))}</span></div>
-      ${m < N ? `<div data-short><b>${esc(t('rp.fin_short', { n: fmtQty(roundQty(N - m)), pu }))}</b></div>` : ''}`;
+      ${m < N ? `<div data-short><b>${esc(t('rp.fin_short', { n: fmtQty(roundQty(N - m)), pu }))}</b></div>` : ''}${m > 0 ? rpGoodsMatsHTML(prodById(r.to_product_id), m) : ''}`;
   };
   made.addEventListener('input', () => { if (!remTouched) rem.value = fmtQtyInput(Math.max(0, roundQty(F - qtyVal(made.value || '') * s))); draw(); err.textContent = ''; });
   rem.addEventListener('input', () => { remTouched = true; draw(); err.textContent = ''; });
@@ -7034,7 +7044,7 @@ function openRepackFinish(r) {
         <div class="pb">${esc(t('rp.pv_yield', { n: fmtQty(rp.to_qty), p: NF1.format(num(rp.yield_pct)) }))} · ${esc(t('rp.pv_loss', { q: fmtQty(rp.loss_qty), u: rp.from_unit || '' }))}${num(rp.remaining_qty) > 0 ? ' · ' + esc(t('rp.fin_back', { q: fmtQty(rp.remaining_qty), u: rp.from_unit || '' })) : ''}${isOwner() && rp.unit_cost != null ? ` · ${esc(t('rp.unit_cost'))} <b class="num" data-unit-cost>${fmtRp(rp.unit_cost)}</b>` : ''}</div></div>`;
       toast(t(data.cancel ? 'rp.cancelled' : 'rp.saved_toast'), 'ok');
       Object.keys(salesCache).forEach(k => delete salesCache[k]); gdInvalidate();
-      if (S.view === 'gudang') gdDrawRepack($('#gd-body'));
+      if (S.view === 'gudang') gdDrawRepack($('#gd-body')); else if (S.view === 'approvals') rpDrawOpen();
     } catch (e) { err.textContent = errMsg(e); btn.disabled = false; }
   };
   $('#rf-ok', el).onclick = e => {
@@ -8241,7 +8251,7 @@ Object.assign(I18N.id, {
   'rps.new_pack': 'Kemasan baru (produk baru)', 'rps.new_hint': 'Kemasan baru = produk baru (toples / stiker baru). Stok mulai 0; kategorinya ikut curahnya.', 'rps.new_name': 'Nama kemasan baru', 'rps.new_price': 'Harga jual (Rp)', 'rps.new_unit': 'Satuan', 'rps.new_sku': 'Barcode (opsional)',
   'rps.new_need': 'Isi nama dan harga jual kemasan baru', 'rps.created': 'Kemasan baru dibuat dan diatur', 'rps.costs': 'Bahan kemasan per kemasan', 'rps.costs_hint': 'stiker, tutup, toples… ditambahkan ke modal setiap kemas ulang', 'rps.cost_name': 'Nama bahan (mis. Stiker)',
   'rps.cost_add': 'Tambah bahan', 'rps.cost_total': 'Total per {u}: {rp}', 'rps.cost_need_name': 'Isi nama bahan untuk setiap biaya', 'rps.costs_line': 'Bahan: {list} = {rp} / {u}',
-  'rp.extra_cost': 'Biaya lain', 'rp.extra_ph': 'opsional', 'rp.pv_mat': 'Bahan kemasan {per} / {u} × {n} = {tot} (otomatis)', 'rps.need': 'Pilih barang kemasan, barang curah dan isi per kemasan', 'rps.same': 'Barang curah tidak boleh sama dengan barang kemasan',
+  'rp.extra_cost': 'Upah & biaya lain', 'rp.extra_ph': 'opsional', 'rp.gmats_use': 'Bahan dari barang masuk yang terpakai:', 'rp.piece': 'buah', 'rp.gmat_short': 'stok kurang (ada {q})', 'rp.pv_mat': 'Bahan kemasan {per} / {u} × {n} = {tot} (otomatis)', 'rps.need': 'Pilih barang kemasan, barang curah dan isi per kemasan', 'rps.same': 'Barang curah tidak boleh sama dengan barang kemasan',
   'rp.form_title': 'Kemas ulang', 'rp.pack_product': 'Produk kemasan', 'rp.pick': 'pilih', 'rp.pieces': 'Jumlah kemasan jadi', 'rp.bulk_used': 'Curah dipakai', 'rp.auto': 'otomatis', 'rp.pack_cost': 'Biaya kemasan', 'rp.save': 'Simpan kemas ulang',
   'rp.from_bulk': 'Dari', 'rp.size': 'Isi per kemasan', 'rp.preview_empty': 'Pilih produk kemasan dan isi jumlah kemasan jadi.', 'rp.pv_used': 'Curah dipakai {q} {u} → seharusnya {e} kemasan', 'rp.pv_yield': 'Jadi {n} = hasil {p}%', 'rp.pv_loss': 'susut {q} {u}',
   'rp.not_enough': 'Stok curah tidak cukup ({q} {u})', 'rp.pick_first': 'Pilih produk kemasan dulu', 'rp.qty_invalid': 'Jumlah tidak valid', 'rp.saved': 'Kemas ulang tersimpan: {from} → {name} × {n}', 'rp.saved_toast': 'Kemas ulang tersimpan', 'rp.unit_cost': 'Modal per kemasan',
@@ -8320,7 +8330,7 @@ Object.assign(I18N.ar, {
   'rps.new_pack': 'عبوة جديدة (منتج جديد)', 'rps.new_hint': 'العبوة الجديدة = منتج جديد (علبة / ستيكر جديد). المخزون يبدأ من 0، وفئته نفس فئة السائب.', 'rps.new_name': 'اسم العبوة الجديدة', 'rps.new_price': 'سعر البيع (روبية)', 'rps.new_unit': 'الوحدة', 'rps.new_sku': 'الباركود (اختياري)',
   'rps.new_need': 'اكتب اسم العبوة الجديدة وسعر بيعها', 'rps.created': 'تم إنشاء العبوة الجديدة وضبطها', 'rps.costs': 'مواد التعبئة لكل عبوة', 'rps.costs_hint': 'ستيكر، غطاء، علبة… تُضاف إلى تكلفة كل تعبئة', 'rps.cost_name': 'اسم المادة (مثلًا ستيكر)',
   'rps.cost_add': 'إضافة مادة', 'rps.cost_total': 'المجموع لكل {u}: {rp}', 'rps.cost_need_name': 'اكتب اسم المادة لكل تكلفة', 'rps.costs_line': 'المواد: {list} = {rp} / {u}',
-  'rp.extra_cost': 'تكاليف أخرى', 'rp.extra_ph': 'اختياري', 'rp.pv_mat': 'مواد التعبئة {per} / {u} × {n} = {tot} (تلقائيًا)', 'rps.need': 'اختر صنف العبوة والصنف السائب وكمية كل عبوة', 'rps.same': 'لا يمكن أن يكون السائب هو نفس صنف العبوة',
+  'rp.extra_cost': 'أجرة العمال وتكاليف أخرى', 'rp.extra_ph': 'اختياري', 'rp.gmats_use': 'المواد المستعملة من البضاعة الواردة:', 'rp.piece': 'قطعة', 'rp.gmat_short': 'المخزون غير كافٍ (الموجود {q})', 'rp.pv_mat': 'مواد التعبئة {per} / {u} × {n} = {tot} (تلقائيًا)', 'rps.need': 'اختر صنف العبوة والصنف السائب وكمية كل عبوة', 'rps.same': 'لا يمكن أن يكون السائب هو نفس صنف العبوة',
   'rp.form_title': 'إعادة التعبئة', 'rp.pack_product': 'منتج العبوة', 'rp.pick': 'اختر', 'rp.pieces': 'عدد العبوات الناتجة', 'rp.bulk_used': 'السائب المستخدم', 'rp.auto': 'تلقائي', 'rp.pack_cost': 'تكلفة التغليف', 'rp.save': 'حفظ إعادة التعبئة',
   'rp.from_bulk': 'من', 'rp.size': 'محتوى العبوة', 'rp.preview_empty': 'اختر منتج العبوة وأدخل عدد العبوات الناتجة.', 'rp.pv_used': 'السائب المستخدم {q} {u} ← المتوقع {e} عبوة', 'rp.pv_yield': 'الناتج {n} = نسبة {p}%', 'rp.pv_loss': 'فاقد {q} {u}',
   'rp.not_enough': 'مخزون السائب غير كافٍ ({q} {u})', 'rp.pick_first': 'اختر منتج العبوة أولًا', 'rp.qty_invalid': 'كمية غير صالحة', 'rp.saved': 'حُفظت إعادة التعبئة: {from} ← {name} × {n}', 'rp.saved_toast': 'حُفظت إعادة التعبئة', 'rp.unit_cost': 'تكلفة العبوة',

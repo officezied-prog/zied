@@ -52,6 +52,12 @@ the worker tests + the three Playwright suites on every PR. This removed n8n's m
   Products (v62, owner 2026-10-19: «المدير يعدل و المحاسب بإذن من المدير»): owner and manager edit them (`product_save`); the accountant
   only proposes (`product_request` → table `cold_product_requests`), applied when the manager / owner approves (`request_decide`). The
   manager and the accountant see a "Produk" tab (products only — the rest of the settings stay the owner's).
+- **Packaging materials (v63, owner 2026-10-20):** a sticker / jar / box is received at goods-in like any goods (cashier "Produk baru" →
+  "Bahan kemasan"): category `Bahan kemasan`, no selling price, `use_for` = JSON `[{p: packId, q: pieces per pack}]`; its price per piece is
+  its goods-in cost (weighted average). Never sold (`computeSale` refuses it). The pack's cost includes `cost_price × q` of each material;
+  a confirmed repack (`repack_finish` / `applyRepack`) takes `q × made` out of its stock (never below 0, "STOK KURANG" in the notice) with
+  a `KEMAS ULANG` purchase row. The manager OR the accountant confirms the packs made (the accountant from her approvals screen); the
+  owner's notice carries the cost of one pack (curah, bahan, upah & lain).
 - **Khair Order Brad (`brad/`, v60) = stage 1 of that plan as its OWN app until the owner has proven it** (owner 2026-10-18: «في تطبيق
   اخر الان منفصل حتى نتأكد منه قبل دمجه مع القديم»; the gudang app stays exactly as before — do not add the order process to it until he
   says so). Logic `backend/brad/brad-core.js` (KBrad, loaded after cold-parsers + cold-core), Worker `/webhook/khair-brad` (`worker/src/brad.js`).

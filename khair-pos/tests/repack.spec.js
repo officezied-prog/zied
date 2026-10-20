@@ -55,7 +55,7 @@ test('owner: type to find the bulk, its packs (same kind, no oils), 5 kg → 10 
   expect(rp0).toMatchObject({ status: 'proses', from_qty: 5, planned_qty: 10, to_qty: 0, started_by: 'Pemilik' });
   expect(productByName(db, /Kurma Rabia Curah/).stock).toBe(Math.round((bulk.stock - 5) * 1000) / 1000); // on the packing table
   expect(productByName(db, /Kurma Rabia Kemas 500/).stock).toBe(pack.stock); // no packs yet
-  expect(db.activity.filter(a => a.kind === 'notifikasi').slice(-1)[0]).toMatchObject({ ref: 'manager' });
+  expect(db.activity.filter(a => a.kind === 'notifikasi').slice(-1)[0]).toMatchObject({ ref: 'manager,akuntan' }); // v63: the accountant may confirm it too
   // "Sedang dikemas" → confirm: 9 packs, 0,3 kg left over
   const row = page.locator(`#rp-open-body [data-rp-open="${rp0.repack_id}"]`);
   await expect(row).toContainText('rencana 10');

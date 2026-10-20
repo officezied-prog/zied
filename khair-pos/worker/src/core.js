@@ -63,6 +63,8 @@ export const POS_MIGRATIONS = [
   'ALTER TABLE pos_sales ADD COLUMN transfer_ref TEXT',
   'ALTER TABLE pos_sales ADD COLUMN proof_photo_id TEXT',
   'ALTER TABLE pos_payments ADD COLUMN payee TEXT',
+  // v63 (owner 2026-10-20): a packaging material received at goods-in says which packs it is used for
+  'ALTER TABLE pos_products ADD COLUMN use_for TEXT',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;

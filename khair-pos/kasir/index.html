@@ -112,7 +112,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.7.6';
+const APP_VERSION = 'kasir-1.7.7';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1256,9 +1256,12 @@ function shelfBlock(p, qty) {
   if (!sellFromShop() || qty <= shelfOf(p) + 1e-9) return '';
   return gudangOf(p) > 0 ? t('shelf.move_first', { name: p.name, shop: fmtQty(Math.max(0, shelfOf(p))), gudang: fmtQty(gudangOf(p)) }) : t('shelf.no_goods_in', { name: p.name, shop: fmtQty(Math.max(0, shelfOf(p))) });
 }
+/** v63: a packaging material (sticker, jar …) received at goods-in — used by the repacks, never sold. */
+const isMat = p => !!p && (p.material === true || String(p.category || '').trim().toLowerCase() === 'bahan kemasan');
 function addToCart(p, qty = 1, set = false) {
   if (!p) return;
   if (p.active === false) { toast(t('sell.inactive'), 'warn'); return; }
+  if (isMat(p)) { toast(t('sell.material', { name: p.name }), 'warn'); return; }
   const ex0 = S.cart.lines.find(l => l.product_id == p.id), want = set ? roundQty(qty) : roundQty((ex0 ? ex0.qty : 0) + qty);
   const sb = shelfBlock(p, want); if (sb) { beep(); toast(sb, 'err', 5000); return; }
   const ex = S.cart.lines.find(l => l.product_id == p.id);
@@ -1493,7 +1496,7 @@ function onSearchEnter(raw, fast) {
   const p = findBySku(v);
   if (p) { clear(); if (isLoose(p)) openWeightSheet(p); else addToCart(p); return; }
   if (fast) { beep(); toast(t('sell.barcode_nf', { code: v }), 'err'); clear(); return; }
-  const list = filterProducts(v);
+  const list = filterProducts(v).filter(p => !isMat(p));
   if (list.length === 1) { clear(); pickProduct(list[0]); }
 }
 function beep() { try { const a = new (window.AudioContext || window.webkitAudioContext)(); const o = a.createOscillator(); o.frequency.value = 330; o.connect(a.destination); o.start(); setTimeout(() => { o.stop(); a.close(); }, 160); } catch (e) { } }
@@ -1509,7 +1512,7 @@ function syncLooseChip() {
 function renderGrid() {
   const g = $('#grid'); if (!g) return;
   syncLooseChip();
-  const list = filterProducts(SELL.q).filter(p => !SELL.loose || isLoose(p)), shown = list.slice(0, SELL.limit);
+  const list = filterProducts(SELL.q).filter(p => !isMat(p) && (!SELL.loose || isLoose(p))), shown = list.slice(0, SELL.limit);
   const inCart = new Map(S.cart.lines.map(l => [String(l.product_id), l.qty]));
   g.innerHTML = shown.length ? shown.map(p => {
     const low = isLow(p), q = inCart.get(String(p.id));
@@ -2939,6 +2942,10 @@ function puAdd(p) {
 const NP_UNITS = ['pcs', 'kg', 'box', 'pak', 'dus', 'botol', 'liter', 'karung', 'pouch', 'set', 'lusin'];
 const NP_MEASURES = ['g', 'kg', 'ml', 'L', 'cm', 'isi'];
 function npTitle(name) { return String(name || '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/(^|\s)\S/g, c => c.toUpperCase()).slice(0, 80); }
+/* v63 (owner 2026-10-20: «عند استقبال أي بضاعة … يتم كتابة ثمنها ونوعها ولأي شيء تستعمل … ستيكر عجوة 250 غرام … أو أيضا العلبة»): a
+   packaging material (sticker, jar, box) comes in like any goods — its price per piece is the goods-in line's cost — and says which
+   packs it is for and how many pieces one pack takes. It is never sold; the pack's cost carries it; a confirmed repack uses it up. */
+const npPacks = () => S.products.filter(p => p.active !== false && num(p.repack_from) > 0 && !isMat(p)).sort((a, b) => String(a.name).localeCompare(String(b.name)));
 function openNewProduct(init, after) {
   init = init || {};
   const cats = [...new Set(S.products.map(p => String(p.category || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
@@ -2946,14 +2953,19 @@ function openNewProduct(init, after) {
   const el = openModal({
     title: t('newp.title'), id: 'new-product', focus: false,
     body: `<p class="small muted" style="margin-top:0">${esc(t('newp.hint'))}</p>
+      <div class="field"><label class="f">${esc(t('newp.kind'))}</label><div class="row wrap" style="gap:12px" id="np-kind">
+        <label class="row" style="gap:6px"><input type="radio" name="np-kind" value="sale" checked> ${esc(t('newp.k_sale'))}</label>
+        <label class="row" style="gap:6px"><input type="radio" name="np-kind" value="mat" id="np-kind-mat"> ${esc(t('newp.k_mat'))}</label></div></div>
       <div class="field"><label class="f" for="np-name">${esc(t('name'))} *</label><input class="input" data-rule="pname" id="np-name" maxlength="80" value="${esc(npTitle(init.name))}"></div>
-      <div class="field"><label class="f" for="np-cat">${esc(t('newp.category'))} *</label><input class="input" data-rule="pname" id="np-cat" maxlength="40" list="np-cats" autocomplete="off"><datalist id="np-cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
+      <div id="np-mat" hidden><div class="field"><label class="f">${esc(t('newp.mat_for'))} *</label><div class="small muted" style="margin-bottom:6px">${esc(t('newp.mat_hint'))}</div>
+        ${npPacks().length ? `<div class="list" id="np-mat-list">${npPacks().map(pk => `<label class="li" style="gap:8px;align-items:center" data-np-pack="${esc(pk.id)}"><input type="checkbox" data-np-use="${esc(pk.id)}" style="width:auto;min-height:0"><div class="grow"><div class="t">${esc(pk.name)}</div></div><input class="input num" data-np-q="${esc(pk.id)}" inputmode="decimal" value="1" style="width:64px" aria-label="${esc(t('newp.mat_q'))}" title="${esc(t('newp.mat_q'))}"></label>`).join('')}</div>` : `<div class="empty" id="np-mat-none">${esc(t('newp.mat_none'))}</div>`}</div></div>
+      <div id="np-sale-f"><div class="field"><label class="f" for="np-cat">${esc(t('newp.category'))} *</label><input class="input" data-rule="pname" id="np-cat" maxlength="40" list="np-cats" autocomplete="off"><datalist id="np-cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
       <div class="field"><label class="f" for="np-size">${esc(t('newp.size'))} *</label><div class="row" style="gap:6px"><input class="input num grow" data-rule="num" inputmode="decimal" id="np-size" placeholder="500" style="min-width:0"><select class="input" id="np-measure" style="width:auto;flex:0 0 auto" aria-label="${esc(t('newp.measure'))}">${NP_MEASURES.map(m => `<option value="${m}">${esc(m === 'isi' ? t('newp.m_isi') : m)}</option>`).join('')}</select></div><div class="small muted">${esc(t('newp.size_hint'))}</div></div>
       <div class="grid2"><div class="field"><label class="f" for="np-unit">${esc(t('newp.unit'))}</label><select class="input" id="np-unit">${NP_UNITS.map(u => `<option value="${u}" ${u === (NP_UNITS.includes(unit0) ? unit0 : 'pcs') ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></div>
       <div class="field"><label class="f" for="np-sku">${esc(t('newp.barcode'))}</label><div class="row" style="gap:6px"><input class="input grow" id="np-sku" maxlength="40" inputmode="text" autocomplete="off" style="min-width:0">${camOk() ? `<button type="button" class="icon-btn" id="np-sku-cam" aria-label="${esc(t('sell.camera'))}" style="flex:0 0 auto">${ic('scan')}</button>` : ''}</div></div></div>
       <div class="grid2"><div class="field"><label class="f" for="np-retail">${esc(t('newp.retail'))} *</label><input class="input num" data-rule="num" inputmode="numeric" id="np-retail"></div>
       <div class="field"><label class="f" for="np-whole">${esc(t('newp.wholesale'))}</label><input class="input num" data-rule="num" inputmode="numeric" id="np-whole"></div></div>
-      <div class="field"><label class="f" for="np-wmin">${esc(t('newp.wmin'))}</label><input class="input num" data-rule="num" inputmode="decimal" id="np-wmin"></div>
+      <div class="field"><label class="f" for="np-wmin">${esc(t('newp.wmin'))}</label><input class="input num" data-rule="num" inputmode="decimal" id="np-wmin"></div></div>
       ${int(init.cost) ? `<div class="small" id="np-cost">${esc(t('newp.cost_from_note'))}: <b class="num">${fmtRp(init.cost)}</b></div>` : ''}
       <div class="small muted" style="margin-top:6px">${ic('lock')} ${esc(t('newp.review_hint'))}</div>
       <div class="err" id="np-err" role="alert"></div>`,
@@ -2962,21 +2974,37 @@ function openNewProduct(init, after) {
   const cam = $('#np-sku-cam', el); if (cam) cam.onclick = () => cameraScan(code => { const i = $('#np-sku', el); if (i) i.value = String(code || '').trim().slice(0, 40); });
   ['#np-retail', '#np-whole'].forEach(id => { const i = $(id, el); i.addEventListener('change', () => { const v = moneyVal(i.value); i.value = v ? fmtNum(v) : ''; }); });
   setTimeout(() => { const f = $('#np-cat', el); if (f && f.isConnected) f.focus(); }, 50);
+  const isMatKind = () => !!$('#np-kind-mat', el).checked;
+  $$('input[name="np-kind"]', el).forEach(r => r.addEventListener('change', () => {
+    const mat = isMatKind();
+    $('#np-mat', el).hidden = !mat; $('#np-sale-f', el).hidden = mat; $('#np-err', el).textContent = '';
+    if (mat) { const u = $('#np-unit', el); if (u && !unit0) u.value = 'pcs'; }
+  }));
+  $$('[data-np-use]', el).forEach(c => c.addEventListener('change', () => { const q = $(`[data-np-q="${c.dataset.npUse}"]`, el); if (c.checked && q && !(qtyVal(q.value) > 0)) q.value = '1'; }));
   $('#np-ok', el).onclick = async () => {
     const err = $('#np-err', el), v = id => $(id, el).value.trim();
     const name = v('#np-name').replace(/\s+/g, ' '), cat = v('#np-cat'), size = qtyVal(v('#np-size')), m = v('#np-measure'), sku = v('#np-sku');
     const retail = moneyVal(v('#np-retail')), whole = moneyVal(v('#np-whole')), wmin = qtyVal(v('#np-wmin'));
-    const bad = (msg, id) => { err.textContent = msg; const f = $(id, el); if (f) f.focus(); };
+    const bad = (msg, id) => { err.textContent = msg; const f = id && $(id, el); if (f) f.focus(); };
+    const mat = isMatKind();
     if (!name) return bad(t('required') + ': ' + t('name'), '#np-name');
-    if (!cat) return bad(t('newp.need_cat'), '#np-cat');
-    if (!(size > 0)) return bad(t('newp.need_size'), '#np-size');
-    if (!(retail > 0)) return bad(t('newp.need_price'), '#np-retail');
+    let useFor = null;
+    if (mat) {
+      useFor = $$('[data-np-use]', el).filter(c => c.checked).map(c => ({ pack_id: isNaN(Number(c.dataset.npUse)) ? c.dataset.npUse : Number(c.dataset.npUse), qty: qtyVal($(`[data-np-q="${c.dataset.npUse}"]`, el).value) }));
+      if (!useFor.length) return bad(t('newp.need_for'));
+      if (useFor.some(u => !(u.qty > 0))) return bad(t('newp.mat_q') + ' > 0');
+    } else {
+      if (!cat) return bad(t('newp.need_cat'), '#np-cat');
+      if (!(size > 0)) return bad(t('newp.need_size'), '#np-size');
+      if (!(retail > 0)) return bad(t('newp.need_price'), '#np-retail');
+    }
     if (sku && !/^[A-Za-z0-9._-]{1,40}$/.test(sku)) return bad(t('newp.bad_sku'), '#np-sku');
     if (sku && S.products.some(p => String(p.sku || '') === sku)) return bad(t('newp.sku_used'), '#np-sku');
     const dup = S.products.find(p => String(p.name || '').trim().toLowerCase() === name.toLowerCase());
     if (dup) return bad(t('newp.dup', { name: dup.name }), '#np-name');
     const meas = (m === 'isi' ? 'isi ' : '') + String(size).replace('.', ',') + (m === 'isi' ? '' : ' ' + m);
-    const data = { name, category: cat, unit: v('#np-unit') || 'pcs', sku, retail_price: retail, wholesale_price: whole, wholesale_min_qty: whole ? wmin : 0, cost_price: int(init.cost), from_goods_in: true,
+    const data = mat ? { name, material: true, unit: v('#np-unit') || 'pcs', sku, cost_price: int(init.cost), from_goods_in: true, use_for: useFor }
+      : { name, category: cat, unit: v('#np-unit') || 'pcs', sku, retail_price: retail, wholesale_price: whole, wholesale_min_qty: whole ? wmin : 0, cost_price: int(init.cost), from_goods_in: true,
       weight: m === 'g' || m === 'kg' ? meas : '', size: m === 'g' || m === 'kg' ? '' : meas };
     $('#np-ok', el).disabled = true; err.textContent = '';
     try {
@@ -4131,6 +4159,15 @@ const rkPacks = () => S.products.filter(p => p.active !== false && num(p.repack_
 function rkCalc(size, qty, fromQty) { const expected = size > 0 ? roundQty(fromQty / size) : 0; return { expected, yieldPct: expected > 0 ? Math.round(qty / expected * 1000) / 10 : 0, loss: roundQty(fromQty - qty * size) }; }
 /** v48: the names of a pack's materials (the manager sets them in the owner app; the cashier sees the names only). */
 function rkMaterials(p) { let a = []; try { a = JSON.parse(String((p && p.repack_costs) || '') || '[]'); } catch (e) { a = []; } return (Array.isArray(a) ? a : []).map(x => String((x && x.n) || '').trim() + (num(x && x.q) > 1 ? ' ×' + fmtQty(x.q) : '')).filter(Boolean); }
+/** v63: the pack's packaging materials received at goods-in (sticker, jar…): pieces per pack and their stock. */
+const rkGoodsMats = p => (p && Array.isArray(p.materials) ? p.materials : []).filter(m => m && m.name && num(m.q) > 0)
+  .map(m => { const live = prodById(m.id); return Object.assign({}, m, live ? { stock: num(live.stock) } : {}); }); // the stock as it is now (a repack just used some)
+function rkGoodsMatsHTML(p, packs, id) {
+  const gm = rkGoodsMats(p); if (!gm.length) return '';
+  const rows = gm.map(m => { const need = roundQty(num(m.q) * packs), short = packs > 0 && need > num(m.stock) + 1e-9;
+    return `<div data-gmat="${esc(m.id)}"${short ? ' data-mat-short' : ''}>${esc(m.name)}: ${packs > 0 ? `<b class="num">${fmtQty(need)}</b> · ` : `${fmtQty(m.q)} / ${esc(p.unit || 'pcs')} · `}${esc(t('stock'))} <span class="num">${fmtQty(m.stock)}</span>${short ? ` — <b>${esc(t('rk.gmat_short', { name: m.name, q: fmtQty(m.stock) }))}</b>` : ''}</div>`; });
+  return `<div id="${id || 'rk-gmats'}" class="small" style="margin-top:4px"><b>${esc(t(packs > 0 ? 'rk.gmats_use' : 'rk.gmats'))}</b>${rows.join('')}</div>`;
+}
 /* v50 (owner 2026-10-15: «تنطلق عملية التعبية باختيار العنصر الكبير … ثم اختيار من القائمة العنصر الصغير … ثم الحاسوب يحسب مباشرة الكمية
    المطلوبة … وبعد عملية التعليب تقع الموافقة على الكمية التي تمت عن طريق المدير»; «إمكانية كتابة الكلمة كاملة ليس الحرف فقط»): the form starts
    from the BULK (type any word of its name), then one of its packs; the bulk amount gives the packs at once (whole packs + what is
@@ -4193,14 +4230,14 @@ function openRepack() {
     $('#rk-unit', el).textContent = r.b ? (r.b.unit || '') : '—';
     $('#rk-info', el).innerHTML = r.b ? `${esc(t('stock'))} <b class="num" id="rk-bulk-stock">${fmtQty(r.b.stock)} ${esc(r.b.unit || '')}</b>` : '';
     const mats = r.p ? rkMaterials(r.p) : [];
-    $('#rk-pack-info', el).innerHTML = r.p ? `${esc(t('rk.size'))}: <b>${fmtQty(r.size)} ${esc(r.b ? r.b.unit || '' : '')}</b> / ${esc(r.p.unit || 'pcs')}${mats.length ? `<div id="rk-mats">${esc(t('rk.mats', { list: mats.join(', ') }))}</div>` : ''}` : '';
+    $('#rk-pack-info', el).innerHTML = r.p ? `${esc(t('rk.size'))}: <b>${fmtQty(r.size)} ${esc(r.b ? r.b.unit || '' : '')}</b> / ${esc(r.p.unit || 'pcs')}${mats.length ? `<div id="rk-mats">${esc(t('rk.mats', { list: mats.join(', ') }))}</div>` : ''}${rkGoodsMatsHTML(r.p, 0)}` : '';
     const box = $('#rk-calc', el);
     if (!r.b || !r.p || !(r.fromQty > 0)) { box.className = 'rp-preview'; box.innerHTML = `<span class="muted">${esc(t('rk.calc_empty'))}</span>`; return; }
     const u = r.b.unit || '', over = r.fromQty > num(r.b.stock) + 1e-9;
     box.className = 'rp-preview' + (over || !r.packs ? ' bad' : '');
     box.innerHTML = `<div>${esc(fmtQty(r.fromQty))} ${esc(u)} ÷ ${esc(fmtQty(r.size))} ${esc(u)} = <b style="font-size:20px" id="rk-planned" data-planned="${r.packs}">${esc(t('rk.calc_packs', { n: fmtNum(r.packs), u: r.p.unit || 'pcs' }))}</b></div>
       ${r.left > 0 ? `<div data-left>${esc(t('rk.calc_left', { q: fmtQty(r.left), u }))}</div>` : ''}${!r.packs ? `<div><b>${esc(t('rk.calc_less', { s: fmtQty(r.size), u }))}</b></div>` : ''}
-      ${over ? `<div data-short><b>${esc(t('rk.not_enough', { q: fmtQty(r.b.stock), u }))}</b></div>` : ''}`;
+      ${over ? `<div data-short><b>${esc(t('rk.not_enough', { q: fmtQty(r.b.stock), u }))}</b></div>` : ''}${rkGoodsMatsHTML(r.p, r.packs)}`;
   };
   const pack = KPick.mount($('#rk-pack', el), { id: 'rk-pack', items: [], placeholder: t('rk.pack_ph'), empty: t('rk.no_match'), label: t('rk.f_pack'),
     onChange: id => { R.pack = id; $('#rk-err', el).textContent = ''; draw(); if (id) amount.focus(); } });
@@ -4269,7 +4306,7 @@ function openRkFinish(r) {
     const m = qtyVal(made.value || ''), lf = qtyVal(rem.value || ''), used = roundQty(F - lf), c = rkCalc(s, m, used);
     pv.className = 'rp-preview' + (m < N || c.yieldPct < 95 ? ' low' : '');
     pv.innerHTML = `<div>${esc(t('rk.pv_used', { q: fmtQty(used), u, e: fmtQty(c.expected) }))}</div><div><b data-yield>${esc(t('rk.pv_yield', { n: fmtQty(m), p: NF1.format(c.yieldPct) }))}</b> · <span data-loss>${esc(t('rk.pv_loss', { q: fmtQty(c.loss), u }))}</span></div>
-      ${m < N ? `<div data-short><b>${esc(t('rk.fin_short', { n: fmtQty(roundQty(N - m)), pu }))}</b></div>` : ''}`;
+      ${m < N ? `<div data-short><b>${esc(t('rk.fin_short', { n: fmtQty(roundQty(N - m)), pu }))}</b></div>` : ''}${m > 0 ? rkGoodsMatsHTML(prodById(r.to_product_id), m, 'rkf-gmats') : ''}`;
   };
   made.addEventListener('input', () => { if (!remTouched) rem.value = fmtQtyInput(Math.max(0, roundQty(F - qtyVal(made.value || '') * s))); err.textContent = ''; draw(); });
   rem.addEventListener('input', () => { remTouched = true; err.textContent = ''; draw(); });
@@ -5356,6 +5393,10 @@ Object.assign(I18N.id, {
   'newp.cost_from_note': 'Harga beli dari nota', 'newp.review_hint': 'Produk baru dari kasir ditandai "baru — dicek": manajer / akuntan memeriksa harganya.',
   'newp.need_cat': 'Kategori wajib diisi', 'newp.need_size': 'Ukuran / berat wajib diisi', 'newp.need_price': 'Harga jual wajib diisi', 'newp.bad_sku': 'Barcode hanya huruf, angka, titik, garis',
   'newp.sku_used': 'Barcode sudah dipakai produk lain', 'newp.dup': 'Sudah ada: {name} — pilih dari daftar', 'newp.saved': 'Produk baru {name} tersimpan — menunggu dicek',
+  'newp.kind': 'Jenis barang', 'newp.k_sale': 'Barang dijual', 'newp.k_mat': 'Bahan kemasan (stiker, toples, dus…)',
+  'newp.mat_for': 'Dipakai untuk kemasan', 'newp.mat_hint': 'Centang kemasan yang memakai bahan ini, dan berapa buah per 1 kemasan. Harga per buah = harga beli di nota ini.',
+  'newp.mat_q': 'Buah per kemasan', 'newp.mat_none': 'Belum ada produk kemasan (kemas ulang). Minta manajer membuatnya dulu.', 'newp.need_for': 'Pilih minimal satu kemasan yang memakai bahan ini',
+  'sell.material': '{name} adalah bahan kemasan — tidak dijual',
   'apr.kind_exp_mm': 'Pengeluaran {amount} beda dengan nota', 'apr.kind_exp_manual': 'Pengeluaran {amount} — cek nota manual', 'apr.kind_newprod': 'Produk baru dari kasir: {name}',
   'apr.exp_mm_hint': 'Uang sudah keluar. Setujui = selisih diterima; tolak = ditandai untuk pemilik.',
   'apr.exp_manual_hint': 'Nota tidak terbaca otomatis: cocokkan nota fisik dengan rincian, lalu setujui atau tolak.',
@@ -5377,6 +5418,10 @@ Object.assign(I18N.ar, {
   'newp.cost_from_note': 'سعر الشراء من الفاتورة', 'newp.review_hint': 'الصنف الجديد من الكاشير يُعلَّم "جديد — قيد التدقيق": المدير / المحاسب يراجع أسعاره.',
   'newp.need_cat': 'الفئة مطلوبة', 'newp.need_size': 'الحجم / الوزن مطلوب', 'newp.need_price': 'سعر البيع مطلوب', 'newp.bad_sku': 'الباركود حروف وأرقام ونقطة وشرطة فقط',
   'newp.sku_used': 'الباركود مستخدم لصنف آخر', 'newp.dup': 'موجود مسبقًا: {name} — اختره من القائمة', 'newp.saved': 'حُفظ الصنف الجديد {name} — بانتظار التدقيق',
+  'newp.kind': 'نوع البضاعة', 'newp.k_sale': 'بضاعة للبيع', 'newp.k_mat': 'مادة تعبئة (ستيكر، علبة، كرتون…)',
+  'newp.mat_for': 'تُستعمل في العبوة', 'newp.mat_hint': 'اختر العبوات التي تستعمل هذه المادة، وكم قطعة لكل عبوة واحدة. سعر القطعة = سعر الشراء في هذه الفاتورة.',
+  'newp.mat_q': 'قطع لكل عبوة', 'newp.mat_none': 'لا توجد عبوات (إعادة تعبئة) بعد. اطلب من المدير إنشاءها أولًا.', 'newp.need_for': 'اختر عبوة واحدة على الأقل تستعمل هذه المادة',
+  'sell.material': '{name} مادة تعبئة — لا تُباع',
   'apr.kind_exp_mm': 'مصروف {amount} يختلف عن الفاتورة', 'apr.kind_exp_manual': 'مصروف {amount} — تدقيق الفاتورة يدويًا', 'apr.kind_newprod': 'صنف جديد من الكاشير: {name}',
   'apr.exp_mm_hint': 'المال صُرف. موافقة = قبول الفرق؛ رفض = يُعلَّم للمالك.',
   'apr.exp_manual_hint': 'لم تُقرأ الفاتورة آليًا: طابق الفاتورة الورقية مع التفاصيل ثم وافق أو ارفض.',
@@ -5388,7 +5433,8 @@ Object.assign(I18N.id, {
   'rk.hint': 'Barang curah yang sudah dikemas kecil: pilih kemasannya, isi berapa kemasan jadi lalu simpan. Stok langsung berubah; pemilik, manajer dan akuntan diberi tahu.',
   'rk.hint_mgr': 'Barang curah yang dikemas kecil di toko: stok curah berkurang, stok kemasan bertambah. Pemilik dan akuntan diberi tahu.',
   'rk.none': 'Belum ada produk kemas ulang. Manajer mengaturnya di aplikasi pemilik: Gudang → Kemas ulang → "Atur barang kemas ulang".', 'rk.pack_product': 'Produk kemasan', 'rk.pick': 'pilih',
-  'rk.pieces': 'Jumlah kemasan jadi', 'rk.bulk_used': 'Curah dipakai', 'rk.auto': 'otomatis', 'rk.pack_cost': 'Biaya kemasan', 'rk.extra_cost': 'Biaya lain', 'rk.extra_ph': 'opsional', 'rk.mats': 'Bahan kemasan: {list} (biayanya dihitung otomatis)', 'rk.exp': 'Kedaluwarsa',
+  'rk.pieces': 'Jumlah kemasan jadi', 'rk.bulk_used': 'Curah dipakai', 'rk.auto': 'otomatis', 'rk.pack_cost': 'Biaya kemasan', 'rk.extra_cost': 'Upah & biaya lain', 'rk.extra_ph': 'opsional', 'rk.mats': 'Bahan kemasan: {list} (biayanya dihitung otomatis)',
+  'rk.gmats': 'Bahan dari barang masuk (per kemasan):', 'rk.gmats_use': 'Bahan yang terpakai:', 'rk.gmat_short': 'stok {name} kurang (ada {q}) — beri tahu manajer', 'rk.exp': 'Kedaluwarsa',
   'rk.from_bulk': 'Dari', 'rk.size': 'Isi per kemasan', 'rk.preview_empty': 'Pilih produk kemasan dan isi jumlah kemasan jadi.',
   'rk.pv_used': 'Curah dipakai {q} {u} → seharusnya {e} kemasan', 'rk.pv_yield': 'Jadi {n} = hasil {p}%', 'rk.pv_loss': 'susut {q} {u}',
   'rk.not_enough': 'Stok curah tidak cukup ({q} {u})', 'rk.pick_first': 'Pilih produk kemasan dulu', 'rk.qty_invalid': 'Jumlah tidak valid',
@@ -5412,7 +5458,8 @@ Object.assign(I18N.ar, {
   'rk.hint': 'بضاعة سائبة عُبّئت في عبوات صغيرة: اختر العبوة واكتب عدد العبوات الناتجة ثم احفظ. يتغير المخزون فورًا ويصل إشعار إلى المالك والمدير والمحاسب.',
   'rk.hint_mgr': 'بضاعة سائبة تُعبّأ صغيرة في المتجر: ينقص مخزون السائب ويزيد مخزون العبوات. يصل إشعار إلى المالك والمحاسب.',
   'rk.none': 'لا توجد منتجات معاد تعبئتها. يضبطها المدير في تطبيق الإدارة: المخزن ← إعادة التعبئة ← «ضبط بضائع إعادة التعبئة».', 'rk.pack_product': 'منتج العبوة', 'rk.pick': 'اختر',
-  'rk.pieces': 'عدد العبوات الناتجة', 'rk.bulk_used': 'السائب المستخدم', 'rk.auto': 'تلقائي', 'rk.pack_cost': 'تكلفة التغليف', 'rk.extra_cost': 'تكاليف أخرى', 'rk.extra_ph': 'اختياري', 'rk.mats': 'مواد التعبئة: {list} (تُحسب تكلفتها تلقائيًا)', 'rk.exp': 'تاريخ الانتهاء',
+  'rk.pieces': 'عدد العبوات الناتجة', 'rk.bulk_used': 'السائب المستخدم', 'rk.auto': 'تلقائي', 'rk.pack_cost': 'تكلفة التغليف', 'rk.extra_cost': 'أجرة العمال وتكاليف أخرى', 'rk.extra_ph': 'اختياري', 'rk.mats': 'مواد التعبئة: {list} (تُحسب تكلفتها تلقائيًا)',
+  'rk.gmats': 'مواد من البضاعة الواردة (لكل عبوة):', 'rk.gmats_use': 'المواد المستعملة:', 'rk.gmat_short': 'مخزون {name} غير كافٍ (الموجود {q}) — أبلغ المدير', 'rk.exp': 'تاريخ الانتهاء',
   'rk.from_bulk': 'من', 'rk.size': 'محتوى العبوة', 'rk.preview_empty': 'اختر منتج العبوة واكتب عدد العبوات الناتجة.',
   'rk.pv_used': 'السائب المستخدم {q} {u} ← المتوقع {e} عبوة', 'rk.pv_yield': 'الناتج {n} = نسبة {p}%', 'rk.pv_loss': 'الفاقد {q} {u}',
   'rk.not_enough': 'مخزون السائب لا يكفي ({q} {u})', 'rk.pick_first': 'اختر منتج العبوة أولًا', 'rk.qty_invalid': 'الكمية غير صحيحة',
