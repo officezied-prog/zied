@@ -70,8 +70,8 @@ test('start → the bulk leaves the stock, the packs are worked out; the manager
   assert.equal(st.repack.status, 'proses'); assert.equal(st.repack.planned_qty, 5); assert.equal(st.repack.started_by, 'Siti');
   assert.equal(st.repack.packaging_cost, undefined); assert.equal(st.repack.bulk_cost, undefined); // no costs to the cashier
   assert.equal(stockOf(db, 1), 15); assert.equal(stockOf(db, 2), 0); // the bulk is on the packing table, no jars yet
-  assert.match(notices(db).at(-1).summary, /Mulai kemas ulang oleh kasir Siti .*Kurma Ajwa Curah 5 kg diambil → Kurma Ajwa Toples 1 kg \(1 kg per toples\) = 5 kemasan rencana \| stok Kurma Ajwa Curah 20 → 15 kg\. Setelah selesai, manajer mengonfirmasi/);
-  assert.equal(notices(db).at(-1).ref, 'owner,manager');
+  assert.match(notices(db).at(-1).summary, /Mulai kemas ulang oleh kasir Siti .*Kurma Ajwa Curah 5 kg diambil → Kurma Ajwa Toples 1 kg \(1 kg per toples\) = 5 kemasan rencana \| stok Kurma Ajwa Curah 20 → 15 kg\. Setelah selesai, manajer atau akuntan mengonfirmasi/);
+  assert.equal(notices(db).at(-1).ref, 'owner,manager,akuntan'); // v63: the accountant may confirm it too
   // a resend is the same start; the same pack from the same bulk cannot start again while this one is open
   assert.equal((await call(ad, 'Siti', 'repack_start', { client_id: 'c-1', from_product_id: 1, to_product_id: 2, from_qty: 5 })).duplicate, true);
   const busy = await call(ad, 'Rina', 'repack_start', { client_id: 'c-2', from_product_id: 1, to_product_id: 2, from_qty: 3, confirm_recent: true });
@@ -94,8 +94,11 @@ test('start → the bulk leaves the stock, the packs are worked out; the manager
   assert.equal(r.materials_cost, 4 * 4000); assert.equal(r.packaging_cost, 2000 + 16000);
   assert.equal(r.unit_cost, Math.round((4.1 * 120000 + 18000) / 4));
   assert.equal(db.prepare('SELECT cost_price FROM pos_products WHERE id = 2').get().cost_price, r.unit_cost);
-  const n = notices(db).at(-1);
-  assert.equal(n.ref, 'owner,akuntan');
+  // v63: the owner's notice carries what one pack cost; the accountant's the same news without it
+  const n = notices(db).at(-1), no = notices(db).at(-2);
+  assert.equal(n.ref, 'akuntan'); assert.equal(no.ref, 'owner');
+  assert.doesNotMatch(n.summary, /biaya per/);
+  assert.match(no.summary, / — biaya per \w+: Rp 127\.500 \(curah Rp 123\.000, bahan Rp 4\.000, upah & lain Rp 500\)$/);
   assert.match(n.summary, /Kemas ulang selesai, dikonfirmasi manajer Jihan \(RP\w+, dimulai Siti .*\): Kurma Ajwa Curah 4\.1 kg → Kurma Ajwa Toples 1 kg x4 .*rencana 5, jadi 4; sisa curah 0\.9 kg kembali ke stok — KURANG 1 dari rencana/);
   // once only; it is no longer open
   assert.equal((await call(ad, 'Pemilik', 'repack_finish', { repack_id: id, to_qty: 4, remaining_qty: 0.9 })).error, 'INVALID');
@@ -111,7 +114,7 @@ test('cancel: everything goes back; wrong starts are refused (not set up, anothe
   assert.equal(st.ok, true, JSON.stringify(st));
   assert.equal(st.repack.planned_qty, 4); // 2.2 kg ÷ 0.5 kg = 4 whole packs (0.2 kg over)
   assert.match(notices(db).at(-1).summary, /= 4 kemasan rencana, sisa 0\.2 kg/);
-  assert.equal(notices(db).at(-1).ref, 'owner');
+  assert.equal(notices(db).at(-1).ref, 'owner,akuntan');
   assert.equal(stockOf(db, 1), 17.8);
   const c = await call(ad, 'Pemilik', 'repack_finish', { repack_id: st.repack.repack_id, cancel: true });
   assert.equal(c.ok, true, JSON.stringify(c));

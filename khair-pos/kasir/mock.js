@@ -80,6 +80,7 @@ const MockServer = (() => {
     const lines = data.items.map(it => {
       const p = db.products.find(x => x.id === Number(it.product_id));
       if (!p) throw E('NOT_FOUND', 'product ' + it.product_id);
+      if (window.KRepackMock && window.KRepackMock.isMaterial(p)) throw E('INVALID', p.name + ' adalah bahan kemasan — tidak dijual'); // v63
       const qty = roundQty(it.qty);
       if (!(qty > 0)) throw E('INVALID', 'qty must be > 0');
       const unit_price = Math.max(0, int(it.unit_price));
@@ -1462,10 +1463,16 @@ const MockServer = (() => {
         if (!name) throw E('INVALID', 'name required');
         const sku = String(data.sku || '').trim();
         if (sku && db.products.some(p => p.sku === sku && p.id !== Number(data.id))) throw E('INVALID', 'SKU already used');
+        // v63: a packaging material (sticker, jar …): no selling price, no size — the packs it is used for instead
+        const RK = window.KRepackMock, material = data.material === true || RK.isMaterial({ category: data.category });
+        const useFor = material && data.use_for !== undefined ? RK.useForIn(db, data.use_for) : null;
+        if (useFor && useFor.error) throw E('INVALID', useFor.error);
+        if (material && fromGoodsIn && !(useFor && useFor.list.length)) throw E('INVALID', 'Bahan kemasan: pilih kemasan yang memakainya');
         if (fromGoodsIn) {
-          if (!str(data.category)) throw E('INVALID', 'Kategori wajib untuk produk baru');
-          if (!str(data.size) && !str(data.weight)) throw E('INVALID', 'Ukuran atau berat wajib untuk produk baru');
-          if (u.role === 'kasir' && !(money(data.retail_price) > 0)) throw E('INVALID', 'Harga jual wajib untuk produk baru');
+          if (!material && !str(data.category)) throw E('INVALID', 'Kategori wajib untuk produk baru');
+          if (!material && !str(data.size) && !str(data.weight)) throw E('INVALID', 'Ukuran atau berat wajib untuk produk baru');
+          if (!material && u.role === 'kasir' && !(money(data.retail_price) > 0)) throw E('INVALID', 'Harga jual wajib untuk produk baru');
+          if (material) Object.assign(data, { category: RK.MATERIAL_CAT, retail_price: 0, wholesale_price: 0, wholesale_min_qty: 0 });
           if (db.products.some(p => str(p.name).toLowerCase() === name.toLowerCase())) throw E('INVALID', 'Produk dengan nama ini sudah ada — pilih dari daftar');
           const p = Object.assign(productFields(data, blankProduct()), { id: nextId(db, 'product'), name, stock: u.role === 'kasir' ? 0 : roundQty(data.stock || 0), size: str(data.size).slice(0, 40), weight: str(data.weight).slice(0, 40), supplier: str(data.supplier).slice(0, 80), review: '' });
           let ap = null;
@@ -1475,6 +1482,7 @@ const MockServer = (() => {
               payload: JSON.stringify({ product_name: name, category: p.category, size: p.size, weight: p.weight, unit: p.unit, sku, supplier: p.supplier, retail_price: p.retail_price, wholesale_price: p.wholesale_price, wholesale_min_qty: p.wholesale_min_qty, cost_price: p.cost_price, by: u.name }) });
             p.review = ap.request_id;
           }
+          if (useFor) p.use_for = useFor.json; // v63
           db.products.push(p);
           logAct(db, u, 'produk_baru', 'Produk baru: ' + name + ' (stok ' + fmtN(p.stock) + ' ' + p.unit + ')' + (ap ? ' — dibuat kasir saat barang masuk, menunggu cek' : ''), sku, 0, ap ? 'warn' : 'info');
           return Object.assign({ product: p }, ap ? { review_request_id: ap.request_id } : {});

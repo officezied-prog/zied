@@ -81,7 +81,7 @@ test('v39 no double recording: the same bulk repacked again within 2 h asks firs
   const db = await getDb(page);
   expect(productByName(db, /Kurma Rabia Curah/).stock).toBe(r3(bulk.stock - 2.5));
   const n = db.activity.filter(a => a.kind === 'notifikasi').slice(-1)[0];
-  expect(n).toMatchObject({ ref: 'owner', user: 'Jihan' }); // v50: started (the bulk is out); the result is confirmed afterwards
+  expect(n).toMatchObject({ ref: 'owner,akuntan', user: 'Jihan' }); // v50: started (the bulk is out); the result is confirmed afterwards
   expect(n.summary).toMatch(/^Mulai kemas ulang oleh manajer Jihan .*dikonfirmasi bukan kemas ulang ganda/);
 });
 
@@ -104,4 +104,38 @@ test('v39 a v38 request still pending: the bulk waits for it, and the accountant
   const db = await getDb(page);
   expect(productByName(db, /Kacang Mete Curah/).stock).toBe(r3(bulk.stock - 1));
   expect(db.repacks.slice(-1)[0]).toMatchObject({ requested_by: 'Siti', approved_by: 'Lestari' });
+});
+
+// v63 (owner 2026-10-20: «المدير → و المحاسب»): the accountant may confirm the packs made too — she has no stock screen, so the
+// started repacks wait for her on the approvals screen; a pack's packaging materials from goods-in are used up and shown.
+test('v63 the accountant confirms a started repack from her approvals screen; the sticker from goods-in is used up', async ({ page }) => {
+  await addAkuntan(page);
+  await asUser(page, 'Siti', '1111', 'bootstrap', {}); // (the demo's repack products are added on the first request)
+  const db0 = await getDb(page);
+  const bulk = productByName(db0, /Kacang Mete Curah/), pack = productByName(db0, /Kacang Mete Arab/);
+  const st = await asUser(page, 'Siti', '1111', 'save_product', { name: 'Stiker Mete', material: true, unit: 'pcs', cost_price: 250, from_goods_in: true, use_for: [{ pack_id: pack.id, qty: 1 }] });
+  expect(st.product.category).toBe('Bahan kemasan');
+  await editDb(page, `db.products.find(p => p.id === arg).stock = 50;`, st.product.id);
+  const rs = await asUser(page, 'Siti', '1111', 'repack_start', { client_id: cid(), from_product_id: bulk.id, to_product_id: pack.id, from_qty: 1, confirm_recent: true });
+  expect(rs.repack.planned_qty).toBe(4);
+  const told = (await getDb(page)).activity.filter(a => a.kind === 'notifikasi' && /Mulai kemas ulang oleh kasir Siti/.test(a.summary)).slice(-1)[0];
+  expect(told.ref).toBe('owner,manager,akuntan');
+  await staffSession(page, 'Lestari', '5555');
+  await expect(page.locator('#app')).toBeVisible();
+  await nav(page, 'approvals');
+  const row = page.locator(`#rp-open-body [data-rp-open="${rs.repack.repack_id}"]`);
+  await expect(row).toBeVisible();
+  await row.locator('[data-act="rp-fin"]').click();
+  await expect(page.locator('#rf-gmats')).toContainText('Stiker Mete: 4');
+  await page.fill('#rf-made', '3');
+  await expect(page.locator('#rf-gmats')).toContainText('Stiker Mete: 3');
+  await page.click('#rf-ok');
+  await expect(page.locator('#rp-fin-modal')).toHaveCount(0);
+  await expect(row).toHaveCount(0);
+  const db = await getDb(page);
+  expect(db.repacks.find(r => r.repack_id === rs.repack.repack_id)).toMatchObject({ status: 'selesai', to_qty: 3, confirmed_by: 'Lestari' });
+  expect(db.products.find(p => p.id === st.product.id).stock).toBe(47);
+  const fin = db.activity.filter(a => a.kind === 'notifikasi' && /dikonfirmasi akuntan Lestari/.test(a.summary));
+  expect(fin.map(a => a.ref).sort()).toEqual(['manager', 'owner']);
+  expect(fin.find(a => a.ref === 'owner').summary).toMatch(/bahan: Stiker Mete 3 — biaya per \w+: Rp [\d.]+ \(curah Rp [\d.]+, bahan Rp 250\)$/);
 });
