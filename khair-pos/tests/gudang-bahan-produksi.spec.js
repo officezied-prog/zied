@@ -222,7 +222,7 @@ test('Produksi stok: the range with its sources / results / materials, open + ca
   await expect(page.locator('#rp-bulk-q')).toBeFocused();
 });
 
-test('manager: no Impor; the bulk cost and the cost per pack only with the owner\'s cost setting; the accountant has no Gudang', async ({ page }) => {
+test('manager: no Impor; the bulk cost and the cost per pack only with the owner\'s cost setting; the accountant sees the two tabs only', async ({ page }) => {
   await openApp(page);
   await addAkuntan(page);
   await enterKey(page);
@@ -246,13 +246,24 @@ test('manager: no Impor; the bulk cost and the cost per pack only with the owner
   await page.click('#gd-tabs [data-tab="produksi"]');
   await expect(page.locator('#prd-table tbody tr[data-id]').first()).toBeVisible();
   await expect(page.locator('#prd-table th[data-col="cost"]')).toHaveCount(1); // v67: a repack's costs follow the owner's cost setting
-  // the accountant: Gudang is not one of her pages (unchanged), so neither tab is reachable
+  // v68 (owner 2026-10-20: «اجعل المحاسب يرى المواد الخام وإنتاج المخزون»): the accountant opens Gudang with these two tabs only
   await staffSession(page, 'Lestari', '5555');
   await expect(page.locator('#app')).toBeVisible();
-  await expect(page.locator('#nav [data-view="gudang"]')).toHaveCount(0);
+  await expect(page.locator('#nav [data-view="gudang"]')).toHaveCount(1);
   await page.evaluate(() => go('gudang'));
-  await expect(page.locator('#view-gudang')).toBeHidden();
-  await expect(page.locator('#view-reports')).toBeVisible();
+  await expect(page.locator('#view-gudang')).toBeVisible();
+  await expect(page.locator('#gd-tabs [data-tab]')).toHaveCount(2);
+  await expect(page.locator('#gd-tabs [data-tab="bahan"]')).toHaveClass(/on/);
+  await expect(bbRow(page, rabia.name)).toBeVisible();
+  await expect(bbRow(page, rabia.name).locator('[data-col="cost"]')).toHaveText(rp(rabia.cost_price)); // the owner's cost setting is on
+  await expect(page.locator('#bb-imp')).toHaveCount(0);
+  await expect(page.locator('#bb-add')).toHaveCount(0);
+  await page.click('#gd-tabs [data-tab="produksi"]');
+  await expect(page.locator('#prd-table tbody tr[data-id]').first()).toBeVisible();
+  await expect(page.locator('#prd-add')).toHaveCount(0);
+  await page.evaluate(() => { GD.tab = 'repack'; RENDER.gudang(); }); // a tab that is not hers falls back to hers
+  await expect(page.locator('#gd-tabs [data-tab="bahan"]')).toHaveClass(/on/);
+  await expect(page.locator('#rp-form')).toHaveCount(0);
 });
 
 test('Arabic: both tabs read in Arabic', async ({ page }) => {

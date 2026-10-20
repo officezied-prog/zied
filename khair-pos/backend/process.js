@@ -981,6 +981,80 @@ function allocStatus(amount, chk, docs) {
   if (chk.sum < amount) return 'lebih';
   return 'lunas';
 }
+/* v68 (owner 2026-10-20: «نعم يسجله الكاشير ويأخذ صورة للسيارة أو ما دفع له ويكتب التفاصيل بالوقت متى وكيف ولماذا دفع هذا المبلغ. يكتب في مصاريف
+   الكاشير التي دفعها وخرجت من الكاشير، ويقوم التطبيق بوضعها في المكان المناسب في الإدارة المالية»): cash the cashier paid from his own drawer
+   when the goods arrived is recorded with the goods-in note in the SAME save_purchase (one request, one D1 batch: all or nothing). Why decides
+   where it goes: the goods' price ('barang', cash on delivery) = a supplier payment (tunai, [dari kas]) allocated to the new note — a note
+   paid in full is 'lunas' at once but still waits for the manager's / accountant's confirmation, which then records no second payment;
+   a delivery fee, porters or anything else = a cashier expense from the drawer (as save_expense). Either way: the drawer's cash out + a
+   move, a photo (the car, the receipt or what was paid), the cashier's note, the time, one notice to the owner / manager / accountant;
+   the note keeps the summary (drawer_pay) for its history and its confirmation. */
+const DRAWER_PURPOSES = { barang: 'Bayar barang (ke pemasok/sopir)', ongkir: 'Ongkos kirim / sopir', kuli: 'Bongkar muat / kuli', lain: 'Lainnya' };
+const DRAWER_EXP_CAT = { ongkir: 'transport', kuli: 'transport', lain: 'lain' }; // the existing expense categories (save_expense)
+function drawerPayIn(x) {
+  if (!myShift) return { error: 'SHIFT_REQUIRED', message: 'Buka laci kasir (shift) dulu untuk mencatat uang yang keluar dari laci' };
+  const amount = money(x.amount), purpose = Object.prototype.hasOwnProperty.call(DRAWER_PURPOSES, x.purpose) ? x.purpose : '';
+  if (!(amount > 0)) return { error: 'INVALID', message: 'Jumlah yang dibayar dari laci tidak valid' };
+  if (!purpose) return { error: 'INVALID', message: 'Pilih untuk apa uang laci dibayar' };
+  const note = str(x.note).replace(/\s+/g, ' ').slice(0, 200);
+  if (!note) return { error: 'INVALID', message: 'Tulis kenapa / untuk apa uang laci dibayar' };
+  const photoId = str(x.photo_id).slice(0, 40);
+  if (!photoId) return { error: 'INVALID', message: 'Foto wajib: mobil, nota atau yang dibayar' };
+  const ph = rows('Get Pay Photo').find(function (r) { return r.photo_id === photoId; });
+  if (!ph || ['biaya', 'bayar'].indexOf(str(ph.kind)) < 0) return { error: 'INVALID', message: 'Foto pembayaran dari laci tidak ditemukan' };
+  const sup = str(data.supplier);
+  if (purpose === 'barang' && (!sup || INTERNAL_SUPPLIERS.indexOf(sup.toUpperCase()) >= 0)) return { error: 'INVALID', message: 'Nama pemasok wajib untuk bayar barang dari laci' };
+  return { amount: amount, purpose: purpose, note: note, photo_id: photoId };
+}
+/** Writes the drawer payment of the new note `no` (its lines are in ops.purchases): payment or expense, the shift, the note's summary. */
+function drawerPayApply(dp, no) {
+  const lines = ops.purchases.filter(function (r) { return r.purchase_no === no; });
+  const total = lines.reduce(function (a1, r) { return a1 + money(r.total); }, 0), known = lines.every(function (r) { return money(r.cost_price) > 0; });
+  if (dp.purpose === 'barang' && known && dp.amount > total) return { error: 'INVALID', message: 'Bayar barang dari laci ' + rpTxt(dp.amount) + ' melebihi total nota ' + rpTxt(total) };
+  const nowIso = new Date().toISOString(), today = jkDate(), sup = str(data.supplier), label = DRAWER_PURPOSES[dp.purpose];
+  const sh = Object.assign({}, myShift, { cash_out: money(myShift.cash_out) + dp.amount });
+  const info = { amount: dp.amount, purpose: dp.purpose, note: dp.note, by: me.name, at: nowIso, photo_id: dp.photo_id };
+  let pay = null, exp = null, full = false;
+  if (dp.purpose === 'barang') {
+    const alloc = Math.min(dp.amount, total);
+    full = total > 0 && alloc >= total;
+    pay = {
+      pay_id: 'PY' + rand(7), pay_date: today, pay_time: nowIso, direction: 'out', party_type: 'supplier', customer_id: 0, customer_name: '', supplier: sup,
+      amount: dp.amount, method: 'tunai', account_id: '', slip_date: '', bank: '', transfer_ref: '', proof_photo_id: dp.photo_id,
+      alloc: JSON.stringify(alloc > 0 ? [{ ref: no, amount: alloc }] : []), match_status: alloc <= 0 ? 'belum_dialokasi' : alloc < total ? 'sebagian' : alloc < dp.amount ? 'lebih' : 'lunas',
+      note: ('Barang masuk ' + no + ' dibayar tunai oleh kasir ' + me.name + ' [dari kas] | ' + dp.note).slice(0, 500), cashier: me.name
+    };
+    ops.payments.push(forWrite(pay, -1));
+    addMove(sh, 'out', dp.amount, 'Bayar pemasok ' + sup + ' (' + no + ')');
+    info.pay_id = pay.pay_id;
+    logAct('bayar_keluar', 'Bayar pemasok ' + sup + ' Rp ' + dp.amount + ' (tunai, dari kas ' + me.name + ' saat barang masuk) untuk ' + no + (alloc > 0 ? ' Rp ' + alloc : ' — belum dialokasi') + ' | ' + dp.note, pay.pay_id, dp.amount, 'info');
+  } else {
+    exp = {
+      expense_date: today, category: DRAWER_EXP_CAT[dp.purpose], amount: dp.amount, note: ('Barang masuk ' + no + ' — ' + label + ': ' + dp.note).slice(0, 500), user: me.name,
+      photo_id: dp.photo_id, paid_from: 'kas', lines: '', check_status: '', request_id: '', checked_by: ''
+    };
+    ops.expenses.push(forWrite(exp, -1));
+    addMove(sh, 'out', dp.amount, 'Pengeluaran ' + exp.category + ': ' + exp.note);
+    info.category = exp.category;
+    logAct('biaya', 'Pengeluaran ' + exp.category + ' Rp ' + dp.amount + ': ' + exp.note + ' (kas)', '', dp.amount, 'info');
+  }
+  ops.shifts.push(forWrite(sh, myShift.id));
+  const json = JSON.stringify(info);
+  lines.forEach(function (r) { r.drawer_pay = json; if (full) { r.pay_status = 'lunas'; r.pay_method = 'tunai'; r.paid_at = today; } });
+  notify(['owner', 'manager', 'akuntan'].filter(function (x) { return x !== role; }), 'Tunai dari laci ' + me.name + ' ' + rpTxt(dp.amount) + ' saat barang masuk ' + no + (sup ? ' dari ' + sup : '') +
+    ' — ' + label + ': "' + dp.note + '" (' + wibStamp(nowIso) + ', foto terlampir) — ' + (pay ? 'dicatat sebagai pembayaran ke pemasok' + (full ? ', nota lunas (tetap menunggu konfirmasi)' : total > 0 && dp.amount < total ? ', sisa ' + rpTxt(total - dp.amount) : '')
+    : 'dicatat sebagai pengeluaran ' + exp.category + ' dari laci'), 'info');
+  return { purpose: dp.purpose, amount: dp.amount, at: nowIso, full: full, payment: pay ? payOut(pay) : null, expense: exp ? Object.assign({ id: null }, exp) : null, shift: shiftOut(sh) };
+}
+/** The drawer payment a note's lines carry (v68), or null. */
+function drawerPayOf(lines) {
+  for (let i = 0; i < lines.length; i++) {
+    let o = null;
+    try { o = JSON.parse(str(lines[i].drawer_pay) || 'null'); } catch (e) { o = null; }
+    if (o && typeof o === 'object' && money(o.amount) > 0) return o;
+  }
+  return null;
+}
 function slipCheck(amount) {
   // A payment with a photographed slip must have the slip's amount (or a reason).
   if (!str(data.photo_id)) return null;
@@ -1524,7 +1598,13 @@ switch (req.action) {
     }
     // The cash drawer belongs to the cashier: only kasir accounts need an open shift (owner / manager sell without one).
     if (!myShift && role === 'kasir' && readSettings().require_shift !== false) return fail('SHIFT_REQUIRED', 'Buka kasir (shift) dulu');
-    const invoice = 'KM' + str(data.sale_date).replace(/-/g, '').slice(2) + '-' + rand(5);
+    // v68 (owner 2026-10-20: «every invoice should have number … date/month/years/ anytime minute and hours no space all/number of invoice
+    // this date/», his choice «20/10/2026/1542/12», counted for the whole store): DD/MM/YYYY/HHmm/N — the sale's day and time (Jakarta)
+    // and N = its number in that day, all cashiers together (a void keeps its number; the day's older KM… sales count too). Unique per
+    // day on the database itself (sale_date, day_seq): when two cashiers save at the same moment the Worker runs the later one again.
+    const dseq = rows('Get Day Seq')[0] || {}, daySeq = Math.max(num(dseq.mx), num(dseq.n)) + 1;
+    const hhmm = (function () { const t0 = Date.parse(str(data.sale_time)), d = new Date((isFinite(t0) ? t0 : Date.now()) + 7 * 3600000); return ('0' + d.getUTCHours()).slice(-2) + ('0' + d.getUTCMinutes()).slice(-2); })();
+    const sd = str(data.sale_date), invoice = sd.slice(8, 10) + '/' + sd.slice(5, 7) + '/' + sd.slice(0, 4) + '/' + hhmm + '/' + daySeq;
     const c = computeSale(invoice);
     if (c.error) return c.error;
     // Only goods already moved from the warehouse to the shelf can be sold (they came in with a supplier note first).
@@ -1581,7 +1661,7 @@ switch (req.action) {
     const exitRequired = c.total >= minTotal || c.lines.some(function (l) { return l.qty >= minQty; });
     const survey = Array.isArray(data.survey) && data.survey_consent === true ? data.survey.slice(0, 10).map(function (x) { return { q: str(x.q), a: str(x.a) }; }).filter(function (x) { return x.a; }) : [];
     const sale = {
-      invoice_no: invoice, sale_date: data.sale_date, sale_time: str(data.sale_time) || new Date().toISOString(),
+      invoice_no: invoice, day_seq: daySeq, sale_date: data.sale_date, sale_time: str(data.sale_time) || new Date().toISOString(),
       cashier: me.name, customer_id: c.customer ? c.customer.id : 0,
       customer_name: c.customer ? str(c.customer.name) : (str(data.customer_name) || 'Umum'),
       customer_type: c.customer ? str(c.customer.type) : (data.customer_type === 'grosir' ? 'grosir' : 'eceran'),
@@ -3139,16 +3219,20 @@ switch (req.action) {
     const kind = data.pay === 'tempo' ? 'tempo' : data.pay === 'lunas' ? 'lunas' : '';
     if (!kind) return fail('INVALID', 'Pilih: sudah dibayar, atau bayar nanti (tempo)');
     const today = jkDate(), nowIso = new Date().toISOString(), total = lines.reduce(function (a1, r) { return a1 + money(r.total); }, 0);
+    // v68: the cashier paid the goods in cash from his drawer when they arrived — a note paid in full is confirmed "paid", never twice
+    const cod = drawerPayOf(lines), codDoc = cod && cod.purpose === 'barang' ? partyDocs('supplier', sup, '')[no] : null;
+    const codFull = !!codDoc && codDoc.total > 0 && codDoc.remaining <= 0;
+    if (codFull && kind === 'tempo') return fail('INVALID', 'Nota ' + no + ' sudah dibayar tunai oleh kasir ' + str(cod.by) + ' ' + rpTxt(cod.amount) + ' — pilih "Sudah dibayar"');
     let due = '', method = '', pay = null, fromKas = false, before = false;
     if (kind === 'tempo') {
       due = str(data.due_date);
       const maxDue = new Date(Date.parse(today) + 180 * 86400000).toISOString().slice(0, 10);
       if (!isDate(due) || due < today || due > maxDue) return fail('INVALID', 'Tanggal bayar yang disepakati: hari ini sampai 180 hari lagi');
     } else {
-      method = ['tunai', 'transfer', 'qris'].indexOf(data.method) >= 0 ? data.method : '';
+      method = codFull ? 'tunai' : ['tunai', 'transfer', 'qris'].indexOf(data.method) >= 0 ? data.method : '';
       if (!method) return fail('INVALID', 'Pilih cara bayar: tunai, transfer atau QRIS');
-      before = data.paid_before === true; // v66: paid and recorded earlier (a note from before the confirmation existed): no second payment
-      fromKas = !before && data.paid_from === 'kas' && method === 'tunai';
+      before = !codFull && data.paid_before === true; // v66: paid and recorded earlier (a note from before the confirmation existed): no second payment
+      fromKas = !codFull && !before && data.paid_from === 'kas' && method === 'tunai';
       if (fromKas && !myShift) return fail('SHIFT_REQUIRED', 'Buka kasir (shift) dulu untuk bayar dari kas');
       if (!before && dupRef(data.transfer_ref)) return fail('INVALID', 'Nomor transfer ini sudah pernah dipakai: ' + str(data.transfer_ref));
       const docs = partyDocs('supplier', sup, ''), doc = docs[no], amount = before ? 0 : doc ? doc.remaining : total;
@@ -3171,11 +3255,11 @@ switch (req.action) {
       }
     }
     lines.forEach(function (r) {
-      ops.purchases.push(forWrite(Object.assign({}, r, { check_status: 'dikonfirmasi', checked_by: me.name, checked_at: nowIso, pay_status: kind, pay_method: method, due_date: due, paid_at: kind === 'lunas' ? today : '' }), r.id));
+      ops.purchases.push(forWrite(Object.assign({}, r, { check_status: 'dikonfirmasi', checked_by: me.name, checked_at: nowIso, pay_status: kind, pay_method: method, due_date: due, paid_at: kind === 'lunas' ? (codFull && str(r.paid_at) ? str(r.paid_at) : today) : '' }), r.id));
     });
     const who = (role === 'owner' ? 'pemilik ' : role === 'manager' ? 'manajer ' : 'akuntan ') + me.name;
     const txt = 'Barang masuk ' + no + ' dari ' + sup + ' (' + str(lines[0].purchase_date) + ', diterima ' + str(lines[0].user) + ', ' + rpTxt(total) + ') dikonfirmasi ' + who + ': ' +
-      (kind === 'tempo' ? 'BAYAR NANTI — jatuh tempo ' + due + ' (hutang ke pemasok)' : 'sudah dibayar ' + method + (fromKas ? ' dari kas' : '') + (pay ? ' ' + rpTxt(pay.amount) + (pay.bank ? ' ' + pay.bank : '') + (pay.transfer_ref ? ' ref ' + pay.transfer_ref : '') : before ? ' (dibayar sebelumnya, tanpa pembayaran baru)' : ' (sudah lunas sebelumnya)')) +
+      (kind === 'tempo' ? 'BAYAR NANTI — jatuh tempo ' + due + ' (hutang ke pemasok)' : 'sudah dibayar ' + method + (fromKas ? ' dari kas' : '') + (pay ? ' ' + rpTxt(pay.amount) + (pay.bank ? ' ' + pay.bank : '') + (pay.transfer_ref ? ' ref ' + pay.transfer_ref : '') : codFull ? ' oleh kasir ' + str(cod.by) + ' ' + rpTxt(cod.amount) + ' dari laci saat barang masuk (tanpa pembayaran baru)' : before ? ' (dibayar sebelumnya, tanpa pembayaran baru)' : ' (sudah lunas sebelumnya)')) +
       (str(data.note) ? ' | ' + str(data.note).slice(0, 200) : '');
     logAct('konfirmasi_masuk', txt, no, total, 'info');
     notify(['owner', 'manager', 'akuntan'].filter(function (x) { return x !== role; }), txt, kind === 'tempo' ? 'warn' : 'info');
@@ -3674,7 +3758,10 @@ switch (req.action) {
     // Who brought the goods: public transport (+ its number), a friend (name), the supplier's driver or our staff.
     const carrier = readCarrier(data.carrier, readSettings().require_carrier !== false);
     if (carrier.error) return fail('CARRIER_REQUIRED', carrier.error);
-    const date = isDate(data.purchase_date) ? data.purchase_date : new Date().toISOString().slice(0, 10);
+    // v68: cash paid from the cashier's drawer at delivery (checked before anything is saved; written below with the note)
+    const drawerPay = data.drawer_pay && typeof data.drawer_pay === 'object' ? drawerPayIn(data.drawer_pay) : null;
+    if (drawerPay && drawerPay.error) return fail(drawerPay.error, drawerPay.message);
+    const date = isDate(data.purchase_date) ? data.purchase_date : jkDate(); // (Jakarta's day, like every other default — not UTC's)
     const photoId = str(data.photo_id);
     if (photoId) {
       const ph = rows('Get Photo').find(function (x) { return x.photo_id === photoId; });
@@ -3740,6 +3827,7 @@ switch (req.action) {
     const sumTotal = ops.purchases.reduce(function (a1, r) { return a1 + money(r.total); }, 0);
     logAct('masuk', 'Barang masuk ' + purchaseNo + (str(data.supplier) ? ' dari ' + str(data.supplier) : '') + ': ' + items.length + ' baris, Rp ' + sumTotal + ' — nota: ' + match.status + (matchNotes ? ' (' + matchNotes + ')' : '') + (carrier.type ? ' — dibawa ' + ({ umum: 'kendaraan umum', teman: 'teman', pemasok: 'sopir pemasok', karyawan: 'karyawan' })[carrier.type] + (carrier.name ? ' ' + carrier.name : '') + (carrier.vehicle ? ' ' + carrier.vehicle : '') : ''), purchaseNo, sumTotal, match.status === 'cocok' ? 'info' : 'warn');
     const outResp = { ok: true, stock: stockOut, purchase_no: purchaseNo, match: match };
+    if (drawerPay) { const dpr = drawerPayApply(drawerPay, purchaseNo); if (dpr.error) return fail(dpr.error, dpr.message); outResp.drawer_pay = dpr; } // v68
     // v29 (owner 2026-10-10): when the receiver's counted quantities differ from the photographed invoice,
     // the stock is still recorded at the counted quantity (the goods are physically here), AND a goods-in
     // mismatch review is raised to the manager OR accountant (mgr_akuntan). The owner is notified.
@@ -4002,7 +4090,8 @@ switch (req.action) {
       items: rows('Get Range Items').map(function (r) { return strip(r, role); }),
       payments: rows('Get Range Payments').map(clean),
       // v50 / v59: the note totals reach the owner, the manager and the accountant (noteTotalOk); unit costs follow strip()
-      purchases: rows('Get Range Purchases').map(function (r) { const o = strip(r, role); if (!noteTotalOk()) delete o.total; return o; }),
+      // v68: a cashier sees another cashier's cash-on-delivery payment without its amount (it is the note's total)
+      purchases: rows('Get Range Purchases').map(function (r) { const o = strip(r, role); if (!noteTotalOk()) { delete o.total; const dp = drawerPayOf([o]); if (dp && dp.purpose === 'barang' && str(dp.by).toLowerCase() !== me.name.toLowerCase()) { delete dp.amount; o.drawer_pay = JSON.stringify(dp); } } return o; }),
       expenses: rows('Get Range Expenses').map(clean),
       shifts: rows('Get Range Shifts').map(clean),
       repacks: rows('Get Range Repacks').map(repackOut)

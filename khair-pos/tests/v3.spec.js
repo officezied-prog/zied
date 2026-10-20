@@ -11,7 +11,7 @@ test('manager requests a void → cannot decide her own request → owner approv
   const p = productByName(await getDb(page), /Kacang Almond/);
   await addBySearch(page, 'almond');
   await checkoutSkip(page);
-  const inv = (await page.locator('.modal #receipt').innerText()).match(/KM\d{6}-\d{4}/)[0];
+  const inv = (await page.locator('.modal #receipt').innerText()).match(/\d{2}\/\d{2}\/\d{4}\/\d{4}\/\d+/)[0];
   await closeModals(page);
   await nav(page, 'history');
   await page.click('[data-act="hist-load"]');

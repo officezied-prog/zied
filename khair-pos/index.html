@@ -155,7 +155,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.1.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -449,8 +449,8 @@ const isApprover = () => S.role === 'owner' || S.role === 'manager';
 const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
 // v36 (owner 2026-10-11: "the visits table … a copy for the manager, the accountant and the owner"): + the field page, read-only
-const AUDIT_VIEWS = ['reports', 'finance', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'invchg', 'approvals', 'shoplist', 'field', 'settings'];
-const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|printer-open|scanner-open|pu-confirm|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*|fin-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
+const AUDIT_VIEWS = ['reports', 'finance', 'gudang', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'invchg', 'approvals', 'shoplist', 'field', 'settings'];
+const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|printer-open|scanner-open|pu-confirm|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*|fin-.*|gd-tab|gd-refresh)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
@@ -1743,7 +1743,7 @@ function receiptLinesHTML(rc) {
     <div class="ln"></div>
     ${rc.status === 'void' ? `<div class="stamp">${esc(t('rc.void'))}</div>` : ''}
     ${rc.pending ? `<div class="stamp">${esc(t('rc.pending'))}</div>` : ''}
-    <div class="r2"><span>${esc(t('rc.no'))}</span><span class="b">${esc(rc.invoice_no)}</span></div>
+    <div class="r2"><span>${esc(t('rc.no'))}</span><span class="b" data-rc-no>${esc(rc.invoice_no)}${rc.cashier && rc.invoice_no ? ` · ${esc(rc.cashier)}` : ''}</span></div>
     <div class="r2"><span>${esc(t('rc.date'))}</span><span>${esc(fmtDateTime(rc.sale_time, rc.sale_date))}</span></div>
     <div class="r2"><span>${esc(t('rc.cashier'))}</span><span>${esc(rc.cashier)}</span></div>
     <div class="r2"><span>${esc(t('rc.customer'))}</span><span>${esc(rc.customer_name)}</span></div>
@@ -5732,6 +5732,8 @@ let resizeT; window.addEventListener('resize', () => { clearTimeout(resizeT); re
    computed backwards from the current stock. Expiry uses purchase rows with exp_date (last 12 months) and assumes
    the current stock consists of the most recent purchases (FIFO). */
 const GD = { group: store.get('gd_group', '') || '', tab: 'overview', q: '', cat: '', status: '', sort: 'name', expMax: 60, d30: null, d30At: 0, year: null, yearAt: 0, yearP: null, gen: 0, bootAt: 0, err: '', result: '' };
+// v68 (owner 2026-10-20: «اجعل المحاسب يرى المواد الخام وإنتاج المخزون»): the accountant opens Gudang with these two tabs only
+const gdTabs = () => (isAudit() ? ['bahan', 'produksi'] : GD_TABS);
 const GD_TTL = 5 * 60000, GD_TABS = ['overview', 'list', 'sold', 'expiry', 'repack', 'bahan', 'produksi', 'opname'], GD_STATUS = ['', 'menipis', 'habis', 'lebih', 'kedaluwarsa', 'rak_kosong'];
 const GDO = Object.assign({ lines: [], note: '', show: false }, store.get('gd_opname', null) || {});
 const saveGdo = () => store.set('gd_opname', { lines: GDO.lines, note: GDO.note, show: GDO.show });
@@ -5812,10 +5814,10 @@ RENDER.cold = function () {
   host.querySelector('iframe').dataset.user = S.user;
 };
 RENDER.gudang = function () {
-  if (!isApprover()) { go('pos'); return; }
-  if (!GD_TABS.includes(GD.tab)) GD.tab = 'overview';
+  if (!isApprover() && !isAudit()) { go('pos'); return; }
+  if (!gdTabs().includes(GD.tab)) GD.tab = gdTabs()[0];
   $('#view-gudang').innerHTML = `<div class="view-head"><h1>${esc(t('nav.gudang'))}</h1><button class="btn sm" data-act="gd-refresh">${ic('refresh')} ${esc(t('refresh'))}</button></div>
-    <div class="chips gd-tabs" role="tablist" id="gd-tabs">${GD_TABS.map(k => `<button class="chip ${GD.tab === k ? 'on' : ''}" role="tab" aria-selected="${GD.tab === k}" data-act="gd-tab" data-tab="${k}">${esc(t('gd.tab_' + k))}${k === 'opname' && GDO.lines.length ? ` <span class="gd-n">${GDO.lines.length}</span>` : ''}</button>`).join('')}</div>
+    <div class="chips gd-tabs" role="tablist" id="gd-tabs">${gdTabs().map(k => `<button class="chip ${GD.tab === k ? 'on' : ''}" role="tab" aria-selected="${GD.tab === k}" data-act="gd-tab" data-tab="${k}">${esc(t('gd.tab_' + k))}${k === 'opname' && GDO.lines.length ? ` <span class="gd-n">${GDO.lines.length}</span>` : ''}</button>`).join('')}</div>
     <div id="gd-body"></div>`;
   gdDraw(true);
   gdLoad();
@@ -5832,6 +5834,7 @@ async function gdLoad(force) {
       if (seq !== gdSeq) return;
       gdDraw();
     }
+    if (isAudit()) return; // v68: her two tabs (Bahan baku, Produksi stok) read their own data
     if (!GD.d30 || Date.now() - GD.d30At > GD_TTL) {
       const gen = GD.gen, d = await loadSales(addDays(T, -29), T, !force);
       if (seq !== gdSeq) return;
@@ -6188,7 +6191,7 @@ async function gudangAttention() {
 }
 Object.assign(ACT, {
   'gd-refresh': () => gdLoad(true),
-  'gd-tab': el => { GD.tab = el.dataset.tab; GD.result = GD.tab === 'opname' ? GD.result : ''; RENDER.gudang(); },
+  'gd-tab': el => { if (!gdTabs().includes(el.dataset.tab)) return; GD.tab = el.dataset.tab; GD.result = GD.tab === 'opname' ? GD.result : ''; RENDER.gudang(); },
   'gd-filter': el => { GD.tab = 'list'; GD.status = el.dataset.status || ''; RENDER.gudang(); },
   'gd-status': el => { GD.status = el.dataset.status || ''; gdDrawListRows(); },
   'gd-cat': el => { GD.tab = 'list'; GD.cat = el.dataset.cat || ''; GD.status = ''; RENDER.gudang(); },
@@ -7518,6 +7521,7 @@ Object.assign(ACT, {
     const r = (S.repacksOpen || []).find(x => x.repack_id === el.dataset.id);
     closeModal(true);
     if (!r) { toast(t('prd.gone'), 'warn'); return; }
+    if (isAudit()) { go('approvals'); return; } // v68: the accountant confirms the packs made from her approvals screen (#rp-open)
     prdToRepack(() => openRepackFinish(r)); // confirmed there: the result shows on the Kemas ulang tab
   }
 });
@@ -7644,6 +7648,7 @@ function purchaseNotes(purchases) {
     // v50: no total from the server = hidden for this account, never "Rp 0" (v59: the owner, manager and accountant always get it)
     n.rows.push(r); n.total += int(r.total); if (r.total === undefined || r.total === null) n.hidden = true; n.id = Math.max(n.id, num(r.id));
     if (r.check_status && !n.check) n.check = { by: r.checked_by, at: r.checked_at, pay: r.pay_status, method: r.pay_method, due: r.due_date, paid_at: r.paid_at }; // v65
+    if (r.drawer_pay && !n.dp) { n.dp = puDrawerOf(r.drawer_pay); if (r.pay_status === 'lunas') n.dpFull = true; } // v68
     if (r.match_status === 'koreksi') n.fixed = true;
     else { if (!n.date || r.purchase_date < n.date) n.date = r.purchase_date; n.status = r.match_status || n.status || (r.photo_id ? '' : 'tanpa_foto'); n.notes = r.match_notes || n.notes; n.user = r.user || n.user; }
   });
@@ -7661,7 +7666,7 @@ function drawPurchaseHistory() {
   el.innerHTML = notes.length ? `<div class="tbl-wrap"><table class="tbl" id="pu-hist"><thead><tr><th>${esc(t('date'))}</th><th>${esc(t('pu.no'))}</th><th>${esc(t('pu.supplier'))}</th><th class="hide-phone">${esc(t('items'))}</th><th class="r">${esc(t('total'))}</th><th>${esc(t('status'))}</th><th></th></tr></thead><tbody>
     ${notes.map(n => `<tr data-no="${esc(n.no)}"><td class="num">${esc(fmtDate(n.date))}</td><td class="small"><b>${esc(n.no || '—')}</b></td><td>${esc(n.supplier || '—')}${n.carrier ? `<div class="small muted" data-carrier>${ic('truck')} ${esc(n.carrier)}</div>` : ''}</td>
       <td class="hide-phone small">${noteProducts(n).slice(0, 4).map(a => `${esc(a.name)} <b class="num">×${fmtQty(a.qty)}</b>`).join(', ')}${noteProducts(n).length > 4 ? ' …' : ''}</td>
-      <td class="r num">${n.hidden ? `<span class="muted" data-cost-hidden title="${esc(t('pu.cost_hidden_hint'))}">${esc(t('pu.cost_hidden'))}</span>` : fmtRp(n.total)}</td><td>${matchBadge(n.status)}${n.fixed ? ' ' + matchBadge('koreksi') : ''}${puCheckHTML(n)}${n.notes && n.status === 'tidak_cocok' ? `<div class="small muted">${esc(n.notes)}</div>` : ''}</td>
+      <td class="r num">${n.hidden ? `<span class="muted" data-cost-hidden title="${esc(t('pu.cost_hidden_hint'))}">${esc(t('pu.cost_hidden'))}</span>` : fmtRp(n.total)}</td><td>${matchBadge(n.status)}${n.fixed ? ' ' + matchBadge('koreksi') : ''}${puCheckHTML(n)}${puDrawerBadge(n)}${n.notes && n.status === 'tidak_cocok' ? `<div class="small muted">${esc(n.notes)}</div>` : ''}</td>
       <td class="r" style="white-space:nowrap">${n.no && n.status !== 'retur' && isApprover() && !isOwner() ? `<button class="btn xs" data-act="pu-fix" data-no="${esc(n.no)}">${ic('edit')} ${esc(t('fix.button'))}</button> <button class="btn xs" data-act="pu-retur" data-no="${esc(n.no)}">${ic('return')} ${esc(t('rt.btn'))}</button>` : ''}${n.no ? ` <button class="btn xs" data-act="pu-doc" data-no="${esc(n.no)}">${ic('print')} ${esc(t('doc.goods_in'))}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
     <p class="small muted">${esc(t('pu.locked_hint'))}${notes.some(n => n.hidden) ? ' ' + esc(t('pu.cost_hidden_hint')) : ''}</p>` : `<div class="muted">${esc(t('no_data'))}</div>`;
 }
@@ -7686,10 +7691,10 @@ function openPurchaseConfirm(no) {
   const n = PH.data && purchaseNotes(PH.data.purchases).find(x => x.no === no); if (!n) return;
   const shiftOpen = !!(S.shift && S.shift.status === 'open'), due0 = new Date(Date.parse(today()) + int(settings().invoice_due_days || 14) * 86400000).toISOString().slice(0, 10);
   const el = openModal({
-    title: `${t('pc.title')} · ${no}`, id: 'pc-modal',
+    title: `${t('pcf.title')} · ${no}`, id: 'pc-modal',
     body: `<p style="margin-top:0"><b>${esc(n.supplier || '—')}</b> · ${esc(fmtDate(n.date))}${n.user ? ' · ' + esc(t('pc.received_by', { name: n.user })) : ''}<br>
         <span class="small">${esc(t('items'))}: ${noteProducts(n).map(a => `${esc(a.name)} ×${fmtQty(a.qty)}`).join(', ')}</span>${n.hidden ? '' : `<br><b class="num" id="pc-total">${fmtRp(n.total)}</b>`}</p>
-      <p class="small muted">${esc(t('pc.hint'))}</p>
+      ${pcDrawerHTML(n)}<p class="small muted">${esc(t('pcf.hint'))}</p>
       <div class="seg" id="pc-kind" role="radiogroup" style="margin-bottom:10px"><button type="button" data-k="lunas" id="pc-k-lunas" class="on">${esc(t('pc.k_paid'))}</button><button type="button" data-k="tempo" id="pc-k-tempo">${esc(t('pc.k_later'))}</button></div>
       <div id="pc-paid">
         <div class="field"><label class="f">${esc(t('pc.method'))}</label><div class="seg" id="pc-m">${['tunai', 'transfer', 'qris'].map((m, i) => `<button type="button" data-m="${m}" class="${i === 1 ? 'on' : ''}">${esc(t('pm.' + m))}</button>`).join('')}</div></div>
@@ -7700,15 +7705,17 @@ function openPurchaseConfirm(no) {
       <div id="pc-later" hidden><div class="field"><label class="f" for="pc-due">${esc(t('pc.due'))} *</label><input class="input" type="date" id="pc-due" min="${today()}" value="${esc(due0)}" style="max-width:200px"></div></div>
       <div class="field"><label class="f" for="pc-note">${esc(t('notes'))}</label><input class="input" id="pc-note" maxlength="200" autocomplete="off"></div>
       <div class="red" id="pc-err" role="alert"></div>`,
-    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="pc-ok">${ic('check')} ${esc(t('pc.save'))}</button>`
+    foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary" id="pc-ok">${ic('check')} ${esc(t('pcf.save'))}</button>`
   });
-  let kind = 'lunas', method = 'transfer';
+  const codFull = pcCodFull(n); // v68: paid in full from the cashier's drawer at delivery
+  let kind = 'lunas', method = codFull ? 'tunai' : 'transfer';
   const sync = () => {
     $$('#pc-kind [data-k]', el).forEach(b => b.classList.toggle('on', b.dataset.k === kind));
     $$('#pc-m [data-m]', el).forEach(b => b.classList.toggle('on', b.dataset.m === method));
     $('#pc-paid', el).hidden = kind !== 'lunas'; $('#pc-later', el).hidden = kind !== 'tempo';
     const before = $('#pc-before', el).checked;
     $('#pc-kas-row', el).hidden = method !== 'tunai' || before; $('#pc-tf', el).hidden = method === 'tunai' || before;
+    if (codFull) pcCodSync(el);
   };
   $('#pc-before', el).onchange = sync;
   $$('#pc-kind [data-k]', el).forEach(b => b.onclick = () => { kind = b.dataset.k; sync(); });
@@ -7731,6 +7738,58 @@ function openPurchaseConfirm(no) {
     } catch (x) { err.textContent = errMsg(x); btn.disabled = false; }
   };
 }
+/* v68 (owner 2026-10-20: «نعم يسجله الكاشير ويأخذ صورة للسيارة أو ما دفع له ويكتب التفاصيل بالوقت متى وكيف ولماذا دفع هذا المبلغ. يكتب في مصاريف
+   الكاشير التي دفعها وخرجت من الكاشير، ويقوم التطبيق بوضعها في المكان المناسب في الإدارة المالية»): cash the cashier paid from his drawer when the
+   goods arrived (Khair Kasir, goods-in "Dibayar dari laci kasir"). The note carries it (drawer_pay): a badge "Tunai dari laci" in the history
+   (its photo opens in the photo viewer) and, in the confirmation, who paid how much, why, when and the note. A note paid in full that way is
+   confirmed "Sudah dibayar" only — no second payment (the server refuses "tempo" too); a part paid leaves the rest; a delivery fee /
+   porters were a cashier expense, so the goods' payment is still chosen as usual. */
+const DP_EXP_CAT_O = { ongkir: 'transport', kuli: 'transport', lain: 'lain' };
+function puDrawerOf(s) { try { const o = typeof s === 'string' ? JSON.parse(s || 'null') : s; return o && typeof o === 'object' && o.purpose ? o : null; } catch (e) { return null; } }
+const pcCodFull = n => !!(n && n.dp && n.dp.purpose === 'barang' && n.dpFull);
+function puDrawerBadge(n) {
+  const d = n.dp; if (!d) return '';
+  return ` <span class="badge ${pcCodFull(n) ? 'green' : 'amber'}" data-dp="${esc(d.purpose)}" title="${esc([t('pd.p_' + d.purpose), d.note, d.by, d.at ? fmtDateTime(d.at) : ''].filter(Boolean).join(' · '))}">${ic('cash')} ${esc(d.amount != null ? t('pd.badge', { amount: fmtRp(d.amount) }) : t('pd.badge_n'))}</span>${d.photo_id ? ` <button type="button" class="linkbtn small" data-act="photo-view" data-photo="${esc(d.photo_id)}" data-dp-photo>📷</button>` : ''}`;
+}
+function pcDrawerHTML(n) {
+  const d = n.dp; if (!d) return '';
+  const full = pcCodFull(n), goods = d.purpose === 'barang', rest = goods && !full && !n.hidden && d.amount != null ? Math.max(0, n.total - int(d.amount)) : null;
+  const what = goods ? (full ? t('pd.full') : rest != null ? t('pd.part', { rest: fmtRp(rest) }) : t('pd.part_n')) : t('pd.exp', { cat: t('excat.' + (d.category || DP_EXP_CAT_O[d.purpose] || 'lain')) });
+  return `<div class="exit-box ${full ? 'cocok' : 'perlu_cek'}" id="pc-cod" data-full="${full ? 1 : 0}" data-purpose="${esc(d.purpose)}">
+    <div class="st" style="font-size:16px">${ic('cash')} ${esc(t('pd.head', { name: d.by || '—', amount: d.amount != null ? fmtRp(d.amount) : '' }))}</div>
+    <div class="small"><b>${esc(t('pd.p_' + d.purpose))}</b>${d.at ? ' · ' + esc(fmtDateTime(d.at)) : ''}${d.note ? ` · “${esc(d.note)}”` : ''}</div>
+    <div class="small" id="pc-cod-what" style="margin-top:4px">${esc(what)}</div>
+    ${d.photo_id ? `<button type="button" class="linkbtn" data-act="photo-view" data-photo="${esc(d.photo_id)}" id="pc-cod-photo">📷 ${esc(t('photo.open'))}</button>` : ''}</div>`;
+}
+/** Paid in full from the drawer: "Sudah dibayar" (tunai) is the only answer — no method, no "from my drawer", no "tempo". */
+function pcCodSync(el) {
+  const tm = $('#pc-k-tempo', el); if (tm) { tm.disabled = true; tm.title = t('pd.no_tempo'); tm.style.opacity = '.45'; tm.style.cursor = 'not-allowed'; }
+  const m = $('#pc-m', el); if (m && m.closest('.field')) m.closest('.field').hidden = true;
+  ['#pc-before-row', '#pc-kas-row', '#pc-tf'].forEach(id => { const x = $(id, el); if (x) x.hidden = true; });
+}
+Object.assign(I18N.id, {
+  'pd.badge': 'Tunai dari laci {amount}', 'pd.badge_n': 'Tunai dari laci',
+  'pd.p_barang': 'Bayar barang (ke pemasok/sopir)', 'pd.p_ongkir': 'Ongkos kirim / sopir', 'pd.p_kuli': 'Bongkar muat / kuli', 'pd.p_lain': 'Lainnya',
+  'pd.head': 'Dibayar tunai oleh kasir {name} {amount} dari laci',
+  'pd.full': 'Nota ini sudah lunas dari laci kasir saat barang datang — konfirmasi sebagai "Sudah dibayar"; tidak ada pembayaran kedua.',
+  'pd.part': 'Sebagian harga barang dari laci kasir — sisa {rest}: pilih cara bayarnya atau tanggal bayar.', 'pd.part_n': 'Sebagian harga barang dari laci kasir — pilih cara bayar sisanya atau tanggal bayar.',
+  'pd.exp': 'Bukan harga barang: sudah dicatat sebagai pengeluaran kasir dari laci ({cat}). Pilih cara bayar barangnya seperti biasa.',
+  'pd.no_tempo': 'Sudah dibayar tunai dari laci kasir',
+  // the confirmation's own title / hint / button: 'pc.title', 'pc.hint' and 'pc.save' are also the PIN-change screen's (defined later, they won)
+  'pcf.title': 'Konfirmasi barang masuk', 'pcf.save': 'Konfirmasi',
+  'pcf.hint': 'Barang sudah dicek oleh penerima. Tulis apakah sudah dibayar dan caranya, atau tanggal bayar yang disepakati (jadi hutang ke pemasok). Pemilik diberi tahu.'
+});
+Object.assign(I18N.ar, {
+  'pd.badge': 'نقدًا من الدرج {amount}', 'pd.badge_n': 'نقدًا من الدرج',
+  'pd.p_barang': 'ثمن البضاعة (للمورد/السائق)', 'pd.p_ongkir': 'أجرة التوصيل / السائق', 'pd.p_kuli': 'التحميل والتفريغ / العتّالون', 'pd.p_lain': 'أخرى',
+  'pd.head': 'دفعه الكاشير {name} نقدًا {amount} من الدرج',
+  'pd.full': 'هذه الفاتورة دُفعت بالكامل من درج الكاشير عند وصول البضاعة — صدّقها على أنها «مدفوعة»؛ لا تُسجَّل دفعة ثانية.',
+  'pd.part': 'جزء من ثمن البضاعة من درج الكاشير — الباقي {rest}: اختر طريقة دفعه أو تاريخ الدفع.', 'pd.part_n': 'جزء من ثمن البضاعة من درج الكاشير — اختر طريقة دفع الباقي أو تاريخ الدفع.',
+  'pd.exp': 'ليس ثمن البضاعة: سُجّل مصروفًا للكاشير من الدرج ({cat}). اختر طريقة دفع البضاعة كالمعتاد.',
+  'pd.no_tempo': 'دُفعت نقدًا من درج الكاشير',
+  'pcf.title': 'تصديق البضاعة الواردة', 'pcf.save': 'تصديق',
+  'pcf.hint': 'البضاعة دقّقها المستلم. اكتب هل تم الدفع وبأي وسيلة، أو تاريخ الدفع المتفق عليه (تصبح دينًا للمورد). يُبلَّغ المالك.'
+});
 function openPurchaseFix(no) {
   const n = PH.data && purchaseNotes(PH.data.purchases).find(x => x.no === no); if (!n) return;
   const own = isOwner(), prods = noteProducts(n);
@@ -11094,7 +11153,7 @@ function ntServerRowHTML(a) {
   const id = 'a:' + a.act_id;
   return `<div class="li nt-li" data-nt-row="${esc(id)}" style="min-height:0;padding:8px 12px"><span class="badge ${a.level === 'warn' ? 'amber' : 'blue'}">!</span><div class="grow"><div class="t" style="font-weight:600">${esc(a.summary)}</div><div class="s">${esc(fmtDateTime(a.at))} · ${esc(a.user)}</div></div>${ntActs(id, ntActInfo(a))}</div>`;
 }
-const NT_DOC_RE = /\b(?:KM\d{6}-[A-Z0-9]{3,}|PB-[A-Z0-9-]{4,}|[A-Z]{2,4}-\d[\w-]{2,})\b/;
+const NT_DOC_RE = /\b(?:\d{2}\/\d{2}\/\d{4}\/\d{4}\/\d+|KM\d{6}-[A-Z0-9]{3,}|PB-[A-Z0-9-]{4,}|[A-Z]{2,4}-\d[\w-]{2,})\b/;
 function ntActInfo(a) {
   const roleRef = /^(owner|manager|kasir|sales|akuntan)(,|$)/.test(String(a.ref || ''));
   const m = NT_DOC_RE.exec(String(a.summary || ''));
@@ -11302,7 +11361,7 @@ function gsLinesHTML(r) {
   return `<tr class="gs-lines" data-lines="${esc(r.k)}"><td colspan="6" style="padding:4px 8px 12px;background:var(--bg2,rgba(10,125,75,.05))">
     <div class="small muted" style="margin:4px 0 6px" data-split>${esc(t('gs.split', { e: `${fmtQty(r.ecer)} ${r.unit}`.trim(), g: `${fmtQty(r.gros)} ${r.unit}`.trim() }))}${r.hasLaba && canSeeCost() ? ` · ${esc(t('gs.sum_profit'))}: <b class="num">${fmtRp(r.laba)}</b>` : ''}</div>
     ${r.lines.length ? `<div class="tbl-wrap"><table class="tbl" data-lines-table="${esc(r.k)}"><thead><tr><th>${esc(t('gs.l_when'))} · ${esc(t('gs.l_inv'))}</th><th class="r">${esc(t('gs.l_qty'))}</th><th class="r">${esc(t('gs.l_total'))}</th><th class="hide-phone">${esc(t('gs.l_who'))}</th></tr></thead><tbody>
-      ${r.lines.slice(0, max).map(l => `<tr data-line="${esc(l.inv)}"><td><div class="num" style="white-space:nowrap">${esc(l.at ? fmtDateTime(l.at, l.date) : fmtDate(l.date))}</div><div class="small muted num">${esc(l.inv)}${l.pt === 'grosir' ? ` <span class="badge blue">${esc(t('grosir'))}</span>` : ''}</div></td>
+      ${r.lines.slice(0, max).map(l => `<tr data-line="${esc(l.inv)}"><td><div class="num" style="white-space:nowrap">${esc(l.at ? fmtDateTime(l.at, l.date) : fmtDate(l.date))}</div><div class="small muted num" style="white-space:normal;overflow-wrap:anywhere">${esc(l.inv)}${l.pt === 'grosir' ? ` <span class="badge blue">${esc(t('grosir'))}</span>` : ''}</div></td>
         <td class="r num" data-col="qty"><b>${fmtQty(l.qty)}</b> <span class="small muted">${esc(r.unit)}</span></td><td class="r num" data-col="total">${fmtRp(l.total)}<div class="small muted">@ ${fmtRp(l.price)}</div></td><td class="small hide-phone">${esc([l.cashier, l.cust].filter(Boolean).join(' · '))}</td></tr>`).join('')}</tbody></table></div>
       ${more > 0 ? `<div class="small muted" style="margin-top:4px">${esc(t('gs.more', { n: fmtNum(more) }))}</div>` : ''}` : `<div class="small muted">${esc(t('gs.none_one'))}</div>`}</td></tr>`;
 }

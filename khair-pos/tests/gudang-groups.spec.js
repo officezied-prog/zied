@@ -12,6 +12,16 @@ async function openList(page) {
   await expect(page.locator('#gd-count')).not.toContainText('Memuat'); // 12 months loaded
 }
 const group = (page, k) => page.locator(`#gd-table tbody[data-group="${k}"]`);
+/** The product's most urgent batch still in stock, in days (FIFO over the last 12 months, as the app): at night, before the day's
+ *  sales, the stock can reach an older batch already past its date. */
+function worstDays(db, p, T = jktToday()) {
+  const day = s => Date.parse(s + 'T00:00:00Z') / 86400000, from = new Date((day(T) - 364) * 86400000).toISOString().slice(0, 10);
+  const rows = db.purchases.filter(r => r.product_id === p.id && !['PENYESUAIAN STOK', 'STOK OPNAME'].includes(r.supplier) && r.qty > 0 && r.purchase_date >= from)
+    .sort((a, b) => b.purchase_date.localeCompare(a.purchase_date) || b.id - a.id);
+  let left = Math.max(0, p.stock), worst = null;
+  for (const r of rows) { if (left <= 0) break; left -= Math.min(r.qty, left); if (r.exp_date) { const d = Math.round(day(r.exp_date) - day(T)); worst = worst === null ? d : Math.min(worst, d); } }
+  return worst;
+}
 
 test('group by category: one section per category with items, units and value subtotals (cost for the owner only)', async ({ page }) => {
   await login(page, 'Pemilik', '1234', '', { stay: true });
@@ -47,8 +57,9 @@ test('group by packaging, supplier, expiry band and ABC; the manager sees no cos
   await expect(group(page, 'grosir kramat jati').locator(`tr[data-pid="${P(/Kacang Mete Curah/).id}"]`)).toHaveCount(1);
   // expiry band: the short-dated chocolate batch (5 days) is in "≤ 7 hari"
   await page.selectOption('#gd-group', 'expiry');
-  await expect(group(page, 'le7').locator(`tr[data-pid="${P(/Cokelat Arab Kerang/).id}"]`)).toHaveCount(1);
-  await expect(group(page, 'le7').locator('tr.gd-grp')).toContainText('≤ 7 hari');
+  const cok = P(/Cokelat Arab Kerang/), wd = worstDays(db, cok), band = wd < 0 ? 'lewat' : 'le7';
+  await expect(group(page, band).locator(`tr[data-pid="${cok.id}"]`)).toHaveCount(1);
+  await expect(group(page, band).locator('tr.gd-grp')).toContainText(band === 'lewat' ? 'Sudah lewat' : '≤ 7 hari');
   // ABC: A = top 80 % of the sales value of the last 30 days
   await page.selectOption('#gd-group', 'abc');
   const from = jktToday(-29), T = jktToday(), voided = new Set(db.sales.filter(s => s.status === 'void').map(s => s.invoice_no));

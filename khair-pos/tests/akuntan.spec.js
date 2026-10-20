@@ -22,7 +22,7 @@ test('accountant: lands on reports, sees only the audit views, cannot change any
   await expect(page.locator('#view-reports')).toBeVisible();
   await expect(page.locator('body')).toHaveClass(/\bro\b/);
   const views = await page.locator('#nav [data-view]').evaluateAll(b => b.map(x => x.dataset.view));
-  expect(views.sort()).toEqual(['approvals', 'bank', 'cold', 'customers', 'field', 'finance', 'history', 'invchg', 'koreksi', 'products', 'purchases', 'reports', 'retur', 'settings', 'shoplist', 'suppliers']); // finance = Keuangan (v67) // invchg = Perubahan faktur, the invoice-change audit (v37) // field = the field page, read-only (v36) // shoplist = send a rep the shops of a street from Google Maps (v33) // cold = البرادات page (read-only there too); products = create-only (v22); approvals = the manager-or-accountant inbox (v29)
+  expect(views.sort()).toEqual(['approvals', 'bank', 'cold', 'customers', 'field', 'finance', 'gudang', 'history', 'invchg', 'koreksi', 'products', 'purchases', 'reports', 'retur', 'settings', 'shoplist', 'suppliers']); // finance = Keuangan (v67) // gudang = Bahan baku + Produksi stok only (v68) // invchg = Perubahan faktur, the invoice-change audit (v37) // field = the field page, read-only (v36) // shoplist = send a rep the shops of a street from Google Maps (v33) // cold = البرادات page (read-only there too); products = create-only (v22); approvals = the manager-or-accountant inbox (v29)
   await page.evaluate(() => go('pos'));
   await expect(page.locator('#view-reports')).toBeVisible(); // POS is not reachable
   await nav(page, 'purchases');

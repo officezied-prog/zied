@@ -40,6 +40,10 @@ const INDEXES = {
   brad_orders: ['status', 'order_date'],
   brad_wa_log: ['wamid', 'at'],
 };
+// v68: unique indexes {table: {name: [columns]}} — the database itself refuses a second sale with the same number in a day
+const UNIQUE = {
+  pos_sales: { day_seq: ['sale_date', 'day_seq'] },
+};
 
 function buildSchema() {
   const out = [
@@ -55,6 +59,9 @@ function buildSchema() {
     out.push(');');
     for (const col of INDEXES[table] || []) {
       out.push(`CREATE INDEX IF NOT EXISTS idx_${table}_${col} ON ${table} (${col});`);
+    }
+    for (const [name, cols2] of Object.entries(UNIQUE[table] || {})) {
+      out.push(`CREATE UNIQUE INDEX IF NOT EXISTS idx_${table}_${name} ON ${table} (${cols2.join(', ')});`);
     }
     out.push('');
   }

@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS pos_sales (
   shift_id TEXT,
   survey_transcript TEXT,
   send_fee REAL,
+  day_seq REAL,
   account_id TEXT,
   bank TEXT,
   transfer_ref TEXT,
@@ -106,6 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_pos_sales_sale_date ON pos_sales (sale_date);
 CREATE INDEX IF NOT EXISTS idx_pos_sales_client_id ON pos_sales (client_id);
 CREATE INDEX IF NOT EXISTS idx_pos_sales_invoice_no ON pos_sales (invoice_no);
 CREATE INDEX IF NOT EXISTS idx_pos_sales_customer_id ON pos_sales (customer_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pos_sales_day_seq ON pos_sales (sale_date, day_seq);
 
 CREATE TABLE IF NOT EXISTS pos_sale_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -178,7 +180,8 @@ CREATE TABLE IF NOT EXISTS pos_purchases (
   pay_status TEXT,
   pay_method TEXT,
   due_date TEXT,
-  paid_at TEXT
+  paid_at TEXT,
+  drawer_pay TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pos_purchases_purchase_date ON pos_purchases (purchase_date);
 CREATE INDEX IF NOT EXISTS idx_pos_purchases_purchase_no ON pos_purchases (purchase_no);
