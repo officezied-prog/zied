@@ -6801,6 +6801,20 @@ function rsCostsLine(p) {
   const c = rpCostsOf(p); if (!c.length) return '';
   return t('rps.costs_line', { list: c.map(x => `${x.name}${x.qty !== 1 ? ' ×' + fmtQty(x.qty) : ''} ${fmtRp(x.cost)}`).join(' + '), rp: fmtRp(rpCostPer(p)), u: p.unit || 'pcs' });
 }
+/* v66 (owner 2026-10-20, the set-up list: «التطبيق لا يحسب جملة الثمن مع البضاعة. اضف ثمن البضاعة ايضا»): a pack's whole cost per piece —
+   the bulk's share (its cost price × the pack's size) + the materials — for whoever sees costs; above the selling price it is flagged
+   (a size typed wrong shows at once). */
+function rsTotal(p) {
+  const b = prodById(p && p.repack_from); if (!b || !canSeeCost()) return null;
+  const c = int(b.cost_price), goods = Math.round(c * num(p.repack_qty));
+  const mats = rpCostPer(p) + (Array.isArray(p.materials) ? p.materials : []).reduce((a, m) => a + int(m && m.cost), 0), total = goods + mats;
+  return { b, c, goods, mats, total, over: int(p.retail_price) > 0 && total > int(p.retail_price) };
+}
+function rsTotalHTML(p) {
+  const r = rsTotal(p); if (!r) return '';
+  if (!(r.c > 0)) return `<div class="small amber" data-rs-total="nocost">${esc(t('rps.no_cost', { name: r.b.name }))}</div>`;
+  return `<div class="small" data-rs-total="${r.total}"><b>${esc(t('rps.total_line', { u: p.unit || 'pcs', g: fmtRp(r.goods), q: fmtQty(p.repack_qty), bu: r.b.unit || '', c: fmtRp(r.c), m: fmtRp(r.mats), rp: fmtRp(r.total) }))}</b>${r.over ? `<div class="red" data-rs-over>${esc(t('rps.over_price', { p: fmtRp(p.retail_price) }))}</div>` : ''}</div>`;
+}
 /** Bulk products for the picker: the bulks already packed first, then (manager / owner) any product in stock that is not a pack. */
 function rpBulkItems() {
   const packs = packProducts(), bulkIds = new Set(packs.map(p => String(p.repack_from))), own = canSetRepack();
@@ -6982,7 +6996,7 @@ function rpPackSync(bulkChanged, typed) {
     if (RPK.pack === '__new') setTimeout(() => { const n = $('#rpi-n-name'); if (n) n.focus(); }, 0);
   }
   const pi = $('#rp-pack-info');
-  pi.innerHTML = isSet ? `${esc(t('rp.size'))}: <b>${fmtQty(p.repack_qty)} ${esc(b ? b.unit || '' : '')}</b> / ${esc(p.unit || 'pcs')} · ${esc(t('stock'))} <b class="num">${fmtQty(p.stock)}</b>${rsCostsLine(p) ? `<div data-rp-mats>${esc(rsCostsLine(p))}</div>` : ''}`
+  pi.innerHTML = isSet ? `${esc(t('rp.size'))}: <b>${fmtQty(p.repack_qty)} ${esc(b ? b.unit || '' : '')}</b> / ${esc(p.unit || 'pcs')} · ${esc(t('stock'))} <b class="num">${fmtQty(p.stock)}</b>${rsCostsLine(p) ? `<div data-rp-mats>${esc(rsCostsLine(p))}</div>` : ''}${rsTotalHTML(p)}`
     : needSetup ? esc(t(p ? 'rp.setup_free' : 'rp.setup_new')) : (b && !rpPackItems(b).length ? esc(t(canSetRepack() ? 'rp.no_pack_mgr' : 'rp.no_pack')) : '');
 }
 /** Bulk amount → whole packs + what is left over (the pack's size, or the size typed for a new set-up). */
@@ -7119,7 +7133,7 @@ function rsPanelHTML(packs) {
   const mats = matList();
   return `<div class="panel" id="rp-setup"><h3>${ic('gear')} ${esc(t('rps.title'))}</h3><div class="pb">
     <p class="small muted" style="margin-top:0">${esc(t(isOwner() ? 'rps.hint_owner' : 'rps.hint'))}</p>
-    ${packs.length ? `<table class="tbl" id="rs-list"><tbody>${packs.map(p => { const b = prodById(p.repack_from) || {}, cl = rsCostsLine(p); return `<tr data-rs="${esc(p.id)}"><td><b>${esc(p.name)}</b><div class="small muted">← ${esc(b.name || '')} · ${fmtQty(p.repack_qty)} ${esc(b.unit || '')} / ${esc(p.unit || 'pcs')}</div>${cl ? `<div class="small" data-rs-costs>${esc(cl)}</div>` : ''}</td>
+    ${packs.length ? `<table class="tbl" id="rs-list"><tbody>${packs.map(p => { const b = prodById(p.repack_from) || {}, cl = rsCostsLine(p); return `<tr data-rs="${esc(p.id)}"><td><b>${esc(p.name)}</b><div class="small muted">← ${esc(b.name || '')} · ${fmtQty(p.repack_qty)} ${esc(b.unit || '')} / ${esc(p.unit || 'pcs')}</div>${cl ? `<div class="small" data-rs-costs>${esc(cl)}</div>` : ''}${rsTotalHTML(p)}</td>
       <td class="r" style="white-space:nowrap"><button class="btn xs" data-act="rs-edit" data-id="${esc(p.id)}">${ic('edit')} ${esc(t('rps.edit'))}</button> <button class="btn xs danger" data-act="rs-del" data-id="${esc(p.id)}">${ic('trash')} ${esc(t('rps.del'))}</button></td></tr>`; }).join('')}</tbody></table>` : `<div class="muted small">${esc(t('rps.none_yet'))}</div>`}
     <h4 style="margin:14px 0 6px">${esc(t('rpm.title'))}</h4><p class="small muted" style="margin-top:0">${esc(t('rpm.hint'))}</p>
     <table class="tbl" id="rm-list"><tbody>${mats.map((m, i) => `<tr data-rm="${esc(m.name)}"><td><b>${esc(m.name)}</b></td><td class="r" style="width:150px"><input class="input num rm-price" data-i="${i}" inputmode="numeric" value="${esc(fmtNum(m.cost))}" aria-label="${esc(t('rpm.price'))} ${esc(m.name)}" style="width:130px"></td>
@@ -8453,6 +8467,7 @@ Object.assign(I18N.id, {
   'rps.new_pack': 'Kemasan baru (produk baru)', 'rps.new_hint': 'Kemasan baru = produk baru (toples / stiker baru). Stok mulai 0; kategorinya ikut curahnya.', 'rps.new_name': 'Nama kemasan baru', 'rps.new_price': 'Harga jual (Rp)', 'rps.new_unit': 'Satuan', 'rps.new_sku': 'Barcode (opsional)',
   'rps.new_need': 'Isi nama dan harga jual kemasan baru', 'rps.created': 'Kemasan baru dibuat dan diatur', 'rps.costs': 'Bahan kemasan per kemasan', 'rps.costs_hint': 'stiker, tutup, toples… ditambahkan ke modal setiap kemas ulang', 'rps.cost_name': 'Nama bahan (mis. Stiker)',
   'rps.cost_add': 'Tambah bahan', 'rps.cost_total': 'Total per {u}: {rp}', 'rps.cost_need_name': 'Isi nama bahan untuk setiap biaya', 'rps.costs_line': 'Bahan: {list} = {rp} / {u}',
+  'rps.total_line': 'Modal per {u}: barang {g} ({q} {bu} × {c}) + bahan {m} = {rp}', 'rps.over_price': 'Modal di atas harga jual ({p}) — periksa ukuran kemasan', 'rps.no_cost': 'Harga modal {name} belum ada (diisi dari barang masuk)',
   'rp.extra_cost': 'Upah & biaya lain', 'rp.extra_ph': 'opsional', 'rp.gmats_use': 'Bahan dari barang masuk yang terpakai:', 'rp.piece': 'buah', 'rp.gmat_short': 'stok kurang (ada {q})', 'rp.pv_mat': 'Bahan kemasan {per} / {u} × {n} = {tot} (otomatis)', 'rps.need': 'Pilih barang kemasan, barang curah dan isi per kemasan', 'rps.same': 'Barang curah tidak boleh sama dengan barang kemasan',
   'rp.form_title': 'Kemas ulang', 'rp.pack_product': 'Produk kemasan', 'rp.pick': 'pilih', 'rp.pieces': 'Jumlah kemasan jadi', 'rp.bulk_used': 'Curah dipakai', 'rp.auto': 'otomatis', 'rp.pack_cost': 'Biaya kemasan', 'rp.save': 'Simpan kemas ulang',
   'rp.from_bulk': 'Dari', 'rp.size': 'Isi per kemasan', 'rp.preview_empty': 'Pilih produk kemasan dan isi jumlah kemasan jadi.', 'rp.pv_used': 'Curah dipakai {q} {u} → seharusnya {e} kemasan', 'rp.pv_yield': 'Jadi {n} = hasil {p}%', 'rp.pv_loss': 'susut {q} {u}',
@@ -8544,6 +8559,7 @@ Object.assign(I18N.ar, {
   'rps.new_pack': 'عبوة جديدة (منتج جديد)', 'rps.new_hint': 'العبوة الجديدة = منتج جديد (علبة / ستيكر جديد). المخزون يبدأ من 0، وفئته نفس فئة السائب.', 'rps.new_name': 'اسم العبوة الجديدة', 'rps.new_price': 'سعر البيع (روبية)', 'rps.new_unit': 'الوحدة', 'rps.new_sku': 'الباركود (اختياري)',
   'rps.new_need': 'اكتب اسم العبوة الجديدة وسعر بيعها', 'rps.created': 'تم إنشاء العبوة الجديدة وضبطها', 'rps.costs': 'مواد التعبئة لكل عبوة', 'rps.costs_hint': 'ستيكر، غطاء، علبة… تُضاف إلى تكلفة كل تعبئة', 'rps.cost_name': 'اسم المادة (مثلًا ستيكر)',
   'rps.cost_add': 'إضافة مادة', 'rps.cost_total': 'المجموع لكل {u}: {rp}', 'rps.cost_need_name': 'اكتب اسم المادة لكل تكلفة', 'rps.costs_line': 'المواد: {list} = {rp} / {u}',
+  'rps.total_line': 'التكلفة لكل {u}: البضاعة {g} ({q} {bu} × {c}) + المواد {m} = {rp}', 'rps.over_price': 'التكلفة أعلى من سعر البيع ({p}) — راجع حجم العبوة', 'rps.no_cost': 'سعر تكلفة {name} غير موجود بعد (يأتي من البضاعة الواردة)',
   'rp.extra_cost': 'أجرة العمال وتكاليف أخرى', 'rp.extra_ph': 'اختياري', 'rp.gmats_use': 'المواد المستعملة من البضاعة الواردة:', 'rp.piece': 'قطعة', 'rp.gmat_short': 'المخزون غير كافٍ (الموجود {q})', 'rp.pv_mat': 'مواد التعبئة {per} / {u} × {n} = {tot} (تلقائيًا)', 'rps.need': 'اختر صنف العبوة والصنف السائب وكمية كل عبوة', 'rps.same': 'لا يمكن أن يكون السائب هو نفس صنف العبوة',
   'rp.form_title': 'إعادة التعبئة', 'rp.pack_product': 'منتج العبوة', 'rp.pick': 'اختر', 'rp.pieces': 'عدد العبوات الناتجة', 'rp.bulk_used': 'السائب المستخدم', 'rp.auto': 'تلقائي', 'rp.pack_cost': 'تكلفة التغليف', 'rp.save': 'حفظ إعادة التعبئة',
   'rp.from_bulk': 'من', 'rp.size': 'محتوى العبوة', 'rp.preview_empty': 'اختر منتج العبوة وأدخل عدد العبوات الناتجة.', 'rp.pv_used': 'السائب المستخدم {q} {u} ← المتوقع {e} عبوة', 'rp.pv_yield': 'الناتج {n} = نسبة {p}%', 'rp.pv_loss': 'فاقد {q} {u}',
