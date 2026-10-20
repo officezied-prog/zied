@@ -8264,7 +8264,7 @@ function dsProductsHTML() {
 function dsInvoiceBody(x, D) {
   const lines = D.items.filter(i => i.invoice_no === x.invoice_no);
   return `<table class="tbl" style="margin:6px 0"><tbody>${lines.map(i => `<tr><td>${esc(i.name)}${i.price_type === 'grosir' ? ` <span class="badge">${esc(t('type.grosir'))}</span>` : ''}</td><td class="r num">${fmtQty(i.qty)} × ${fmtRp(i.unit_price)}</td><td class="r num">${fmtRp(i.line_total)}</td></tr>`).join('')}</tbody></table>
-    <div class="small">${int(x.discount) ? `${esc(t('discount'))} −${fmtRp(x.discount)} · ` : ''}${int(x.send_fee) ? `${esc(t('rs.fee_line'))} ${fmtRp(x.send_fee)} · ` : ''}<b>${esc(t('total'))} ${fmtRp(int(x.total) + int(x.send_fee))}</b> · ${esc(dsMethod(x))}${int(x.debt_amount) ? ` · <span class="red">${esc(t('pm.hutang'))} ${fmtRp(x.debt_amount)}</span>` : ''}</div>
+    <div class="small">${int(x.discount) ? `${esc(t('discount'))} −${fmtRp(x.discount)} · ` : ''}${int(x.send_fee) ? `${esc(t('rs.fee_line'))} ${fmtRp(x.send_fee)} · ` : ''}<b>${esc(t('total'))} ${fmtRp(int(x.total))}</b> · ${esc(dsMethod(x))}${int(x.debt_amount) ? ` · <span class="red">${esc(t('pm.hutang'))} ${fmtRp(x.debt_amount)}</span>` : ''}</div>
     <div class="row wrap" style="gap:6px;margin-top:6px"><button class="btn xs" data-act="hist-open" data-inv="${esc(x.invoice_no)}">${ic('list')} ${esc(t('ds.open_rc'))}</button></div>`;
 }
 function dsInvoicesHTML() {
@@ -8272,7 +8272,7 @@ function dsInvoicesHTML() {
   const nOk = Object.keys(D.ok).length;
   return `<div class="panel" style="margin-bottom:14px" id="dr-invoices"><h3>${ic('report')} ${esc(t('ds.invoices', { n: fmtNum(nOk) }))}${D.sales.length > nOk ? ` <span class="badge red">${esc(t('ds.n_void', { n: fmtNum(D.sales.length - nOk) }))}</span>` : ''}</h3><div class="pb">
     ${D.sales.length ? D.sales.map(x => `<details class="ds-inv" data-ds-inv="${esc(x.invoice_no)}" style="border-bottom:1px solid var(--border);padding:6px 0"><summary style="cursor:pointer" class="row wrap"><span class="num">${esc(dsTime(x))}</span> <b class="num">${esc(x.invoice_no)}</b> <span class="grow small muted">${esc(x.cashier || '')}${x.customer_name ? ' · ' + esc(x.customer_name) : ''}</span>
-        ${x.status === 'void' ? `<span class="badge red">${esc(t('ds.void'))}</span>` : int(x.debt_amount) ? `<span class="badge amber">${esc(t('pm.hutang'))}</span>` : ''}<b class="num">${fmtRp(int(x.total) + int(x.send_fee))}</b></summary>${dsInvoiceBody(x, D)}</details>`).join('')
+        ${x.status === 'void' ? `<span class="badge red">${esc(t('ds.void'))}</span>` : int(x.debt_amount) ? `<span class="badge amber">${esc(t('pm.hutang'))}</span>` : ''}<b class="num">${fmtRp(int(x.total))}</b></summary>${dsInvoiceBody(x, D)}</details>`).join('')
       : `<div class="muted">${esc(t('ds.none'))}</div>`}
     <p class="small muted" style="margin:8px 0 0">${esc(t('ds.kept'))}</p></div></div>`;
 }
@@ -8290,7 +8290,7 @@ function dsPrint() {
     <h3>${esc(t('ds.invoices', { n: fmtNum(Object.keys(D.ok).length) }))}</h3>
     ${D.sales.map(x => `<table style="margin-bottom:8px"><tr><th colspan="3" style="text-align:start">${esc(dsTime(x))} · ${esc(x.invoice_no)} · ${esc(x.cashier || '')}${x.customer_name ? ' · ' + esc(x.customer_name) : ''}${x.status === 'void' ? ' · ' + esc(t('ds.void')) : ''}</th></tr>
       ${D.items.filter(i => i.invoice_no === x.invoice_no).map(i => `<tr><td>${esc(i.name)}</td><td class="r">${fmtQty(i.qty)} × ${fmtRp(i.unit_price)}</td><td class="r">${fmtRp(i.line_total)}</td></tr>`).join('')}
-      <tr><td>${int(x.discount) ? esc(t('discount')) + ' −' + fmtRp(x.discount) : ''}${int(x.send_fee) ? ' · ' + esc(t('rs.fee_line')) + ' ' + fmtRp(x.send_fee) : ''}</td><td class="r">${esc(dsMethod(x))}${int(x.debt_amount) ? ' · ' + esc(t('pm.hutang')) + ' ' + fmtRp(x.debt_amount) : ''}</td><td class="r"><b>${fmtRp(int(x.total) + int(x.send_fee))}</b></td></tr></table>`).join('')}</div>`;
+      <tr><td>${int(x.discount) ? esc(t('discount')) + ' −' + fmtRp(x.discount) : ''}${int(x.send_fee) ? ' · ' + esc(t('rs.fee_line')) + ' ' + fmtRp(x.send_fee) : ''}</td><td class="r">${esc(dsMethod(x))}${int(x.debt_amount) ? ' · ' + esc(t('pm.hutang')) + ' ' + fmtRp(x.debt_amount) : ''}</td><td class="r"><b>${fmtRp(int(x.total))}</b></td></tr></table>`).join('')}</div>`;
   printHTML(html, 'size:A4;margin:12mm');
 }
 /** CSV (Excel): every invoice line of the day, or every product of the day. */
@@ -8300,7 +8300,7 @@ function dsCSV(kind) {
   const lines = kind === 'prod'
     ? [['tanggal', 'barang', 'jumlah', 'satuan', 'omzet', 'nota'].join(';')].concat(D.products.map(r => [DR.date, r.name, String(r.qty).replace('.', ','), r.unit, r.total, r.n].map(q).join(';')))
     : [['tanggal', 'jam', 'nota', 'status', 'kasir', 'pelanggan', 'bayar', 'barang', 'jumlah', 'harga', 'total_baris', 'diskon_nota', 'ongkir', 'total_nota', 'hutang'].join(';')]
-      .concat([].concat(...D.sales.map(x => D.items.filter(i => i.invoice_no === x.invoice_no).map(i => [DR.date, dsTime(x), x.invoice_no, x.status === 'void' ? 'batal' : 'ok', x.cashier || '', x.customer_name || '', dsMethod(x), i.name, String(num(i.qty)).replace('.', ','), int(i.unit_price), int(i.line_total), int(x.discount), int(x.send_fee), int(x.total) + int(x.send_fee), int(x.debt_amount)].map(q).join(';')))));
+      .concat([].concat(...D.sales.map(x => D.items.filter(i => i.invoice_no === x.invoice_no).map(i => [DR.date, dsTime(x), x.invoice_no, x.status === 'void' ? 'batal' : 'ok', x.cashier || '', x.customer_name || '', dsMethod(x), i.name, String(num(i.qty)).replace('.', ','), int(i.unit_price), int(i.line_total), int(x.discount), int(x.send_fee), int(x.total), int(x.debt_amount)].map(q).join(';')))));
   const url = URL.createObjectURL(new Blob(['\ufeff' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' }));
   const a = document.createElement('a'); a.href = url; a.download = `${kind === 'prod' ? 'barang' : 'nota'}-${DR.date}.csv`; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
