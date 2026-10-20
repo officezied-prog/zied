@@ -78,9 +78,11 @@ test('overview numbers match the mock DB; urgent list and Beranda expiry item li
   await expect(page.locator('[data-kpi="gd-exp"] .v')).toHaveText(String(exp30.size));
   // the most urgent: the batch expiring within 7 days is listed with a red badge and opens its stock card
   const soon = fifo(db, 7)[0];
+  // its most urgent batch in stock (at night, before the day's sales, the stock can reach an older batch already past its date)
+  const worst = Math.min(...fifo(db, 7).filter(b => b.p.id === soon.p.id).map(b => b.days));
   const u = page.locator(`#gd-urgent [data-act="gd-card"][data-id="${soon.p.id}"]`);
   await expect(u).toContainText(soon.p.name);
-  await expect(u.locator('.badge.red')).toHaveText(`${soon.days} hari`);
+  await expect(u.locator('.badge.red')).toHaveText(worst < 0 ? `Lewat ${-worst} hari` : worst === 0 ? 'Hari ini' : `${worst} hari`);
   await page.screenshot({ path: path.join(SHOTS, 'desktop-gudang.png') });
   await u.click();
   await expect(page.locator('#gd-card-modal')).toContainText(soon.p.name);
