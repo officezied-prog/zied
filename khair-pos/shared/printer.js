@@ -107,10 +107,10 @@
 
   /* ---- v68 (owner 2026-10-20: «تم إصلاح المطبعة الصغيرة، ولكن لا يوجد فيها اللوجو حق الشركة»): the store logo on top of the receipt.
      The site's logo.png is drawn once in a canvas and made black / white (a thermal printer prints dots — no colour, no grey: the red
-     and the blue print black, the white stays paper), cropped to its ink and sent as a GS v 0 raster image: 256 dots wide on 58 mm
-     paper (384 dots), 288 on 80 mm (576), centred by blank dots on its left (so no printer has to centre an image itself), in bands of
+     and the blue print black, the white stays paper), cropped to its ink and sent as a GS v 0 raster image: 160 dots wide (2 cm) on 58 mm
+     paper (384 dots), 192 on 80 mm (576), centred by blank dots on its left (so no printer has to centre an image itself), in bands of
      48 rows (small printer buffers). Ready a moment after the page opens; a print before that goes without it and readies it. */
-  var LOGO = { src: '', bytes: {}, p: null }, LOGO_W = { 58: [384, 256], 80: [576, 288] };
+  var LOGO = { src: '', bytes: {}, p: null }, LOGO_W = { 58: [384, 160], 80: [576, 192] }; // v68 (owner: «Logo should small not big»)
   try {
     var me = document.currentScript || document.querySelector('script[src*="shared/printer.js"]');
     LOGO.src = me && me.src ? new URL('../logo.png', me.src).href : '';

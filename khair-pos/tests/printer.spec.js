@@ -68,11 +68,11 @@ test('the store logo prints on top of the receipt and the test print (58 / 80 mm
   await page.evaluate(() => { window.__rawbt = []; KPrint.go = u => window.__rawbt.push(u); });
   expect(await page.evaluate(() => KPrint.prepLogo())).toBe(true);
   const dec = u => [...Buffer.from(u.split(',')[1], 'base64')];
-  for (const [w, bpr] of [[58, 40], [80, 54]]) { // 256 / 288 dots of logo after 64 / 144 blank ones (centred on 384 / 576)
+  for (const [w, bpr] of [[58, 34], [80, 48]]) { // a small logo: 160 / 192 dots after 112 / 192 blank ones (centred on 384 / 576)
     const r = rasters(await page.evaluate(w => Array.from(KPrint.logoBytes(w)), w));
     expect(r.bands.every(b => b.bpr === bpr && b.rows <= 48)).toBe(true);
-    expect(r.rows).toBeGreaterThan(100);
-    expect(r.rows).toBeLessThanOrEqual(w === 58 ? 152 : 171);
+    expect(r.rows).toBeGreaterThan(60);
+    expect(r.rows).toBeLessThanOrEqual(w === 58 ? 95 : 114);
     expect(r.dots).toBeGreaterThan(r.rows * bpr * 8 * 0.15); // real ink, not a blank box
   }
   await nav(page, 'settings');
