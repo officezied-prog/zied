@@ -49,6 +49,17 @@ out on that account since; money tied to no account shown apart), neraca (receiv
 aggregate-SQL call `finance_position`. Gudang tabs "Bahan baku" (bulk goods + packaging materials + price list, CSV, import) and "Produksi
 stok" (repacks of a range incl. open / cancelled, CSV, "Tambah" → Kemas ulang). A repack's costs follow the owner's cost setting.
 
+**v68 (owner 3.1.0, kasir 1.8.0; owner 2026-10-20):** the accountant opens Gudang with "Bahan baku" + "Produksi stok" only (`gdTabs()`).
+Receipt printers print the store logo (logo.png → black / white GS v 0 raster, small: 160 dots on 58 mm, 192 on 80 mm, centred by blank
+dots; "Cetak logo toko" in Printer struk) and a SHORT receipt («اريد عدم اضاعة الورق»: one line an item, the number with the employee,
+no Umum / Kasir lines, ESC 3 26). **Invoice number `DD/MM/YYYY/HHmm/N`** (owner's choice «20/10/2026/1542/12»): the sale's day + time
+(Jakarta), N = its number in that day for the whole store (`pos_sales.day_seq`, unique (sale_date, day_seq); the day's older KM… count;
+a void keeps its number); two cashiers at the same moment → the Worker runs the later request again (`handleRequest` retry); the
+employee's name is printed beside it. Goods-in "Dibayar dari laci kasir" (cashier app): cash paid at delivery with amount, why
+(barang → a supplier payment `[dari kas]` allocated to the note; ongkos kirim / bongkar / lainnya → a drawer expense), time, note and a
+required photo, all inside the same `save_purchase` (`data.drawer_pay`, `pos_purchases.drawer_pay`); the confirmation then records no
+second payment.
+
 **New versions reach phones by themselves (v49):** `shared/app-update.js` (KUpdate) re-reads the app's own page
 (`cache:'no-cache'`, a 304 when unchanged) on open, on return to the screen (≥5 min) and every 30 min; another
 `APP_VERSION` there → it reloads itself on the login screen / when untouched since it opened, otherwise a green

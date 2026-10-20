@@ -113,7 +113,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.7.8';
+const APP_VERSION = 'kasir-1.8.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -2393,7 +2393,7 @@ function receiptLinesHTML(rc) {
     ${st.address ? `<div class="c">${esc(st.address)}</div>` : ''}${st.phone ? `<div class="c">${esc(t('rc.phone'))} ${esc(st.phone)}</div>` : ''}
     <div class="ln"></div>
     ${rc.pending ? `<div class="stamp">${esc(t('rc.pending'))}</div>` : ''}
-    <div class="r2"><span>${esc(t('rc.no'))}</span><span class="b">${esc(rc.invoice_no)}</span></div>
+    <div class="r2"><span>${esc(t('rc.no'))}</span><span class="b" data-rc-no>${esc(rc.invoice_no)}${rc.cashier && rc.invoice_no ? ` · ${esc(rc.cashier)}` : ''}</span></div>
     <div class="r2"><span>${esc(t('rc.date'))}</span><span>${esc(fmtDateTime(rc.sale_time, rc.sale_date))}</span></div>
     <div class="r2"><span>${esc(t('rc.cashier'))}</span><span>${esc(rc.cashier)}</span></div>
     <div class="r2"><span>${esc(t('rc.customer'))}</span><span>${esc(rc.customer_name)}</span></div>
@@ -2422,7 +2422,7 @@ function receiptText(rc) {
   if (st.address) out.push(st.address);
   out.push(L2);
   if (rc.pending) out.push(`*${t('rc.pending')}*`);
-  out.push(`${t('rc.no')}: ${rc.invoice_no}`, `${t('rc.date')}: ${fmtDateTime(rc.sale_time, rc.sale_date)}`, `${t('rc.cashier')}: ${rc.cashier}`, `${t('rc.customer')}: ${rc.customer_name}`, L2);
+  out.push(`${t('rc.no')}: ${rc.invoice_no}${rc.cashier ? ' · ' + rc.cashier : ''}`, `${t('rc.date')}: ${fmtDateTime(rc.sale_time, rc.sale_date)}`, `${t('rc.cashier')}: ${rc.cashier}`, `${t('rc.customer')}: ${rc.customer_name}`, L2);
   rc.lines.forEach(l => out.push(`${l.name}${l.price_type === 'grosir' ? ' (grosir)' : ''}`, `  ${fmtQty(l.qty)} x ${fmtRp(l.unit_price)} = ${fmtRp(l.line_total)}`));
   if (int(rc.send_fee)) out.push(`${t('rs.fee_line')}: ${fmtRp(rc.send_fee)}`);
   out.push(L2, `*${t('total')}: ${fmtRp(rc.total)}*`, `${t('rc.paid')} (${t('pm.' + rc.method)}): ${fmtRp(rc.paid)}`);
@@ -2577,7 +2577,7 @@ function openLastReceipts() {
 function receiptPlain(rc) {
   const st = settings(), L2 = '------------------------------', out = [st.store_name || 'Khair Mart'];
   if (st.address) out.push(st.address);
-  out.push(L2, `${tid('rc.no')}: ${rc.invoice_no}`, `${tid('rc.date')}: ${fmtDateTime(rc.sale_time, rc.sale_date)}`, `${tid('rc.cashier')}: ${rc.cashier}`, `${tid('rc.customer')}: ${rc.customer_name}`, L2);
+  out.push(L2, `${tid('rc.no')}: ${rc.invoice_no}${rc.cashier ? ' · ' + rc.cashier : ''}`, `${tid('rc.date')}: ${fmtDateTime(rc.sale_time, rc.sale_date)}`, `${tid('rc.cashier')}: ${rc.cashier}`, `${tid('rc.customer')}: ${rc.customer_name}`, L2);
   rc.lines.forEach(l => out.push(l.name, `  ${fmtQty(l.qty)} x ${fmtRp(l.unit_price)} = ${fmtRp(l.line_total)}`));
   out.push(L2);
   if (rc.discount) out.push(`${tid('rc.subtotal')}: ${fmtRp(rc.subtotal)}`);
@@ -2823,7 +2823,7 @@ const PU = Object.assign({ supplier: '', date: '', note: '', lines: [], photo_id
 if (!PU.carrier || typeof PU.carrier !== 'object') PU.carrier = { type: '' };
 PU.result = null; PU.q = ''; PU.scanning = false; PU.scanErr = '';
 const PUH = { groups: null, loading: false, err: '', wait: null };
-const savePuDraft = () => KS.set('purchase_draft', { supplier: PU.supplier, date: PU.date, note: PU.note, lines: PU.lines, photo_id: PU.photo_id, thumb: PU.thumb, scan: PU.scan, carrier: PU.carrier });
+const savePuDraft = () => KS.set('purchase_draft', { supplier: PU.supplier, date: PU.date, note: PU.note, lines: PU.lines, photo_id: PU.photo_id, thumb: PU.thumb, scan: PU.scan, carrier: PU.carrier, dp: PU.dp || null }); // v68: + dp (cash from the drawer)
 const purchasePhotoRequired = () => settings().require_purchase_photo !== false;
 const MATCH_BADGE = { cocok: 'ok', tidak_cocok: 'red', perlu_cek: 'warn', tanpa_foto: 'gray', koreksi: '', retur: 'red' };
 function puBlockReason() {
@@ -2903,6 +2903,7 @@ RENDER.masuk = function (force) {
       <div class="field" style="margin-top:6px"><label class="f" for="pu-q">${esc(t('pu.add_product'))}</label><div class="search">${ic('search')}<input class="input" id="pu-q" type="search" autocomplete="off" placeholder="${esc(t('sell.search_ph'))}" value="${esc(PU.q)}"></div><div class="list" id="pu-sug" style="margin-top:6px"></div></div>
       <div class="card pad" id="pu-carrier" style="margin:10px 0;background:var(--pll)">${carrierHTML('pu', PU.carrier)}</div>
       <div class="sumrow" style="font-weight:900;font-size:19px"><span>${esc(t('pu.total_note'))}</span><span class="num" id="pu-total">${fmtRp(total)}</span></div>
+      ${dpHTML()}
       <div id="pu-match"></div>
       <div class="small" id="pu-block" style="color:var(--warn);font-weight:800">${PU.lines.length ? esc(block) : ''}</div>
       <div class="err" id="pu-err" role="alert"></div>
@@ -2927,13 +2928,14 @@ RENDER.masuk = function (force) {
   q.addEventListener('input', sug);
   q.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const p = findBySku(q.value) || (filterProducts(q.value).length === 1 ? filterProducts(q.value)[0] : null); if (p) puAdd(p); } });
   sug();
-  const recalc = () => { $('#pu-total', v).textContent = fmtRp(sum(PU.lines, l => Math.round(num(l.qty) * int(l.cost)))); savePuDraft(); };
+  const recalc = () => { $('#pu-total', v).textContent = fmtRp(sum(PU.lines, l => Math.round(num(l.qty) * int(l.cost)))); savePuDraft(); dpSync(); };
   $$('[data-pu-qty]', v).forEach(i => i.oninput = () => { const k = +i.dataset.puQty; PU.lines[k].qty = qtyVal(i.value); recalc(); drawPuLine(k); drawPuMatch(); });
   $$('[data-pu-cost]', v).forEach(i => i.oninput = () => { PU.lines[+i.dataset.puCost].cost = moneyVal(i.value); recalc(); });
   $$('[data-pu-prod]', v).forEach(sel => sel.onchange = () => { const l = PU.lines[+sel.dataset.puProd]; l.product_id = sel.value ? Number(sel.value) || sel.value : null; savePuDraft(); RENDER.masuk(); });
   $$('[data-pu-exp]', v).forEach(i => i.onchange = () => { PU.lines[+i.dataset.puExp].exp = i.value; savePuDraft(); });
   $$('[data-pu-expnone]', v).forEach(i => i.onchange = () => { const l = PU.lines[+i.dataset.puExpnone]; l.exp_none = i.checked; if (i.checked) l.exp = ''; savePuDraft(); RENDER.masuk(); });
   bindCarrier(v, 'pu', PU.carrier, () => { savePuDraft(); RENDER.masuk(); }, savePuDraft);
+  dpBind(v); // v68
   drawPuMatch();
   drawPuHist();
   if (force || (!PUH.groups && !PUH.loading && !PUH.err)) loadPuHistory();
@@ -3074,6 +3076,7 @@ async function savePurchase(reason) {
   const cchk = carrierCheck(PU.carrier, carrierRequired());
   if (cchk) { carrierShow($('#v-masuk'), 'pu', cchk); if (err) err.textContent = cchk.msg; return; }
   if (items.some(i => !i.exp_none && !i.exp_date)) { if (err) err.textContent = t('pu.exp_required'); return; }
+  const dpBad = dpCheck(); if (dpBad) { if (err) err.textContent = dpBad; dpErr(dpBad); return; } // v68
   if (!reason && items.some(i => !(i.cost_price > 0))) { const ok = await confirmBox(t('pu.zero_cost')); if (!ok.ok) return; }
   const btn = $('#pu-save'); if (btn) { btn.disabled = true; btn.textContent = t('saving'); }
   const mmBtn = $('#pu-mm-save'); if (mmBtn) mmBtn.disabled = true;
@@ -3085,21 +3088,23 @@ async function savePurchase(reason) {
     if (PU.photo_id) data.photo_id = PU.photo_id;
     if (reason) data.mismatch_reason = reason;
     const car = carrierPayload(PU.carrier); if (car) data.carrier = car;
+    const dp = dpPayload(); if (dp) data.drawer_pay = dp; // v68: cash from the drawer, in the same request
     const r = await api('save_purchase', data);
+    if (r.drawer_pay && r.drawer_pay.shift) { S.shift = Object.assign({}, S.shift, r.drawer_pay.shift); saveCache(); } // the drawer's cash out
     applyStock(r.stock);
     const m = r.match || { status: PU.photo_id ? 'perlu_cek' : 'tanpa_foto', diffs: [] }, no = r.purchase_no || '';
     const qtyOf = new Map(); lines.forEach(l => qtyOf.set(String(l.product_id), roundQty((qtyOf.get(String(l.product_id)) || 0) + l.qty)));
     PU.result = `<div class="card pad" id="pu-res" data-no="${esc(no)}" data-match="${esc(m.status)}" style="border-color:#5EEAD4">
       <div class="row wrap" style="margin-bottom:8px"><span class="badge ok">${ic('check')} ${esc(t('pu.saved'))}</span>${no ? `<b class="num" id="pu-res-no">${esc(no)}</b>` : ''}<span class="badge ${MATCH_BADGE[m.status] || 'gray'}" id="pu-res-match">${esc(t('pu.m_' + m.status))}</span></div>
       ${reason ? `<div class="small" id="pu-res-reason" style="margin-bottom:6px">${esc(t('pu.mm_reason'))}: <b>“${esc(reason)}”</b></div>` : ''}
-      ${r.mismatch_request_id ? `<div class="small" id="pu-res-review" style="margin-bottom:6px;color:var(--warn)"><b>${esc(t('pu.mm_sent_review'))}</b></div>` : ''}
+      ${r.mismatch_request_id ? `<div class="small" id="pu-res-review" style="margin-bottom:6px;color:var(--warn)"><b>${esc(t('pu.mm_sent_review'))}</b></div>` : ''}${dpResultHTML(r)}
       <table class="tbl"><thead><tr><th>${esc(t('product'))}</th><th class="r">${esc(t('qty'))}</th><th class="r">${esc(t('stock'))}</th></tr></thead><tbody>
       ${(r.stock || []).map(s => { const p = prodById(s.product_id) || {}; return `<tr><td>${esc(p.name || s.product_id)}</td><td class="r num">${fmtQty(qtyOf.get(String(s.product_id)))} ${esc(p.unit || '')}</td><td class="r num">${fmtQty(before.get(String(s.product_id)))} → <b>${fmtQty(s.stock)}</b></td></tr>`; }).join('')}</tbody></table>
       <div class="lockline" id="pu-res-locked">${ic('lock')} ${esc(t('pu.locked'))}</div>
       <div class="row wrap" style="margin-top:8px"><button class="btn primary sm" data-act="pu-move-now" id="pu-res-move">${ic('truck')} ${esc(t('mv.now'))}</button>
       ${no ? `<button class="btn sm" data-act="pu-fix" data-no="${esc(no)}" id="pu-res-fix">${esc(t('pu.fix_btn'))}</button>` : ''}</div></div>`;
     PU.lastIn = lines.slice();
-    Object.assign(PU, { lines: [], note: '', photo_id: '', thumb: '', scan: null, supplier: '', carrier: { type: '' } }); savePuDraft();
+    Object.assign(PU, { lines: [], note: '', photo_id: '', thumb: '', scan: null, supplier: '', carrier: { type: '' }, dp: null }); savePuDraft();
     const mm = $('#pu-mismatch'); if (mm) dropModal(mm);
     toast(t('saved'), 'ok');
     PUH.groups = null;
@@ -3150,7 +3155,7 @@ function groupPurchases(rows) {
     let x = g.get(r.purchase_no);
     if (!x) { x = { no: r.purchase_no, date: r.purchase_date, supplier: r.supplier || '', user: r.user || '', match: '', notes: '', lines: new Map(), fixes: 0, base: false, order: 0 }; g.set(r.purchase_no, x); }
     if (r.match_status === 'koreksi') x.fixes++;
-    else { if (!x.base || String(r.purchase_date) < String(x.date)) x.date = r.purchase_date; x.base = true; x.match = r.match_status || ''; x.notes = r.match_notes || ''; x.supplier = r.supplier || ''; x.user = r.user || ''; }
+    else { if (!x.base || String(r.purchase_date) < String(x.date)) x.date = r.purchase_date; x.base = true; x.match = r.match_status || ''; x.notes = r.match_notes || ''; x.supplier = r.supplier || ''; x.user = r.user || ''; if (r.drawer_pay) x.dp = dpParse(r.drawer_pay); }
     x.order = Math.max(x.order, num(r.id));
     const k = String(r.product_id), ln = x.lines.get(k) || { product_id: r.product_id, name: r.name, qty: 0 };
     ln.qty = roundQty(ln.qty + num(r.qty)); x.lines.set(k, ln);
@@ -3178,7 +3183,7 @@ function drawPuHist() {
   if (!PUH.groups) { box.innerHTML = PUH.err ? `<div class="small red">${esc(PUH.err)}</div>` : `<div class="spinner"></div>`; return; }
   box.innerHTML = PUH.groups.length ? PUH.groups.slice(0, 40).map(g => {
     const pend = pendingFix(g.no);
-    return `<div class="hist" data-no="${esc(g.no)}"><div class="h"><b class="num">${esc(g.no)}</b><span class="badge ${MATCH_BADGE[g.match] || 'gray'}">${esc(t('pu.m_' + (g.match || 'tanpa_foto')))}</span>${g.fixes ? `<span class="badge">${esc(t('pu.n_fixes', { n: g.fixes }))}</span>` : ''}${pend ? `<span class="badge warn" data-pending="${esc(pend.id)}">${esc(t(S.role === 'manager' ? 'pu.fix_waiting_owner' : 'pu.fix_waiting'))}</span>` : ''}</div>
+    return `<div class="hist" data-no="${esc(g.no)}"><div class="h"><b class="num">${esc(g.no)}</b><span class="badge ${MATCH_BADGE[g.match] || 'gray'}">${esc(t('pu.m_' + (g.match || 'tanpa_foto')))}</span>${g.fixes ? `<span class="badge">${esc(t('pu.n_fixes', { n: g.fixes }))}</span>` : ''}${dpBadgeHTML(g.dp)}${pend ? `<span class="badge warn" data-pending="${esc(pend.id)}">${esc(t(S.role === 'manager' ? 'pu.fix_waiting_owner' : 'pu.fix_waiting'))}</span>` : ''}</div>
       <div class="small muted">${esc(fmtDate(g.date))}${g.supplier ? ' · ' + esc(g.supplier) : ''}${g.user ? ' · ' + esc(g.user) : ''}</div>
       ${g.lines.map(l => { const p = prodById(l.product_id); return `<div class="hl"><span>${esc(p ? p.name : l.name)}</span><b class="num">${fmtQty(l.qty)} ${esc(p ? p.unit || '' : '')}</b></div>`; }).join('')}
       ${g.match === 'retur' ? '' : `<div class="row wrap" style="justify-content:space-between;margin-top:6px"><span class="lockline" style="margin:0">${ic('lock')} ${esc(t('pu.locked_short'))}</span><span class="row" style="gap:6px"><button class="btn xs" data-act="pu-doc" data-no="${esc(g.no)}">${ic('print')} ${esc(t('doc.goods_in'))}</button><button class="btn xs" data-act="pu-retur" data-no="${esc(g.no)}">${esc(t('sr.btn'))}</button><button class="btn xs" data-act="pu-fix" data-no="${esc(g.no)}" ${pend ? 'disabled' : ''}>${esc(t('pu.fix_btn'))}</button></span></div>`}</div>`;
@@ -4690,7 +4695,7 @@ const ACT = {
   'pu-newprod': el => { const l = PU.lines[+el.dataset.i]; if (l) openNewProduct({ name: l.ext ? l.ext.name : l.name, unit: l.ext && l.ext.unit, cost: l.cost }, p => { l.product_id = p.id; savePuDraft(); RENDER.masuk(); }); },
   'pu-newprod-q': () => openNewProduct(/^\d{6,14}$/.test(String(PU.q || '').trim()) ? { sku: String(PU.q).trim() } : { name: PU.q }, p => puAdd(p)), // v64: a scanned barcode is the new product's barcode
   'pu-del': el => { PU.lines.splice(+el.dataset.i, 1); savePuDraft(); RENDER.masuk(); },
-  'pu-clear': () => { Object.assign(PU, { lines: [], photo_id: '', thumb: '', scan: null, result: null, scanErr: '', carrier: { type: '' } }); savePuDraft(); RENDER.masuk(); },
+  'pu-clear': () => { Object.assign(PU, { lines: [], photo_id: '', thumb: '', scan: null, result: null, scanErr: '', carrier: { type: '' }, dp: null }); savePuDraft(); RENDER.masuk(); },
   'pu-retur': el => openSupReturn(el.dataset.no),
   // v17: attendance of the shop's workers by face on this device (shared/att-kiosk.js, workflow khair-att)
   'to-mgmt': () => handOff(S.user, S.role, S.pin_hash, S.viaMaster),
@@ -5632,6 +5637,118 @@ Object.assign(I18N.ar, {
   'pay.tr_to': 'دخل إلى حساب المتجر:', 'pay.tr_pick': 'اختر حساب المتجر الذي وصل إليه التحويل (أو صوّر الإيصال)',
   'pay.tr_mm': 'الإيصال {slip} ≠ التحويل {amt} — تحقّق مرة أخرى', 'pay.tr_ok': 'المبلغ مطابق', 'pay.tr_unclear': 'المبلغ في الإيصال غير مقروء',
   'pay.tr_from': 'من {b}', 'pay.tr_acc_found': 'حساب المتجر المعروف من الإيصال: {acc}'
+});
+/* v68 (owner 2026-10-20, asked whether the cashier records the cash he gives the driver at delivery on the goods-in screen itself: «نعم يسجله
+   الكاشير ويأخذ صورة للسيارة أو ما دفع له ويكتب التفاصيل بالوقت متى وكيف ولماذا دفع هذا المبلغ. يكتب في مصاريف الكاشير التي دفعها وخرجت من الكاشير،
+   ويقوم التطبيق بوضعها في المكان المناسب في الإدارة المالية»): on the goods-in form, "Dibayar dari laci kasir" (off by default) — how much, why
+   (the goods' price / delivery / porters / other), how (cash from the drawer, fixed), when (recorded by itself), a short note and ONE photo
+   (the car, the receipt or what was paid). It is sent with the note in the same save_purchase (one request: all or nothing); the server
+   makes it a supplier payment for the note or a cashier expense from the drawer. Needs the user's own open drawer. */
+const DP_PURPOSES = ['barang', 'ongkir', 'kuli', 'lain'];
+const DP_EXP_CAT = { ongkir: 'transport', kuli: 'transport', lain: 'lain' }; // as the server (the existing expense categories)
+const DPS = { scanning: false, err: '' }; // this screen only (not kept with the draft)
+const dpState = () => PU.dp && typeof PU.dp === 'object' ? PU.dp : (DPS.err = '', PU.dp = { on: false, purpose: 'barang', amount: 0, note: '', photo_id: '', thumb: '' });
+const dpCan = () => !!S.shift;
+const puTotalNow = () => sum(PU.lines, l => Math.round(num(l.qty) * int(l.cost)));
+const puCostsKnown = () => PU.lines.length > 0 && PU.lines.every(l => int(l.cost) > 0);
+function dpParse(s) { try { const o = typeof s === 'string' ? JSON.parse(s || 'null') : s; return o && typeof o === 'object' && o.purpose ? o : null; } catch (e) { return null; } }
+function dpHTML() {
+  const d = dpState(), can = dpCan(), on = !!d.on && can, total = puTotalNow();
+  const slip = DPS.scanning ? `<div class="row"><div class="spinner" style="width:22px;height:22px;border-width:3px;margin:0"></div><b>${esc(t('dp.photo_reading'))}</b></div>`
+    : d.photo_id ? `<b class="okc" id="pu-dp-photo-ok">${esc(t('dp.photo_ok'))}</b>`
+    : DPS.err ? `<span class="red small">${esc(DPS.err)}</span>` : `<b>${esc(t('dp.photo'))}</b><div class="small muted">${esc(t('dp.photo_hint'))}</div>`;
+  return `<div class="card pad" id="pu-dp" data-on="${on ? 1 : 0}" style="margin:10px 0;background:var(--pll)">
+    <label class="check" style="margin:0;padding:0;background:none;min-height:0;font-weight:900"><input type="checkbox" id="pu-dp-on" ${d.on ? 'checked' : ''} ${can || d.on ? '' : 'disabled'}> <span>${ic('out')} ${esc(t('dp.title'))}<div class="small muted" style="font-weight:400">${esc(t('dp.hint'))}</div></span></label>
+    ${can ? '' : `<div class="small" id="pu-dp-noshift" style="color:var(--warn);font-weight:800;margin-top:6px">${esc(t('dp.no_shift'))}</div>`}
+    ${on ? `<div id="pu-dp-body" style="margin-top:10px">
+      <div class="field"><label class="f">${esc(t('dp.why'))} *</label><div class="chips" id="pu-dp-why" role="radiogroup" style="flex-wrap:wrap">${DP_PURPOSES.map(p => `<button type="button" role="radio" class="chip ${d.purpose === p ? 'on' : ''}" aria-checked="${d.purpose === p}" data-dp-why="${p}" id="pu-dp-why-${p}">${esc(t('dp.p_' + p))}</button>`).join('')}</div>
+        <div class="small muted" id="pu-dp-where" data-where="${d.purpose === 'barang' ? 'payment' : 'expense'}">${esc(d.purpose === 'barang' ? t('dp.where_barang') : t('dp.where_exp', { cat: t('excat.' + DP_EXP_CAT[d.purpose]) }))}</div></div>
+      <div class="field"><label class="f" for="pu-dp-amt">${esc(t('dp.amount'))} (Rp) *</label><div class="row wrap" style="gap:6px"><input class="input money" data-rule="num" id="pu-dp-amt" inputmode="numeric" autocomplete="off" style="flex:1 1 170px;min-width:0" value="${d.amount ? esc(fmtNum(d.amount)) : ''}">${d.purpose === 'barang' && total > 0 ? `<button type="button" class="btn sm" id="pu-dp-use-total" style="flex:0 0 auto">${esc(t('dp.use_total', { total: fmtRp(total) }))}</button>` : ''}</div></div>
+      <div class="small" id="pu-dp-how" style="margin:-4px 0 10px">${ic('cash')} <b>${esc(t('dp.how'))}</b>${S.shift && S.shift.shift_id ? ` <span class="badge gray">${esc(S.shift.shift_id)}</span>` : ''}<br><span id="pu-dp-when">${esc(t('dp.when', { time: fmtDateTime(new Date().toISOString()) }))}</span></div>
+      <div class="field"><label class="f" for="pu-dp-note">${esc(t('dp.note'))} *</label><input class="input" id="pu-dp-note" maxlength="200" autocomplete="off" placeholder="${esc(t('dp.note_ph'))}" value="${esc(d.note || '')}"></div>
+      <div class="slip ${d.photo_id ? 'ok' : ''}" id="pu-dp-slip" style="margin-bottom:6px">${d.thumb ? `<img class="thumb" id="pu-dp-thumb" src="${esc(d.thumb)}" alt="${esc(t('dp.photo'))}">` : `<div class="thumb">${ic('camera')}</div>`}
+        <div class="grow" style="min-width:150px">${slip}</div>
+        <label class="btn ${d.photo_id ? 'sm' : 'primary'}" for="pu-dp-photo" id="pu-dp-photo-btn" ${DPS.scanning ? 'aria-disabled="true" style="pointer-events:none"' : ''}>${ic('camera')} ${esc(d.photo_id ? t('pu.photo_retake') : t('dp.photo_take'))}</label>${PHOTO_INPUT('pu-dp-photo')}</div>
+      <div class="small" id="pu-dp-err" role="alert" style="color:var(--warn);font-weight:800"></div></div>` : ''}</div>`;
+}
+function dpDraw() { const box = $('#pu-dp'); if (!box) return; box.outerHTML = dpHTML(); dpBind($('#v-masuk')); dpErr(''); }
+function dpBind(v) {
+  const box = $('#pu-dp', v); if (!box) return;
+  const d = dpState();
+  $('#pu-dp-on', box).onchange = e => { d.on = e.target.checked; savePuDraft(); dpDraw(); if (d.on) { const a = $('#pu-dp-amt'); if (a) a.focus(); } };
+  $$('[data-dp-why]', box).forEach(b => b.onclick = () => { d.purpose = b.dataset.dpWhy; savePuDraft(); dpDraw(); });
+  const amt = $('#pu-dp-amt', box);
+  if (amt) { amt.addEventListener('input', () => { d.amount = moneyVal(amt.value); savePuDraft(); dpErr(''); }); amt.addEventListener('change', () => { amt.value = d.amount ? fmtNum(d.amount) : ''; }); }
+  const use = $('#pu-dp-use-total', box); if (use) use.onclick = () => { d.amount = puTotalNow(); savePuDraft(); dpDraw(); };
+  const note = $('#pu-dp-note', box); if (note) note.addEventListener('input', () => { d.note = note.value; savePuDraft(); dpErr(''); });
+  const ph = $('#pu-dp-photo', box); if (ph) ph.onchange = () => { const f = ph.files[0]; if (f) dpScan(f); };
+}
+function dpErr(msg) { const e = $('#pu-dp-err'); if (e) e.textContent = msg || ''; if (!msg) { const pe = $('#pu-err'); if (pe) pe.textContent = ''; } }
+/** The goods' total changed: the "= total" button follows it. */
+function dpSync() { const b = $('#pu-dp-use-total'); if (b) b.textContent = t('dp.use_total', { total: fmtRp(puTotalNow()) }); }
+async function dpScan(file) {
+  const d = dpState();
+  DPS.scanning = true; DPS.err = ''; dpDraw();
+  try {
+    const img = await imageToJpeg(file);
+    d.thumb = img.thumb; d.photo_id = ''; dpDraw();
+    const r = await apiPhoto('scan_expense', { image_base64: img.base64, mime: img.mime }); // the same photo upload as an expense (kept with the payment / expense)
+    d.photo_id = r.photo_id || '';
+  } catch (e) { DPS.err = (e instanceof NetError ? t('pu.scan_net') : errMsg(e)) + ' ' + t('pu.scan_retry'); }
+  DPS.scanning = false; savePuDraft(); dpDraw();
+}
+/** Why the section cannot be sent yet ('' = fine, or not used). */
+function dpCheck() {
+  const d = dpState();
+  if (!d.on) return '';
+  if (!dpCan()) return t('dp.no_shift');
+  if (!(int(d.amount) > 0)) return t('dp.need_amount');
+  if (d.purpose === 'barang' && puCostsKnown() && int(d.amount) > puTotalNow()) return t('dp.over_total', { total: fmtRp(puTotalNow()) });
+  if (d.purpose === 'barang' && !String(PU.supplier || '').trim()) return t('dp.need_supplier');
+  if (!String(d.note || '').trim()) return t('dp.need_note');
+  if (DPS.scanning) return t('dp.photo_wait');
+  if (!d.photo_id) return t('dp.need_photo');
+  return '';
+}
+function dpPayload() { const d = dpState(); return d.on && dpCan() ? { amount: int(d.amount), purpose: d.purpose, note: String(d.note || '').trim(), photo_id: d.photo_id } : null; }
+/** In the saved note's card: where the cash went. */
+function dpResultHTML(r) {
+  const x = r && r.drawer_pay; if (!x) return '';
+  const where = x.purpose === 'barang' ? t(x.full ? 'dp.res_pay_full' : 'dp.res_pay') : t('dp.res_exp', { cat: t('excat.' + ((x.expense && x.expense.category) || DP_EXP_CAT[x.purpose] || 'lain')) });
+  return `<div class="small" id="pu-res-dp" data-purpose="${esc(x.purpose)}" style="margin-bottom:6px">${ic('out')} <b>${esc(t('dp.res', { amount: fmtRp(x.amount), why: t('dp.p_' + x.purpose) }))}</b> — ${esc(where)} · ${esc(fmtDateTime(x.at))}</div>`;
+}
+/** In the history: a small badge (no amount when it is hidden for this account). */
+function dpBadgeHTML(dp) {
+  if (!dp) return '';
+  return `<span class="badge warn" data-dp="${esc(dp.purpose)}" title="${esc([t('dp.p_' + dp.purpose), dp.note, dp.by, dp.at ? fmtDateTime(dp.at) : ''].filter(Boolean).join(' · '))}">${ic('out')} ${esc(dp.amount != null ? t('dp.badge', { amount: fmtRp(dp.amount) }) : t('dp.badge_nohide'))}</span>`;
+}
+Object.assign(I18N.id, {
+  'dp.title': 'Dibayar dari laci kasir', 'dp.hint': 'Centang jika Anda membayar tunai dari laci saat barang datang (barang, sopir, ongkir, kuli).',
+  'dp.no_shift': 'Buka laci kasir dulu — uang yang keluar dari laci dicatat di laci Anda sendiri.',
+  'dp.why': 'Untuk apa?', 'dp.p_barang': 'Bayar barang (ke pemasok/sopir)', 'dp.p_ongkir': 'Ongkos kirim / sopir', 'dp.p_kuli': 'Bongkar muat / kuli', 'dp.p_lain': 'Lainnya',
+  'dp.where_barang': 'Masuk sebagai pembayaran ke pemasok untuk nota ini (lunas bila sama dengan totalnya). Manajer / akuntan tetap mengonfirmasi nota.',
+  'dp.where_exp': 'Masuk sebagai pengeluaran kasir dari laci (kategori {cat}).',
+  'dp.amount': 'Jumlah dibayar', 'dp.use_total': '= total nota {total}', 'dp.how': 'Cara: tunai dari laci kasir', 'dp.when': 'Waktu: {time} — dicatat otomatis saat disimpan',
+  'dp.note': 'Kenapa / untuk apa', 'dp.note_ph': 'mis. sopir minta tunai, nota lunas',
+  'dp.photo': 'Foto mobil / nota / yang dibayar *', 'dp.photo_hint': 'Satu foto wajib sebagai bukti.', 'dp.photo_take': 'Ambil foto', 'dp.photo_ok': 'Foto tersimpan', 'dp.photo_reading': 'Mengirim foto…',
+  'dp.need_amount': 'Isi jumlah yang dibayar dari laci', 'dp.over_total': 'Bayar barang tidak boleh lebih dari total nota {total}', 'dp.need_supplier': 'Isi nama pemasok untuk bayar barang',
+  'dp.need_note': 'Tulis kenapa / untuk apa uang ini dibayar', 'dp.need_photo': 'Foto wajib: mobil, nota atau yang dibayar', 'dp.photo_wait': 'Tunggu foto selesai dikirim',
+  'dp.res': 'Tunai dari laci {amount} — {why}', 'dp.res_pay': 'dicatat sebagai pembayaran ke pemasok', 'dp.res_pay_full': 'dicatat sebagai pembayaran ke pemasok — nota lunas', 'dp.res_exp': 'dicatat sebagai pengeluaran kasir ({cat})',
+  'dp.badge': 'Tunai dari laci {amount}', 'dp.badge_nohide': 'Tunai dari laci'
+});
+Object.assign(I18N.ar, {
+  'dp.title': 'دُفع من درج الكاشير', 'dp.hint': 'ضع علامة إذا دفعت نقدًا من الدرج عند وصول البضاعة (البضاعة، السائق، أجرة التوصيل، العتّالون).',
+  'dp.no_shift': 'افتح درج الكاشير أولًا — المال الخارج من الدرج يُسجَّل على درجك أنت.',
+  'dp.why': 'مقابل ماذا؟', 'dp.p_barang': 'ثمن البضاعة (للمورد/السائق)', 'dp.p_ongkir': 'أجرة التوصيل / السائق', 'dp.p_kuli': 'التحميل والتفريغ / العتّالون', 'dp.p_lain': 'أخرى',
+  'dp.where_barang': 'يُسجَّل دفعةً للمورد عن هذه الفاتورة (مدفوعة بالكامل إذا ساوى إجماليها). ويبقى تأكيد الفاتورة على المدير / المحاسب.',
+  'dp.where_exp': 'يُسجَّل مصروفًا للكاشير من الدرج (الفئة: {cat}).',
+  'dp.amount': 'المبلغ المدفوع', 'dp.use_total': '= إجمالي الفاتورة {total}', 'dp.how': 'الطريقة: نقدًا من درج الكاشير', 'dp.when': 'الوقت: {time} — يُسجَّل تلقائيًا عند الحفظ',
+  'dp.note': 'لماذا / مقابل ماذا', 'dp.note_ph': 'مثلًا: طلب السائق نقدًا، الفاتورة مدفوعة بالكامل',
+  'dp.photo': 'صورة السيارة / الإيصال / ما دُفع *', 'dp.photo_hint': 'صورة واحدة إلزامية كإثبات.', 'dp.photo_take': 'التقط صورة', 'dp.photo_ok': 'حُفظت الصورة', 'dp.photo_reading': 'جارٍ إرسال الصورة…',
+  'dp.need_amount': 'اكتب المبلغ المدفوع من الدرج', 'dp.over_total': 'ثمن البضاعة لا يتجاوز إجمالي الفاتورة {total}', 'dp.need_supplier': 'اكتب اسم المورد لدفع ثمن البضاعة',
+  'dp.need_note': 'اكتب لماذا / مقابل ماذا دُفع هذا المبلغ', 'dp.need_photo': 'الصورة إلزامية: السيارة أو الإيصال أو ما دُفع', 'dp.photo_wait': 'انتظر حتى يكتمل إرسال الصورة',
+  'dp.res': 'نقدًا من الدرج {amount} — {why}', 'dp.res_pay': 'سُجّل دفعةً للمورد', 'dp.res_pay_full': 'سُجّل دفعةً للمورد — الفاتورة مدفوعة بالكامل', 'dp.res_exp': 'سُجّل مصروفًا للكاشير ({cat})',
+  'dp.badge': 'نقدًا من الدرج {amount}', 'dp.badge_nohide': 'نقدًا من الدرج'
 });
 /* ========== Boot ========== */
 /* ========== Trial links (?demo=1 / ?mock=1) can be closed by the owner ==========

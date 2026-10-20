@@ -131,7 +131,7 @@ test('Pesanan sales: badge, open order, Proses → POS sale → order diproses w
   await expect(page.locator('.modal #receipt, #shelf-modal').first()).toBeVisible();
   if (await page.locator('#shelf-modal').count()) await page.click('#ns-move');
   await expect(page.locator('.modal #receipt')).toBeVisible();
-  const inv = (await page.locator('.modal #receipt').innerText()).match(/KM\d{6}-\d{4}/)[0];
+  const inv = (await page.locator('.modal #receipt').innerText()).match(/\d{2}\/\d{2}\/\d{4}\/\d{4}\/\d+/)[0];
   await expect.poll(async () => (await getDb(page)).field_orders.find(x => x.order_id === o.order_id).status).toBe('diproses');
   db = await getDb(page);
   expect(db.field_orders.find(x => x.order_id === o.order_id).invoice_no).toBe(inv);

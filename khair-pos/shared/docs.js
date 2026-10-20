@@ -102,7 +102,7 @@
     var st = ctx.store || {}, c = ctx.customer || { name: rc.customer_name, phone: rc.customer_phone };
     var dueDays = int(st.invoice_due_days) > 0 ? int(st.invoice_due_days) : 14;
     var due = int(rc.debt) > 0 ? addDays(rc.sale_date, dueDays) : '';
-    var h = header(ctx, 'FAKTUR PENJUALAN', [['No. faktur', rc.invoice_no], ['Tanggal', (date(rc.sale_date) + ' ' + hhmm(rc.sale_time)).trim()],
+    var h = header(ctx, 'FAKTUR PENJUALAN', [['No. faktur', rc.invoice_no + (rc.cashier ? ' · ' + rc.cashier : '')], ['Tanggal', (date(rc.sale_date) + ' ' + hhmm(rc.sale_time)).trim()],
       ['Jenis', saleKind(rc, ctx.customer)], ['Kasir', rc.cashier], ['Jatuh tempo', due ? date(due) : '']]);
     if (rc.status === 'void') h += '<div class="stamp">BATAL</div>';
     h += toBox('Kepada', c);

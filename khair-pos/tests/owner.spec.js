@@ -13,7 +13,7 @@ test('owner voids a sale from history: status void, stock restored, debt reverse
   await page.locator('#cp-list [data-pick]').filter({ hasText: 'Al-Barokah' }).click();
   await page.click('[data-act="method"][data-m="hutang"]');
   await checkoutSkip(page);
-  const inv = (await page.locator('.modal #receipt').innerText()).match(/KM\d{6}-\d{4}/)[0];
+  const inv = (await page.locator('.modal #receipt').innerText()).match(/\d{2}\/\d{2}\/\d{4}\/\d{4}\/\d+/)[0];
   await closeModals(page);
   let db = await getDb(page);
   expect(productByName(db, /Sukkari/).stock).toBe(p.stock - 3);

@@ -522,6 +522,22 @@ user presses Send in WhatsApp (no automatic sending without the WhatsApp Busines
 - Names: letters (any language), digits, space, `. , ' -`; vehicle numbers: letters, digits, space, `/ - .`; phone: digits.
 Stored on each goods-in row (`carrier_type, carrier_name, carrier_vehicle, carrier_phone`) and in the activity log.
 
+### Cash paid from the drawer at delivery (v68)
+`save_purchase` may carry `data.drawer_pay = {amount, purpose: "barang" | "ongkir" | "kuli" | "lain", note, photo_id}` (Khair Kasir
+"Dibayar dari laci kasir"), written in the SAME request as the note (one D1 batch: all or nothing; a refusal writes nothing).
+- Needs the user's own open shift (`SHIFT_REQUIRED`), `amount > 0`, a `note` (≤ 200) and a `photo_id` of kind `biaya` or `bayar`
+  (the app uploads it with `scan_expense`) — else `INVALID`. `barang` needs a supplier and may not exceed the note's total when every
+  line has a cost.
+- `barang` (the goods' price, cash on delivery) → a supplier payment out: `method tunai`, note `… [dari kas] | <note>`, `proof_photo_id`,
+  allocated to the new `purchase_no` (`lunas` / `sebagian`; no costs → `belum_dialokasi`). Covering the note → its lines get
+  `pay_status 'lunas'`, `pay_method 'tunai'`, `paid_at` — it still waits for `confirm_purchase`, which then records no second payment
+  and refuses `tempo`.
+- `ongkir` / `kuli` → an expense `category 'transport'`, `lain` → `'lain'`; `paid_from 'kas'`, its photo, note
+  `Barang masuk <no> — <purpose>: <note>`.
+- Both: the shift's `cash_out` + a move; the lines keep `drawer_pay` (JSON `{amount, purpose, note, by, at, photo_id, pay_id | category}`;
+  a cashier sees another cashier's `barang` without `amount`); one `notifikasi` to owner / manager / accountant; activity
+  `bayar_keluar` / `biaya`. Response `drawer_pay: {purpose, amount, at, full, payment, expense, shift}`.
+
 ### Returns (retur) — customers and suppliers (v16)
 | Action | Who | `data` | Response |
 |---|---|---|---|
