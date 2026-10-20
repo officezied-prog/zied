@@ -228,7 +228,7 @@ test('receipt: copy text, WhatsApp link, print-only receipt', async ({ page }) =
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   expect(clip).toContain(inv);
   expect(clip).toContain('Kacang Pistachio');
-  await expect(page.locator('#rc-wa')).toHaveAttribute('href', new RegExp(`^https://wa\\.me/6281244445566\\?text=.*${inv}`));
+  await expect(page.locator('#rc-wa')).toHaveAttribute('href', new RegExp(`^https://wa\\.me/6281244445566\\?text=.*${encodeURIComponent(inv)}`)); // (the number's / is %2F in the link)
 
   await page.evaluate(() => { window.print = () => { window.__printed = true; }; });
   await page.click('[data-act="rc-print"]');
