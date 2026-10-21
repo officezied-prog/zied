@@ -69,7 +69,8 @@ test('"bayar barang" from the drawer: amount, why, time, note and photo → a su
   expect(pay).toMatchObject({ direction: 'out', party_type: 'supplier', supplier: 'CV Timur Tengah Food', method: 'tunai', amount: 700000, paid_from: 'kas', shift_id: sh.shift_id, match_status: 'lunas', cashier: 'Siti' });
   expect(JSON.parse(pay.alloc)).toEqual([{ ref: no, amount: 700000 }]);
   expect(pay.note).toBe('Barang masuk ' + no + ' dibayar tunai oleh kasir Siti [dari kas] | Sopir minta tunai, nota lunas');
-  expect(photo).toMatchObject({ kind: 'biaya', user: 'Siti' });
+  expect(photo).toMatchObject({ kind: 'biaya', user: 'Siti', match_status: '' });
+  expect(photo.extracted.stored_only).toBe(true); // v70: an evidence photo, kept but never read by AI (no cost, no wait)
   const lines = db.purchases.filter(r => r.purchase_no === no);
   expect(lines.map(r => [r.pay_status, r.pay_method, r.check_status || ''])).toEqual([['lunas', 'tunai', '']]); // paid, still waiting for the manager
   expect(JSON.parse(lines[0].drawer_pay)).toMatchObject({ amount: 700000, purpose: 'barang', note: 'Sopir minta tunai, nota lunas', by: 'Siti', photo_id: photo.photo_id, pay_id: pay.pay_id });

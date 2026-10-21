@@ -20,6 +20,8 @@ return [{ json: {
   mime: /^image\/(jpeg|png|webp)$/.test(String(data.mime || '')) ? data.mime : 'image/jpeg',
   invoice_no: action === 'scan_exit' && data.invoice_no ? String(data.invoice_no) : '__none__',
   // Supplier return (v17): the goods-in number the goods go back against, kept as the photo's ref.
+  // v70: an evidence photo only (the cashier's cash paid from the drawer at goods-in: the car, the money) — kept, never read by AI
+  no_read: action === 'scan_expense' && data.read === false,
   purchase_no: action === 'scan_supplier_return' && /^[A-Z0-9][A-Z0-9 \/.-]{0,39}$/.test(String(data.purchase_no || '').trim().toUpperCase()) ? String(data.purchase_no).trim().toUpperCase() : '',
   from: action === 'list_photos' && isDate(data.from) ? data.from : '9999-12-31',
   to: action === 'list_photos' && isDate(data.to) ? data.to : '0000-01-01'
