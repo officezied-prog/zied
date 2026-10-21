@@ -70,6 +70,12 @@ every app's top bar, phones included (owner `#tb-sub` "POS · v…", the store k
 gudang (now `APP_VERSION` + KUpdate too) and Brad `#hd-ver` under the title). The first time a new version opens on a phone, KUpdate
 shows a short green note "Aplikasi diperbarui ke versi …" (`#kupd-ok`, `localStorage kupd.seen:<app folder>`; never on a first
 install, never blocks a tap).
+**v70 (owner 3.1.2, kasir 1.8.2, sales 1.9.9):** text keys defined twice with different texts showed the later text on both
+screens (Beranda "Semua aman" → "Belum ada pekerja…", the drawer-opening approval → the bank help, the field orders map → "Penjualan &
+faktur hari ini", the photo list's "Referensi"); each screen now has its own key, and `tests/i18n-keys.spec.js` fails on any new such
+clash (add a deliberate replacement to its `REPLACED` list). Photo API `scan_expense` with `data.read === false` = an evidence photo
+(the cashier's drawer payment at goods-in): stored in R2 + `pos_photos` without the AI call (`ai: 'skipped'`, `extracted.stored_only`,
+no "perlu cek").
 
 **Backend = "Khair Mart Jumla" (الخير مارت جملة) — LIVE since 2026-10-10.** The owner, cashier
 and field-sales apps point at the Cloudflare Worker `https://khair-mart-jumla.officezied.workers.dev`

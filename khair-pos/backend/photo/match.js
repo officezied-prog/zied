@@ -40,7 +40,8 @@ function firstObject(t) {
   }
   return null;
 }
-if (!aiError) {
+if (a.skip_ai) ex = { items: [], readable: true, stored_only: true, notes: 'Foto bukti, disimpan tanpa dibaca AI' }; // v70: an evidence photo
+else if (!aiError) {
   const s = text.indexOf('{');
   const e = text.lastIndexOf('}');
   if (s >= 0 && e > s) { try { ex = JSON.parse(text.slice(s, e + 1)); } catch (err) { ex = null; } }
@@ -102,7 +103,7 @@ if (a.kind === 'bayar') {
   ex.total = ex.total !== null && ex.total !== undefined && isFinite(Number(ex.total)) ? Math.round(Number(ex.total)) : ex.amount;
   ['vendor', 'date'].forEach(function (k) { ex[k] = ex[k] === null || ex[k] === undefined ? null : str(ex[k]).slice(0, 120); });
   if (ex.date && !/^\d{4}-\d{2}-\d{2}$/.test(ex.date)) ex.date = null;
-  matchStatus = ex.readable === false || ex.amount === null ? 'perlu_cek' : '';
+  matchStatus = a.skip_ai || !(ex.readable === false || ex.amount === null) ? '' : 'perlu_cek'; // v70: an evidence photo has nothing to check
   matchNotes = str(ex.notes).slice(0, 500);
 } else if (a.kind === 'masuk') {
   let products = [];

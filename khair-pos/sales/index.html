@@ -84,7 +84,7 @@
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.9.8';
+const APP_VERSION = 'sales-1.9.9';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -2843,7 +2843,7 @@ RENDER.shops = function () {
   $('#v-shops').innerHTML = `<div class="wrapc">${seg}
     <div class="row" style="margin-bottom:8px"><div class="search grow">${ic('search')}<input class="input" id="sh-q" type="search" placeholder="${esc(t('shop.search'))}" value="${esc(SH.q)}"></div><button class="btn ${SH.map ? 'primary' : ''}" data-act="sh-map" id="sh-map-btn">${ic('route')} ${esc(t('shop.map'))}</button></div>
     ${chips}
-    ${SH.map ? `<div class="map tall" id="shops-map" style="margin:4px 0 12px"></div><div class="legend" id="shops-legend" aria-label="${esc(t('map.legend'))}">${KST.GROUPS.filter(g => legendGroups.includes(g.id)).map(g => `<span data-group="${esc(g.id)}"><i class="gdot" style="--g:${gUI(g.id).c}"></i>${esc(KST.groupLabel(g.id, S.lang))}</span>`).join('')}</div>` : ''}
+    ${SH.map ? `<div class="map tall" id="shops-map" style="margin:4px 0 12px"></div><div class="legend" id="shops-legend" aria-label="${esc(t('map.legend_types'))}">${KST.GROUPS.filter(g => legendGroups.includes(g.id)).map(g => `<span data-group="${esc(g.id)}"><i class="gdot" style="--g:${gUI(g.id).c}"></i>${esc(KST.groupLabel(g.id, S.lang))}</span>`).join('')}</div>` : ''}
     <div class="list" id="sh-list">${list.map(s => shopRow(s, s._d)).join('') || `<div class="empty">${esc(t('no_data'))}</div>`}</div></div>`;
   $('#sh-q').addEventListener('input', debounce(e => { SH.q = $('#sh-q').value; const pos = $('#sh-q').selectionStart; RENDER.shops(); const i = $('#sh-q'); i.focus(); try { i.setSelectionRange(pos, pos); } catch (er) { } }, 250));
   if (SH.map) renderMap($('#shops-map'), { shops: list, current: S.pos, tall: true });
@@ -3077,7 +3077,7 @@ const I18N = {
     'tp.other': 'Jenis toko (tulis sendiri)', 'tp.other_ph': 'mis. Toko parfum Arab', 'tp.chain': 'Jaringan / merek', 'tp.chain_ph': 'Pilih atau tulis — kosongkan jika toko mandiri',
     'tp.none': 'Tidak ketemu. Pilih kelompok "Lainnya" lalu tulis sendiri.',
     'visit.pick_type': 'Pilih jenis toko dulu', 'visit.need_type_other': 'Tulis jenis tokonya (Lainnya)', 'visit.recat': 'Ubah jenis toko', 'visit.recat_hint': 'Jenis baru dikirim bersama kunjungan ini.',
-    'map.legend': 'Warna titik = kelompok toko',
+    'map.legend_types': 'Warna titik = kelompok toko',
     'target.title': 'Jenis toko target', 'target.mine': '{n} toko saya',
     'target.lead': 'Toko yang bisa kita layani, per kelompok — dan barang Khair Grosir yang cocok untuk mereka (harga grosir).',
     'hint.perlengkapan_haji': 'Kurma, air zamzam, tasbih, sajadah & oleh-oleh haji — beli grosir untuk dijual lagi.',
@@ -3226,7 +3226,7 @@ const I18N = {
     'tp.other': 'نوع المتجر (اكتبه بنفسك)', 'tp.other_ph': 'مثال: متجر عطور عربية', 'tp.chain': 'السلسلة / العلامة التجارية', 'tp.chain_ph': 'اختر أو اكتب — اتركه فارغًا إن كان المتجر مستقلًا',
     'tp.none': 'لا نتائج. اختر مجموعة "أخرى" واكتب النوع بنفسك.',
     'visit.pick_type': 'اختر نوع المتجر أولًا', 'visit.need_type_other': 'اكتب نوع المتجر (أخرى)', 'visit.recat': 'تغيير نوع المتجر', 'visit.recat_hint': 'يُرسل النوع الجديد مع هذه الزيارة.',
-    'map.legend': 'لون النقطة = مجموعة المتجر',
+    'map.legend_types': 'لون النقطة = مجموعة المتجر',
     'target.title': 'أنواع المتاجر المستهدفة', 'target.mine': '{n} من متاجري',
     'target.lead': 'المتاجر التي يمكننا خدمتها حسب المجموعة — وما يناسبها من بضائع Khair Grosir (بسعر الجملة).',
     'hint.perlengkapan_haji': 'تمور، ماء زمزم، مسابح، سجاد وهدايا الحج — بالجملة لإعادة البيع.',

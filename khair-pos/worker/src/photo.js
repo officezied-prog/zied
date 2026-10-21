@@ -43,6 +43,7 @@ export function parsePhoto(body) {
     too_big: tooBig,
     mime: /^image\/(jpeg|png|webp)$/.test(String(data.mime || '')) ? data.mime : 'image/jpeg',
     invoice_no: action === 'scan_exit' && data.invoice_no ? String(data.invoice_no) : '__none__',
+    no_read: action === 'scan_expense' && data.read === false, // v70: an evidence photo only — kept, never read by AI
     purchase_no: action === 'scan_supplier_return' && /^[A-Z0-9][A-Z0-9 /.-]{0,39}$/.test(String(data.purchase_no || '').trim().toUpperCase()) ? String(data.purchase_no).trim().toUpperCase() : '',
     from: action === 'list_photos' && isDate(data.from) ? data.from : '9999-12-31',
     to: action === 'list_photos' && isDate(data.to) ? data.to : '0000-01-01',
@@ -131,8 +132,8 @@ export async function handlePhoto(adapter, body, headers, STORE_KEY, env, opts =
   const auth = runPhotoAuth($, STORE_KEY)[0].json;
   if (auth.mode === 'respond') return auth.response; // list_photos or an auth/validation error
 
-  // scan: read the image with AI (optional), then Match (pure).
-  const aiOut = await callAI(env, auth);
+  // scan: read the image with AI (optional), then Match (pure). v70: an evidence photo (auth.skip_ai) is only kept — no AI call, no cost.
+  const aiOut = auth.skip_ai ? {} : await callAI(env, auth);
   nodes['Auth & Route'] = [auth];
   const $2 = makeAccessor(nodes);
   const $input = { first: () => ({ json: aiOut }) };
@@ -140,7 +141,7 @@ export async function handlePhoto(adapter, body, headers, STORE_KEY, env, opts =
   // v50: say WHY nothing was read — 'off' = no AI key in the Worker (the owner adds ANTHROPIC_API_KEY), 'error' = the AI call failed
   // (ai_error: HTTP status / cut off) — instead of an empty result nobody can explain.
   if (m.response && typeof m.response === 'object') {
-    m.response.ai = !aiOut || !aiOut.error ? 'ok' : aiOut.error === 'AI_DISABLED' ? 'off' : 'error';
+    m.response.ai = auth.skip_ai ? 'skipped' : !aiOut || !aiOut.error ? 'ok' : aiOut.error === 'AI_DISABLED' ? 'off' : 'error';
     if (aiOut && aiOut.error && aiOut.error !== 'AI_DISABLED') m.response.ai_error = String(aiOut.error).slice(0, 80);
   }
   const stored = await storeOriginal(env, m.photo, auth, opts.base); // v36: keep the image (R2), when the bucket is bound
