@@ -9,7 +9,7 @@ const H = x => x.repeat(64).slice(0, 64);
 const PIN = { owner: H('a'), budi: H('b'), siti: H('c'), wahyu: H('d'), master: H('e') };
 function baseUsers() {
   return [
-    { id: 1, name: 'zied salah', role: 'owner', pin_hash: PIN.owner, master_hash: PIN.master, active: true },
+    { id: 1, name: 'zaid pemilik', role: 'owner', pin_hash: PIN.owner, master_hash: PIN.master, active: true },
     { id: 2, name: 'Budi', role: 'manager', pin_hash: PIN.budi, active: true },
     { id: 3, name: 'Siti', role: 'kasir', pin_hash: PIN.siti, active: true },
     { id: 4, name: 'Wahyu', role: 'sales', pin_hash: PIN.wahyu, active: true }
@@ -32,7 +32,7 @@ function apply(st, writes, nowIso) { // mimic the data-table upsert back into st
 }
 const NOW = '2026-10-07T10:00:00.000Z';
 const req = (action, who, data) => ({ action, user: who ? who.name : '', pin_hash: who ? who.pin : '', data: data || {} });
-const WHO = { owner: { name: 'zied salah', pin: PIN.owner }, budi: { name: 'Budi', pin: PIN.budi }, siti: { name: 'Siti', pin: PIN.siti }, wahyu: { name: 'Wahyu', pin: PIN.wahyu } };
+const WHO = { owner: { name: 'zaid pemilik', pin: PIN.owner }, budi: { name: 'Budi', pin: PIN.budi }, siti: { name: 'Siti', pin: PIN.siti }, wahyu: { name: 'Wahyu', pin: PIN.wahyu } };
 
 console.log('— auth —');
 eq('bad key', KChat.core(state({ key_ok: false }), req('chat_bootstrap', WHO.owner), NOW).response.error, 'BAD_KEY');
@@ -43,7 +43,7 @@ eq('locked_until', KChat.core(state({ users: baseUsers().map(u => u.name === 'Si
 eq('must_change blocks', KChat.core(state({ users: baseUsers().map(u => u.name === 'Siti' ? Object.assign(u, { must_change: true }) : u) }), req('chat_bootstrap', WHO.siti), NOW).response.error, 'PIN_CHANGE_REQUIRED');
 eq('master code opens', KChat.core(state(), req('chat_bootstrap', { name: 'Budi', pin: PIN.master }), NOW).response.ok, true);
 eq('tamper locked kasir', KChat.core(state({ settings: [{ id: 9, skey: 'locked_accounts', svalue: JSON.stringify(['siti']) }] }), req('chat_bootstrap', WHO.siti), NOW).response.error, 'TAMPER_LOCKED');
-eq('owner never tamper-locked', KChat.core(state({ settings: [{ id: 9, skey: 'locked_accounts', svalue: JSON.stringify(['zied salah']) }] }), req('chat_bootstrap', WHO.owner), NOW).response.ok, true);
+eq('owner never tamper-locked', KChat.core(state({ settings: [{ id: 9, skey: 'locked_accounts', svalue: JSON.stringify(['zaid pemilik']) }] }), req('chat_bootstrap', WHO.owner), NOW).response.ok, true);
 
 console.log('— channels —');
 eq('owner sees 2 channels', KChat.core(state(), req('chat_bootstrap', WHO.owner), NOW).response.channels.length, 2);
@@ -112,7 +112,7 @@ eq('retention 0 keeps all', (() => { const s2 = state({ settings: [], chat: st.c
 console.log('— v36: private 1-to-1 rooms with every team member —');
 st = state();
 boot = KChat.core(st, req('chat_bootstrap', WHO.siti), NOW).response;
-eq('kasir team = the 3 others', boot.team.map(t => t.name).join(','), 'Budi,Wahyu,zied salah');
+eq('kasir team = the 3 others', boot.team.map(t => t.name).join(','), 'Budi,Wahyu,zaid pemilik');
 const dmSW = boot.team.find(t => t.name === 'Wahyu').channel;
 eq('room id from both ids + names, sorted', dmSW, 'dm:3.siti|4.wahyu');
 eq('both sides compute the same room', KChat.core(st, req('chat_bootstrap', WHO.wahyu), NOW).response.team.find(t => t.name === 'Siti').channel, dmSW);
@@ -122,7 +122,7 @@ eq('kasir → sales private ok', r.response.ok, true);
 apply(st, r.writes);
 r = KChat.core(st, req('chat_send', WHO.owner, { channel: dmSW, body: 'masuk', cid: 'd2' }), NOW);
 eq('owner cannot post in a room of two others', r.response.error, 'FORBIDDEN');
-r = KChat.core(st, req('chat_send', WHO.siti, { channel: 'dm:1.zied salah|4.wahyu', body: 'x', cid: 'd3' }), NOW);
+r = KChat.core(st, req('chat_send', WHO.siti, { channel: 'dm:1.zaid pemilik|4.wahyu', body: 'x', cid: 'd3' }), NOW);
 eq('nobody posts in a room that is not theirs', r.response.error, 'FORBIDDEN');
 r = KChat.core(st, req('chat_send', WHO.siti, { channel: 'dm:nonsense', body: 'x', cid: 'd4' }), NOW);
 eq('unknown private room', r.response.error, 'FORBIDDEN');
@@ -154,7 +154,7 @@ const st3 = state({ users: baseUsers().filter(u => u.name !== 'Wahyu').concat([{
 ok('a new account with an old name does not see the old room', KChat.core(st3, req('chat_poll', WHO.wahyu, { cursors: { [dmSW]: '' } }), NOW).response.messages[dmSW] === undefined);
 // inactive users leave the team list; an akuntan is in it
 const st4 = state({ users: baseUsers().map(u => u.name === 'Budi' ? Object.assign(u, { active: false }) : u).concat([{ id: 5, name: 'Rina', role: 'akuntan', pin_hash: H('f'), active: true }]) });
-eq('inactive left out, akuntan in', KChat.core(st4, req('chat_bootstrap', WHO.siti), NOW).response.team.map(t => t.name).join(','), 'Rina,Wahyu,zied salah');
+eq('inactive left out, akuntan in', KChat.core(st4, req('chat_bootstrap', WHO.siti), NOW).response.team.map(t => t.name).join(','), 'Rina,Wahyu,zaid pemilik');
 // unread for the fixed rooms too, from the device's seen map
 st = state();
 apply(st, KChat.core(st, req('chat_send', WHO.owner, { channel: 'general', body: 'a', cid: 'g1' }), '2026-10-07T09:00:00.000Z').writes);

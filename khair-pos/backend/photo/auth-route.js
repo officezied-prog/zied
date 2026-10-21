@@ -19,10 +19,16 @@ if (me.pin_hash !== req.pin_hash && !viaMaster) return fail('BAD_PIN', 'Nama ata
 if (me.must_change === true && !viaMaster) return fail('PIN_CHANGE_REQUIRED', 'Buat PIN baru dulu sebelum memakai aplikasi');
 
 if (req.action === 'list_photos') {
+  // v71 security: the photo list (what the AI read on payment slips — account numbers — and supplier notes — prices) is for the
+  // owner, the manager and the accountant only, like the photo files themselves; a supplier's unit prices follow the owner's cost
+  // setting (akuntan_sees_cost), as everywhere else.
+  if (['owner', 'manager', 'akuntan'].indexOf(me.role) < 0) return fail('FORBIDDEN', 'Hanya pemilik, manajer, atau akuntan');
   if (req.from === '9999-12-31') return fail('INVALID', 'Rentang tanggal tidak valid');
+  const seesCost = me.role === 'owner' || rows('Get Settings').some(function (r) { return r.skey === 'akuntan_sees_cost' && String(r.svalue) === 'true'; });
   const photos = rows('Get Photos Range').map(function (p) {
     let ex = {};
     try { ex = JSON.parse(p.extracted || '{}'); } catch (e) { ex = {}; }
+    if (!seesCost && p.kind === 'masuk' && Array.isArray(ex.items)) ex.items = ex.items.map(function (it) { const o = Object.assign({}, it); delete o.unit_price; return o; });
     return { photo_id: p.photo_id, kind: p.kind, ref: p.ref, created_at: p.created_at, photo_date: p.photo_date, user: p.user,
       drive_url: p.drive_url || '', extracted: ex, match_status: p.match_status || '', match_notes: p.match_notes || '' };
   });
@@ -65,8 +71,9 @@ const sale = rows('Get Sale').find(function (s) { return s.invoice_no === req.in
 if (!sale) return fail('NOT_FOUND', 'Faktur tidak ditemukan: ' + req.invoice_no);
 const recorded = rows('Get Sale Items').filter(function (it) { return it.invoice_no === sale.invoice_no; })
   .map(function (it) { return { name: str(it.name), qty: Number(it.qty) || 0 }; });
+// v71 privacy: the customer's name is not sent to the AI (reading the receipt / counting the goods does not need it)
 const prompt = 'Kamu pengawas barang keluar di toko grosir Khair Mart. Foto ini adalah struk/nota penjualan dan/atau barang yang akan keluar dari toko untuk faktur ' + sale.invoice_no +
-  ' (pembeli: ' + str(sale.customer_name) + '). Barang yang TERCATAT di sistem: ' + JSON.stringify(recorded) +
+  '. Barang yang TERCATAT di sistem: ' + JSON.stringify(recorded) +
   '. Baca barang dan jumlah yang terlihat di foto (dari struk dan/atau hitungan dus/karung/pcs), lalu bandingkan dengan yang tercatat. Nama di struk bisa disingkat. ' + JSON_ONLY +
   ' Format: {"invoice_no": string|null, "items": [{"name": string, "qty": number|null, "unit": string|null}], "total": number|null, "readable": boolean, "match": {"status": "cocok"|"tidak_cocok"|"perlu_cek", "diffs": [{"name": string, "recorded_qty": number|null, "photo_qty": number|null}], "notes": string}, "notes": string}. ' +
   'status cocok = semua barang dan jumlah sama; tidak_cocok = ada barang/jumlah berbeda atau barang tambahan; perlu_cek = foto tidak jelas atau tidak bisa dipastikan. Tulis notes dalam Bahasa Indonesia singkat.';

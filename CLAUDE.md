@@ -76,6 +76,16 @@ faktur hari ini", the photo list's "Referensi"); each screen now has its own key
 clash (add a deliberate replacement to its `REPLACED` list). Photo API `scan_expense` with `data.read === false` = an evidence photo
 (the cashier's drawer payment at goods-in): stored in R2 + `pos_photos` without the AI call (`ai: 'skipped'`, `extracted.stored_only`,
 no "perlu cek").
+**Security (v71, owner 2026-10-21: «حماية التطبيق حتى لا يتمكن أي شخص من اختراقه … سرية تامة»):** one login gate in front of EVERY
+endpoint (`worker/src/authgate.js`, called by `index.js` for POS / field / chat / att / photo + its file GET / cold / Brad): the store key
+first (constant time, no D1 read when wrong — a flood cannot use up the free reads), then the PIN against `pos_users` only; wrong PINs
+are counted on all endpoints together and lock longer each time (5 → 15 min, 10 → 1 h, 15 → 6 h, 20+ → 24 h), each lock logged for the
+owner (activity kind `keamanan`, danger); a refusal writes nothing else. Data per role: no POS bootstrap for sales reps; a cashier's
+settings without `brad_*` / `cold_*` / `att_*` / lala / `locked_accounts` / `limit_agreements`; a cashier's `get_sales` = 62 days of
+sales / items / goods-in + own drawer via `shiftOut`; `list_photos` owner / manager / accountant only (supplier unit prices per
+`akuntan_sees_cost`); notices and the "Balas" quote hide cost prices / margins (`noticeOut`, `ntSafeText`); a master-code session never
+edits an owner account. Never put personal data (names, phones, bank accounts, addresses) or anything about the store key (length,
+hashes) in the repo: it is PUBLIC.
 
 **Backend = "Khair Mart Jumla" (الخير مارت جملة) — LIVE since 2026-10-10.** The owner, cashier
 and field-sales apps point at the Cloudflare Worker `https://khair-mart-jumla.officezied.workers.dev`

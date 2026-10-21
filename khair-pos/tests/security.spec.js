@@ -48,14 +48,14 @@ for (const mode of ['leaflet-stub', 'svg']) {
   });
 }
 
-test('store key never shown in full; pin hashes not kept at rest; offline login with the verifier; old entries migrated', async ({ page }) => {
+test('store key never shown in full; pin hashes not kept at rest; no offline check of the owner\'s PIN; the manager\'s is slow; old entries migrated', async ({ page }) => {
   await login(page, 'Pemilik', '1234', '', { stay: true });
   expect(await page.evaluate(() => [maskKey('KHR-8f3a-91c2-77d0'), maskKey('')])).toEqual(['••••-77d0', '']);
   const hash = await page.evaluate(() => KPOS.S.pin_hash);
   const local = await page.evaluate(() => Object.keys(localStorage).filter(k => k !== 'kmock.db').map(k => localStorage.getItem(k)).join('\n'));
   expect(local).not.toContain(hash);
-  const pins = await page.evaluate(() => JSON.parse(localStorage.getItem('kpos.mock.pins')));
-  expect(pins.pemilik).toEqual({ o: await page.evaluate(h => sha256Hex('offline:' + h), hash), role: 'owner' });
+  // v71: the owner's PIN check is never kept on a device (a thief could find the PIN from it)
+  expect((await page.evaluate(() => JSON.parse(localStorage.getItem('kpos.mock.pins') || '{}'))).pemilik).toBeUndefined();
   expect(JSON.parse(await page.evaluate(() => sessionStorage.getItem('kpos.mock.session')))).toMatchObject({ user: 'Pemilik', pin_hash: hash });
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('kpos.mock.session')))).toEqual({ user: 'Pemilik', role: 'owner' });
   // the offline login below needs this device's copy of the shop data: wait for the first download after login (on a slow
@@ -65,20 +65,27 @@ test('store key never shown in full; pin hashes not kept at rest; offline login 
   await page.click('#tb-lock');
   expect(await page.evaluate(() => sessionStorage.getItem('kpos.mock.session'))).toBeNull();
   await expect(page.locator('#login')).toContainText('••••-demo');
-  // offline: the verifier lets the right PIN in, a wrong PIN stays out
+  // offline: the owner cannot come in without the internet (no check kept); the manager, who may sell here, can — with a slow check
   await page.evaluate(() => localStorage.setItem('kmock.offline', '1'));
   await page.click('[data-act="login-user"][data-name="Pemilik"]');
-  await typePin(page, '9999');
-  await expect(page.locator('.login-err')).not.toBeEmpty();
   await typePin(page, '1234');
-  await expect(page.locator('#app')).toBeVisible();
+  await expect(page.locator('.login-err')).not.toBeEmpty();
+  await expect(page.locator('#app')).toBeHidden();
   await page.evaluate(() => localStorage.removeItem('kmock.offline'));
-  // an old {h: pin_hash} entry is converted on the next start
-  await page.evaluate(h => { const p = JSON.parse(localStorage.getItem('kpos.mock.pins')); p.jihan = { h, role: 'manager' }; localStorage.setItem('kpos.mock.pins', JSON.stringify(p)); }, 'a'.repeat(64));
-  await page.reload();
-  await expect(page.locator('#app')).toBeVisible(); // same tab: the session survives a reload
+  const mh = await page.evaluate(() => sha256Hex('demo:jihan:2222'));
+  await page.evaluate(h => rememberPin('Jihan', h, 'manager'), mh);
+  const pm = await page.evaluate(() => JSON.parse(localStorage.getItem('kpos.mock.pins')));
+  expect(pm.jihan).toMatchObject({ v: 2, role: 'manager' });
+  expect(pm.jihan.o).not.toBe(await page.evaluate(h => sha256Hex('offline:' + h), mh));
+  expect(await page.evaluate(h => offlinePinOk('Jihan', h), mh)).toEqual({ role: 'manager' });
+  expect(await page.evaluate(() => offlinePinOk('Jihan', 'f'.repeat(64)))).toBeNull();
+  // an old quick check of the manager still opens once and is replaced by the slow one; an old owner / raw-hash entry is removed / converted at start
+  await page.evaluate(([h, q]) => { localStorage.setItem('kpos.mock.pins', JSON.stringify({ jihan: { o: q, role: 'manager' }, pemilik: { h: 'b'.repeat(64), role: 'owner' }, akun: { o: 'c'.repeat(64), role: 'akuntan' } })); }, [mh, await page.evaluate(h => sha256Hex('offline:' + h), mh)]);
+  expect(await page.evaluate(h => offlinePinOk('Jihan', h), mh)).toEqual({ role: 'manager' });
+  expect((await page.evaluate(() => JSON.parse(localStorage.getItem('kpos.mock.pins')))).jihan).toMatchObject({ v: 2 });
+  await page.evaluate(() => migratePins());
   const p2 = await page.evaluate(() => JSON.parse(localStorage.getItem('kpos.mock.pins')));
-  expect(p2.jihan).toEqual({ o: await page.evaluate(() => sha256Hex('offline:' + 'a'.repeat(64))), role: 'manager' });
+  expect(p2.pemilik).toBeUndefined(); expect(p2.akun).toBeUndefined(); expect(p2.jihan).toMatchObject({ v: 2, role: 'manager' });
 });
 
 test('LOW: CSV cells cannot start a formula; links from data must be https; CSP meta present', async ({ page }) => {

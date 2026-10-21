@@ -353,7 +353,7 @@ test('streets: each its own colour; drawn even when the shop search fails; start
   const KEDUA = [{ type: 'way', id: 9, tags: { highway: 'residential', name: 'Jalan Kedua' }, geometry: [{ lat: -6.2610, lon: 106.8580 }, { lat: -6.2610, lon: 106.8560 }] }];
   let shopsFail = true;
   await context.route(/nominatim\.openstreetmap\.org\/reverse/, r => r.fulfill({ status: 503, body: 'busy', headers: CORS })); // the address service is busy here → Overpass
-  await context.route(/overpass|maps\.mail\.ru/, r => {
+  await context.route(/overpass/, r => {
     const q = decodeURIComponent((r.request().postData() || '').replace(/^data=/, ''));
     if (/out center/.test(q) && shopsFail) return r.fulfill({ status: 504, body: 'timeout', headers: CORS }); // the heavy shops search times out
     const m = /around:40,(-?[\d.]+),(-?[\d.]+)\)/.exec(q), near = m && +m[2] < 106.859 ? KEDUA : PANJANG; // the tap: west → Jalan Kedua
@@ -410,7 +410,7 @@ test('streets: a busy map server → the next one answers; a street fetched once
   await page.route(/\/vendor\/leaflet\//, r => r.continue());
   const hits = [];
   await context.route(/nominatim\.openstreetmap\.org\/reverse/, r => r.fulfill({ status: 503, body: 'busy', headers: CORS })); // the address service is busy here → Overpass
-  await context.route(/overpass|maps\.mail\.ru/, r => {
+  await context.route(/overpass/, r => {
     const u = r.request().url(), q = decodeURIComponent((r.request().postData() || '').replace(/^data=/, '')); hits.push([u, q]);
     if (/overpass-api\.de/.test(u)) return r.fulfill({ status: 429, body: 'rate limited', headers: CORS });
     if (/private\.coffee/.test(u)) return r.fulfill({ json: { elements: [], remark: 'runtime error: Query timed out in "query" at line 1 after 26 seconds.' }, headers: CORS });
@@ -425,7 +425,7 @@ test('streets: a busy map server → the next one answers; a street fetched once
   await page.click('#pl-sel-street');
   await page.click('#pl-seg-plan');
   await expect(page.locator('#pl-streets .pl-street')).toHaveCount(1);
-  expect(hits.some(([u]) => /maps\.mail\.ru/.test(u))).toBe(true); // the third server answered
+  expect(hits.some(([u]) => /kumi\.systems/.test(u))).toBe(true); // the third server answered
   // the whole street is kept on the phone now
   await expect.poll(() => page.evaluate(() => Object.keys(localStorage).filter(k => /street_shapes$/.test(k)).map(k => Object.keys(JSON.parse(localStorage.getItem(k))).length)[0] || 0)).toBeGreaterThan(0);
   const shapeQ = () => hits.filter(([, q]) => /out geom;$/.test(q) && /"name"="Jalan Raya Condet"\]\(/.test(q)).length;
@@ -434,7 +434,7 @@ test('streets: a busy map server → the next one answers; a street fetched once
   await page.evaluate(() => planMapClick(window.L.latLng(-6.2760, 106.8585)));
   await expect(page.locator('.leaflet-popup')).toHaveCount(1);
   await expect(page.locator('#pl-sel-street')).toContainText('Jalan Raya Condet');
-  expect(/maps\.mail\.ru/.test(hits[n][0])).toBe(true);
+  expect(/kumi\.systems/.test(hits[n][0])).toBe(true);
   await page.waitForTimeout(800);
   expect(shapeQ()).toBe(before);
 });
@@ -443,7 +443,7 @@ test('streets: a busy map server → the next one answers; a street fetched once
 // (Nominatim) first; the whole street from Overpass, else Nominatim; with both busy the piece under the finger is coloured.
 test('streets: Overpass busy → Nominatim gives the street and the whole street; both busy → the piece is coloured', async ({ page, context }) => {
   await page.route(/\/vendor\/leaflet\//, r => r.continue());
-  await context.route(/overpass|maps\.mail\.ru/, r => r.fulfill({ status: 429, body: 'Too Many Requests', headers: CORS })); // every Overpass server refuses
+  await context.route(/overpass/, r => r.fulfill({ status: 429, body: 'Too Many Requests', headers: CORS })); // every Overpass server refuses
   const geo = pts => ({ type: 'LineString', coordinates: pts.map(([a, b]) => [b, a]) });
   let nomiBusy = false; const nq = [];
   await context.route(/nominatim\.openstreetmap\.org/, r => {

@@ -233,7 +233,8 @@ var KAtt = (function () {
     }
     var isBoss = role === 'owner' || role === 'manager';
     function workerOut(w, withToday) {
-      var o = { worker_id: w.worker_id, name: w.name, phone: w.phone || '', job: w.job || '', active: w.active !== false, enrolled: !!str(w.face_desc), consent_at: w.consent_at || '' };
+      // v71 security: the workers' phone numbers for the owner, the manager and the accountant only (not the cashier at the kiosk)
+      var o = { worker_id: w.worker_id, name: w.name, phone: isBoss || role === 'akuntan' ? w.phone || '' : '', job: w.job || '', active: w.active !== false, enrolled: !!str(w.face_desc), consent_at: w.consent_at || '' };
       if (role === 'owner') o.daily_wage = num(w.daily_wage);
       if (isBoss && w.face_thumb) o.face_thumb = w.face_thumb;
       if (withToday) {

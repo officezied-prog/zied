@@ -9,13 +9,13 @@ const ph = (n, pin) => sha('demo:' + n.toLowerCase() + ':' + pin);
 
 // tables like n8n: rows with ids; writes with an id update, without are inserted
 const T = { warehouses: [], products: [], containers: [], pallets: [], movements: [], checks: [], orders: [], customers: [], requests: [], settings: {},
-  users: [{ id: 1, name: 'zied salah', role: 'owner', pin_hash: ph('zied salah', '1234'), active: true },
+  users: [{ id: 1, name: 'zaid pemilik', role: 'owner', pin_hash: ph('zaid pemilik', '1234'), active: true },
     { id: 2, name: 'Jihan', role: 'manager', pin_hash: ph('Jihan', '2222'), active: true },
     { id: 3, name: 'Akun', role: 'akuntan', pin_hash: ph('Akun', '3333'), active: true },
     { id: 4, name: 'Emma', role: 'kasir', pin_hash: ph('Emma', '4444'), active: true },
     { id: 5, name: 'Baru', role: 'manager', pin_hash: ph('Baru', '5555'), active: true, must_change: true }] };
 let nid = 100;
-const WHO = { owner: ['zied salah', '1234'], manager: ['Jihan', '2222'], akuntan: ['Akun', '3333'], kasir: ['Emma', '4444'] };
+const WHO = { owner: ['zaid pemilik', '1234'], manager: ['Jihan', '2222'], akuntan: ['Akun', '3333'], kasir: ['Emma', '4444'] };
 let NOW = '2026-10-07T02:00:00Z'; // 09:00 WIB
 function call(action, data, who = 'owner', pinOverride) {
   const [user, pin] = WHO[who] || [who, pinOverride];
@@ -33,7 +33,7 @@ const err = (r, code) => { assert.strictEqual(r.ok, false, JSON.stringify(r)); a
 const stock = (pc, wh) => ok(call('bootstrap', {})).stock.filter(r => r.pallet_code === pc && (!wh || r.warehouse === wh)).reduce((s, r) => s + r.cartons, 0);
 
 // ---------- login and roles ----------
-err(call('login', {}, 'zied salah', '9999'), 'BAD_PIN');
+err(call('login', {}, 'zaid pemilik', '9999'), 'BAD_PIN');
 err(call('login', {}, 'kasir'), 'FORBIDDEN');
 err(call('login', {}, 'Baru', '5555'), 'PIN_CHANGE_REQUIRED');
 assert.strictEqual(ok(call('login', {}, 'akuntan')).me.role, 'akuntan');

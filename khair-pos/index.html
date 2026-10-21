@@ -2,7 +2,7 @@
 <html lang="id" dir="ltr">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' https://khair-mart-jumla.officezied.workers.dev; media-src 'self' blob: mediastream:; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' https://khair-mart-jumla.officezied.workers.dev; media-src 'self' blob: mediastream:; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1E40AF">
 <meta name="mobile-web-app-capable" content="yes">
@@ -145,6 +145,7 @@
 <script src="shared/scan-wedge.js"></script>
 <script src="shared/install-btn.js" data-host="#login:not([hidden]) .login-card"></script>
 <script src="shared/app-update.js"></script>
+<script src="shared/pin-guard.js"></script>
 <script src="mock.js"></script>
 <script>
 'use strict';
@@ -155,7 +156,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '3.1.2';
+const APP_VERSION = '3.1.3';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -270,25 +271,12 @@ function sessGet() {
   return user ? { user, role: (loc && loc.role) || (ss && ss.role) || '', pin_hash: mine ? ss.pin_hash || '' : '', via_master: !!(mine && ss.via_master) } : null;
 }
 function sessDel() { store.del('session'); try { sessionStorage.removeItem(SESS_KEY); sessionStorage.removeItem('kcold.session'); } catch (e) { } }
-const offlineVerifier = hash => sha256Hex('offline:' + hash);
-async function rememberPin(user, hash, role) {
-  const pins = store.get('pins', {}) || {};
-  pins[String(user).toLowerCase()] = { o: await offlineVerifier(hash), role };
-  store.set('pins', pins);
-}
-async function offlinePinOk(user, hash) {
-  const k = (store.get('pins', {}) || {})[String(user).toLowerCase()];
-  if (!k) return null;
-  if (k.o && k.o === await offlineVerifier(hash)) return k;
-  return null;
-}
-/** One-time migration: old entries {h: pin_hash} become {o: verifier}; the raw hash is deleted. */
-async function migratePins() {
-  const pins = store.get('pins', null); if (!pins || typeof pins !== 'object') return;
-  let ch = false;
-  for (const k of Object.keys(pins)) { const v = pins[k] || {}; if (v.h) { pins[k] = { o: await offlineVerifier(v.h), role: v.role }; ch = true; } }
-  if (ch) store.set('pins', pins);
-}
+// v71 security (shared/pin-guard.js): the offline PIN check is slow to guess (PBKDF2) and kept here for the manager only, who may sell
+// in this app; the owner's and the accountant's are never kept on a device (removed at start).
+const OFFLINE_ROLES_HERE = ['manager'];
+const rememberPin = (user, hash, role) => KPin.remember(store, user, hash, role, OFFLINE_ROLES_HERE);
+const offlinePinOk = (user, hash) => KPin.check(store, user, hash, OFFLINE_ROLES_HERE);
+const migratePins = () => KPin.prune(store);
 const maskKey = k => { const v = String(k || ''); return v ? '••••-' + v.slice(-4) : ''; };
 /** Links built from data: only https (no javascript:, data:). */
 const safeUrl = u => /^https:\/\//i.test(String(u || '').trim()) ? String(u).trim() : '#';
@@ -769,6 +757,10 @@ function forceRelogin(e) {
 }
 function logoutStore() {
   S.pin_hash = ''; S.user = ''; S.role = ''; S.inApp = false; sessDel();
+  // v71 security: leaving the store also leaves nothing of it on this device to read — the downloaded shop data (cost prices,
+  // customers, users), the receipts, the suppliers and the drafts. Sales still waiting to be sent (the outbox) are kept.
+  ['cache', 'receipts', 'suppliers', 'purchase_draft', 'expense_draft', 'cart', 'notifs', 'my_requests', 'pending_contacts', 'shop_links', 'order_updates'].forEach(k => store.del(k));
+  S.products = []; S.customers = [];
   const cf = $('#view-cold'); if (cf) cf.innerHTML = '';
   L.users = []; L.sel = '';
   try { if (window.KChatUI) KChatUI.stop(); } catch (e) { }
@@ -3910,7 +3902,7 @@ function productForm(p, fromInvoice) {
   const isNew = !p.id, req = fromInvoice ? ' *' : '';
   const units = ['pcs', 'kg', 'box', 'pak', 'dus', 'botol', 'liter', 'karung', 'pouch', 'set', 'lusin'];
   const f = (k, label, attrs = '', val) => `<div class="field"><label class="f" for="pf-${k}">${esc(label)}</label><input class="input" id="pf-${k}" name="${k}" value="${esc(val !== undefined ? val : (p[k] ?? ''))}" ${attrs}></div>`;
-  return `<form id="pf" autocomplete="off" onsubmit="return false">
+  return `<form id="pf" autocomplete="off">
     ${f('name', t('name') + ' *', 'required autofocus')}
     <div class="grid2"><div class="field"><label class="f" for="pf-sku">${esc(t('sku'))}</label><div class="row" style="gap:6px;align-items:center"><input class="input" id="pf-sku" name="sku" value="${esc(p.sku ?? '')}" inputmode="text" style="flex:1 1 auto;min-width:0">${camOk() ? `<button type="button" class="icon-btn" id="pf-sku-cam" style="flex:0 0 auto;width:42px;height:42px" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}">${ic('scan')}</button>` : ''}</div></div>${f('category', t('category') + req, 'list="dl-cats"')}</div>
     <datalist id="dl-cats">${categories().map(c => `<option value="${esc(c)}">`).join('')}</datalist>
@@ -5692,6 +5684,8 @@ function renderLoginKeep() {
   Object.entries(keep).forEach(([id, v]) => { const e = $('#' + id); if (e) e.value = v; });
 }
 
+// v71 security: no inline handlers (CSP script-src-attr 'none'): a form never submits natively (Enter in the product form …)
+document.addEventListener('submit', e => e.preventDefault(), true);
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-act]');
   if (!el || el.disabled) return;
@@ -9097,7 +9091,7 @@ Object.assign(I18N.id, {
   'actg.masuk': 'Barang masuk & koreksi', 'actg.harga': 'Harga', 'actg.stok': 'Stok & opname', 'actg.kas': 'Kas & biaya', 'actg.jual': 'Penjualan & batal', 'actg.bayar': 'Pembayaran', 'actg.pengguna': 'Pengguna & pengaturan', 'actg.perangkat': 'Perangkat', 'actg.lain': 'Lainnya',
   'ak.masuk': 'Barang masuk', 'ak.minta_koreksi': 'Minta koreksi', 'ak.koreksi_masuk': 'Koreksi barang masuk', 'ak.harga': 'Ubah harga', 'ak.minta_harga': 'Minta ubah harga', 'ak.keputusan': 'Keputusan', 'ak.batal': 'Faktur batal', 'ak.minta_batal': 'Minta batal',
   'ak.stok': 'Penyesuaian stok', 'ak.opname': 'Stok opname', 'ak.minta_opname': 'Minta opname', 'ak.kemas_ulang': 'Kemas ulang', 'ak.biaya': 'Pengeluaran', 'ak.kas': 'Kas masuk/keluar', 'ak.tutup_kas': 'Tutup kas', 'ak.buka_kas': 'Buka kas', 'ak.hutang': 'Penjualan hutang',
-  'ak.produk': 'Ubah produk', 'ak.produk_baru': 'Produk baru', 'ak.impor': 'Impor produk', 'ak.pengaturan': 'Pengaturan', 'ak.pengguna': 'Pengguna', 'ak.perangkat_baru': 'Perangkat baru', 'ak.bayar_masuk': 'Pembayaran masuk', 'ak.bayar_keluar': 'Bayar pemasok', 'ak.alokasi': 'Alokasi pembayaran', 'ak.rekening': 'Rekening bank',
+  'ak.produk': 'Ubah produk', 'ak.produk_baru': 'Produk baru', 'ak.impor': 'Impor produk', 'ak.pengaturan': 'Pengaturan', 'ak.pengguna': 'Pengguna', 'ak.perangkat_baru': 'Perangkat baru', 'ak.bayar_masuk': 'Pembayaran masuk', 'ak.bayar_keluar': 'Bayar pemasok', 'ak.alokasi': 'Alokasi pembayaran', 'ak.rekening': 'Rekening bank', 'ak.keamanan': 'Keamanan',
   'att.activity': '{n} catatan penting baru', 'att.bukakas': 'Buka kas menunggu persetujuan ({n})', 'att.daily': 'Kirim laporan harian', 'att.bank_recon': 'Rekonsiliasi rekening bulan lalu belum dibuat ({acc}, {m})',
   'apr.kind_fix': 'Koreksi barang masuk {no}', 'apr.kind_bukakas': 'Buka kas: {name}', 'apr.new_fix': 'Permintaan koreksi barang masuk {no} dari {cashier} →', 'apr.new_bukakas': 'Buka kas {cashier} menunggu persetujuan →',
   'bk.opening': 'Modal awal dihitung', 'bk.last': 'Tutup kas terakhir ({name})', 'bk.open_hint': 'Cek jumlah uang di laci pagi ini dibanding hitungan tutup kas terakhir. Penjualan tidak diblokir.',
@@ -9189,7 +9183,7 @@ Object.assign(I18N.ar, {
   'actg.masuk': 'الوارد والتصحيح', 'actg.harga': 'الأسعار', 'actg.stok': 'المخزون والجرد', 'actg.kas': 'الصندوق والمصاريف', 'actg.jual': 'المبيعات والإلغاء', 'actg.bayar': 'المدفوعات', 'actg.pengguna': 'المستخدمون والإعدادات', 'actg.perangkat': 'الأجهزة', 'actg.lain': 'أخرى',
   'ak.masuk': 'بضاعة واردة', 'ak.minta_koreksi': 'طلب تصحيح', 'ak.koreksi_masuk': 'تصحيح وارد', 'ak.harga': 'تغيير سعر', 'ak.minta_harga': 'طلب تغيير سعر', 'ak.keputusan': 'قرار', 'ak.batal': 'إلغاء فاتورة', 'ak.minta_batal': 'طلب إلغاء',
   'ak.stok': 'تسوية مخزون', 'ak.opname': 'جرد', 'ak.minta_opname': 'طلب جرد', 'ak.kemas_ulang': 'إعادة تعبئة', 'ak.biaya': 'مصروف', 'ak.kas': 'إدخال/إخراج نقد', 'ak.tutup_kas': 'إغلاق الصندوق', 'ak.buka_kas': 'فتح الصندوق', 'ak.hutang': 'بيع بالدَّين',
-  'ak.produk': 'تعديل منتج', 'ak.produk_baru': 'منتج جديد', 'ak.impor': 'استيراد منتجات', 'ak.pengaturan': 'الإعدادات', 'ak.pengguna': 'المستخدمون', 'ak.perangkat_baru': 'جهاز جديد', 'ak.bayar_masuk': 'دفعة واردة', 'ak.bayar_keluar': 'دفع لمورد', 'ak.alokasi': 'تخصيص دفعة', 'ak.rekening': 'الحساب البنكي',
+  'ak.produk': 'تعديل منتج', 'ak.produk_baru': 'منتج جديد', 'ak.impor': 'استيراد منتجات', 'ak.pengaturan': 'الإعدادات', 'ak.pengguna': 'المستخدمون', 'ak.perangkat_baru': 'جهاز جديد', 'ak.bayar_masuk': 'دفعة واردة', 'ak.bayar_keluar': 'دفع لمورد', 'ak.alokasi': 'تخصيص دفعة', 'ak.rekening': 'الحساب البنكي', 'ak.keamanan': 'الأمان',
   'att.activity': '{n} ملاحظات مهمة جديدة', 'att.bukakas': 'فتح صندوق بانتظار الموافقة ({n})', 'att.daily': 'أرسل التقرير اليومي', 'att.bank_recon': 'لم تُنجز مطابقة الحساب البنكي للشهر الماضي ({acc}، {m})',
   'apr.kind_fix': 'تصحيح وارد {no}', 'apr.kind_bukakas': 'فتح الصندوق: {name}', 'apr.new_fix': 'طلب تصحيح الوارد {no} من {cashier} ←', 'apr.new_bukakas': 'فتح صندوق {cashier} بانتظار الموافقة ←',
   'bk.opening': 'رصيد الافتتاح المعدود', 'bk.last': 'آخر إغلاق ({name})', 'bk.open_hint': 'قارن نقد الدرج صباح اليوم بعدّ آخر إغلاق. البيع غير متوقف.',
@@ -11207,6 +11201,8 @@ function ntPeople() {
   if (!list.length) list = (S.users || []).filter(u => u.active !== false && NT_ROLES.includes(u.role) && String(u.name).toLowerCase() !== me).map(u => ({ name: u.name, role: u.role }));
   return list.sort((a, b) => a.name.localeCompare(b.name));
 }
+/** v71 security: a notice text without cost prices or margins ("cost_price 150000→160000", "| laba 12% → 8% (Rp … → Rp …)"). */
+const ntSafeText = x => String(x || '').replace(/cost_price -?\d+→-?\d+/g, 'cost_price (rahasia)').replace(/ ?\| ?laba -?[\d.,]+% → -?[\d.,]+%( \(Rp -?\d+ → Rp -?\d+\))?/g, '');
 function ntReplyOpen(id) {
   const info = ntS().reg[id] || {}, people = ntPeople(), me = String(S.user || '').toLowerCase(), actor = String(info.actor || '');
   const hit = actor && actor.toLowerCase() !== me ? people.find(p => p.name.toLowerCase() === actor.toLowerCase()) : null;
@@ -11228,7 +11224,10 @@ function ntReplyOpen(id) {
     if (!window.KChatUI || !KChatUI.sendTo) { err.textContent = t('err.SERVER'); return; }
     btn.disabled = true; err.textContent = '';
     try {
-      const quote = { text: String(info.text || '').slice(0, 400), at, no: info.no || '', by: actor && actor.toLowerCase() !== me ? actor : '' };
+      // v71 security: the quote reaches a cashier / rep / manager without the owner's numbers (cost prices, margins, profit)
+      const toRole = (people.find(p => p.name === to) || {}).role;
+      const qtext = toRole === 'owner' ? String(info.text || '') : ntSafeText(info.text);
+      const quote = { text: qtext.slice(0, 400), at, no: info.no || '', by: actor && actor.toLowerCase() !== me ? actor : '' };
       const res = await KChatUI.sendTo(to, { body, quote, ref: id });
       const n = ntS(); n.replied[id] = { at: (res && res.message && res.message.created_at) || new Date().toISOString(), to }; n.pend = n.pend.filter(x => x !== id); ntSave();
       if (topModal() === el) closeModal();
