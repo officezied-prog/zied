@@ -57,6 +57,7 @@ export async function loadPhotoNodes(adapter, req) {
     'Get Sale': Q.eq('pos_sales', 'invoice_no', req.invoice_no),
     'Get Sale Items': Q.eq('pos_sale_items', 'invoice_no', req.invoice_no),
     'Get Photos Range': Q.range('pos_photos', 'photo_date', req.from, req.to),
+    'Get Settings': Q.eq('pos_settings', 'skey', 'akuntan_sees_cost'), // v71: the owner's cost setting for the photo list (one row)
   });
   nodes['Parse Photo'] = [req];
   return nodes;

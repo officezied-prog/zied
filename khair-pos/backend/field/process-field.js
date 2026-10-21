@@ -121,6 +121,11 @@ const todayOrders = rows('Get Today Orders').filter(mine);
 function productOut(p) {
   const o = clean(p);
   if (role !== 'owner') { delete o.cost_price; }
+  // v71 security: a pack's material prices are the owner's, manager's and accountant's (like the POS productOut): names only here
+  if (str(o.repack_costs) && ['owner', 'manager', 'akuntan'].indexOf(role) < 0) {
+    let rc = []; try { rc = JSON.parse(o.repack_costs); } catch (e) { rc = []; }
+    o.repack_costs = JSON.stringify((Array.isArray(rc) ? rc : []).map(function (x) { return { n: str(x && (x.name || x.n)) }; }));
+  }
   delete o.notes;
   return o;
 }

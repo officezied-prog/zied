@@ -9,6 +9,7 @@ import { handleAtt } from './attendance.js';
 import { handlePhoto, handlePhotoFile } from './photo.js';
 import { handleCold } from './cold.js';
 import { handleBrad, handleWaWebhook, handleLalaCron, handleLalaWebhook } from './brad.js';
+import { authGate, credsOf } from './authgate.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*', // store-key auth, no cookies → safe
@@ -103,7 +104,13 @@ export default {
       try {
         let id = '';
         try { id = decodeURIComponent(fileMatch[1]); } catch (e) { id = ''; }
-        const r = await handlePhotoFile(d1Adapter(env.DB), id, headers, env.STORE_KEY, env);
+        const fileDb = d1Adapter(env.DB);
+        // v71: the same gate as every endpoint (store key before any read; wrong PINs counted and locked)
+        let fileUser = ''; try { fileUser = decodeURIComponent(String(headers['x-khair-user'] || '')); } catch (e) { fileUser = ''; }
+        const refused = await authGate(fileDb, { key: headers['x-khair-key'], user: fileUser, pin_hash: headers['x-khair-pin'], action: 'photo_file' }, env.STORE_KEY,
+          { route: 'photo-file', ip: headers['cf-connecting-ip'] || '' });
+        if (refused) return json(refused, 401);
+        const r = await handlePhotoFile(fileDb, id, headers, env.STORE_KEY, env);
         if (!r.object) return json(r.json, r.status);
         const obj = r.object;
         return new Response(obj.body, {
@@ -173,6 +180,13 @@ export default {
     const path = url.pathname;
     const adapter = d1Adapter(env.DB);
     try {
+      // v71 security: one gate before any table is read — the store key (no read at all when it is wrong), then the PIN with the
+      // lockout counted on every endpoint (src/authgate.js). The handlers keep all their own checks.
+      const route = path.endsWith('khair-pos-photo') ? 'photo' : path.endsWith('khair-field') ? 'field' : path.endsWith('khair-chat') ? 'chat'
+        : path.endsWith('khair-att') ? 'att' : path.endsWith('khair-cold') ? 'cold' : path.endsWith('khair-brad') ? 'brad' : 'pos';
+      const refused = await authGate(adapter, credsOf(text), env.STORE_KEY, { route, ip: headers['cf-connecting-ip'] || '' });
+      // a refusal writes nothing more (not even the usage meter): a flood of refused requests costs one small read each at most
+      if (refused) return json(refused, 200); // business errors (ok:false) are 200, as before
       let response;
       if (path.endsWith('khair-pos-photo')) {
         // v36: the base of the stored-photo links (…/webhook/khair-pos-photo) on this Worker's own host.
