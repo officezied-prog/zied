@@ -119,7 +119,9 @@ if (req.action === 'setup') {
 if (users.length === 0) return fail('NO_USERS', 'Belum ada pengguna');
 const me = activeUsers.find(function (u) { return str(u.name).toLowerCase() === str(req.user).toLowerCase(); });
 if (!me) return fail('BAD_PIN', 'Nama atau PIN salah');
-// Wrong PIN 5 times in a row → that account is locked for 15 minutes.
+// Wrong PIN 5 times in a row → that account is locked for 15 minutes. v71: longer each time — 10 → 1 hour, 15 → 6 hours, 20 and
+// more → 24 hours (each further 5 wrong locks again); a right PIN resets the count. Same tiers as worker/src/authgate.js, which
+// counts the wrong PINs of every app (the Worker refuses there first; this stays for the n8n reference / harness).
 function wibTime(iso) { return new Date(Date.parse(iso) + 7 * 3600000).toISOString().slice(11, 16) + ' WIB'; }
 if (Date.parse(me.locked_until) > Date.now()) return done({ ok: false, error: 'LOCKED', locked_until: str(me.locked_until), message: 'Terlalu banyak PIN salah. Coba lagi jam ' + wibTime(me.locked_until) });
 // Owner master code: sha256(KEY:'__master__':code) opens every account; every login with it is logged.
@@ -127,10 +129,11 @@ const masterOwner = isHash(req.pin_hash) && me.pin_hash !== req.pin_hash ? activ
 const viaMaster = !!masterOwner;
 if (me.pin_hash !== req.pin_hash && !viaMaster) {
   const fc = num(me.fail_count) + 1;
-  const until = fc >= 5 ? new Date(Date.now() + 15 * 60000).toISOString() : '';
-  ops.users.push(forWrite(Object.assign({}, me, { fail_count: until ? 0 : fc, locked_until: until }), me.id));
+  const lockMin = fc >= 5 && fc % 5 === 0 ? (fc >= 20 ? 1440 : fc >= 15 ? 360 : fc >= 10 ? 60 : 15) : 0;
+  const until = lockMin ? new Date(Date.now() + lockMin * 60000).toISOString() : '';
+  ops.users.push(forWrite(Object.assign({}, me, { fail_count: fc, locked_until: until }), me.id));
   return done(until ? { ok: false, error: 'LOCKED', locked_until: until, message: 'Terlalu banyak PIN salah. Coba lagi jam ' + wibTime(until) }
-    : { ok: false, error: 'BAD_PIN', message: 'Nama atau PIN salah' + (fc >= 3 ? ' (' + (5 - fc) + ' kali lagi, lalu akun dikunci 15 menit)' : '') });
+    : { ok: false, error: 'BAD_PIN', message: 'Nama atau PIN salah' + (5 - fc % 5 <= 2 ? ' (' + (5 - fc % 5) + ' kali lagi, lalu akun dikunci)' : '') });
 }
 if ((num(me.fail_count) > 0 || str(me.locked_until)) && ['change_pin', 'set_master', 'save_user'].indexOf(req.action) < 0) {
   ops.users.push(forWrite(Object.assign({}, me, { fail_count: 0, locked_until: '' }), me.id));
@@ -149,7 +152,8 @@ const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' 
 const AKUNTAN_READ = ['confirm_purchase', 'repack_finish', 'login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank', 'finance_position']; // v67: + the Keuangan screen (read only)
 if (role === 'akuntan' && AKUNTAN_READ.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
 // v36: report_tamper too — the field app reports a code attempt here (it was refused before, so the rep's account was never locked).
-if (role === 'sales' && ['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
+// v71 security: no POS bootstrap for a rep either (it carried every customer's phone, address and debt; the field app has its own).
+if (role === 'sales' && ['login', 'device_ping', 'change_pin', 'report_tamper'].indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
 const isApprover = role === 'owner' || role === 'manager';
 const canAudit = isApprover || role === 'akuntan';
 // v19 anti-tamper: a clear code attempt locks a non-owner account (only the owner opens it); the owner is warned, not locked.
@@ -174,6 +178,12 @@ function findApprover(name, hash) {
 const openShifts = rows('Get Open Shifts').filter(function (x) { return x.status === 'open'; });
 function shiftOf(name) { return openShifts.find(function (x) { return str(x.cashier).toLowerCase() === str(name).toLowerCase(); }) || null; }
 const myShift = shiftOf(me.name);
+// v71 security: a notice's cost prices and margins ("cost_price 150000→160000", "laba 12% → 8% (Rp … → Rp …)") only for those
+// who may see costs — like approvalOut (a manager saw them in her notices while the same approval hid them).
+function noticeOut(o) {
+  if (!costOk()) o.summary = str(o.summary).replace(/cost_price -?\d+→-?\d+/g, 'cost_price (rahasia)').replace(/ ?\| ?laba -?[\d.,]+% → -?[\d.,]+%( \(Rp -?\d+ → Rp -?\d+\))?/g, '');
+  return o;
+}
 function shiftOut(x) {
   if (!x) return null;
   const o = clean(x);
@@ -731,6 +741,11 @@ function settingsOut() {
   // v56: the supplier directory in full for the owner, manager and accountant; the names only for the others (goods-in pickers)
   st.supplier_dir = supDir().map(function (x) { return ['owner', 'manager', 'akuntan'].indexOf(role) >= 0 ? x : { n: x.n }; });
   delete st.acct_opening; // v67: the accounts' opening balances reach the Keuangan screen only (finance_position)
+  // v71 security: a cashier / rep never receives the cold stores' and drivers' contacts, the Brad / Lalamove / attendance settings,
+  // the names of locked accounts, the agreed limits or the shop's coordinates — none is used by their apps.
+  if (['owner', 'manager', 'akuntan'].indexOf(role) < 0) Object.keys(st).forEach(function (k) {
+    if (/^(brad_|cold_|att_|lala|wa_admin|wa_log|chat_)/.test(k) || ['locked_accounts', 'limit_agreements', 'akuntan_sees_cost', 'store_lat', 'store_lng', 'street_return_days'].indexOf(k) >= 0) delete st[k];
+  });
   if (Object.keys(os).length) {
     const o = Object.assign({}, os);
     o.counted_n = Array.isArray(o.counted) ? o.counted.length : 0;
@@ -1586,7 +1601,7 @@ switch (req.action) {
       // v29 (owner 2026-10-10): role-addressed notifications (kind 'notifikasi', target roles in ref) for the
       // owner / manager / accountant — e.g. "accountant approved a void", "price change by cashier".
       // v37: every invoice change (kind 'ubah_faktur') made by someone else is a notice for the owner too.
-      notifications: (role === 'owner' || role === 'manager' || role === 'akuntan') ? rows('Get Range Activity').filter(function (a) { return (a.kind === 'notifikasi' && String(a.ref || '').split(',').indexOf(role) >= 0) || (role === 'owner' && a.kind === 'ubah_faktur' && str(a.user).toLowerCase() !== me.name.toLowerCase()); }).map(clean).sort(function (a1, b1) { return String(b1.at).localeCompare(String(a1.at)); }).slice(0, 40) : [],
+      notifications: (role === 'owner' || role === 'manager' || role === 'akuntan') ? rows('Get Range Activity').filter(function (a) { return (a.kind === 'notifikasi' && String(a.ref || '').split(',').indexOf(role) >= 0) || (role === 'owner' && a.kind === 'ubah_faktur' && str(a.user).toLowerCase() !== me.name.toLowerCase()); }).map(clean).map(noticeOut).sort(function (a1, b1) { return String(b1.at).localeCompare(String(a1.at)); }).slice(0, 40) : [],
       server_time: new Date().toISOString()
     });
   }
@@ -4084,6 +4099,22 @@ switch (req.action) {
 
   case 'get_sales': {
     if (!isDate(data.from) || !isDate(data.to)) return fail('INVALID', 'Rentang tanggal tidak valid');
+    function rangePurchaseOut(r) { const o = strip(r, role); if (!noteTotalOk()) { delete o.total; const dp = drawerPayOf([o]); if (dp && dp.purpose === 'barang' && str(dp.by).toLowerCase() !== me.name.toLowerCase()) { delete dp.amount; o.drawer_pay = JSON.stringify(dp); } } return o; }
+    // v71 security: a cashier reads only what Khair Kasir shows — the last 62 days of sales / their lines / goods-in, and their own
+    // drawer through shiftOut (the open drawer's expected cash stays hidden: the closing count is blind). Payments, supplier
+    // payouts, expenses (salaries …) and other cashiers' drawers are for the owner, the manager and the accountant.
+    if (role === 'kasir') {
+      const minDay = new Date(Date.now() + 7 * 3600000 - 62 * 86400000).toISOString().slice(0, 10);
+      const ks = rows('Get Range Sales').filter(function (r) { return str(r.sale_date) >= minDay; }).map(function (r) { return strip(r, role); });
+      const inv = {}; ks.forEach(function (x) { inv[x.invoice_no] = 1; });
+      return done({
+        ok: true, sales: ks,
+        items: rows('Get Range Items').filter(function (r) { return inv[r.invoice_no]; }).map(function (r) { return strip(r, role); }),
+        payments: [], expenses: [], repacks: [],
+        purchases: rows('Get Range Purchases').filter(function (r) { return str(r.purchase_date) >= minDay; }).map(rangePurchaseOut),
+        shifts: rows('Get Range Shifts').filter(function (r) { return str(r.cashier).toLowerCase() === me.name.toLowerCase(); }).map(shiftOut)
+      });
+    }
     return done({
       ok: true,
       sales: rows('Get Range Sales').map(function (r) { return strip(r, role); }),
@@ -4091,7 +4122,7 @@ switch (req.action) {
       payments: rows('Get Range Payments').map(clean),
       // v50 / v59: the note totals reach the owner, the manager and the accountant (noteTotalOk); unit costs follow strip()
       // v68: a cashier sees another cashier's cash-on-delivery payment without its amount (it is the note's total)
-      purchases: rows('Get Range Purchases').map(function (r) { const o = strip(r, role); if (!noteTotalOk()) { delete o.total; const dp = drawerPayOf([o]); if (dp && dp.purpose === 'barang' && str(dp.by).toLowerCase() !== me.name.toLowerCase()) { delete dp.amount; o.drawer_pay = JSON.stringify(dp); } } return o; }),
+      purchases: rows('Get Range Purchases').map(rangePurchaseOut),
       expenses: rows('Get Range Expenses').map(clean),
       shifts: rows('Get Range Shifts').map(clean),
       repacks: rows('Get Range Repacks').map(repackOut)
@@ -4202,6 +4233,9 @@ switch (req.action) {
     }
     if (data.pin_hash !== undefined && data.pin_hash !== '' && !isHash(data.pin_hash)) return fail('INVALID', 'PIN tidak valid');
     if (!ex && !isHash(data.pin_hash)) return fail('INVALID', 'PIN wajib untuk pengguna baru');
+    // v71 security: a session opened with the owner's master code never touches an owner account (its PIN, role or active state)
+    // nor makes a new owner — like change_pin / set_master: the owner's own account changes only with the owner's own PIN.
+    if (viaMaster && (newRole === 'owner' || (ex && ex.role === 'owner'))) return fail('FORBIDDEN', 'Akun pemilik hanya bisa diubah dengan PIN pemilik sendiri');
     if (ex && ex.role === 'owner' && (newRole !== 'owner' || !active)) {
       const owners = activeUsers.filter(function (u) { return u.role === 'owner'; });
       if (owners.length <= 1) return fail('INVALID', 'Harus ada minimal satu pemilik aktif');

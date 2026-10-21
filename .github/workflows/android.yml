@@ -21,8 +21,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # v71 security: the signing password is given only to the two steps that need it (never to npm ci), and a pull request
+    # never opens the real key — it builds with a throw-away key only, to check the build.
     env:
-      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       ON_MAIN: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
@@ -32,13 +33,17 @@ jobs:
         with: { node-version: '20' }
       - name: Signing key
         id: key
+        env:
+          ANDROID_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEY_PASSWORD || '' }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           ENC=khair-pos/android/khair-release.p12.enc
           KS="$RUNNER_TEMP/khair-release.p12"
           if [ -z "${ANDROID_KEY_PASSWORD:-}" ]; then
-            echo "::notice title=Android apps not published::The repository secret ANDROID_KEY_PASSWORD is not set (Settings → Secrets and variables → Actions). The apps are built with a throw-away key only to check the build."
-            export ANDROID_KEY_PASSWORD="throwaway-$(openssl rand -hex 12)"; echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD" >> "$GITHUB_ENV"
+            if [ "$EVENT_NAME" = pull_request ]; then echo "Pull request: built with a throw-away key only (the real key is never opened here)."
+            else echo "::notice title=Android apps not published::The repository secret ANDROID_KEY_PASSWORD is not set (Settings → Secrets and variables → Actions). The apps are built with a throw-away key only to check the build."; fi
+            export ANDROID_KEY_PASSWORD="throwaway-$(openssl rand -hex 12)"; echo "KHAIR_THROWAWAY_PASS=$ANDROID_KEY_PASSWORD" >> "$GITHUB_ENV"
             echo "publish=0" >> "$GITHUB_OUTPUT"; NEWKEY=throwaway
           elif [ -f "$ENC" ]; then
             openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in "$ENC" -out "$KS" -pass env:ANDROID_KEY_PASSWORD
@@ -62,13 +67,17 @@ jobs:
             git commit -m "Android: signing key (encrypted with ANDROID_KEY_PASSWORD) and Digital Asset Links [skip ci]"
             git push
           fi
+      - name: Install the build tools
+        working-directory: khair-pos/android
+        run: npm ci --no-audit --no-fund
       - name: Build the four apps
         working-directory: khair-pos/android
         env:
           VERSION_CODE: ${{ github.run_number }}
           VERSION_NAME: 1.${{ github.run_number }}
+          KHAIR_KEY_SECRET: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEY_PASSWORD || '' }}
         run: |
-          npm ci --no-audit --no-fund
+          export ANDROID_KEY_PASSWORD="${KHAIR_THROWAWAY_PASS:-$KHAIR_KEY_SECRET}"
           node build.mjs
           ls -l out
       - name: Keep the files of this run (7 days)

@@ -32,7 +32,7 @@ test('a 30-item invoice is saved in a handful of D1 calls (was 91 queries; the f
   const r = await call(env, 'Siti', '1111', 'save_sale', { client_id: 'big-1', sale_date: today(), items, payment_method: 'tunai', paid_amount: 90000 });
   assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 200));
   assert.equal(r.body.ok, true, JSON.stringify(r.body).slice(0, 200));
-  assert.ok(r.calls <= 6, 'D1 calls: ' + r.calls);
+  assert.ok(r.calls <= 7, 'D1 calls: ' + r.calls); // v71: + the login gate's one read of pos_users (src/authgate.js)
   assert.equal(db.prepare('SELECT COUNT(*) c FROM pos_sale_items WHERE invoice_no = ?').get(r.body.invoice_no).c, 30);
   assert.equal(db.prepare('SELECT stock FROM pos_products WHERE id = 30').get().stock, 98);
 });
@@ -43,7 +43,7 @@ test('importing 200 products in one request works under the limit; a failing wri
   const r = await call(env, 'Pemilik', '1234', 'import_products', { rows });
   assert.equal(r.body.ok, true, JSON.stringify(r.body).slice(0, 200));
   assert.equal(r.body.created, 200);
-  assert.ok(r.calls <= 6, 'D1 calls: ' + r.calls);
+  assert.ok(r.calls <= 7, 'D1 calls: ' + r.calls); // v71: + the login gate's one read of pos_users (src/authgate.js)
   assert.equal(db.prepare("SELECT COUNT(*) c FROM pos_products WHERE sku LIKE 'IMP%'").get().c, 200);
   // all or nothing: a batch with a bad statement leaves no half-written rows
   const { sqliteAdapter } = await import('./shim.js');

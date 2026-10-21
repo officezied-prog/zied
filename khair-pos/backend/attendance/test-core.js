@@ -17,7 +17,7 @@ function call(action, data, who, at) {
   res.ops.settings.forEach(x => { const ex = T.settings.find(r => r.skey === x.skey); if (ex) ex.svalue = x.svalue; else T.settings.push({ skey: x.skey, svalue: x.svalue }); });
   return res.response;
 }
-const OWNER = { name: 'Pemilik', role: 'owner' }, MGR = { name: 'Jihan', role: 'manager' }, KASIR = { name: 'Emma', role: 'kasir' }, SALES = { name: 'Wahyu', role: 'sales' };
+const OWNER = { name: 'zaid pemilik', role: 'owner' }, MGR = { name: 'Jihan', role: 'manager' }, KASIR = { name: 'Emma', role: 'kasir' }, SALES = { name: 'Wahyu', role: 'sales' };
 // seeded random faces: two different people are ~0.9 apart (like real face-api descriptors), one person ~0.2 between photos
 const face = seed => { let x = seed * 2654435761 >>> 0; return Array.from({ length: 128 }, () => { x = (x ^ (x << 13)) >>> 0; x = (x ^ (x >>> 17)) >>> 0; x = (x ^ (x << 5)) >>> 0; return ((x % 2000) / 1000 - 1) * 0.1; }); };
 const near = (f, d) => f.map((x, i) => x + (i % 2 ? d : -d) / Math.sqrt(128));

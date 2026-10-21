@@ -12,8 +12,8 @@
       db._chatSeeded = true;
       db.chat = [
         { id: 1, channel: 'general', cid: 'seed1', from_user: 'Siti', from_name: 'Siti', from_role: 'kasir', body: 'Selamat pagi semua 🌿', image: '', created_at: back(nowIso, 7200), deleted: false },
-        { id: 2, channel: 'general', cid: 'seed2', from_user: 'Pemilik', from_name: 'Pemilik', from_role: 'owner', body: 'Pagi, semangat! Stok gula hampir habis ya.', image: '', created_at: back(nowIso, 5400), deleted: false },
-        { id: 3, channel: 'owner_mgr', cid: 'seed3', from_user: 'Pemilik', from_name: 'Pemilik', from_role: 'owner', body: 'Tolong kirim laporan kas sore ini.', image: '', created_at: back(nowIso, 3600), deleted: false }
+        { id: 2, channel: 'general', cid: 'seed2', from_user: 'zaid pemilik', from_name: 'zaid pemilik', from_role: 'owner', body: 'Pagi, semangat! Stok gula hampir habis ya.', image: '', created_at: back(nowIso, 5400), deleted: false },
+        { id: 3, channel: 'owner_mgr', cid: 'seed3', from_user: 'zaid pemilik', from_name: 'zaid pemilik', from_role: 'owner', body: 'Tolong kirim laporan kas sore ini.', image: '', created_at: back(nowIso, 3600), deleted: false }
       ];
       // v36: one private 1-to-1 message (Pemilik → Siti) so the demo shows the team list with an unread badge
       var users = db.users || [], own = users.find(function (u) { return u.name === 'Pemilik'; }), siti = users.find(function (u) { return u.name === 'Siti'; });
