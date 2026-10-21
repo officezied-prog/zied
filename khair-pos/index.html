@@ -2,7 +2,7 @@
 <html lang="id" dir="ltr">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' https://khair-mart-jumla.officezied.workers.dev; media-src 'self' blob: mediastream:; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' https://khair-mart-jumla.officezied.workers.dev; media-src 'self' blob: mediastream:; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1E40AF">
 <meta name="mobile-web-app-capable" content="yes">
@@ -145,6 +145,7 @@
 <script src="shared/scan-wedge.js"></script>
 <script src="shared/install-btn.js" data-host="#login:not([hidden]) .login-card"></script>
 <script src="shared/app-update.js"></script>
+<script src="shared/pin-guard.js"></script>
 <script src="mock.js"></script>
 <script>
 'use strict';
@@ -155,7 +156,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '3.1.2';
+const APP_VERSION = '3.1.3';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -270,25 +271,12 @@ function sessGet() {
   return user ? { user, role: (loc && loc.role) || (ss && ss.role) || '', pin_hash: mine ? ss.pin_hash || '' : '', via_master: !!(mine && ss.via_master) } : null;
 }
 function sessDel() { store.del('session'); try { sessionStorage.removeItem(SESS_KEY); sessionStorage.removeItem('kcold.session'); } catch (e) { } }
-const offlineVerifier = hash => sha256Hex('offline:' + hash);
-async function rememberPin(user, hash, role) {
-  const pins = store.get('pins', {}) || {};
-  pins[String(user).toLowerCase()] = { o: await offlineVerifier(hash), role };
-  store.set('pins', pins);
-}
-async function offlinePinOk(user, hash) {
-  const k = (store.get('pins', {}) || {})[String(user).toLowerCase()];
-  if (!k) return null;
-  if (k.o && k.o === await offlineVerifier(hash)) return k;
-  return null;
-}
-/** One-time migration: old entries {h: pin_hash} become {o: verifier}; the raw hash is deleted. */
-async function migratePins() {
-  const pins = store.get('pins', null); if (!pins || typeof pins !== 'object') return;
-  let ch = false;
-  for (const k of Object.keys(pins)) { const v = pins[k] || {}; if (v.h) { pins[k] = { o: await offlineVerifier(v.h), role: v.role }; ch = true; } }
-  if (ch) store.set('pins', pins);
-}
+// v71 security (shared/pin-guard.js): the offline PIN check is slow to guess (PBKDF2) and kept here for the manager only, who may sell
+// in this app; the owner's and the accountant's are never kept on a device (removed at start).
+const OFFLINE_ROLES_HERE = ['manager'];
+const rememberPin = (user, hash, role) => KPin.remember(store, user, hash, role, OFFLINE_ROLES_HERE);
+const offlinePinOk = (user, hash) => KPin.check(store, user, hash, OFFLINE_ROLES_HERE);
+const migratePins = () => KPin.prune(store);
 const maskKey = k => { const v = String(k || ''); return v ? '••••-' + v.slice(-4) : ''; };
 /** Links built from data: only https (no javascript:, data:). */
 const safeUrl = u => /^https:\/\//i.test(String(u || '').trim()) ? String(u).trim() : '#';
@@ -769,6 +757,10 @@ function forceRelogin(e) {
 }
 function logoutStore() {
   S.pin_hash = ''; S.user = ''; S.role = ''; S.inApp = false; sessDel();
+  // v71 security: leaving the store also leaves nothing of it on this device to read — the downloaded shop data (cost prices,
+  // customers, users), the receipts, the suppliers and the drafts. Sales still waiting to be sent (the outbox) are kept.
+  ['cache', 'receipts', 'suppliers', 'purchase_draft', 'expense_draft', 'cart', 'notifs', 'my_requests', 'pending_contacts', 'shop_links', 'order_updates'].forEach(k => store.del(k));
+  S.products = []; S.customers = [];
   const cf = $('#view-cold'); if (cf) cf.innerHTML = '';
   L.users = []; L.sel = '';
   try { if (window.KChatUI) KChatUI.stop(); } catch (e) { }
@@ -3910,7 +3902,7 @@ function productForm(p, fromInvoice) {
   const isNew = !p.id, req = fromInvoice ? ' *' : '';
   const units = ['pcs', 'kg', 'box', 'pak', 'dus', 'botol', 'liter', 'karung', 'pouch', 'set', 'lusin'];
   const f = (k, label, attrs = '', val) => `<div class="field"><label class="f" for="pf-${k}">${esc(label)}</label><input class="input" id="pf-${k}" name="${k}" value="${esc(val !== undefined ? val : (p[k] ?? ''))}" ${attrs}></div>`;
-  return `<form id="pf" autocomplete="off" onsubmit="return false">
+  return `<form id="pf" autocomplete="off">
     ${f('name', t('name') + ' *', 'required autofocus')}
     <div class="grid2"><div class="field"><label class="f" for="pf-sku">${esc(t('sku'))}</label><div class="row" style="gap:6px;align-items:center"><input class="input" id="pf-sku" name="sku" value="${esc(p.sku ?? '')}" inputmode="text" style="flex:1 1 auto;min-width:0">${camOk() ? `<button type="button" class="icon-btn" id="pf-sku-cam" style="flex:0 0 auto;width:42px;height:42px" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}">${ic('scan')}</button>` : ''}</div></div>${f('category', t('category') + req, 'list="dl-cats"')}</div>
     <datalist id="dl-cats">${categories().map(c => `<option value="${esc(c)}">`).join('')}</datalist>
@@ -5692,6 +5684,8 @@ function renderLoginKeep() {
   Object.entries(keep).forEach(([id, v]) => { const e = $('#' + id); if (e) e.value = v; });
 }
 
+// v71 security: no inline handlers (CSP script-src-attr 'none'): a form never submits natively (Enter in the product form …)
+document.addEventListener('submit', e => e.preventDefault(), true);
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-act]');
   if (!el || el.disabled) return;

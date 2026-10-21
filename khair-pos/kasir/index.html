@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- security M8: CSP (GitHub Pages cannot send headers). connect-src = the n8n webhooks only. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://khair-mart-jumla.officezied.workers.dev; media-src 'self' blob: mediastream:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://khair-mart-jumla.officezied.workers.dev; media-src 'self' blob: mediastream:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="theme-color" content="#1E40AF">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -102,18 +102,21 @@
 <script src="../shared/scan-wedge.js"></script>
 <script src="../shared/install-btn.js" data-host="#login:not([hidden]) > .screen-card"></script>
 <script src="../shared/app-update.js"></script>
+<script src="../shared/pin-guard.js"></script>
 <script src="../shared/field-mock.js"></script>
 <script src="../shared/gmaps-import.js"></script>
 <script src="mock.js"></script>
 <script>
 'use strict';
+// v71 security: no framing (a <meta> CSP cannot set frame-ancestors): leave any frame, like the owner app.
+if (window.top !== window.self) { try { window.top.location = window.location.href; } catch (e) { document.documentElement.innerHTML = ''; } }
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.8.2';
+const APP_VERSION = 'kasir-1.8.3';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -282,13 +285,12 @@ const SESS = {
   set(v) { memSess = v; try { sessionStorage.setItem(SESS_KEY, JSON.stringify(v)); } catch (e) { } },
   del() { memSess = null; try { sessionStorage.removeItem(SESS_KEY); } catch (e) { } }
 };
-const offlineVerifier = hash => sha256Hex('offline:' + hash);
-/** Old devices kept {h: pin_hash}: turn them into verifiers, and drop a hash left in the stored session. */
+// v71 security (shared/pin-guard.js): the offline PIN check is slow to guess (PBKDF2) and kept here for cashier accounts only — never the
+// manager's or the owner's on a shared cashier device.
+const OFFLINE_ROLES_HERE = ['kasir'];
+/** Old devices kept {h: pin_hash} or a quick check: the owner's / accountant's go, the rest become slow checks; drop a hash left in the stored session. */
 async function migrateSecrets() {
-  const pins = store.get('pins', {});
-  let changed = false;
-  for (const k of Object.keys(pins || {})) { const e = pins[k]; if (e && e.h) { if (!e.o) e.o = await offlineVerifier(e.h); delete e.h; changed = true; } }
-  if (changed) store.set('pins', pins);
+  await KPin.prune(store);
   const ls = KS.get('session');
   if (ls && ls.pin_hash !== undefined) { if (ls.pin_hash && !SESS.get()) SESS.set({ user: ls.user, role: ls.role, pin_hash: ls.pin_hash }); KS.set('session', { user: ls.user, role: ls.role }); }
 }
@@ -854,7 +856,7 @@ async function submitNewPin() {
   L.busy = true; L.err = ''; renderLogin();
   try {
     await apiRaw('change_pin', { new_pin_hash: nh }, { key: S.key, user: np.user, pin_hash: np.old });
-    const pins = store.get('pins', {}); pins[np.user.toLowerCase()] = { o: await offlineVerifier(nh), role: np.role }; store.set('pins', pins);
+    await KPin.remember(store, np.user, nh, np.role, OFFLINE_ROLES_HERE);
     L.np = null; L.busy = false; L.pin = '';
     toast(t('np.done'), 'ok');
     startSession(np.user, np.role, nh, false);
@@ -885,7 +887,7 @@ async function submitPin() {
   try {
     const r = await apiRaw('login', {}, { key: S.key, user, pin_hash: hash });
     if (r.tamper_locked) { L.busy = false; L.pin = ''; L.err = t('tamper.locked'); renderLogin(); return; }
-    if (!master) { const pins = store.get('pins', {}); pins[user.toLowerCase()] = { o: await offlineVerifier(hash), role: r.user.role }; store.set('pins', pins); }
+    if (!master) await KPin.remember(store, user, hash, r.user.role, OFFLINE_ROLES_HERE);
     L.master = false; L.busy = false; L.pin = '';
     if (r.must_change) { askNewPin(r.user.name, r.user.role, hash, r.via_master); return; }
     startSession(r.user.name, r.user.role, hash, false, { viaMaster: !!r.via_master });
@@ -898,8 +900,8 @@ async function submitPin() {
       renderLogin(); return;
     }
     if (e instanceof NetError && !master) {
-      const known = store.get('pins', {})[user.toLowerCase()];
-      if (known && known.o && known.o === await offlineVerifier(hash) && KS.get('cache')) { startSession(user, known.role, hash, true); return; }
+      const known = await KPin.check(store, user, hash, OFFLINE_ROLES_HERE);
+      if (known && KS.get('cache')) { startSession(user, known.role, hash, true); return; }
     }
     // v16: the server warns before the lock ("(2 kali lagi, lalu akun dikunci 15 menit)")
     const left = /\((\d) kali lagi/.exec(String(e.message || ''));

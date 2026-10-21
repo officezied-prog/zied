@@ -100,8 +100,11 @@ test('store key masked; pins keep only an offline verifier; the session hash liv
   await H.login(page);
   const hash = H.sha('demo:siti:1111');
   const st = await page.evaluate(() => ({ pins: JSON.parse(localStorage.getItem('kpos.mock.pins')), ls: JSON.parse(localStorage.getItem('kpos.mock.kasir.session')), ss: JSON.parse(sessionStorage.getItem('kpos.mock.kasir.session')) }));
-  expect(st.pins.pemilik).toEqual({ o: H.sha('offline:' + 'b'.repeat(64)), role: 'owner' });
-  expect(st.pins.siti).toEqual({ o: H.sha('offline:' + hash), role: 'kasir' });
+  // v71: the owner's check is never kept on a device (removed at start); the cashier's is a slow PBKDF2 check with this device's salt
+  expect(st.pins.pemilik).toBeUndefined();
+  expect(st.pins.siti).toMatchObject({ v: 2, role: 'kasir' });
+  expect(st.pins.siti.o).not.toBe(H.sha('offline:' + hash)); // not the old quick check
+  expect(await page.evaluate(h => KPin.check(store, 'Siti', h, ['kasir']), hash)).toEqual({ role: 'kasir' });
   expect(st.ls).toEqual({ user: 'Siti', role: 'kasir' });
   expect(st.ss).toMatchObject({ user: 'Siti', pin_hash: hash });
   // the outbox entries keep their own credentials (offline sales); everything else on the device has no hash

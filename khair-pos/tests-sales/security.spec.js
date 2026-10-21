@@ -43,10 +43,13 @@ test('store key masked; pins keep a verifier only; the session hash lives in thi
   });
   await H.login(page, 'Ahmad', '4444');
   const st = await page.evaluate(() => ({ pins: JSON.parse(localStorage.getItem('kpos.mock.pins')), ls: JSON.parse(localStorage.getItem('kpos.mock.sales.session')), ss: JSON.parse(sessionStorage.getItem('kpos.mock.sales.session')) }));
-  expect(st.pins.pemilik.h).toBeUndefined();
-  expect(st.pins.pemilik.o).toMatch(/^[0-9a-f]{64}$/);
+  // v71: the owner's check is never kept on a device (removed at start); the rep's is a slow PBKDF2 check with this device's salt
+  expect(st.pins.pemilik).toBeUndefined();
+  expect(st.pins.ahmad).toMatchObject({ v: 2, role: 'sales' });
   expect(st.pins.ahmad.h).toBeUndefined();
   expect(st.pins.ahmad.o).toMatch(/^[0-9a-f]{64}$/);
+  expect(await page.evaluate(h => KPin.check(store, 'Ahmad', h, ['sales']), st.ss.pin_hash)).toEqual({ role: 'sales' });
+  expect(await page.evaluate(() => KPin.check(store, 'Ahmad', 'f'.repeat(64), ['sales']))).toBeNull();
   expect(st.ls).toEqual({ user: 'Ahmad', role: 'sales' });
   expect(st.ss.pin_hash).toMatch(/^[0-9a-f]{64}$/);
   expect(st.pins.ahmad.o).not.toBe(st.ss.pin_hash);

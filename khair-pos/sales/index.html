@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- security M8: CSP (GitHub Pages cannot send headers). connect-src = the n8n webhooks only; images incl. OSM tiles. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' https://khair-mart-jumla.officezied.workers.dev https://nominatim.openstreetmap.org https://overpass-api.de https://overpass.private.coffee https://maps.mail.ru https://overpass.kumi.systems; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; script-src-attr 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; connect-src 'self' https://khair-mart-jumla.officezied.workers.dev https://nominatim.openstreetmap.org https://overpass-api.de https://overpass.private.coffee https://overpass.kumi.systems; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="theme-color" content="#1E40AF">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -78,13 +78,16 @@
 <script src="../shared/tamper-guard.js"></script>
 <script src="../shared/install-btn.js" data-host="#login:not([hidden]) > .screen-card"></script>
 <script src="../shared/app-update.js"></script>
+<script src="../shared/pin-guard.js"></script>
 <script src="mock.js"></script>
 <script>
 'use strict';
+// v71 security: no framing (a <meta> CSP cannot set frame-ancestors): leave any frame, like the owner app.
+if (window.top !== window.self) { try { window.top.location = window.location.href; } catch (e) { document.documentElement.innerHTML = ''; } }
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.9.9';
+const APP_VERSION = 'sales-1.9.10';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -245,12 +248,11 @@ const SESS = {
   set(v) { memSess = v; try { sessionStorage.setItem(SESS_KEY, JSON.stringify(v)); } catch (e) { } },
   del() { memSess = null; try { sessionStorage.removeItem(SESS_KEY); } catch (e) { } }
 };
-const offlineVerifier = hash => sha256Hex('offline:' + hash);
+// v71 security (shared/pin-guard.js): the offline PIN check is slow to guess (PBKDF2) and kept here for sales reps only (never the owner's
+// or the manager's, who may also open this app).
+const OFFLINE_ROLES_HERE = ['sales'];
 async function migrateSecrets() {
-  const pins = store.get('pins', {});
-  let changed = false;
-  for (const k of Object.keys(pins || {})) { const e = pins[k]; if (e && e.h) { if (!e.o) e.o = await offlineVerifier(e.h); delete e.h; changed = true; } }
-  if (changed) store.set('pins', pins);
+  await KPin.prune(store);
   const ls = FS.get('session');
   if (ls && ls.pin_hash !== undefined) { if (ls.pin_hash && !SESS.get()) SESS.set({ user: ls.user, role: ls.role, pin_hash: ls.pin_hash }); FS.set('session', { user: ls.user, role: ls.role }); }
 }
@@ -888,7 +890,7 @@ async function submitNewPin() {
   L.busy = true; L.err = ''; renderLogin();
   try {
     await apiRaw('change_pin', { new_pin_hash: nh }, { key: S.key, user: np.user, pin_hash: np.old });
-    const pins = store.get('pins', {}); pins[np.user.toLowerCase()] = { o: await offlineVerifier(nh), role: np.role }; store.set('pins', pins);
+    await KPin.remember(store, np.user, nh, np.role, OFFLINE_ROLES_HERE);
     L.np = null; L.busy = false; L.pin = ''; toast(t('np.done'), 'ok');
     startSession(np.user, np.role, nh, false);
   } catch (e) { L.busy = false; np.first = ''; L.pin = ''; L.err = e instanceof NetError ? t('np.need_online') : errMsg(e); renderLogin(); }
@@ -904,14 +906,14 @@ async function submitPin() {
     const r = await apiRaw('login', {}, { key: S.key, user, pin_hash: hash });
     if (r.tamper_locked) { L.busy = false; L.pin = ''; L.err = t('tamper.locked'); renderLogin(); return; }
     if (!SALES_ROLES.includes(r.user.role)) { L.busy = false; L.pin = ''; L.err = t('login.not_sales', { role: t('role.' + r.user.role) }); renderLogin(); return; }
-    const pins = store.get('pins', {}); pins[user.toLowerCase()] = { o: await offlineVerifier(hash), role: r.user.role }; store.set('pins', pins);
+    await KPin.remember(store, user, hash, r.user.role, OFFLINE_ROLES_HERE);
     L.busy = false; L.pin = '';
     if (r.must_change) { askNewPin(r.user.name, r.user.role, hash); return; }
     startSession(r.user.name, r.user.role, hash, false);
   } catch (e) {
     L.busy = false; L.pin = '';
     if (e.code === 'LOCKED') { const until = lockUntilFrom(e); LOCKS[user.toLowerCase()] = until; L.err = ''; setTimeout(() => { if (!$('#login').hidden && L.step === 'pin') renderLogin(); }, Math.min(until - Date.now() + 500, 2147483000)); renderLogin(); return; }
-    if (e instanceof NetError) { const known = store.get('pins', {})[user.toLowerCase()]; if (known && known.o && known.o === await offlineVerifier(hash) && SALES_ROLES.includes(known.role) && FS.get('cache')) { startSession(user, known.role, hash, true); return; } }
+    if (e instanceof NetError) { const known = await KPin.check(store, user, hash, OFFLINE_ROLES_HERE); if (known && SALES_ROLES.includes(known.role) && FS.get('cache')) { startSession(user, known.role, hash, true); return; } }
     const left = /\((\d) kali lagi/.exec(String(e.message || ''));
     L.err = e.code === 'BAD_PIN' ? t('err.BAD_PIN') + (left ? ' — ' + t('login.tries_left', { n: left[1] }) : '') : errMsg(e); renderLogin();
   }
@@ -1160,7 +1162,7 @@ function svgMap(el, points, shops, current, orders, plan) {
 const PL = { date: '', start: null, end: null, stops: [], streets: [], note: '', results: [], street: null, seg: 'search', q: '', msg: '', busy: false, map: null, lay: null, el: null, sel: null, worked: [], workedAt: 0,
   draw: null, found: [], foundOn: '', lineRef: '', cats: null, gmOpen: false, placing: '', unplaced: [], g: null,
   rf: { from: '', to: '', user: '', view: true }, hl: -1, tap: 0, tapHit: null, prev: null, part: null }; // v35c part = choosing the start / end of the work on a long street // v35 rf = the worked-routes filter; hl = the route shown; tap/tapHit = the street under the last tap // v34 g = Google search { enabled, n, cap } // v33: Google Maps paste box; a place being put on the map; places still without a position // v32: draw = the work line being drawn ({ pts, name }); found = shops of the chosen kinds along a line
-const OSM = { nomi: 'https://nominatim.openstreetmap.org/search', over: ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'], ovi: 0, last: 0 };
+const OSM = { nomi: 'https://nominatim.openstreetmap.org/search', over: ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'], ovi: 0, last: 0 }; // v71 privacy: no maps.mail.ru (the rep's coordinates)
 const plansAll = () => FS.get(uk('plans'), {}) || {};
 const planFor = d => plansAll()[d] || null;
 function putPlanLocal(p, dirty) {
