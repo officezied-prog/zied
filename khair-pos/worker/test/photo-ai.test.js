@@ -59,3 +59,23 @@ test('bootstrap tells the apps whether the photo reader is on (the AI key is set
   assert.equal((await call({ DB: d1Mock(db), STORE_KEY: KEY })).ai_reader, false);
   assert.equal((await call({ DB: d1Mock(db), STORE_KEY: KEY, ANTHROPIC_API_KEY: 'k' })).ai_reader, true);
 });
+
+test('v70: an evidence photo (cash paid from the drawer at goods-in, read: false) is kept but never sent to the AI', async () => {
+  let calls = 0;
+  const db = seed();
+  const ev = { action: 'scan_expense', key: KEY, user: 'Siti', pin_hash: h('Siti', '1111'), data: { image_base64: IMG, mime: 'image/jpeg', read: false } };
+  const r = await withFetch(async () => { calls++; return new Response('{}', { status: 500 }); },
+    () => handlePhoto(sqliteAdapter(db), ev, {}, KEY, { ANTHROPIC_API_KEY: 'test-key' }));
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(calls, 0, 'no AI call: nothing to read on a photo of the car or the money, and its answer was never used');
+  assert.equal(r.ai, 'skipped');
+  assert.match(r.photo_id, /^PH/);
+  const row = db.prepare('SELECT kind, match_status, match_notes, extracted FROM pos_photos').get();
+  assert.equal(row.kind, 'biaya');
+  assert.equal(row.match_status, '', 'not "perlu cek": an evidence photo has nothing to check');
+  assert.equal(JSON.parse(row.extracted).stored_only, true);
+  // an expense receipt sent as before is still read
+  const read = await withFetch(async () => { calls++; return new Response(JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{"vendor":"PLN","total":250000,"amount":250000,"items":[],"readable":true,"notes":""}' }] }), { status: 200 }); },
+    () => handlePhoto(sqliteAdapter(db), { ...ev, data: { image_base64: IMG, mime: 'image/jpeg' } }, {}, KEY, { ANTHROPIC_API_KEY: 'test-key' }));
+  assert.equal(calls, 1); assert.equal(read.ai, 'ok'); assert.equal(read.extracted.amount, 250000);
+});

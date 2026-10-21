@@ -113,7 +113,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.8.1';
+const APP_VERSION = 'kasir-1.8.2';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -5692,7 +5692,8 @@ async function dpScan(file) {
   try {
     const img = await imageToJpeg(file);
     d.thumb = img.thumb; d.photo_id = ''; dpDraw();
-    const r = await apiPhoto('scan_expense', { image_base64: img.base64, mime: img.mime }); // the same photo upload as an expense (kept with the payment / expense)
+    // kept with the payment / expense; v70: read: false = only kept, never read by AI (nothing to read on it, no cost, no wait)
+    const r = await apiPhoto('scan_expense', { image_base64: img.base64, mime: img.mime, read: false });
     d.photo_id = r.photo_id || '';
   } catch (e) { DPS.err = (e instanceof NetError ? t('pu.scan_net') : errMsg(e)) + ' ' + t('pu.scan_retry'); }
   DPS.scanning = false; savePuDraft(); dpDraw();

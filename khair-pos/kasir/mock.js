@@ -1350,14 +1350,15 @@ const MockServer = (() => {
         if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');
         let raw = null; try { raw = localStorage.getItem('kmock.expscan'); } catch (e) { }
         let ex = null;
-        if (raw === 'off') ex = { items: [], readable: false, notes: 'AI gagal membaca: AI_DISABLED' };
+        if (data.read === false) ex = { items: [], readable: true, stored_only: true, notes: 'Foto bukti, disimpan tanpa dibaca AI' }; // v70: an evidence photo
+        else if (raw === 'off') ex = { items: [], readable: false, notes: 'AI gagal membaca: AI_DISABLED' };
         else { try { ex = JSON.parse(raw || 'null'); } catch (e) { } }
         if (!ex) ex = { vendor: 'Toko Plastik Jaya', date: jktDate(), items: [{ name: 'Kantong plastik besar', qty: 10, unit_price: 5000, total: 50000 }, { name: 'Lakban coklat', qty: 5, unit_price: 7000, total: 35000 }], total: 85000, amount: 85000, readable: true, notes: '' };
         const photo = { photo_id: 'PH-' + String(nextId(db, 'photo')).padStart(5, '0'), kind: 'biaya', ref: '', created_at: jktISO(), photo_date: jktDate(), user: u.name, drive_url: '', extracted: ex,
-          match_status: ex.readable === false || (ex.amount == null && ex.total == null) ? 'perlu_cek' : '', match_notes: String(ex.notes || '') };
+          match_status: !ex.stored_only && (ex.readable === false || (ex.amount == null && ex.total == null)) ? 'perlu_cek' : '', match_notes: String(ex.notes || '') };
         keepPhotoImg(db, photo, data); // v68: kept like every scanned photo (the owner / manager open it from the note)
         db.photos.push(photo);
-        return { photo_id: photo.photo_id, extracted: ex, drive_url: photo.drive_url };
+        return { photo_id: photo.photo_id, extracted: ex, drive_url: photo.drive_url, ai: ex.stored_only ? 'skipped' : 'ok' };
       }
       case 'scan_exit': {
         if (!String(data.image_base64 || '').length) throw E('INVALID', 'image_base64 required');

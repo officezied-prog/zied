@@ -49,7 +49,9 @@ if (req.action === 'scan_expense') {
   // maintenance… Read the grand total (to check it against the amount the cashier typed) and the line items. Kind 'biaya'.
   const prompt = 'Kamu akuntan toko grosir Khair Mart. Foto ini adalah nota/faktur/struk PENGELUARAN (biaya operasional: sewa, gaji, listrik/air, transport, iklan, kemasan, perawatan, dll). Baca total yang harus dibayar dan rincian barang/jasa. ' + JSON_ONLY +
     ' Format: {"vendor": string|null, "date": "YYYY-MM-DD"|null, "items": [{"name": string, "qty": number|null, "unit_price": number|null, "total": number|null}], "total": number|null, "amount": number|null, "readable": boolean, "notes": string}. amount = total akhir yang dibayar (sama dengan total). Tulis notes dalam Bahasa Indonesia singkat.';
-  return [{ json: { mode: 'scan', kind: 'biaya', action: req.action, img: req.img, mime: req.mime, prompt: prompt, user: me.name, ref: '' } }];
+  // v70: data.read === false = an evidence photo (cash paid from the drawer at goods-in: the car, the money handed over) — kept
+  // as it is, not read: nothing on it to read, and the answer was never used (no AI cost, no wait while the driver waits).
+  return [{ json: { mode: 'scan', kind: 'biaya', action: req.action, img: req.img, mime: req.mime, prompt: req.no_read === true ? '' : prompt, user: me.name, ref: '', skip_ai: req.no_read === true } }];
 }
 if (req.action === 'scan_supplier_return') {
   // Goods going back to a supplier (v17): the outgoing return note / delivery order and/or the goods leaving. Own kind 'retur'.
