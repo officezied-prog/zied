@@ -149,6 +149,10 @@ test('goods-in: cashier adds a NEW product (category + size/weight required), us
   await m.locator('#np-ok').click();
   await expect(m.locator('#np-err')).toContainText('Harga jual');
   await m.locator('#np-retail').fill('120000');
+  // v73: the cashier must say whether it can be repacked
+  await m.locator('#np-ok').click();
+  await expect(m.locator('#np-err')).toContainText('bisa dikemas ulang atau tidak');
+  await m.locator('#np-rp-no').check();
   await H.shot(page, 'phone-v36-new-product', false, { noToasts: true });
   await m.locator('#np-ok').click();
   await expect(m).toHaveCount(0);

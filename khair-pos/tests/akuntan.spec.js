@@ -67,6 +67,7 @@ test('accountant: Products is read-only but can ADD a new product; editing an ex
   await expect(page.locator('#pf')).toBeVisible();
   await page.fill('#pf-name', 'Teh Akuntan');
   await page.fill('#pf-retail_price', '5000');
+  await page.check('#pf-rp-no'); // v73: can it be repacked? — answered
   await page.click('#pf-save');
   await expect(page.locator('.toast.ok').first()).toBeVisible();
   const db = await getDb(page);

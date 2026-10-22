@@ -26,6 +26,7 @@ test('the manager marks a per-kg product as loose in Produk (and back); per-piec
   // a new product: loose with a per-piece unit is refused, with kg it is saved loose
   await page.click('[data-act="prod-new"]');
   await page.fill('#pf-name', 'Kismis Curah Test');
+  await page.check('#pf-rp-no'); // v73: can it be repacked? — answered
   await page.fill('#pf-unit', 'pcs');
   await page.fill('#pf-retail_price', '90000');
   await page.check('#pf-loose');

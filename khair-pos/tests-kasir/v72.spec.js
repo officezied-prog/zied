@@ -216,3 +216,32 @@ test('more than the shelf holds: one tap takes the rest from the storeroom (a re
   expect(p.shop_stock).toBe(5);
   expect(db.activity.some(a => a.kind === 'pindah_stok' && /Madu Habbatusauda 1 Kg 3 pcs/.test(a.summary) && /Diambil langsung dari gudang/.test(a.summary))).toBe(true);
 });
+
+// v73 (owner 2026-10-22: «أضف عند إدخال المعطيات أي بضاعة جديدة هل يمكن هذه البضاعة أن تقسم إلى بضائع صغيرة وإعادة التعبئة أم لا؟ يجب أن يجيب
+// عنها الموظف … فإن كانت يتم إعادة تعبئتها فتكون في خانة المواد التي يمكن إعادة تعبئتها»)
+test('a new product at goods-in: "can it be repacked?" must be answered; yes is kept on the product', async ({ page }) => {
+  await H.login(page);
+  await H.tab(page, 'masuk');
+  await page.fill('#pu-q', 'Gula Pasir Karung 50 Kg');
+  await page.click('#pu-newprod-q');
+  const m = page.locator('#new-product');
+  await expect(m).toBeVisible();
+  await m.locator('#np-cat').fill('Gula');
+  await m.locator('#np-size').fill('50');
+  await m.locator('#np-measure').selectOption('kg');
+  await m.locator('#np-unit').selectOption('karung');
+  await m.locator('#np-retail').fill('800000');
+  await m.locator('#np-ok').click();
+  await expect(m.locator('#np-err')).toContainText('Jawab dulu: barang ini bisa dikemas ulang atau tidak?');
+  await m.locator('#np-rp-yes').check();
+  await H.shot(page, 'phone-new-product-repackable', false, { noToasts: true });
+  await m.locator('#np-ok').click();
+  await expect(m).toHaveCount(0);
+  const p = (await H.getDb(page)).products.find(x => x.name === 'Gula Pasir Karung 50 Kg');
+  expect(p.repackable).toBe(true);
+  // a packaging material is never repackable: the question is not asked
+  await page.fill('#pu-q', 'Stiker Gula');
+  await page.click('#pu-newprod-q');
+  await m.locator('#np-kind-mat').check();
+  await expect(m.locator('#np-rp')).toBeHidden();
+});

@@ -157,7 +157,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '3.2.0';
+const APP_VERSION = '3.3.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -3925,6 +3925,9 @@ function productForm(p, fromInvoice) {
       <p class="small muted">${esc(t('prod.repack_hint'))}</p>
       <div class="grid2"><div class="field"><label class="f" for="pf-repack_from">${esc(t('prod.repack_from'))}</label><select class="input" id="pf-repack_from"><option value="0">— ${esc(t('prod.repack_none'))} —</option>${S.products.filter(x => x.id != p.id && !(num(x.repack_from) > 0)).slice().sort((a, b) => a.name.localeCompare(b.name)).map(x => `<option value="${esc(x.id)}" data-unit="${esc(x.unit || '')}" ${String(p.repack_from) === String(x.id) ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
       <div class="field"><label class="f" for="pf-repack_qty">${esc(t('prod.repack_qty'))} (<span id="pf-rq-unit">${esc((prodById(p.repack_from) || {}).unit || '—')}</span>)</label><input class="input" id="pf-repack_qty" autocomplete="off" value="${num(p.repack_qty) > 0 ? esc(KMeasure.inputText(prodById(p.repack_from), p, p.repack_qty)) : ''}" placeholder="${esc(t('rps.size_ph'))}"></div></div><div class="small" id="pf-rq-hint" aria-live="polite"></div></details>
+    <div class="field" id="pf-rp"><label class="f">${esc(t('prod.repackable_q'))}${isNew ? ' *' : ''}</label><div class="small muted" style="margin-bottom:4px">${esc(t('prod.repackable_hint'))}</div>
+      <div class="row wrap" style="gap:16px"><label class="row" style="gap:6px"><input type="radio" name="pf-repackable" value="1" id="pf-rp-yes" ${!isNew && p.repackable === true ? 'checked' : ''}> ${esc(t('prod.rp_yes'))}</label>
+        <label class="row" style="gap:6px"><input type="radio" name="pf-repackable" value="0" id="pf-rp-no" ${!isNew && p.id && p.repackable !== true ? 'checked' : ''}> ${esc(t('prod.rp_no'))}</label></div></div>
     <div class="field"><label class="f" for="pf-notes">${esc(t('notes'))}</label><textarea class="input" id="pf-notes" name="notes">${esc(p.notes || '')}</textarea></div>
     <label class="check"><input type="checkbox" id="pf-active" ${p.active === false ? '' : 'checked'}> ${esc(t('prod.active'))}</label>
     <div class="small muted" id="pf-margin"></div>
@@ -3969,6 +3972,11 @@ function openProductEditor(p, after, opts = {}) {
     }
     if (data.loose && !looseUnit(data.unit)) { $('#pf-err', el).textContent = t('loose.unit'); $('#pf-unit', el).focus(); return; }
     if (data.repack_from && !(data.repack_qty > 0)) { $('#pf-err', el).textContent = t('required') + ': ' + t('prod.repack_qty'); $('#pf-repack_qty', el).focus(); return; }
+    // v73 (owner 2026-10-22: «عند إدخال … أي بضاعة جديدة هل يمكن … إعادة التعبئة أم لا؟ يجب أن يجيب عنها الموظف»): answered for a new
+    // product (a pack made from a bulk is itself not repacked)
+    const rpAns = $('input[name="pf-repackable"]:checked', el);
+    if (!p.id && !rpAns && !data.repack_from) { $('#pf-err', el).textContent = t('prod.need_repackable'); $('#pf-rp-yes', el).focus(); return; }
+    if (rpAns) data.repackable = rpAns.value === '1' && !data.repack_from; else if (!p.id) data.repackable = false;
     if (p.id) data.id = p.id; else data.stock = qtyVal(val('stock'));
     const err = $('#pf-err', el);
     if (!data.name) { err.textContent = t('required') + ': ' + t('name'); return; }
@@ -6891,9 +6899,10 @@ function rsTotalHTML(p) {
 /** Bulk products for the picker: the bulks already packed first, then (manager / owner) any product in stock that is not a pack. */
 function rpBulkItems() {
   const packs = packProducts(), bulkIds = new Set(packs.map(p => String(p.repack_from))), own = canSetRepack();
-  return S.products.filter(p => p.active !== false && !(num(p.repack_from) > 0) && (bulkIds.has(String(p.id)) || (own && num(p.stock) > 0)))
-    .sort((a, b) => (bulkIds.has(String(b.id)) - bulkIds.has(String(a.id))) || String(a.name).localeCompare(String(b.name)))
-    .map(p => { const n = packs.filter(x => String(x.repack_from) === String(p.id)).length; return { id: String(p.id), label: p.name, keys: p.category || '', sub: `${t('stock')} ${fmtQty(p.stock)} ${p.unit || ''}${p.category ? ' · ' + p.category : ''}${n ? ' · ' + t('rp.n_packs', { n }) : ''}` }; });
+  const rk = p => (bulkIds.has(String(p.id)) ? 2 : 0) + (p.repackable === true ? 1 : 0); // v73: the repackable ones right after the packed bulks
+  return S.products.filter(p => p.active !== false && !(num(p.repack_from) > 0) && (bulkIds.has(String(p.id)) || p.repackable === true || (own && num(p.stock) > 0)))
+    .sort((a, b) => (rk(b) - rk(a)) || String(a.name).localeCompare(String(b.name)))
+    .map(p => { const n = packs.filter(x => String(x.repack_from) === String(p.id)).length; return { id: String(p.id), label: p.name, keys: p.category || '', sub: `${t('stock')} ${fmtQty(p.stock)} ${p.unit || ''}${p.category ? ' · ' + p.category : ''}${n ? ' · ' + t('rp.n_packs', { n }) : p.repackable === true ? ' · ' + t('rp.bulk_repackable') : ''}` }; });
 }
 /** Packs for a bulk: those made from it; for the manager / owner also the same-kind (category) products not packed yet. */
 function rpPackItems(b) {
@@ -7421,6 +7430,9 @@ function bbRows() {
   const prodRow = (p, kind, price, uses) => ({ kind, id: p.id, sku: p.sku || '', name: p.name, unit: p.unit || '', stock: num(p.stock), min: num(p.min_stock), st: st(num(p.stock), num(p.min_stock)), cost: price, uses });
   S.products.filter(p => p.active !== false && isBulkOfAny(p)).forEach(p => out.push(prodRow(p, 'curah', cost && 'cost_price' in p ? int(p.cost_price) : null,
     packs.filter(x => String(x.repack_from) === String(p.id)).sort((a, b) => num(b.repack_qty) - num(a.repack_qty)).map(x => ({ name: x.name, q: num(x.repack_qty), u: p.unit || '' })))));
+  // v73: a product answered "can be repacked" when it was entered is in the bulk list at once, before any pack is set up for it
+  S.products.filter(p => p.active !== false && p.repackable === true && !isBulkOfAny(p) && !(num(p.repack_from) > 0) && !isMatProd(p))
+    .forEach(p => out.push(Object.assign(prodRow(p, 'curah', cost && 'cost_price' in p ? int(p.cost_price) : null, []), { noPack: true })));
   S.products.filter(p => p.active !== false && isMatProd(p) && !isBulkOfAny(p)).forEach(p => out.push(prodRow(p, 'kemasan', bbMatPrice(p, packs), bbMatUses(p, packs))));
   matList().forEach(m => out.push({ kind: 'daftar', id: '', sku: '', name: m.name, unit: t('rp.piece'), stock: null, min: 0, st: '', cost: m.cost,
     uses: packs.map(x => { const c = rpCostsOf(x).find(y => y.name.toLowerCase() === m.name.toLowerCase()); return c ? { name: x.name, q: c.qty, pcs: true } : null; }).filter(Boolean) }));
@@ -7450,7 +7462,7 @@ function gdDrawBahan(body, err) {
   bbDrawRows();
 }
 function bbRowHTML(r) {
-  const kb = `<span class="badge ${BBK_BADGE[r.kind]}">${esc(t('bb.k_' + r.kind))}</span>`, uses = r.uses.map(u => esc(bbUseTxt(u))).join('<br>');
+  const kb = `<span class="badge ${BBK_BADGE[r.kind]}">${esc(t('bb.k_' + r.kind))}</span>`, uses = r.noPack ? `<span class="amber" data-no-pack>${esc(t('bb.no_pack'))}</span>` : r.uses.map(u => esc(bbUseTxt(u))).join('<br>');
   return `<tr ${r.id !== '' ? `class="click" data-act="rp-bb-card" data-id="${esc(r.id)}"` : ''} data-bb="${r.kind}" data-name="${esc(r.name)}">
     <td class="hide-phone num" data-col="sku">${r.sku ? esc(r.sku) : '<span class="muted">—</span>'}</td>
     <td><b>${esc(r.name)}</b><div class="show-phone small muted">${kb}${r.sku ? ' · ' + esc(r.sku) : ''}</div>${uses ? `<div class="show-phone small muted">${uses}</div>` : ''}</td>
@@ -7656,6 +7668,9 @@ Object.assign(I18N.id, { // v67 Bahan baku + Produksi stok
   'gd.tab_bahan': 'Bahan baku', 'gd.tab_produksi': 'Produksi stok',
   'bb.hint': 'Semua yang dipakai untuk membuat kemasan: barang curah yang dikemas di toko, bahan kemasan dari barang masuk (ada stoknya) dan daftar harga bahan kemasan (tanpa stok).',
   'bb.search_ph': 'Cari nama, SKU atau kemasan', 'bb.kind_all': 'Semua jenis', 'bb.k_curah': 'Barang curah', 'bb.k_kemasan': 'Bahan kemasan', 'bb.k_daftar': 'Daftar bahan',
+  'bb.no_pack': 'Bisa dikemas ulang — kemasannya belum diatur', 'rp.bulk_repackable': 'bisa dikemas ulang',
+  'prod.repackable_q': 'Bisa dibagi ke kemasan kecil (dikemas ulang)?', 'prod.repackable_hint': 'Misal karung 25 kg → kemasan 1 kg. "Ya" = masuk daftar barang yang bisa dikemas ulang (Gudang → Bahan baku).',
+  'prod.rp_yes': 'Ya, bisa dikemas ulang', 'prod.rp_no': 'Tidak', 'prod.need_repackable': 'Jawab dulu: barang ini bisa dikemas ulang atau tidak?',
   'bb.col_sku': 'SKU', 'bb.col_kind': 'Jenis', 'bb.col_cost': 'Harga modal', 'bb.col_cost_u': '/ satuan', 'bb.col_uses': 'Dipakai untuk',
   'bb.price_list': 'Daftar harga', 'bb.price_list_t': 'Tanpa stok: hanya nama dan harga per buah (Kemas ulang → Daftar bahan kemasan)',
   'bb.min': 'min {n}', 'bb.n': '{n} bahan baku', 'bb.use_size': '{name} ({q} {u})', 'bb.use_pcs': '{name} × {q} buah',
@@ -7685,6 +7700,9 @@ Object.assign(I18N.ar, {
   'gd.tab_bahan': 'المواد الخام', 'gd.tab_produksi': 'إنتاج المخزون',
   'bb.hint': 'كل ما يُستخدم لصنع العبوات: الأصناف السائبة التي تُعبّأ في المحل، ومستلزمات التعبئة المستلمة في الوارد (لها مخزون)، وقائمة أسعار مستلزمات التعبئة (بدون مخزون).',
   'bb.search_ph': 'ابحث بالاسم أو الرمز أو العبوة', 'bb.kind_all': 'كل الأنواع', 'bb.k_curah': 'صنف سائب', 'bb.k_kemasan': 'مستلزم تعبئة', 'bb.k_daftar': 'قائمة المستلزمات',
+  'bb.no_pack': 'يمكن إعادة تعبئته — لم تُحدَّد عبوته بعد', 'rp.bulk_repackable': 'يمكن إعادة تعبئته',
+  'prod.repackable_q': 'هل يمكن تقسيمه إلى عبوات صغيرة (إعادة تعبئة)؟', 'prod.repackable_hint': 'مثلًا كيس 25 كغ ← عبوات 1 كغ. «نعم» = يدخل قائمة المواد التي يمكن إعادة تعبئتها (المخزن ← المواد الأولية).',
+  'prod.rp_yes': 'نعم، يمكن إعادة تعبئته', 'prod.rp_no': 'لا', 'prod.need_repackable': 'أجب أولًا: هل يمكن إعادة تعبئة هذا الصنف أم لا؟',
   'bb.col_sku': 'الرمز', 'bb.col_kind': 'النوع', 'bb.col_cost': 'سعر التكلفة', 'bb.col_cost_u': '/ للوحدة', 'bb.col_uses': 'يُستخدم في',
   'bb.price_list': 'قائمة أسعار', 'bb.price_list_t': 'بدون مخزون: الاسم وسعر القطعة فقط (إعادة التعبئة ← قائمة مستلزمات التعبئة)',
   'bb.min': 'الحد الأدنى {n}', 'bb.n': '{n} مادة خام', 'bb.use_size': '{name} (بحجم {q} {u})', 'bb.use_pcs': '{name} × {q} قطعة',

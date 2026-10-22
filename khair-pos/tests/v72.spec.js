@@ -111,3 +111,31 @@ test('goods-in history: any period (12 Aug – 12 Oct 2025), a supplier search, 
   await expect(page.locator('#puh-err')).toContainText('400 hari');
   await page.screenshot({ path: require('path').join(require('./helpers').SHOTS, 'desktop-goodsin-history-search.png') });
 });
+
+// v73 (owner 2026-10-22: «أضف عند إدخال المعطيات أي بضاعة جديدة هل يمكن هذه البضاعة أن تقسم إلى بضائع صغيرة وإعادة التعبئة أم لا؟ يجب أن يجيب
+// عنها الموظف … فإن كانت يتم إعادة تعبئتها فتكون في خانة المواد التي يمكن إعادة تعبئتها»)
+test('a new product must say whether it can be repacked; "yes" puts it in Bahan baku (no pack yet) and first in the repack picker', async ({ page }) => {
+  await login(page, 'Jihan', '2222', '', { stay: true });
+  await nav(page, 'products');
+  await page.click('[data-act="prod-new"]');
+  await page.fill('#pf-name', 'Gula Pasir Karung 50 Kg');
+  await page.fill('#pf-unit', 'karung');
+  await page.fill('#pf-retail_price', '800000');
+  await page.click('#pf-save');
+  await expect(page.locator('#pf-err')).toHaveText('Jawab dulu: barang ini bisa dikemas ulang atau tidak?');
+  await page.check('#pf-rp-yes');
+  await page.click('#pf-save');
+  await expect(page.locator('#pf')).toHaveCount(0);
+  const p = (await getDb(page)).products.find(x => x.name === 'Gula Pasir Karung 50 Kg');
+  expect(p.repackable).toBe(true);
+  // Gudang → Bahan baku: with the bulk goods, "no pack set up yet"
+  await nav(page, 'gudang');
+  await page.click('[data-act="gd-tab"][data-tab="bahan"]');
+  const row = page.locator(`#bb-table tr[data-name="Gula Pasir Karung 50 Kg"], tr[data-bb="curah"][data-name="Gula Pasir Karung 50 Kg"]`).first();
+  await expect(row).toHaveAttribute('data-bb', 'curah');
+  await expect(row.locator('[data-col="uses"] [data-no-pack]')).toContainText('kemasannya belum diatur');
+  // the repack picker offers it (even with no stock yet), marked
+  await page.click('[data-act="gd-tab"][data-tab="repack"]');
+  await page.locator('#rp-bulk-q').fill('gula pasir karung');
+  await expect(page.locator(`#rp-bulk-list [data-pick="${p.id}"]`)).toContainText('bisa dikemas ulang');
+});

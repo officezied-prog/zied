@@ -102,6 +102,11 @@ period ≤ 400 days, supplier / note search; a cashier 62 days) + date range, se
 weight ANY product whose name says its weight ("Madu … 1 Kg", "Coklat 2 kg"): "⚖ Timbang" in its quantity sheet → grams → qty =
 grams ÷ the unit's grams (0.35 of a jar, priced and taken from stock as such; receipts print "350 g"); cards show Rak AND Gudang always
 (an opened unit as "1 pcs + 650 g"); more than the shelf → "Ambil … dari gudang & tambahkan" (a recorded `move_stock`, then into the cart).
+**v73 (owner 3.3.0, kasir 1.10.0; owner 2026-10-22: «عند إدخال … أي بضاعة جديدة هل يمكن … إعادة التعبئة أم لا؟ يجب أن يجيب عنها الموظف»):**
+`pos_products.repackable` (self-migration): every NEW product must answer "Bisa dikemas ulang?" (Khair Kasir's "Produk baru" and the owner
+app's product form; not for a packaging material, not for a pack made from a bulk); a cashier's answer rides on the manager's review card.
+Yes = listed at once in Gudang → Bahan baku as "Barang curah" ("kemasannya belum diatur" until a pack is set up) and offered right after
+the packed bulks in the repack picker. An older app that does not send it changes nothing (the server keeps the stored answer).
 
 
 **Backend = "Khair Mart Jumla" (الخير مارت جملة) — LIVE since 2026-10-10.** The owner, cashier

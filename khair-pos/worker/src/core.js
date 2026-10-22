@@ -79,6 +79,8 @@ export const POS_MIGRATIONS = [
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_pos_sales_day_seq ON pos_sales (sale_date, day_seq)',
   // v68: cash paid from the cashier's drawer when the goods arrived (the note keeps how much, why, by whom, when, the photo)
   'ALTER TABLE pos_purchases ADD COLUMN drawer_pay TEXT',
+  // v73: can the product be repacked into small packs (asked when it is entered)
+  'ALTER TABLE pos_products ADD COLUMN repackable INTEGER',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;
