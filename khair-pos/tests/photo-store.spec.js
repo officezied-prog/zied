@@ -1,7 +1,7 @@
 // v36 (owner 2026-10-08: "فعّل حفظ الصور عبر Google Drive") — photos are kept by the Worker in Cloudflare R2 and opened
 // from the owner app with "📷 Lihat foto" (owner / manager / accountant only). Demo mode keeps them in IndexedDB.
 const { test, expect } = require('@playwright/test');
-const { login, getDb, nav, asUser, sha, jktToday, openApp, editDb } = require('./helpers');
+const { login, getDb, nav, asUser, sha, jktToday, openApp, editDb, blockLiveBackend } = require('./helpers');
 
 const PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 const API = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos';
@@ -65,6 +65,7 @@ test('demo: the accountant (read-only app) can open a stored photo too', async (
 test('real mode: the stored photo is fetched with the session credentials as headers (never in the URL) and shown', async ({ page }) => {
   const KEY = 'test-store-key';
   const PIN = sha(`${KEY}:jihan:4321`);
+  await blockLiveBackend(page); // the chat / field / attendance calls never reach the live Worker
   await page.route(API, route => {
     const body = JSON.parse(route.request().postData());
     const send = obj => route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*', 'content-type': 'application/json' }, body: JSON.stringify(obj) });

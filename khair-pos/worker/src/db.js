@@ -38,7 +38,7 @@ function toDb(table, col, v) {
 // inbox every minute, the sales / activity refreshes, the device ping — never read the two big tables (every product,
 // every customer), which they do not use. Fewer D1 rows read per day and less CPU per request; test/light-polls.test.js
 // proves each of these answers (and writes) exactly the same with and without them.
-export const LIGHT_ACTIONS = ['list_approvals', 'check_approval', 'get_sales', 'list_activity', 'device_ping'];
+export const LIGHT_ACTIONS = ['list_approvals', 'check_approval', 'get_sales', 'list_activity', 'device_ping', 'list_purchases'];
 export function loaderSpecs(req, opts = {}) {
   const data = (req && req.data) || {};
   const inReturnOrSale = ['request_return', 'get_sale'].indexOf(req.action) >= 0;
@@ -108,7 +108,7 @@ export function loaderSpecs(req, opts = {}) {
     'Get Range Sales': range('pos_sales', 'sale_date', req.from, req.to),
     'Get Range Items': range('pos_sale_items', 'sale_date', req.from, req.to),
     'Get Range Payments': range('pos_payments', 'pay_date', req.pay_from, req.pay_to),
-    'Get Range Purchases': range('pos_purchases', 'purchase_date', req.from, req.to),
+    'Get Range Purchases': range('pos_purchases', 'purchase_date', req.pu_from || req.from, req.pu_to || req.to), // v72: pu_from — list_purchases
     'Get Range Expenses': range('pos_expenses', 'expense_date', req.from, req.to),
     // v36: the expense an expense_check approval belongs to (decide_approval marks it checked / rejected)
     'Get Expense By Request': eq('pos_expenses', 'request_id', req.action === 'decide_approval' ? req.approval_id : SENTINEL_NONE),

@@ -53,6 +53,8 @@ const CASES = [
   ...['Pemilik', 'Jihan', 'Aqil', 'Siti'].map((u) => ['get_sales', u, { from: DAY, to: DAY }]),
   ['list_activity', 'Pemilik', { from: DAY, to: DAY }],
   ['list_activity', 'Jihan', { from: DAY, to: DAY }],
+  ['list_purchases', 'Jihan', { from: DAY, to: DAY }], // v72: the goods-in history of any period
+  ['list_purchases', 'Siti', { from: DAY, to: DAY, supplier: 'pt' }],
   ...['Pemilik', 'Siti', 'Rani'].map((u) => ['device_ping', u, { device: { id: 'DEVICE-0001', app: 'kasir', lat: -6.26, lng: 106.86, acc: 12 } }]),
 ];
 
