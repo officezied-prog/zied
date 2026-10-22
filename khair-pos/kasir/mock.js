@@ -69,6 +69,7 @@ const MockServer = (() => {
     if (src.active !== undefined) p.active = !(src.active === false || src.active === 'false' || src.active === 0);
     // v52: shown loose, sold by weight at the till — only per kg / gram / ons (as the server)
     if (src.loose !== undefined) p.loose = src.loose === true;
+    if (src.repackable !== undefined) p.repackable = src.repackable === true && !(src.material === true || String(src.category || p.category || '').trim().toLowerCase() === 'bahan kemasan'); // v73 (as the server)
     if (p.loose && !['kg', 'kilo', 'g', 'gr', 'gram', 'ons'].includes(String(p.unit !== undefined ? p.unit : '').trim().toLowerCase())) throw E('INVALID', 'Barang curah dijual per kg / gram / ons — ubah satuannya dulu');
     return p;
   }

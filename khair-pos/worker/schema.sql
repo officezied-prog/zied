@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS pos_products (
   loose INTEGER,
   review TEXT,
   repack_costs TEXT,
-  use_for TEXT
+  use_for TEXT,
+  repackable INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS pos_customers (

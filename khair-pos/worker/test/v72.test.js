@@ -135,3 +135,22 @@ test('a drawer keeps every move (no longer only the last 100)', async () => {
   assert.equal(kept[0].note, 'm0');
   assert.equal(kept[100].note, 'plastik');
 });
+
+test('v73: a new product says whether it can be repacked — kept; told to the manager with a cashier\'s new product; a material never', async () => {
+  const db = seed(), ad = sqliteAdapter(db);
+  const r = await call(ad, 'Siti', 'save_product', { name: 'Gula Pasir Karung 50 Kg', category: 'Gula', unit: 'karung', retail_price: 800000, weight: '50 kg', from_goods_in: true, repackable: true });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const row = db.prepare("SELECT id, repackable FROM pos_products WHERE name = 'Gula Pasir Karung 50 Kg'").get();
+  assert.equal(Number(row.repackable), 1);
+  const ap = db.prepare("SELECT summary, payload FROM pos_approvals WHERE kind = 'product_new' ORDER BY id DESC").get();
+  assert.match(ap.summary, /bisa dikemas ulang/);
+  assert.equal(JSON.parse(ap.payload).repackable, true);
+  // an edit that does not send the answer keeps it; the owner can change it
+  await call(ad, 'Pemilik', 'save_product', { id: row.id, name: 'Gula Pasir Karung 50 Kg', category: 'Gula', unit: 'karung', retail_price: 810000 });
+  assert.equal(Number(db.prepare('SELECT repackable FROM pos_products WHERE id = ?').get(row.id).repackable), 1);
+  await call(ad, 'Pemilik', 'save_product', { id: row.id, name: 'Gula Pasir Karung 50 Kg', category: 'Gula', unit: 'karung', retail_price: 810000, repackable: false });
+  assert.equal(Number(db.prepare('SELECT repackable FROM pos_products WHERE id = ?').get(row.id).repackable), 0);
+  // the bootstrap carries it to the apps
+  await call(ad, 'Pemilik', 'save_product', { id: row.id, name: 'Gula Pasir Karung 50 Kg', category: 'Gula', unit: 'karung', retail_price: 810000, repackable: true });
+  assert.equal((await call(ad, 'Jihan', 'bootstrap', {})).products.find((p) => p.id === row.id).repackable, true);
+});
