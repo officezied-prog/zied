@@ -87,7 +87,7 @@ test('goods-in history: any period (12 Aug – 12 Oct 2025), a supplier search, 
   await expect(page.locator('#pu-hist tr[data-no="PB250820-OLD1"]')).toHaveCount(0); // the last 30 days at first
   await page.fill('#puh-from', '2025-08-12');
   await page.fill('#puh-to', '2025-10-12');
-  await page.fill('#puh-q', 'sarah');
+  await page.fill('#puh-q', 'sumber');
   await page.click('#puh-go');
   await expect(page.locator('#pu-hist tbody tr')).toHaveCount(2);
   await expect(page.locator('#pu-hist tr[data-no="PB250820-OLD1"]')).toBeVisible();
