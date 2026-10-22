@@ -29,11 +29,20 @@ test('the manager packs a same-kind product for the first time: size + materials
   await expect(page.locator('#rp-setup-inline')).toBeVisible();
   await expect(page.locator('#rpi-new')).toBeHidden(); // an existing product: no new name / price
   await expect(page.locator('#rpi-unit')).toHaveText(bulk.unit);
+  // v72: the size the names give ("… 1 kg", counted in kg) fills the box; a size that does not match them is refused, "Pakai 1 kg" puts it back
+  await expect(page.locator('#rpi-size')).toHaveValue('1 kg');
+  await page.fill('#rpi-size', '');
   await page.fill('#rp-amount', '2');
   await page.click('#rp-start');
   await expect(page.locator('#rp-err')).toContainText('isi per kemasan');
   await page.fill('#rpi-size', '0,5');
-  await expect(page.locator('#rp-planned')).toHaveAttribute('data-planned', '4');
+  await expect(page.locator('#rpi-size-hint')).toContainText('Tidak cocok dengan nama');
+  await page.click('#rp-start');
+  await expect(page.locator('#rp-err')).toContainText('Tidak cocok dengan nama');
+  await page.click('#rpi-size-hint [data-size-use]');
+  await expect(page.locator('#rpi-size')).toHaveValue('1 kg');
+  await expect(page.locator('#rpi-size-hint')).toContainText('1 kg = 1 kg');
+  await expect(page.locator('#rp-planned')).toHaveAttribute('data-planned', '2');
   // a material that is not on the list yet: "＋ Bahan baru…" adds it to the list, then it is chosen
   await page.click('#rpi-mat-add');
   await page.fill('#rpi-m0-q', 'Stiker bulat');
@@ -48,13 +57,13 @@ test('the manager packs a same-kind product for the first time: size + materials
   await page.click('#rp-start');
   await expect(page.locator('#rp-res, #rp-recent').first()).toBeVisible();
   if (await page.locator('#rp-recent').isVisible()) await page.click('#rp-again');
-  await expect(page.locator('#rp-res')).toContainText('rencana 4');
+  await expect(page.locator('#rp-res')).toContainText('rencana 2');
   let db = await getDb(page);
-  expect(productByName(db, new RegExp(free.name.replace(/[()]/g, '.')))).toMatchObject({ repack_from: bulk.id, repack_qty: 0.5 });
+  expect(productByName(db, new RegExp(free.name.replace(/[()]/g, '.')))).toMatchObject({ repack_from: bulk.id, repack_qty: 1 });
   expect(JSON.parse(db.products.find(p => p.id === free.id).repack_costs)).toEqual([{ n: 'Stiker bulat', q: 1, c: 400 }]);
   expect(db.settings.repack_materials).toEqual([{ n: 'Stiker bulat', c: 400 }]);
   const told = db.activity.filter(a => a.kind === 'notifikasi');
-  expect(told.find(a => a.summary.includes(`Kemas ulang diatur: ${free.name} dibuat dari ${bulk.name}, 0.5 ${bulk.unit}`))).toMatchObject({ ref: 'owner,akuntan', user: 'Jihan' });
+  expect(told.find(a => a.summary.includes(`Kemas ulang diatur: ${free.name} dibuat dari ${bulk.name}, 1 ${bulk.unit}`))).toMatchObject({ ref: 'owner,akuntan', user: 'Jihan' });
   expect(told.find(a => a.summary.includes('Daftar bahan kemasan diubah (harga per buah): + Stiker bulat Rp 400'))).toBeTruthy();
   // it is set up now: listed, and its open repack is confirmed (cancelled) before it is changed
   const open = db.repacks.slice(-1)[0];
@@ -65,13 +74,13 @@ test('the manager packs a same-kind product for the first time: size + materials
   await expect(page.locator(`#rs-list tr[data-rs="${free.id}"]`)).toContainText('Stiker bulat Rp 400');
   // "Ubah": the size and the materials
   await page.click(`#rs-list [data-act="rs-edit"][data-id="${free.id}"]`);
-  await expect(page.locator('#rse-size')).toHaveValue('0,5');
-  await page.fill('#rse-size', '0,25');
+  await expect(page.locator('#rse-size')).toHaveValue('1 kg');
+  await page.fill('#rse-size', '1000 g'); // the same size written in grams
   await page.locator('#rse-mats .ps-mat-qty').first().fill('2');
   await page.click('#rse-save');
   await expect(page.locator('.toast.ok').filter({ hasText: 'Pengaturan kemas ulang disimpan' })).toBeVisible();
   db = await getDb(page);
-  expect(db.products.find(p => p.id === free.id)).toMatchObject({ repack_qty: 0.25 });
+  expect(db.products.find(p => p.id === free.id)).toMatchObject({ repack_qty: 1 });
   expect(JSON.parse(db.products.find(p => p.id === free.id).repack_costs)).toEqual([{ n: 'Stiker bulat', q: 2, c: 800 }]);
   // "Hapus"
   await page.click(`#rs-list [data-act="rs-del"][data-id="${free.id}"]`);

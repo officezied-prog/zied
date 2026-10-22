@@ -423,3 +423,7 @@ body.busy::before{content:"";position:fixed;top:0;left:0;right:0;height:3px;z-in
 /* v53: six payment ways (Tunai · Transfer · QRIS · Kartu · Hutang · Campur) in two rows; three non-cash parts of a split */
 .seg.seg3{grid-auto-flow:row;grid-template-columns:repeat(3,1fr)}
 .grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+/* v72: the cashier's day log + invoice log */
+.kv{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;border-bottom:1px dashed var(--line)}
+.kv:last-child{border-bottom:0}
+.li[data-void="1"] .t b,.li[data-void="1"]>.grow{opacity:.75}

@@ -146,6 +146,7 @@
 <script src="shared/install-btn.js" data-host="#login:not([hidden]) .login-card"></script>
 <script src="shared/app-update.js"></script>
 <script src="shared/pin-guard.js"></script>
+<script src="shared/measure.js"></script>
 <script src="mock.js"></script>
 <script>
 'use strict';
@@ -156,7 +157,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '3.1.3';
+const APP_VERSION = '3.2.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -3923,7 +3924,7 @@ function productForm(p, fromInvoice) {
     <details class="field" id="pf-repack-box" ${num(p.repack_from) > 0 ? 'open' : ''} style="border:1px solid var(--border);border-radius:8px;padding:8px 12px"><summary style="cursor:pointer"><b>${ic('repack')} ${esc(t('prod.repack_title'))}</b></summary>
       <p class="small muted">${esc(t('prod.repack_hint'))}</p>
       <div class="grid2"><div class="field"><label class="f" for="pf-repack_from">${esc(t('prod.repack_from'))}</label><select class="input" id="pf-repack_from"><option value="0">— ${esc(t('prod.repack_none'))} —</option>${S.products.filter(x => x.id != p.id && !(num(x.repack_from) > 0)).slice().sort((a, b) => a.name.localeCompare(b.name)).map(x => `<option value="${esc(x.id)}" data-unit="${esc(x.unit || '')}" ${String(p.repack_from) === String(x.id) ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
-      <div class="field"><label class="f" for="pf-repack_qty">${esc(t('prod.repack_qty'))} (<span id="pf-rq-unit">${esc((prodById(p.repack_from) || {}).unit || '—')}</span>)</label><input class="input num" id="pf-repack_qty" inputmode="decimal" value="${num(p.repack_qty) > 0 ? esc(fmtQtyInput(p.repack_qty)) : ''}" placeholder="0,5"></div></div></details>
+      <div class="field"><label class="f" for="pf-repack_qty">${esc(t('prod.repack_qty'))} (<span id="pf-rq-unit">${esc((prodById(p.repack_from) || {}).unit || '—')}</span>)</label><input class="input" id="pf-repack_qty" autocomplete="off" value="${num(p.repack_qty) > 0 ? esc(KMeasure.inputText(prodById(p.repack_from), p, p.repack_qty)) : ''}" placeholder="${esc(t('rps.size_ph'))}"></div></div><div class="small" id="pf-rq-hint" aria-live="polite"></div></details>
     <div class="field"><label class="f" for="pf-notes">${esc(t('notes'))}</label><textarea class="input" id="pf-notes" name="notes">${esc(p.notes || '')}</textarea></div>
     <label class="check"><input type="checkbox" id="pf-active" ${p.active === false ? '' : 'checked'}> ${esc(t('prod.active'))}</label>
     <div class="small muted" id="pf-margin"></div>
@@ -3940,7 +3941,12 @@ function openProductEditor(p, after, opts = {}) {
   const skuCam = $('#pf-sku-cam', el); if (skuCam) skuCam.onclick = () => cameraScan(code => { const s = $('#pf-sku', el); if (s) { s.value = String(code || '').trim(); s.dispatchEvent(new Event('input', { bubbles: true })); } });
   const expNoneBox = $('#pf-exp_none', el), expDateInp = $('#pf-exp_date', el);
   if (expNoneBox && expDateInp) expNoneBox.onchange = () => { expDateInp.disabled = expNoneBox.checked; if (expNoneBox.checked) expDateInp.value = ''; };
-  const rf = $('#pf-repack_from', el); if (rf) rf.onchange = () => { const o = rf.selectedOptions[0]; $('#pf-rq-unit', el).textContent = o && o.dataset.unit || '—'; };
+  const rf = $('#pf-repack_from', el), rq = $('#pf-repack_qty', el);
+  // v72: the content as "1 kg" or in the bulk's unit; the line under it says what it means or why it does not match the names
+  const pfPack = () => ({ name: String(($('#pf-name', el) || {}).value || p.name || ''), unit: String(($('#pf-unit', el) || {}).value || '').trim() || 'pcs' });
+  const pfHint = () => { if (rf && rq) sizeHint($('#pf-rq-hint', el), rq, prodById(rf.value), pfPack()); };
+  if (rf) rf.onchange = () => { const o = rf.selectedOptions[0]; $('#pf-rq-unit', el).textContent = o && o.dataset.unit || '—'; pfHint(); };
+  if (rq) { rq.oninput = pfHint; pfHint(); }
   $('#pf-save', el).onclick = async () => {
     const expNone = $('#pf-exp_none', el) ? $('#pf-exp_none', el).checked : false;
     const data = {
@@ -3949,8 +3955,13 @@ function openProductEditor(p, after, opts = {}) {
       wholesale_min_qty: qtyVal(val('wholesale_min_qty')), min_stock: qtyVal(val('min_stock')), notes: val('notes'), active: $('#pf-active', el).checked,
       supplier: val('supplier').trim(), size: val('size').trim(), weight: val('weight').trim(),
       exp_none: expNone, exp_date: expNone ? '' : val('exp_date').trim(), loose: $('#pf-loose', el) ? $('#pf-loose', el).checked : undefined,
-      repack_from: Number(val('repack_from')) || 0, repack_qty: Number(val('repack_from')) ? qtyVal(val('repack_qty')) : 0
+      repack_from: Number(val('repack_from')) || 0, repack_qty: 0
     };
+    if (data.repack_from) { // v72: "1 kg" → 0.04 karung; a content that does not match the names is refused (as the server)
+      const se = sizeEval(prodById(data.repack_from), { name: data.name, unit: data.unit }, val('repack_qty'));
+      if (se.err) { $('#pf-err', el).textContent = t('prod.repack_qty') + ': ' + se.err; $('#pf-repack_qty', el).focus(); return; }
+      data.repack_qty = se.size;
+    }
     if (fromInvoice) {
       data.from_goods_in = true;
       if (!data.category) { $('#pf-err', el).textContent = t('newp.need_cat'); $('#pf-category', el).focus(); return; }
@@ -4212,8 +4223,8 @@ RENDER.purchases = function () {
   // The manager enters goods-in and requests any correction; the owner approves it.
   if (isAudit() || isOwner()) {
     $('#view-purchases').innerHTML = `<div class="view-head"><h1>${esc(t('nav.purchases'))}</h1></div><p class="small muted" style="margin-top:0">${esc(t(isOwner() ? 'mon.purchases_hint' : 'ro.hint'))}</p>
-      <div class="panel"><h3>${esc(t('pu.history'))}</h3><div id="pu-recent" class="pb"><div class="muted">${esc(t('loading'))}</div></div></div>`;
-    loadRecentPurchases(); return;
+      <div class="panel"><h3>${esc(t('pu.history'))}</h3><div class="pb">${puhFilterHTML()}<div id="pu-recent"><div class="muted">${esc(t('loading'))}</div></div></div></div>`;
+    bindPuhFilter(); loadRecentPurchases(); return;
   }
   const own = canSeeCost();
   if (!PU.date) PU.date = today();
@@ -4257,7 +4268,7 @@ RENDER.purchases = function () {
       <div id="pu-mm-wrap">${puMismatchHTML()}</div>
     </div>
     <div id="pu-result">${PU.result || ''}</div>
-    <div class="panel"><h3>${esc(t('pu.history'))}</h3><div id="pu-recent" class="pb"><div class="muted">${esc(t('loading'))}</div></div></div>`;
+    <div class="panel"><h3>${esc(t('pu.history'))}</h3><div class="pb">${puhFilterHTML()}<div id="pu-recent"><div class="muted">${esc(t('loading'))}</div></div></div></div>`;
   const v = $('#view-purchases');
   $('#pu-photo', v).onchange = e => { const f = e.target.files[0]; if (f) scanPurchasePhoto(f); };
   bindCarrier(v, 'pu', PU.carrier, () => { savePuDraft(); RENDER.purchases(); }, savePuDraft);
@@ -4279,7 +4290,7 @@ RENDER.purchases = function () {
   $$('[data-pu-exp]', v).forEach(i => i.onchange = () => { PU.lines[+i.dataset.puExp].exp = i.value; savePuDraft(); });
   $$('[data-pu-expnone]', v).forEach(i => i.onchange = () => { const l = PU.lines[+i.dataset.puExpnone]; l.exp_none = i.checked; if (i.checked) l.exp = ''; savePuDraft(); RENDER.purchases(); });
   $$('[data-pu-prod]', v).forEach(sel => sel.onchange = () => { const l = PU.lines[+sel.dataset.puProd]; l.product_id = sel.value ? Number(sel.value) || sel.value : null; savePuDraft(); RENDER.purchases(); });
-  loadRecentPurchases();
+  bindPuhFilter(); loadRecentPurchases();
 };
 async function scanPurchasePhoto(file) {
   PU.scanning = true; PU.scanErr = ''; PU.result = null;
@@ -4364,13 +4375,65 @@ async function savePurchase(mismatchReason) {
     err.textContent = errMsg(e);
   }
 }
+/* v72 (the manager 2026-10-22: "History of barang masuk/purchase only 30 days. We cannot search history barang masuk by supplier name or by
+   range date, for example search history from 12 agustus 2025-12 oktober 2025"): any period (≤ 400 days a search; the last 30 days at
+   first), the supplier / note number searched on the server (list_purchases: only the goods-in notes are read) and, as one types, among
+   the notes shown (supplier, note number, goods); the notes found and their total; CSV. */
+const PUH_MAX_DAYS = 400;
+function puhFilterHTML() {
+  if (!PH.from) { PH.from = addDays(today(), -30); PH.to = today(); }
+  return `<div class="row wrap" id="puh-filter" style="gap:8px;align-items:flex-end;margin-bottom:8px">
+      <div class="field" style="margin:0"><label class="f" for="puh-from">${esc(t('puh.from'))}</label><input class="input" type="date" id="puh-from" value="${esc(PH.from)}" max="${esc(today())}"></div>
+      <div class="field" style="margin:0"><label class="f" for="puh-to">${esc(t('puh.to'))}</label><input class="input" type="date" id="puh-to" value="${esc(PH.to)}" max="${esc(today())}"></div>
+      <div class="field grow" style="margin:0;min-width:200px"><label class="f" for="puh-q">${esc(t('puh.q'))}</label><input class="input" id="puh-q" type="search" list="dl-puh-sup" autocomplete="off" value="${esc(PH.q || '')}" placeholder="${esc(t('puh.q_ph'))}"><datalist id="dl-puh-sup">${knownSuppliers().map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
+      <button type="button" class="btn primary" id="puh-go">${ic('search')} ${esc(t('puh.go'))}</button>
+      <button type="button" class="btn" id="puh-csv">${ic('download')} CSV</button></div>
+    <div class="row wrap" style="gap:6px;margin-bottom:8px">${[[30, 'puh.d30'], [90, 'puh.d90'], [365, 'puh.d365']].map(([n, k]) => `<button type="button" class="chip" data-puh-days="${n}">${esc(t(k))}</button>`).join('')}</div>
+    <div class="red small" id="puh-err" role="alert"></div>`;
+}
+function bindPuhFilter() {
+  const go = $('#puh-go'); if (!go) return;
+  const from = $('#puh-from'), to = $('#puh-to'), q = $('#puh-q'), err = $('#puh-err');
+  const run = () => {
+    err.textContent = '';
+    const f = from.value, tt = to.value;
+    if (!isYmdStr(f) || !isYmdStr(tt) || f > tt) { err.textContent = t('puh.bad'); return; }
+    if ((Date.parse(tt) - Date.parse(f)) / 86400000 > PUH_MAX_DAYS) { err.textContent = t('puh.long', { n: PUH_MAX_DAYS }); return; }
+    PH.from = f; PH.to = tt; PH.sup = String(q.value || '').trim(); PH.q = PH.sup; loadRecentPurchases();
+  };
+  go.onclick = run;
+  q.oninput = () => { PH.q = q.value; drawPurchaseHistory(); };
+  q.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); run(); } };
+  $$('[data-puh-days]').forEach(b => b.onclick = () => { to.value = today(); from.value = addDays(today(), -(+b.dataset.puhDays)); run(); });
+  $('#puh-csv').onclick = puhCSV;
+}
+function puhNotes() {
+  const k = String(PH.q || '').trim().toLowerCase();
+  const all = PH.data ? purchaseNotes(PH.data.purchases) : [];
+  return k ? all.filter(n => `${n.supplier} ${n.no} ${noteProducts(n).map(a => a.name).join(' ')}`.toLowerCase().includes(k)) : all;
+}
+function puhCSV() {
+  const notes = puhNotes(); if (!notes.length) { toast(t('no_data'), 'warn'); return; }
+  gdCsvSave(`barang-masuk-${PH.from}-${PH.to}.csv`, [['tanggal', 'no_nota', 'pemasok', 'barang', 'total', 'status', 'diterima_oleh'].join(';')].concat(notes.map(n =>
+    [csvCell(n.date), csvCell(n.no), csvCell(n.supplier), csvCell(noteProducts(n).map(a => `${a.name} x${String(roundQty(a.qty)).replace('.', ',')}`).join(', ')), n.hidden ? csvCell('') : csvCell(n.total), csvCell(n.status || ''), csvCell(n.user || '')].join(';'))));
+}
 async function loadRecentPurchases() {
-  const el = $('#pu-recent');
+  const el = $('#pu-recent'); if (!el) return;
+  if (!PH.from) { PH.from = addDays(today(), -30); PH.to = today(); }
+  const key = PH.from + '|' + PH.to + '|' + (PH.sup || ''); PH.key = key;
+  if (!PH.data || PH.dataKey !== key) el.innerHTML = `<div class="muted">${esc(t('loading'))}</div>`;
   try {
-    const d = await loadSales(addDays(today(), -30), today(), true);
-    if (!$('#pu-recent')) return;
-    PH.data = d; drawPurchaseHistory();
-  } catch (e) { if ($('#pu-recent')) el.innerHTML = `<div class="red">${esc(errMsg(e))}</div>`; }
+    let d;
+    try {
+      const r = await api('list_purchases', { from: PH.from, to: PH.to, supplier: PH.sup || '' });
+      d = { purchases: (r.purchases || []).map(p => Object.assign(p, { qty: num(p.qty) }, p.total !== undefined && p.total !== null ? { total: int(p.total) } : {})) };
+    } catch (e) {
+      if (!(e.code === 'INVALID' && /Aksi tidak dikenal|Unknown action/i.test(String(e.message || '')))) throw e;
+      d = await loadSales(PH.from, PH.to, true); // an older server: the same range through get_sales
+    }
+    if (!$('#pu-recent') || PH.key !== key) return;
+    PH.data = d; PH.dataKey = key; drawPurchaseHistory();
+  } catch (e) { if ($('#pu-recent')) $('#pu-recent').innerHTML = `<div class="red">${esc(errMsg(e))}</div>`; }
 }
 
 /* ========== Customers ========== */
@@ -6823,7 +6886,7 @@ function rsTotal(p) {
 function rsTotalHTML(p) {
   const r = rsTotal(p); if (!r) return '';
   if (!(r.c > 0)) return `<div class="small amber" data-rs-total="nocost">${esc(t('rps.no_cost', { name: r.b.name }))}</div>`;
-  return `<div class="small" data-rs-total="${r.total}"><b>${esc(t('rps.total_line', { u: p.unit || 'pcs', g: fmtRp(r.goods), q: fmtQty(p.repack_qty), bu: r.b.unit || '', c: fmtRp(r.c), m: fmtRp(r.mats), rp: fmtRp(r.total) }))}</b>${r.over ? `<div class="red" data-rs-over>${esc(t('rps.over_price', { p: fmtRp(p.retail_price) }))}</div>` : ''}</div>`;
+  return `<div class="small" data-rs-total="${r.total}"><b>${esc(t('rps.total_line', { u: p.unit || 'pcs', g: fmtRp(r.goods), q: KMeasure.label(r.b, p, p.repack_qty), bu: '', c: fmtRp(r.c), m: fmtRp(r.mats), rp: fmtRp(r.total) }))}</b>${r.over ? `<div class="red" data-rs-over>${esc(t('rps.over_price', { p: fmtRp(p.retail_price) }))}</div>` : ''}</div>`;
 }
 /** Bulk products for the picker: the bulks already packed first, then (manager / owner) any product in stock that is not a pack. */
 function rpBulkItems() {
@@ -6837,7 +6900,7 @@ function rpPackItems(b) {
   if (!b) return [];
   const cat = String(b.category || '').trim().toLowerCase();
   const set = packProducts().filter(p => String(p.repack_from) === String(b.id)).sort((x, y) => num(y.repack_qty) - num(x.repack_qty))
-    .map(p => ({ id: String(p.id), label: p.name, sub: t('rp.pk_sub', { s: fmtQty(p.repack_qty), u: b.unit || '', pu: p.unit || 'pcs', st: fmtQty(p.stock) }) }));
+    .map(p => ({ id: String(p.id), label: p.name, sub: t('rp.pk_sub', { s: KMeasure.label(b, p, p.repack_qty), u: '', pu: p.unit || 'pcs', st: fmtQty(p.stock) }).replace('  ', ' ') + (sizeWrong(b, p) ? ' ⚠' : '') }));
   const free = canSetRepack() && cat ? S.products.filter(p => p.active !== false && String(p.id) !== String(b.id) && !(num(p.repack_from) > 0) && String(p.category || '').trim().toLowerCase() === cat && !isBulkOfAny(p))
     .sort((x, y) => String(x.name).localeCompare(String(y.name))).map(p => ({ id: String(p.id), label: p.name, rank: 1, sub: t('rp.pk_free', { pu: p.unit || 'pcs' }) })) : [];
   return set.concat(free);
@@ -6854,7 +6917,7 @@ function psBlockHTML(px) {
       <div class="grid2"><div class="field"><label class="f" for="${px}-n-unit">${esc(t('rps.new_unit'))}</label><input class="input" id="${px}-n-unit" maxlength="15" placeholder="pcs" autocomplete="off"></div>
         <div class="field"><label class="f" for="${px}-n-sku">${esc(t('rps.new_sku'))}</label><div class="row" style="gap:6px"><input class="input grow" id="${px}-n-sku" maxlength="40" autocomplete="off" style="min-width:0">${camOk() ? `<button type="button" class="icon-btn" id="${px}-n-sku-cam" style="flex:0 0 auto;width:42px;height:42px" title="${esc(t('pos.camera'))}" aria-label="${esc(t('pos.camera'))}">${ic('scan')}</button>` : ''}</div></div></div>
     </div>
-    <div class="field"><label class="f" for="${px}-size">${esc(t('rps.qty'))} (<span id="${px}-unit">—</span>)</label><input class="input num" id="${px}-size" inputmode="decimal" autocomplete="off"></div>
+    <div class="field"><label class="f" for="${px}-size">${esc(t('rps.qty'))} (<span id="${px}-unit">—</span>)</label><input class="input" id="${px}-size" autocomplete="off" placeholder="${esc(t('rps.size_ph'))}"><div class="small" id="${px}-size-hint" aria-live="polite" style="margin-top:4px"></div></div>
     <div class="field"><label class="f">${esc(t('rps.costs'))} <span class="small muted">— ${esc(t('rps.costs_hint2'))}</span></label><div id="${px}-mats"></div>
       <div class="row wrap" style="gap:8px;margin-top:6px"><button type="button" class="btn xs" data-act="ps-mat-add" data-px="${px}" id="${px}-mat-add">＋ ${esc(t('rps.cost_add'))}</button><span class="grow"></span><b class="small" id="${px}-mat-total"></b></div>
       <div id="${px}-newmat" class="rs-new" hidden style="border:1px dashed var(--border);border-radius:10px;padding:10px 12px;margin-top:8px">
@@ -6887,14 +6950,52 @@ function psTotal(px) {
   $$('#' + px + '-mats .ps-mat').forEach(row => { const r = S0.rows[+row.dataset.i] || {}, pr = r.name ? matPrice(r.name) : null, c = pr == null ? 0 : Math.round(pr * (num(r.qty) || 0)); tot += c; row.querySelector('.ps-mat-rp').textContent = r.name ? fmtRp(c) : ''; });
   const el = $('#' + px + '-mat-total'); if (el) el.textContent = tot ? t('rps.cost_total', { u: S0.unit ? S0.unit() : 'pcs', rp: fmtRp(tot) }) : '';
 }
+/* v72 (owner 2026-10-22: «هناك خطاء في العملية الحسابية» — "Garam Himalaya 1 kg" from "Garam Himalaya 25 Kg" set up as 1 karung a pack):
+   a content box takes the number in the bulk's unit (0,04) or the size itself ("1 kg", "500 g", "1 L"), converted with the bulk's size
+   from its name; a content that does not match the names is refused here and by the server (KMeasure, shared/measure.js). */
+function sizeEval(bulk, pack, raw) {
+  const v = String(raw == null ? '' : raw).trim();
+  if (!v) return { size: 0, err: t('rps.need') };
+  if (!bulk) return { size: 0, err: t('rp.pick_bulk') };
+  const r = KMeasure.input(v, bulk), bu = bulk.unit || '', pu = (pack && pack.unit) || 'pcs';
+  if (r.error === 'bulk') return { size: 0, err: t('rps.size_bulk', { bulk: bulk.name, u: bu }) };
+  if (r.error === 'dim') return { size: 0, err: t('rps.size_dim', { bulk: bulk.name }) };
+  if (r.error) return { size: 0, err: t('rps.need') };
+  const want = pack ? KMeasure.size(bulk, pack) : 0;
+  if (want && !KMeasure.fits(r.size, want)) {
+    const m = KMeasure.text(KMeasure.of(pack.name, pack.unit));
+    return { size: r.size, want, m, err: t('rps.size_bad', { pack: pack.name, m, bulk: bulk.name, s: KMeasure.label(bulk, pack, want), pu }) };
+  }
+  return { size: r.size, ok: t('rps.size_eq', { s: KMeasure.label(bulk, pack || {}, r.size), pu, n: fmtNum(KMeasure.packs(1, r.size)), u: bu }) };
+}
+/** The line under a content box: what it means, or why it is wrong (+ "Pakai 1 kg"). */
+function sizeHint(box, input, bulk, pack, after) {
+  if (!box || !input) return;
+  const v = String(input.value || '').trim();
+  if (!v || !bulk) { box.innerHTML = ''; box.className = 'small'; return; }
+  const e = sizeEval(bulk, pack, v);
+  box.className = 'small' + (e.err ? ' red' : ' muted');
+  box.innerHTML = e.err ? `${esc(e.err)}${e.m ? ` <button type="button" class="btn xs" data-size-use="${esc(e.m)}">${esc(t('rps.size_use', { m: e.m }))}</button>` : ''}` : esc(e.ok);
+  const u = box.querySelector('[data-size-use]');
+  if (u) u.onclick = () => { input.value = u.dataset.sizeUse; input.dataset.auto = ''; sizeHint(box, input, bulk, pack, after); if (after) after(); };
+}
 /** Binds a pack set-up block. o: { pack (product or null for a new one), bulk, unit() (pack unit for the total line), onInput } */
 function psBind(px, o) {
   PS[px] = { rows: o.pack ? rpCostsOf(o.pack).map(x => ({ name: x.name, qty: x.qty })) : [], line: -1, unit: o.unit, onInput: o.onInput };
   const isNew = !o.pack;
   $('#' + px + '-new').hidden = !isNew;
   $('#' + px + '-unit').textContent = o.bulk ? (o.bulk.unit || '') : '—';
-  const sz = $('#' + px + '-size'); sz.value = o.pack && num(o.pack.repack_qty) > 0 ? fmtQtyInput(o.pack.repack_qty) : '';
-  sz.addEventListener('input', () => { if (o.onInput) o.onInput(); });
+  const sz = $('#' + px + '-size'), hint = $('#' + px + '-size-hint');
+  // v72: the pack being set up (a new one: the name / unit typed); its size from the names fills an empty box ("1 kg")
+  const packNow = () => o.pack || { name: String(($('#' + px + '-n-name') || {}).value || ''), unit: String(($('#' + px + '-n-unit') || {}).value || '').trim() || 'pcs' };
+  const autoFill = () => { const pk = packNow(), w = o.bulk ? KMeasure.size(o.bulk, pk) : 0; if ((!sz.value.trim() || sz.dataset.auto === '1') && w) { sz.value = KMeasure.text(KMeasure.of(pk.name, pk.unit)); sz.dataset.auto = '1'; } };
+  PS[px].size = () => sizeEval(o.bulk, packNow(), sz.value);
+  const redraw = () => { sizeHint(hint, sz, o.bulk, packNow(), o.onInput); if (o.onInput) o.onInput(); };
+  sz.value = o.pack && num(o.pack.repack_qty) > 0 ? KMeasure.inputText(o.bulk, o.pack, o.pack.repack_qty) : '';
+  autoFill();
+  sz.oninput = () => { sz.dataset.auto = ''; redraw(); }; // one handler (the block is bound again when the pack changes)
+  ['-n-name', '-n-unit'].forEach(k => { const x = $('#' + px + k); if (x) x.oninput = () => { autoFill(); redraw(); }; });
+  sizeHint(hint, sz, o.bulk, packNow(), o.onInput);
   const pr = $('#' + px + '-n-price'); if (pr) pr.addEventListener('change', e => { const x = moneyVal(e.target.value); e.target.value = x ? fmtNum(x) : ''; });
   const un = $('#' + px + '-n-unit'); if (un) un.addEventListener('input', () => psTotal(px));
   const cam = $('#' + px + '-n-sku-cam'); if (cam) cam.onclick = () => cameraScan(code => { $('#' + px + '-n-sku').value = String(code || '').trim().slice(0, 40); });
@@ -6903,9 +7004,9 @@ function psBind(px, o) {
 }
 /** The set_repack request for this block, or {error}. */
 function psData(px, bulk, pack) {
-  const size = qtyVal($('#' + px + '-size').value || '');
   if (!bulk) return { error: t('rp.pick_bulk') };
-  if (!(size > 0)) { $('#' + px + '-size').focus(); return { error: t('rps.need') }; }
+  const se = PS[px] && PS[px].size ? PS[px].size() : sizeEval(bulk, pack, $('#' + px + '-size').value), size = se.size; // v72
+  if (se.err || !(size > 0)) { $('#' + px + '-size').focus(); return { error: se.err || t('rps.need') }; }
   const rows = PS[px].rows.filter(r => r.name);
   if (PS[px].rows.some(r => r.name && !(num(r.qty) > 0))) return { error: t('rpm.qty_bad') };
   const materials = rows.map(r => ({ name: r.name, qty: num(r.qty) || 1 }));
@@ -6972,8 +7073,8 @@ function gdDrawRepack(body) {
         <div class="panel" id="rp-open"><h3>${ic('repack')} ${esc(t('rp.open_title'))}</h3><div class="pb" id="rp-open-body"></div></div>
         <div class="panel" id="rp-bulks"><h3>${ic('box')} ${esc(t('rp.bulks'))}</h3><div class="pb">${bulks.map(b => `<div class="rp-bulk" data-bulk="${esc(b.id)}" style="margin-bottom:10px">
           <div class="row"><b class="grow">${esc(b.name)}</b><span class="num" data-bulk-stock>${esc(t('stock'))}: <b>${fmtQty(b.stock)}</b> ${esc(b.unit || '')}</span></div>
-          <table class="tbl" style="margin-top:4px"><tbody>${packs.filter(p => String(p.repack_from) === String(b.id)).map(p => `<tr data-pack="${esc(p.id)}"><td>${esc(p.name)}<div class="small muted">${fmtQty(p.repack_qty)} ${esc(b.unit || '')} / ${esc(p.unit || 'pcs')}</div></td>
-            <td class="r num">${fmtQty(p.stock)} ${esc(p.unit || '')}</td><td class="r small muted">${esc(t('rp.can_make', { n: fmtNum(Math.floor(Math.max(0, num(b.stock)) / num(p.repack_qty) + 1e-9)) }))}</td>
+          <table class="tbl" style="margin-top:4px"><tbody>${packs.filter(p => String(p.repack_from) === String(b.id)).map(p => `<tr data-pack="${esc(p.id)}"><td>${esc(p.name)}<div class="small muted">${esc(KMeasure.label(b, p, p.repack_qty))} / ${esc(p.unit || 'pcs')}</div>${sizeWrongHTML(b, p)}</td>
+            <td class="r num">${fmtQty(p.stock)} ${esc(p.unit || '')}</td><td class="r small muted">${esc(t('rp.can_make', { n: fmtNum(KMeasure.packs(Math.max(0, num(b.stock)), num(p.repack_qty))) }))}</td>
             <td class="r"><button class="btn xs" data-act="rp-pick" data-bulk="${esc(b.id)}" data-id="${esc(p.id)}">${ic('repack')} ${esc(t('rp.make'))}</button></td></tr>`).join('')}</tbody></table></div>`).join('') || `<div class="muted">${esc(t(canSet ? 'rp.none_owner' : 'rp.none'))}</div>`}</div></div>
       </div>
     </div>
@@ -7002,31 +7103,61 @@ function rpPackSync(bulkChanged, typed) {
   const box = $('#rp-setup-inline'); box.hidden = !needSetup;
   if (needSetup) {
     psBind('rpi', { pack: p || null, bulk: b, unit: () => (p ? p.unit : String($('#rpi-n-unit').value || '').trim()) || 'pcs', onInput: rpCalc });
-    if (RPK.pack === '__new' && typed) $('#rpi-n-name').value = String(typed).slice(0, 80);
+    if (RPK.pack === '__new' && typed) { $('#rpi-n-name').value = String(typed).slice(0, 80); $('#rpi-n-name').dispatchEvent(new Event('input')); } // v72: "… 1 kg" fills the size
     if (RPK.pack === '__new') setTimeout(() => { const n = $('#rpi-n-name'); if (n) n.focus(); }, 0);
   }
   const pi = $('#rp-pack-info');
-  pi.innerHTML = isSet ? `${esc(t('rp.size'))}: <b>${fmtQty(p.repack_qty)} ${esc(b ? b.unit || '' : '')}</b> / ${esc(p.unit || 'pcs')} · ${esc(t('stock'))} <b class="num">${fmtQty(p.stock)}</b>${rsCostsLine(p) ? `<div data-rp-mats>${esc(rsCostsLine(p))}</div>` : ''}${rsTotalHTML(p)}`
+  pi.innerHTML = isSet ? `${esc(t('rp.size'))}: <b>${esc(KMeasure.label(b, p, p.repack_qty))}</b> / ${esc(p.unit || 'pcs')} · ${esc(t('stock'))} <b class="num">${fmtQty(p.stock)}</b>${sizeWrong(b, p) ? '' : packYieldHTML(b, p, num(p.repack_qty))}${rsCostsLine(p) ? `<div data-rp-mats>${esc(rsCostsLine(p))}</div>` : ''}${rsTotalHTML(p)}${sizeWrongHTML(b, p)}`
     : needSetup ? esc(t(p ? 'rp.setup_free' : 'rp.setup_new')) : (b && !rpPackItems(b).length ? esc(t(canSetRepack() ? 'rp.no_pack_mgr' : 'rp.no_pack')) : '');
 }
+/* v72: a pack set up with a content that does not match the names (the screenshot: "1 kg" packs as 1 karung each) — red, packing
+   blocked; the manager / owner fixes it with one tap (the materials stay) */
+/* v72 (owner 2026-10-22: «مباشرة التطبيق يبين لنا كم المفروض يكون هناك من علبة … ويكتب تحتها مباشرة ثمن 1 كيلوغرام من المادة الأولية،
+   مثلا 25 كيلوغرام من الملح هذا مثلا 100,000 … يقسم 100,000 على 25»): as soon as the pack is chosen — how many packs one bulk unit gives,
+   and (for whoever sees costs) the raw material's cost in one pack = the bulk's cost ÷ that number. */
+function packYieldHTML(b, p, size, cls) {
+  if (!b || !p || !(size > 0)) return '';
+  const n = 1 / size, nTxt = Math.abs(n - Math.round(n)) < 1e-6 ? fmtNum(Math.round(n)) : fmtQty(n), pu = p.unit || 'pcs', bu = b.unit || '';
+  const m = KMeasure.size(b, p) && KMeasure.fits(size, KMeasure.size(b, p)) ? KMeasure.text(KMeasure.of(p.name, p.unit)) : '';
+  const c = canSeeCost() ? int(b.cost_price) : 0;
+  return `<div class="${cls || 'small'}" data-yield-per="${esc(nTxt)}">${esc(t('rp.yield_one', { u: bu, am: KMeasure.amountText(b, 1) ? ' (' + KMeasure.amountText(b, 1) + ')' : '', n: nTxt, pu }))}</div>
+    ${c > 0 ? `<div class="${cls || 'small'}" data-raw-cost="${Math.round(c * size)}"><b>${esc(t('rp.raw_cost', { pu, m: m ? ' (' + m + ')' : '', rp: fmtRp(Math.round(c * size)), c: fmtRp(c), u: bu, n: nTxt }))}</b></div>` : ''}`;
+}
+function sizeWrong(b, p) { const want = b && p && num(p.repack_qty) > 0 ? KMeasure.size(b, p) : 0; return want && !KMeasure.fits(p.repack_qty, want) ? want : 0; }
+function sizeWrongHTML(b, p) {
+  const want = sizeWrong(b, p); if (!want) return '';
+  return `<div class="red small" data-size-wrong="${esc(p.id)}" style="margin-top:4px"><b>${esc(t('rps.size_wrong', { now: KMeasure.label(b, p, p.repack_qty), s: KMeasure.label(b, p, want), pu: p.unit || 'pcs' }))}</b>
+    ${canSetRepack() ? ` <button type="button" class="btn xs primary" data-act="size-fix" data-id="${esc(p.id)}">${ic('check')} ${esc(t('rps.size_fix', { m: KMeasure.text(KMeasure.of(p.name, p.unit)) }))}</button>` : ` ${esc(t('rps.size_ask'))}`}</div>`;
+}
+ACT['size-fix'] = async el => {
+  const p = prodById(el.dataset.id), b = p ? prodById(p.repack_from) : null, want = sizeWrong(b, p); if (!want) return;
+  el.disabled = true;
+  try { await rpSetRepack({ product_id: p.id, repack_from: b.id, repack_qty: want }); toast(t('rps.saved'), 'ok'); RENDER.gudang(); }
+  catch (e) { toast(errMsg(e), 'err'); el.disabled = false; }
+};
 /** Bulk amount → whole packs + what is left over (the pack's size, or the size typed for a new set-up). */
 function rpRead() {
   const b = prodById(RPK.bulk), p = RPK.pack && RPK.pack !== '__new' ? prodById(RPK.pack) : null;
   const setup = !$('#rp-setup-inline').hidden;
-  const size = setup ? qtyVal(($('#rpi-size') || {}).value || '') : p ? num(p.repack_qty) : 0;
+  const se = setup && PS.rpi && PS.rpi.size ? PS.rpi.size() : null;
+  const size = setup ? (se && !se.err ? se.size : 0) : p ? num(p.repack_qty) : 0;
   const amount = qtyVal(($('#rp-amount') || {}).value || '');
-  const packs = size > 0 && amount > 0 ? Math.floor(amount / size + 1e-9) : 0;
-  return { b, p, setup, size, amount, packs, left: size > 0 ? roundQty(amount - packs * size) : 0 };
+  const packs = KMeasure.packs(amount, size); // v72: exact (1 jerigen of 18 L = 18 bottles of 1 L)
+  return { b, p, setup, size, amount, packs, left: size > 0 ? roundQty(amount - packs * size) : 0, wrong: !setup && sizeWrong(b, p) };
 }
 function rpCalc() {
   const R = rpRead(), pv = $('#rp-calc'); if (!pv) return;
   $('#rp-err').textContent = '';
   if (!R.b || !(R.size > 0) || !(R.amount > 0)) { pv.className = 'rp-preview'; pv.innerHTML = `<span class="muted">${esc(t('rp.calc_empty'))}</span>`; return; }
   const u = R.b.unit || '', over = R.amount > num(R.b.stock) + 1e-9, pu = R.p ? R.p.unit || 'pcs' : String(($('#rpi-n-unit') || {}).value || '').trim() || 'pcs';
+  if (R.wrong) { pv.className = 'rp-preview bad'; pv.innerHTML = sizeWrongHTML(R.b, R.p); return; } // v72: fixed first
   pv.className = 'rp-preview' + (over || !R.packs ? ' bad' : '');
-  pv.innerHTML = `<div class="row wrap" style="gap:6px 12px"><span>${esc(fmtQty(R.amount))} ${esc(u)} ÷ ${esc(fmtQty(R.size))} ${esc(u)} =</span><b style="font-size:20px" id="rp-planned" data-planned="${R.packs}">${esc(t('rp.calc_packs', { n: fmtNum(R.packs), u: pu }))}</b></div>
+  const pk = R.p || { name: String(($('#rpi-n-name') || {}).value || ''), unit: pu }, am = KMeasure.amountText(R.b, R.amount), wantNow = KMeasure.size(R.b, pk);
+  const per = am && wantNow && KMeasure.fits(R.size, wantNow) ? KMeasure.text(KMeasure.of(pk.name, pk.unit)) : ''; // "2 karung (50 kg) ÷ 1 kg"
+  pv.innerHTML = `<div class="row wrap" style="gap:6px 12px"><span>${esc(fmtQty(R.amount))} ${esc(u)}${per ? ` (${esc(am)}) ÷ ${esc(per)}` : ` ÷ ${esc(KMeasure.label(R.b, pk, R.size))}`} =</span><b style="font-size:20px" id="rp-planned" data-planned="${R.packs}">${esc(t('rp.calc_packs', { n: fmtNum(R.packs), u: pu }))}</b></div>
     ${R.left > 0 ? `<div data-left>${esc(t('rp.calc_left', { q: fmtQty(R.left), u }))}</div>` : ''}
-    ${!R.packs ? `<div><b>${esc(t('rp.calc_less', { s: fmtQty(R.size), u }))}</b></div>` : ''}${over ? `<div><b>${esc(t('rp.not_enough', { q: fmtQty(R.b.stock), u }))}</b></div>` : ''}${R.p && R.packs > 0 ? rpGoodsMatsHTML(R.p, R.packs, 'rp-gmats') : ''}`;
+    ${!R.packs ? `<div><b>${esc(t('rp.calc_less', { s: KMeasure.label(R.b, pk, R.size), u: '' }))}</b></div>` : ''}${over ? `<div><b>${esc(t('rp.not_enough', { q: fmtQty(R.b.stock), u }))}</b></div>` : ''}
+    ${canSeeCost() && int(R.b.cost_price) > 0 && R.packs > 0 ? `<div class="small" id="rp-raw-total">${esc(t('rp.raw_total', { q: fmtQty(R.amount), u, rp: fmtRp(Math.round(int(R.b.cost_price) * R.amount)), per: fmtRp(Math.round(int(R.b.cost_price) * R.size)), pu }))}</div>` : ''}${R.p && R.packs > 0 ? rpGoodsMatsHTML(R.p, R.packs, 'rp-gmats') : ''}`;
 }
 async function rpStart(confirmRecent) {
   const R = rpRead(), err = $('#rp-err'), btn = $('#rp-start');
@@ -7035,6 +7166,7 @@ async function rpStart(confirmRecent) {
   if (!RPK.pack) { err.textContent = t('rp.pick_first'); RPK.packPick.focus(); return; }
   if (!(R.amount > 0)) { err.textContent = t('rp.qty_invalid'); $('#rp-amount').focus(); return; }
   if (R.amount > num(R.b.stock) + 1e-9) { err.textContent = t('rp.not_enough', { q: fmtQty(R.b.stock), u: R.b.unit || '' }); return; }
+  if (R.wrong) { err.textContent = t('rps.size_wrong', { now: KMeasure.label(R.b, R.p, R.p.repack_qty), s: KMeasure.label(R.b, R.p, R.wrong), pu: R.p.unit || 'pcs' }); return; } // v72
   let to = R.p;
   const setup = R.setup ? psData('rpi', R.b, to) : null;
   if (setup && setup.error) { err.textContent = setup.error; return; }
@@ -7143,7 +7275,7 @@ function rsPanelHTML(packs) {
   const mats = matList();
   return `<div class="panel" id="rp-setup"><h3>${ic('gear')} ${esc(t('rps.title'))}</h3><div class="pb">
     <p class="small muted" style="margin-top:0">${esc(t(isOwner() ? 'rps.hint_owner' : 'rps.hint'))}</p>
-    ${packs.length ? `<table class="tbl" id="rs-list"><tbody>${packs.map(p => { const b = prodById(p.repack_from) || {}, cl = rsCostsLine(p); return `<tr data-rs="${esc(p.id)}"><td><b>${esc(p.name)}</b><div class="small muted">← ${esc(b.name || '')} · ${fmtQty(p.repack_qty)} ${esc(b.unit || '')} / ${esc(p.unit || 'pcs')}</div>${cl ? `<div class="small" data-rs-costs>${esc(cl)}</div>` : ''}${rsTotalHTML(p)}</td>
+    ${packs.length ? `<table class="tbl" id="rs-list"><tbody>${packs.map(p => { const b = prodById(p.repack_from) || {}, cl = rsCostsLine(p); return `<tr data-rs="${esc(p.id)}"><td><b>${esc(p.name)}</b><div class="small muted">← ${esc(b.name || '')} · ${esc(KMeasure.label(b, p, p.repack_qty))} / ${esc(p.unit || 'pcs')}</div>${cl ? `<div class="small" data-rs-costs>${esc(cl)}</div>` : ''}${rsTotalHTML(p)}${sizeWrongHTML(b, p)}</td>
       <td class="r" style="white-space:nowrap"><button class="btn xs" data-act="rs-edit" data-id="${esc(p.id)}">${ic('edit')} ${esc(t('rps.edit'))}</button> <button class="btn xs danger" data-act="rs-del" data-id="${esc(p.id)}">${ic('trash')} ${esc(t('rps.del'))}</button></td></tr>`; }).join('')}</tbody></table>` : `<div class="muted small">${esc(t('rps.none_yet'))}</div>`}
     <h4 style="margin:14px 0 6px">${esc(t('rpm.title'))}</h4><p class="small muted" style="margin-top:0">${esc(t('rpm.hint'))}</p>
     <table class="tbl" id="rm-list"><tbody>${mats.map((m, i) => `<tr data-rm="${esc(m.name)}"><td><b>${esc(m.name)}</b></td><td class="r" style="width:150px"><input class="input num rm-price" data-i="${i}" inputmode="numeric" value="${esc(fmtNum(m.cost))}" aria-label="${esc(t('rpm.price'))} ${esc(m.name)}" style="width:130px"></td>
@@ -7657,8 +7789,9 @@ function noteProducts(n) {
 }
 function drawPurchaseHistory() {
   const el = $('#pu-recent'); if (!el || !PH.data) return;
-  const notes = purchaseNotes(PH.data.purchases).slice(0, 60);
-  el.innerHTML = notes.length ? `<div class="tbl-wrap"><table class="tbl" id="pu-hist"><thead><tr><th>${esc(t('date'))}</th><th>${esc(t('pu.no'))}</th><th>${esc(t('pu.supplier'))}</th><th class="hide-phone">${esc(t('items'))}</th><th class="r">${esc(t('total'))}</th><th>${esc(t('status'))}</th><th></th></tr></thead><tbody>
+  const found = puhNotes(), notes = found.slice(0, 300), hid = found.some(n => n.hidden);
+  const head = `<div class="small" id="puh-sum" style="margin-bottom:6px"><b>${esc(t('puh.sum', { n: fmtNum(found.length), from: fmtDate(PH.from), to: fmtDate(PH.to) }))}</b>${hid ? '' : ` · <b class="num" id="puh-total">${fmtRp(found.reduce((a, n) => a + int(n.total), 0))}</b>`}${found.length > notes.length ? ` · ${esc(t('puh.more', { n: fmtNum(notes.length) }))}` : ''}</div>`;
+  el.innerHTML = notes.length ? `${head}<div class="tbl-wrap"><table class="tbl" id="pu-hist"><thead><tr><th>${esc(t('date'))}</th><th>${esc(t('pu.no'))}</th><th>${esc(t('pu.supplier'))}</th><th class="hide-phone">${esc(t('items'))}</th><th class="r">${esc(t('total'))}</th><th>${esc(t('status'))}</th><th></th></tr></thead><tbody>
     ${notes.map(n => `<tr data-no="${esc(n.no)}"><td class="num">${esc(fmtDate(n.date))}</td><td class="small"><b>${esc(n.no || '—')}</b></td><td>${esc(n.supplier || '—')}${n.carrier ? `<div class="small muted" data-carrier>${ic('truck')} ${esc(n.carrier)}</div>` : ''}</td>
       <td class="hide-phone small">${noteProducts(n).slice(0, 4).map(a => `${esc(a.name)} <b class="num">×${fmtQty(a.qty)}</b>`).join(', ')}${noteProducts(n).length > 4 ? ' …' : ''}</td>
       <td class="r num">${n.hidden ? `<span class="muted" data-cost-hidden title="${esc(t('pu.cost_hidden_hint'))}">${esc(t('pu.cost_hidden'))}</span>` : fmtRp(n.total)}</td><td>${matchBadge(n.status)}${n.fixed ? ' ' + matchBadge('koreksi') : ''}${puCheckHTML(n)}${puDrawerBadge(n)}${n.notes && n.status === 'tidak_cocok' ? `<div class="small muted">${esc(n.notes)}</div>` : ''}</td>
@@ -9110,6 +9243,11 @@ Object.assign(I18N.id, {
   'rps.cost_add': 'Tambah bahan', 'rps.cost_total': 'Total per {u}: {rp}', 'rps.cost_need_name': 'Isi nama bahan untuk setiap biaya', 'rps.costs_line': 'Bahan: {list} = {rp} / {u}',
   'rps.total_line': 'Modal per {u}: barang {g} ({q} {bu} × {c}) + bahan {m} = {rp}', 'rps.over_price': 'Modal di atas harga jual ({p}) — periksa ukuran kemasan', 'rps.no_cost': 'Harga modal {name} belum ada (diisi dari barang masuk)',
   'rp.extra_cost': 'Upah & biaya lain', 'rp.extra_ph': 'opsional', 'rp.gmats_use': 'Bahan dari barang masuk yang terpakai:', 'rp.piece': 'buah', 'rp.gmat_short': 'stok kurang (ada {q})', 'rp.pv_mat': 'Bahan kemasan {per} / {u} × {n} = {tot} (otomatis)', 'rps.need': 'Pilih barang kemasan, barang curah dan isi per kemasan', 'rps.same': 'Barang curah tidak boleh sama dengan barang kemasan',
+  'rps.size_ph': 'mis. 1 kg atau 0,04', 'rps.size_eq': '= {s} per {pu} · 1 {u} = {n} {pu}', 'rps.size_use': 'Pakai {m}',
+  'rp.yield_one': '1 {u}{am} = {n} {pu}', 'rp.raw_cost': 'Bahan baku per {pu}{m}: {rp} = {c} per {u} ÷ {n}', 'rp.raw_total': 'Bahan baku dikemas: {q} {u} = {rp} ({per} per {pu})',
+  'rps.size_bad': 'Tidak cocok dengan nama: {pack} ({m}) dari {bulk} = {s} per {pu}.', 'rps.size_bulk': 'Berat / isi {bulk} per {u} tidak tertulis di namanya: tulis isinya dalam {u} (misal 0,04).',
+  'rps.size_dim': 'Satuan tidak cocok dengan {bulk} (kg dan liter tidak bisa dicampur).', 'rps.size_wrong': 'Isi kemasan salah: tercatat {now} per {pu}, seharusnya {s}. Perbaiki dulu sebelum mengemas.',
+  'rps.size_fix': 'Perbaiki: {m} per kemasan', 'rps.size_ask': 'Minta manajer memperbaikinya.',
   'rp.form_title': 'Kemas ulang', 'rp.pack_product': 'Produk kemasan', 'rp.pick': 'pilih', 'rp.pieces': 'Jumlah kemasan jadi', 'rp.bulk_used': 'Curah dipakai', 'rp.auto': 'otomatis', 'rp.pack_cost': 'Biaya kemasan', 'rp.save': 'Simpan kemas ulang',
   'rp.from_bulk': 'Dari', 'rp.size': 'Isi per kemasan', 'rp.preview_empty': 'Pilih produk kemasan dan isi jumlah kemasan jadi.', 'rp.pv_used': 'Curah dipakai {q} {u} → seharusnya {e} kemasan', 'rp.pv_yield': 'Jadi {n} = hasil {p}%', 'rp.pv_loss': 'susut {q} {u}',
   'rp.not_enough': 'Stok curah tidak cukup ({q} {u})', 'rp.pick_first': 'Pilih produk kemasan dulu', 'rp.qty_invalid': 'Jumlah tidak valid', 'rp.saved': 'Kemas ulang tersimpan: {from} → {name} × {n}', 'rp.saved_toast': 'Kemas ulang tersimpan', 'rp.unit_cost': 'Modal per kemasan',
@@ -9119,7 +9257,10 @@ Object.assign(I18N.id, {
   'mt.cocok': 'cocok dengan nota', 'mt.tidak_cocok': 'tidak cocok', 'mt.perlu_cek': 'perlu cek', 'mt.tanpa_foto': 'tanpa foto', 'mt.koreksi': 'dikoreksi',
   'pu.cmp_title': 'Cek dengan nota', 'pu.cmp_item': 'Barang di nota', 'pu.cmp_note': 'Nota', 'pu.cmp_typed': 'Diketik', 'pu.cmp_ok': 'Semua jumlah sama dengan nota.', 'pu.cmp_bad': '{n} baris berbeda dengan nota — perbaiki jumlah atau simpan dengan alasan.', 'pu.use_note': 'Pakai jumlah nota',
   'pu.mm_title': 'Jumlah tidak sama dengan nota', 'pu.mm_hint': 'Belum disimpan. Perbaiki jumlah, atau tulis alasannya (misal "2 dus bonus").', 'pu.mm_fix': 'Perbaiki jumlah', 'pu.mm_reason': 'Alasan beda dengan nota', 'pu.mm_reason_ph': 'mis. 2 dus bonus dari sales', 'pu.mm_save': 'Simpan dengan alasan',
-  'pu.history': 'Riwayat barang masuk (30 hari)', 'pu.cost_hidden': 'disembunyikan', 'pu.cost_hidden_hint': 'Harga beli disembunyikan untuk akun ini. Pemilik bisa mengizinkannya di Pengaturan → "Akuntan & manajer boleh melihat harga beli".', 'pu.no': 'No.', 'pu.locked_hint': 'Setelah disimpan, jumlah dan harga terkunci. Perubahan lewat "Koreksi" dengan alasan; manajer/pemilik menyetujui dan pemilik melihatnya di Aktivitas.',
+  'pu.history': 'Riwayat barang masuk', 'pu.cost_hidden': 'disembunyikan', 'pu.cost_hidden_hint': 'Harga beli disembunyikan untuk akun ini. Pemilik bisa mengizinkannya di Pengaturan → "Akuntan & manajer boleh melihat harga beli".', 'pu.no': 'No.', 'pu.locked_hint': 'Setelah disimpan, jumlah dan harga terkunci. Perubahan lewat "Koreksi" dengan alasan; manajer/pemilik menyetujui dan pemilik melihatnya di Aktivitas.',
+  'puh.from': 'Dari tanggal', 'puh.to': 'Sampai tanggal', 'puh.q': 'Pemasok / no. nota / barang', 'puh.q_ph': 'mis. Sarah Hartati', 'puh.go': 'Tampilkan',
+  'puh.d30': '30 hari', 'puh.d90': '3 bulan', 'puh.d365': '1 tahun', 'puh.bad': 'Pilih tanggal awal dan akhir yang benar.', 'puh.long': 'Paling lama {n} hari sekali cari — bagi periodenya.',
+  'puh.sum': '{n} nota · {from} – {to}', 'puh.more': 'yang tampil {n} pertama (persempit tanggal / pemasok)',
   'fix.button': 'Koreksi', 'fix.title': 'Koreksi barang masuk', 'fix.hint_apply': 'Koreksi langsung diterapkan ke stok dan dicatat untuk pemilik.', 'fix.hint_request': 'Koreksi dikirim ke manajer / pemilik untuk disetujui.', 'fix.now': 'Sekarang', 'fix.new_qty': 'Jumlah benar',
   'fix.reason': 'Alasan koreksi', 'fix.reason_ph': 'mis. 2 dus rusak dikembalikan', 'fix.save': 'Simpan koreksi', 'fix.nothing': 'Tidak ada perubahan', 'fix.applied': 'Koreksi {no} diterapkan', 'fix.requested': 'Koreksi dikirim untuk persetujuan: {id}', 'fix.req_label': 'Koreksi barang masuk {no}', 'fix.before': 'Sebelum', 'fix.after': 'Sesudah',
   'led.title': 'Buku piutang', 'led.invoice': 'Faktur', 'led.note': 'Nota', 'led.debt': 'Hutang', 'led.paid': 'Dibayar', 'led.remaining': 'Sisa', 'led.open_total': 'Sisa tagihan', 'led.open_total_sup': 'Sisa nota belum dibayar', 'led.unalloc_total': 'Pembayaran belum dialokasi', 'led.open_invoices': 'Faktur belum lunas', 'led.open_notes': 'Nota belum lunas',
@@ -9202,6 +9343,11 @@ Object.assign(I18N.ar, {
   'rps.cost_add': 'إضافة مادة', 'rps.cost_total': 'المجموع لكل {u}: {rp}', 'rps.cost_need_name': 'اكتب اسم المادة لكل تكلفة', 'rps.costs_line': 'المواد: {list} = {rp} / {u}',
   'rps.total_line': 'التكلفة لكل {u}: البضاعة {g} ({q} {bu} × {c}) + المواد {m} = {rp}', 'rps.over_price': 'التكلفة أعلى من سعر البيع ({p}) — راجع حجم العبوة', 'rps.no_cost': 'سعر تكلفة {name} غير موجود بعد (يأتي من البضاعة الواردة)',
   'rp.extra_cost': 'أجرة العمال وتكاليف أخرى', 'rp.extra_ph': 'اختياري', 'rp.gmats_use': 'المواد المستعملة من البضاعة الواردة:', 'rp.piece': 'قطعة', 'rp.gmat_short': 'المخزون غير كافٍ (الموجود {q})', 'rp.pv_mat': 'مواد التعبئة {per} / {u} × {n} = {tot} (تلقائيًا)', 'rps.need': 'اختر صنف العبوة والصنف السائب وكمية كل عبوة', 'rps.same': 'لا يمكن أن يكون السائب هو نفس صنف العبوة',
+  'rps.size_ph': 'مثلًا 1 kg أو 0,04', 'rps.size_eq': '= {s} لكل {pu} · 1 {u} = {n} {pu}', 'rps.size_use': 'استعمل {m}',
+  'rp.yield_one': '1 {u}{am} = {n} {pu}', 'rp.raw_cost': 'المادة الأولية لكل {pu}{m}: {rp} = {c} لكل {u} ÷ {n}', 'rp.raw_total': 'المادة الأولية المعبّأة: {q} {u} = {rp} ({per} لكل {pu})',
+  'rps.size_bad': 'لا يطابق الاسم: {pack} ({m}) من {bulk} = {s} لكل {pu}.', 'rps.size_bulk': 'وزن / محتوى {bulk} لكل {u} غير مكتوب في اسمه: اكتب المحتوى بـ {u} (مثلًا 0,04).',
+  'rps.size_dim': 'الوحدة لا تناسب {bulk} (لا يُخلط الكيلو مع اللتر).', 'rps.size_wrong': 'محتوى العبوة خطأ: المسجّل {now} لكل {pu}، والصحيح {s}. صحّحه قبل التعبئة.',
+  'rps.size_fix': 'تصحيح: {m} لكل عبوة', 'rps.size_ask': 'اطلب من المدير تصحيحه.',
   'rp.form_title': 'إعادة التعبئة', 'rp.pack_product': 'منتج العبوة', 'rp.pick': 'اختر', 'rp.pieces': 'عدد العبوات الناتجة', 'rp.bulk_used': 'السائب المستخدم', 'rp.auto': 'تلقائي', 'rp.pack_cost': 'تكلفة التغليف', 'rp.save': 'حفظ إعادة التعبئة',
   'rp.from_bulk': 'من', 'rp.size': 'محتوى العبوة', 'rp.preview_empty': 'اختر منتج العبوة وأدخل عدد العبوات الناتجة.', 'rp.pv_used': 'السائب المستخدم {q} {u} ← المتوقع {e} عبوة', 'rp.pv_yield': 'الناتج {n} = نسبة {p}%', 'rp.pv_loss': 'فاقد {q} {u}',
   'rp.not_enough': 'مخزون السائب غير كافٍ ({q} {u})', 'rp.pick_first': 'اختر منتج العبوة أولًا', 'rp.qty_invalid': 'كمية غير صالحة', 'rp.saved': 'حُفظت إعادة التعبئة: {from} ← {name} × {n}', 'rp.saved_toast': 'حُفظت إعادة التعبئة', 'rp.unit_cost': 'تكلفة العبوة',
@@ -9211,7 +9357,10 @@ Object.assign(I18N.ar, {
   'mt.cocok': 'مطابق للفاتورة', 'mt.tidak_cocok': 'غير مطابق', 'mt.perlu_cek': 'يحتاج مراجعة', 'mt.tanpa_foto': 'بلا صورة', 'mt.koreksi': 'مُصحَّح',
   'pu.cmp_title': 'المقارنة مع فاتورة المورد', 'pu.cmp_item': 'الصنف في الفاتورة', 'pu.cmp_note': 'الفاتورة', 'pu.cmp_typed': 'المُدخل', 'pu.cmp_ok': 'كل الكميات مطابقة للفاتورة.', 'pu.cmp_bad': '{n} سطر يختلف عن الفاتورة — صحّح الكمية أو احفظ مع السبب.', 'pu.use_note': 'استخدم كمية الفاتورة',
   'pu.mm_title': 'الكمية لا تطابق الفاتورة', 'pu.mm_hint': 'لم يُحفظ بعد. صحّح الكميات أو اكتب السبب (مثلًا «كرتونان هدية»).', 'pu.mm_fix': 'تصحيح الكميات', 'pu.mm_reason': 'سبب الاختلاف عن الفاتورة', 'pu.mm_reason_ph': 'مثلًا كرتونان هدية من المندوب', 'pu.mm_save': 'حفظ مع السبب',
-  'pu.history': 'سجل الوارد (30 يومًا)', 'pu.cost_hidden': 'مخفي', 'pu.cost_hidden_hint': 'سعر الشراء مخفي لهذا الحساب. يمكن للمالك السماح به من الإعدادات ← «يسمح للمحاسب والمديرة برؤية سعر الشراء».', 'pu.no': 'الرقم', 'pu.locked_hint': 'بعد الحفظ تُقفل الكميات والأسعار. التغيير عبر «تصحيح» مع السبب؛ يوافق المدير/المالك ويراه المالك في سجل النشاط.',
+  'pu.history': 'سجل الوارد', 'pu.cost_hidden': 'مخفي', 'pu.cost_hidden_hint': 'سعر الشراء مخفي لهذا الحساب. يمكن للمالك السماح به من الإعدادات ← «يسمح للمحاسب والمديرة برؤية سعر الشراء».', 'pu.no': 'الرقم', 'pu.locked_hint': 'بعد الحفظ تُقفل الكميات والأسعار. التغيير عبر «تصحيح» مع السبب؛ يوافق المدير/المالك ويراه المالك في سجل النشاط.',
+  'puh.from': 'من تاريخ', 'puh.to': 'إلى تاريخ', 'puh.q': 'المورّد / رقم الفاتورة / الصنف', 'puh.q_ph': 'مثلًا Sarah Hartati', 'puh.go': 'عرض',
+  'puh.d30': '30 يومًا', 'puh.d90': '3 أشهر', 'puh.d365': 'سنة', 'puh.bad': 'اختر تاريخ بداية ونهاية صحيحين.', 'puh.long': 'أقصى مدة للبحث {n} يومًا — قسّم الفترة.',
+  'puh.sum': '{n} فاتورة · {from} – {to}', 'puh.more': 'المعروض أول {n} (ضيّق التاريخ / المورّد)',
   'fix.button': 'تصحيح', 'fix.title': 'تصحيح الوارد', 'fix.hint_apply': 'يُطبَّق التصحيح على المخزون مباشرة ويُسجَّل للمالك.', 'fix.hint_request': 'يُرسل التصحيح إلى المدير / المالك للموافقة.', 'fix.now': 'الحالي', 'fix.new_qty': 'الكمية الصحيحة',
   'fix.reason': 'سبب التصحيح', 'fix.reason_ph': 'مثلًا كرتونان تالفان أُعيدا', 'fix.save': 'حفظ التصحيح', 'fix.nothing': 'لا يوجد تغيير', 'fix.applied': 'طُبّق تصحيح {no}', 'fix.requested': 'أُرسل التصحيح للموافقة: {id}', 'fix.req_label': 'تصحيح الوارد {no}', 'fix.before': 'قبل', 'fix.after': 'بعد',
   'led.title': 'دفتر الذمم', 'led.invoice': 'الفاتورة', 'led.note': 'فاتورة الوارد', 'led.debt': 'الدَّين', 'led.paid': 'المدفوع', 'led.remaining': 'المتبقي', 'led.open_total': 'المتبقي للتحصيل', 'led.open_total_sup': 'المتبقي من فواتير الوارد', 'led.unalloc_total': 'دفعات غير مخصصة', 'led.open_invoices': 'فواتير غير مسددة', 'led.open_notes': 'فواتير وارد غير مسددة',

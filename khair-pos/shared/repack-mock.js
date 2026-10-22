@@ -135,6 +135,19 @@
     return { materials: list };
   }
 
+  /* v72 (owner 2026-10-22: «هناك خطاء في العملية الحسابية»): a pack's content must match the sizes in the names — the server's
+     sizeBad() (backend/process.js), same words. Throws SIZE_MISMATCH with `want`. */
+  function sizeStr(v) { return String(Math.round(num(v) * 10000) / 10000); }
+  function sizeCheck(bulk, pack, sz, atStart, X) {
+    const want = KMeasure.size(bulk, pack);
+    if (!want || KMeasure.fits(sz, want)) return;
+    const pu = strv(pack.unit) || 'pcs', bu = strv(bulk.unit), m = KMeasure.text(KMeasure.of(pack.name, pack.unit));
+    const bm = KMeasure.of('', bulk.unit) ? '' : ' (' + KMeasure.text(KMeasure.of(bulk.name, bulk.unit)) + ' per ' + bu + ')';
+    const what = strv(pack.name) + ' (' + m + ') dari ' + strv(bulk.name) + bm + ' = ' + sizeStr(want) + ' ' + bu + ' per ' + pu;
+    throw X.E('SIZE_MISMATCH', atStart
+      ? 'Isi kemasan salah di pengaturan: tercatat ' + sizeStr(sz) + ' ' + bu + ' per ' + pu + ', seharusnya ' + what + '. Manajer memperbaikinya dulu (Gudang → Kemas ulang → Ubah).'
+      : 'Isi per kemasan tidak cocok dengan nama: ' + what + ', bukan ' + sizeStr(sz) + ' ' + bu + '. Tulis ' + m + ' (atau ' + sizeStr(want) + ').', { want });
+  }
   function start(db, u, data, X) {
     if (!['owner', 'manager', 'kasir'].includes(u.role)) throw X.E('FORBIDDEN', 'Tidak diizinkan');
     db.repacks = db.repacks || [];
@@ -148,9 +161,10 @@
     const pend = X.pending && X.pending(db, bulk.id); // a v38 request still waiting for this bulk is decided first
     if (pend) throw pend;
     const size = num(to.repack_qty), fromQty = r3(data.from_qty);
+    sizeCheck(bulk, to, size, true, X); // v72 (as the server)
     if (!(fromQty > 0)) throw X.E('INVALID', 'Jumlah curah yang dikemas tidak valid');
     if (fromQty > num(bulk.stock) + 1e-9) throw X.E('INVALID', 'Stok ' + bulk.name + ' tidak cukup (' + fmtN(bulk.stock) + ' ' + strv(bulk.unit) + ')');
-    const planned = Math.floor(fromQty / size + 1e-9);
+    const planned = KMeasure.packs(fromQty, size);
     if (planned < 1) throw X.E('INVALID', fmtN(fromQty) + ' ' + strv(bulk.unit) + ' kurang dari isi satu kemasan (' + fmtN(size) + ' ' + strv(bulk.unit) + ')');
     const open = db.repacks.filter(r => r.status === 'proses');
     const busy = open.find(r => Number(r.from_product_id) === Number(bulk.id) && Number(r.to_product_id) === Number(to.id));
@@ -196,7 +210,10 @@
     if (r.status !== 'proses') throw X.E('INVALID', 'Kemas ulang ' + r.repack_id + ' sudah ' + (r.status === 'batal' ? 'dibatalkan' : 'dikonfirmasi') + (r.confirmed_by ? ' oleh ' + r.confirmed_by : ''));
     const bulk = db.products.find(p => p.id === Number(r.from_product_id)), to = db.products.find(p => p.id === Number(r.to_product_id));
     if (!bulk || !to) throw X.E('NOT_FOUND', 'Produk curah / kemasan tidak ditemukan');
-    const F = num(r.from_qty), size = num(r.pack_size) > 0 ? num(r.pack_size) : num(to.repack_qty), cancel = data.cancel === true;
+    const F = num(r.from_qty), cancel = data.cancel === true;
+    let size = num(r.pack_size) > 0 ? num(r.pack_size) : num(to.repack_qty);
+    const want = KMeasure.size(bulk, to); // v72: a repack started with a wrong content is confirmed with the right one (as the server)
+    if (want && !KMeasure.fits(size, want)) size = KMeasure.fits(num(to.repack_qty), want) ? num(to.repack_qty) : want;
     const made = cancel ? 0 : r3(data.to_qty), rem = cancel ? F : r3(data.remaining_qty);
     if (!cancel && !(made > 0)) throw X.E('INVALID', 'Isi jumlah kemasan yang jadi (atau batalkan kemas ulang ini)');
     if (!(rem >= 0) || rem > F + 1e-9) throw X.E('INVALID', 'Sisa curah harus antara 0 dan ' + fmtN(F) + ' ' + strv(r.from_unit));
@@ -245,5 +262,5 @@
     return { repack: out(r, u.role), stock };
   }
 
-  window.KRepackMock = { catalog, catalogOut, costsOf, costPer, matsIn, costsText, productCosts, out, openList, materials, start, finish, isMaterial, useForIn, MATERIAL_CAT };
+  window.KRepackMock = { sizeCheck, catalog, catalogOut, costsOf, costPer, matsIn, costsText, productCosts, out, openList, materials, start, finish, isMaterial, useForIn, MATERIAL_CAT };
 })();

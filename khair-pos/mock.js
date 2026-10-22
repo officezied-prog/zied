@@ -4,7 +4,7 @@ const MockServer = (() => {
   const DBKEY = 'kmock.db';
   const COST_KEYS = ['cost_price', 'total_cost', 'profit', 'line_profit', 'cost'];
   const CHANNELS = ['toko', 'whatsapp', 'shopee', 'tiktok', 'tokopedia', 'web', 'lainnya'];
-  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_transfers', 'list_photos', 'photo_file', 'field_bootstrap', 'list_field', 'product_images', 'orders_map', 'shop_photos', 'street_returns', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon', 'profit_loss', 'list_invoice_changes', 'finance_position'];
+  const READ_ONLY = ['get_sale', 'list_returns', 'users', 'login', 'bootstrap', 'get_sales', 'list_purchases', 'check_approval', 'list_approvals', 'list_pay_plans', 'list_transfers', 'list_photos', 'photo_file', 'field_bootstrap', 'list_field', 'product_images', 'orders_map', 'shop_photos', 'street_returns', 'list_devices', 'list_activity', 'party_ledger', 'bank_recon', 'profit_loss', 'list_invoice_changes', 'finance_position'];
   class MockErr extends Error { constructor(code, message, extra) { super(message || code); this.code = code; this.extra = extra || null; } }
   const E = (code, msg, extra) => new MockErr(code, msg, extra);
   let ready = null;
@@ -1230,7 +1230,7 @@ const MockServer = (() => {
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
-    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'confirm_purchase', 'repack_finish', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank', 'finance_position'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
+    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'confirm_purchase', 'repack_finish', 'get_sales', 'list_purchases', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank', 'finance_position'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
     if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'scan_expense', 'list_photos', 'photo_file'].includes(action)) deviceTouch(db, u, data.device, false);
 
@@ -1925,7 +1925,8 @@ const MockServer = (() => {
           const bulk = prodById(data.repack_from);
           if (!bulk || (data.id && bulk.id === Number(data.id))) throw E('INVALID', 'Produk curah (asal kemasan) tidak valid');
           if (!(num(data.repack_qty) > 0)) throw E('INVALID', 'Isi per kemasan wajib diisi');
-          rp.repack_from = bulk.id; rp.repack_qty = roundQty(data.repack_qty);
+          rp.repack_from = bulk.id; rp.repack_qty = KMeasure.round(num(data.repack_qty)); // v72: exact; must match the names
+          window.KRepackMock.sizeCheck(bulk, { name: strv(data.name), unit: strv(data.unit) || 'pcs' }, rp.repack_qty, false, RPX);
         }
         if (data.id) {
           const p = prodById(data.id);
@@ -2032,7 +2033,8 @@ const MockServer = (() => {
         if (nw && !bulk) throw E('INVALID', 'Pilih produk curah untuk kemasan baru');
         if (pk && bulk && num(bulk.repack_from) === num(pk.id)) throw E('INVALID', 'Produk curah itu sendiri dibuat dari produk ini');
         if (bulk && !(num(data.repack_qty) > 0)) throw E('INVALID', 'Isi per kemasan wajib diisi');
-        const qty = bulk ? roundQty(data.repack_qty) : 0;
+        const qty = bulk ? KMeasure.round(num(data.repack_qty)) : 0; // v72: exact; must match the names (as the server)
+        if (bulk) window.KRepackMock.sizeCheck(bulk, nw ? { name: strv(nw.name), unit: strv(nw.unit) || 'pcs' } : pk, qty, false, RPX);
         let cIn = null;
         if (data.materials !== undefined) { cIn = window.KRepackMock.matsIn(db, data.materials); if (cIn.error) throw E('INVALID', cIn.error); } // v50: chosen from the list
         else if (data.costs !== undefined) {
@@ -2899,6 +2901,13 @@ const MockServer = (() => {
         logAct(db, u, 'atur_bank', txt, accId, data.clear === true ? 0 : Math.round(Number(data.amount)), 'info');
         notifyR(db, u, ['akuntan'], txt, 'info');
         return { account_id: accId, opening: cur[accId] || null };
+      }
+      case 'list_purchases': { // v72 (as backend/process.js): the goods-in notes of any period (≤ 400 days), by supplier / note number
+        if (!isYmd(data.from) || !isYmd(data.to) || data.from > data.to) throw E('INVALID', 'Rentang tanggal tidak valid');
+        if ((Date.parse(data.to) - Date.parse(data.from)) / 86400000 > 400) throw E('INVALID', 'Rentang paling lama 400 hari — pilih periode yang lebih pendek');
+        const q = strv(data.supplier).toLowerCase();
+        return { from: data.from, to: data.to, supplier: q, purchases: db.purchases.filter(p => p.purchase_date >= data.from && p.purchase_date <= data.to && (!q || strv(p.supplier).toLowerCase().includes(q) || strv(p.purchase_no).toLowerCase().includes(q)))
+          .map(p => { if (mockCostOk(db, u)) return p; const o = Object.assign({}, p); delete o.cost_price; if (!mockNoteOk(db, u)) { delete o.total; o.drawer_pay = drawerPayView(o.drawer_pay, u.name); } return o; }) };
       }
       case 'get_sales': {
         if (!isYmd(data.from) || !isYmd(data.to)) throw E('INVALID', 'from/to');

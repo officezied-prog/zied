@@ -20,6 +20,7 @@ on:
     paths:
       - 'khair-pos/backend/**'
       - 'khair-pos/worker/**'
+      - 'khair-pos/shared/measure.js' # v72: built into the POS process (worker/build.js)
       - '.github/workflows/worker-deploy.yml'
   workflow_dispatch:
 
