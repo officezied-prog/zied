@@ -2977,6 +2977,10 @@ switch (req.action) {
     p.exp_none = data.exp_none !== undefined ? data.exp_none === true : (existing ? existing.exp_none === true : false);
     p.exp_date = p.exp_none ? '' : (isDate(data.exp_date) ? data.exp_date : (data.exp_date === undefined && existing ? str(existing.exp_date) : ''));
     p.loose = data.loose !== undefined ? data.loose === true : (existing ? existing.loose === true : false);
+    // v73 (owner 2026-10-22: «عند إدخال … أي بضاعة جديدة هل يمكن هذه البضاعة أن تقسم إلى بضائع صغيرة وإعادة التعبئة أم لا؟ يجب أن يجيب عنها
+    // الموظف … فتكون في خانة المواد التي يمكن إعادة تعبئتها»): the answer given when the product is entered (the apps ask it; an older
+    // app that does not send it leaves the product as it was / not repackable). A packaging material is never repacked.
+    p.repackable = material ? false : data.repackable !== undefined ? data.repackable === true : (existing ? existing.repackable === true : false);
     if (p.loose && !looseUnitOk(p.unit)) return fail('INVALID', 'Barang curah dijual per kg / gram / ons — ubah satuannya dulu');
     // Repacked in the shop: this product is made from a bulk product (repack_from), repack_qty of its unit per piece.
     if (num(data.repack_from) > 0) {
@@ -2993,8 +2997,9 @@ switch (req.action) {
     if (!existing && role === 'kasir') {
       p.stock = 0; // stock only through the goods-in that follows
       reviewAp = newApproval({ kind: 'product_new', approver_role: 'mgr_akuntan', ref: sku || name.slice(0, 40), total: p.retail_price,
-        summary: ('Produk baru dari kasir ' + me.name + ': ' + name + ' (' + p.category + (p.size ? ', ' + p.size : '') + (p.weight ? ', ' + p.weight : '') + ', ' + p.unit + ') eceran Rp ' + p.retail_price + (p.wholesale_price ? ', grosir Rp ' + p.wholesale_price : '')).slice(0, 1500),
-        payload: JSON.stringify({ product_name: name, category: p.category, size: p.size, weight: p.weight, unit: p.unit, sku: sku, supplier: p.supplier,
+        summary: ('Produk baru dari kasir ' + me.name + ': ' + name + ' (' + p.category + (p.size ? ', ' + p.size : '') + (p.weight ? ', ' + p.weight : '') + ', ' + p.unit + ') eceran Rp ' + p.retail_price + (p.wholesale_price ? ', grosir Rp ' + p.wholesale_price : '') +
+          (data.repackable !== undefined ? (p.repackable ? ' — bisa dikemas ulang' : ' — tidak dikemas ulang') : '')).slice(0, 1500),
+        payload: JSON.stringify({ product_name: name, category: p.category, size: p.size, weight: p.weight, unit: p.unit, sku: sku, supplier: p.supplier, repackable: p.repackable,
           retail_price: p.retail_price, wholesale_price: p.wholesale_price, wholesale_min_qty: p.wholesale_min_qty, cost_price: p.cost_price, by: me.name }) });
       p.review = reviewAp.request_id;
       ops.approvals.push(forWrite(reviewAp, -1));

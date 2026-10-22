@@ -42,6 +42,9 @@ test('purchase is blocked without a photo; mock AI scan prefills editable lines;
   await expect(page.locator('#pf-err')).toContainText('Ukuran atau berat');
   await page.fill('#pf-weight', '500 g');
   await page.click('#pf-save');
+  await expect(page.locator('#pf-err')).toContainText('bisa dikemas ulang atau tidak'); // v73: asked for every new product
+  await page.check('#pf-rp-yes');
+  await page.click('#pf-save');
   await expect(page.locator('#pu-lines tr.unmatched')).toHaveCount(0);
   // edit: drop the manual line, change qty of the Medjool line, re-map the Gula line by hand
   await page.locator('[data-act="pu-del"][data-i="0"]').click();

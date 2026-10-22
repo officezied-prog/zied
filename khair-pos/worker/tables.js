@@ -29,6 +29,8 @@ export const TABLES = {
     repack_costs: 'string',
     // v63: a packaging material (category "Bahan kemasan") received at goods-in: the packs it is used for, JSON [{p: pack id, q}]
     use_for: 'string',
+    // v73: can it be split into small packs in the shop (repacked)? Asked when the product is entered; yes = in the repackable list
+    repackable: 'boolean',
   },
   pos_customers: {
     name: 'string', phone: 'string', type: 'string', address: 'string', notes: 'string',

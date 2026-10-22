@@ -117,7 +117,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.9.0';
+const APP_VERSION = 'kasir-1.10.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -3162,6 +3162,9 @@ function openNewProduct(init, after) {
       <div class="field"><label class="f" for="np-size">${esc(t('newp.size'))} *</label><div class="row" style="gap:6px"><input class="input num grow" data-rule="num" inputmode="decimal" id="np-size" placeholder="500" style="min-width:0"><select class="input" id="np-measure" style="width:auto;flex:0 0 auto" aria-label="${esc(t('newp.measure'))}">${NP_MEASURES.map(m => `<option value="${m}">${esc(m === 'isi' ? t('newp.m_isi') : m)}</option>`).join('')}</select></div><div class="small muted">${esc(t('newp.size_hint'))}</div></div>
       <div class="grid2"><div class="field"><label class="f" for="np-unit">${esc(t('newp.unit'))}</label><select class="input" id="np-unit">${NP_UNITS.map(u => `<option value="${u}" ${u === (NP_UNITS.includes(unit0) ? unit0 : 'pcs') ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></div>
       <div class="field"><label class="f" for="np-sku">${esc(t('newp.barcode'))}</label><div class="row" style="gap:6px"><input class="input grow" id="np-sku" maxlength="40" inputmode="text" autocomplete="off" style="min-width:0" value="${esc(init.sku || '')}">${camOk() ? `<button type="button" class="icon-btn" id="np-sku-cam" aria-label="${esc(t('sell.camera'))}" style="flex:0 0 auto">${ic('scan')}</button>` : ''}</div></div></div>
+      <div class="field" id="np-rp"><label class="f">${esc(t('newp.repack_q'))} *</label><div class="small muted" style="margin-bottom:6px">${esc(t('newp.repack_hint'))}</div>
+        <div class="row wrap" style="gap:14px"><label class="row" style="gap:6px"><input type="radio" name="np-rp" value="1" id="np-rp-yes"> ${esc(t('newp.rp_yes'))}</label>
+          <label class="row" style="gap:6px"><input type="radio" name="np-rp" value="0" id="np-rp-no"> ${esc(t('newp.rp_no'))}</label></div></div>
       <div class="grid2"><div class="field"><label class="f" for="np-retail">${esc(t('newp.retail'))} *</label><input class="input num" data-rule="num" inputmode="numeric" id="np-retail"></div>
       <div class="field"><label class="f" for="np-whole">${esc(t('newp.wholesale'))}</label><input class="input num" data-rule="num" inputmode="numeric" id="np-whole"></div></div>
       <div class="field"><label class="f" for="np-wmin">${esc(t('newp.wmin'))}</label><input class="input num" data-rule="num" inputmode="decimal" id="np-wmin"></div></div>
@@ -3196,6 +3199,8 @@ function openNewProduct(init, after) {
       if (!cat) return bad(t('newp.need_cat'), '#np-cat');
       if (!(size > 0)) return bad(t('newp.need_size'), '#np-size');
       if (!(retail > 0)) return bad(t('newp.need_price'), '#np-retail');
+      // v73 (owner 2026-10-22: «هل يمكن هذه البضاعة أن تقسم إلى بضائع صغيرة وإعادة التعبئة أم لا؟ يجب أن يجيب عنها الموظف»)
+      if (!$('input[name="np-rp"]:checked', el)) return bad(t('newp.need_repack'), '#np-rp-yes');
     }
     if (sku && !/^[A-Za-z0-9._-]{1,40}$/.test(sku)) return bad(t('newp.bad_sku'), '#np-sku');
     if (sku && S.products.some(p => String(p.sku || '') === sku)) return bad(t('newp.sku_used'), '#np-sku');
@@ -3204,6 +3209,7 @@ function openNewProduct(init, after) {
     const meas = (m === 'isi' ? 'isi ' : '') + String(size).replace('.', ',') + (m === 'isi' ? '' : ' ' + m);
     const data = mat ? { name, material: true, unit: v('#np-unit') || 'pcs', sku, cost_price: int(init.cost), from_goods_in: true, use_for: useFor }
       : { name, category: cat, unit: v('#np-unit') || 'pcs', sku, retail_price: retail, wholesale_price: whole, wholesale_min_qty: whole ? wmin : 0, cost_price: int(init.cost), from_goods_in: true,
+      repackable: !!$('#np-rp-yes', el).checked,
       weight: m === 'g' || m === 'kg' ? meas : '', size: m === 'g' || m === 'kg' ? '' : meas };
     $('#np-ok', el).disabled = true; err.textContent = '';
     try {
@@ -5645,6 +5651,8 @@ Object.assign(I18N.id, {
   'ex.sent_review': 'dikirim ke manajer / akuntan untuk dicek',
   'newp.btn': 'Produk baru', 'newp.badge': 'Baru — dicek', 'newp.not_found': 'Belum ada di aplikasi? Tambahkan sebagai produk baru',
   'newp.title': 'Produk baru (barang masuk)', 'newp.hint': 'Barang ini belum ada di aplikasi. Isi datanya — langsung bisa dipakai untuk barang masuk ini.',
+  'newp.repack_q': 'Bisa dibagi ke kemasan kecil (dikemas ulang)?', 'newp.repack_hint': 'Misal karung 25 kg → kemasan 1 kg. "Ya" = masuk daftar barang yang bisa dikemas ulang.',
+  'newp.rp_yes': 'Ya, bisa dikemas ulang', 'newp.rp_no': 'Tidak', 'newp.need_repack': 'Jawab dulu: barang ini bisa dikemas ulang atau tidak?',
   'newp.category': 'Kategori', 'newp.size': 'Ukuran / berat', 'newp.measure': 'Satuan ukuran', 'newp.m_isi': 'isi (pcs)', 'newp.size_hint': 'Contoh: 500 g, 1 kg, 250 ml, 1 L, isi 12.',
   'newp.unit': 'Satuan jual', 'newp.barcode': 'Barcode (boleh kosong)', 'newp.retail': 'Harga jual eceran', 'newp.wholesale': 'Harga grosir (boleh kosong)', 'newp.wmin': 'Minimal qty grosir',
   'newp.cost_from_note': 'Harga beli dari nota', 'newp.review_hint': 'Produk baru dari kasir ditandai "baru — dicek": manajer / akuntan memeriksa harganya.',
@@ -5670,6 +5678,8 @@ Object.assign(I18N.ar, {
   'ex.sent_review': 'أُرسل إلى المدير / المحاسب للتدقيق',
   'newp.btn': 'صنف جديد', 'newp.badge': 'جديد — قيد التدقيق', 'newp.not_found': 'غير موجود في التطبيق؟ أضفه صنفًا جديدًا',
   'newp.title': 'صنف جديد (بضاعة واردة)', 'newp.hint': 'هذه البضاعة غير موجودة في التطبيق. أدخل بياناتها — تُستخدم فورًا في هذا الاستلام.',
+  'newp.repack_q': 'هل يمكن تقسيمه إلى عبوات صغيرة (إعادة تعبئة)؟', 'newp.repack_hint': 'مثلًا كيس 25 كغ ← عبوات 1 كغ. «نعم» = يدخل قائمة المواد التي يمكن إعادة تعبئتها.',
+  'newp.rp_yes': 'نعم، يمكن إعادة تعبئته', 'newp.rp_no': 'لا', 'newp.need_repack': 'أجب أولًا: هل يمكن إعادة تعبئة هذا الصنف أم لا؟',
   'newp.category': 'الفئة', 'newp.size': 'الحجم / الوزن', 'newp.measure': 'وحدة القياس', 'newp.m_isi': 'عدد (قطع)', 'newp.size_hint': 'مثال: 500 غ، 1 كغ، 250 مل، 1 لتر، 12 قطعة.',
   'newp.unit': 'وحدة البيع', 'newp.barcode': 'الباركود (اختياري)', 'newp.retail': 'سعر البيع بالتجزئة', 'newp.wholesale': 'سعر الجملة (اختياري)', 'newp.wmin': 'أقل كمية للجملة',
   'newp.cost_from_note': 'سعر الشراء من الفاتورة', 'newp.review_hint': 'الصنف الجديد من الكاشير يُعلَّم "جديد — قيد التدقيق": المدير / المحاسب يراجع أسعاره.',
