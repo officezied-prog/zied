@@ -27,7 +27,7 @@ async function withFetch(fake, fn) {
 
 test('a readable note: the AI gets room to think + answer; supplier, items and prices come back for the form', async () => {
   let sent = null;
-  const note = { supplier: 'Sarah Hartati', date: '2026-10-15', invoice_no: 'SH-77', items: [{ name: 'AIR ZAM ZAM 1 LITER', qty: 50, unit: 'pcs', unit_price: 19000, total: 950000 }], total: 950000, readable: true, notes: '' };
+  const note = { supplier: 'CV Sumber Makmur', date: '2026-10-15', invoice_no: 'SH-77', items: [{ name: 'AIR ZAM ZAM 1 LITER', qty: 50, unit: 'pcs', unit_price: 19000, total: 950000 }], total: 950000, readable: true, notes: '' };
   const r = await withFetch(async (url, init) => {
     sent = { url, headers: init.headers, body: JSON.parse(init.body) };
     return new Response(JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: JSON.stringify(note) }] }), { status: 200 });
@@ -39,7 +39,7 @@ test('a readable note: the AI gets room to think + answer; supplier, items and p
   assert.deepEqual(sent.body.output_config, { effort: 'medium' });
   assert.equal(sent.body.messages[0].content[0].type, 'image');
   assert.equal(r.ai, 'ok');
-  assert.equal(r.extracted.supplier, 'Sarah Hartati');
+  assert.equal(r.extracted.supplier, 'CV Sumber Makmur');
   assert.deepEqual(r.extracted.items.map((i) => [i.name, i.qty, i.unit_price]), [['AIR ZAM ZAM 1 LITER', 50, 19000]]);
   assert.equal(r.suggestions[0].product_id, 1); // matched to the shop's product
 });

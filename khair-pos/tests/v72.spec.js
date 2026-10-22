@@ -80,14 +80,14 @@ test('goods-in history: any period (12 Aug – 12 Oct 2025), a supplier search, 
     const p = db.products.filter(x => x.active !== false && !x.repack_from)[0];
     let id = Math.max(...db.purchases.map(r => r.id || 0)) + 1;
     const row = (d, no, sup, qty, cost) => ({ id: id++, purchase_date: d, purchase_no: no, supplier: sup, product_id: p.id, name: p.name, qty, cost_price: cost, total: qty * cost, user: 'Siti', photo_id: '', match_status: 'cocok' });
-    db.purchases.push(row('2025-08-20', 'PB250820-OLD1', 'Sarah Hartati', 10, 20000), row('2025-09-15', 'PB250915-OLD2', 'PT.Saida Rezeki Abadi', 5, 30000),
-      row('2025-10-01', 'PB251001-OLD3', 'Sarah Hartati', 2, 25000), row('2025-11-01', 'PB251101-OLD4', 'Sarah Hartati', 1, 10000));`);
+    db.purchases.push(row('2025-08-20', 'PB250820-OLD1', 'CV Sumber Makmur', 10, 20000), row('2025-09-15', 'PB250915-OLD2', 'PT.Saida Rezeki Abadi', 5, 30000),
+      row('2025-10-01', 'PB251001-OLD3', 'CV Sumber Makmur', 2, 25000), row('2025-11-01', 'PB251101-OLD4', 'CV Sumber Makmur', 1, 10000));`);
   await nav(page, 'purchases');
   await expect(page.locator('#puh-sum')).toContainText(' – ');
   await expect(page.locator('#pu-hist tr[data-no="PB250820-OLD1"]')).toHaveCount(0); // the last 30 days at first
   await page.fill('#puh-from', '2025-08-12');
   await page.fill('#puh-to', '2025-10-12');
-  await page.fill('#puh-q', 'sarah');
+  await page.fill('#puh-q', 'sumber');
   await page.click('#puh-go');
   await expect(page.locator('#pu-hist tbody tr')).toHaveCount(2);
   await expect(page.locator('#pu-hist tr[data-no="PB250820-OLD1"]')).toBeVisible();

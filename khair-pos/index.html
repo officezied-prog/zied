@@ -157,7 +157,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '3.3.0';
+const APP_VERSION = '3.3.1';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -9276,7 +9276,7 @@ Object.assign(I18N.id, {
   'pu.cmp_title': 'Cek dengan nota', 'pu.cmp_item': 'Barang di nota', 'pu.cmp_note': 'Nota', 'pu.cmp_typed': 'Diketik', 'pu.cmp_ok': 'Semua jumlah sama dengan nota.', 'pu.cmp_bad': '{n} baris berbeda dengan nota — perbaiki jumlah atau simpan dengan alasan.', 'pu.use_note': 'Pakai jumlah nota',
   'pu.mm_title': 'Jumlah tidak sama dengan nota', 'pu.mm_hint': 'Belum disimpan. Perbaiki jumlah, atau tulis alasannya (misal "2 dus bonus").', 'pu.mm_fix': 'Perbaiki jumlah', 'pu.mm_reason': 'Alasan beda dengan nota', 'pu.mm_reason_ph': 'mis. 2 dus bonus dari sales', 'pu.mm_save': 'Simpan dengan alasan',
   'pu.history': 'Riwayat barang masuk', 'pu.cost_hidden': 'disembunyikan', 'pu.cost_hidden_hint': 'Harga beli disembunyikan untuk akun ini. Pemilik bisa mengizinkannya di Pengaturan → "Akuntan & manajer boleh melihat harga beli".', 'pu.no': 'No.', 'pu.locked_hint': 'Setelah disimpan, jumlah dan harga terkunci. Perubahan lewat "Koreksi" dengan alasan; manajer/pemilik menyetujui dan pemilik melihatnya di Aktivitas.',
-  'puh.from': 'Dari tanggal', 'puh.to': 'Sampai tanggal', 'puh.q': 'Pemasok / no. nota / barang', 'puh.q_ph': 'mis. Sarah Hartati', 'puh.go': 'Tampilkan',
+  'puh.from': 'Dari tanggal', 'puh.to': 'Sampai tanggal', 'puh.q': 'Pemasok / no. nota / barang', 'puh.q_ph': 'mis. CV Sumber Makmur', 'puh.go': 'Tampilkan',
   'puh.d30': '30 hari', 'puh.d90': '3 bulan', 'puh.d365': '1 tahun', 'puh.bad': 'Pilih tanggal awal dan akhir yang benar.', 'puh.long': 'Paling lama {n} hari sekali cari — bagi periodenya.',
   'puh.sum': '{n} nota · {from} – {to}', 'puh.more': 'yang tampil {n} pertama (persempit tanggal / pemasok)',
   'fix.button': 'Koreksi', 'fix.title': 'Koreksi barang masuk', 'fix.hint_apply': 'Koreksi langsung diterapkan ke stok dan dicatat untuk pemilik.', 'fix.hint_request': 'Koreksi dikirim ke manajer / pemilik untuk disetujui.', 'fix.now': 'Sekarang', 'fix.new_qty': 'Jumlah benar',
@@ -9376,7 +9376,7 @@ Object.assign(I18N.ar, {
   'pu.cmp_title': 'المقارنة مع فاتورة المورد', 'pu.cmp_item': 'الصنف في الفاتورة', 'pu.cmp_note': 'الفاتورة', 'pu.cmp_typed': 'المُدخل', 'pu.cmp_ok': 'كل الكميات مطابقة للفاتورة.', 'pu.cmp_bad': '{n} سطر يختلف عن الفاتورة — صحّح الكمية أو احفظ مع السبب.', 'pu.use_note': 'استخدم كمية الفاتورة',
   'pu.mm_title': 'الكمية لا تطابق الفاتورة', 'pu.mm_hint': 'لم يُحفظ بعد. صحّح الكميات أو اكتب السبب (مثلًا «كرتونان هدية»).', 'pu.mm_fix': 'تصحيح الكميات', 'pu.mm_reason': 'سبب الاختلاف عن الفاتورة', 'pu.mm_reason_ph': 'مثلًا كرتونان هدية من المندوب', 'pu.mm_save': 'حفظ مع السبب',
   'pu.history': 'سجل الوارد', 'pu.cost_hidden': 'مخفي', 'pu.cost_hidden_hint': 'سعر الشراء مخفي لهذا الحساب. يمكن للمالك السماح به من الإعدادات ← «يسمح للمحاسب والمديرة برؤية سعر الشراء».', 'pu.no': 'الرقم', 'pu.locked_hint': 'بعد الحفظ تُقفل الكميات والأسعار. التغيير عبر «تصحيح» مع السبب؛ يوافق المدير/المالك ويراه المالك في سجل النشاط.',
-  'puh.from': 'من تاريخ', 'puh.to': 'إلى تاريخ', 'puh.q': 'المورّد / رقم الفاتورة / الصنف', 'puh.q_ph': 'مثلًا Sarah Hartati', 'puh.go': 'عرض',
+  'puh.from': 'من تاريخ', 'puh.to': 'إلى تاريخ', 'puh.q': 'المورّد / رقم الفاتورة / الصنف', 'puh.q_ph': 'مثلًا CV Sumber Makmur', 'puh.go': 'عرض',
   'puh.d30': '30 يومًا', 'puh.d90': '3 أشهر', 'puh.d365': 'سنة', 'puh.bad': 'اختر تاريخ بداية ونهاية صحيحين.', 'puh.long': 'أقصى مدة للبحث {n} يومًا — قسّم الفترة.',
   'puh.sum': '{n} فاتورة · {from} – {to}', 'puh.more': 'المعروض أول {n} (ضيّق التاريخ / المورّد)',
   'fix.button': 'تصحيح', 'fix.title': 'تصحيح الوارد', 'fix.hint_apply': 'يُطبَّق التصحيح على المخزون مباشرة ويُسجَّل للمالك.', 'fix.hint_request': 'يُرسل التصحيح إلى المدير / المالك للموافقة.', 'fix.now': 'الحالي', 'fix.new_qty': 'الكمية الصحيحة',

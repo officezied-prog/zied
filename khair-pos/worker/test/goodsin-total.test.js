@@ -24,7 +24,7 @@ test('goods-in totals: owner, manager and accountant always; unit costs for the 
   insert(db, 'pos_products', { id: 1, sku: 'AZ1', name: 'Air Zam Zam 1 Liter', unit: 'pcs', cost_price: 18000, retail_price: 25000, stock: 61, shop_stock: 61, active: true });
   insert(db, 'pos_settings', { id: 10, skey: 'require_purchase_photo', svalue: 'false' });
   const ad = sqliteAdapter(db);
-  const s = await call(ad, 'Jihan', 'save_purchase', { supplier: 'Sarah Hartati', purchase_date: jkToday(), carrier: { type: 'umum', vehicle: 'B 1234 BB' }, items: [{ product_id: 1, qty: 50, cost_price: 19000, exp_none: true }] });
+  const s = await call(ad, 'Jihan', 'save_purchase', { supplier: 'CV Sumber Makmur', purchase_date: jkToday(), carrier: { type: 'umum', vehicle: 'B 1234 BB' }, items: [{ product_id: 1, qty: 50, cost_price: 19000, exp_none: true }] });
   assert.equal(s.ok, true, JSON.stringify(s));
   const lines = async (u) => (await call(ad, u, 'get_sales', { from: jkToday(), to: jkToday() })).purchases.filter((p) => p.purchase_no === s.purchase_no);
   assert.equal((await lines('Pemilik'))[0].total, 950000);

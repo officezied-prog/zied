@@ -4,7 +4,7 @@
 const { test, expect } = require('@playwright/test');
 const { login, nav, photoFile } = require('./helpers');
 
-const NOTE = { supplier: 'Sarah Hartati', date: null, invoice_no: 'SH-77', total: 950000, items: [{ name: 'AIR ZAM ZAM 1 LITER', qty: 50, unit: 'pcs', unit_price: 19000, total: 950000 }] };
+const NOTE = { supplier: 'CV Sumber Makmur', date: null, invoice_no: 'SH-77', total: 950000, items: [{ name: 'AIR ZAM ZAM 1 LITER', qty: 50, unit: 'pcs', unit_price: 19000, total: 950000 }] };
 
 test('a read note fills the form: supplier, the item, quantity and price', async ({ page }) => {
   await login(page, 'Jihan', '2222', '', { stay: true });
@@ -14,7 +14,7 @@ test('a read note fills the form: supplier, the item, quantity and price', async
   await expect(page.locator('#pu-photo-card')).toHaveClass(/done/);
   await expect(page.locator('#pu-photo-status')).toContainText('Nota terbaca: 1 baris');
   await expect(page.locator('#pu-ai-note')).toHaveCount(0);
-  await expect(page.locator('#pu-sup')).toHaveValue('Sarah Hartati');
+  await expect(page.locator('#pu-sup')).toHaveValue('CV Sumber Makmur');
   await expect(page.locator('#pu-lines tbody tr[data-line]')).toHaveCount(1);
   await expect(page.locator('[data-pu-qty]').first()).toHaveValue('50');
   await expect(page.locator('[data-pu-cost]').first()).toHaveValue('19.000');
