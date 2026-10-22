@@ -143,6 +143,14 @@ async function blockMapNetwork(page) {
   await page.route(/tile\.openstreetmap\.org/, r => r.abort());
 }
 
+/** A real-mode test never reaches the live Worker (it did for the chat / field / attendance calls it does not answer itself: since the
+ *  v71 login gate those answered BAD_KEY for the test key and the app went back to the login — CI red, local green, as this machine has
+ *  no route to the Worker). Everything the test does not answer is cut, as offline. Call it BEFORE the test's own page.route (Playwright
+ *  tries the routes added last first). */
+async function blockLiveBackend(page) {
+  await page.route(/^https:\/\/khair-mart-jumla\.officezied\.workers\.dev\//, r => r.abort('internetdisconnected'));
+}
+
 async function closeModals(page) {
   while (await page.locator('.modal-bg').count()) {
     await page.locator('.modal-bg').last().locator('[data-act="modal-close"]').first().click();
@@ -163,4 +171,4 @@ async function pick(page, id, text, value) {
   await page.locator(`#${id}-list [data-pick="${value}"]`).click();
   await expect(page.locator('#' + id)).toHaveAttribute('data-value', String(value));
 }
-module.exports = { pick, staffSession, switchUser, pickCarrier, CARRIER, rp, pct, sha, SHOTS, jktToday, openApp, enterKey, typePin, login, getDb, productByName, nav, addBySearch, confirmQty, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect, editDb, blockMapNetwork };
+module.exports = { pick, staffSession, switchUser, pickCarrier, CARRIER, rp, pct, sha, SHOTS, jktToday, openApp, enterKey, typePin, login, getDb, productByName, nav, addBySearch, confirmQty, checkoutSkip, closeModals, photoFile, asUser, loginKasirRedirect, editDb, blockMapNetwork, blockLiveBackend };

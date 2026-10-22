@@ -103,6 +103,7 @@
 <script src="../shared/install-btn.js" data-host="#login:not([hidden]) > .screen-card"></script>
 <script src="../shared/app-update.js"></script>
 <script src="../shared/pin-guard.js"></script>
+<script src="../shared/measure.js"></script>
 <script src="../shared/field-mock.js"></script>
 <script src="../shared/gmaps-import.js"></script>
 <script src="mock.js"></script>
@@ -116,7 +117,7 @@ CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
 // Field-sales backend (separate n8n workflow): the cashier reads field reps' orders read-only (cashier_orders).
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
-const APP_VERSION = 'kasir-1.8.3';
+const APP_VERSION = 'kasir-1.9.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -1259,6 +1260,26 @@ function shelfBlock(p, qty) {
   if (!sellFromShop() || qty <= shelfOf(p) + 1e-9) return '';
   return gudangOf(p) > 0 ? t('shelf.move_first', { name: p.name, shop: fmtQty(Math.max(0, shelfOf(p))), gudang: fmtQty(gudangOf(p)) }) : t('shelf.no_goods_in', { name: p.name, shop: fmtQty(Math.max(0, shelfOf(p))) });
 }
+/* v72 (owner 2026-10-22: «في بعض الأحيان يتم طلبية تكون أكثر من الكمية الموجودة في الرفوف. فيتم مباشرة سحبها من المخازن»): more than the shelf
+   holds, and the storeroom has the rest → one tap moves the missing part from the storeroom to the shelf (a recorded move_stock) and
+   the goods go into the cart. */
+function pullHTML(p, q, px) {
+  const miss = roundQty(q - Math.max(0, shelfOf(p)));
+  return miss > 0 && gudangOf(p) + 1e-9 >= miss ? `<div style="margin-top:6px"><button type="button" class="btn sm primary" id="${px}-pull">${ic('truck')} ${esc(t('shelf.pull', { q: stockText(p, miss) }))}</button></div>` : '';
+}
+function bindPull(el, px, p, getQ, done) {
+  const b = $('#' + px + '-pull', el); if (!b) return;
+  b.onclick = async () => {
+    const miss = roundQty(getQ() - Math.max(0, shelfOf(p)));
+    b.disabled = true;
+    try {
+      const r = await api('move_stock', { to: 'toko', lines: [{ product_id: p.id, qty: miss }], note: tid('shelf.pull_note') }); // the record stays in Indonesian
+      if (r.stock) applyStock(r.stock);
+      renderGrid(); toast(t('shelf.pulled', { q: stockText(p, miss) }), 'ok');
+      done();
+    } catch (e) { toast(e instanceof NetError ? t('apr.need_online') : errMsg(e), 'err', 5000); b.disabled = false; }
+  };
+}
 /** v63: a packaging material (sticker, jar …) received at goods-in — used by the repacks, never sold. */
 const isMat = p => !!p && (p.material === true || String(p.category || '').trim().toLowerCase() === 'bahan kemasan');
 function addToCart(p, qty = 1, set = false) {
@@ -1323,7 +1344,7 @@ function speak(text) {
     ss.speak(u);
   } catch (e) { }
 }
-function speakAdded(p, qty) { clearTimeout(VOICE.timer); speak(`${speakableName(p.name)}, ${isLoose(p) ? toGrams(p, qty) + (VOICE.lang === 'ar-SA' ? ' غرام' : ' gram') : spokenQty(qty)}`); }
+function speakAdded(p, qty) { clearTimeout(VOICE.timer); speak(`${speakableName(p.name)}, ${isWeighed(p, qty) ? toGrams(p, qty) + (VOICE.lang === 'ar-SA' ? ' غرام' : ' gram') : spokenQty(qty)}`); }
 function speakQtyLater(pid) {
   clearTimeout(VOICE.timer);
   VOICE.timer = setTimeout(() => { const l = S.cart.lines.find(x => x.product_id == pid); if (l) speak(`${VOICE.lang === 'ar-SA' ? 'الكمية' : 'jumlah'} ${spokenQty(l.qty)}`); }, 500);
@@ -1352,7 +1373,22 @@ const QTY_CHIPS = [1, 2, 3, 5, 10], QTY_MAX = 100000;
    the price worked out, the stock in the product's own unit (250 g of a per-kg product = 0.25). */
 const isLoose = p => !!(p && p.loose === true);
 const GRAMS_PER = { kg: 1000, kilo: 1000, g: 1, gr: 1, gram: 1, ons: 100 };
-const gPer = p => GRAMS_PER[String((p && p.unit) || '').trim().toLowerCase()] || 1000;
+/* v72 (owner 2026-10-22, the quantity sheet of "Madu Habbatusauda 1 Kg": «يجب يكون هناك زر لإمكانية الشراء بالميزان. مثلا أخذ 350 غرام فقط، فيتم
+   عملية حسابية الثمن … ويوضع في المخزون الباقي من هذا الكيلوغرام … أي طلبية ثانية بالميزان أيضا تحسب وتخصم من هذا العلبة»): any product whose
+   name says its weight ("… 1 Kg", "Coklat 2 kg") can also be sold by weight — "⚖ Timbang" in its quantity sheet opens the weight sheet:
+   350 g of a 1 kg jar = 0.35 jar, priced 0.35 × the jar's price, and 0.35 leaves the stock (the next weighed sale takes from the rest). */
+const weighOf = p => { const m = p ? KMeasure.of(p.name, p.unit) : null; return m && m.d === 'w' && m.q > 0 ? m : null; };
+const canWeigh = p => !!p && !isLoose(p) && !isMat(p) && !GRAMS_PER[String(p.unit || '').trim().toLowerCase()] && !!weighOf(p);
+const gPer = p => GRAMS_PER[String((p && p.unit) || '').trim().toLowerCase()] || (weighOf(p) || {}).q || 1000;
+/** A cart line sold by weight: a loose product, or a weighable one with a part of a unit. */
+const isWeighed = (p, q) => isLoose(p) || (canWeigh(p) && Math.abs(num(q) - Math.round(num(q))) > 1e-9);
+/** "9 pcs + 650 g" — a weighable product's stock with an opened unit; else "9,65 pcs". */
+function stockText(p, q) {
+  q = roundQty(q); const u = p.unit || '';
+  if (!canWeigh(p) || Math.abs(q - Math.round(q)) < 1e-9 || q < 0) return `${fmtQty(q)} ${u}`.trim();
+  const whole = Math.floor(q + 1e-9), g = Math.round((q - whole) * gPer(p));
+  return whole > 0 ? `${fmtNum(whole)} ${u} + ${fmtGrams(g)}` : fmtGrams(g);
+}
 const toGrams = (p, q) => Math.round(num(q) * gPer(p));
 const fromGrams = (p, g) => roundQty(num(g) / gPer(p));
 const fmtGrams = g => g >= 1000 && g % 100 === 0 ? fmtQty(g / 1000) + ' kg' : fmtNum(g) + ' g';
@@ -1363,7 +1399,7 @@ function openWeightSheet(p) {
   let g = ex ? toGrams(p, ex.qty) : 0;
   const el = openModal({
     title: p.name, id: 'weight-sheet', focus: false,
-    body: `<div class="qs-info"><span class="pr num"><bdi>${fmtRp(p.retail_price)}</bdi><span class="muted small">/${esc(p.unit || 'kg')}</span></span><span class="badge" id="ws-badge">⚖ ${esc(t('loose.badge'))}</span><span class="muted small" id="ws-stock">${esc(t('shelf.rak'))} <bdi class="num">${fmtQty(shelfOf(p))} ${esc(p.unit || '')}</bdi></span></div>
+    body: `<div class="qs-info"><span class="pr num"><bdi>${fmtRp(p.retail_price)}</bdi><span class="muted small">/${esc(p.unit || 'kg')}${canWeigh(p) ? ` (${esc(fmtGrams(gPer(p)))})` : ''}</span></span><span class="badge" id="ws-badge">⚖ ${esc(t(canWeigh(p) ? 'ws.badge_weigh' : 'loose.badge'))}</span><span class="muted small" id="ws-stock">${esc(t('shelf.rak'))} <bdi class="num">${fmtQty(shelfOf(p))} ${esc(p.unit || '')}</bdi></span></div>
       <label class="f" for="ws-g" style="margin-top:8px">${esc(t('ws.label'))}</label>
       <div class="qs-row"><input data-rule="num" id="ws-g" type="text" inputmode="numeric" autocomplete="off" enterkeyhint="done" aria-label="${esc(t('ws.label'))}" placeholder="250" value="${g ? esc(String(g)) : ''}"><span class="ws-unit">g</span></div>
       <div class="qs-chips" id="ws-chips">${WS_CHIPS.map(n => `<button type="button" data-g="${n}">${esc(fmtGrams(n))}</button>`).join('')}</div>
@@ -1374,11 +1410,12 @@ function openWeightSheet(p) {
   const inp = $('#ws-g', el);
   const draw = () => {
     const q = fromGrams(p, g), c = lineCalc({ product_id: p.id, qty: q }, custById(S.cart.customer_id));
-    $('#ws-up', el).textContent = g > 0 ? t('ws.per', { g: fmtGrams(g), price: fmtRp(c.unit_price), unit: p.unit || 'kg' }) : t('ws.need');
+    $('#ws-up', el).textContent = g > 0 ? t('ws.per', { g: fmtGrams(g), price: fmtRp(c.unit_price), unit: (p.unit || 'kg') + (canWeigh(p) ? ' ' + fmtGrams(gPer(p)) : '') }) : t('ws.need');
     $('#ws-total', el).textContent = g > 0 ? fmtRp(c.total) : '';
     $$('#ws-chips [data-g]', el).forEach(b => b.classList.toggle('on', num(b.dataset.g) === g));
     const sb = g > 0 ? shelfBlock(p, q) : '';
-    $('#ws-warn', el).textContent = sb || (g > 0 && q > num(p.stock) ? t('sell.stock_low', { name: p.name }) : '');
+    $('#ws-warn', el).innerHTML = esc(sb || (g > 0 && q > num(p.stock) ? t('sell.stock_low', { name: p.name }) : '')) + (sb ? pullHTML(p, q, 'ws') : '');
+    bindPull(el, 'ws', p, () => q, () => ok());
     $('#ws-ok', el).disabled = !(g > 0 && q < QTY_MAX) || !!sb;
   };
   inp.addEventListener('input', () => { g = Math.max(0, Math.round(qtyVal(inp.value))); draw(); });
@@ -1413,6 +1450,7 @@ function openQtySheet(p) {
     body: `<div class="qs-info"><span class="pr num"><bdi>${fmtRp(p.retail_price)}</bdi><span class="muted small">/${esc(p.unit || 'pcs')}</span></span>${hasW ? `<span class="gr" id="qs-gr">${esc(t('grosir'))} <bdi class="num">${fmtRp(p.wholesale_price)}</bdi> · <bdi>≥${fmtQty(wmin)}</bdi></span>` : ''}<span class="muted small" id="qs-stock">${esc(t('shelf.rak'))} <bdi class="num">${fmtQty(shelfOf(p))} ${esc(p.unit || '')}</bdi> · ${esc(t('shelf.gudang'))} <bdi class="num">${fmtQty(gudangOf(p))}</bdi></span></div>
       <div class="qs-row"><button type="button" id="qs-dec" aria-label="−">−</button><input data-rule="num" id="qs-qty" type="text" inputmode="${isWeightUnit(p.unit) ? 'decimal' : 'numeric'}" autocomplete="off" enterkeyhint="done" aria-label="${esc(t('qty'))}" value="${esc(fmtQtyInput(q))}"><button type="button" id="qs-inc" aria-label="+">+</button></div>
       <div class="qs-chips" id="qs-chips">${QTY_CHIPS.map(n => `<button type="button" data-q="${n}">${n}</button>`).join('')}${hasW ? `<button type="button" class="g" data-q="${wmin}" id="qs-chip-g">${esc(t('grosir'))} ${esc(fmtQty(wmin))}</button>` : ''}</div>
+      ${canWeigh(p) ? `<button type="button" class="btn block" id="qs-weigh" style="margin-top:8px">⚖ ${esc(t('ws.weigh_btn', { g: fmtGrams(gPer(p)), u: p.unit || 'pcs' }))}</button>` : ''}
       <div class="qs-total"><span><span class="pt" id="qs-pt"></span> <span class="muted small num" id="qs-up"></span></span><b class="num" id="qs-total"></b></div>
       <div class="qs-warn" id="qs-warn" role="alert"></div>`,
     foot: `<button class="btn" data-act="modal-close">${esc(t('cancel'))}</button><button class="btn primary qs-ok" id="qs-ok">${esc(ex ? t('qty.change') : t('qty.add'))}</button>`
@@ -1426,7 +1464,8 @@ function openQtySheet(p) {
     $('#qs-total', el).textContent = fmtRp(c.total);
     $$('#qs-chips [data-q]', el).forEach(b => b.classList.toggle('on', num(b.dataset.q) === q));
     const sb = shelfBlock(p, q);
-    $('#qs-warn', el).textContent = sb || (q > num(p.stock) ? t('sell.stock_low', { name: p.name }) : '');
+    $('#qs-warn', el).innerHTML = esc(sb || (q > num(p.stock) ? t('sell.stock_low', { name: p.name }) : '')) + (sb ? pullHTML(p, q, 'qs') : '');
+    bindPull(el, 'qs', p, () => q, () => ok());
     if (q >= QTY_MAX) $('#qs-warn', el).textContent = t('qty.too_big');
     $('#qs-ok', el).disabled = !(q > 0 && q < QTY_MAX) || !!sb;
   };
@@ -1440,6 +1479,7 @@ function openQtySheet(p) {
   $('#qs-dec', el).onclick = () => { if (q > 1) setQ(Math.ceil(q - 1e-9) - 1); };
   $('#qs-inc', el).onclick = () => setQ(Math.floor(q + 1e-9) + 1);
   $('#qs-chips', el).onclick = e => { const b = e.target.closest('[data-q]'); if (b) setQ(num(b.dataset.q)); };
+  const wb = $('#qs-weigh', el); if (wb) wb.onclick = () => { dropModal(el); openWeightSheet(p); }; // v72
   const ok = () => {
     q = qtyVal(inp.value);
     if (!(q > 0) || q >= QTY_MAX) { $('#qs-warn', el).textContent = t(q > 0 ? 'qty.too_big' : 'qty.invalid'); return; }
@@ -1521,9 +1561,9 @@ function renderGrid() {
   g.innerHTML = shown.length ? shown.map(p => {
     const low = isLow(p), q = inCart.get(String(p.id));
     const gr = int(p.wholesale_price) > 0 && num(p.wholesale_min_qty) > 0 ? `<div class="gr">${esc(t('grosir'))} <bdi class="num">${fmtRp(p.wholesale_price)}</bdi> · <bdi>≥${fmtQty(p.wholesale_min_qty)}</bdi></div>` : '';
-    return `<button class="pc ${isLoose(p) ? 'loose' : ''}" data-act="add" data-id="${esc(p.id)}" data-sku="${esc(p.sku)}">${q ? `<span class="incart num">${isLoose(p) ? esc(fmtGrams(toGrams(p, q))) : fmtQty(q)}</span>` : ''}
+    return `<button class="pc ${isLoose(p) ? 'loose' : ''}" data-act="add" data-id="${esc(p.id)}" data-sku="${esc(p.sku)}">${q ? `<span class="incart num">${isWeighed(p, q) ? esc(fmtGrams(toGrams(p, q))) : fmtQty(q)}</span>` : ''}
       <div class="nm">${isLoose(p) ? `<span class="loose-b" data-loose>⚖ ${esc(t('loose.badge'))}</span> ` : ''}${esc(p.name)}</div>
-      <div class="st ${low ? 'low' : ''}" data-shelf="${esc(shelfOf(p))}">${esc(t('shelf.rak'))} <bdi class="num">${fmtQty(shelfOf(p))} ${esc(p.unit || '')}</bdi>${gudangOf(p) > 0 ? ` · ${esc(t('shelf.gudang'))} <bdi class="num">${fmtQty(gudangOf(p))}</bdi>` : ''}</div>
+      <div class="st ${low ? 'low' : ''}" data-shelf="${esc(shelfOf(p))}">${esc(t('shelf.rak'))} <bdi class="num">${esc(stockText(p, shelfOf(p)))}</bdi> · <span data-gudang="${esc(gudangOf(p))}">${esc(t('shelf.gudang'))} <bdi class="num">${esc(stockText(p, gudangOf(p)))}</bdi></span></div>
       <div class="pr num"><bdi>${fmtRp(p.retail_price)}</bdi><span class="muted small" style="font-weight:700">/${esc(p.unit || 'pcs')}</span></div>${gr}</button>`;
   }).join('') + (list.length > shown.length ? `<button class="btn block" style="grid-column:1/-1" data-act="sell-more">${esc(t('show_more', { n: list.length - shown.length }))}</button>` : '')
     : `<div class="empty" style="grid-column:1/-1">${esc(S.products.length ? t('sell.no_match') : t('sell.no_products'))}</div>`;
@@ -1542,7 +1582,7 @@ function renderCart(flashId) {
       <div class="cl" data-line="${i}" data-pid="${esc(l.p.id)}">
         <div class="a"><div class="nm">${esc(l.p.name)}</div><div class="lt num" data-ref="lt">${fmtRp(l.total)}</div><button class="icon-btn ghost sm" data-act="line-del" data-i="${i}" aria-label="${esc(t('delete'))}" style="margin-top:-8px;color:var(--muted)">${ic('trash')}</button></div>
         <div class="b">
-          ${isLoose(l.p) ? `<button class="btn sm ws-edit" data-act="ws-edit" data-pid="${esc(l.p.id)}" data-i="${i}" aria-label="${esc(t('ws.label'))} ${esc(l.p.name)}">⚖ <b class="num">${esc(fmtGrams(toGrams(l.p, l.line.qty)))}</b></button>`
+          ${isWeighed(l.p, l.line.qty) ? `<button class="btn sm ws-edit" data-act="ws-edit" data-pid="${esc(l.p.id)}" data-i="${i}" aria-label="${esc(t('ws.label'))} ${esc(l.p.name)}">⚖ <b class="num">${esc(fmtGrams(toGrams(l.p, l.line.qty)))}</b></button>`
             : `<div class="qty"><button data-act="qty-dec" data-i="${i}" aria-label="−">−</button><input type="text" inputmode="decimal" data-rule="num" data-qty="${i}" value="${esc(fmtQtyInput(l.line.qty))}" aria-label="${esc(t('qty'))} ${esc(l.p.name)}"><button data-act="qty-inc" data-i="${i}" aria-label="+">+</button></div>`}
           <span class="muted small num" data-ref="up">× ${fmtRp(l.unit_price)}</span>
           <span class="pt ${l.type}" data-ref="pt">${esc(t(l.type))}</span>
@@ -2102,7 +2142,7 @@ function receiptFromCart(v, pay, req) {
   return {
     invoice_no: '', client_id: req.client_id, pending: false, sale_date: req.sale_date, sale_time: req.sale_time, cashier: S.user,
     customer_name: v.cust ? v.cust.name : t('sell.walkin'), customer_phone: v.cust ? v.cust.phone : '', customer_id: v.cust ? v.cust.id : null,
-    lines: v.lines.map(l => ({ name: l.p.name, unit: l.p.unit || '', qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type, line_total: l.total })),
+    lines: v.lines.map(l => ({ name: l.p.name, unit: l.p.unit || '', qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type, line_total: l.total, ...(isWeighed(l.p, l.line.qty) ? { g: toGrams(l.p, l.line.qty), gu: gPer(l.p) } : {}) })),
     subtotal: v.subtotal, discount: v.discount, member_disc: v.memberDisc, member: v.mem ? { pct: v.mem.pct, purchase_no: v.mem.n, member_no: v.mem.no } : null,
     customer_email: v.cust ? v.cust.email || '' : '', total: v.total, method: pay.method, paid: pay.paid, change: pay.change, debt: pay.debt, status: 'ok',
     parts: pay.method === 'campur' && pay.parts.length > 1 ? pay.parts.map(x => ({ m: x.method, a: x.amount })) : null,
@@ -2390,11 +2430,11 @@ function openDiscWait(info) {
 /* ========== Receipt (58 / 80 mm), print, share, copy ========== */
 function receiptLinesHTML(rc) {
   const st = settings();
-  const rows = rc.lines.map(l => `<div class="it"><div>${esc(l.name)}${l.price_type === 'grosir' ? ' <i>(G)</i>' : ''}</div><div class="r2"><span>${esc(fmtQty(l.qty))} x ${esc(NF.format(l.unit_price))}</span><span>${esc(NF.format(l.line_total))}</span></div></div>`).join('');
+  const rows = rc.lines.map(l => `<div class="it"><div>${esc(l.name)}${l.price_type === 'grosir' ? ' <i>(G)</i>' : ''}</div><div class="r2"><span>${l.g ? `${esc(fmtGrams(l.g))} × ${esc(NF.format(l.unit_price))}/${esc(fmtGrams(l.gu || 1000))}` : `${esc(fmtQty(l.qty))} x ${esc(NF.format(l.unit_price))}`}</span><span>${esc(NF.format(l.line_total))}</span></div></div>`).join('');
   return `<div class="c"><img class="rc-logo" src="../logo.png" alt=""></div><div class="c b big">${esc(st.store_name)}</div>
     ${st.address ? `<div class="c">${esc(st.address)}</div>` : ''}${st.phone ? `<div class="c">${esc(t('rc.phone'))} ${esc(st.phone)}</div>` : ''}
     <div class="ln"></div>
-    ${rc.pending ? `<div class="stamp">${esc(t('rc.pending'))}</div>` : ''}
+    ${rc.pending ? `<div class="stamp">${esc(t('rc.pending'))}</div>` : ''}${rc.voided ? `<div class="stamp" id="rc-void">${esc(t('il.void_stamp'))}</div>` : ''}
     <div class="r2"><span>${esc(t('rc.no'))}</span><span class="b" data-rc-no>${esc(rc.invoice_no)}${rc.cashier && rc.invoice_no ? ` · ${esc(rc.cashier)}` : ''}</span></div>
     <div class="r2"><span>${esc(t('rc.date'))}</span><span>${esc(fmtDateTime(rc.sale_time, rc.sale_date))}</span></div>
     <div class="r2"><span>${esc(t('rc.cashier'))}</span><span>${esc(rc.cashier)}</span></div>
@@ -2425,7 +2465,7 @@ function receiptText(rc) {
   out.push(L2);
   if (rc.pending) out.push(`*${t('rc.pending')}*`);
   out.push(`${t('rc.no')}: ${rc.invoice_no}${rc.cashier ? ' · ' + rc.cashier : ''}`, `${t('rc.date')}: ${fmtDateTime(rc.sale_time, rc.sale_date)}`, `${t('rc.cashier')}: ${rc.cashier}`, `${t('rc.customer')}: ${rc.customer_name}`, L2);
-  rc.lines.forEach(l => out.push(`${l.name}${l.price_type === 'grosir' ? ' (grosir)' : ''}`, `  ${fmtQty(l.qty)} x ${fmtRp(l.unit_price)} = ${fmtRp(l.line_total)}`));
+  rc.lines.forEach(l => out.push(`${l.name}${l.price_type === 'grosir' ? ' (grosir)' : ''}`, `  ${l.g ? `${fmtGrams(l.g)} × ${fmtRp(l.unit_price)}/${fmtGrams(l.gu || 1000)}` : `${fmtQty(l.qty)} x ${fmtRp(l.unit_price)}`} = ${fmtRp(l.line_total)}`));
   if (int(rc.send_fee)) out.push(`${t('rs.fee_line')}: ${fmtRp(rc.send_fee)}`);
   out.push(L2, `*${t('total')}: ${fmtRp(rc.total)}*`, `${t('rc.paid')} (${t('pm.' + rc.method)}): ${fmtRp(rc.paid)}`);
   (rc.parts || []).forEach(x => out.push(`  ${t('pm.' + x.m)}: ${fmtRp(x.a)}`));
@@ -2526,7 +2566,7 @@ function openQuotation() {
   if (!v.lines.length || !window.KDocs) return;
   const d = new Date(Date.now() + 7 * 3600000).toISOString();
   const q = { no: 'PNW-' + d.slice(2, 10).replace(/-/g, '') + d.slice(11, 16).replace(':', ''), date: today(), customer_name: v.cust ? v.cust.name : '',
-    lines: v.lines.map(l => ({ name: l.p.name, unit: l.p.unit || '', qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type, line_total: l.total })),
+    lines: v.lines.map(l => ({ name: l.p.name, unit: l.p.unit || '', qty: roundQty(l.line.qty), unit_price: l.unit_price, price_type: l.type, line_total: l.total, ...(isWeighed(l.p, l.line.qty) ? { g: toGrams(l.p, l.line.qty), gu: gPer(l.p) } : {}) })),
     subtotal: v.subtotal, discount: v.discount + (v.memberDisc || 0), total: v.total - (v.sendFee || 0) };
   const cust = v.cust ? { name: v.cust.name, phone: v.cust.phone, address: v.cust.address } : { name: '' }, text = KDocs.quotationText(q, docCtx());
   const el = openModal({ title: t('doc.quote_title'), id: 'quote',
@@ -2546,14 +2586,14 @@ function showReceipt(rc, opts = {}) {
     body: `${opts.fromSale ? `<div class="row" style="justify-content:center;margin-bottom:10px"><span class="badge ${rc.pending ? 'warn' : 'ok'}" id="rc-state" style="font-size:15px;padding:6px 14px">${esc(rc.pending ? t('outbox.queued_short') : t('rc.saved_ok'))}</span></div>` : ''}
       ${rc.change ? `<div class="result" id="rc-change"><span>${esc(t('pay.change'))}</span><span class="num">${fmtRp(rc.change)}</span></div>` : ''}
       <div id="exit-wrap"></div><div id="rcsend-wrap"></div><div id="wa-wrap"></div>${receiptHTML(rc)}`,
-    foot: `<button class="btn sm" id="rc-print">${ic('print')} ${esc(t('print'))}</button>
+    foot: `${rc.voided ? '' : `<button class="btn sm" id="rc-print">${ic('print')} ${esc(t('print'))}</button>`}
       <button class="btn sm" id="rc-share">${ic('share')} ${esc(t('share'))}</button>
       <button class="btn sm" id="rc-copy">${ic('copy')} ${esc(t('copy'))}</button>
-      ${rc.invoice_no ? `<button class="btn sm" id="rc-invoice">${ic('receipt')} ${esc(t('doc.invoice'))}</button><button class="btn sm" id="rc-sj">${ic('truck')} ${esc(t('doc.sj'))}</button>` : ''}
-      ${!rc.pending && rc.invoice_no && !opts.fromSale ? `<button class="btn sm" id="rc-retur">${ic('undo')} ${esc(t('rt.from_receipt'))}</button>` : ''}
+      ${rc.invoice_no && !rc.voided ? `<button class="btn sm" id="rc-invoice">${ic('receipt')} ${esc(t('doc.invoice'))}</button><button class="btn sm" id="rc-sj">${ic('truck')} ${esc(t('doc.sj'))}</button>` : ''}
+      ${!rc.pending && rc.invoice_no && !opts.fromSale && !rc.voided ? `<button class="btn sm" id="rc-retur">${ic('undo')} ${esc(t('rt.from_receipt'))}</button>` : ''}
       <button class="btn primary sm grow" data-act="modal-close" id="rc-new">${esc(opts.fromSale ? t('rc.new_sale') : t('close'))}</button>`
   });
-  $('#rc-print', el).onclick = e => printReceipt(rc, e.currentTarget); // v54: the printer chosen on this device
+  const pb = $('#rc-print', el); if (pb) pb.onclick = e => printReceipt(rc, e.currentTarget); // v54: the printer chosen on this device (v72: not for a voided invoice)
   $('#rc-share', el).onclick = () => shareText(receiptText(rc), rc.customer_phone);
   $('#rc-copy', el).onclick = async () => { const ok = await copyText(receiptText(rc)); toast(ok ? t('copied') : t('copy_failed'), ok ? 'ok' : 'err'); };
   const rb = $('#rc-retur', el); if (rb) rb.onclick = () => { dropModal(el); openReturn({ invoice: rc.invoice_no }); };
@@ -2574,13 +2614,125 @@ function openLastReceipts() {
   });
   $$('[data-lrc]', el).forEach(b => b.onclick = () => { const rc = all[+b.dataset.lrc]; dropModal(el); showReceipt(rc); });
 }
+/* ========== v72 (owner 2026-10-22: «في تطبيق الكاشير لا توجد سجل اليومي للعمليات المالية المنجزة و لا سجل الفاتورات»):
+   "Catatan keuangan" — the money operations of a day done by THIS cashier (sales by how they were paid, debt payments received, payments
+   and expenses from the drawer, cash in / out, refunds), with the totals; the cash total of a drawer still open stays hidden (the closing
+   count is blind, as on the server). "Daftar faktur" — every invoice of a day (all cashiers, or mine), searchable; one tap opens it as a
+   receipt to print again. Nothing here changes anything: the records are the server's, which never deletes one (a void only marks it).
+   Read from get_sales (the last 62 days for a cashier). ========== */
+const LOGMIN = () => addDays(today(), -61);
+const saleTime = s => s.sale_time ? jktTime(s.sale_time) : '';
+/** The parts of a sale by how it was paid: tunai / transfer / qris / kartu / hutang (the unpaid part). */
+function salePartsOf(s) {
+  const o = { tunai: 0, transfer: 0, qris: 0, kartu: 0, hutang: int(s.debt_amount) };
+  let parts = null;
+  if (s.payment_method === 'campur') { try { parts = JSON.parse(s.pay_parts || '[]'); } catch (e) { parts = null; } }
+  if (Array.isArray(parts) && parts.length) parts.forEach(x => { if (x && o[x.m] !== undefined && x.m !== 'hutang') o[x.m] += int(x.a); });
+  else o[['tunai', 'transfer', 'qris', 'kartu'].includes(s.payment_method) ? s.payment_method : 'tunai'] += Math.min(int(s.paid_amount), int(s.total)); // as the server's saleParts
+  return o;
+}
+function logDayBar(id, d) {
+  return `<div class="row wrap" style="gap:8px;align-items:center;margin-bottom:10px"><button type="button" class="btn sm" data-day="-1" aria-label="${esc(t('dl.prev'))}">‹</button>
+    <input class="input" type="date" id="${id}-date" value="${esc(d)}" min="${esc(LOGMIN())}" max="${esc(today())}" style="max-width:170px">
+    <button type="button" class="btn sm" data-day="1" aria-label="${esc(t('dl.next'))}">›</button>${d === today() ? `<span class="badge ok">${esc(t('dl.today'))}</span>` : ''}</div>`;
+}
+function bindDayBar(el, id, d, go) {
+  const inp = $('#' + id + '-date', el);
+  inp.onchange = () => { const v = inp.value; if (/^\d{4}-\d{2}-\d{2}$/.test(v) && v >= LOGMIN() && v <= today()) go(v); };
+  $$('[data-day]', el).forEach(b => { const n = addDays(d, +b.dataset.day); b.disabled = n < LOGMIN() || n > today(); b.onclick = () => go(n); });
+}
+async function openDayLog(d) {
+  d = d || today();
+  const el = openModal({ title: t('dl.title'), id: 'day-log', body: `${logDayBar('dl', d)}<div id="dl-body"><div class="spinner"></div></div>` });
+  bindDayBar(el, 'dl', d, n => { dropModal(el); openDayLog(n); });
+  const box = $('#dl-body', el), me = String(S.user || '').toLowerCase(), mine = x => String(x || '').toLowerCase() === me;
+  let r;
+  try { r = await api('get_sales', { from: d, to: d }); }
+  catch (e) { box.innerHTML = `<div class="err">${esc(e instanceof NetError ? t('dl.offline') : errMsg(e))}</div>`; return; }
+  const sales = (r.sales || []).filter(x => x.sale_date === d && mine(x.cashier));
+  const pays = (r.payments || []).filter(x => x.pay_date === d && mine(x.cashier));
+  const exps = (r.expenses || []).filter(x => x.expense_date === d && mine(x.user));
+  const shifts = (r.shifts || []).filter(x => mine(x.cashier) && (x.shift_date === d || (x.opened_at && jktDate(x.opened_at) === d)));
+  const rows = [];
+  sales.forEach(x => { const p = salePartsOf(x), vd = x.status === 'void';
+    rows.push({ at: x.sale_time || '', kind: 'sale', inv: x.invoice_no, void: vd, amount: int(x.total), txt: `${x.invoice_no}${x.customer_name ? ' · ' + x.customer_name : ''}`,
+      sub: Object.keys(p).filter(k => p[k] > 0).map(k => `${t(k === 'hutang' ? 'dl.debt' : 'pm.' + k)} ${fmtRp(p[k])}`).join(' · ') }); });
+  pays.forEach(x => { const out = x.direction === 'out';
+    rows.push({ at: x.pay_time || '', kind: out ? 'pay_out' : 'pay_in', amount: (out ? -1 : 1) * int(x.amount), txt: out ? t('dl.pay_out', { who: x.supplier || x.payee || x.customer_name || '' }) : t('dl.pay_in', { who: x.customer_name || '' }), sub: t('pm.' + (x.method || 'tunai')) + (x.note ? ' · ' + String(x.note).slice(0, 80) : '') }); });
+  exps.forEach(x => rows.push({ at: '', kind: 'exp', amount: -int(x.amount), txt: t('dl.exp', { cat: x.category || '' }), sub: (x.paid_from === 'kas' ? t('dl.from_drawer') + ' · ' : '') + String(x.note || '').slice(0, 80) }));
+  shifts.forEach(sh => { let mv = []; try { mv = JSON.parse(sh.moves || '[]'); } catch (e) { mv = []; }
+    (Array.isArray(mv) ? mv : []).filter(m => m && !/^(Pengeluaran|Bayar pemasok)\b/.test(String(m.note || ''))).forEach(m => rows.push({ at: m.t || m.time || '', kind: m.type === 'in' ? 'cash_in' : 'cash_out', amount: (m.type === 'in' ? 1 : -1) * int(m.amount), txt: t(m.type === 'in' ? 'dl.cash_in' : 'dl.cash_out'), sub: String(m.note || '').slice(0, 100) })); });
+  rows.sort((a, b) => (a.at ? 0 : 1) - (b.at ? 0 : 1) || String(a.at).localeCompare(String(b.at))); // an expense has no time: last
+  const ok = sales.filter(x => x.status !== 'void'), tot = { tunai: 0, transfer: 0, qris: 0, kartu: 0, hutang: 0 };
+  ok.forEach(x => { const p = salePartsOf(x); Object.keys(tot).forEach(k => { tot[k] += p[k]; }); });
+  const openSh = shifts.find(x => x.status === 'open'), closed = shifts.filter(x => x.status !== 'open');
+  const card = (label, v, id, extra = '') => `<div class="kv" ${id ? `id="${id}"` : ''}><span>${esc(label)}</span><b class="num">${v}</b>${extra}</div>`;
+  box.innerHTML = `<div class="card" id="dl-totals" style="padding:10px 12px;margin-bottom:12px">
+      ${card(t('dl.n_sales'), `${fmtNum(ok.length)}${sales.length - ok.length ? ` <span class="badge">${esc(t('dl.n_void', { n: sales.length - ok.length }))}</span>` : ''}`, 'dl-n')}
+      ${card(t('dl.sales_total'), esc(fmtRp(sum(ok, x => int(x.total)))), 'dl-total')}
+      ${card(t('pm.tunai'), openSh ? `<span class="muted small">${esc(t('dl.cash_blind'))}</span>` : esc(fmtRp(tot.tunai)), 'dl-cash')}
+      ${['transfer', 'qris', 'kartu'].filter(k => tot[k]).map(k => card(t('pm.' + k), esc(fmtRp(tot[k])), 'dl-' + k)).join('')}
+      ${tot.hutang ? card(t('dl.debt'), esc(fmtRp(tot.hutang)), 'dl-debt') : ''}
+      ${pays.some(x => x.direction !== 'out') ? card(t('dl.pays_in'), esc(fmtRp(sum(pays.filter(x => x.direction !== 'out'), x => int(x.amount)))), 'dl-pin') : ''}
+      ${exps.length || pays.some(x => x.direction === 'out') ? card(t('dl.money_out'), esc(fmtRp(sum(exps, x => int(x.amount)) + sum(pays.filter(x => x.direction === 'out'), x => int(x.amount)))), 'dl-out') : ''}
+      ${closed.map(sh => card(t('dl.closed', { time: sh.closed_at ? jktTime(sh.closed_at) : '' }), `${esc(fmtRp(int(sh.counted_cash)))}${int(sh.difference) ? ` <span class="badge ${int(sh.difference) < 0 ? 'red' : 'warn'}">${esc((int(sh.difference) > 0 ? '+' : '') + fmtRp(sh.difference))}</span>` : ''}`)).join('')}
+    </div>
+    <div class="list" id="dl-list">${rows.map(x => `<${x.inv ? `button type="button" data-dl-inv="${esc(x.inv)}"` : 'div'} class="li dl-row" data-kind="${x.kind}"${x.void ? ' data-void="1"' : ''}>
+        <div class="grow"><div class="t">${x.at ? `<span class="muted num">${esc(jktTime(x.at))}</span> ` : ''}${esc(x.txt)}${x.void ? ` <span class="badge red">${esc(t('il.void'))}</span>` : ''}</div>${x.sub ? `<div class="s">${esc(x.sub)}</div>` : ''}</div>
+        <b class="num ${x.amount < 0 ? 'red' : ''}"${x.void ? ' style="text-decoration:line-through"' : ''}>${esc((x.amount < 0 ? '−' : '') + fmtRp(Math.abs(x.amount)))}</b></${x.inv ? 'button' : 'div'}>`).join('') || `<div class="empty">${esc(t('dl.none'))}</div>`}</div>
+    <p class="small muted" style="margin-top:10px">${esc(t('dl.kept'))}</p>`;
+  $$('[data-dl-inv]', box).forEach(b => b.onclick = () => openInvoice(b.dataset.dlInv, r));
+}
+/** An invoice as a receipt (to read or print again), from the server's sale + its lines. */
+function rcFromSale(x, items) {
+  const c = x.customer_id != null ? custById(x.customer_id) : null;
+  let parts = null; if (x.payment_method === 'campur') { try { parts = JSON.parse(x.pay_parts || '[]'); } catch (e) { parts = null; } }
+  return {
+    invoice_no: x.invoice_no, client_id: x.client_id || '', pending: false, sale_date: x.sale_date, sale_time: x.sale_time, cashier: x.cashier || '',
+    customer_name: x.customer_name || t('sell.walkin'), customer_phone: c ? c.phone || '' : '', customer_id: x.customer_id, customer_email: c ? c.email || '' : '',
+    lines: (items || []).map(l => { const pr = prodById(l.product_id); return { name: l.name, unit: (pr || {}).unit || '', qty: num(l.qty), unit_price: int(l.unit_price), price_type: l.price_type || '', line_total: int(l.line_total), ...(pr && isWeighed(pr, l.qty) ? { g: toGrams(pr, l.qty), gu: gPer(pr) } : {}) }; }),
+    subtotal: int(x.subtotal), discount: int(x.discount), member_disc: 0, member: null, total: int(x.total), method: x.payment_method || 'tunai', paid: int(x.paid_amount), change: 0, debt: int(x.debt_amount),
+    parts: Array.isArray(parts) && parts.length > 1 ? parts.map(p => ({ m: p.m, a: int(p.a) })) : null, send_fee: int(x.send_fee), promo_code: x.promo_code || '', channel: x.channel || '',
+    approved_by: x.approved_by || '', status: x.status || 'ok', voided: x.status === 'void', copy: true
+  };
+}
+function openInvoice(inv, r) {
+  const x = (r.sales || []).find(y => y.invoice_no === inv); if (!x) { toast(t('err.NOT_FOUND'), 'err'); return; }
+  showReceipt(rcFromSale(x, (r.items || []).filter(i => i.invoice_no === inv)));
+}
+async function openInvoiceLog(d, who) {
+  d = d || today(); who = who || 'all';
+  const el = openModal({ title: t('il.title'), id: 'inv-log', body: `${logDayBar('il', d)}
+    <div class="row wrap" style="gap:8px;margin-bottom:10px"><input class="input grow" id="il-q" type="search" autocomplete="off" placeholder="${esc(t('il.search'))}" style="min-width:160px">
+      <div class="seg" style="min-width:170px"><button type="button" class="${who === 'all' ? 'on' : ''}" data-who="all" id="il-all">${esc(t('il.all'))}</button><button type="button" class="${who === 'me' ? 'on' : ''}" data-who="me" id="il-me">${esc(t('il.mine'))}</button></div></div>
+    <div id="il-body"><div class="spinner"></div></div>` });
+  bindDayBar(el, 'il', d, n => { dropModal(el); openInvoiceLog(n, who); });
+  const box = $('#il-body', el), q = $('#il-q', el);
+  let r;
+  try { r = await api('get_sales', { from: d, to: d }); }
+  catch (e) { box.innerHTML = `<div class="err">${esc(e instanceof NetError ? t('dl.offline') : errMsg(e))}</div>`; return; }
+  const all = (r.sales || []).filter(x => x.sale_date === d).sort((a, b) => String(b.sale_time).localeCompare(String(a.sale_time)));
+  const draw = () => {
+    const k = String(q.value || '').trim().toLowerCase(), me = String(S.user || '').toLowerCase();
+    const list = all.filter(x => (who === 'all' || String(x.cashier || '').toLowerCase() === me) && (!k || `${x.invoice_no} ${x.customer_name || ''} ${x.cashier || ''}`.toLowerCase().includes(k)));
+    const okL = list.filter(x => x.status !== 'void');
+    box.innerHTML = `<div class="small muted" id="il-sum" style="margin-bottom:6px">${esc(t('il.sum', { n: fmtNum(okL.length), total: fmtRp(sum(okL, x => int(x.total))) }))}</div>
+      <div class="list" id="il-list">${list.map(x => `<button type="button" class="li" data-il-inv="${esc(x.invoice_no)}"${x.status === 'void' ? ' data-void="1"' : ''}><div class="grow"><div class="t"><span class="muted num">${esc(saleTime(x))}</span> <b>${esc(x.invoice_no)}</b>${x.status === 'void' ? ` <span class="badge red">${esc(t('il.void'))}</span>` : ''}</div>
+        <div class="s">${esc(x.customer_name || t('sell.walkin'))} · ${esc(x.cashier || '')} · ${esc(t('pm.' + (x.payment_method || 'tunai')))}</div></div><b class="num"${x.status === 'void' ? ' style="text-decoration:line-through"' : ''}>${esc(fmtRp(int(x.total)))}</b></button>`).join('') || `<div class="empty">${esc(t('il.none'))}</div>`}</div>
+      <p class="small muted" style="margin-top:10px">${esc(t('dl.kept'))}</p>`;
+    $$('[data-il-inv]', box).forEach(b => b.onclick = () => openInvoice(b.dataset.ilInv, r));
+  };
+  q.oninput = draw;
+  $$('[data-who]', el).forEach(b => b.onclick = () => { who = b.dataset.who; $$('[data-who]', el).forEach(x => x.classList.toggle('on', x === b)); draw(); });
+  draw();
+}
 /* v16: send the receipt as plain text — WhatsApp (wa.me to the customer's phone, or a number typed here) and e-mail (mailto),
    one tap each; the cashier presses Send in WhatsApp / the mail app. Always Indonesian. */
 function receiptPlain(rc) {
   const st = settings(), L2 = '------------------------------', out = [st.store_name || 'Khair Mart'];
   if (st.address) out.push(st.address);
   out.push(L2, `${tid('rc.no')}: ${rc.invoice_no}${rc.cashier ? ' · ' + rc.cashier : ''}`, `${tid('rc.date')}: ${fmtDateTime(rc.sale_time, rc.sale_date)}`, `${tid('rc.cashier')}: ${rc.cashier}`, `${tid('rc.customer')}: ${rc.customer_name}`, L2);
-  rc.lines.forEach(l => out.push(l.name, `  ${fmtQty(l.qty)} x ${fmtRp(l.unit_price)} = ${fmtRp(l.line_total)}`));
+  rc.lines.forEach(l => out.push(l.name, `  ${l.g ? `${fmtGrams(l.g)} × ${fmtRp(l.unit_price)}/${fmtGrams(l.gu || 1000)}` : `${fmtQty(l.qty)} x ${fmtRp(l.unit_price)}`} = ${fmtRp(l.line_total)}`));
   out.push(L2);
   if (rc.discount) out.push(`${tid('rc.subtotal')}: ${fmtRp(rc.subtotal)}`);
   if (rc.member_disc) out.push(`${tid('mem.disc_line', { pct: fmtPct1(rc.member && rc.member.pct) })}: -${fmtRp(rc.member_disc)}`);
@@ -3949,6 +4101,8 @@ RENDER.more = function () {
       <button class="li" data-act="stock-count" id="m-count">${ic('count')}<div class="grow"><div class="t">${esc(t('more.count'))}</div><div class="s">${esc(t('more.count_s'))}</div></div></button>
       <button class="li" data-act="my-req" id="m-myreq">${ic('list')}<div class="grow"><div class="t">${esc(t('more.myreq'))}</div><div class="s">${esc(t('more.myreq_s'))}</div></div>${mine ? `<span class="badge warn">${mine}</span>` : ''}</button>
       ${isApprover() ? `<button class="li" data-act="apr-open" id="m-apr">${ic('check')}<div class="grow"><div class="t">${esc(t('apr.inbox'))} (<span id="m-apr-n">${AP.count}</span>)</div><div class="s">${esc(t('apr.inbox_s'))}</div></div></button>` : ''}
+      <button class="li" data-act="day-log" id="m-daylog">${ic('wallet')}<div class="grow"><div class="t">${esc(t('dl.title'))}</div><div class="s">${esc(t('dl.menu_s'))}</div></div></button>
+      <button class="li" data-act="inv-log" id="m-invlog">${ic('list')}<div class="grow"><div class="t">${esc(t('il.title'))}</div><div class="s">${esc(t('il.menu_s'))}</div></div></button>
       <button class="li" data-act="last-rc" id="m-last">${ic('receipt')}<div class="grow"><div class="t">${esc(t('more.last_rc'))}</div></div></button>
       <button class="li" data-act="outbox-open" id="m-outbox">${ic('refresh')}<div class="grow"><div class="t">${esc(t('outbox.title'))}</div><div class="s">${esc(t('outbox.pending'))}: <b id="more-outbox-n">${n}</b></div></div></button>
       <div class="li">${ic('globe')}<div class="grow t">${esc(t('more.lang'))}</div><div class="seg" style="min-width:170px"><button class="${S.lang === 'id' ? 'on' : ''}" data-act="set-lang" data-lang="id" id="lang-id">ID</button><button class="${S.lang === 'ar' ? 'on' : ''}" data-act="set-lang" data-lang="ar" id="lang-ar">العربية</button></div></div>
@@ -4231,9 +4385,28 @@ function rkBulkItems() {
 }
 function rkPackItems(b) {
   return b ? rkPacks().filter(p => String(p.repack_from) === String(b.id)).sort((x, y) => num(y.repack_qty) - num(x.repack_qty))
-    .map(p => ({ id: String(p.id), label: p.name, sub: t('rk.pk_sub', { s: fmtQty(p.repack_qty), u: b.unit || '', pu: p.unit || 'pcs', st: fmtQty(p.stock) }) })) : [];
+    .map(p => ({ id: String(p.id), label: p.name, sub: t('rk.pk_sub', { s: KMeasure.label(b, p, p.repack_qty), u: '', pu: p.unit || 'pcs', st: fmtQty(p.stock) }) + (rkWrong(b, p) ? ' ⚠' : '') })) : [];
 }
 const rkMgr = () => S.role === 'manager' || S.role === 'owner';
+/* v72 (owner 2026-10-22: «هناك خطاء في العملية الحسابية» — "Garam Himalaya 1 kg" from "Garam Himalaya 25 Kg" set up as 1 karung a pack, so
+   2 karung showed "2 pcs"): the content is read with the sizes in the two names (KMeasure, shared/measure.js); one that does not match
+   blocks the packing — the manager fixes it with one tap here (the materials stay), a cashier asks the manager. */
+/* v72 (owner 2026-10-22: «مباشرة التطبيق يبين لنا كم المفروض يكون هناك من علبة … ويكتب تحتها مباشرة ثمن 1 كيلوغرام من المادة الأولية»):
+   how many packs one bulk unit gives, and the raw material's cost in one pack (bulk cost ÷ that number) when this account gets costs
+   (the server strips them for a cashier). */
+function rkYieldHTML(b, p, size) {
+  if (!b || !p || !(size > 0)) return '';
+  const n = 1 / size, nTxt = Math.abs(n - Math.round(n)) < 1e-6 ? fmtNum(Math.round(n)) : fmtQty(n), pu = p.unit || 'pcs', bu = b.unit || '';
+  const w = KMeasure.size(b, p), m = w && KMeasure.fits(size, w) ? KMeasure.text(KMeasure.of(p.name, p.unit)) : '', c = int(b.cost_price);
+  return `<div data-yield-per="${esc(nTxt)}">${esc(t('rk.yield_one', { u: bu, am: KMeasure.amountText(b, 1) ? ' (' + KMeasure.amountText(b, 1) + ')' : '', n: nTxt, pu }))}</div>
+    ${c > 0 ? `<div data-raw-cost="${Math.round(c * size)}"><b>${esc(t('rk.raw_cost', { pu, m: m ? ' (' + m + ')' : '', rp: fmtRp(Math.round(c * size)), c: fmtRp(c), u: bu, n: nTxt }))}</b></div>` : ''}`;
+}
+function rkWrong(b, p) { const want = b && p && num(p.repack_qty) > 0 ? KMeasure.size(b, p) : 0; return want && !KMeasure.fits(p.repack_qty, want) ? want : 0; }
+function rkWrongHTML(b, p) {
+  const want = rkWrong(b, p); if (!want) return '';
+  return `<div class="red" data-size-wrong="${esc(p.id)}"><b>${esc(t('rk.size_wrong', { now: KMeasure.label(b, p, p.repack_qty), s: KMeasure.label(b, p, want), pu: p.unit || 'pcs' }))}</b>
+    <div style="margin-top:6px">${rkMgr() ? `<button type="button" class="btn sm primary" id="rk-size-fix" data-id="${esc(p.id)}">${ic('check')} ${esc(t('rk.size_fix', { m: KMeasure.text(KMeasure.of(p.name, p.unit)) }))}</button>` : `<span class="small">${esc(t('rk.size_ask'))}</span>`}</div></div>`;
+}
 /** The approval card of a v38 request (still pending): bulk used → expected packs, made = yield %, loss; too little bulk in stock → red. */
 function rkPreview(box, size, unit, stock, qty, fromQty) {
   if (!box) return;
@@ -4273,22 +4446,33 @@ function openRepack() {
   const amount = $('#rk-amount', el);
   const read = () => {
     const b = prodById(R.bulk), p = R.pack ? prodById(R.pack) : null, size = p ? num(p.repack_qty) : 0, fromQty = qtyVal(amount.value || '');
-    const packs = size > 0 && fromQty > 0 ? Math.floor(fromQty / size + 1e-9) : 0;
-    return { b, p, size, fromQty, packs, left: size > 0 ? roundQty(fromQty - packs * size) : 0 };
+    const packs = KMeasure.packs(fromQty, size); // v72: exact (1 jerigen of 18 L = 18 bottles of 1 L)
+    return { b, p, size, fromQty, packs, left: size > 0 ? roundQty(fromQty - packs * size) : 0, wrong: rkWrong(b, p) };
   };
   const draw = () => {
     const r = read();
     $('#rk-unit', el).textContent = r.b ? (r.b.unit || '') : '—';
     $('#rk-info', el).innerHTML = r.b ? `${esc(t('stock'))} <b class="num" id="rk-bulk-stock">${fmtQty(r.b.stock)} ${esc(r.b.unit || '')}</b>` : '';
     const mats = r.p ? rkMaterials(r.p) : [];
-    $('#rk-pack-info', el).innerHTML = r.p ? `${esc(t('rk.size'))}: <b>${fmtQty(r.size)} ${esc(r.b ? r.b.unit || '' : '')}</b> / ${esc(r.p.unit || 'pcs')}${mats.length ? `<div id="rk-mats">${esc(t('rk.mats', { list: mats.join(', ') }))}</div>` : ''}${rkGoodsMatsHTML(r.p, 0)}` : '';
+    $('#rk-pack-info', el).innerHTML = r.p ? `${esc(t('rk.size'))}: <b>${esc(KMeasure.label(r.b, r.p, r.size))}</b> / ${esc(r.p.unit || 'pcs')}${r.wrong ? '' : rkYieldHTML(r.b, r.p, r.size)}${mats.length ? `<div id="rk-mats">${esc(t('rk.mats', { list: mats.join(', ') }))}</div>` : ''}${rkGoodsMatsHTML(r.p, 0)}` : '';
     const box = $('#rk-calc', el);
+    const okb = $('#rk-ok', el); if (okb) okb.disabled = !!r.wrong || !bulks.length;
+    if (r.wrong) { box.className = 'rp-preview bad'; box.innerHTML = rkWrongHTML(r.b, r.p); const fx = $('#rk-size-fix', el); if (fx) fx.onclick = () => rkFixSize(fx, r.b, r.p); return; } // v72
     if (!r.b || !r.p || !(r.fromQty > 0)) { box.className = 'rp-preview'; box.innerHTML = `<span class="muted">${esc(t('rk.calc_empty'))}</span>`; return; }
-    const u = r.b.unit || '', over = r.fromQty > num(r.b.stock) + 1e-9;
+    const u = r.b.unit || '', over = r.fromQty > num(r.b.stock) + 1e-9, am = KMeasure.amountText(r.b, r.fromQty), w = KMeasure.size(r.b, r.p);
+    const per = am && w ? KMeasure.text(KMeasure.of(r.p.name, r.p.unit)) : ''; // "2 karung (50 kg) ÷ 1 kg = 50 pcs"
     box.className = 'rp-preview' + (over || !r.packs ? ' bad' : '');
-    box.innerHTML = `<div>${esc(fmtQty(r.fromQty))} ${esc(u)} ÷ ${esc(fmtQty(r.size))} ${esc(u)} = <b style="font-size:20px" id="rk-planned" data-planned="${r.packs}">${esc(t('rk.calc_packs', { n: fmtNum(r.packs), u: r.p.unit || 'pcs' }))}</b></div>
+    box.innerHTML = `<div>${esc(fmtQty(r.fromQty))} ${esc(u)}${per ? ` (${esc(am)}) ÷ ${esc(per)}` : ` ÷ ${esc(KMeasure.label(r.b, r.p, r.size))}`} = <b style="font-size:20px" id="rk-planned" data-planned="${r.packs}">${esc(t('rk.calc_packs', { n: fmtNum(r.packs), u: r.p.unit || 'pcs' }))}</b></div>
       ${r.left > 0 ? `<div data-left>${esc(t('rk.calc_left', { q: fmtQty(r.left), u }))}</div>` : ''}${!r.packs ? `<div><b>${esc(t('rk.calc_less', { s: fmtQty(r.size), u }))}</b></div>` : ''}
       ${over ? `<div data-short><b>${esc(t('rk.not_enough', { q: fmtQty(r.b.stock), u }))}</b></div>` : ''}${rkGoodsMatsHTML(r.p, r.packs)}`;
+  };
+  const rkFixSize = async (btn, b, p) => { // v72: the manager corrects the content (the server tells the owner and the accountant)
+    btn.disabled = true;
+    try {
+      const out = await api('set_repack', { product_id: p.id, repack_from: b.id, repack_qty: KMeasure.size(b, p) });
+      if (out.product) { const i = S.products.findIndex(x => String(x.id) === String(out.product.id)); if (i >= 0) S.products[i] = Object.assign({}, S.products[i], out.product); saveCache(); }
+      toast(t('rk.size_fixed'), 'ok'); draw();
+    } catch (e) { toast(errMsg(e), 'err'); btn.disabled = false; }
   };
   const pack = KPick.mount($('#rk-pack', el), { id: 'rk-pack', items: [], placeholder: t('rk.pack_ph'), empty: t('rk.no_match'), label: t('rk.f_pack'),
     onChange: id => { R.pack = id; $('#rk-err', el).textContent = ''; draw(); if (id) amount.focus(); } });
@@ -4306,7 +4490,8 @@ function openRepack() {
     if (!r.p) { err.textContent = t('rk.pick_first'); pack.focus(); return; }
     if (!(r.fromQty > 0)) { err.textContent = t('rk.qty_invalid'); amount.focus(); return; }
     if (r.fromQty > num(r.b.stock) + 1e-9) { err.textContent = t('rk.not_enough', { q: fmtQty(r.b.stock), u: r.b.unit || '' }); return; }
-    if (!(r.packs >= 1)) { err.textContent = t('rk.calc_less', { s: fmtQty(r.size), u: r.b.unit || '' }); return; }
+    if (r.wrong) { err.textContent = t('rk.size_wrong', { now: KMeasure.label(r.b, r.p, r.size), s: KMeasure.label(r.b, r.p, r.wrong), pu: r.p.unit || 'pcs' }); return; } // v72
+    if (!(r.packs >= 1)) { err.textContent = t('rk.calc_less', { s: KMeasure.label(r.b, r.p, r.size), u: '' }); return; }
     const data = { client_id: R.cid, from_product_id: r.b.id, to_product_id: r.p.id, from_qty: r.fromQty, note: $('#rk-note', el).value.trim() };
     const pc = moneyVal($('#rk-cost', el).value); if (pc) data.packaging_cost = pc;
     const ex = $('#rk-exp', el).value; if (/^\d{4}-\d{2}-\d{2}$/.test(ex)) data.exp_date = ex;
@@ -4736,6 +4921,8 @@ const ACT = {
   'price-pick': el => { const p = prodById(el.dataset.id); closeModal(); if (p) openPriceChange(p); },
   'my-req': () => openMyRequests(),
   'last-rc': () => openLastReceipts(),
+  'day-log': () => openDayLog(), // v72
+  'inv-log': () => openInvoiceLog(),
   // v33 (owner 2026-10-11): the cashier too may send a rep the shops of a street copied from Google Maps (free) — shared/gmaps-import.js
   'shoplist-open': () => {
     const el = openModal({ title: t('more.shoplist'), id: 'shoplist', body: '<div id="gl-host"></div>', foot: `<button class="btn" data-act="modal-close">${esc(t('close'))}</button>` });
@@ -4865,6 +5052,12 @@ const I18N = {
     'ex.photo': 'Foto nota (boleh kosong)', 'ex.photo_hint': 'Foto nota/struk pengeluaran — dicek dengan jumlah yang diisi.', 'ex.photo_ok': 'Nota terbaca', 'ex.photo_take': 'Foto nota', 'ex.mm_title': 'Jumlah beda dengan nota', 'ex.mm_photo': 'Di nota', 'ex.mm_need_reason': 'Isi alasan selisih dulu',
     'excat.sewa': 'Sewa', 'excat.gaji': 'Gaji', 'excat.listrik_air': 'Listrik & air', 'excat.transport': 'Transport', 'excat.iklan': 'Iklan', 'excat.kemasan': 'Kemasan', 'excat.perawatan': 'Perawatan', 'excat.lain': 'Lain-lain',
     'more.debt_pay': 'Terima bayar hutang', 'more.debt_pay_s': 'Pelanggan membayar cicilan', 'more.void': 'Batalkan nota hari ini', 'more.void_s': 'Kirim permintaan ke manajer / akuntan',
+    'dl.title': 'Catatan keuangan hari ini', 'dl.menu_s': 'Penjualan, bayar hutang, uang keluar & masuk laci — milik Anda', 'dl.prev': 'Hari sebelumnya', 'dl.next': 'Hari berikutnya', 'dl.today': 'Hari ini',
+    'dl.offline': 'Butuh internet untuk membuka catatan.', 'dl.n_sales': 'Nota', 'dl.n_void': '{n} batal', 'dl.sales_total': 'Total penjualan', 'dl.cash_blind': 'tampil setelah laci ditutup', 'dl.debt': 'Hutang',
+    'dl.pays_in': 'Bayar hutang diterima', 'dl.money_out': 'Uang keluar', 'dl.closed': 'Laci ditutup {time}: dihitung', 'dl.pay_in': 'Bayar hutang {who}', 'dl.pay_out': 'Bayar {who}', 'dl.exp': 'Pengeluaran {cat}',
+    'dl.from_drawer': 'dari laci', 'dl.cash_in': 'Kas masuk', 'dl.cash_out': 'Kas keluar', 'dl.none': 'Belum ada catatan pada hari ini.', 'dl.kept': 'Semua catatan disimpan permanen di server — tidak bisa dihapus (nota batal hanya ditandai).',
+    'il.title': 'Daftar faktur', 'il.menu_s': 'Semua nota per hari: cari, buka, cetak ulang', 'il.search': 'Cari no. nota / pelanggan / kasir', 'il.all': 'Semua', 'il.mine': 'Saya', 'il.void': 'BATAL', 'il.void_stamp': 'NOTA DIBATALKAN',
+    'il.sum': '{n} nota · {total}', 'il.none': 'Tidak ada nota.',
     'more.price': 'Ubah harga', 'more.price_s': 'Kirim permintaan ubah harga', 'more.price_s_mgr': 'Harga eceran / grosir', 'more.myreq': 'Permintaan saya', 'more.myreq_s': 'Status persetujuan',
     'mgmt.field': 'Lapangan: peta sales & hasil kunjungan', 'mgmt.field_s': 'Hijau pesan · oranye tanpa pesanan · biru tidak mau · hitam tutup', 'more.shoplist': 'Daftar toko untuk sales', 'more.shoplist_s': 'Dari Google Maps → langsung ke rencana sales (gratis)', 'more.last_rc': 'Struk terakhir', 'more.lang': 'Bahasa', 'more.voice': 'Suara barang', 'more.voice_s': 'Sebut nama & jumlah barang (tanpa harga)', 'more.lock': 'Kunci layar', 'more.logout': 'Keluar / ganti kasir', 'more.scanner_s': 'Cara menyambung + tes pindai',
     'scan.close_first': 'Selesaikan jendela yang terbuka dulu, lalu pindai lagi', 'scan.where': 'Pindai di layar Jual, Barang masuk atau Stok opname', 'pu.scan_nf': 'Barcode {code} belum ada di aplikasi — pilih barangnya atau "Produk baru"',
@@ -4981,6 +5174,12 @@ const I18N = {
     'ex.photo': 'صورة الفاتورة (اختياري)', 'ex.photo_hint': 'صوّر فاتورة/إيصال المصروف — يُطابَق مع المبلغ المُدخَل.', 'ex.photo_ok': 'الفاتورة مقروءة', 'ex.photo_take': 'صوّر الفاتورة', 'ex.mm_title': 'المبلغ يختلف عن الفاتورة', 'ex.mm_photo': 'في الفاتورة', 'ex.mm_need_reason': 'اكتب سبب الاختلاف أولًا',
     'excat.sewa': 'الإيجار', 'excat.gaji': 'الرواتب', 'excat.listrik_air': 'الكهرباء والماء', 'excat.transport': 'النقل', 'excat.iklan': 'الإعلانات', 'excat.kemasan': 'التغليف', 'excat.perawatan': 'الصيانة', 'excat.lain': 'أخرى',
     'more.debt_pay': 'استلام سداد دَين', 'more.debt_pay_s': 'العميل يدفع قسطًا', 'more.void': 'إلغاء فاتورة اليوم', 'more.void_s': 'إرسال طلب إلى المدير / المحاسب',
+    'dl.title': 'السجل المالي لليوم', 'dl.menu_s': 'المبيعات، سداد الديون، الداخل والخارج من الدرج — عملياتك', 'dl.prev': 'اليوم السابق', 'dl.next': 'اليوم التالي', 'dl.today': 'اليوم',
+    'dl.offline': 'يلزم الإنترنت لفتح السجل.', 'dl.n_sales': 'الفواتير', 'dl.n_void': '{n} ملغاة', 'dl.sales_total': 'إجمالي المبيعات', 'dl.cash_blind': 'يظهر بعد إغلاق الدرج', 'dl.debt': 'دَين',
+    'dl.pays_in': 'سداد ديون مستلم', 'dl.money_out': 'مال خارج', 'dl.closed': 'أُغلق الدرج {time}: المعدود', 'dl.pay_in': 'سداد دَين {who}', 'dl.pay_out': 'دفع {who}', 'dl.exp': 'مصروف {cat}',
+    'dl.from_drawer': 'من الدرج', 'dl.cash_in': 'نقد داخل', 'dl.cash_out': 'نقد خارج', 'dl.none': 'لا توجد عمليات في هذا اليوم.', 'dl.kept': 'كل السجلات محفوظة دائمًا في الخادم — لا يمكن حذفها (الفاتورة الملغاة تُعلَّم فقط).',
+    'il.title': 'سجل الفواتير', 'il.menu_s': 'كل الفواتير لكل يوم: بحث، فتح، إعادة طباعة', 'il.search': 'ابحث برقم الفاتورة / العميل / الكاشير', 'il.all': 'الكل', 'il.mine': 'فواتيري', 'il.void': 'ملغاة', 'il.void_stamp': 'فاتورة ملغاة',
+    'il.sum': '{n} فاتورة · {total}', 'il.none': 'لا توجد فواتير.',
     'more.price': 'تغيير السعر', 'more.price_s': 'إرسال طلب تغيير سعر', 'more.price_s_mgr': 'سعر التجزئة / الجملة', 'more.myreq': 'طلباتي', 'more.myreq_s': 'حالة الموافقات',
     'mgmt.field': 'الميدان: خريطة المندوبين ونتائج الزيارات', 'mgmt.field_s': 'أخضر طلبية · برتقالي بلا طلبية · أزرق لا يرغب · أسود مغلق', 'more.shoplist': 'قائمة محلات للمندوب', 'more.shoplist_s': 'من خرائط جوجل ← مباشرة إلى خطة المندوب (مجانًا)', 'more.last_rc': 'آخر إيصال', 'more.lang': 'اللغة', 'more.voice': 'صوت الأصناف', 'more.voice_s': 'نطق اسم الصنف والكمية (بدون سعر)', 'more.lock': 'قفل الشاشة', 'more.logout': 'خروج / تغيير الكاشير', 'more.scanner_s': 'طريقة التوصيل + تجربة المسح',
     'scan.close_first': 'أكمل النافذة المفتوحة أولًا ثم امسح مرة أخرى', 'scan.where': 'امسح في شاشة البيع أو البضاعة الواردة أو جرد المخزون', 'pu.scan_nf': 'الباركود {code} غير موجود في التطبيق — اختر الصنف أو «صنف جديد»',
@@ -5293,6 +5492,8 @@ Object.assign(I18N.id, {
   'np.title': 'Buat PIN baru', 'np.hint6': 'PIN 6 angka (pemilik / manajer)', 'np.hint46': 'PIN 4–6 angka', 'np.first': 'Ketik PIN baru', 'np.again': 'Ulangi PIN baru', 'np.ok': 'OK',
   'np.mismatch': 'PIN tidak sama, ulangi', 'np.same': 'PIN baru harus beda dengan PIN lama', 'np.done': 'PIN baru tersimpan', 'np.need_online': 'Buat PIN baru perlu internet',
   'shelf.rak': 'Rak', 'shelf.gudang': 'Gudang', 'shelf.move_first': '{name}: belum di rak — pindahkan dari gudang dulu (rak {shop}, gudang {gudang})',
+  'shelf.pull': 'Ambil {q} dari gudang & tambahkan', 'shelf.pull_note': 'Diambil langsung dari gudang saat penjualan', 'shelf.pulled': '{q} dipindah dari gudang ke rak',
+  'ws.badge_weigh': 'Timbang', 'ws.weigh_btn': 'Timbang — beli per gram (1 {u} = {g})',
   'shelf.no_goods_in': '{name}: belum ada barang masuk dengan nota (rak {shop})', 'shelf.title': 'Barang belum di rak', 'shelf.refused': 'Penjualan ditolak: barang ini belum ada di rak toko.',
   'shelf.no_note': 'Belum ada barang masuk dengan nota',
   'mv.title': 'Pindah ke rak', 'mv.to_toko': 'Gudang → Rak', 'mv.to_gudang': 'Rak → Gudang', 'mv.hint_toko': 'Barang masuk ada di gudang. Pindahkan yang dipajang ke rak toko agar bisa dijual.',
@@ -5318,6 +5519,8 @@ Object.assign(I18N.ar, {
   'np.title': 'إنشاء رمز سري جديد', 'np.hint6': 'رمز من 6 أرقام (المالك / المدير)', 'np.hint46': 'رمز من 4 إلى 6 أرقام', 'np.first': 'اكتب الرمز الجديد', 'np.again': 'أعد كتابة الرمز الجديد', 'np.ok': 'موافق',
   'np.mismatch': 'الرمزان غير متطابقين، أعد المحاولة', 'np.same': 'يجب أن يختلف الرمز الجديد عن القديم', 'np.done': 'حُفظ الرمز الجديد', 'np.need_online': 'إنشاء رمز جديد يحتاج إلى الإنترنت',
   'shelf.rak': 'الرف', 'shelf.gudang': 'المستودع', 'shelf.move_first': '{name}: ليس على الرف — انقله من المستودع أولًا (الرف {shop}، المستودع {gudang})',
+  'shelf.pull': 'اسحب {q} من المستودع وأضف', 'shelf.pull_note': 'Diambil langsung dari gudang saat penjualan', 'shelf.pulled': 'نُقل {q} من المستودع إلى الرف',
+  'ws.badge_weigh': 'بالميزان', 'ws.weigh_btn': 'بالميزان — شراء بالغرام (1 {u} = {g})',
   'shelf.no_goods_in': '{name}: لا يوجد استلام بفاتورة بعد (الرف {shop})', 'shelf.title': 'البضاعة ليست على الرف', 'shelf.refused': 'رُفض البيع: هذه البضاعة ليست على رف المتجر بعد.',
   'shelf.no_note': 'لا يوجد استلام بفاتورة بعد',
   'mv.title': 'النقل إلى الرف', 'mv.to_toko': 'المستودع ← الرف', 'mv.to_gudang': 'الرف ← المستودع', 'mv.hint_toko': 'البضاعة المستلمة في المستودع. انقل المعروض إلى رف المتجر ليُباع.',
@@ -5541,6 +5744,9 @@ Object.assign(I18N.id, { // v50 two-step repacking (start → the manager confir
   'rk.n_packs': '{n} kemasan', 'rk.pk_sub': '{s} {u} per {pu} · stok {st}',
   'rk.calc_empty': 'Pilih curah dan kemasan, lalu isi berapa curah yang dikemas.', 'rk.calc_packs': '{n} {u}', 'rk.calc_left': 'Sisa {q} {u} (kurang dari satu kemasan)',
   'rk.calc_less': 'Kurang dari isi satu kemasan ({s} {u})', 'rk.pick_bulk': 'Pilih barang curah dulu',
+  'rk.size_wrong': 'Isi kemasan salah: tercatat {now} per {pu}, seharusnya {s}. Kemas ulang ditahan sampai diperbaiki.', 'rk.size_fix': 'Perbaiki: {m} per kemasan',
+  'rk.yield_one': '1 {u}{am} = {n} {pu}', 'rk.raw_cost': 'Bahan baku per {pu}{m}: {rp} = {c} per {u} ÷ {n}',
+  'rk.size_ask': 'Minta manajer memperbaikinya (di Kemas ulang atau di Gudang).', 'rk.size_fixed': 'Isi kemasan diperbaiki',
   'rk.started': 'Mulai dikemas: {from} → {name} (rencana {n})', 'rk.started_hint': 'Setelah selesai, manajer mengonfirmasi jumlah kemasan yang jadi.', 'rk.started_mgr': 'Setelah selesai, konfirmasi hasilnya di "Sedang dikemas".',
   'rk.started_toast': 'Kemas ulang dimulai', 'rk.busy_title2': 'Kemasan ini sedang dikemas',
   'rk.busy2': '{name} sedang mengemas {bulk} {q} {u} → {pack} (mulai {time}). Manajer mengonfirmasi hasilnya dulu — jangan dikemas dua kali.',
@@ -5559,6 +5765,9 @@ Object.assign(I18N.ar, {
   'rk.n_packs': '{n} عبوات', 'rk.pk_sub': '{s} {u} لكل {pu} · المخزون {st}',
   'rk.calc_empty': 'اختر السائب والعبوة، ثم اكتب كمية السائب.', 'rk.calc_packs': '{n} {u}', 'rk.calc_left': 'يتبقى {q} {u} (أقل من عبوة واحدة)',
   'rk.calc_less': 'أقل من كمية عبوة واحدة ({s} {u})', 'rk.pick_bulk': 'اختر الصنف السائب أولًا',
+  'rk.size_wrong': 'محتوى العبوة خطأ: المسجّل {now} لكل {pu}، والصحيح {s}. التعبئة متوقفة حتى يُصحَّح.', 'rk.size_fix': 'تصحيح: {m} لكل عبوة',
+  'rk.yield_one': '1 {u}{am} = {n} {pu}', 'rk.raw_cost': 'المادة الأولية لكل {pu}{m}: {rp} = {c} لكل {u} ÷ {n}',
+  'rk.size_ask': 'اطلب من المدير تصحيحه (في إعادة التعبئة أو في المخزن).', 'rk.size_fixed': 'تم تصحيح محتوى العبوة',
   'rk.started': 'بدأت التعبئة: {from} ← {name} (المخطط {n})', 'rk.started_hint': 'بعد الانتهاء يؤكد المدير عدد العبوات الناتجة.', 'rk.started_mgr': 'بعد الانتهاء أكّد النتيجة في «قيد التعبئة».',
   'rk.started_toast': 'بدأت إعادة التعبئة', 'rk.busy_title2': 'هذه العبوة قيد التعبئة الآن',
   'rk.busy2': '{name} يعبّئ {bulk} {q} {u} ← {pack} (بدأ {time}). يؤكد المدير النتيجة أولًا — لا تعبّئ مرتين.',

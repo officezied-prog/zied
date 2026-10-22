@@ -149,7 +149,7 @@ const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' 
 // by canDecide — and may register a member (save_customer); the cashier may no longer create members.
 // v63 (owner 2026-10-20: «المدير و المحاسب»): and confirm the packs a repack really made (repack_finish), like the manager.
 // v65 (owner 2026-10-20: «المدير و المحاسب يصادق عليها»): and confirm a goods-in note with how it was paid (confirm_purchase).
-const AKUNTAN_READ = ['confirm_purchase', 'repack_finish', 'login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank', 'finance_position']; // v67: + the Keuangan screen (read only)
+const AKUNTAN_READ = ['confirm_purchase', 'repack_finish', 'login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'list_purchases', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank', 'finance_position']; // v67: + the Keuangan screen (read only)
 if (role === 'akuntan' && AKUNTAN_READ.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
 // v36: report_tamper too — the field app reports a code attempt here (it was refused before, so the rep's account was never locked).
 // v71 security: no POS bootstrap for a rep either (it carried every customer's phone, address and debt; the field app has its own).
@@ -194,8 +194,11 @@ function addMove(x, type, amount, note) {
   let mv = [];
   try { mv = JSON.parse(x.moves || '[]'); } catch (e) { mv = []; }
   mv.push({ t: new Date().toISOString(), type: type, amount: amount, note: note, by: me.name });
-  x.moves = JSON.stringify(mv.slice(-100));
+  x.moves = JSON.stringify(mv); // v72 (owner 2026-10-22: «كل السجل لا يمحى»): every move is kept (it kept only the last 100)
 }
+/** A goods-in row as this account may read it: unit costs by strip(); the note's total for the owner / manager / accountant
+ *  (noteTotalOk); a cashier sees another cashier's cash-on-delivery payment without its amount (v68). */
+function rangePurchaseOut(r) { const o = strip(r, role); if (!noteTotalOk()) { delete o.total; const dp = drawerPayOf([o]); if (dp && dp.purpose === 'barang' && str(dp.by).toLowerCase() !== me.name.toLowerCase()) { delete dp.amount; o.drawer_pay = JSON.stringify(dp); } } return o; }
 // v36: profit_loss (the monthly profit & loss statement) needs purchase costs → owner only.
 // v40 (owner 2026-10-12: «المدير هو من يقوم بالتغيير ويصل مجرد إعلام فقط للمالك»): stock_adjust is the owner's AND the manager's
 // (checked in the action); the owner is told of every change the manager makes.
@@ -1334,12 +1337,32 @@ function repackCostsText(list, unit) {
   const tot = list.reduce(function (t, x) { return t + num(x.c !== undefined ? x.c : x.cost); }, 0);
   return 'bahan kemasan per ' + (unit || 'pcs') + ': ' + list.map(function (x) { const q = num(x.q !== undefined ? x.q : x.qty); return str(x.n || x.name) + (q > 0 && q !== 1 ? ' x' + fmtN(q) : '') + ' ' + rpTxt(x.c !== undefined ? x.c : x.cost); }).join(' + ') + ' = ' + rpTxt(tot);
 }
+// v72 (owner 2026-10-22: «هناك خطاء في العملية الحسابية» — "Garam Himalaya 1 kg" from "Garam Himalaya 25 Kg" counted in karung was set
+// up as 1 karung a pack, so 2 karung planned 2 packs, not 50): a pack's content must match the sizes the two names say
+// (shared/measure.js, KMeasure — concatenated before this file by worker/build.js). Names that say no size are not checked.
+function sizeStr(v) { return String(Math.round(num(v) * 10000) / 10000); }
+/** " (1 kg)" after a content in karung / dus … that matches the names, else '' (a bulk counted in kg / liter says it already). */
+function packMeasureTxt(bulk, pack, sz) { const want = KMeasure.size(bulk, pack); return want && KMeasure.fits(sz, want) && !KMeasure.of('', bulk.unit) ? ' (' + KMeasure.text(KMeasure.of(pack.name, pack.unit)) + ')' : ''; }
+/** null when the content fits the names; otherwise the refusal (SIZE_MISMATCH, with `want`: the content the names give). */
+function sizeBad(bulk, pack, sz, atStart) {
+  const want = KMeasure.size(bulk, pack);
+  if (!want || KMeasure.fits(sz, want)) return null;
+  const pu = str(pack.unit) || 'pcs', bu = str(bulk.unit), m = KMeasure.text(KMeasure.of(pack.name, pack.unit));
+  const bm = KMeasure.of('', bulk.unit) ? '' : ' (' + KMeasure.text(KMeasure.of(bulk.name, bulk.unit)) + ' per ' + bu + ')';
+  const what = str(pack.name) + ' (' + m + ') dari ' + str(bulk.name) + bm + ' = ' + sizeStr(want) + ' ' + bu + ' per ' + pu;
+  Object.keys(ops).forEach(function (k) { ops[k] = []; });
+  return done({ ok: false, error: 'SIZE_MISMATCH', want: want, message: atStart
+    ? 'Isi kemasan salah di pengaturan: tercatat ' + sizeStr(sz) + ' ' + bu + ' per ' + pu + ', seharusnya ' + what + '. Manajer memperbaikinya dulu (Gudang → Kemas ulang → Ubah).'
+    : 'Isi per kemasan tidak cocok dengan nama: ' + what + ', bukan ' + sizeStr(sz) + ' ' + bu + '. Tulis ' + m + ' (atau ' + sizeStr(want) + ').' });
+}
 /** The pack product, its bulk product and the quantities (packs made; bulk used = packs × size unless typed). */
 function repackPlan(toId, toQtyIn, fromQtyIn) {
   const to = productById[String(toId)];
   if (!to) return { error: fail('NOT_FOUND', 'Produk kemasan tidak ditemukan') };
   const from = num(to.repack_from) > 0 ? productById[String(to.repack_from)] : null;
   if (!from || !(num(to.repack_qty) > 0)) return { error: fail('INVALID', 'Produk ini belum diatur sebagai kemasan ulang (asal curah + isi per kemasan)') };
+  const bad = sizeBad(from, to, num(to.repack_qty), true); // v72
+  if (bad) return { error: bad };
   const toQty = Math.round(num(toQtyIn) * 1000) / 1000;
   if (!(toQty > 0)) return { error: fail('INVALID', 'Jumlah kemasan jadi tidak valid') };
   const size = num(to.repack_qty);
@@ -2058,10 +2081,12 @@ switch (req.action) {
     const pend = pendingRepackFor(bulk.id); // a cashier's v38 request still waiting for this bulk is decided (or cancelled) first
     if (pend) return repackBusy(pend);
     const size = num(to.repack_qty), fromQty = Math.round(num(data.from_qty) * 1000) / 1000;
+    const badSize = sizeBad(bulk, to, size, true); // v72: a content that does not match the names is fixed by the manager first
+    if (badSize) return badSize;
     if (!(fromQty > 0)) return fail('INVALID', 'Jumlah curah yang dikemas tidak valid');
     if (fromQty > num(bulk.stock) + 1e-9) return fail('INVALID', 'Stok ' + str(bulk.name) + ' tidak cukup (' + fmtN(bulk.stock) + ' ' + str(bulk.unit) + ')');
-    const planned = Math.floor(fromQty / size + 1e-9);
-    if (planned < 1) return fail('INVALID', fmtN(fromQty) + ' ' + str(bulk.unit) + ' kurang dari isi satu kemasan (' + fmtN(size) + ' ' + str(bulk.unit) + ')');
+    const planned = KMeasure.packs(fromQty, size);
+    if (planned < 1) return fail('INVALID', fmtN(fromQty) + ' ' + str(bulk.unit) + ' kurang dari isi satu kemasan (' + sizeStr(size) + ' ' + str(bulk.unit) + packMeasureTxt(bulk, to, size) + ')');
     const busy = open.find(function (r) { return Number(r.from_product_id) === Number(bulk.id) && Number(r.to_product_id) === Number(to.id); });
     if (busy) {
       Object.keys(ops).forEach(function (k) { ops[k] = []; });
@@ -2097,7 +2122,7 @@ switch (req.action) {
       note: ('diambil untuk dikemas → ' + str(to.name) + ' (rencana ' + planned + ', ' + rp.repack_id + ') ' + rp.note).trim(), user: me.name, photo_id: '', exp_date: '' }, -1));
     const who = { owner: 'pemilik', manager: 'manajer', kasir: 'kasir' }[role] || role;
     const txt = 'Mulai kemas ulang oleh ' + who + ' ' + me.name + ' (' + wibStamp(now) + ', ' + rp.repack_id + '): ' + str(bulk.name) + ' ' + fmtN(fromQty) + ' ' + str(bulk.unit) +
-      ' diambil → ' + str(to.name) + ' (' + fmtN(size) + ' ' + str(bulk.unit) + ' per ' + str(to.unit || 'pcs') + ') = ' + planned + ' kemasan rencana' +
+      ' diambil → ' + str(to.name) + ' (' + sizeStr(size) + ' ' + str(bulk.unit) + packMeasureTxt(bulk, to, size) + ' per ' + str(to.unit || 'pcs') + ') = ' + planned + ' kemasan rencana' +
       (Math.round((fromQty - planned * size) * 1000) / 1000 > 0 ? ', sisa ' + fmtN(Math.round((fromQty - planned * size) * 1000) / 1000) + ' ' + str(bulk.unit) : '') +
       ' | stok ' + str(bulk.name) + ' ' + fmtN(fromOld) + ' → ' + fmtN(fromNew) + ' ' + str(bulk.unit) + (data.confirm_recent === true ? ' — dikonfirmasi bukan kemas ulang ganda' : '') +
       '. Setelah selesai, manajer atau akuntan mengonfirmasi jumlah kemasan jadi.';
@@ -2116,14 +2141,19 @@ switch (req.action) {
     if (str(r.status) !== 'proses') return fail('INVALID', 'Kemas ulang ' + str(r.repack_id) + ' sudah ' + (str(r.status) === 'batal' ? 'dibatalkan' : 'dikonfirmasi') + (str(r.confirmed_by) ? ' oleh ' + str(r.confirmed_by) : ''));
     const bulk = productById[String(r.from_product_id)], to = productById[String(r.to_product_id)];
     if (!bulk || !to) return fail('NOT_FOUND', 'Produk curah / kemasan tidak ditemukan');
-    const F = num(r.from_qty), size = num(r.pack_size) > 0 ? num(r.pack_size) : num(to.repack_qty), cancel = data.cancel === true;
+    const F = num(r.from_qty), cancel = data.cancel === true;
+    let size = num(r.pack_size) > 0 ? num(r.pack_size) : num(to.repack_qty);
+    // v72: a repack started with a content that did not match the names (before the check) is confirmed with the right content:
+    // the corrected set-up when it fits the names, else the content the names give
+    const wantSize = KMeasure.size(bulk, to);
+    if (wantSize && !KMeasure.fits(size, wantSize)) size = KMeasure.fits(num(to.repack_qty), wantSize) ? num(to.repack_qty) : wantSize;
     const made = cancel ? 0 : Math.round(num(data.to_qty) * 1000) / 1000;
     const rem = cancel ? F : Math.round(num(data.remaining_qty) * 1000) / 1000;
     if (!cancel && !(made > 0)) return fail('INVALID', 'Isi jumlah kemasan yang jadi (atau batalkan kemas ulang ini)');
     if (!(rem >= 0) || rem > F + 1e-9) return fail('INVALID', 'Sisa curah harus antara 0 dan ' + fmtN(F) + ' ' + str(r.from_unit));
     const used = Math.round((F - rem) * 1000) / 1000;
     if (!cancel && !(used > 0)) return fail('INVALID', 'Tidak ada curah yang terpakai: periksa sisa curah');
-    if (made * size > used * 1.1 + 1e-9) return fail('INVALID', fmtN(made) + ' kemasan × ' + fmtN(size) + ' ' + str(r.from_unit) + ' lebih dari curah yang terpakai (' + fmtN(used) + ' ' + str(r.from_unit) + ')');
+    if (made * size > used * 1.1 + 1e-9) return fail('INVALID', fmtN(made) + ' kemasan × ' + sizeStr(size) + ' ' + str(r.from_unit) + packMeasureTxt(bulk, to, size) + ' lebih dari curah yang terpakai (' + fmtN(used) + ' ' + str(r.from_unit) + ')');
     const matCost = Math.round(repackCostPer(to) * made), other = Math.max(0, money(r.packaging_cost)) + Math.max(0, money(data.packaging_cost));
     const packCost = cancel ? 0 : other + matCost;
     const bulkCost = num(r.bulk_cost) > 0 ? money(r.bulk_cost) : money(bulk.cost_price);
@@ -2150,7 +2180,7 @@ switch (req.action) {
     }
     const mats = cancel ? [] : useMaterials(to, made, str(r.repack_id) + ', dikonfirmasi ' + me.name, stock, date); // v63
     const nr = Object.assign({}, r, {
-      status: cancel ? 'batal' : 'selesai', repack_date: date, from_qty: used, to_qty: made, expected_qty: expected, yield_pct: yieldPct, loss_qty: cancel ? 0 : loss,
+      status: cancel ? 'batal' : 'selesai', repack_date: date, from_qty: used, to_qty: made, expected_qty: expected, yield_pct: yieldPct, loss_qty: cancel ? 0 : loss, pack_size: size,
       remaining_qty: rem, packaging_cost: packCost, materials_cost: cancel ? 0 : matCost, unit_cost: unitCost, confirmed_by: me.name, confirmed_at: now,
       note: (str(r.note) + (str(data.note) ? (str(r.note) ? ' | ' : '') + str(data.note).slice(0, 200) : '')).slice(0, 500)
     });
@@ -2954,7 +2984,9 @@ switch (req.action) {
       if (!bulk || (existing && bulk.id === existing.id)) return fail('INVALID', 'Produk curah (asal kemasan) tidak valid');
       if (!(num(data.repack_qty) > 0)) return fail('INVALID', 'Isi per kemasan wajib diisi');
       p.repack_from = bulk.id;
-      p.repack_qty = Math.round(num(data.repack_qty) * 1000) / 1000;
+      p.repack_qty = KMeasure.round(num(data.repack_qty)); // v72: kept exact (1/18 karung is not 0.056)
+      const badSize = sizeBad(bulk, p, p.repack_qty, false);
+      if (badSize) return badSize;
     }
     // A cashier's new product is flagged "new — check" (review = the approval id) for the manager / accountant.
     let reviewAp = null;
@@ -3059,13 +3091,15 @@ switch (req.action) {
     if (nw && !bulk) return fail('INVALID', 'Pilih produk curah untuk kemasan baru');
     if (pk && bulk && num(bulk.repack_from) === num(pk.id)) return fail('INVALID', 'Produk curah itu sendiri dibuat dari produk ini');
     if (bulk && !(num(data.repack_qty) > 0)) return fail('INVALID', 'Isi per kemasan wajib diisi');
-    const qty = bulk ? Math.round(num(data.repack_qty) * 1000) / 1000 : 0;
+    const qty = bulk ? KMeasure.round(num(data.repack_qty)) : 0; // v72: kept exact (1/18 karung is not 0.056)
+    if (bulk) { const badSize = sizeBad(bulk, nw ? { name: str(nw.name), unit: str(nw.unit) || 'pcs' } : pk, qty, false); if (badSize) return badSize; }
     // v50: materials chosen from the list ({name, qty}); `costs` (typed names + cost, v48 apps) still accepted
     const cIn = data.materials !== undefined ? repackMatsIn(data.materials) : data.costs === undefined ? null : repackCostsIn(data.costs);
     if (cIn && cIn.error) return fail('INVALID', cIn.error);
     const who = ' — oleh ' + (role === 'manager' ? 'manajer ' : 'pemilik ') + me.name;
     const told = ['owner', 'manager', 'akuntan'].filter(function (r) { return r !== role; });
-    const desc = function (b, q, unit) { return b ? str(b.name) + ', ' + fmtN(q) + ' ' + str(b.unit) + ' per ' + str(unit || 'pcs') : 'tidak dikemas ulang'; };
+    const packOf = function (unit) { return nw ? { name: str(nw.name), unit: unit } : { name: str(pk.name), unit: unit }; };
+    const desc = function (b, q, unit) { return b ? str(b.name) + ', ' + sizeStr(q) + ' ' + str(b.unit) + packMeasureTxt(b, packOf(unit), q) + ' per ' + str(unit || 'pcs') : 'tidak dikemas ulang'; };
     if (nw) {
       const name = safeName(nw.name, 80);
       if (!name) return fail('INVALID', str(nw.name) ? 'Nama kemasan hanya boleh huruf, angka dan . , \' & ( ) / % + # -' : 'Nama kemasan baru wajib diisi');
@@ -4097,12 +4131,27 @@ switch (req.action) {
     return done({ ok: true, account_id: accId, opening: cur[accId] || null });
   }
 
+  // v72 (the manager 2026-10-22: "History of barang masuk only 30 days. We cannot search history barang masuk by supplier name or by
+  // range date, for example from 12 agustus 2025 - 12 oktober 2025"): the goods-in notes of ANY period (up to 400 days a request), by
+  // supplier / note number — and only pos_purchases is read (a light action: no products, no sales). A cashier: the last 62 days.
+  case 'list_purchases': {
+    if (!isDate(data.from) || !isDate(data.to) || data.from > data.to) return fail('INVALID', 'Rentang tanggal tidak valid');
+    if ((Date.parse(data.to) - Date.parse(data.from)) / 86400000 > 400) return fail('INVALID', 'Rentang paling lama 400 hari — pilih periode yang lebih pendek');
+    if (['owner', 'manager', 'akuntan', 'kasir'].indexOf(role) < 0) return fail('FORBIDDEN', 'Tidak diizinkan');
+    const q = str(data.supplier).toLowerCase().slice(0, 80);
+    const minDay = role === 'kasir' ? new Date(Date.now() + 7 * 3600000 - 62 * 86400000).toISOString().slice(0, 10) : '';
+    return done({ ok: true, from: data.from, to: data.to, supplier: q, purchases: rows('Get Range Purchases')
+      .filter(function (r) { return (!minDay || str(r.purchase_date) >= minDay) && (!q || str(r.supplier).toLowerCase().indexOf(q) >= 0 || str(r.purchase_no).toLowerCase().indexOf(q) >= 0); })
+      .map(rangePurchaseOut) });
+  }
+
   case 'get_sales': {
     if (!isDate(data.from) || !isDate(data.to)) return fail('INVALID', 'Rentang tanggal tidak valid');
-    function rangePurchaseOut(r) { const o = strip(r, role); if (!noteTotalOk()) { delete o.total; const dp = drawerPayOf([o]); if (dp && dp.purpose === 'barang' && str(dp.by).toLowerCase() !== me.name.toLowerCase()) { delete dp.amount; o.drawer_pay = JSON.stringify(dp); } } return o; }
     // v71 security: a cashier reads only what Khair Kasir shows — the last 62 days of sales / their lines / goods-in, and their own
-    // drawer through shiftOut (the open drawer's expected cash stays hidden: the closing count is blind). Payments, supplier
-    // payouts, expenses (salaries …) and other cashiers' drawers are for the owner, the manager and the accountant.
+    // drawer through shiftOut (the open drawer's expected cash stays hidden: the closing count is blind). Other people's payments,
+    // supplier payouts, expenses (salaries …) and other cashiers' drawers are for the owner, the manager and the accountant.
+    // v72 (owner 2026-10-22: «في تطبيق الكاشير لا توجد سجل اليومي للعمليات المالية المنجزة»): + the payments and the expenses the
+    // cashier HIMSELF recorded (his "Catatan hari ini").
     if (role === 'kasir') {
       const minDay = new Date(Date.now() + 7 * 3600000 - 62 * 86400000).toISOString().slice(0, 10);
       const ks = rows('Get Range Sales').filter(function (r) { return str(r.sale_date) >= minDay; }).map(function (r) { return strip(r, role); });
@@ -4110,7 +4159,9 @@ switch (req.action) {
       return done({
         ok: true, sales: ks,
         items: rows('Get Range Items').filter(function (r) { return inv[r.invoice_no]; }).map(function (r) { return strip(r, role); }),
-        payments: [], expenses: [], repacks: [],
+        payments: rows('Get Range Payments').filter(function (r) { return str(r.pay_date) >= minDay && str(r.cashier).toLowerCase() === me.name.toLowerCase(); }).map(clean),
+        expenses: rows('Get Range Expenses').filter(function (r) { return str(r.expense_date) >= minDay && str(r.user).toLowerCase() === me.name.toLowerCase(); }).map(clean),
+        repacks: [],
         purchases: rows('Get Range Purchases').filter(function (r) { return str(r.purchase_date) >= minDay; }).map(rangePurchaseOut),
         shifts: rows('Get Range Shifts').filter(function (r) { return str(r.cashier).toLowerCase() === me.name.toLowerCase(); }).map(shiftOut)
       });

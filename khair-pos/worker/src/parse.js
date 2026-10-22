@@ -37,6 +37,9 @@ export function parseRequest(body, headers) {
     invoice_no: (['void_sale', 'request_void', 'decide_approval'].indexOf(action) >= 0 || (action === 'set_transfer_bank' && data.kind === 'sale')) && data.invoice_no ? String(data.invoice_no) : '__none__',
     from: salesFrom,
     to: salesTo,
+    // v72: list_purchases reads only the goods-in notes of its range; get_sales / daily_report read them with their own range as before
+    pu_from: action === 'list_purchases' && isDate(data.from) ? data.from : salesFrom,
+    pu_to: action === 'list_purchases' && isDate(data.to) ? data.to : salesTo,
     // v57: set_transfer_bank on a payment reads the payments of its day
     pay_from: period ? shift(period + '-01', -3) : (action === 'set_transfer_bank' && data.kind === 'payment' && isDate(data.pay_date) ? data.pay_date : salesFrom),
     pay_to: period ? shift(periodEnd, 3) : (action === 'set_transfer_bank' && data.kind === 'payment' && isDate(data.pay_date) ? data.pay_date : salesTo),

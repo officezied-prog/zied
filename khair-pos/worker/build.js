@@ -77,7 +77,8 @@ function buildSchema() {
 // single STORE_KEY declaration (`const`/`var` STORE_KEY = '__STORE_KEY__';) which we strip so
 // STORE_KEY becomes a parameter fed from the Worker secret.
 const PROCESSES = [
-  { srcs: [['..', 'backend', 'process.js']], fn: 'runProcess', out: 'process.gen.js' },
+  // v72: shared/measure.js (KMeasure — the sizes in product names, also loaded by the apps) goes before the POS process
+  { srcs: [['..', 'shared', 'measure.js'], ['..', 'backend', 'process.js']], fn: 'runProcess', out: 'process.gen.js' },
   { srcs: [['..', 'backend', 'field', 'process-field.js']], fn: 'runProcessField', out: 'process-field.gen.js' },
   { srcs: [['..', 'backend', 'chat', 'chat-core.js'], ['..', 'backend', 'chat', 'process-chat.js']], fn: 'runProcessChat', out: 'process-chat.gen.js' },
   { srcs: [['..', 'backend', 'attendance', 'att-core.js'], ['..', 'backend', 'attendance', 'process-att.js']], fn: 'runProcessAtt', out: 'process-att.gen.js' },

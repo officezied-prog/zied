@@ -1,7 +1,7 @@
 // Real (non-mock) mode against the intercepted backend (the Khair Mart Jumla Worker since 2026-10-10; same envelope as the n8n webhook it replaced): checks the request envelope of API.md
 // and that only network failures (not {ok:false}) put a sale in the outbox.
 const { test, expect } = require('@playwright/test');
-const { sha, confirmQty } = require('./helpers');
+const { sha, confirmQty, blockLiveBackend } = require('./helpers');
 
 const API = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos';
 const KEY = 'test-store-key';
@@ -36,6 +36,7 @@ function fakeBackend() {
 
 test('real mode: envelope, text/plain, pin_hash, n8n array response, outbox on network failure only', async ({ page }) => {
   const be = fakeBackend();
+  await blockLiveBackend(page); // the chat / field / attendance calls never reach the live Worker
   await page.route(API, be.handle);
   await page.goto('index.html');
   await expect(page.locator('#lg-key')).toHaveValue('');

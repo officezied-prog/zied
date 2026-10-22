@@ -1186,6 +1186,17 @@ const MockServer = (() => {
       }
       case 'repack': case 'request_repack': case 'cancel_repack': return repackAction(db, u, action, data, x => canDecideAp(u.role, x)); // v38
       case 'repack_start': { const r0 = window.KRepackMock.start(db, u, data, RPX); dirty = true; return r0; } // v50 step 1: the bulk leaves the stock
+      case 'set_repack': { // v72: the manager corrects a pack's content from Khair Kasir (only the content; the materials stay) — as the server
+        if (!['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Hanya pemilik / manajer');
+        const pk = db.products.find(p => p.id === Number(data.product_id)), bulk = db.products.find(p => p.id === Number(data.repack_from));
+        if (!pk || !bulk) throw E('NOT_FOUND', 'Produk tidak ditemukan');
+        const qty = KMeasure.round(num(data.repack_qty));
+        if (!(qty > 0)) throw E('INVALID', 'Isi per kemasan wajib diisi');
+        window.KRepackMock.sizeCheck(bulk, pk, qty, false, RPX);
+        const was = num(pk.repack_qty); pk.repack_from = bulk.id; pk.repack_qty = qty; dirty = true;
+        notifyR(db, u, ['owner', 'manager', 'akuntan'].filter(r => r !== u.role), 'Kemas ulang diatur: ' + pk.name + ' dibuat dari ' + bulk.name + ', ' + KMeasure.label(bulk, pk, qty) + ' per ' + (pk.unit || 'pcs') + ' (sebelumnya ' + KMeasure.label(bulk, pk, was) + ')', 'info');
+        return { product: Object.assign({}, pk) };
+      }
       case 'repack_finish': { const r0 = window.KRepackMock.finish(db, u, data, RPX); dirty = true; return r0; } // step 2: the manager confirms the result
       case 'list_approvals': {
         if (!['owner', 'manager'].includes(u.role)) throw E('FORBIDDEN', 'Owner/manager only');
@@ -1787,7 +1798,7 @@ const MockServer = (() => {
         const inR = d => d >= data.from && d <= data.to;
         const sales = db.sales.filter(s => inR(s.sale_date));
         const inv = new Set(sales.map(s => s.invoice_no));
-        return { sales, items: db.items.filter(i => inv.has(i.invoice_no)), payments: db.payments.filter(p => inR(p.pay_date)), purchases: db.purchases.filter(p => inR(p.purchase_date)).map(p => { if (u.role === 'owner') return p; const o = Object.assign({}, p); delete o.total; if (u.role === 'kasir') o.drawer_pay = drawerPayView(o.drawer_pay, u.name); return o; }), expenses: db.expenses.filter(x => inR(x.expense_date)), shifts: db.shifts.filter(x => inR(x.shift_date)).map(x => blind(shiftSummary(db, x), u.role)) };
+        return { sales, items: db.items.filter(i => inv.has(i.invoice_no)), payments: db.payments.filter(p => inR(p.pay_date) && (u.role !== 'kasir' || String(p.cashier || '').toLowerCase() === u.name.toLowerCase())), purchases: db.purchases.filter(p => inR(p.purchase_date)).map(p => { if (u.role === 'owner') return p; const o = Object.assign({}, p); delete o.total; if (u.role === 'kasir') o.drawer_pay = drawerPayView(o.drawer_pay, u.name); return o; }), expenses: db.expenses.filter(x => inR(x.expense_date) && (u.role !== 'kasir' || String(x.user || '').toLowerCase() === u.name.toLowerCase())), shifts: db.shifts.filter(x => inR(x.shift_date)).map(x => blind(shiftSummary(db, x), u.role)) };
       }
       case 'save_settings': {
         needOwner();

@@ -286,10 +286,11 @@
     var cust = rc.customer_name && !/^umum$/i.test(String(rc.customer_name).trim()) ? rc.customer_name : '';
     d.left().pair(R.no, (rc.invoice_no || '-') + (rc.invoice_no && rc.cashier ? ' ' + rc.cashier : '')).pair(when(rc.sale_time, rc.sale_date), cust).hr();
     (rc.lines || []).forEach(function (l) {
-      var name = (l.name || '') + (l.price_type === 'grosir' ? ' (G)' : ''), one = num(l.qty) === 1, q = one ? '' : qty(l.qty) + 'x' + N(l.unit_price), tot = N(l.line_total);
+      // v72: a line sold by weight prints its grams ("350g")
+      var name = (l.name || '') + (l.price_type === 'grosir' ? ' (G)' : ''), one = num(l.qty) === 1 && !l.g, q = one ? '' : l.g ? l.g + 'g' : qty(l.qty) + 'x' + N(l.unit_price), tot = N(l.line_total);
       var left = name + (q ? ' ' + q : '');
       if (ascii(left).length + 1 + tot.length <= d.cols) d.pair(left, tot);
-      else { d.text(name); d.pair('  ' + qty(l.qty) + ' x ' + N(l.unit_price), tot); }
+      else { d.text(name); d.pair('  ' + (l.g ? l.g + ' g' : qty(l.qty) + ' x ' + N(l.unit_price)), tot); }
     });
     d.hr();
     if (num(rc.discount)) d.pair(R.subtotal, N(rc.subtotal));

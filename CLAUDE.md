@@ -86,6 +86,23 @@ sales / items / goods-in + own drawer via `shiftOut`; `list_photos` owner / mana
 `akuntan_sees_cost`); notices and the "Balas" quote hide cost prices / margins (`noticeOut`, `ntSafeText`); a master-code session never
 edits an owner account. Never put personal data (names, phones, bank accounts, addresses) or anything about the store key (length,
 hashes) in the repo: it is PUBLIC.
+**v72 (owner 3.2.0, kasir 1.9.0; owner + manager 2026-10-22):** `shared/measure.js` (KMeasure — sizes written in product names: kg / g /
+gr / ons / L / ml, ½, 1/2, "10 x 500 g"; a kg / liter UNIT wins over the name; two different sizes = unclear → no check) is loaded by the
+owner and cashier apps AND concatenated before `backend/process.js` by `worker/build.js`. A pack's content (`repack_qty`, in the bulk's
+unit) must match the names within 3 % («هناك خطاء في العملية الحسابية»: "Garam Himalaya 1 kg" from "… 25 Kg" set up as 1 karung → 2 karung
+planned 2): `set_repack` / `save_product` refuse `SIZE_MISMATCH` (with `want`), `repack_start` refuses a wrong set-up, `repack_finish`
+confirms an older wrong start with the right size; stored exact (12 decimals: 1/18 must not plan 17); `KMeasure.packs()` = the planned
+packs everywhere. The content box takes "1 kg" / "500 g" (auto-filled from the names); a wrong set-up is red with a one-tap fix
+(owner / manager; also in Khair Kasir); the repack screens show "1 karung (25 kg) = 25 pcs" and, for whoever sees costs, the raw material
+per pack (bulk cost ÷ that). Khair Kasir: "Catatan keuangan hari ini" (the cashier's OWN sales by method, debt payments, drawer
+expenses / payments / cash moves — the cash total hidden while his drawer is open; `get_sales` now gives a cashier his own payments and
+expenses) and "Daftar faktur" (every invoice of a day, mine / all, search, open → receipt; a voided one stamped, never printed again).
+Nothing deletes a record (a shift keeps every move — it kept 100). Goods-in history: `list_purchases` (light: only pos_purchases, any
+period ≤ 400 days, supplier / note search; a cashier 62 days) + date range, search, total, CSV in the owner app. Khair Kasir sells by
+weight ANY product whose name says its weight ("Madu … 1 Kg", "Coklat 2 kg"): "⚖ Timbang" in its quantity sheet → grams → qty =
+grams ÷ the unit's grams (0.35 of a jar, priced and taken from stock as such; receipts print "350 g"); cards show Rak AND Gudang always
+(an opened unit as "1 pcs + 650 g"); more than the shelf → "Ambil … dari gudang & tambahkan" (a recorded `move_stock`, then into the cart).
+
 
 **Backend = "Khair Mart Jumla" (الخير مارت جملة) — LIVE since 2026-10-10.** The owner, cashier
 and field-sales apps point at the Cloudflare Worker `https://khair-mart-jumla.officezied.workers.dev`

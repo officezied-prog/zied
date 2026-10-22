@@ -36,12 +36,18 @@ test('the manager sets a pack product from a bulk one; the owner and the account
   assert.match(n.summary, /Kemas ulang diatur: Minyak Goreng 1\/2 L dibuat dari Minyak Goreng 20 L, 0\.5 liter per btl — oleh manajer Jihan/);
   const p = { ...db.prepare('SELECT name, retail_price, stock FROM pos_products WHERE id = 2').get() };
   assert.deepEqual(p, { name: 'Minyak Goreng 1/2 L', retail_price: 12000, stock: 0 });
-  // changed later: the notice says what it was before
-  await call(ad, 'Jihan', 'set_repack', { product_id: 2, repack_from: 1, repack_qty: 0.45 });
-  assert.match(notices(db).at(-1).summary, /0\.45 liter per btl \(sebelumnya Minyak Goreng 20 L, 0\.5 liter per btl\)/);
+  // v72: a content that does not match the names ("1/2 L" = 0.5 liter) is refused, with the right one
+  const bad = await call(ad, 'Jihan', 'set_repack', { product_id: 2, repack_from: 1, repack_qty: 0.45 });
+  assert.equal(bad.error, 'SIZE_MISMATCH');
+  assert.equal(bad.want, 0.5);
+  assert.match(bad.message, /Minyak Goreng 1\/2 L \(500 ml\) dari Minyak Goreng 20 L = 0\.5 liter per btl, bukan 0\.45 liter\. Tulis 500 ml \(atau 0\.5\)/);
+  assert.deepEqual(prod(db, 2), { repack_from: 1, repack_qty: 0.5 });
+  // changed later (within 3 %): the notice says what it was before
+  await call(ad, 'Jihan', 'set_repack', { product_id: 2, repack_from: 1, repack_qty: 0.51 });
+  assert.match(notices(db).at(-1).summary, /0\.51 liter per btl \(sebelumnya Minyak Goreng 20 L, 0\.5 liter per btl\)/);
   // the same again: nothing written, no notice
   const before = notices(db).length;
-  const same = await call(ad, 'Jihan', 'set_repack', { product_id: 2, repack_from: 1, repack_qty: 0.45 });
+  const same = await call(ad, 'Jihan', 'set_repack', { product_id: 2, repack_from: 1, repack_qty: 0.51 });
   assert.equal(same.unchanged, true);
   assert.equal(notices(db).length, before);
   // removed
