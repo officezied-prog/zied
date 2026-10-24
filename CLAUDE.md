@@ -107,6 +107,12 @@ grams ÷ the unit's grams (0.35 of a jar, priced and taken from stock as such; r
 app's product form; not for a packaging material, not for a pack made from a bulk); a cashier's answer rides on the manager's review card.
 Yes = listed at once in Gudang → Bahan baku as "Barang curah" ("kemasannya belum diatur" until a pack is set up) and offered right after
 the packed bulks in the repack picker. An older app that does not send it changes nothing (the server keeps the stored answer).
+**History cleaned (2026-10-23; owner chose «ب»: the repo stays public and free):** every branch and the `android` tag were rewritten once
+(git-filter-repo `--sensitive-data-removal`): the owner's full name, the owner's and the manager's personal WhatsApp numbers, the bank
+account, the old notes' store-key hints, the cold stores' agreed rates and a supplier's name are gone from every old version; the owner's
+email on old commits became his GitHub no-reply address. The app files are byte-identical; every older commit hash changed. **Never push
+or merge from a clone or branch made before 2026-10-23** (it would bring the old history back): clone again. The owner asks GitHub
+Support to drop the old pull-request diffs and run the clean-up. Placeholders and test data use made-up names (e.g. "CV Sumber Makmur").
 
 
 **Backend = "Khair Mart Jumla" (الخير مارت جملة) — LIVE since 2026-10-10.** The owner, cashier
