@@ -1,0 +1,20 @@
+# Temporary (2026-10-25): row counts per table (numbers only), to find what makes each request read so many rows.
+name: D1 usage check (temporary)
+on:
+  push:
+    branches: [ccr-06535ad1-7yvo7e]
+permissions:
+  contents: read
+jobs:
+  usage:
+    if: contains(github.event.head_commit.message, '[d1-usage-check]')
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: c82e2561b81c97de7c59166d7a915924
+      WRANGLER_SEND_METRICS: false
+    steps:
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Rows per table
+        run: npx -y wrangler@4 d1 execute khair_mart_jumla --remote --json --command "SELECT (SELECT COUNT(*) FROM pos_products) AS pos_products, (SELECT COUNT(*) FROM pos_customers) AS pos_customers, (SELECT COUNT(*) FROM pos_users) AS pos_users, (SELECT COUNT(*) FROM pos_settings) AS pos_settings, (SELECT COUNT(*) FROM pos_devices) AS pos_devices, (SELECT COUNT(*) FROM pos_chat) AS pos_chat, (SELECT COUNT(*) FROM pos_shops) AS pos_shops, (SELECT COUNT(*) FROM pos_approvals) AS pos_approvals, (SELECT COUNT(*) FROM pos_purchases) AS pos_purchases, (SELECT COUNT(*) FROM pos_sales) AS pos_sales, (SELECT COUNT(*) FROM pos_sale_items) AS pos_sale_items, (SELECT COUNT(*) FROM pos_payments) AS pos_payments, (SELECT COUNT(*) FROM pos_activity) AS pos_activity, (SELECT COUNT(*) FROM pos_repacks) AS pos_repacks, (SELECT COUNT(*) FROM pos_shifts) AS pos_shifts, (SELECT COUNT(*) FROM pos_expenses) AS pos_expenses, (SELECT COUNT(*) FROM pos_workers) AS pos_workers, (SELECT COUNT(*) FROM pos_attendance) AS pos_attendance, (SELECT COUNT(*) FROM pos_att_seals) AS pos_att_seals, (SELECT COUNT(*) FROM pos_photos) AS pos_photos, (SELECT COUNT(*) FROM pos_tamper_shots) AS pos_tamper_shots, (SELECT COUNT(*) FROM pos_returns) AS pos_returns, (SELECT COUNT(*) FROM pos_visits) AS pos_visits, (SELECT COUNT(*) FROM pos_tracks) AS pos_tracks, (SELECT COUNT(*) FROM pos_field_orders) AS pos_field_orders, (SELECT COUNT(*) FROM pos_route_plans) AS pos_route_plans, (SELECT COUNT(*) FROM pos_product_images) AS pos_product_images, (SELECT COUNT(*) FROM cold_pallets) AS cold_pallets, (SELECT COUNT(*) FROM cold_movements) AS cold_movements, (SELECT COUNT(*) FROM brad_orders) AS brad_orders" 2>&1 | grep -E '"(pos|cold|brad)_[a-z_]+": [0-9]+' || true
