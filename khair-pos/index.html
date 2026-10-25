@@ -157,7 +157,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '3.4.0';
+const APP_VERSION = '3.4.1';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -833,13 +833,25 @@ function keepTyped(redraw) {
     el.dataset.typed = '1'; if (focus) el.focus();
   });
 }
+/* 3.4.1: several bootstraps can be on their way at once (the login's refresh, Gudang's fresh stock numbers, "Muat ulang data") and
+   come back in any order. An answer is applied only when no newer one has been applied yet (null = skipped), so older stock never
+   comes back on screen. */
+let bootAsked = 0, bootApplied = 0;
+async function apiBootstrap() {
+  const n = ++bootAsked, r = await api('bootstrap');
+  if (n < bootApplied) return null;
+  bootApplied = n;
+  return r;
+}
 async function refreshData(quiet) {
   try {
-    const r = await api('bootstrap');
-    applyData(r);
-    applyPendingToLocal();
-    ST.qs = null;
-    saveCache();
+    const r = await apiBootstrap();
+    if (r) {
+      applyData(r);
+      applyPendingToLocal();
+      ST.qs = null;
+      saveCache();
+    }
     S.offline = false;
     if (S.inApp) { renderShell(); if (S.view === 'pos') { renderPosSkeleton(); renderGrid(); renderCart(); focusSearch(); } else keepTyped(() => RENDER[S.view] && RENDER[S.view]()); }
     const hl = $('#held-list'); if (hl) drawHeld(hl); // an open held list is re-priced with the fresh data
@@ -5916,9 +5928,11 @@ async function gdLoad(force) {
   try {
     if (force || Date.now() - GD.bootAt > 60000) { // fresh stock numbers without re-rendering the whole app
       GD.bootAt = Date.now();
-      try { const r = await api('bootstrap'); applyData(r); applyPendingToLocal(); saveCache(); updateApprovalBadge(); } catch (e) { if (!(e instanceof NetError)) throw e; }
+      let r = null;
+      try { r = await apiBootstrap(); if (r) { applyData(r); applyPendingToLocal(); saveCache(); updateApprovalBadge(); } } catch (e) { if (!(e instanceof NetError)) throw e; }
+      // 3.4.1: drawn even when another tab was opened meanwhile — that newer load does not ask again, so these are the newest numbers
+      if (r || seq === gdSeq) gdDraw();
       if (seq !== gdSeq) return;
-      gdDraw();
     }
     if (isAudit()) return; // v68: her two tabs (Bahan baku, Produksi stok) read their own data
     if (!GD.d30 || Date.now() - GD.d30At > GD_TTL) {
