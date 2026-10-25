@@ -284,6 +284,34 @@ test('Arabic: both tabs read in Arabic', async ({ page }) => {
   await page.evaluate(() => setLang('id'));
 });
 
+// 3.4.1 (CI 2026-10-22 and 10-25: the Stiker missing from Bahan baku): Gudang's own bootstrap was not drawn when a tab was opened while
+// it was on its way (that newer load does not ask again); its answer is held back here, as a slow network would.
+test('a tab opened while Gudang\'s fresh data is on its way shows that data when it arrives', async ({ page }) => {
+  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await page.waitForFunction(() => API_PENDING.size === 0); // the login's own refresh is in: the material is not on screen yet
+  await addMaterials(page);
+  await page.evaluate(() => { const orig = MockServer.request; MockServer.request = (b, o) => orig(b, o).then(r => b.action === 'bootstrap' ? sleep(700).then(() => r) : r); });
+  await openTab(page, 'bahan');
+  await expect(bbRow(page, 'Stiker Kurma 500 g')).toHaveAttribute('data-bb', 'kemasan');
+});
+test('an older bootstrap that comes back after a newer one is not applied: the newer data stays on screen', async ({ page }) => {
+  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await page.waitForFunction(() => API_PENDING.size === 0);
+  // a refresh reads the data now (no material yet) and its answer is held back until released
+  await page.evaluate(() => {
+    const orig = MockServer.request, gate = new Promise(r => { window.__release = r; }); let held = true;
+    MockServer.request = (b, o) => { if (b.action !== 'bootstrap' || !held) return orig(b, o); held = false; return orig(b, o).then(r => { window.__oldRead = true; return gate.then(() => r); }); };
+    window.__oldDone = refreshData(true);
+  });
+  await page.waitForFunction(() => window.__oldRead === true);
+  await addMaterials(page);
+  await openTab(page, 'bahan');
+  await expect(bbRow(page, 'Stiker Kurma 500 g')).toBeVisible(); // Gudang's own, newer bootstrap
+  await page.evaluate(async () => { window.__release(); await window.__oldDone; }); // the older answer comes back last
+  await expect(bbRow(page, 'Stiker Kurma 500 g')).toBeVisible();
+  expect(await page.evaluate(() => S.products.some(p => p.name === 'Stiker Kurma 500 g'))).toBe(true);
+});
+
 test.describe('phone', () => {
   test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true });
   test('375 px: both tabs fit (no horizontal page scroll); screenshots', async ({ page }) => {
