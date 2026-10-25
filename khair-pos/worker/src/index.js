@@ -10,6 +10,7 @@ import { handlePhoto, handlePhotoFile } from './photo.js';
 import { handleCold } from './cold.js';
 import { handleBrad, handleWaWebhook, handleLalaCron, handleLalaWebhook } from './brad.js';
 import { authGate, credsOf } from './authgate.js';
+import { withTableCache, QuotaError } from './tablecache.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*', // store-key auth, no cookies → safe
@@ -31,7 +32,7 @@ function json(obj, status = 200) {
 // v38: `use` counts the rows this request read / wrote, from D1's own meta (rows_read / rows_written).
 function d1Adapter(DB) {
   const use = { read: 0, write: 0 };
-  return {
+  return withTableCache({ // v74: the tables read whole are kept in memory by version (src/tablecache.js)
     use,
     async all(sql, params) {
       const r = await DB.prepare(sql).bind(...params).all();
@@ -56,7 +57,7 @@ function d1Adapter(DB) {
         return list[i].kind === 'all' ? ((r && r.results) || []) : { lastInsertRowid: m.last_row_id, changes: m.changes };
       });
     },
-  };
+  });
 }
 
 // v39: GET …/health/batch — 60 trivial SELECTs in ONE batch. On the free plan (50 D1 queries per request) this answers
@@ -74,19 +75,27 @@ async function batchHealth(DB) {
 // 100,000 writes a day — reset at 00:00 UTC). Written after the answer has gone out (ctx.waitUntil), never in its way;
 // the owner app shows it and warns long before the limit. A failure here never touches the request.
 let usageTableEnsured = false;
-export async function recordUsage(DB, use, now = new Date()) {
+export async function recordUsage(DB, use, now = new Date(), what = '') {
   const day = now.toISOString().slice(0, 10), at = now.toISOString();
-  const add = async (api, n) => {
-    const u = await DB.prepare('UPDATE pos_api_usage SET n = n + ?, updated_at = ? WHERE api = ? AND month = ?').bind(n, at, api, day).run();
-    if (!(u && u.meta && u.meta.changes > 0)) await DB.prepare('INSERT INTO pos_api_usage (api, month, n, updated_at) VALUES (?, ?, ?, ?)').bind(api, day, n, at).run();
-  };
+  // v74: the rows read per endpoint and action today ('rd:pos:save_sale' …) — what to look at when a day reads too much; all the
+  // counters in one D1 call (a second one only for a counter's first row of the day)
+  const items = [['d1_read', use.read], ['d1_write', use.write], what ? ['rd:' + String(what).slice(0, 40), use.read] : null]
+    .filter((x) => x && Number(x[1]) > 0);
+  if (!items.length) return;
+  const UPD = 'UPDATE pos_api_usage SET n = n + ?, updated_at = ? WHERE api = ? AND month = ?';
+  const INS = 'INSERT INTO pos_api_usage (api, month, n, updated_at) VALUES (?, ?, ?, ?)';
   try {
     if (!usageTableEnsured) {
       await DB.prepare('CREATE TABLE IF NOT EXISTS pos_api_usage (id INTEGER PRIMARY KEY AUTOINCREMENT, api TEXT, month TEXT, n INTEGER NOT NULL DEFAULT 0, updated_at TEXT)').bind().run();
       usageTableEnsured = true;
     }
-    if (use.read > 0) await add('d1_read', use.read);
-    if (use.write > 0) await add('d1_write', use.write);
+    const ups = DB.batch
+      ? await DB.batch(items.map(([api, n]) => DB.prepare(UPD).bind(n, at, api, day)))
+      : await Promise.all(items.map(([api, n]) => DB.prepare(UPD).bind(n, at, api, day).run()));
+    const missing = items.filter((_, i) => !(ups[i] && ups[i].meta && ups[i].meta.changes > 0));
+    if (!missing.length) return;
+    if (DB.batch) await DB.batch(missing.map(([api, n]) => DB.prepare(INS).bind(api, day, n, at)));
+    else for (const [api, n] of missing) await DB.prepare(INS).bind(api, day, n, at).run();
   } catch (e) { /* a lost count is better than a failed request */ }
 }
 
@@ -179,14 +188,16 @@ export default {
     // Field, khair-chat → Chat, khair-att → Attendance, everything else → POS API.
     const path = url.pathname;
     const adapter = d1Adapter(env.DB);
+    const route = path.endsWith('khair-pos-photo') ? 'photo' : path.endsWith('khair-field') ? 'field' : path.endsWith('khair-chat') ? 'chat'
+      : path.endsWith('khair-att') ? 'att' : path.endsWith('khair-cold') ? 'cold' : path.endsWith('khair-brad') ? 'brad' : 'pos';
+    const creds = credsOf(text);
     try {
       // v71 security: one gate before any table is read — the store key (no read at all when it is wrong), then the PIN with the
       // lockout counted on every endpoint (src/authgate.js). The handlers keep all their own checks.
-      const route = path.endsWith('khair-pos-photo') ? 'photo' : path.endsWith('khair-field') ? 'field' : path.endsWith('khair-chat') ? 'chat'
-        : path.endsWith('khair-att') ? 'att' : path.endsWith('khair-cold') ? 'cold' : path.endsWith('khair-brad') ? 'brad' : 'pos';
-      const refused = await authGate(adapter, credsOf(text), env.STORE_KEY, { route, ip: headers['cf-connecting-ip'] || '' });
+      const refused = await authGate(adapter, creds, env.STORE_KEY, { route, ip: headers['cf-connecting-ip'] || '' });
       // a refusal writes nothing more (not even the usage meter): a flood of refused requests costs one small read each at most
       if (refused) return json(refused, 200); // business errors (ok:false) are 200, as before
+      adapter.req = { route, action: creds.action }; // v74: the quota guard (src/tablecache.js) refuses by endpoint and action
       let response;
       if (path.endsWith('khair-pos-photo')) {
         // v36: the base of the stored-photo links (…/webhook/khair-pos-photo) on this Worker's own host.
@@ -202,12 +213,19 @@ export default {
         // v50: the apps show whether the photo reader (AI) is on — the owner sees at once that ANTHROPIC_API_KEY is missing
         if (handler === handleRequest && response && response.ok === true && response.user && response.server_time) response.ai_reader = !!env.ANTHROPIC_API_KEY;
       }
-      const counted = recordUsage(env.DB, adapter.use);
+      const counted = recordUsage(env.DB, adapter.use, new Date(), route + ':' + creds.action);
       if (ctx && ctx.waitUntil) ctx.waitUntil(counted); else await counted; // tests (no ctx) wait for it
       return json(response, 200); // business errors (ok:false) are 200, as n8n returned them
     } catch (e) {
+      // v74: near the free day's limit — the apps keep it like a lost connection (sales wait in their outbox)
+      if (e instanceof QuotaError) {
+        const counted = recordUsage(env.DB, adapter.use, new Date(), route + ':quota');
+        if (ctx && ctx.waitUntil) ctx.waitUntil(counted); else await counted;
+        return json(e.response, 200);
+      }
       // Only true server faults reach here. Keep the message generic (the apps map it to
-      // "مشكلة في الخادم. حاول بعد قليل.").
+      // "مشكلة في الخادم. حاول بعد قليل."). v74: the cause goes to the Worker's own log (wrangler tail / dashboard), never to the app.
+      try { console.error('khair-pos fault', path, String((e && e.message) || e).slice(0, 300)); } catch (e2) { /* never in the way */ }
       return json({ ok: false, error: 'SERVER', message: 'Server error' }, 500);
     }
   },

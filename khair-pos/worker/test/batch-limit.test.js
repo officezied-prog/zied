@@ -39,6 +39,7 @@ test('a 30-item invoice is saved in a handful of D1 calls (was 91 queries; the f
 
 test('importing 200 products in one request works under the limit; a failing write rolls the whole batch back', async () => {
   const db = seed(), env = { DB: d1Mock(db, { maxCalls: 50 }), STORE_KEY: KEY };
+  await call(env, 'Pemilik', '1234', 'bootstrap', {}); // v74: a database's first request also makes pos_meta (src/tablecache.js)
   const rows = Array.from({ length: 200 }, (_, i) => ({ name: 'Impor ' + i, sku: 'IMP' + i, retail_price: 1000 + i }));
   const r = await call(env, 'Pemilik', '1234', 'import_products', { rows });
   assert.equal(r.body.ok, true, JSON.stringify(r.body).slice(0, 200));

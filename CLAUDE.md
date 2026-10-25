@@ -107,6 +107,19 @@ grams ÷ the unit's grams (0.35 of a jar, priced and taken from stock as such; r
 app's product form; not for a packaging material, not for a pack made from a bulk); a cashier's answer rides on the manager's review card.
 Yes = listed at once in Gudang → Bahan baku as "Barang curah" ("kemasannya belum diatur" until a pack is set up) and offered right after
 the packed bulks in the repack picker. An older app that does not send it changes nothing (the server keeps the stored answer).
+**v74 — the free D1 day can no longer stop the shop (owner 3.4.0, kasir 1.11.0, sales 1.9.11; owner 2026-10-25: the shop stopped at
+15:00 and sold with majoo — «أريد أصلح هذه نهائياً … مجانية وآمنة»):** that day 6.1 M rows were read (free: 5 M a day, reset 07:00 WIB):
+every request read the tables it loads whole (all 1,873 products …, ≈2,700 rows), and the apps re-sent an outbox item the server
+REFUSED every 30 s all day. Now (1) `worker/src/tablecache.js`: the tables read whole (`CACHE_TABLES`, checked by test/v74.test.js against
+every `Q.all` / `all()` loader) are kept in the Worker's memory by version — table `pos_meta` (`epoch` + `ver:<table>`), raised by the
+adapter IN THE SAME D1 batch as every write to the table (`writtenTable`), read with today's count each request (a few rows); stale
+tables are read again with their version, and at least every 30 min; any failure of that path falls back to the plain reads.
+(2) Quota guard: today's reads ≥ 70 % → reports + chat answer `QUOTA`; ≥ 90 % → only `ESSENTIAL` actions (login, bootstrap, sales,
+payments, the drawer, field visits). (3) `recordUsage` also counts `rd:<route>:<action>` per UTC day (what read the most); a server
+fault is logged (`console.error('khair-pos fault' …)`, `wrangler tail`), never sent to the app. (4) Apps (owner, kasir, sales): an
+answer `SERVER` / `QUOTA` / a non-JSON answer = `serverDown()` → a NetError (offline sign-in with the known PIN, sales into the outbox,
+sent later); the outbox (`outboxDue` / `outboxFailed`) sends a refused item only by hand ("Kirim sekarang") or drops it, and after a
+server fault waits 30 s, 1, 2, 4 … 30 min (a lost connection: every 30 s, as before).
 **History cleaned (2026-10-23; owner chose «ب»: the repo stays public and free):** every branch and the `android` tag were rewritten once
 (git-filter-repo `--sensitive-data-removal`): the owner's full name, the owner's and the manager's personal WhatsApp numbers, the bank
 account, the old notes' store-key hints, the cold stores' agreed rates and a supplier's name are gone from every old version; the owner's
