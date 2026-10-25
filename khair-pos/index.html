@@ -157,7 +157,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '3.3.1';
+const APP_VERSION = '3.4.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -354,6 +354,23 @@ async function copyText(text) {
 /* ========== API client ========== */
 class ApiError extends Error { constructor(code, message, data) { super(message || code); this.code = code || 'SERVER'; this.data = data || null; } }
 class NetError extends Error { constructor(message) { super(message || 'NETWORK'); this.code = 'NETWORK'; } }
+// v74 (owner 2026-10-25: the shop stopped when the server's free day ran out — an outbox item the server refused was sent again
+// every 30 s all day, each time reading thousands of rows): a server fault (SERVER) or its quota guard (QUOTA) is kept like a lost
+// connection (sign in offline, sales into the outbox, sent by themselves later); an item the server refuses is no longer sent by
+// itself (the outbox shows why: send it again by hand, or drop it); after a server fault the next try waits longer each time
+// (30 s, 1, 2, 4 … up to 30 minutes). A lost connection costs the server nothing and is tried every 30 s as before.
+function serverDown(res) { const e = new NetError(String((res && res.message) || 'SERVER')); e.server = (res && res.error) || 'SERVER'; return e; }
+const outboxDue = e => !e.held && !(e.next_at > Date.now());
+function outboxFailed(e, err) { // true = try the next ones later (connection / server), false = this one was refused
+  e.tries = (e.tries || 0) + 1; e.message = err.message || '';
+  if (err instanceof NetError) {
+    e.error = 'NETWORK'; e.why = err.server || '';
+    e.next_at = err.server ? Date.now() + Math.min(30 * 60000, 30000 * Math.pow(2, Math.min((e.srv_tries = (e.srv_tries || 0) + 1), 7) - 1)) : 0;
+    return true;
+  }
+  e.error = err.code || 'SERVER'; e.why = ''; e.held = true; e.next_at = 0;
+  return false;
+}
 /** Only real network failures/timeouts queue a sale; an {ok:false} answer is shown, never queued. */
 const isRetryable = e => e instanceof NetError;
 
@@ -388,10 +405,11 @@ async function apiRawInner(action, data, cred, opts) {
     } catch (e) { throw new NetError(e && e.message); } finally { clearTimeout(timer); }
     try { res = JSON.parse(txt); } catch (e) {
       if (r.status >= 500 || r.status === 404 || r.status === 0) throw new NetError('HTTP ' + r.status);
-      throw new ApiError('SERVER', 'HTTP ' + r.status);
+      throw serverDown({ error: 'SERVER', message: 'HTTP ' + r.status });
     }
     if (Array.isArray(res)) res = res[0];
   }
+  if (res && (res.error === 'SERVER' || res.error === 'QUOTA')) throw serverDown(res);
   if (!res || res.ok !== true) throw new ApiError((res && res.error) || 'SERVER', res && res.message, res);
   return res;
 }
@@ -414,7 +432,7 @@ async function api(action, data, opts) {
 }
 function errMsg(e) {
   if (!e) return t('err.SERVER');
-  if (e instanceof NetError) return t('err.NETWORK');
+  if (e instanceof NetError) return e.server === 'QUOTA' ? e.message : e.server ? t('err.SERVER') : t('err.NETWORK');
   const k = 'err.' + e.code;
   const base = I18N.id[k] ? t(k) : t('err.SERVER');
   return e.message && e.message !== e.code && S.lang === 'id' ? `${base} (${e.message})` : base;
@@ -1705,6 +1723,7 @@ async function syncOutbox(manual) {
   let sent = 0;
   try {
     for (const e of S.outbox.slice()) {
+      if (!manual && !outboxDue(e)) continue;
       const cred = manual && e.error === 'BAD_PIN' && S.pin_hash ? { key: S.key, user: S.user, pin_hash: S.pin_hash } : { key: e.key, user: e.user, pin_hash: e.pin_hash };
       try {
         const r = await apiRaw('save_sale', e.req, cred);
@@ -1716,9 +1735,10 @@ async function syncOutbox(manual) {
         if (e.field_order && rc.invoice_no) markOrderProcessed(e.field_order, rc.invoice_no);
         sent++;
       } catch (err) {
-        e.tries++; e.error = err.code || 'SERVER'; e.message = err.message || '';
+        const later = outboxFailed(e, err);
         saveOutbox();
-        if (err instanceof NetError) break;
+        if (later) break;
+        if (!manual) toast(errMsg(err), 'err', 6000);
       }
     }
   } finally { syncing = false; }

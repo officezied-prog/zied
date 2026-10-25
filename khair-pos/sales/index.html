@@ -87,7 +87,7 @@ if (window.top !== window.self) { try { window.top.location = window.location.hr
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.9.10';
+const APP_VERSION = 'sales-1.9.11';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -262,6 +262,23 @@ const maskKey = k => k ? '••••' + String(k).slice(-4) : '';
 /* ========== API client (copied from the owner app) ========== */
 class ApiError extends Error { constructor(code, message) { super(message || code); this.code = code || 'SERVER'; } }
 class NetError extends Error { constructor(message) { super(message || 'NETWORK'); this.code = 'NETWORK'; } }
+// v74 (owner 2026-10-25: the shop stopped when the server's free day ran out — an outbox item the server refused was sent again
+// every 30 s all day, each time reading thousands of rows): a server fault (SERVER) or its quota guard (QUOTA) is kept like a lost
+// connection (sign in offline, sales into the outbox, sent by themselves later); an item the server refuses is no longer sent by
+// itself (the outbox shows why: send it again by hand, or drop it); after a server fault the next try waits longer each time
+// (30 s, 1, 2, 4 … up to 30 minutes). A lost connection costs the server nothing and is tried every 30 s as before.
+function serverDown(res) { const e = new NetError(String((res && res.message) || 'SERVER')); e.server = (res && res.error) || 'SERVER'; return e; }
+const outboxDue = e => !e.held && !(e.next_at > Date.now());
+function outboxFailed(e, err) { // true = try the next ones later (connection / server), false = this one was refused
+  e.tries = (e.tries || 0) + 1; e.message = err.message || '';
+  if (err instanceof NetError) {
+    e.error = 'NETWORK'; e.why = err.server || '';
+    e.next_at = err.server ? Date.now() + Math.min(30 * 60000, 30000 * Math.pow(2, Math.min((e.srv_tries = (e.srv_tries || 0) + 1), 7) - 1)) : 0;
+    return true;
+  }
+  e.error = err.code || 'SERVER'; e.why = ''; e.held = true; e.next_at = 0;
+  return false;
+}
 /** Only real network failures/timeouts are queued; an {ok:false} answer is shown, never queued. */
 const isRetryable = e => e instanceof NetError;
 
@@ -291,10 +308,11 @@ async function apiRawInner(action, data, cred, opts) {
     } catch (e) { throw new NetError(e && e.message); } finally { clearTimeout(timer); }
     try { res = JSON.parse(txt); } catch (e) {
       if (r.status >= 500 || r.status === 404 || r.status === 0) throw new NetError('HTTP ' + r.status);
-      throw new ApiError('SERVER', 'HTTP ' + r.status);
+      throw serverDown({ error: 'SERVER', message: 'HTTP ' + r.status });
     }
     if (Array.isArray(res)) res = res[0];
   }
+  if (res && (res.error === 'SERVER' || res.error === 'QUOTA')) throw serverDown(res);
   if (!res || res.ok !== true) { const err = new ApiError((res && res.error) || 'SERVER', res && res.message); err.res = res || null; throw err; }
   return res;
 }
@@ -319,7 +337,7 @@ async function api(action, data, opts) {
 const apiChat = (action, data) => S.pin_hash ? apiRawInner(action, data, sessCred(), { chat: true, timeout: 30000 }) : Promise.reject(new NetError('NO_SESSION'));
 function errMsg(e) {
   if (!e) return t('err.SERVER');
-  if (e instanceof NetError) return t('err.NETWORK');
+  if (e instanceof NetError) return e.server === 'QUOTA' ? e.message : e.server ? t('err.SERVER') : t('err.NETWORK');
   const k = 'err.' + e.code;
   const base = I18N.id[k] ? t(k) : t('err.SERVER');
   return e.message && e.message !== e.code && S.lang === 'id' ? `${base} (${e.message})` : base;
@@ -747,6 +765,7 @@ async function syncOutbox(manual) {
   let sent = 0;
   try {
     for (const e of S.outbox.slice()) {
+      if (!manual && !outboxDue(e)) continue;
       const data = resolveIds(e.data);
       if (String(data.shop_id || '').startsWith('tmp:')) { e.error = 'WAIT'; continue; } // its new shop is not synced yet
       try {
@@ -755,8 +774,9 @@ async function syncOutbox(manual) {
         afterSynced(e, r);
         sent++;
       } catch (err) {
-        e.tries++; e.error = err.code || 'SERVER'; saveOutbox();
-        if (err instanceof NetError) break;
+        const later = outboxFailed(e, err); saveOutbox();
+        if (later) break;
+        if (!manual) toast(errMsg(err), 'err', 6000);
       }
     }
   } finally { syncing = false; }

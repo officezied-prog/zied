@@ -186,6 +186,12 @@ function financeSpecs(data) {
 // Run a {nodeName: {table, sql, params}} spec map and return nodeName -> row[] (booleans
 // coerced). Reads are independent, so they run concurrently. Shared by every workflow.
 export async function execSpecs(adapter, specs) {
+  if (adapter.tables) {
+    try { return await execKept(adapter, specs); } catch (e) {
+      if (e && e.code === 'QUOTA') throw e;
+      // anything else in the kept-tables path: this request reads the plain way below (the cache never stops the shop)
+    }
+  }
   const names = Object.keys(specs);
   // v39 (free Cloudflare plan: at most 50 D1 queries per request): with a batching adapter every read of this request goes
   // to D1 in ONE call (the loaders alone were 29 queries, so a 10-item sale passed the limit).
@@ -199,6 +205,30 @@ export async function execSpecs(adapter, specs) {
     return [name, (rows || []).map((r) => coerceOut(table, r))];
   }));
   return Object.fromEntries(results);
+}
+
+// v74 (src/tablecache.js): the tables read whole come from the Worker's memory while their version is unchanged. One D1 call
+// in the usual case — the versions (+ today's reads, for the quota guard) together with every other read of the request; a
+// second call only for a kept table that changed since (read together with its version, one snapshot).
+async function execKept(adapter, specs) {
+  const tc = adapter.tables, names = Object.keys(specs);
+  const whole = names.filter((n) => tc.covers(specs[n])), rest = names.filter((n) => whole.indexOf(n) < 0);
+  const tables = [...new Set(whole.map((n) => specs[n].table))];
+  const { v, res } = await tc.versions(tables, rest.map((n) => ({ sql: specs[n].sql, params: specs[n].params, kind: 'all' })));
+  tc.guard(v);
+  const out = {};
+  rest.forEach((n, i) => { out[n] = (res[i] || []).map((r) => coerceOut(specs[n].table, r)); });
+  const stale = tables.filter((t) => !tc.fresh(t, v));
+  if (stale.length) {
+    const again = await tc.versions(stale, stale.map((t) => ({ sql: `SELECT * FROM ${t} ORDER BY id`, params: [], kind: 'all' })));
+    stale.forEach((t, i) => tc.keep(t, again.res[i] || [], again.v));
+    if (!again.v.epoch) { // no versions at all (cannot happen once pos_meta exists): this request uses what it just read
+      for (const n of whole) out[n] = (again.res[stale.indexOf(specs[n].table)] || []).map((r) => coerceOut(specs[n].table, Object.assign({}, r)));
+      return out;
+    }
+  }
+  for (const n of whole) out[n] = tc.rows(specs[n].table).map((r) => coerceOut(specs[n].table, r));
+  return out;
 }
 
 // Small SQL builders reused by each workflow's loader specs.

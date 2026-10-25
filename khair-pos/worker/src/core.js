@@ -81,6 +81,8 @@ export const POS_MIGRATIONS = [
   'ALTER TABLE pos_purchases ADD COLUMN drawer_pay TEXT',
   // v73: can the product be repacked into small packs (asked when it is entered)
   'ALTER TABLE pos_products ADD COLUMN repackable INTEGER',
+  // v74: the quota guard reads today's read count on every request — one row through this index (src/tablecache.js)
+  'CREATE INDEX IF NOT EXISTS idx_pos_api_usage_api_month ON pos_api_usage (api, month)',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;
