@@ -19,7 +19,7 @@ const INDEXES = {
   pos_sale_items: ['sale_date', 'invoice_no'],
   pos_payments: ['pay_date', 'customer_id', 'supplier'],
   pos_purchases: ['purchase_date', 'purchase_no', 'supplier'],
-  pos_approvals: ['status', 'request_id', 'client_id'], // v38: client_id — a resent repack request is found by it
+  pos_approvals: ['status', 'request_id', 'client_id', 'kind'], // v38: client_id — a resent repack request is found by it; v75: kind
   pos_expenses: ['expense_date', 'request_id'],
   pos_shifts: ['status', 'shift_date'],
   pos_repacks: ['repack_date'],
@@ -29,7 +29,13 @@ const INDEXES = {
   pos_photos: ['photo_id'],
   pos_tamper_shots: ['shot_id'],
   pos_route_plans: ['plan_date', 'user'],
-  pos_visits: ['shop_id'], // v36: a shop's photos are read by shop
+  pos_visits: ['shop_id', 'visit_date', 'client_id'], // v36: a shop's photos are read by shop
+  // v75: every field request looks up today's rows and one by its client id (src/field.js FIELD_MIGRATIONS adds them to D1)
+  pos_field_orders: ['order_date', 'client_id', 'order_id', 'status'],
+  pos_tracks: ['track_date'],
+  pos_field_days: ['day_date'],
+  pos_product_images: ['product_id'],
+  pos_attendance: ['att_date'], // v75 (src/core.js POS_MIGRATIONS adds it to D1)
   pos_street_log: ['plan_date', 'skey'],
   pos_shop_lists: ['status', 'created_at'],
   pos_api_usage: ['month'],

@@ -7,6 +7,10 @@
 import { TABLES, BOOL_COLS, OPS_TABLE } from '../tables.js';
 
 const SENTINEL_NONE = '__none__';
+// v75: the top of every "from this day on" range. SQLite reads `col >= ? ORDER BY id` by scanning the WHOLE table in id order
+// (an open range never uses the column's index there); `col >= ? AND col <= HIGH` goes through the index and reads only the
+// rows in range. Every value these ranges compare (dates, ISO times: digits first) sorts below it.
+export const HIGH = '~';
 
 // --- value coercion -------------------------------------------------------
 // n8n returns boolean columns as real true/false; D1 stores them as 0/1. Convert on the way
@@ -76,10 +80,14 @@ export function loaderSpecs(req, opts = {}) {
     'Get Settings': all('pos_settings'),
     ...(!opts.full && LIGHT_ACTIONS.indexOf(req.action) >= 0 ? {} : { 'Get Products': all('pos_products'), 'Get Customers': all('pos_customers') }),
     'Get Devices': all('pos_devices'),
-    // v38: yesterday's and today's D1 use (UTC days) — read only by the owner's approvals poll, which shows it
-    'Get D1 Usage': req.action === 'list_approvals'
-      ? range('pos_api_usage', 'month', new Date(Date.now() - 86400000).toISOString().slice(0, 10), new Date().toISOString().slice(0, 10))
-      : eq('pos_api_usage', 'month', SENTINEL_NONE),
+    // v38: yesterday's and today's D1 use (UTC days) — read only by the owner's approvals poll, which shows it. v75: only for
+    // that action, and only the two counters it shows (four rows through the (api, month) index — the table also holds a
+    // per-action counter row for every action of every day since v74, and the old reads scanned it whole on EVERY request)
+    ...(req.action === 'list_approvals' ? { 'Get D1 Usage': {
+      table: 'pos_api_usage',
+      sql: "SELECT * FROM pos_api_usage WHERE api IN ('d1_read', 'd1_write') AND month >= ? AND month <= ? ORDER BY id",
+      params: [new Date(Date.now() - 86400000).toISOString().slice(0, 10), new Date().toISOString().slice(0, 10)],
+    } } : {}),
     'Get Sale By Client': eq('pos_sales', 'client_id', req.client_id),
     // v68: the day's last invoice number and its count (the next one is N + 1) — one indexed aggregate, only for a new sale
     'Get Day Seq': { table: 'pos_sales', sql: 'SELECT COALESCE(MIN(id), 0) AS id, MAX(day_seq) AS mx, COUNT(*) AS n FROM pos_sales WHERE sale_date = ?', // (an id: process.js keeps rows with one)
@@ -91,17 +99,21 @@ export function loaderSpecs(req, opts = {}) {
     'Get Open Shifts': eq('pos_shifts', 'status', 'open'),
     'Get Purchase By No': eq('pos_purchases', 'purchase_no', purchaseNo),
     // v65: for the owner / manager / accountant at bootstrap — the goods-in notes not confirmed yet (the last 30 days) and the
-    // ones bought on credit whose agreed date is near or past (a handful of rows; the light polls never read them)
-    'Get Unchecked Purchases': {
-      table: 'pos_purchases',
-      sql: "SELECT * FROM pos_purchases WHERE purchase_date >= ? AND (check_status IS NULL OR check_status = '') ORDER BY id",
-      params: [req.action === 'bootstrap' ? req.check_since : '9999-12-31'],
-    },
-    'Get Due Purchases': {
-      table: 'pos_purchases',
-      sql: "SELECT * FROM pos_purchases WHERE pay_status = 'tempo' AND due_date <= ? ORDER BY id",
-      params: [req.action === 'bootstrap' ? req.due_until : '0000-01-01'],
-    },
+    // ones bought on credit whose agreed date is near or past (a handful of rows; the light polls never read them).
+    // v75 (2026-10-27 read 2,477,882 rows for 13 sales): only bootstrap shows them, so only bootstrap runs them — the open
+    // range (`>= ?`) scanned every goods-in line (573) on EVERY request, polls included; the closed range uses the date index.
+    ...(req.action === 'bootstrap' ? {
+      'Get Unchecked Purchases': {
+        table: 'pos_purchases',
+        sql: "SELECT * FROM pos_purchases WHERE purchase_date >= ? AND purchase_date <= ? AND (check_status IS NULL OR check_status = '') ORDER BY id",
+        params: [req.check_since, HIGH],
+      },
+      'Get Due Purchases': {
+        table: 'pos_purchases',
+        sql: "SELECT * FROM pos_purchases WHERE pay_status = 'tempo' AND due_date <= ? ORDER BY id",
+        params: [req.due_until],
+      },
+    } : {}),
     'Get Party Sales': eq('pos_sales', 'customer_id', req.party_cid),
     'Get Party Purchases': eq('pos_purchases', 'supplier', req.party_supplier),
     'Get Returns By Ref': eq('pos_returns', 'ref', returnsRef),
@@ -114,7 +126,7 @@ export function loaderSpecs(req, opts = {}) {
     'Get Expense By Request': eq('pos_expenses', 'request_id', req.action === 'decide_approval' ? req.approval_id : SENTINEL_NONE),
     'Get Range Shifts': range('pos_shifts', 'shift_date', req.shift_from, req.shift_to),
     'Get Range Repacks': range('pos_repacks', 'repack_date', req.from, req.to),
-    'Get Recent Repacks': { table: 'pos_repacks', sql: 'SELECT * FROM pos_repacks WHERE repack_date >= ? ORDER BY id', params: [req.rp_from || '9999-12-31'] },
+    'Get Recent Repacks': { table: 'pos_repacks', sql: 'SELECT * FROM pos_repacks WHERE repack_date >= ? AND repack_date <= ? ORDER BY id', params: [req.rp_from || '9999-12-31', HIGH] },
     // v50: the repacks being packed now (started, not yet confirmed) — read only where they are shown or checked; one by id to confirm
     'Get Open Repacks': eq('pos_repacks', 'status', ['bootstrap', 'repack_start', 'repack'].indexOf(req.action) >= 0 ? 'proses' : SENTINEL_NONE),
     'Get Repack By Id': eq('pos_repacks', 'repack_id', req.action === 'repack_finish' ? String(data.repack_id || SENTINEL_NONE) : SENTINEL_NONE),
@@ -126,8 +138,14 @@ export function loaderSpecs(req, opts = {}) {
     // needed), and party payments for this customer OR this supplier.
     'Get Approvals': {
       table: 'pos_approvals',
-      // v38: + the repack request with this client id (a resend returns it even after it was decided)
-      sql: "SELECT * FROM pos_approvals WHERE status = ? OR request_id = ? OR request_id = ? OR (? = 1 AND kind IN ('koreksi', 'refund', 'konsultasi')) OR (kind = 'repack' AND client_id = ?) ORDER BY id",
+      // v38: + the repack request with this client id (a resend returns it even after it was decided). v75: the same rows as
+      // one UNION of index lookups (status, request_id, kind, client_id) — the OR form scanned every approval ever made on
+      // every request; the history part costs nothing when it is off (its `? = 1` is checked once, before any row is read).
+      sql: 'SELECT * FROM pos_approvals WHERE status = ?'
+        + ' UNION SELECT * FROM pos_approvals WHERE request_id IN (?, ?)'
+        + " UNION SELECT * FROM pos_approvals WHERE ? = 1 AND kind IN ('koreksi', 'refund', 'konsultasi')"
+        + " UNION SELECT * FROM pos_approvals WHERE client_id = ? AND +kind = 'repack'" // (+: by client id, not every repack)
+        + ' ORDER BY id',
       params: ['pending', req.approval_id, discApproval, corrHistory, req.approval_client || SENTINEL_NONE],
     },
     'Get Party Payments': {
@@ -236,7 +254,8 @@ export const Q = {
   all: (table) => ({ table, sql: `SELECT * FROM ${table} ORDER BY id`, params: [] }),
   eq: (table, col, val) => ({ table, sql: `SELECT * FROM ${table} WHERE ${col} = ? ORDER BY id`, params: [val] }),
   range: (table, col, from, to) => ({ table, sql: `SELECT * FROM ${table} WHERE ${col} >= ? AND ${col} <= ? ORDER BY id`, params: [from, to] }),
-  gte: (table, col, from) => ({ table, sql: `SELECT * FROM ${table} WHERE ${col} >= ? ORDER BY id`, params: [from] }),
+  // v75: closed at HIGH so the column's index is used (an open `>= ?` scanned the whole table, see HIGH)
+  gte: (table, col, from) => ({ table, sql: `SELECT * FROM ${table} WHERE ${col} >= ? AND ${col} <= ? ORDER BY id`, params: [from, HIGH] }),
 };
 
 // POS loaders.

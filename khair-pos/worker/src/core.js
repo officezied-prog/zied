@@ -6,6 +6,7 @@ import { loadNodes, makeAccessor, applyOps } from './db.js';
 import { finalize } from './finalize.js';
 import { OPS_TABLE } from '../tables.js';
 import { runProcess } from './generated/process.gen.js';
+import { runMigrations } from './migrate.js';
 
 // v36 self-migration (same pattern as field.js): the live D1 predates the expense-check / new-product-review columns and
 // pos_tamper_shots. The Worker adds them itself on the first POS request per isolate — ADD COLUMN / CREATE … IF NOT EXISTS
@@ -83,13 +84,18 @@ export const POS_MIGRATIONS = [
   'ALTER TABLE pos_products ADD COLUMN repackable INTEGER',
   // v74: the quota guard reads today's read count on every request — one row through this index (src/tablecache.js)
   'CREATE INDEX IF NOT EXISTS idx_pos_api_usage_api_month ON pos_api_usage (api, month)',
+  // v75: the lookups the loaders make on every request go through an index, never a whole-table scan (test/v75.test.js
+  // checks every loader's query plan). Same names as schema.sql, so a database made from it gets nothing twice.
+  'CREATE INDEX IF NOT EXISTS idx_pos_api_usage_month ON pos_api_usage (month)',
+  'CREATE INDEX IF NOT EXISTS idx_pos_approvals_kind ON pos_approvals (kind)',
+  'CREATE INDEX IF NOT EXISTS idx_pos_purchases_purchase_date ON pos_purchases (purchase_date)',
+  'CREATE INDEX IF NOT EXISTS idx_pos_repacks_repack_date ON pos_repacks (repack_date)',
+  'CREATE INDEX IF NOT EXISTS idx_pos_attendance_att_date ON pos_attendance (att_date)',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;
-  for (const sql of POS_MIGRATIONS) {
-    try { await adapter.run(sql, []); } catch (e) { /* column already exists — already migrated */ }
-  }
-  posSchemaEnsured = true;
+  // v75: once per database (src/migrate.js) — a new instance reads one row instead of sending all 55 statements again
+  posSchemaEnsured = await runMigrations(adapter, 'schema:pos', POS_MIGRATIONS);
 }
 export function _resetPosSchemaForTests() { posSchemaEnsured = false; }
 
