@@ -212,6 +212,7 @@ CREATE TABLE IF NOT EXISTS pos_approvals (
 CREATE INDEX IF NOT EXISTS idx_pos_approvals_status ON pos_approvals (status);
 CREATE INDEX IF NOT EXISTS idx_pos_approvals_request_id ON pos_approvals (request_id);
 CREATE INDEX IF NOT EXISTS idx_pos_approvals_client_id ON pos_approvals (client_id);
+CREATE INDEX IF NOT EXISTS idx_pos_approvals_kind ON pos_approvals (kind);
 
 CREATE TABLE IF NOT EXISTS pos_expenses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -468,6 +469,8 @@ CREATE TABLE IF NOT EXISTS pos_visits (
   shop_photo TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pos_visits_shop_id ON pos_visits (shop_id);
+CREATE INDEX IF NOT EXISTS idx_pos_visits_visit_date ON pos_visits (visit_date);
+CREATE INDEX IF NOT EXISTS idx_pos_visits_client_id ON pos_visits (client_id);
 
 CREATE TABLE IF NOT EXISTS pos_tracks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -480,6 +483,7 @@ CREATE TABLE IF NOT EXISTS pos_tracks (
   speed REAL,
   battery REAL
 );
+CREATE INDEX IF NOT EXISTS idx_pos_tracks_track_date ON pos_tracks (track_date);
 
 CREATE TABLE IF NOT EXISTS pos_field_days (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -496,6 +500,7 @@ CREATE TABLE IF NOT EXISTS pos_field_days (
   orders REAL,
   note TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_pos_field_days_day_date ON pos_field_days (day_date);
 
 CREATE TABLE IF NOT EXISTS pos_field_orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -516,6 +521,10 @@ CREATE TABLE IF NOT EXISTS pos_field_orders (
   status_note TEXT,
   payment_method TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_pos_field_orders_order_date ON pos_field_orders (order_date);
+CREATE INDEX IF NOT EXISTS idx_pos_field_orders_client_id ON pos_field_orders (client_id);
+CREATE INDEX IF NOT EXISTS idx_pos_field_orders_order_id ON pos_field_orders (order_id);
+CREATE INDEX IF NOT EXISTS idx_pos_field_orders_status ON pos_field_orders (status);
 
 CREATE TABLE IF NOT EXISTS pos_product_images (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -523,6 +532,7 @@ CREATE TABLE IF NOT EXISTS pos_product_images (
   image_base64 TEXT,
   updated_at TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_pos_product_images_product_id ON pos_product_images (product_id);
 
 CREATE TABLE IF NOT EXISTS pos_route_plans (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -641,6 +651,7 @@ CREATE TABLE IF NOT EXISTS pos_attendance (
   prev_hash TEXT,
   hash TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_pos_attendance_att_date ON pos_attendance (att_date);
 
 CREATE TABLE IF NOT EXISTS pos_att_seals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

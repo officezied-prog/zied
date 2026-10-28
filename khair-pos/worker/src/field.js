@@ -1,11 +1,12 @@
 // Field (sales-lapangan) API — replaces the n8n "Khair Mart POS – Field" workflow
 // (POST .../webhook/khair-field). Same pipeline as POS but its own Parse/loaders/process
 // and no Finalize node (the live Respond returns the Process Field response directly).
-import { execSpecs, makeAccessor, applyOps, Q } from './db.js';
+import { execSpecs, makeAccessor, applyOps, Q, HIGH } from './db.js';
 import { OPS_TABLE_FIELD } from '../tables.js';
 import { runProcessField } from './generated/process-field.gen.js';
 import { resolveMapsLinks } from './gmaps.js';
 import { placesSearch } from './places.js';
+import { runMigrations } from './migrate.js';
 
 // ±0.2° (≈ 22 km) around the rep's position / plan start; without one, everywhere.
 function streetBox(data) {
@@ -88,8 +89,8 @@ export function fieldSpecs(req, opts = {}) {
     // v36: one row per worked street (the latest work on it, up to a year back) + whether it is already planned again;
     // the visits / orders of the last 90 days WITHOUT photos or items (small) to score the shops along each street
     'Get Street Summary': { table: 'pos_street_log', sql: 'SELECT l.*, MAX(l.plan_date) AS last_date, (SELECT MAX(p.plan_date) FROM pos_street_log p WHERE p.skey = l.skey AND p.removed = 0 AND p.plan_date > ?) AS next_date FROM pos_street_log l WHERE l.removed = 0 AND l.plan_date <= ? AND l.plan_date >= ? GROUP BY l.skey ORDER BY last_date DESC LIMIT 500', params: [req.today, req.today, req.street_since] },
-    'Get Score Visits': { table: 'pos_visits', sql: 'SELECT id, user, visit_date, shop_id, outcome, rating FROM pos_visits WHERE visit_date >= ? ORDER BY id', params: [req.score_from] },
-    'Get Score Orders': { table: 'pos_field_orders', sql: 'SELECT id, user, order_date, shop_id, total, status FROM pos_field_orders WHERE order_date >= ? ORDER BY id', params: [req.score_from] },
+    'Get Score Visits': { table: 'pos_visits', sql: 'SELECT id, user, visit_date, shop_id, outcome, rating FROM pos_visits WHERE visit_date >= ? AND visit_date <= ? ORDER BY id', params: [req.score_from, HIGH] },
+    'Get Score Orders': { table: 'pos_field_orders', sql: 'SELECT id, user, order_date, shop_id, total, status FROM pos_field_orders WHERE order_date >= ? AND order_date <= ? ORDER BY id', params: [req.score_from, HIGH] },
     'Get Field Settings': Q.eq('pos_settings', 'skey', req.settings_key),
     // latest row per street and rep (SQLite keeps the bare columns of the MAX row), only streets crossing the area box
     'Get Street Log': req.street_box
@@ -138,13 +139,22 @@ export const FIELD_MIGRATIONS = [
     + "COALESCE(json_extract(s.value, '$.lines'), '[]'), -90, 90, -180, 180, 0, p.updated_at "
     + "FROM pos_route_plans p, json_each(CASE WHEN json_valid(p.streets) THEN p.streets ELSE '[]' END) s "
     + "WHERE trim(COALESCE(json_extract(s.value, '$.name'), '')) <> '' AND NOT EXISTS (SELECT 1 FROM pos_street_log)",
+  // v75: every field request looks up today's days / tracks / visits / orders and one by its client id — without these
+  // indexes each lookup read the whole table (the GPS tracks grow every few minutes a rep works)
+  "CREATE INDEX IF NOT EXISTS idx_pos_field_days_day_date ON pos_field_days (day_date)",
+  "CREATE INDEX IF NOT EXISTS idx_pos_tracks_track_date ON pos_tracks (track_date)",
+  "CREATE INDEX IF NOT EXISTS idx_pos_visits_visit_date ON pos_visits (visit_date)",
+  "CREATE INDEX IF NOT EXISTS idx_pos_visits_client_id ON pos_visits (client_id)",
+  "CREATE INDEX IF NOT EXISTS idx_pos_field_orders_order_date ON pos_field_orders (order_date)",
+  "CREATE INDEX IF NOT EXISTS idx_pos_field_orders_client_id ON pos_field_orders (client_id)",
+  "CREATE INDEX IF NOT EXISTS idx_pos_field_orders_order_id ON pos_field_orders (order_id)",
+  "CREATE INDEX IF NOT EXISTS idx_pos_field_orders_status ON pos_field_orders (status)",
+  "CREATE INDEX IF NOT EXISTS idx_pos_product_images_product_id ON pos_product_images (product_id)",
+  "CREATE INDEX IF NOT EXISTS idx_pos_api_usage_month ON pos_api_usage (month)",
 ];
 async function ensureFieldSchema(adapter) {
   if (fieldSchemaEnsured) return;
-  for (const sql of FIELD_MIGRATIONS) {
-    try { await adapter.run(sql, []); } catch (e) { /* column already exists — already migrated */ }
-  }
-  fieldSchemaEnsured = true;
+  fieldSchemaEnsured = await runMigrations(adapter, 'schema:field', FIELD_MIGRATIONS); // v75: once per database (src/migrate.js)
 }
 
 export async function handleField(adapter, body, headers, STORE_KEY, deps = {}) {

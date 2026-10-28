@@ -27,7 +27,8 @@ const call = async (env, user, pin, action, data) => {
 
 test('a 30-item invoice is saved in a handful of D1 calls (was 91 queries; the free plan allows 50)', async () => {
   const db = seed(), env = { DB: d1Mock(db, { maxCalls: 50 }), STORE_KEY: KEY };
-  await call(env, 'Siti', '1111', 'bootstrap', {}); // first request of the isolate also runs the self-migrations
+  await call(env, 'Siti', '1111', 'bootstrap', {}); // the database's first requests also run the self-migrations
+  await call(env, 'Siti', '1111', 'bootstrap', {}); // (v75: at most 40 statements a request, src/migrate.js)
   const items = Array.from({ length: 30 }, (_, i) => ({ product_id: i + 1, qty: 2, unit_price: 1500 }));
   const r = await call(env, 'Siti', '1111', 'save_sale', { client_id: 'big-1', sale_date: today(), items, payment_method: 'tunai', paid_amount: 90000 });
   assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 200));

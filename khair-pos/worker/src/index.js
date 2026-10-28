@@ -78,24 +78,24 @@ let usageTableEnsured = false;
 export async function recordUsage(DB, use, now = new Date(), what = '') {
   const day = now.toISOString().slice(0, 10), at = now.toISOString();
   // v74: the rows read per endpoint and action today ('rd:pos:save_sale' …) — what to look at when a day reads too much; all the
-  // counters in one D1 call (a second one only for a counter's first row of the day)
+  // counters in one D1 call
   const items = [['d1_read', use.read], ['d1_write', use.write], what ? ['rd:' + String(what).slice(0, 40), use.read] : null]
     .filter((x) => x && Number(x[1]) > 0);
   if (!items.length) return;
-  const UPD = 'UPDATE pos_api_usage SET n = n + ?, updated_at = ? WHERE api = ? AND month = ?';
-  const INS = 'INSERT INTO pos_api_usage (api, month, n, updated_at) VALUES (?, ?, ?, ?)';
+  // v75: per counter, the day's row is made when it is missing and then counted — both in the SAME D1 call (one transaction).
+  // The old UPDATE, then INSERT in a second call when nothing was updated, let requests at the same moment each add the day's
+  // first row (2026-10-27: seven rows for one counter, each counting on).
+  const MAKE = 'INSERT INTO pos_api_usage (api, month, n, updated_at) SELECT ?, ?, 0, ? WHERE NOT EXISTS (SELECT 1 FROM pos_api_usage WHERE api = ? AND month = ?)';
+  const ADD = 'UPDATE pos_api_usage SET n = n + ?, updated_at = ? WHERE api = ? AND month = ?';
   try {
     if (!usageTableEnsured) {
       await DB.prepare('CREATE TABLE IF NOT EXISTS pos_api_usage (id INTEGER PRIMARY KEY AUTOINCREMENT, api TEXT, month TEXT, n INTEGER NOT NULL DEFAULT 0, updated_at TEXT)').bind().run();
       usageTableEnsured = true;
     }
-    const ups = DB.batch
-      ? await DB.batch(items.map(([api, n]) => DB.prepare(UPD).bind(n, at, api, day)))
-      : await Promise.all(items.map(([api, n]) => DB.prepare(UPD).bind(n, at, api, day).run()));
-    const missing = items.filter((_, i) => !(ups[i] && ups[i].meta && ups[i].meta.changes > 0));
-    if (!missing.length) return;
-    if (DB.batch) await DB.batch(missing.map(([api, n]) => DB.prepare(INS).bind(api, day, n, at)));
-    else for (const [api, n] of missing) await DB.prepare(INS).bind(api, day, n, at).run();
+    const stmts = [];
+    for (const [api, n] of items) stmts.push(DB.prepare(MAKE).bind(api, day, at, api, day), DB.prepare(ADD).bind(n, at, api, day));
+    if (DB.batch) await DB.batch(stmts);
+    else for (const st of stmts) await st.run();
   } catch (e) { /* a lost count is better than a failed request */ }
 }
 

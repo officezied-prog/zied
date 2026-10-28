@@ -120,6 +120,17 @@ fault is logged (`console.error('khair-pos fault' …)`, `wrangler tail`), never
 answer `SERVER` / `QUOTA` / a non-JSON answer = `serverDown()` → a NetError (offline sign-in with the known PIN, sales into the outbox,
 sent later); the outbox (`outboxDue` / `outboxFailed`) sends a refused item only by hand ("Kirim sekarang") or drops it, and after a
 server fault waits 30 s, 1, 2, 4 … 30 min (a lost connection: every 30 s, as before).
+**v75 — reads through indexes only (server only, apps unchanged; 2026-10-28 review: 27/10 read 2,477,882 rows for 13 sales):**
+SQLite reads `col >= ? ORDER BY id` by scanning the whole table, so every open range is closed at `HIGH` (`'~'`, `src/db.js`; `Q.gte`
+too); the goods-in attention lists (`Get Unchecked / Due Purchases`, 573 rows a request) run at bootstrap only; `Get D1 Usage` only
+for `list_approvals` and only `d1_read` / `d1_write`; `Get Approvals` is a UNION of index lookups (the OR scanned every approval).
+Missing indexes added (`build.js` INDEXES → schema.sql, and the self-migrations for the live D1: pos_api_usage month, pos_approvals
+kind, the field tables' date / client-id / order-id / status, pos_tracks, pos_attendance). `test/v75.test.js` runs the frequent
+requests of every endpoint and fails on any read that scans a growing table (whole cached tables and `pos_settings` / `pos_users`
+excepted). `recordUsage` makes the day's counter row and counts it in ONE batch (concurrent requests made 7 rows of one counter).
+The self-migrations run once per DATABASE (`src/migrate.js`: `pos_meta` 'schema:pos' / 'schema:field' = statements applied;
+at most 40 a request) instead of all 55 on every new Worker instance. Still read in full after each product write: the 1,873
+products (≈ 0.5 M rows a day at 13 sales) — the next step if a day gets close to the limit.
 **History cleaned (2026-10-23; owner chose «ب»: the repo stays public and free):** every branch and the `android` tag were rewritten once
 (git-filter-repo `--sensitive-data-removal`): the owner's full name, the owner's and the manager's personal WhatsApp numbers, the bank
 account, the old notes' store-key hints, the cold stores' agreed rates and a supplier's name are gone from every old version; the owner's
