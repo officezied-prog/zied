@@ -157,7 +157,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '3.4.1';
+const APP_VERSION = '3.5.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -5144,6 +5144,23 @@ const I18N = {
 };
 
 /* i18n v2: approvals, photos */
+// v76: Audit harian — the shop's daily paper as a PDF with the logo, one tap to WhatsApp (the sheet itself is Indonesian, like the paper)
+Object.assign(I18N.id, {
+  'au.title': 'Audit harian (kertas toko)', 'au.send': 'Kirim PDF audit ke WhatsApp', 'au.send_short': 'Kirim audit harian', 'au.pdf': 'Unduh PDF',
+  'au.hint': 'Satu ketukan: WhatsApp terbuka dengan PDF audit berlogo Khair Mart. Pilih chat {who}.',
+  'au.sent': 'Audit harian dikirim', 'au.saved': 'PDF audit diunduh',
+  'au.downloaded': 'PDF audit diunduh — lampirkan di chat WhatsApp Pemilik dan Manajer',
+  'au.fail': 'PDF audit gagal dibuat', 'au.open': 'Kasir masih buka: Zero malam terisi setelah tutup kasir.',
+  'au.diff': 'Zero malam tidak sama dengan seharusnya (selisih {d}).',
+});
+Object.assign(I18N.ar, {
+  'au.title': 'ورقة التدقيق اليومي (ورقة المحل)', 'au.send': 'إرسال ملف الورقة إلى واتساب', 'au.send_short': 'إرسال الورقة اليومية', 'au.pdf': 'تنزيل PDF',
+  'au.hint': 'بضغطة واحدة يفتح واتساب ومعه ملف الورقة بشعار الخير مارت. اختر محادثة {who}.',
+  'au.sent': 'أُرسلت الورقة اليومية', 'au.saved': 'نُزّل ملف الورقة',
+  'au.downloaded': 'نُزّل ملف الورقة — أرفقه في محادثة المالك والمدير على واتساب',
+  'au.fail': 'تعذّر إنشاء ملف الورقة', 'au.open': 'الصندوق ما زال مفتوحاً: نقد المساء يظهر بعد إغلاقه.',
+  'au.diff': 'نقد المساء لا يساوي ما يجب أن يكون (الفرق {d}).',
+});
 Object.assign(I18N.id, {
   'role.manager': 'Manajer', 'nav.approvals': 'Persetujuan', 'navs.approvals': 'Setuju', 'required_short': 'wajib',
   'err.APPROVAL_REQUIRED': 'Hutang kasir perlu persetujuan pemilik/manajer.', 'rc.approved_by': 'Disetujui',
@@ -8709,7 +8726,7 @@ const DR = { date: '', data: null, err: '', withProfit: false, seq: 0, day: null
 function renderDaily(v) {
   if (!DR.date) DR.date = today();
   v.innerHTML = `<div class="view-head"><h1>${esc(t('dr.title'))}</h1><button class="btn sm" data-act="dr-refresh">${ic('refresh')} ${esc(t('refresh'))}</button>
-      <button class="btn sm" data-act="dr-print" id="dr-print">${ic('print')} ${esc(t('ds.print'))}</button><button class="btn sm" data-act="dr-csv" data-k="inv" id="dr-csv-inv">${ic('download')} ${esc(t('ds.csv_inv'))}</button><button class="btn sm" data-act="dr-csv" data-k="prod" id="dr-csv-prod">${ic('download')} ${esc(t('ds.csv_prod'))}</button></div>
+      <button class="btn sm primary" data-act="au-send" id="dr-au-send">${ic('wa')} ${esc(t('au.send_short'))}</button><button class="btn sm" data-act="dr-print" id="dr-print">${ic('print')} ${esc(t('ds.print'))}</button><button class="btn sm" data-act="dr-csv" data-k="inv" id="dr-csv-inv">${ic('download')} ${esc(t('ds.csv_inv'))}</button><button class="btn sm" data-act="dr-csv" data-k="prod" id="dr-csv-prod">${ic('download')} ${esc(t('ds.csv_prod'))}</button></div>
     ${rpModeSeg()}
     <div class="toolbar"><label class="f" style="margin:0">${esc(t('date'))} <input class="input" type="date" id="dr-date" value="${esc(DR.date)}" max="${today()}" style="width:auto"></label></div>
     <div id="dr-body"><div class="empty">${esc(t('loading'))}</div></div>`;
@@ -8744,6 +8761,7 @@ function drawDaily() {
       ${(R.shifts || []).map(x => `<tr data-shift="${esc(x.shift_id || x.cashier)}"><td>${esc(x.cashier)} ${x.status === 'open' ? `<span class="badge amber">${esc(t('shift.status_open'))}</span>` : ''}</td><td class="r num">${fmtRp(x.opening_cash)}</td><td class="r num">${fmtRp(x.expected_cash)}</td><td class="r num">${x.counted_cash == null ? '—' : fmtRp(x.counted_cash)}</td><td class="r num ${x.difference ? 'red' : ''}">${x.difference == null ? '—' : (x.difference > 0 ? '+' : '') + fmtRp(x.difference)}</td></tr>`).join('') || `<tr><td colspan="5" class="empty">${esc(t('no_data'))}</td></tr>`}</tbody></table></div></div>
     <div class="panel" style="margin-bottom:14px" id="dr-top"><h3>${esc(t('home.top'))}</h3><div class="pb">${homeTopRows((R.top_items || []).map(x => ({ name: x.name, qty: x.qty, omzet: x.total, unit: '' })), 10)}</div></div>
     ${dsProductsHTML()}${dsInvoicesHTML()}
+    ${auditCardHTML()}
     <div class="card pad" id="dr-send"><h3 style="margin:0 0 8px;font-size:16px">${ic('wa')} ${esc(t('dr.send_title'))}</h3>
       ${own ? `<label class="check" style="min-height:0"><input type="checkbox" id="dr-profit" ${DR.withProfit ? 'checked' : ''}> ${esc(t('dr.with_profit'))}</label>` : ''}
       <div class="wa-btns" id="dr-wa">${nums.map(([k, n]) => `<a class="btn wa-send" target="_blank" rel="noopener" data-wa="${k}" id="dr-wa-${k}" href="${esc(waLink(n, dailyText(R, own && DR.withProfit)))}">${ic('wa')} ${esc(t('dr.send_' + k))}</a>`).join('')}
@@ -8896,6 +8914,189 @@ function dailyReminderDue() {
   if (!isApprover()) return false;
   const rt = /^\d{2}:\d{2}$/.test(String(settings().report_time || '')) ? settings().report_time : '21:00';
   return jktTime(new Date()) >= rt && store.get('daily_sent', '') !== today();
+}
+
+/* ========== Audit harian (v76, owner 2026-11-05: «كل يوم نقوم بوجهين ورقة مثل هذه … اريدك ان تجهز مثل هذه كل يوم و ترسلها الى الواتس مع شعار
+   الخير مارت», his choice «أ» — «أرسلها لي وللمدير»): the shop's daily paper (TOKO KHAIR MART — AUDIT HARIAN) filled from the day's records,
+   column by column as the staff wrote it by hand: what left the cash drawer (PEMBAYARAN TUNDA — expenses, staff advances, a supplier paid
+   from the drawer …), every cash / transfer / Shopee / Tokopedia / EDC (QRIS + card) receipt with the running totals, the cash taken to the
+   bank, Zero pagi (the drawers' opening cash) and Zero malam (the counted cash, with what it should have been), the store's and the online
+   income. One tap shares it as a PDF with the Khair Mart logo (WhatsApp: the owner and the manager); a computer downloads it. ========== */
+// a cash-out the cashier typed himself that is money taken to the bank (never one the app wrote: an expense, a supplier, a refund)
+const AU_DEPOSIT = /\b(setor(an)?|stor|deposit)\b|\b(bank|bni|bca|bri|mandiri|bsi|cimb|permata|danamon|btn)\b/i;
+const AU_MONTHS = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+/** The paper's content for DR.date — null until the day's report and its records are loaded. */
+function auditOf() {
+  const d = DR.day, R = DR.data && DR.data.report;
+  if (!d || !R) return null;
+  const day = DR.date, up = s => String(s || '').replace(/\s+/g, ' ').trim().toUpperCase();
+  const A = { date: day, out: [], cash: [], transfer: [], shopee: [], tokopedia: [], edc: [], ket: [], deposit: 0, accounts: {} };
+  d.sales.filter(x => x.sale_date === day && x.status !== 'void').sort((a, b) => String(a.sale_time || '').localeCompare(String(b.sale_time || ''))).forEach(x => {
+    if (x.channel === 'shopee' || x.channel === 'tokopedia') { A[x.channel].push(int(x.total)); return; } // the marketplace pays the whole order
+    const p = window.KPay ? KPay.of(x) : methodSplit(x);
+    if (int(p.tunai)) A.cash.push(int(p.tunai));
+    if (int(p.transfer)) { A.transfer.push(int(p.transfer)); A.accounts[x.account_id || ''] = 1; }
+    if (int(p.qris) + int(p.kartu)) A.edc.push(int(p.qris) + int(p.kartu));
+    if (int(x.debt_amount) > 0) A.ket.push({ t: 'HUTANG ' + up(x.customer_name || x.invoice_no), a: int(x.debt_amount) });
+  });
+  (d.payments || []).filter(p => p.pay_date === day && Number(p.customer_id) > 0 && int(p.amount) > 0).forEach(p => { // an older debt paid today
+    const a = int(p.amount), c = custById(p.customer_id);
+    if (p.method === 'transfer') { A.transfer.push(a); A.accounts[p.account_id || ''] = 1; } else if (p.method === 'qris' || p.method === 'kartu') A.edc.push(a); else A.cash.push(a);
+    A.ket.push({ t: 'BAYAR HUTANG ' + up((c && c.name) || p.customer_name || ''), a });
+  });
+  (d.shifts || []).filter(x => x.shift_date === day).forEach(x => {
+    let mv = null; try { mv = JSON.parse(x.moves || 'null'); } catch (e) { mv = null; }
+    if (!Array.isArray(mv)) { // a drawer without its list of moves: its expenses and supplier payments paid from it
+      mv = (d.expenses || []).filter(e => e.shift_id === x.shift_id && e.paid_from === 'kas').map(e => ({ type: 'out', amount: e.amount, note: 'Pengeluaran ' + (e.category || '') + (e.note ? ': ' + e.note : '') }))
+        .concat((d.supplierPayments || []).filter(p => p.shift_id === x.shift_id && p.paid_from === 'kas').map(p => ({ type: 'out', amount: p.amount, note: 'Bayar pemasok ' + (p.supplier || '') })));
+    }
+    mv.forEach(m => {
+      const a = int(m.amount), note = String(m.note || '').trim();
+      if (!a) return;
+      if (m.type === 'in') { A.ket.push({ t: 'KAS MASUK ' + up(note), a }); return; }
+      if (m.type !== 'out') return;
+      if (!/^(Pengeluaran|Bayar pemasok|Retur)\b/i.test(note) && AU_DEPOSIT.test(note)) { A.deposit += a; return; }
+      A.out.push({ t: up(note.replace(/^Pengeluaran:?\s*/i, '')), a });
+    });
+  });
+  const rs = R.shifts || [], closed = rs.filter(x => x.status === 'closed');
+  A.drawers = rs.length; A.open = rs.length - closed.length;
+  A.zero_pagi = sum(rs, x => int(x.opening_cash));
+  A.zero_malam = closed.length && !A.open ? sum(closed, x => int(x.counted_cash)) : null; // only once every drawer of the day is counted
+  A.expected = sum(rs, x => int(x.expected_cash));
+  A.diff = A.zero_malam === null ? null : sum(closed, x => int(x.difference));
+  const tot = arr => arr.reduce((s, v) => s + int(v), 0);
+  A.t = { out: tot(A.out.map(o => o.a)), cash: tot(A.cash), transfer: tot(A.transfer), shopee: tot(A.shopee), tokopedia: tot(A.tokopedia), edc: tot(A.edc) };
+  A.toko = A.t.cash + A.t.transfer + A.t.edc + A.t.shopee + A.t.tokopedia;
+  A.online = A.t.edc;
+  const ids = Object.keys(A.accounts).filter(Boolean), acc = ids.length === 1 && !A.accounts[''] ? bankAccountsList().find(a => String(a.id) === ids[0]) : null;
+  A.tf_label = acc ? 'TRANSFER KE ' + up([acc.bank, acc.holder].filter(Boolean).join(' ')) : 'TOTAL TRANSFER';
+  return A;
+}
+const auNum = n => NF.format(int(n)); // 1.250.000 (the paper writes "Rp" apart)
+const auDay = ymd => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd || ''); return m ? `${m[3]} ${AU_MONTHS[+m[2] - 1]} ${m[1]}` : ''; };
+const auMonth = ymd => { const m = /^(\d{4})-(\d{2})/.exec(ymd || ''); return m ? `${AU_MONTHS[+m[2] - 1].toUpperCase()} ${m[1]}` : ''; };
+/** The paper as a grid — the same cells for the screen (auditHTML) and the PDF (auditCanvas). A cell: { t } text or { rp } an amount
+ *  ("Rp" left, the number right), b bold, hl yellow, al 'c' | 'r', red. */
+function auditGrid(A) {
+  const cols = [['PEMBAYARAN TUNDA', 21], ['PEMBELI', 9], ['CASH', 9], ['TOTAL', 9], ['TRANSFER', 12], ['TOTAL', 9], ['SHOPEE', 8], ['TOKOPEDIA', 8.5], ['EDC', 9], ['KET', 15.5]]
+    .map(([h, w]) => ({ h, w }));
+  const run = arr => { let s = 0; return arr.map(v => (s += int(v))); };
+  const rc = run(A.cash), rt = run(A.transfer), money = v => (v === undefined || v === null ? {} : { rp: v });
+  const n = Math.max(8, A.out.length, A.cash.length, A.transfer.length, A.shopee.length, A.tokopedia.length, A.edc.length, A.ket.length);
+  const body = [];
+  for (let i = 0; i < n; i++) {
+    const o = A.out[i], k = A.ket[i];
+    body.push([o ? { t: o.t } : {}, money(o && o.a), money(A.cash[i]), money(rc[i]), money(A.transfer[i]), money(rt[i]), money(A.shopee[i]), money(A.tokopedia[i]), money(A.edc[i]),
+      k ? { t: k.t + ' ' + auNum(k.a) } : {}]);
+  }
+  const E = {}, hl = v => ({ rp: v, hl: true }), L = (t, al) => ({ t, b: true, al });
+  const malam = A.zero_malam === null ? { t: A.drawers ? 'KAS MASIH BUKA' : '—', b: true, red: !!A.drawers } : hl(A.zero_malam);
+  const foot = [
+    [L('TOTAL'), hl(A.t.out), E, hl(A.t.cash), L(A.tf_label, 'r'), hl(A.t.transfer), A.t.shopee ? hl(A.t.shopee) : { hl: true }, A.t.tokopedia ? hl(A.t.tokopedia) : { hl: true }, hl(A.t.edc), E],
+    [L('STOR TUNAI KE BANK'), A.deposit ? hl(A.deposit) : { t: 'Rp -', hl: true, al: 'r' }, E, E, E, E, E, E, E, E],
+    [L('Zero Pagi'), hl(A.zero_pagi), E, E, E, E, E, E, E, E],
+    [L('Zero Malam'), malam, L('SEHARUSNYA', 'r'), { rp: A.expected }, A.diff !== null ? L('SELISIH', 'r') : E, A.diff !== null ? { rp: A.diff, b: true, red: A.diff !== 0, hl: A.diff !== 0 } : E, E, E, E, E],
+    [L('PENDAPATAN TOKO', 'c'), hl(A.toko), E, E, E, E, E, E, E, E],
+    [L('PENDAPATAN ONLINE', 'c'), { hl: true }, E, E, E, E, E, E, hl(A.online), E],
+  ];
+  return { cols, body, foot };
+}
+function auditHTML(A) {
+  const G = auditGrid(A), w = G.cols.reduce((s, c) => s + c.w, 0);
+  const td = c => `<td class="${[c.b ? 'b' : '', c.hl ? 'hl' : '', c.red ? 'red' : '', c.al === 'c' ? 'c' : c.al === 'r' ? 'r' : ''].join(' ')}">${c.rp !== undefined ? `<span class="rp">Rp</span><span class="v">${auNum(c.rp)}</span>` : esc(c.t || '')}</td>`;
+  return `<div class="au-paper" id="au-paper"><div class="au-head"><img src="logo.png" alt="Khair Mart"><div><b>TOKO ${esc(String(settings().store_name || 'Khair Mart').toUpperCase())}</b><b>AUDIT HARIAN ${esc(auMonth(A.date))}</b></div></div>
+    <div class="au-date"><b>${esc(auDay(A.date))}</b></div>
+    <table class="au-sheet"><colgroup>${G.cols.map(c => `<col style="width:${(c.w * 100 / w).toFixed(2)}%">`).join('')}</colgroup>
+      <thead><tr>${G.cols.map(c => `<th>${esc(c.h)}</th>`).join('')}</tr></thead>
+      <tbody>${G.body.map(r => `<tr>${r.map(td).join('')}</tr>`).join('')}${G.foot.map(r => `<tr class="ft">${r.map(td).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+/** The paper drawn on a canvas (A4 landscape, taller when the day has many lines) — for the PDF. */
+function auditCanvas(A, logo) {
+  const G = auditGrid(A), W = 1684, M = 56, inner = W - 2 * M, wsum = G.cols.reduce((s, c) => s + c.w, 0);
+  const xs = [M]; G.cols.forEach(c => xs.push(xs[xs.length - 1] + c.w * inner / wsum));
+  const RH = 30, HEAD = 150, rows = 1 + G.body.length + G.foot.length;
+  const H = Math.max(Math.round(W / Math.SQRT2), M + HEAD + rows * RH + M);
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+  const font = (px, bold) => { g.font = `${bold ? 'bold ' : ''}${px}px Arial, Helvetica, sans-serif`; };
+  const fit = (s, max) => { s = String(s || ''); if (g.measureText(s).width <= max) return s; while (s.length > 1 && g.measureText(s + '…').width > max) s = s.slice(0, -1); return s + '…'; };
+  if (logo && logo.naturalWidth) { const lh = 84, lw = Math.round(logo.naturalWidth * lh / logo.naturalHeight); g.drawImage(logo, M, M - 8, lw, lh); }
+  g.fillStyle = '#000'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  font(28, true); g.fillText('TOKO ' + String(settings().store_name || 'Khair Mart').toUpperCase(), W / 2, M + 18);
+  font(26, true); g.fillText('AUDIT HARIAN ' + auMonth(A.date), W / 2, M + 56);
+  font(19, true); g.textAlign = 'left'; g.fillText(auDay(A.date), M + 4, M + HEAD - 18);
+  const y0 = M + HEAD, cell = (c, x, y, w, head) => {
+    if (c.hl) { g.fillStyle = '#ffff00'; g.fillRect(x + 1, y + 1, w - 2, RH - 2); }
+    g.fillStyle = c.red ? '#c00000' : '#000'; font(head ? 14 : 15, head || c.b);
+    if (c.rp !== undefined) { g.textAlign = 'left'; g.fillText('Rp', x + 6, y + RH / 2); g.textAlign = 'right'; g.fillText(auNum(c.rp), x + w - 6, y + RH / 2); return; }
+    const t = fit(c.t, w - 10);
+    if (head || c.al === 'c') { g.textAlign = 'center'; g.fillText(t, x + w / 2, y + RH / 2); } else if (c.al === 'r') { g.textAlign = 'right'; g.fillText(t, x + w - 6, y + RH / 2); } else { g.textAlign = 'left'; g.fillText(t, x + 6, y + RH / 2); }
+  };
+  [G.cols.map(c => ({ t: c.h }))].concat(G.body, G.foot).forEach((r, ri) => r.forEach((c, ci) => cell(c, xs[ci], y0 + ri * RH, xs[ci + 1] - xs[ci], ri === 0)));
+  g.strokeStyle = '#000'; g.lineWidth = 1;
+  for (let ri = 0; ri <= rows; ri++) { const y = y0 + ri * RH + 0.5; g.beginPath(); g.moveTo(M, y); g.lineTo(W - M, y); g.stroke(); }
+  xs.forEach(x => { g.beginPath(); g.moveTo(Math.round(x) + 0.5, y0); g.lineTo(Math.round(x) + 0.5, y0 + rows * RH); g.stroke(); });
+  return cv;
+}
+/** A one-page PDF around a JPEG (the page keeps the picture's shape, 842 pt wide = A4 landscape). */
+function pdfOfJpeg(jpg, w, h) {
+  const enc = s => new TextEncoder().encode(s), parts = [], at = [];
+  let len = 0;
+  const push = b => { parts.push(b); len += b.length; };
+  const pw = 842, ph = Math.round(842 * h / w * 100) / 100;
+  const obj = (n, body) => { at[n] = len; push(enc(`${n} 0 obj\n${body}\nendobj\n`)); };
+  push(enc('%PDF-1.4\n'));
+  obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  obj(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+  obj(3, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pw} ${ph}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`);
+  at[4] = len;
+  push(enc(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${w} /Height ${h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpg.length} >>\nstream\n`));
+  push(jpg); push(enc('\nendstream\nendobj\n'));
+  const draw = `q ${pw} 0 0 ${ph} 0 0 cm /Im0 Do Q`;
+  obj(5, `<< /Length ${draw.length} >>\nstream\n${draw}\nendstream`);
+  const xref = len;
+  push(enc('xref\n0 6\n0000000000 65535 f \n' + [1, 2, 3, 4, 5].map(i => String(at[i]).padStart(10, '0') + ' 00000 n \n').join('') + `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`));
+  const out = new Uint8Array(len); let o = 0;
+  parts.forEach(p => { out.set(p, o); o += p.length; });
+  return out;
+}
+const auditFileName = A => `AUDIT_HARIAN_${auDay(A.date).replace(/\s+/g, '_').toUpperCase()}.pdf`;
+async function auditPdf(A) {
+  const logo = await new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = 'logo.png'; });
+  const cv = auditCanvas(A, logo);
+  const jpg = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.92));
+  return new Blob([pdfOfJpeg(new Uint8Array(await jpg.arrayBuffer()), cv.width, cv.height)], { type: 'application/pdf' });
+}
+const auditCaption = A => `Audit harian ${settings().store_name || 'Khair Mart'} — ${fmtDate(A.date)}\nPendapatan toko: ${fmtRp(A.toko)}\nZero malam: ${A.zero_malam === null ? '-' : fmtRp(A.zero_malam)}`;
+/** One tap: the PDF straight into WhatsApp (the phone's share sheet: choose the owner's and the manager's chats); else it is downloaded. */
+async function auditSend(download) {
+  const A = auditOf(); if (!A) { toast(t('loading'), 'warn'); return; }
+  let blob;
+  try { blob = await auditPdf(A); } catch (e) { toast(t('au.fail'), 'err'); return; }
+  const name = auditFileName(A);
+  if (!download && navigator.share && navigator.canShare) {
+    const file = new File([blob], name, { type: 'application/pdf' });
+    let can = false; try { can = navigator.canShare({ files: [file] }); } catch (e) { can = false; }
+    if (can) {
+      try { await navigator.share({ files: [file], title: name, text: auditCaption(A) }); } catch (e) { if (e && e.name === 'AbortError') return; can = false; }
+      if (can) { if (DR.date === today()) { store.set('daily_sent', today()); refreshAttention(); } toast(t('au.sent'), 'ok'); return; }
+    }
+  }
+  const url = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  toast(t(download ? 'au.saved' : 'au.downloaded'), 'ok', 7000);
+}
+function auditCardHTML() {
+  const A = auditOf(); if (!A) return '';
+  const to = (DR.data && DR.data.send_to) || {}, who = [[t('role.owner'), to.owner], [t('role.manager'), to.manager]].filter(x => x[1]).map(x => `${x[0]} (${x[1]})`).join(' & ') || `${t('role.owner')} & ${t('role.manager')}`;
+  return `<div class="card pad" id="au-card" style="margin-bottom:14px"><h3 style="margin:0 0 6px;font-size:16px">${ic('report')} ${esc(t('au.title'))}</h3>
+    <p class="small muted" style="margin:0 0 8px">${esc(t('au.hint', { who }))}</p>
+    ${A.open ? `<p class="small" style="margin:0 0 8px;color:var(--warn,#b45309)">${esc(t('au.open'))}</p>` : A.diff ? `<p class="small red" style="margin:0 0 8px">${esc(t('au.diff', { d: fmtRp(A.diff) }))}</p>` : ''}
+    <div class="row wrap" style="gap:8px;margin-bottom:10px"><button class="btn primary" data-act="au-send" id="au-send">${ic('wa')} ${esc(t('au.send'))}</button><button class="btn" data-act="au-pdf" id="au-pdf">${ic('download')} ${esc(t('au.pdf'))}</button></div>
+    <div class="tbl-wrap au-wrap">${auditHTML(A)}</div></div>`;
 }
 
 /* ========== Detail penjualan + Penjualan per periode (Laporan modes 'detail' / 'chart') ========== */
@@ -9218,6 +9419,8 @@ Object.assign(ACT, {
   'bk-reopen': el => bkReopenLine(el.dataset.line),
   'dr-refresh': () => loadDaily(),
   'dr-print': () => dsPrint(),
+  'au-send': () => auditSend(false),
+  'au-pdf': () => auditSend(true),
   'dr-csv': el => dsCSV(el.dataset.k),
   'dr-copy': async () => { if (!DR.data) return; const ok = await copyText(dailyText(DR.data.report || {}, isOwner() && DR.withProfit)); toast(ok ? t('copied') : t('copy_failed'), ok ? 'ok' : 'err'); },
   'home-daily': () => { RP.mode = 'daily'; DR.date = today(); go('reports'); },

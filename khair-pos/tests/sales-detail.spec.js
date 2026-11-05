@@ -15,11 +15,31 @@ const money = s => Number(String(s).replace(/[^\d-]/g, '')) || 0;
 const SEED = `
   const T = arg.T, M = arg.M;
   const inR = s => s.sale_date >= M && s.sale_date <= T;
+  // early in a month the demo holds few of its sales: plain older ones (with their lines) are copied onto the month's days, so the month
+  // always has more than 200 invoices (paging) whatever today's date
+  const older = db.sales.filter(s => s.sale_date < M && s.status !== 'void' && ['tunai', 'transfer', 'qris', 'kartu', 'hutang'].includes(s.payment_method) && !/^Pesanan/.test(s.notes || ''));
+  const days = Math.round((Date.parse(T) - Date.parse(M)) / 86400000) + 1;
+  for (let k = 0; db.sales.filter(inR).length < 210 && k < older.length; k++) {
+    const o = older[k], inv = 'CP' + String(k + 1).padStart(4, '0') + '-' + o.invoice_no;
+    const day = new Date(Date.parse(M) + (k % days) * 86400000).toISOString().slice(0, 10);
+    db.sales.push(Object.assign({}, o, { id: 980000 + k, invoice_no: inv, client_id: 'cp-' + k, sale_date: day, sale_time: day + String(o.sale_time || 'T10:00:00+07:00').slice(10) }));
+    db.items.filter(i => i.invoice_no === o.invoice_no).forEach((i, j) => db.items.push(Object.assign({}, i, { id: 98000000 + k * 100 + j, invoice_no: inv, sale_date: day })));
+  }
   const list = db.sales.filter(inR).sort((a, b) => String(a.sale_time).localeCompare(String(b.sale_time)));
   const pick = i => list[i];
   const v = pick(3); v.status = 'void'; v.void_reason = 'salah input';
   const c = pick(5); c.payment_method = 'campur'; c.pay_parts = JSON.stringify([{ m: 'tunai', a: 20000 }, { m: 'transfer', a: c.total - 20000 }]); c.paid_amount = c.total; c.debt_amount = 0; c.account_id = 'BA1'; c.send_fee = 500;
   const f = pick(7); f.notes = 'Pesanan sales FO-0007 (Ahmad)'; f.channel = 'toko';
+  // a debt invoice of the month paid later in the month (an allocated payment): the demo has one only later in a month
+  const allocOf = p => { try { return JSON.parse(p.alloc || '[]'); } catch (e) { return []; } };
+  const hasLater = db.payments.some(p => p.direction === 'in' && p.pay_date >= M && p.pay_date <= T && allocOf(p).some(a => db.sales.some(s => s.invoice_no === a.ref && inR(s) && s.sale_date < p.pay_date)));
+  const debtor = !hasLater && list.find((s, i) => i > 8 && s.sale_date < T && s.status !== 'void' && s.payment_method !== 'campur');
+  if (debtor) {
+    const cu = db.customers.find(c => c.id === debtor.customer_id) || db.customers[0];
+    Object.assign(debtor, { payment_method: 'hutang', paid_amount: 0, debt_amount: debtor.total, customer_id: cu.id, customer_name: cu.name });
+    db.payments.push({ id: 990002, pay_id: 'PYLATER01', pay_date: T, pay_time: new Date().toISOString(), direction: 'in', party_type: 'customer', customer_id: cu.id, customer_name: cu.name, supplier: '',
+      amount: debtor.total, method: 'tunai', account_id: '', alloc: JSON.stringify([{ ref: debtor.invoice_no, amount: debtor.total }]), cashier: 'Siti', note: '' });
+  }
   db.payments.push({ id: 990001, pay_id: 'PYRET0001', pay_date: T, pay_time: new Date().toISOString(), direction: 'out', party_type: 'customer', customer_id: 0, customer_name: 'Umum', supplier: '', amount: 25000, method: 'tunai', account_id: '', slip_date: '', bank: '', transfer_ref: '', proof_photo_id: '', alloc: '[]', match_status: 'retur', note: 'Uang kembali retur RT1 faktur ' + list[0].invoice_no, cashier: 'Siti' });
 `;
 
