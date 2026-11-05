@@ -83,7 +83,7 @@ test('owner: the month\'s laba rugi (chart + table) equals Laporan; the demo num
   const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#fin-csv')]);
   expect(dl.suggestedFilename()).toBe(`laba-rugi-${M0}-${T}.csv`);
   const csv = require('fs').readFileSync(await dl.path(), 'utf8');
-  expect(csv).toContain('Laba bersih;' + net);
+  expect(csv).toContain((net < 0 ? 'Rugi' : 'Laba') + ' bersih;' + net); // early in a month the rent alone makes it a loss
   // Laporan for the same range: the owner's Laba rugi (profit_loss) and the KPIs
   const finNet = await row('net').innerText();
   await nav(page, 'reports');
