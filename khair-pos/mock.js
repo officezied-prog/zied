@@ -152,6 +152,15 @@ const MockServer = (() => {
     if (!s) throw E('NOT_FOUND', 'invoice');
     if (s.status === 'void') return s;
     s.status = 'void'; s.void_reason = reason; s.voided_by = by; s.voided_at = jktISO();
+    // v78: a cancelled sale leaves its drawer — an open drawer is counted from its sales; a closed one's figures move (once)
+    const sh = s.shift_id ? db.shifts.find(x => x.shift_id === s.shift_id) : null;
+    if (sh && sh.status === 'closed' && !s.drawer_undone && window.KPay) {
+      const p = window.KPay.of(s);
+      Object.assign(sh, { cash_sales: int(sh.cash_sales) - p.tunai, transfer_sales: int(sh.transfer_sales) - p.transfer, qris_sales: int(sh.qris_sales) - p.qris, card_sales: int(sh.card_sales) - p.kartu,
+        debt_sales: int(sh.debt_sales) - int(s.debt_amount), sales_total: int(sh.sales_total) - int(s.total), sales_count: Math.max(0, int(sh.sales_count) - 1),
+        expected_cash: int(sh.expected_cash) - p.tunai, difference: int(sh.difference) + p.tunai });
+    }
+    if (s.shift_id) s.drawer_undone = true;
     db.items.filter(i => i.invoice_no === s.invoice_no).forEach(i => { const p = db.products.find(x => x.id === i.product_id); if (p) { if (db._shopSet) db._shopSet[p.id] = roundQty((db._shopSet[p.id] !== undefined ? db._shopSet[p.id] : shopOf(p)) + i.qty); p.stock = roundQty(p.stock + i.qty); } });
     const c = s.customer_id ? db.customers.find(x => x.id === s.customer_id) : null;
     if (c && s.debt_amount) c.debt_balance = Math.max(0, int(c.debt_balance) - s.debt_amount);

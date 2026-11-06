@@ -139,3 +139,34 @@ test('today\'s paper sent marks the evening reminder done; an open drawer says s
   await expect(page.locator('#au-card')).toContainText('ورقة التدقيق اليومي');
   await expect(page.locator('#au-card .au-sheet')).toContainText('PEMBAYARAN TUNDA'); // the paper itself stays as the shop writes it
 });
+
+// v78 (manager 2026-11-06, the paper of 03/11: «sudah ubah ke transfer, tapi di report harian detect minus»): a cash sale cancelled after
+// the drawer was closed leaves the drawer — "seharusnya" and "selisih" move with it (before, the cancelled cash still counted).
+test('a cash sale cancelled after the drawer closed: SEHARUSNYA and SELISIH move with it', async ({ page }) => {
+  await login(page, 'Pemilik', '1234', '', { stay: true });
+  const day = jktToday(-1);
+  const db0 = await getDb(page);
+  const sh = db0.shifts.find(x => x.shift_date === day && x.status === 'closed');
+  const sale = sh && db0.sales.find(x => x.shift_id === sh.shift_id && x.status !== 'void' && x.payment_method === 'tunai' && Number(x.paid_amount) > 0);
+  expect(sale).toBeTruthy();
+  const cash = Math.min(Number(sale.paid_amount), Number(sale.total));
+  const seharusnya = async () => {
+    const t = await page.locator('#au-card .au-sheet tr.ft').nth(3).innerText();
+    return Number((/SEHARUSNYA\s*Rp\s*([\d.]+)/.exec(t.replace(/\s+/g, ' ')) || [])[1].replace(/\./g, ''));
+  };
+  await openDaily(page, day);
+  await expect(page.locator('#au-card')).toBeVisible();
+  const before = await seharusnya();
+  const r = await page.evaluate(inv => api('void_sale', { invoice_no: inv, reason: 'salah input: dibayar transfer' }), sale.invoice_no);
+  expect(r.ok).toBe(true);
+  const db1 = await getDb(page), sh1 = db1.shifts.find(x => x.shift_id === sh.shift_id);
+  expect(sh1.expected_cash).toBe(Number(sh.expected_cash) - cash);
+  expect(sh1.difference).toBe(Number(sh.difference) + cash);
+  expect(db1.sales.find(x => x.invoice_no === sale.invoice_no).drawer_undone).toBe(true);
+  // cancelling it again changes nothing
+  await page.evaluate(inv => api('void_sale', { invoice_no: inv, reason: 'x' }), sale.invoice_no);
+  expect((await getDb(page)).shifts.find(x => x.shift_id === sh.shift_id).expected_cash).toBe(sh1.expected_cash);
+  // the paper shows the corrected drawer
+  await openDaily(page, day);
+  await expect.poll(seharusnya).toBe(before - cash);
+});

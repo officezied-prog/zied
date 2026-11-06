@@ -278,9 +278,10 @@ export function makeAccessor(nodes) {
 // row, otherwise updates the row with that id. Only known columns present in the row are
 // written (process emits full rows for updates, partial for inserts). Returns the written
 // rows (with ids) per ops key, which Finalize uses to fill new customer/product/payment ids.
-export async function applyOps(adapter, ops, opsMap = OPS_TABLE) {
+export async function applyOps(adapter, ops, opsMap = OPS_TABLE, pre = []) {
   // v39: every write of the request is prepared first, then sent in ONE D1 batch (one call, one transaction: all or
   // nothing) when the adapter can batch; otherwise one by one, as before.
+  // v78: `pre` = statements that go FIRST in the same batch ({ sql, params }: a cancelled sale leaving its drawer, src/core.js)
   const plan = [];
   for (const [key, table] of Object.entries(opsMap)) {
     const rows = (ops && ops[key]) || [];
@@ -297,9 +298,15 @@ export async function applyOps(adapter, ops, opsMap = OPS_TABLE) {
     }
   }
   const stmts = plan.filter((p) => p.sql);
+  const first = (pre || []).filter((q) => q && q.sql);
   let results;
-  if (adapter.batch && stmts.length > 1) results = await adapter.batch(stmts.map((p) => ({ sql: p.sql, params: p.params, kind: 'run' })));
-  else { results = []; for (const p of stmts) results.push(await adapter.run(p.sql, p.params)); }
+  if (adapter.batch && stmts.length + first.length > 1) {
+    results = (await adapter.batch(first.map((q) => ({ sql: q.sql, params: q.params || [], kind: 'run' }))
+      .concat(stmts.map((p) => ({ sql: p.sql, params: p.params, kind: 'run' }))))).slice(first.length);
+  } else {
+    for (const q of first) await adapter.run(q.sql, q.params || []);
+    results = []; for (const p of stmts) results.push(await adapter.run(p.sql, p.params));
+  }
   stmts.forEach((p, i) => { p.res = results[i]; });
   const upserts = {};
   for (const p of plan) {

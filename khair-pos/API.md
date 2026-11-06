@@ -817,3 +817,9 @@ checks shared with the apps' demo: `shared/passkey.js` (`KPasskey`), demo twin `
   activity log as with a PIN); the app then sends that `pin_hash` with each request as after a PIN login.
 - A new PIN (`change_pin`, or `save_user` with a `pin_hash`) or an account switched off (`save_user` `active: false`) removes that
   account's passkeys. At most 10 an account (the oldest go). Each one turned on / off is in the owner's activity log (`keamanan`).
+
+## A cancelled sale leaves its drawer (v78)
+`void_sale` and an approved `request_void` take the sale out of its cashier's drawer (`pos_shifts` row of the sale's `shift_id`): its
+cash / transfer / QRIS / card / debt parts, total and count; when the drawer is already closed, also `expected_cash` (− the cash part)
+and `difference` (+ the cash part). Done once per sale (`pos_sales.drawer_undone`). Sales cancelled before v78 were corrected once by the
+Worker (activity line by "Sistem", kind `kas`).

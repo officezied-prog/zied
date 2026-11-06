@@ -49,6 +49,7 @@ export const TABLES = {
     day_seq: 'number', // v68: the sale's number in its day (the invoice no. DD/MM/YYYY/HHmm/N)
     // v57: a sale paid (partly) by transfer — the store account it went to, the sender's bank, the transfer no. and the slip photo
     account_id: 'string', bank: 'string', transfer_ref: 'string', proof_photo_id: 'string',
+    drawer_undone: 'boolean', // v78: a cancelled sale already taken out of its drawer's totals (src/core.js)
   },
   pos_sale_items: {
     invoice_no: 'string', sale_date: 'string', product_id: 'number', sku: 'string',
