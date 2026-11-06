@@ -62,6 +62,7 @@
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></symbol>
   <symbol id="i-stop" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+  <symbol id="i-finger" viewBox="0 0 24 24"><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M2 12a10 10 0 0 1 18-6"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M9 6.8a6 6 0 0 1 9 5.2v2"/></symbol>
   <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
   <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16M20 20v-4h-4"/></symbol>
@@ -79,6 +80,8 @@
 <script src="../shared/install-btn.js" data-host="#login:not([hidden]) > .screen-card"></script>
 <script src="../shared/app-update.js"></script>
 <script src="../shared/pin-guard.js"></script>
+<script src="../shared/passkey.js"></script>
+<script src="../shared/passkey-mock.js"></script>
 <script src="mock.js"></script>
 <script>
 'use strict';
@@ -87,7 +90,7 @@ if (window.top !== window.self) { try { window.top.location = window.location.hr
 const CONFIG = { API_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos', FIELD_URL: 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field', TZ: 'Asia/Jakarta', CURRENCY: 'IDR' };
 CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-pos-photo';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = 'sales-1.9.11';
+const APP_VERSION = 'sales-1.10.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -826,6 +829,7 @@ function showLogin(step, err, keepTracking) {
   $('#login').hidden = false; $('#app').hidden = true;
   renderLogin();
   if (step !== 'key' && !L.users.length) loadUsers();
+  if (step === 'pin') pkAuto(); // v77: straight into the phone's fingerprint / face check (when set up here)
 }
 async function loadUsers() {
   const cached = store.get('users_' + S.key, []);
@@ -856,7 +860,7 @@ function renderLogin() {
     const until = lockedUntil(L.sel), locked = until > Date.now();
     const dots = Array.from({ length: Math.max(4, L.pin.length) }, (_, i) => `<i class="${i < L.pin.length ? 'f' : ''}"></i>`).join('');
     inner = `<div class="who"><button class="icon-btn ghost sm" data-act="login-back" aria-label="${esc(t('login.switch'))}">${ic('back')}</button><b id="pin-who">${esc(L.sel)}</b></div>
-      <h2 class="muted" style="font-size:15px">${esc(t('login.enter_pin'))}</h2><div class="dots">${dots}</div><div class="err" role="alert" id="login-err">${esc(locked ? t('login.locked_until', { time: jktTime(until) }) : L.err)}</div>
+      ${pkLoginHTML(locked)}<h2 class="muted" style="font-size:15px">${esc(t('login.enter_pin'))}</h2><div class="dots">${dots}</div><div class="err" role="alert" id="login-err">${esc(locked ? t('login.locked_until', { time: jktTime(until) }) : L.err)}</div>
       ${pinpadHTML(locked)}`;
   }
   // v36 (owner 2026-10-11): permanent notice on the login / lock screen of the reps' phones
@@ -911,6 +915,7 @@ async function submitNewPin() {
   try {
     await apiRaw('change_pin', { new_pin_hash: nh }, { key: S.key, user: np.user, pin_hash: np.old });
     await KPin.remember(store, np.user, nh, np.role, OFFLINE_ROLES_HERE);
+    pkSet(np.user, null); // v77: the server ended this account's fingerprint / face logins with the old PIN
     L.np = null; L.busy = false; L.pin = ''; toast(t('np.done'), 'ok');
     startSession(np.user, np.role, nh, false);
   } catch (e) { L.busy = false; np.first = ''; L.pin = ''; L.err = e instanceof NetError ? t('np.need_online') : errMsg(e); renderLogin(); }
@@ -929,6 +934,7 @@ async function submitPin() {
     await KPin.remember(store, user, hash, r.user.role, OFFLINE_ROLES_HERE);
     L.busy = false; L.pin = '';
     if (r.must_change) { askNewPin(r.user.name, r.user.role, hash); return; }
+    PK.via = 'pin'; // v77: after a PIN login the fingerprint / face is offered once
     startSession(r.user.name, r.user.role, hash, false);
   } catch (e) {
     L.busy = false; L.pin = '';
@@ -957,10 +963,12 @@ async function enterApp(offline) {
   devBoot();
   if (S.role !== 'owner') { try { if (window.KGuard) KGuard.prime(); } catch (e) { } } // v36: ask for the camera once at a staff login (silent shot later)
   try { if (window.KChatUI) KChatUI.start({ api: apiChat, lang: S.lang, user: S.user }); } catch (e) { } // v36: user → this device's read marks for the team rooms
+  pkAfterLogin(offline); // v77
 }
 /** auto = idle auto-lock: during a working day the GPS keeps collecting points on the phone (sent after the PIN). */
 function lock(auto) {
   if (!S.inApp) return;
+  PK.autoDone = true; // v77: the idle lock does not pop the fingerprint check up by itself (the button is there)
   const keep = !!auto && S.day.status === 'working';
   if (!keep) stopTracking();
   S.pin_hash = ''; FS.set('session', { user: S.user, role: S.role }); SESS.del(); L.sel = S.user; S.inApp = false;
@@ -982,7 +990,7 @@ function forceRelogin(e) {
 async function logout() {
   if (S.day.status === 'working') { const r = await confirmBox(t('menu.logout_working')); if (!r.ok) return; }
   await flushTrack().catch(() => { });
-  stopTracking(); S.pin_hash = ''; S.user = ''; S.role = ''; S.inApp = false; FS.del('session'); SESS.del(); L.sel = '';
+  PK.autoDone = true; stopTracking(); S.pin_hash = ''; S.user = ''; S.role = ''; S.inApp = false; FS.del('session'); SESS.del(); L.sel = '';
   try { if (window.KChatUI) KChatUI.stop(); } catch (e) { }
   showLogin('users');
 }
@@ -2886,6 +2894,105 @@ function pickShop(onPick) {
   $('#sp-list', el).addEventListener('click', e => { const b = e.target.closest('[data-pick]'); if (!b) return; dropModal(el); onPick(shopById(b.dataset.pick)); });
 }
 
+/* ========== v77: open Khair Sales with the phone's own fingerprint / face (a passkey — ../shared/passkey.js; the Worker: src/passkey.js) ==========
+   owner 2026-11-06: «هل يمكن ان يتم الفتح ببصمة او بالوجه», his choice «أ»: each rep on his own phone. Turned on once with the PIN (offered
+   once after a PIN login, or Menu → "Masuk dengan sidik jari / wajah"); then the PIN screen opens straight into the phone's check, the
+   button stays above the PIN pad. The PIN always works (no internet, a new phone); a new PIN switches it off. The list of which accounts
+   have one on this device (kpos.pk) is the same as the owner app's: one passkey serves both apps on this phone. */
+const PK = { avail: null, autoDone: false, via: '', busy: false };
+const pkMap = () => { const m = store.get('pk', {}); return m && typeof m === 'object' && !Array.isArray(m) ? m : {}; };
+const pkMine = user => pkMap()[String(user || '').toLowerCase()] || null;
+function pkSet(user, rec) { const m = pkMap(), k = String(user || '').toLowerCase(); if (!k) return; if (rec) m[k] = rec; else delete m[k]; store.set('pk', m); }
+const pkCan = () => !DEMO && !!(window.KPasskey && KPasskey.supported());
+async function pkAvail() {
+  if (PK.avail === null) { try { PK.avail = !!(window.KPasskey && await KPasskey.available()); } catch (e) { PK.avail = false; } }
+  return PK.avail;
+}
+function pkLoginHTML(locked) {
+  if (!L.sel || !pkMine(L.sel) || !pkCan()) return '';
+  return `<button class="btn primary block big" data-act="login-pk" id="lg-pk" ${locked || L.busy ? 'disabled' : ''}>${ic('finger')} ${esc(t('pk.login'))}</button>
+      <div class="small muted center" id="lg-pk-or" style="margin:6px 0 2px">${esc(t('pk.or_pin'))}</div>`;
+}
+function pkAuto() {
+  if (PK.autoDone || L.step !== 'pin' || !L.sel || !pkMine(L.sel) || !pkCan() || lockedUntil(L.sel) > Date.now() || document.visibilityState === 'hidden') return;
+  PK.autoDone = true;
+  setTimeout(() => { if (!$('#login').hidden && L.step === 'pin' && !L.busy) pkLogin(true); }, 250);
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') { PK.autoDone = false; return; }
+  if (!$('#login').hidden && L.step === 'pin') pkAuto();
+});
+async function pkLogin(auto) {
+  if (L.busy || !L.sel || lockedUntil(L.sel) > Date.now()) return;
+  const user = L.sel;
+  L.busy = true; L.err = ''; renderLogin();
+  try {
+    const b = await apiRaw('passkey_begin', {}, { key: S.key, user });
+    const a = await KPasskey.sign({ challenge: b.challenge, allow: b.allow });
+    const r = await apiRaw('passkey_login', a, { key: S.key, user });
+    if (r.tamper_locked) { L.busy = false; L.err = t('tamper.locked'); renderLogin(); return; }
+    if (!SALES_ROLES.includes(r.user.role)) { L.busy = false; L.err = t('login.not_sales', { role: t('role.' + r.user.role) }); renderLogin(); return; }
+    await KPin.remember(store, r.user.name, r.pin_hash, r.user.role, OFFLINE_ROLES_HERE);
+    pkSet(r.user.name, Object.assign({}, pkMine(r.user.name) || {}, { id: a.cred_id }));
+    L.busy = false; L.pin = ''; PK.via = 'passkey';
+    if (r.must_change) { askNewPin(r.user.name, r.user.role, r.pin_hash); return; }
+    startSession(r.user.name, r.user.role, r.pin_hash, false);
+  } catch (e) {
+    L.busy = false; L.pin = '';
+    const c = (e && e.code) || '';
+    if (c === 'NO_PASSKEY' || c === 'PASSKEY_GONE') { pkSet(user, null); L.err = t('pk.gone'); }
+    else if (c === 'LOCKED') { LOCKS[user.toLowerCase()] = lockUntilFrom(e); L.err = ''; }
+    else if (c === 'CANCEL') L.err = auto ? '' : t('pk.cancel');
+    else if (e instanceof NetError) L.err = t('pk.offline');
+    else if (c === 'NOT_SUPPORTED') L.err = t('pk.unsupported');
+    else if (c === 'PASSKEY_FAIL' || c === 'PASSKEY_EXPIRED') L.err = t('err.' + c);
+    else if (c === 'BAD_KEY') { L.step = 'key'; L.err = t('err.BAD_KEY'); }
+    else L.err = errMsg(e);
+    renderLogin();
+  }
+}
+/** After a PIN login on a phone that can do it: offered once (Nanti = not again here; the menu keeps the switch). */
+async function pkAfterLogin(offline) {
+  const via = PK.via; PK.via = '';
+  if (via !== 'pin' || offline || !SALES_ROLES.includes(S.role) || pkMine(S.user) || !pkCan()) return;
+  if ((store.get('pk_skip', {}) || {})[String(S.user).toLowerCase()]) return;
+  if (!(await pkAvail())) return;
+  setTimeout(() => {
+    if (!S.inApp || !S.pin_hash || modalStack.length || pkMine(S.user) || !$('#login').hidden) return; // busy: offered at the next PIN login
+    openModal({
+      title: t('pk.offer_title'), cls: 'narrow', id: 'pk-offer',
+      body: `<div class="center" style="margin:2px 0 8px;color:var(--primary)"><svg class="i" aria-hidden="true" style="width:44px;height:44px"><use href="#i-finger"/></svg></div><p style="margin-top:0">${esc(t('pk.offer_body'))}</p><p class="small muted" style="margin-bottom:0">${esc(t('pk.offer_note'))}</p>`,
+      foot: `<button class="btn" data-act="pk-later" id="pk-later">${esc(t('pk.later'))}</button><button class="btn primary" data-act="pk-enable" id="pk-yes">${ic('finger')} ${esc(t('pk.enable'))}</button>`
+    });
+  }, 1200);
+}
+async function pkEnable() {
+  if (PK.busy) return;
+  PK.busy = true;
+  try {
+    const r = await KPasskey.register({ user: S.user, label: S.user + ' · Khair Sales' });
+    const res = await api('passkey_add', Object.assign(r, { label: deviceLabel() }));
+    pkSet(S.user, { id: res.passkey.cred_id });
+    closeModal(true);
+    toast(t('pk.on'), 'ok', 5000);
+  } catch (e) {
+    const c = (e && e.code) || '';
+    toast(c === 'CANCEL' ? t('pk.cancel_on') : c === 'NOT_SUPPORTED' ? t('pk.unsupported') : c === 'EXISTS' ? t('pk.exists') : errMsg(e), c === 'CANCEL' ? 'warn' : 'err', 5000);
+  } finally { PK.busy = false; }
+}
+async function pkDisable() {
+  const m = pkMine(S.user); if (!m) return;
+  closeModal(true);
+  if (!(await confirmBox(t('pk.off_q'), { ok: t('pk.disable') })).ok) return;
+  try { await api('passkey_remove', { cred_id: m.id }); } catch (e) { toast(errMsg(e), 'err', 5000); return; }
+  pkSet(S.user, null); toast(t('pk.off'), 'ok');
+}
+/** The menu's line: on / off on this phone. */
+function pkMenuHTML() {
+  if (!pkCan() || !SALES_ROLES.includes(S.role)) return '';
+  const has = !!pkMine(S.user);
+  return `<button class="li" data-act="${has ? 'pk-disable' : 'pk-enable'}" id="m-pk">${ic('finger')}<div class="grow"><div class="t">${esc(t('pk.title'))}</div><div class="s">${esc(t(has ? 'pk.state_on' : 'pk.state_off'))} · ${esc(t(has ? 'pk.disable' : 'pk.enable'))}</div></div></button>`;
+}
 /* ========== Menu ========== */
 function openMenu() {
   openModal({
@@ -2894,6 +3001,7 @@ function openMenu() {
       <div class="li">${ic('globe')}<div class="grow t">${esc(t('menu.lang'))}</div><div class="seg" style="min-width:170px"><button class="${S.lang === 'id' ? 'on' : ''}" data-act="set-lang" data-lang="id" id="lang-id">ID</button><button class="${S.lang === 'ar' ? 'on' : ''}" data-act="set-lang" data-lang="ar" id="lang-ar">العربية</button></div></div>
       <button class="li" data-act="outbox-open">${ic('refresh')}<div class="grow"><div class="t">${esc(t('outbox.title'))}</div><div class="s">${esc(t('outbox.badge', { n: S.outbox.length }))}</div></div></button>
       <button class="li" data-act="refresh">${ic('refresh')}<div class="grow t">${esc(t('menu.refresh'))}</div></button>
+      ${pkMenuHTML()}
       <button class="li" data-act="lock" id="m-lock">${ic('lock')}<div class="grow t">${esc(t('menu.lock'))}</div></button>
       <button class="li" data-act="logout" id="m-logout">${ic('logout')}<div class="grow t">${esc(t('menu.logout'))}</div></button></div>
       <p class="small muted center" style="margin-bottom:0">${esc(t('menu.privacy'))}</p>
@@ -2926,7 +3034,11 @@ const ACT = {
     catch (e) { L.busy = false; L.err = e.code === 'BAD_KEY' ? t('err.BAD_KEY') : errMsg(e); renderLogin(); }
   },
   'login-change-key': () => { L.users = []; L.step = 'key'; L.err = ''; renderLogin(); },
-  'login-user': el => { L.sel = el.dataset.name; L.pin = ''; L.err = ''; if (DEMO) { demoLogin(L.sel); return; } L.step = 'pin'; renderLogin(); },
+  'login-user': el => { L.sel = el.dataset.name; L.pin = ''; L.err = ''; if (DEMO) { demoLogin(L.sel); return; } L.step = 'pin'; renderLogin(); PK.autoDone = false; pkAuto(); },
+  'login-pk': () => pkLogin(false),
+  'pk-enable': () => pkEnable(),
+  'pk-disable': () => pkDisable(),
+  'pk-later': () => { const m = store.get('pk_skip', {}) || {}; m[String(S.user).toLowerCase()] = 1; store.set('pk_skip', m); closeModal(); toast(t('pk.later_hint'), '', 5000); },
   'login-back': () => { L.pin = ''; L.err = ''; L.step = 'users'; renderLogin(); if (!L.users.length) loadUsers(); },
   'pin-key': el => { const k = el.dataset.k; if (k === 'del') L.pin = L.pin.slice(0, -1); else if (k === 'ok') { submitPin(); return; } else if (L.pin.length < 6 && !$('#pinpad[data-locked]')) L.pin += k; L.err = ''; renderLogin(); },
   'day-start': () => dayStart(),
@@ -3360,6 +3472,42 @@ const I18N = {
    local test server is never closed. */
 
 /* v16 login texts */
+/* v77: the fingerprint / face login's texts */
+Object.assign(I18N.id, {
+  'pk.login': 'Masuk dengan sidik jari / wajah', 'pk.or_pin': 'atau ketik PIN',
+  'pk.cancel': 'Dibatalkan. Tekan tombol sidik jari lagi, atau ketik PIN.', 'pk.cancel_on': 'Dibatalkan — sidik jari / wajah belum aktif.',
+  'pk.gone': 'Sidik jari / wajah di HP ini sudah tidak berlaku (PIN diganti atau dimatikan). Masuk dengan PIN, lalu aktifkan lagi di Menu.',
+  'pk.offline': 'Tidak ada internet — masuk dengan PIN.',
+  'pk.unsupported': 'HP / browser ini belum bisa memakai sidik jari / wajah untuk aplikasi (perlu kunci layar HP dengan sidik jari, wajah atau PIN HP). PIN tetap dipakai.',
+  'pk.title': 'Masuk dengan sidik jari / wajah', 'pk.state_on': 'Aktif di HP ini', 'pk.state_off': 'Belum aktif di HP ini',
+  'pk.enable': 'Aktifkan di HP ini', 'pk.disable': 'Matikan di HP ini',
+  'pk.on': 'Sidik jari / wajah aktif. Lain kali cukup sentuh untuk masuk.', 'pk.off': 'Sidik jari / wajah dimatikan di HP ini.',
+  'pk.off_q': 'Matikan masuk dengan sidik jari / wajah di HP ini? Masuk lagi dengan PIN.',
+  'pk.offer_title': 'Masuk lebih cepat?', 'pk.offer_body': 'Lain kali buka aplikasi dengan sidik jari atau wajah, tanpa mengetik PIN.',
+  'pk.offer_note': 'Sidik jari dan wajah tetap di HP ini, tidak dikirim ke mana pun. PIN tetap bisa dipakai.',
+  'pk.later': 'Nanti', 'pk.later_hint': 'Bisa diaktifkan kapan saja: Menu → Masuk dengan sidik jari / wajah.',
+  'pk.exists': 'Sidik jari / wajah sudah ada di HP ini.',
+  'err.PASSKEY_FAIL': 'Sidik jari / wajah ditolak. Masuk dengan PIN.', 'err.PASSKEY_EXPIRED': 'Waktu habis. Coba lagi.',
+  'err.NO_PASSKEY': 'Sidik jari / wajah belum aktif untuk akun ini.', 'err.PASSKEY_GONE': 'Sidik jari / wajah di HP ini sudah tidak berlaku.',
+});
+Object.assign(I18N.ar, {
+  'pk.login': 'الدخول بالبصمة أو الوجه', 'pk.or_pin': 'أو اكتب الرقم السري',
+  'pk.cancel': 'أُلغي. اضغط زر البصمة مرة أخرى أو اكتب الرقم السري.', 'pk.cancel_on': 'أُلغي — لم تُفعَّل البصمة أو الوجه.',
+  'pk.gone': 'البصمة أو الوجه على هذا الهاتف لم تعد صالحة (تغيّر الرقم السري أو أُوقفت). ادخل بالرقم السري ثم فعّلها من جديد من القائمة.',
+  'pk.offline': 'لا يوجد إنترنت — ادخل بالرقم السري.',
+  'pk.unsupported': 'هذا الهاتف أو المتصفح لا يدعم الدخول بالبصمة أو الوجه للتطبيق (يحتاج قفل شاشة الهاتف بالبصمة أو الوجه أو رمز الهاتف). يبقى الرقم السري.',
+  'pk.title': 'الدخول بالبصمة أو الوجه', 'pk.state_on': 'مفعّل على هذا الهاتف', 'pk.state_off': 'غير مفعّل على هذا الهاتف',
+  'pk.enable': 'فعّل على هذا الهاتف', 'pk.disable': 'أوقف على هذا الهاتف',
+  'pk.on': 'فُعّلت البصمة أو الوجه. في المرة القادمة يكفي اللمس للدخول.', 'pk.off': 'أُوقفت البصمة أو الوجه على هذا الهاتف.',
+  'pk.off_q': 'إيقاف الدخول بالبصمة أو الوجه على هذا الهاتف؟ تدخل بعدها بالرقم السري.',
+  'pk.offer_title': 'دخول أسرع؟', 'pk.offer_body': 'في المرة القادمة افتح التطبيق بالبصمة أو الوجه بدون كتابة الرقم السري.',
+  'pk.offer_note': 'البصمة والوجه يبقيان في هذا الهاتف ولا يُرسلان إلى أي مكان. الرقم السري يبقى صالحاً.',
+  'pk.later': 'لاحقاً', 'pk.later_hint': 'يمكن التفعيل في أي وقت: القائمة ← الدخول بالبصمة أو الوجه.',
+  'pk.exists': 'البصمة أو الوجه موجودة على هذا الهاتف.',
+  'err.PASSKEY_FAIL': 'رُفضت البصمة أو الوجه. ادخل بالرقم السري.', 'err.PASSKEY_EXPIRED': 'انتهى الوقت. حاول مرة أخرى.',
+  'err.NO_PASSKEY': 'البصمة أو الوجه غير مفعّلة لهذا الحساب.', 'err.PASSKEY_GONE': 'البصمة أو الوجه على هذا الهاتف لم تعد صالحة.',
+});
+
 /* v41 (owner 2026-10-12): the app version is shown on the login screen and in the top bar */
 Object.assign(I18N.id, { 'app.version': 'Versi' });
 Object.assign(I18N.ar, { 'app.version': 'النسخة' });

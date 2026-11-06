@@ -89,6 +89,7 @@
   <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+  <symbol id="i-finger" viewBox="0 0 24 24"><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M2 12a10 10 0 0 1 18-6"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M9 6.8a6 6 0 0 1 9 5.2v2"/></symbol>
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
   <symbol id="i-scan" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M10 8v8M13 8v8M17 8v8"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
@@ -147,6 +148,8 @@
 <script src="shared/app-update.js"></script>
 <script src="shared/pin-guard.js"></script>
 <script src="shared/measure.js"></script>
+<script src="shared/passkey.js"></script>
+<script src="shared/passkey-mock.js"></script>
 <script src="mock.js"></script>
 <script>
 'use strict';
@@ -157,7 +160,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '3.5.0';
+const APP_VERSION = '3.6.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -457,7 +460,7 @@ const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
 // v36 (owner 2026-10-11: "the visits table … a copy for the manager, the accountant and the owner"): + the field page, read-only
 const AUDIT_VIEWS = ['reports', 'finance', 'gudang', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'invchg', 'approvals', 'shoplist', 'field', 'settings'];
-const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|printer-open|scanner-open|pu-confirm|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*|fin-.*|gd-tab|gd-refresh)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
+const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|printer-open|scanner-open|pu-confirm|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*|fin-.*|gd-tab|gd-refresh|pk-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
@@ -615,6 +618,7 @@ function showLogin(step, err) {
   $('#login').hidden = false; $('#app').hidden = true;
   renderLogin();
   if (step === 'pin' && !L.users.length) loadUsersForLogin();
+  if (step === 'pin') pkAuto(); // v77: the app opens straight into the phone's fingerprint / face check (when set up here)
 }
 async function loadUsersForLogin() {
   const cached = store.get('users_' + S.key, []);
@@ -655,6 +659,7 @@ function renderLogin() {
     inner = `<h2>${esc(S.user && S.inApp ? t('login.locked') : t('login.pick_user'))}</h2>
       <div class="users-pick" role="radiogroup" aria-label="${esc(t('login.pick_user'))}">${loginUsers().length ? loginUsers().map(u => `<button role="radio" aria-checked="${L.sel === u.name}" class="${L.sel === u.name ? 'on' : ''}" data-act="login-user" data-name="${esc(u.name)}">${esc(u.name)}</button>`).join('') : `<span class="muted">${esc(t('loading'))}</span>`}</div>
       ${L.master ? `<div class="badge red" id="lg-master-on" style="margin:0 auto 6px">${ic('lock')} ${esc(t('mc.login_title', { name: L.sel || '…' }))}</div>` : ''}
+      ${pkLoginHTML(lk)}
       <div class="pin-dots ${L.master ? 'eight' : ''}" aria-label="PIN">${dots}</div>
       <div class="login-err" role="alert" id="lg-err">${lk ? `<span id="lg-locked">${esc(t('login.locked_until', { time: lk.time }))}</span>` : esc(L.err)}</div>
       <div class="pinpad ${lk ? 'off' : ''}" id="lg-pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button data-act="pin-key" data-k="${n}" ${off}>${n}</button>`).join('')}
@@ -694,6 +699,7 @@ async function submitPin() {
     if (!r.via_master) await rememberPin(user, hash, r.user.role); // never keep a verifier of the master code
     L.master = false;
     PC.need = r.must_change === true;
+    PK.via = r.via_master ? '' : 'pin'; // v77: after a PIN login the fingerprint / face is offered once
     startSession(r.user.name, r.user.role, hash, false, r.via_master === true);
   } catch (e) {
     L.busy = false; L.pin = '';
@@ -756,9 +762,11 @@ async function enterApp(offline, keepView) {
   devOnAppOpen();
   if (!isOwner()) { try { if (window.KGuard) KGuard.prime(); } catch (e) { } } // v36: ask for the camera once at a staff login (silent shot later)
   try { if (window.KChatUI) KChatUI.start({ api: apiChat, lang: S.lang, user: S.user, onNotices: ntApply }); } catch (e) { } // v36: user → this device's read marks for the team rooms; v38: notice state (closed / replied)
+  pkAfterLogin(offline); // v77
 }
 function lock() {
   if (!S.inApp) return;
+  PK.autoDone = true; // v77: the idle lock does not pop the fingerprint check up by itself (the button is there)
   S.pin_hash = ''; S.viaMaster = false; L.master = false;
   sessSet(S.user, S.role, '');
   L.sel = S.user;
@@ -778,7 +786,7 @@ function logoutStore() {
   S.pin_hash = ''; S.user = ''; S.role = ''; S.inApp = false; sessDel();
   // v71 security: leaving the store also leaves nothing of it on this device to read — the downloaded shop data (cost prices,
   // customers, users), the receipts, the suppliers and the drafts. Sales still waiting to be sent (the outbox) are kept.
-  ['cache', 'receipts', 'suppliers', 'purchase_draft', 'expense_draft', 'cart', 'notifs', 'my_requests', 'pending_contacts', 'shop_links', 'order_updates'].forEach(k => store.del(k));
+  ['cache', 'receipts', 'suppliers', 'purchase_draft', 'expense_draft', 'cart', 'notifs', 'my_requests', 'pending_contacts', 'shop_links', 'order_updates', 'pk', 'pk_skip'].forEach(k => store.del(k));
   S.products = []; S.customers = [];
   const cf = $('#view-cold'); if (cf) cf.innerHTML = '';
   L.users = []; L.sel = '';
@@ -5469,6 +5477,7 @@ RENDER.settings = function () {
     ${!own && S.role === 'manager' ? usersPanelHTML() + bankPanelHTML() + settingsV16HTML() : ''}
 
     ${!own && isApprover() ? `<div class="panel" id="st-retur"><h3>${ic('return')} ${esc(t('set.rt_title'))}</h3><div class="pb">${agreementCardHTML()}</div></div>` : ''}
+    ${pkPanelHTML()}
     <div class="panel"><h3>${esc(t('set.app'))}</h3><div class="pb">
       <div class="field"><label class="f">${esc(t('set.language'))}</label><div class="seg"><button type="button" data-act="set-lang" data-lang="id" class="${S.lang === 'id' ? 'on' : ''}">Bahasa Indonesia</button><button type="button" data-act="set-lang" data-lang="ar" class="${S.lang === 'ar' ? 'on' : ''}">العربية</button></div></div>
       <div class="field"><label class="f">${esc(t('voice.title'))}</label><div class="seg" style="max-width:360px">${[['1', 'voice.on'], ['0', 'voice.off']].map(([v, k]) => `<button type="button" data-act="voice-on" data-v="${v}" class="${(VOICE.on ? '1' : '0') === v ? 'on' : ''}">${esc(t(k))}</button>`).join('')}</div>
@@ -5497,6 +5506,7 @@ RENDER.settings = function () {
   const pp = $('#st-paper'); if (pp) pp.onclick = e => { const b = e.target.closest('[data-p]'); if (!b) return; $$('#st-paper button').forEach(x => x.classList.toggle('on', x === b)); };
   $$('[data-user-role]').forEach(sel => sel.onchange = () => { const u = S.users.find(x => x.name === sel.dataset.userRole); if (u) saveUser({ name: u.name, role: sel.value, active: u.active !== false }); });
   const qn = $('#st-q-new'); if (qn) qn.addEventListener('keydown', e => { if (e.key === 'Enter') ACT['sq-add'](); });
+  pkPanelFill(); // v77
 };
 async function saveSettings(partial, errEl) {
   try {
@@ -5769,7 +5779,7 @@ const ACT = {
     const hash = await pinHash(S.key, u.name, pin);
     const self = u.name.toLowerCase() === S.user.toLowerCase();
     if (await saveUser({ name: u.name, role: u.role, pin_hash: hash, active: u.active !== false })) {
-      if (self) { S.pin_hash = hash; sessSet(S.user, S.role, hash, S.viaMaster); await rememberPin(S.user, hash, S.role); }
+      if (self) { S.pin_hash = hash; sessSet(S.user, S.role, hash, S.viaMaster); await rememberPin(S.user, hash, S.role); pkSet(S.user, null); RENDER.settings(); } // v77: a new PIN ends the fingerprint / face here
       else { ST.tempPin = u.name; RENDER.settings(); }
     }
   },
@@ -9790,11 +9800,195 @@ async function submitPinChange() {
   }
   S.pin_hash = hash; sessSet(S.user, S.role, hash, false);
   await rememberPin(S.user, hash, S.role);
+  pkSet(S.user, null); // v77: the server ended this account's fingerprint / face logins with the old PIN
   PC.need = false; PC.busy = false; PC.pin = ''; PC.first = '';
   $('#pin-change').hidden = true;
   toast(t('pc.done'), 'ok', 4000);
   enterApp(false, S.inApp);
 }
+
+/* ========== v77: open the app with the phone's own fingerprint / face (a passkey — shared/passkey.js; the Worker: src/passkey.js) ==========
+   owner 2026-11-06: «هل يمكن ان يتم الفتح ببصمة او بالوجه», his choice «أ»: the owner, the manager and the accountant here (the sales reps in
+   Khair Sales), each on his own phone. The cashiers' shared device keeps its PIN: a phone accepts any fingerprint enrolled on it and cannot
+   tell two cashiers apart (the server refuses a kasir account). Turned on once with the PIN — offered once after a PIN login, or Pengaturan
+   → "Masuk dengan sidik jari / wajah" — then the login screen opens straight into the phone's own check, and the button stays above the
+   PIN pad. The PIN always works (no internet, a new phone); a new PIN switches it off (the server removes the passkeys). This device keeps
+   only which accounts have one here (kpos.pk: name → passkey id) — nothing that opens anything. */
+const PK_ROLES = ['owner', 'manager', 'akuntan'];
+const PK = { avail: null, autoDone: false, via: '', busy: false, list: null, listErr: '' };
+const pkMap = () => { const m = store.get('pk', {}); return m && typeof m === 'object' && !Array.isArray(m) ? m : {}; };
+const pkMine = user => pkMap()[String(user || '').toLowerCase()] || null;
+function pkSet(user, rec) { const m = pkMap(), k = String(user || '').toLowerCase(); if (!k) return; if (rec) m[k] = rec; else delete m[k]; store.set('pk', m); }
+const pkCan = () => !DEMO && !!(window.KPasskey && KPasskey.supported());
+async function pkAvail() {
+  if (PK.avail === null) { try { PK.avail = !!(window.KPasskey && await KPasskey.available()); } catch (e) { PK.avail = false; } }
+  return PK.avail;
+}
+const pkBig = () => `<svg class="i" aria-hidden="true" style="width:44px;height:44px"><use href="#i-finger"/></svg>`;
+function pkLoginHTML(locked) {
+  if (L.master || !L.sel || !pkMine(L.sel) || !pkCan()) return '';
+  return `<button class="btn primary block big" data-act="login-pk" id="lg-pk" ${locked || L.busy ? 'disabled' : ''}>${ic('finger')} ${esc(t('pk.login'))}</button>
+      <div class="small muted center" id="lg-pk-or" style="margin:6px 0 2px">${esc(t('pk.or_pin'))}</div>`;
+}
+/** The login screen asks the phone at once (opening the app, coming back to it) — not after an idle lock or a "Keluar". */
+function pkAuto() {
+  if (PK.autoDone || L.master || !L.sel || !pkMine(L.sel) || !pkCan() || lockLeft(L.sel) || document.visibilityState === 'hidden') return;
+  PK.autoDone = true;
+  setTimeout(() => { if (!$('#login').hidden && L.step === 'pin' && !L.busy && !L.master) pkLogin(true); }, 250);
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') { PK.autoDone = false; return; }
+  if (!$('#login').hidden && L.step === 'pin') pkAuto();
+});
+async function pkLogin(auto) {
+  if (L.busy || !L.sel || lockLeft(L.sel)) return;
+  const user = L.sel;
+  L.busy = true; L.err = ''; renderLogin();
+  try {
+    const b = await apiRaw('passkey_begin', {}, { key: S.key, user }, { noDevice: true });
+    const a = await KPasskey.sign({ challenge: b.challenge, allow: b.allow });
+    const r = await apiRaw('passkey_login', a, { key: S.key, user });
+    if (r.tamper_locked) { L.busy = false; L.err = t('tamper.locked'); renderLogin(); return; }
+    await rememberPin(r.user.name, r.pin_hash, r.user.role);
+    pkSet(r.user.name, Object.assign({}, pkMine(r.user.name) || {}, { id: a.cred_id }));
+    L.master = false; PC.need = r.must_change === true; PK.via = 'passkey';
+    startSession(r.user.name, r.user.role, r.pin_hash, false, false);
+  } catch (e) {
+    L.busy = false; L.pin = '';
+    const c = (e && e.code) || '';
+    if (c === 'NO_PASSKEY' || c === 'PASSKEY_GONE') { pkSet(user, null); L.err = t('pk.gone'); }
+    else if (c === 'LOCKED') { setLock(user, e.message, e.data && e.data.locked_until); L.err = ''; }
+    else if (c === 'CANCEL') L.err = auto ? '' : t('pk.cancel');
+    else if (e instanceof NetError) L.err = t('pk.offline');
+    else if (c === 'NOT_SUPPORTED') L.err = t('pk.unsupported');
+    else if (c === 'PASSKEY_FAIL' || c === 'PASSKEY_EXPIRED') L.err = t('err.' + c);
+    else if (c === 'BAD_KEY') { L.step = 'key'; L.err = t('err.BAD_KEY'); }
+    else L.err = errMsg(e);
+    renderLogin();
+  }
+}
+/** After a PIN login on a phone that can do it: offered once (Nanti = not again here; Pengaturan keeps the switch). */
+async function pkAfterLogin(offline) {
+  const via = PK.via; PK.via = '';
+  if (via !== 'pin' || offline || S.viaMaster || !PK_ROLES.includes(S.role) || pkMine(S.user) || !pkCan()) return;
+  if ((store.get('pk_skip', {}) || {})[String(S.user).toLowerCase()]) return;
+  if (!(await pkAvail())) return;
+  setTimeout(() => {
+    if (!S.inApp || !S.pin_hash || PC.need || modalOpen() || pkMine(S.user) || !$('#login').hidden) return; // busy: offered at the next PIN login
+    openModal({
+      title: t('pk.offer_title'), cls: 'narrow', id: 'pk-offer',
+      body: `<div class="center" style="margin:2px 0 8px;color:var(--primary)">${pkBig()}</div><p style="margin-top:0">${esc(t('pk.offer_body'))}</p><p class="small muted" style="margin-bottom:0">${esc(t('pk.offer_note'))}</p>`,
+      foot: `<button class="btn" data-act="pk-later" id="pk-later">${esc(t('pk.later'))}</button><button class="btn primary" data-act="pk-enable" id="pk-yes">${ic('finger')} ${esc(t('pk.enable'))}</button>`
+    });
+  }, 1200);
+}
+async function pkEnable() {
+  if (PK.busy) return;
+  if (S.viaMaster) { toast(t('pk.via_master'), 'warn', 5000); return; }
+  PK.busy = true;
+  try {
+    const r = await KPasskey.register({ user: S.user, label: S.user + ' · ' + (settings().store_name || 'Khair Mart') });
+    const res = await api('passkey_add', Object.assign(r, { label: deviceLabel() }), { noDevice: true });
+    pkSet(S.user, { id: res.passkey.cred_id });
+    if ($('#pk-offer')) closeModal();
+    PK.list = null;
+    toast(t('pk.on'), 'ok', 5000);
+  } catch (e) {
+    const c = (e && e.code) || '';
+    toast(c === 'CANCEL' ? t('pk.cancel_on') : c === 'NOT_SUPPORTED' ? t('pk.unsupported') : c === 'EXISTS' ? t('pk.exists') : errMsg(e), c === 'CANCEL' ? 'warn' : 'err', 5000);
+  } finally { PK.busy = false; pkPanelFill(true); }
+}
+async function pkRemove(id, mine) {
+  try { await api('passkey_remove', { cred_id: id }, { noDevice: true }); } catch (e) { toast(errMsg(e), 'err', 5000); return false; }
+  if (mine || (pkMine(S.user) && pkMine(S.user).id === id)) pkSet(S.user, null);
+  PK.list = null; pkPanelFill(true);
+  return true;
+}
+async function pkDisable() {
+  const m = pkMine(S.user); if (!m) return;
+  if (!(await confirmBox(t('pk.off_q'), { ok: t('pk.disable'), danger: true })).ok) return;
+  if (await pkRemove(m.id, true)) toast(t('pk.off'), 'ok');
+}
+async function pkDel(id) {
+  const k = (PK.list || []).find(x => x.cred_id === id); if (!k) return;
+  if (!(await confirmBox(t('pk.del_q', { user: k.user, device: k.device }), { ok: t('delete'), danger: true })).ok) return;
+  if (await pkRemove(id, false)) toast(t('pk.removed'), 'ok');
+}
+/** Pengaturan: this phone's switch; the owner also sees every account's devices (a lost phone is removed here). */
+function pkPanelHTML() {
+  if (!PK_ROLES.includes(S.role) || !pkCan()) return '';
+  return `<div class="panel" id="st-pk"><h3>${ic('finger')} ${esc(t('pk.title'))} <span class="badge gray" id="st-pk-state">…</span></h3><div class="pb">
+      <p class="small" style="margin-top:0">${esc(t('pk.hint'))}</p><div id="st-pk-body"><span class="muted small">${esc(t('loading'))}</span></div>${isOwner() ? '<div id="st-pk-list"></div>' : ''}</div></div>`;
+}
+async function pkPanelFill(reload) {
+  if (!$('#st-pk')) return;
+  const avail = await pkAvail(), has = !!pkMine(S.user);
+  const st = $('#st-pk-state'), body = $('#st-pk-body'); if (!st || !body) return;
+  st.className = 'badge ' + (has ? 'green' : 'gray'); st.textContent = t(has ? 'pk.state_on' : 'pk.state_off');
+  body.innerHTML = has ? `<button class="btn" data-act="pk-disable" id="st-pk-off">${esc(t('pk.disable'))}</button>`
+    : !avail ? `<div class="notice" id="st-pk-no">${esc(t('pk.unsupported'))}</div>`
+      : S.viaMaster ? `<div class="notice">${esc(t('pk.via_master'))}</div>`
+        : `<button class="btn primary" data-act="pk-enable" id="st-pk-on">${ic('finger')} ${esc(t('pk.enable'))}</button>`;
+  if (!isOwner() || !$('#st-pk-list')) return;
+  if (reload || !PK.list) { try { PK.list = (await api('passkey_list', {}, { noDevice: true })).passkeys || []; PK.listErr = ''; } catch (e) { PK.list = null; PK.listErr = errMsg(e); } }
+  const box = $('#st-pk-list'); if (!box) return;
+  const mineId = (pkMine(S.user) || {}).id;
+  box.innerHTML = `<div class="hr"></div><div style="font-weight:700;margin-bottom:2px">${esc(t('pk.list'))}</div><p class="small muted" style="margin-top:0">${esc(t('pk.list_hint'))}</p>
+      ${PK.listErr ? `<div class="red small">${esc(PK.listErr)}</div>` : (PK.list || []).length ? `<div class="list">${PK.list.map(k => `<div class="li" style="min-height:0" data-pk="${esc(k.cred_id)}"><div class="grow"><div class="t">${esc(k.user)} · ${esc(k.device)}${k.cred_id === mineId ? ` <span class="badge green">${esc(t('pk.this'))}</span>` : ''}</div>
+        <div class="s">${esc(t('pk.since', { d: fmtDateTime(k.created_at) }))} · ${esc(k.last_used_at ? t('pk.used', { d: fmtDateTime(k.last_used_at) }) : t('pk.never'))}</div></div>
+        <button class="icon-btn ghost sm" data-act="pk-del" data-id="${esc(k.cred_id)}" aria-label="${esc(t('delete'))}">${ic('trash')}</button></div>`).join('')}</div>` : `<p class="muted small" id="st-pk-none">${esc(t('pk.none'))}</p>`}`;
+}
+Object.assign(ACT, {
+  'login-pk': () => pkLogin(false),
+  'pk-enable': () => pkEnable(),
+  'pk-later': () => { const m = store.get('pk_skip', {}) || {}; m[String(S.user).toLowerCase()] = 1; store.set('pk_skip', m); closeModal(); toast(t('pk.later_hint'), '', 5000); },
+  'pk-disable': () => pkDisable(),
+  'pk-del': el => pkDel(el.dataset.id),
+});
+Object.assign(I18N.id, {
+  'pk.login': 'Masuk dengan sidik jari / wajah', 'pk.or_pin': 'atau ketik PIN',
+  'pk.cancel': 'Dibatalkan. Tekan tombol sidik jari lagi, atau ketik PIN.', 'pk.cancel_on': 'Dibatalkan — sidik jari / wajah belum aktif.',
+  'pk.gone': 'Sidik jari / wajah di HP ini sudah tidak berlaku (PIN diganti atau dimatikan). Masuk dengan PIN, lalu aktifkan lagi di Pengaturan.',
+  'pk.offline': 'Tidak ada internet — masuk dengan PIN.',
+  'pk.unsupported': 'HP / browser ini belum bisa memakai sidik jari / wajah untuk aplikasi (perlu kunci layar HP dengan sidik jari, wajah atau PIN HP). PIN tetap dipakai.',
+  'pk.title': 'Masuk dengan sidik jari / wajah', 'pk.state_on': 'Aktif di HP ini', 'pk.state_off': 'Belum aktif di HP ini',
+  'pk.hint': 'Buka aplikasi dengan sidik jari atau wajah, seperti membuka kunci HP. Sidik jari dan wajah tidak pernah keluar dari HP; server hanya memeriksa tanda tangan dari HP. PIN tetap berlaku (tanpa internet, HP baru). Ganti PIN = sidik jari / wajah mati, aktifkan lagi. Hanya untuk HP pribadi — perangkat kasir bersama tetap memakai PIN.',
+  'pk.enable': 'Aktifkan di HP ini', 'pk.disable': 'Matikan di HP ini',
+  'pk.on': 'Sidik jari / wajah aktif. Lain kali cukup sentuh untuk masuk.', 'pk.off': 'Sidik jari / wajah dimatikan di HP ini.',
+  'pk.off_q': 'Matikan masuk dengan sidik jari / wajah di HP ini? Masuk lagi dengan PIN.',
+  'pk.offer_title': 'Masuk lebih cepat?', 'pk.offer_body': 'Lain kali buka aplikasi dengan sidik jari atau wajah, tanpa mengetik PIN.',
+  'pk.offer_note': 'Sidik jari dan wajah tetap di HP ini, tidak dikirim ke mana pun. PIN tetap bisa dipakai.',
+  'pk.later': 'Nanti', 'pk.later_hint': 'Bisa diaktifkan kapan saja: Pengaturan → Masuk dengan sidik jari / wajah.',
+  'pk.list': 'Semua perangkat dengan sidik jari / wajah', 'pk.list_hint': 'HP hilang atau diganti? Hapus perangkatnya di sini.',
+  'pk.since': 'aktif sejak {d}', 'pk.used': 'terakhir dipakai {d}', 'pk.never': 'belum dipakai',
+  'pk.del_q': 'Matikan sidik jari / wajah {user} di {device}?', 'pk.removed': 'Perangkat dihapus', 'pk.none': 'Belum ada yang memakai sidik jari / wajah.',
+  'pk.via_master': 'Masuk dengan kode pemilik: sidik jari / wajah hanya diaktifkan oleh pemilik akun sendiri, dengan PIN-nya.',
+  'pk.this': 'HP ini', 'pk.exists': 'Sidik jari / wajah sudah ada di HP ini.',
+  'err.PASSKEY_FAIL': 'Sidik jari / wajah ditolak. Masuk dengan PIN.', 'err.PASSKEY_EXPIRED': 'Waktu habis. Coba lagi.',
+  'err.NO_PASSKEY': 'Sidik jari / wajah belum aktif untuk akun ini.', 'err.PASSKEY_GONE': 'Sidik jari / wajah di HP ini sudah tidak berlaku.',
+});
+Object.assign(I18N.ar, {
+  'pk.login': 'الدخول بالبصمة أو الوجه', 'pk.or_pin': 'أو اكتب الرقم السري',
+  'pk.cancel': 'أُلغي. اضغط زر البصمة مرة أخرى أو اكتب الرقم السري.', 'pk.cancel_on': 'أُلغي — لم تُفعَّل البصمة أو الوجه.',
+  'pk.gone': 'البصمة أو الوجه على هذا الهاتف لم تعد صالحة (تغيّر الرقم السري أو أُوقفت). ادخل بالرقم السري ثم فعّلها من جديد في الإعدادات.',
+  'pk.offline': 'لا يوجد إنترنت — ادخل بالرقم السري.',
+  'pk.unsupported': 'هذا الهاتف أو المتصفح لا يدعم الدخول بالبصمة أو الوجه للتطبيق (يحتاج قفل شاشة الهاتف بالبصمة أو الوجه أو رمز الهاتف). يبقى الرقم السري.',
+  'pk.title': 'الدخول بالبصمة أو الوجه', 'pk.state_on': 'مفعّل على هذا الهاتف', 'pk.state_off': 'غير مفعّل على هذا الهاتف',
+  'pk.hint': 'افتح التطبيق بالبصمة أو الوجه مثل فتح قفل الهاتف. البصمة والوجه لا يخرجان من الهاتف أبداً، والخادم يتحقق فقط من توقيع الهاتف. الرقم السري يبقى صالحاً (بدون إنترنت، هاتف جديد). تغيير الرقم السري يوقفها، ففعّلها من جديد. للهاتف الشخصي فقط — جهاز الكاشير المشترك يبقى على الرقم السري.',
+  'pk.enable': 'فعّل على هذا الهاتف', 'pk.disable': 'أوقف على هذا الهاتف',
+  'pk.on': 'فُعّلت البصمة أو الوجه. في المرة القادمة يكفي اللمس للدخول.', 'pk.off': 'أُوقفت البصمة أو الوجه على هذا الهاتف.',
+  'pk.off_q': 'إيقاف الدخول بالبصمة أو الوجه على هذا الهاتف؟ تدخل بعدها بالرقم السري.',
+  'pk.offer_title': 'دخول أسرع؟', 'pk.offer_body': 'في المرة القادمة افتح التطبيق بالبصمة أو الوجه بدون كتابة الرقم السري.',
+  'pk.offer_note': 'البصمة والوجه يبقيان في هذا الهاتف ولا يُرسلان إلى أي مكان. الرقم السري يبقى صالحاً.',
+  'pk.later': 'لاحقاً', 'pk.later_hint': 'يمكن التفعيل في أي وقت: الإعدادات ← الدخول بالبصمة أو الوجه.',
+  'pk.list': 'كل الأجهزة المفعّل عليها البصمة أو الوجه', 'pk.list_hint': 'ضاع هاتف أو تغيّر؟ احذف جهازه من هنا.',
+  'pk.since': 'مفعّل منذ {d}', 'pk.used': 'آخر استخدام {d}', 'pk.never': 'لم يُستخدم بعد',
+  'pk.del_q': 'إيقاف البصمة أو الوجه لـ {user} على {device}؟', 'pk.removed': 'حُذف الجهاز', 'pk.none': 'لا أحد يستخدم البصمة أو الوجه بعد.',
+  'pk.via_master': 'دخلت بكود المالك: صاحب الحساب وحده يفعّل البصمة أو الوجه برقمه السري.',
+  'pk.this': 'هذا الهاتف', 'pk.exists': 'البصمة أو الوجه موجودة على هذا الهاتف.',
+  'err.PASSKEY_FAIL': 'رُفضت البصمة أو الوجه. ادخل بالرقم السري.', 'err.PASSKEY_EXPIRED': 'انتهى الوقت. حاول مرة أخرى.',
+  'err.NO_PASSKEY': 'البصمة أو الوجه غير مفعّلة لهذا الحساب.', 'err.PASSKEY_GONE': 'البصمة أو الوجه على هذا الهاتف لم تعد صالحة.',
+});
 
 /* ---- Discount approval card: the owner sees profit before / after; the manager never does ---- */
 function discountAprHTML(a, pl) {
@@ -10231,7 +10425,7 @@ Object.assign(ACT, {
     } catch (e) { err.textContent = errMsg(e); }
   }
 });
-function logoutUser() { S.pin_hash = ''; S.viaMaster = false; sessSet(S.user, S.role, ''); L.sel = S.user; S.inApp = false; const cf = $('#view-cold'); if (cf) cf.innerHTML = ''; try { if (window.KChatUI) KChatUI.stop(); } catch (e) { } showLogin('pin'); }
+function logoutUser() { PK.autoDone = true; S.pin_hash = ''; S.viaMaster = false; sessSet(S.user, S.role, ''); L.sel = S.user; S.inApp = false; const cf = $('#view-cold'); if (cf) cf.innerHTML = ''; try { if (window.KChatUI) KChatUI.stop(); } catch (e) { } showLogin('pin'); }
 Object.assign(I18N.id, {
   'role.akuntan': 'Akuntan', 'role.pekerja': 'Pekerja harian (absen wajah, tanpa PIN)', 'ro.denied': 'Akun akuntan hanya untuk melihat data', 'ro.hint': 'Akun akuntan: lihat saja, tidak bisa mengubah.', 'set.inv_title': 'Faktur & akuntan', 'set.due_days': 'Jatuh tempo faktur hutang (hari)', 'set.due_bad': 'Isi 0–120 hari', 'set.ak_cost': 'Akuntan & manajer boleh melihat harga beli (modal)', 'set.ak_cost_hint': 'Laba tetap hanya untuk pemilik. Total nota barang masuk selalu terlihat. Tanpa centang, akuntan dan manajer tidak melihat harga modal (rata-rata) produk dan marginnya.',
   'nav.cold': "Gudang Dingin", 'navs.cold': "Gd. Dingin", 'nav.absensi': "Absensi", 'navs.absensi': "Absensi", 'att.kiosk': "Buka layar absen", 'att.add': "Tambah pekerja", 'att.hint': "Pekerja absen dengan wajah di perangkat toko. Catatan tidak bisa diubah atau dihapus siapa pun; perubahan apa pun pada data terlihat di laporan.", 'att.today': "Hari ini", 'att.workers': "Pekerja", 'att.report': "Laporan", 'att.p_month': "Bulan ini", 'att.p_lastmonth': "Bulan lalu", 'att.p_7d': "7 hari", 'att.show': "Tampilkan", 'att.settings': "Jam kerja", 'att.st_hadir': "Hadir", 'att.st_terlambat': "Terlambat", 'att.st_tidak_hadir': "Tidak hadir", 'att.st_libur': "Libur", 'att.st_belum': "Belum datang", 'att.in': "Masuk", 'att.out': "Pulang", 'att.still_in': "masih di toko", 'att.hours': "Jam kerja", 'att.late': "Terlambat", 'att.present': "Hadir", 'att.absent': "Tidak hadir", 'att.fails': "Gagal wajah", 'att.wage': "Upah/hari", 'att.set_wage': "Atur upah", 'att.wage_due': "Upah dibayar", 'att.wage_total': "Total upah", 'att.ok': "Data utuh: {n} catatan, {d} hari disegel — tidak ada yang diubah atau dihapus.", 'att.bad': "PERINGATAN: data absensi berubah", 'att.print': "Cetak laporan (A4)", 'att.csv': "Unduh CSV", 'att.events': "Kejadian ({n})", 'att.ev_fail': "Gagal absen", 'att.ev_enroll': "Daftar wajah", 'att.ev_forget': "Hapus wajah", 'att.ev_worker': "Data pekerja", 'att.ev_setting': "Jam kerja diubah", 'att.face': "Wajah", 'att.enrolled': "Terdaftar", 'att.not_enrolled': "Belum", 'att.enroll': "Daftar wajah", 'att.reenroll': "Ulang", 'att.forget': "Hapus wajah", 'att.forget_q': "Hapus data wajah {name}? Absen lama tetap ada; untuk absen lagi wajahnya harus didaftarkan ulang.", 'att.no_workers': "Belum ada pekerja. Tambahkan pekerja lalu daftarkan wajahnya.", 'att.inactive': "nonaktif", 'att.editor_new': "Pekerja baru", 'att.editor_edit': "Ubah pekerja", 'att.job': "Pekerjaan", 'att.active': "Aktif", 'att.wage_hint': "Hanya pemilik yang melihat upah.", 'att.name_req': "Nama wajib", 'att.start': "Jam masuk", 'att.end': "Jam pulang", 'att.grace': "Toleransi terlambat (menit)", 'att.radius': "Jarak dari toko (m)", 'att.season': "Musim jam panjang", 'att.season_name': "Nama", 'att.season_from': "Dari", 'att.season_to': "Sampai", 'att.season_end': "Jam tutup", 'att.season_hint': "Isi hanya jika tanggalnya lain dari hitungan otomatis — musim yang diketik menang pada hari-harinya.", "om.title": "Penjualan & faktur hari ini", "om.live_hint": "Diperbarui otomatis setiap menit selama halaman ini terbuka.", "om.hint": "Hanya melihat: penjualan dan faktur hari ini dari semua kasir. Penjualan dilakukan di Khair Kasir.", "om.none": "Belum ada penjualan hari ini.",

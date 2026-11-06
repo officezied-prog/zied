@@ -144,6 +144,14 @@ export const TABLES = {
     shot_id: 'string', at: 'string', shot_date: 'string', user: 'string', role: 'string', place: 'string',
     kind: 'string', sample: 'string', photo: 'string', photo_status: 'string', device: 'string',
   },
+  // v77 (owner 2026-11-06: «هل يمكن ان يتم الفتح ببصمة او بالوجه»): the passkeys that open an account with the phone's own
+  // fingerprint / face (src/passkey.js) — only the PUBLIC half of each key; user_id = pos_users.id (a renamed account keeps them);
+  // last_t = the time of the last challenge used (an older one is refused: a signed login can never be sent again).
+  // Created at runtime on the live D1 (src/core.js POS_MIGRATIONS).
+  pos_passkeys: {
+    cred_id: 'string', user_id: 'number', user: 'string', public_key: 'string', alg: 'number', sign_count: 'number',
+    last_t: 'number', device: 'string', created_at: 'string', last_used_at: 'string',
+  },
   pos_photos: {
     photo_id: 'string', kind: 'string', ref: 'string', created_at: 'string',
     photo_date: 'string', user: 'string', drive_file_id: 'string', drive_url: 'string',

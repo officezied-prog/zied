@@ -10,6 +10,7 @@ import { handlePhoto, handlePhotoFile } from './photo.js';
 import { handleCold } from './cold.js';
 import { handleBrad, handleWaWebhook, handleLalaCron, handleLalaWebhook } from './brad.js';
 import { authGate, credsOf } from './authgate.js';
+import { PASSKEY_OPEN, PASSKEY_ACTIONS, passkeyOpen, passkeyAction, passkeyAfterUserChange } from './passkey.js';
 import { withTableCache, QuotaError } from './tablecache.js';
 
 const CORS = {
@@ -181,7 +182,7 @@ export default {
       return json({ ok: false, error: 'SERVER', message: 'Backend not configured' }, 500);
     }
     // Read as text and let parseRequest handle JSON/text, exactly as the n8n node did.
-    const text = await request.text();
+    let text = await request.text();
     const headers = {};
     request.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
     // Route by path. khair-pos-photo → Photo (needs env for the AI key), khair-field →
@@ -190,8 +191,24 @@ export default {
     const adapter = d1Adapter(env.DB);
     const route = path.endsWith('khair-pos-photo') ? 'photo' : path.endsWith('khair-field') ? 'field' : path.endsWith('khair-chat') ? 'chat'
       : path.endsWith('khair-att') ? 'att' : path.endsWith('khair-cold') ? 'cold' : path.endsWith('khair-brad') ? 'brad' : 'pos';
-    const creds = credsOf(text);
+    let creds = credsOf(text);
+    let viaPasskey = null;
     try {
+      // v77: the fingerprint / face login (src/passkey.js) — the store key first, then the passkey is the proof; a verified one is
+      // from here on the user's own ordinary login, with the PIN hash the server keeps (the gate below lets it through as such).
+      if (route === 'pos' && PASSKEY_OPEN.includes(creds.action)) {
+        const pk = await passkeyOpen(adapter, text, env, { route, ip: headers['cf-connecting-ip'] || '' });
+        if (pk.answer) {
+          if (pk.answer.error !== 'BAD_KEY') {
+            const counted = recordUsage(env.DB, adapter.use, new Date(), route + ':' + creds.action);
+            if (ctx && ctx.waitUntil) ctx.waitUntil(counted); else await counted;
+          }
+          return json(pk.answer, 200);
+        }
+        viaPasskey = pk.login;
+        text = JSON.stringify({ action: 'login', key: creds.key, user: pk.login.user, pin_hash: pk.login.pin_hash, data: pk.login.data });
+        creds = credsOf(text);
+      }
       // v71 security: one gate before any table is read — the store key (no read at all when it is wrong), then the PIN with the
       // lockout counted on every endpoint (src/authgate.js). The handlers keep all their own checks.
       const refused = await authGate(adapter, creds, env.STORE_KEY, { route, ip: headers['cf-connecting-ip'] || '' });
@@ -199,7 +216,9 @@ export default {
       if (refused) return json(refused, 200); // business errors (ok:false) are 200, as before
       adapter.req = { route, action: creds.action }; // v74: the quota guard (src/tablecache.js) refuses by endpoint and action
       let response;
-      if (path.endsWith('khair-pos-photo')) {
+      if (route === 'pos' && PASSKEY_ACTIONS.includes(creds.action)) {
+        response = await passkeyAction(adapter, text, env); // v77: make / list / remove a passkey (own PIN)
+      } else if (path.endsWith('khair-pos-photo')) {
         // v36: the base of the stored-photo links (…/webhook/khair-pos-photo) on this Worker's own host.
         response = await handlePhoto(adapter, text, headers, env.STORE_KEY, env, { base: url.origin + path });
       } else {
@@ -212,7 +231,11 @@ export default {
         response = await handler(adapter, text, headers, env.STORE_KEY, { env }); // env: the Google Places key (field search), when set
         // v50: the apps show whether the photo reader (AI) is on — the owner sees at once that ANTHROPIC_API_KEY is missing
         if (handler === handleRequest && response && response.ok === true && response.user && response.server_time) response.ai_reader = !!env.ANTHROPIC_API_KEY;
+        // v77: a new PIN (or an account switched off) ends that account's fingerprint / face logins
+        if (handler === handleRequest && response && response.ok === true && (creds.action === 'change_pin' || creds.action === 'save_user')) await passkeyAfterUserChange(adapter, text);
       }
+      // v77: a login opened by a passkey answers like a PIN login, plus the PIN hash the app then sends with each request
+      if (viaPasskey && response && response.ok === true) { response.pin_hash = viaPasskey.pin_hash; response.via_passkey = true; }
       const counted = recordUsage(env.DB, adapter.use, new Date(), route + ':' + creds.action);
       if (ctx && ctx.waitUntil) ctx.waitUntil(counted); else await counted; // tests (no ctx) wait for it
       return json(response, 200); // business errors (ok:false) are 200, as n8n returned them

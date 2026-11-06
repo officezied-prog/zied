@@ -91,6 +91,10 @@ export const POS_MIGRATIONS = [
   'CREATE INDEX IF NOT EXISTS idx_pos_purchases_purchase_date ON pos_purchases (purchase_date)',
   'CREATE INDEX IF NOT EXISTS idx_pos_repacks_repack_date ON pos_repacks (repack_date)',
   'CREATE INDEX IF NOT EXISTS idx_pos_attendance_att_date ON pos_attendance (att_date)',
+  // v77: the passkeys (fingerprint / face login, src/passkey.js) — same definition and index names as schema.sql
+  'CREATE TABLE IF NOT EXISTS pos_passkeys (id INTEGER PRIMARY KEY AUTOINCREMENT, cred_id TEXT, user_id REAL, user TEXT, public_key TEXT, alg REAL, sign_count REAL, last_t REAL, device TEXT, created_at TEXT, last_used_at TEXT)',
+  'CREATE INDEX IF NOT EXISTS idx_pos_passkeys_cred_id ON pos_passkeys (cred_id)',
+  'CREATE INDEX IF NOT EXISTS idx_pos_passkeys_user_id ON pos_passkeys (user_id)',
 ];
 export async function ensurePosSchema(adapter) {
   if (posSchemaEnsured) return;

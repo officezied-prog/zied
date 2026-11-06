@@ -21,6 +21,7 @@ on:
       - 'khair-pos/backend/**'
       - 'khair-pos/worker/**'
       - 'khair-pos/shared/measure.js' # v72: built into the POS process (worker/build.js)
+      - 'khair-pos/shared/passkey.js' # v77: the fingerprint / face login's checks (worker/build.js → src/generated/passkey.gen.js)
       - '.github/workflows/worker-deploy.yml'
   workflow_dispatch:
 
