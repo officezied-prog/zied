@@ -193,6 +193,7 @@ const MockServer = (() => {
       if (viaMaster && u.role === 'owner') throw E('FORBIDDEN', 'PIN pemilik hanya bisa diganti dengan PIN pemilik sendiri');
       if (db.users.some(x => x.active !== false && isHex64(x.master_hash) && x.master_hash === h)) throw E('INVALID', 'PIN baru tidak valid');
       Object.assign(u, { pin_hash: h, must_change: viaMaster, fail_count: 0, locked_until: '' });
+      if (window.KPasskeyMock) KPasskeyMock.drop(db, u.name); // v77: a new PIN ends the fingerprint / face logins
       logAct(db, u, 'ganti_pin', viaMaster ? 'PIN ' + u.name + ' direset dengan kode pemilik (wajib ganti saat masuk)' : u.name + ' mengganti PIN sendiri', u.name, 0, viaMaster ? 'warn' : 'info');
       return { must_change: viaMaster };
     }
@@ -624,6 +625,16 @@ const MockServer = (() => {
     try { fieldSeeded = !!(window.KhairFieldMock && KhairFieldMock.seed(db)); } catch (e) { console.error(e); }
     db.approvals = db.approvals || []; db.photos = db.photos || []; db.expenses = db.expenses || []; db.shifts = db.shifts || []; db.cash_moves = db.cash_moves || [];
     db.devices = db.devices || []; db.activity = db.activity || [];
+    // v77: the fingerprint / face login (../shared/passkey-mock.js, the twin of the Worker's src/passkey.js)
+    if (window.KPasskeyMock && KPasskeyMock.is(body.action)) {
+      try {
+        const pk = await KPasskeyMock.handle(db, body, E);
+        if (pk.dirty || fieldSeeded) save(db);
+        if (!pk.login) return JSON.parse(JSON.stringify(Object.assign({ ok: true }, pk.res)));
+        const r = await request(pk.login);
+        return r && r.ok ? Object.assign(r, { pin_hash: pk.pin_hash, via_passkey: true }) : r;
+      } catch (e) { return Object.assign({ ok: false, error: e.code || 'SERVER', message: e.message }, e.extra || {}); }
+    }
     // chat is append-only text/images; it bypasses the POS tamper scan (a message may legitimately contain symbols)
     if (CHAT_ACTIONS.includes(body.action)) {
       await loadChatMock();

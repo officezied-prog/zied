@@ -36,7 +36,26 @@ function wib(iso, nowMs) {
   const t = new Date(Date.parse(iso) + 7 * 3600000).toISOString(), n = new Date(nowMs + 7 * 3600000).toISOString();
   return (t.slice(0, 10) === n.slice(0, 10) ? '' : t.slice(8, 10) + '/' + t.slice(5, 7) + ' ') + t.slice(11, 16) + ' WIB';
 }
-const lockedMsg = (until, nowMs) => fail('LOCKED', 'Terlalu banyak PIN salah. Coba lagi ' + wib(until, nowMs), { locked_until: until });
+export const lockedMsg = (until, nowMs) => fail('LOCKED', 'Terlalu banyak PIN salah. Coba lagi ' + wib(until, nowMs), { locked_until: until });
+
+/** One more wrong attempt on `me` (a wrong PIN, or a refused fingerprint / face login — v77): counted in the database itself (two
+ *  phones at once cannot both read the old count); on every 5th the account is locked and the owner told. → { fc, refusal }. */
+export async function countWrong(adapter, me, { nowMs = Date.now(), route = 'pos', ip = '', why = 'PIN salah' } = {}) {
+  await adapter.run('UPDATE pos_users SET fail_count = COALESCE(fail_count, 0) + 1 WHERE id = ?', [me.id]);
+  const fc = Number(((await adapter.all('SELECT fail_count FROM pos_users WHERE id = ?', [me.id]))[0] || {}).fail_count) || 0;
+  const mins = lockMinutes(fc);
+  if (!mins) return { fc, refusal: null };
+  const until = new Date(nowMs + mins * 60000).toISOString(), at = new Date(nowMs).toISOString();
+  await adapter.run('UPDATE pos_users SET locked_until = ? WHERE id = ?', [until, me.id]);
+  try {
+    await adapter.run('INSERT INTO pos_activity (act_id, at, act_date, user, role, kind, summary, ref, amount, level) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [
+      'AC' + Math.random().toString(36).slice(2, 10).toUpperCase(), at, new Date(nowMs + 7 * 3600000).toISOString().slice(0, 10), str(me.name), str(me.role), 'keamanan',
+      why + ' ' + fc + ' kali berturut-turut untuk akun ' + str(me.name) + ' — dikunci ' + (mins >= 60 ? mins / 60 + ' jam' : mins + ' menit') +
+      ' (sampai ' + wib(until, nowMs) + ')' + (ip ? ' · jaringan ' + str(ip).slice(0, 45) : '') + ' · aplikasi ' + route,
+      str(me.name), 0, 'danger']);
+  } catch (e) { /* the lock itself is what matters */ }
+  return { fc, refusal: lockedMsg(until, nowMs) };
+}
 
 /** The credentials of a request body (JSON text, as every app sends) — anything else has no key. */
 export function credsOf(text) {
@@ -68,21 +87,8 @@ export async function authGate(adapter, creds, STORE_KEY, { route = 'pos', nowMs
     return null;
   }
   // wrong PIN: counted in the database itself (two phones at once cannot both read the old count)
-  await adapter.run('UPDATE pos_users SET fail_count = COALESCE(fail_count, 0) + 1 WHERE id = ?', [me.id]);
-  const fc = Number(((await adapter.all('SELECT fail_count FROM pos_users WHERE id = ?', [me.id]))[0] || {}).fail_count) || 0;
-  const mins = lockMinutes(fc);
-  if (mins) {
-    const until = new Date(nowMs + mins * 60000).toISOString(), at = new Date(nowMs).toISOString();
-    await adapter.run('UPDATE pos_users SET locked_until = ? WHERE id = ?', [until, me.id]);
-    try {
-      await adapter.run('INSERT INTO pos_activity (act_id, at, act_date, user, role, kind, summary, ref, amount, level) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [
-        'AC' + Math.random().toString(36).slice(2, 10).toUpperCase(), at, new Date(nowMs + 7 * 3600000).toISOString().slice(0, 10), str(me.name), str(me.role), 'keamanan',
-        'PIN salah ' + fc + ' kali berturut-turut untuk akun ' + str(me.name) + ' — dikunci ' + (mins >= 60 ? mins / 60 + ' jam' : mins + ' menit') +
-        ' (sampai ' + wib(until, nowMs) + ')' + (ip ? ' · jaringan ' + str(ip).slice(0, 45) : '') + ' · aplikasi ' + route,
-        str(me.name), 0, 'danger']);
-    } catch (e) { /* the lock itself is what matters */ }
-    return lockedMsg(until, nowMs);
-  }
+  const { fc, refusal } = await countWrong(adapter, me, { nowMs, route, ip });
+  if (refusal) return refusal;
   const left = 5 - (fc % 5);
   return fail('BAD_PIN', 'Nama atau PIN salah' + (left <= 2 ? ' (' + left + ' kali lagi, lalu akun dikunci)' : ''));
 }

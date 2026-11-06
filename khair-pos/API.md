@@ -793,3 +793,27 @@ Owner: «المتابعة اليومية للفواتير التي تم تنزي
 - Apps: Khair Kasir "Lainnya → Kemas ulang" (kasir: request; manager: direct), status in "Permintaan saya" (+ "Batalkan" after 24 h), the
   manager's inbox card; owner app Persetujuan card (manager + accountant, quantities editable, live yield), Gudang → Kemas ulang history
   "Diminta X · disetujui Y".
+
+## Fingerprint / face login — passkeys (v77)
+Owner 2026-11-06 («هل يمكن ان يتم الفتح ببصمة او بالوجه», choice «أ»). WebAuthn passkeys made by the phone's own lock (fingerprint, face
+unlock, Face ID, Windows Hello); only the public key is kept (`pos_passkeys`: `cred_id`, `user_id` = `pos_users.id`, `public_key` SPKI,
+`alg` −7 ES256 / −257 RS256, `sign_count`, `last_t`, `device`, `created_at`, `last_used_at`). Roles owner / manager / akuntan / sales;
+a **kasir account never gets one** (shared shop device: a phone accepts any fingerprint enrolled on it). Worker: `src/passkey.js`;
+checks shared with the apps' demo: `shared/passkey.js` (`KPasskey`), demo twin `shared/passkey-mock.js`.
+
+| Action (POS endpoint) | Credentials | `data` | Response |
+|---|---|---|---|
+| `passkey_begin` | `key`, `user` (no PIN) | — | `{challenge, allow: [cred_id]}` · `NO_PASSKEY` · `LOCKED` |
+| `passkey_login` | `key`, `user` (no PIN) | `{cred_id, authenticator_data, client_data, signature}` (base64url) + `device` | the ordinary `login` answer + `pin_hash`, `via_passkey: true` · `PASSKEY_FAIL` (counted like a wrong PIN; 5 → `LOCKED`) · `PASSKEY_EXPIRED` / `PASSKEY_GONE` / `NO_PASSKEY` (not counted) |
+| `passkey_add` | own PIN (never the master code; not under `must_change`) | `{cred_id, public_key, alg, client_data, authenticator_data, label}` | `{passkey: {cred_id, device, created_at}}` · kasir → `FORBIDDEN` |
+| `passkey_list` | own PIN | — | `{passkeys: [{cred_id, user, mine, device, created_at, last_used_at}]}` — the owner: every account's |
+| `passkey_remove` | own PIN | `{cred_id}` | `{removed}` — own, or any for the owner |
+
+- The challenge is `k1.<user id>.<ms>.<random>.<HMAC(store key)>`: nothing is written to make it; good for 3 minutes; a passkey keeps
+  the time of the last challenge it answered (`last_t`), so a signed login can never be sent twice. Checked: client data type and
+  challenge, origin (`https://officezied-prog.github.io`, more only through the dashboard variable `PASSKEY_ORIGINS`), the host hash,
+  user present + **user verified** flags, the signature, the counter (never back when it counts).
+- A verified `passkey_login` runs as the user's own `login` with the PIN hash the server keeps (lock-outs, `must_change`, tamper lock,
+  activity log as with a PIN); the app then sends that `pin_hash` with each request as after a PIN login.
+- A new PIN (`change_pin`, or `save_user` with a `pin_hash`) or an account switched off (`save_user` `active: false`) removes that
+  account's passkeys. At most 10 an account (the oldest go). Each one turned on / off is in the owner's activity log (`keamanan`).

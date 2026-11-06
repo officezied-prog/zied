@@ -143,6 +143,22 @@ PENDAPATAN ONLINE = EDC (as on the paper). "Kirim audit harian" (top of the view
 JPEG in a one-page PDF (`pdfOfJpeg`, `AUDIT_HARIAN_DD_MONTH_YYYY.pdf`) and opens the phone's share sheet (WhatsApp: the owner's and the
 manager's chats, named on the card from `send_to`); without a share sheet (a computer) it is downloaded. Sending today's marks the evening
 reminder (`daily_sent`) done. Automatic sending without a tap would need WhatsApp's official API (not set up: no `WA_*` secrets).
+**v77 — open the apps with the phone's own fingerprint / face (owner 3.6.0, sales 1.10.0; owner 2026-11-06: «هل يمكن ان يتم الفتح ببصمة او
+بالوجه», his choice «أ»):** WebAuthn passkeys (the phone's own lock: fingerprint, face unlock, Face ID, Windows Hello) for the owner, the
+manager, the accountant (owner app) and the sales reps (Khair Sales), each on his own phone. **The cashiers' shared device keeps its PIN**
+(a phone accepts any fingerprint enrolled on it, so it cannot tell two cashiers apart): the server refuses a kasir account. Turned on once
+with the PIN (offered once after a PIN login — "Nanti" = not again on that phone — or Pengaturan / Khair Sales menu → "Masuk dengan sidik
+jari / wajah"); then the login screen opens straight into the phone's check when the app is opened (not after an idle lock or "Keluar"),
+and the button stays above the PIN pad. The PIN always works (no internet, a new phone). Worker `src/passkey.js` (table `pos_passkeys`,
+public keys only; `passkey_begin` / `passkey_login` need only the store key — a verified one runs as the user's own ordinary `login` and
+answers its `pin_hash`; `passkey_add` / `_list` / `_remove` need the person's OWN PIN, never the master code); checks in
+`shared/passkey.js` (KPasskey: HMAC challenge from the store key, 3 minutes, never twice per passkey; origin, host hash, user-verified
+flag, ES256 / RS256 signature, counter), built into the Worker by `build.js` (`src/generated/passkey.gen.js`) and loaded by the apps; demo
+twin `shared/passkey-mock.js`. A refused signature counts as a wrong PIN (same lock-out, `authgate.js` `countWrong`). A new PIN or an
+account switched off removes its passkeys. The owner sees every account's devices in Pengaturan and removes a lost phone's. The device
+keeps only which accounts have one there (`kpos.pk`, shared by both apps). Tests: `worker/test/passkey.test.js` (a real P-256 / RSA key
+plays the phone), `tests/passkey.spec.js` + `tests-sales/passkey.spec.js` (Chromium's virtual authenticator; pages on `localhost`, as a
+passkey needs a host name). Extra allowed origins only through the dashboard variable `PASSKEY_ORIGINS` (never in `wrangler.toml`).
 **History cleaned (2026-10-23; owner chose «ب»: the repo stays public and free):** every branch and the `android` tag were rewritten once
 (git-filter-repo `--sensitive-data-removal`): the owner's full name, the owner's and the manager's personal WhatsApp numbers, the bank
 account, the old notes' store-key hints, the cold stores' agreed rates and a supplier's name are gone from every old version; the owner's
