@@ -102,12 +102,14 @@ CREATE TABLE IF NOT EXISTS pos_sales (
   account_id TEXT,
   bank TEXT,
   transfer_ref TEXT,
-  proof_photo_id TEXT
+  proof_photo_id TEXT,
+  drawer_undone INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_pos_sales_sale_date ON pos_sales (sale_date);
 CREATE INDEX IF NOT EXISTS idx_pos_sales_client_id ON pos_sales (client_id);
 CREATE INDEX IF NOT EXISTS idx_pos_sales_invoice_no ON pos_sales (invoice_no);
 CREATE INDEX IF NOT EXISTS idx_pos_sales_customer_id ON pos_sales (customer_id);
+CREATE INDEX IF NOT EXISTS idx_pos_sales_status ON pos_sales (status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pos_sales_day_seq ON pos_sales (sale_date, day_seq);
 
 CREATE TABLE IF NOT EXISTS pos_sale_items (
@@ -259,6 +261,7 @@ CREATE TABLE IF NOT EXISTS pos_shifts (
 );
 CREATE INDEX IF NOT EXISTS idx_pos_shifts_status ON pos_shifts (status);
 CREATE INDEX IF NOT EXISTS idx_pos_shifts_shift_date ON pos_shifts (shift_date);
+CREATE INDEX IF NOT EXISTS idx_pos_shifts_shift_id ON pos_shifts (shift_id);
 
 CREATE TABLE IF NOT EXISTS pos_devices (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

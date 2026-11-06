@@ -159,6 +159,16 @@ account switched off removes its passkeys. The owner sees every account's device
 keeps only which accounts have one there (`kpos.pk`, shared by both apps). Tests: `worker/test/passkey.test.js` (a real P-256 / RSA key
 plays the phone), `tests/passkey.spec.js` + `tests-sales/passkey.spec.js` (Chromium's virtual authenticator; pages on `localhost`, as a
 passkey needs a host name). Extra allowed origins only through the dashboard variable `PASSKEY_ORIGINS` (never in `wrangler.toml`).
+**v78 — a cancelled sale leaves its cashier's drawer (owner 3.6.1, server; manager 2026-11-06, the Audit harian of 03/11: «customer
+payment transfer, kita input cash. sudah ubah ke transfer, tapi di report harian detect minus»):** a cash sale entered by mistake was
+cancelled and entered again as a transfer, but `doVoid` never took it out of the drawer — the shift's `cash_sales` (added at each sale)
+still held it, so "seharusnya" read Rp 3.266.000 instead of 666.000 and "selisih" -Rp 2.600.000 although the drawer was right. Now
+`doVoid` (process.js; `void_sale` and an approved `request_void`) sends `ops.shift_undo`: the Worker (src/core.js `shiftUndoStatements`,
+first in the request's write batch via `applyOps(…, pre)`) takes the sale's parts (cash / transfer / QRIS / card / debt, total, count) out
+of its drawer with ONE UPDATE — a closed drawer's `expected_cash` and `difference` too — only while `pos_sales.drawer_undone` is not set
+(then set): never twice. The sales cancelled before were taken out once per database (`repairVoidDrawers`, pos_meta `repair:void_drawer`,
+≤ 200 a request in one batch, one line "Kas kasir disesuaikan …" for the owner); its flag is read with the migrations' own pos_meta read.
+Indexes `pos_sales.status`, `pos_shifts.shift_id`. Tests `worker/test/v78.test.js` (the 03/11 numbers), `tests/audit-harian.spec.js`.
 **History cleaned (2026-10-23; owner chose «ب»: the repo stays public and free):** every branch and the `android` tag were rewritten once
 (git-filter-repo `--sensitive-data-removal`): the owner's full name, the owner's and the manager's personal WhatsApp numbers, the bank
 account, the old notes' store-key hints, the cold stores' agreed rates and a supplier's name are gone from every old version; the owner's

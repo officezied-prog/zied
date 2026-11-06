@@ -95,13 +95,89 @@ export const POS_MIGRATIONS = [
   'CREATE TABLE IF NOT EXISTS pos_passkeys (id INTEGER PRIMARY KEY AUTOINCREMENT, cred_id TEXT, user_id REAL, user TEXT, public_key TEXT, alg REAL, sign_count REAL, last_t REAL, device TEXT, created_at TEXT, last_used_at TEXT)',
   'CREATE INDEX IF NOT EXISTS idx_pos_passkeys_cred_id ON pos_passkeys (cred_id)',
   'CREATE INDEX IF NOT EXISTS idx_pos_passkeys_user_id ON pos_passkeys (user_id)',
+  // v78: a cancelled sale leaves its cashier's drawer (ops.shift_undo) — marked once taken out; the drawers found by id
+  'ALTER TABLE pos_sales ADD COLUMN drawer_undone INTEGER',
+  'CREATE INDEX IF NOT EXISTS idx_pos_sales_status ON pos_sales (status)',
+  'CREATE INDEX IF NOT EXISTS idx_pos_shifts_shift_id ON pos_shifts (shift_id)',
 ];
 export async function ensurePosSchema(adapter) {
-  if (posSchemaEnsured) return;
-  // v75: once per database (src/migrate.js) — a new instance reads one row instead of sending all 55 statements again
-  posSchemaEnsured = await runMigrations(adapter, 'schema:pos', POS_MIGRATIONS);
+  let known = false;
+  if (!posSchemaEnsured) {
+    // v75: once per database (src/migrate.js) — a new instance reads one row instead of sending all 55 statements again;
+    // v78: the cancelled-sales repair's flag comes in the same read
+    const meta = { 'repair:void_drawer': 0 };
+    posSchemaEnsured = await runMigrations(adapter, 'schema:pos', POS_MIGRATIONS, meta);
+    if (Number(meta['repair:void_drawer']) >= 1) voidRepairDone = true;
+    known = true;
+  }
+  if (posSchemaEnsured && !voidRepairDone && voidRepairTries < 3) await repairVoidDrawers(adapter, known);
 }
-export function _resetPosSchemaForTests() { posSchemaEnsured = false; }
+export function _resetPosSchemaForTests() { posSchemaEnsured = false; voidRepairDone = false; voidRepairTries = 0; }
+
+// v78 (manager 2026-11-06: Audit harian 03/11 "Zero malam tidak sama dengan seharusnya (selisih -Rp 2.600.000)" — a cash sale entered by
+// mistake was cancelled and entered again as a transfer, but the drawer still counted its cash): a cancelled sale leaves its cashier's
+// drawer. One UPDATE of the drawer, only while the sale is not yet marked drawer_undone (so it is never taken out twice — two
+// cancellations at the same second, or two Worker instances repairing at once); a closed drawer's expected cash and difference move
+// with it. Sent first in the request's write batch (one transaction), before the sale itself is written as cancelled and marked.
+const SHIFT_UNDO = 'UPDATE pos_shifts SET cash_sales = COALESCE(cash_sales, 0) - ?, transfer_sales = COALESCE(transfer_sales, 0) - ?, '
+  + 'qris_sales = COALESCE(qris_sales, 0) - ?, card_sales = COALESCE(card_sales, 0) - ?, debt_sales = COALESCE(debt_sales, 0) - ?, '
+  + 'sales_total = COALESCE(sales_total, 0) - ?, sales_count = MAX(0, COALESCE(sales_count, 0) - 1), '
+  + "expected_cash = CASE WHEN status = 'closed' THEN COALESCE(expected_cash, 0) - ? ELSE expected_cash END, "
+  + "difference = CASE WHEN status = 'closed' THEN COALESCE(difference, 0) + ? ELSE difference END "
+  + 'WHERE shift_id = ? AND EXISTS (SELECT 1 FROM pos_sales WHERE id = ? AND COALESCE(drawer_undone, 0) = 0)';
+const n0 = (v) => Math.round(Number(v) || 0);
+export function shiftUndoStatements(list) {
+  return (Array.isArray(list) ? list : []).filter((u) => u && u.shift_id && Number(u.sale_id) > 0).map((u) => ({
+    sql: SHIFT_UNDO,
+    params: [n0(u.cash), n0(u.transfer), n0(u.qris), n0(u.card), n0(u.debt), n0(u.total), n0(u.cash), n0(u.cash), String(u.shift_id), Number(u.sale_id)],
+  }));
+}
+/** A sale's money by method (process.js saleParts): a split sale from its parts, any other from its one method (a down payment is cash). */
+function partsOf(x) {
+  const o = { tunai: 0, transfer: 0, qris: 0, kartu: 0 };
+  let parts = null;
+  if (String(x.payment_method || '') === 'campur') { try { parts = JSON.parse(String(x.pay_parts || '') || '[]'); } catch (e) { parts = null; } }
+  if (Array.isArray(parts) && parts.length) { parts.forEach((p) => { if (p && o[p.m] !== undefined) o[p.m] += n0(p.a); }); return o; }
+  o[o[x.payment_method] !== undefined ? x.payment_method : 'tunai'] += Math.min(n0(x.paid_amount), n0(x.total));
+  return o;
+}
+// The sales cancelled before v78 never left their drawers: taken out once per DATABASE (pos_meta 'repair:void_drawer'), at most
+// VOID_REPAIR_BATCH a request, all in ONE D1 batch (one call, one transaction), with one line in the owner's activity log.
+export const VOID_REPAIR_BATCH = 200;
+let voidRepairDone = false, voidRepairTries = 0;
+export async function repairVoidDrawers(adapter, flagKnown) {
+  if (voidRepairDone) return;
+  voidRepairTries++; // a repair that keeps failing stops trying in this instance (never a read on every request)
+  try {
+    if (!flagKnown) {
+      const meta = await adapter.all("SELECT v FROM pos_meta WHERE k = 'repair:void_drawer'", []);
+      if (meta && meta[0] && Number(meta[0].v) >= 1) { voidRepairDone = true; return; }
+    }
+    const todo = await adapter.all("SELECT id, invoice_no, shift_id, payment_method, pay_parts, paid_amount, total, debt_amount FROM pos_sales WHERE status = 'void' AND COALESCE(drawer_undone, 0) = 0 AND COALESCE(shift_id, '') != '' ORDER BY id LIMIT ?", [VOID_REPAIR_BATCH]);
+    const stmts = [];
+    let cash = 0;
+    for (const s of todo) {
+      const p = partsOf(s);
+      cash += p.tunai;
+      stmts.push(...shiftUndoStatements([{ sale_id: s.id, shift_id: s.shift_id, cash: p.tunai, transfer: p.transfer, qris: p.qris, card: p.kartu, debt: s.debt_amount, total: s.total }]));
+      stmts.push({ sql: 'UPDATE pos_sales SET drawer_undone = 1 WHERE id = ?', params: [Number(s.id)] });
+    }
+    const all = todo.length >= VOID_REPAIR_BATCH; // more may wait: the next instance (or request) goes on
+    if (todo.length) {
+      const now = new Date();
+      stmts.push({ sql: 'INSERT INTO pos_activity (act_id, at, act_date, user, role, kind, summary, ref, amount, level) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', params: [
+        'AC' + Math.random().toString(36).slice(2, 10).toUpperCase(), now.toISOString(), new Date(now.getTime() + 7 * 3600000).toISOString().slice(0, 10), 'Sistem', 'system', 'kas',
+        'Kas kasir disesuaikan: ' + todo.length + ' faktur yang dibatalkan tidak dihitung lagi di kasnya (tunai Rp ' + cash + ': ' + todo.slice(0, 12).map((s) => s.invoice_no).join(', ')
+          + (todo.length > 12 ? ' …' : '') + '). Seharusnya / selisih kas yang sudah ditutup ikut dibetulkan.', '', -cash, 'info'] });
+    }
+    if (!all) stmts.push({ sql: "INSERT INTO pos_meta (k, v) VALUES ('repair:void_drawer', 1) ON CONFLICT(k) DO UPDATE SET v = 1", params: [] });
+    if (stmts.length) {
+      if (adapter.batch) await adapter.batch(stmts.map((q) => ({ sql: q.sql, params: q.params, kind: 'run' })));
+      else for (const q of stmts) await adapter.run(q.sql, q.params);
+    }
+    if (!all) voidRepairDone = true; else voidRepairTries = 0; // more to do: the next request goes on
+  } catch (e) { /* tried again by the next instance; a request never fails because of it */ }
+}
 
 // v68: a sale's invoice number counts the day's sales (DD/MM/YYYY/HHmm/N); two cashiers saving at the same moment both read the same
 // count, and the database's unique (sale_date, day_seq) refuses the later one — its whole request then runs again (its writes are one
@@ -123,7 +199,8 @@ async function handleOnce(adapter, body, headers, STORE_KEY) {
   const out = runProcess($, STORE_KEY)[0].json; // { response, ops, action }
   const ops = out.ops || {};
   const guards = Array.isArray(ops.guard) ? ops.guard : [];
-  if (!guards.length) return finalize(out.response, await applyOps(adapter, ops));
+  const pre = shiftUndoStatements(ops.shift_undo); // v78: a cancelled sale leaves its drawer, in the same write batch
+  if (!guards.length) return finalize(out.response, await applyOps(adapter, ops, OPS_TABLE, pre));
   // v38 (owner 2026-10-12: «ممكن 2 كاشير يقوم بنفس الطلب والتعليب، انتبه منها»): race guards around the writes. process.js checked
   // the rows it LOADED; two requests a few milliseconds apart load the same rows, so the deciding step happens here, on the
   // database itself (D1 runs each statement on one primary, in order):
@@ -199,8 +276,8 @@ async function handleOnce(adapter, body, headers, STORE_KEY) {
       }
       const rest = {};
       for (const [k, tbl] of Object.entries(OPS_TABLE)) if (k !== 'approvals') rest[k] = tbl;
-      upserts = Object.assign(await applyOps(adapter, ops, rest), first);
-    } else upserts = await applyOps(adapter, ops);
+      upserts = Object.assign(await applyOps(adapter, ops, rest, pre), first);
+    } else upserts = await applyOps(adapter, ops, OPS_TABLE, pre);
     return finalize(out.response, upserts);
   } catch (e) {
     // a failed write never leaves an approval stuck in 'deciding'

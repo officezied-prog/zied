@@ -15,13 +15,13 @@ const SQL_TYPE = { string: 'TEXT', number: 'REAL', boolean: 'INTEGER' };
 // Columns worth indexing (the live "Get X" loaders filter on these). Correctness does not
 // depend on indexes; they only keep the range/lookup queries fast on D1.
 const INDEXES = {
-  pos_sales: ['sale_date', 'client_id', 'invoice_no', 'customer_id'],
+  pos_sales: ['sale_date', 'client_id', 'invoice_no', 'customer_id', 'status'], // v78: status — the cancelled sales (src/core.js)
   pos_sale_items: ['sale_date', 'invoice_no'],
   pos_payments: ['pay_date', 'customer_id', 'supplier'],
   pos_purchases: ['purchase_date', 'purchase_no', 'supplier'],
   pos_approvals: ['status', 'request_id', 'client_id', 'kind'], // v38: client_id — a resent repack request is found by it; v75: kind
   pos_expenses: ['expense_date', 'request_id'],
-  pos_shifts: ['status', 'shift_date'],
+  pos_shifts: ['status', 'shift_date', 'shift_id'], // v78: shift_id — a cancelled sale leaves its drawer
   pos_repacks: ['repack_date'],
   pos_activity: ['act_date', 'kind'],
   pos_bank_lines: ['account_id', 'period'],

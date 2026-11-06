@@ -378,6 +378,18 @@ function doVoid(sale, reason, byName) {
     }), c.id));
   }
   const voided = Object.assign({}, sale, { status: 'void', notes: (str(sale.notes) + ' [VOID oleh ' + byName + ': ' + str(reason) + ']').trim() });
+  // v78 (manager 2026-11-06, Audit harian 03/11: a cash sale re-entered as a transfer left the drawer "short" by Rp 2.600.000): a
+  // cancelled sale leaves its cashier's drawer too — its cash no longer counts in "seharusnya", nor its other parts in the drawer's
+  // totals. The drawer may be closed already (then its expected cash and its difference are corrected as well), so the Worker does
+  // it with one UPDATE in the same write batch (ops.shift_undo, src/core.js), only while the sale is not yet marked drawer_undone —
+  // two cancellations of the same sale at the same second change the drawer once.
+  if (str(sale.shift_id)) {
+    const sp = saleParts(sale);
+    voided.drawer_undone = true;
+    ops.shift_undo = (ops.shift_undo || []).concat([{ sale_id: sale.id, shift_id: str(sale.shift_id), cash: sp.tunai, transfer: sp.transfer, qris: sp.qris, card: sp.kartu,
+      debt: money(sale.debt_amount), total: money(sale.total) }]);
+    if (sp.tunai > 0) logAct('kas', 'Kas ' + str(sale.cashier) + ' disesuaikan: faktur ' + str(sale.invoice_no) + ' dibatalkan, tunai Rp ' + sp.tunai + ' tidak dihitung lagi di kas (' + str(sale.shift_id) + ')', str(sale.shift_id), -sp.tunai, 'info');
+  }
   ops.sales.push(forWrite(voided, sale.id));
   return voided;
 }

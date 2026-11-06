@@ -6,12 +6,15 @@
 export const PER_REQUEST = 40; // + the login gate, this row, the reads, the writes and the meter: under the free plan's 50 calls
 const DONE_BEFORE = /duplicate column name/i; // an ADD COLUMN this database already has
 
-/** Runs the statements of `list` this database does not have yet; true when the whole list is in. */
-export async function runMigrations(adapter, key, list) {
+/** Runs the statements of `list` this database does not have yet; true when the whole list is in.
+ *  v78: `meta` ({ key: default }) — more pos_meta rows read in the SAME query (filled in place), so a new instance still makes one read. */
+export async function runMigrations(adapter, key, list, meta) {
   let done = 0;
+  const extra = meta ? Object.keys(meta) : [];
   try {
-    const r = await adapter.all('SELECT v FROM pos_meta WHERE k = ?', [key]);
-    done = Number((r && r[0] && r[0].v) || 0) || 0;
+    const keys = [key].concat(extra);
+    const r = await adapter.all(`SELECT k, v FROM pos_meta WHERE k IN (${keys.map(() => '?').join(', ')})`, keys);
+    for (const row of r || []) { if (row.k === key) done = Number(row.v || 0) || 0; else if (extra.indexOf(row.k) >= 0) meta[row.k] = row.v; }
   } catch (e) { // no pos_meta yet (a new database): made here (as src/tablecache.js makes it), and the list runs from the start
     done = 0;
     try { await adapter.run('CREATE TABLE IF NOT EXISTS pos_meta (k TEXT PRIMARY KEY, v INTEGER NOT NULL DEFAULT 0)', []); } catch (e2) { /* then it is not kept */ }
