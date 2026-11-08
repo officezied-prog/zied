@@ -169,6 +169,21 @@ of its drawer with ONE UPDATE — a closed drawer's `expected_cash` and `differe
 (then set): never twice. The sales cancelled before were taken out once per database (`repairVoidDrawers`, pos_meta `repair:void_drawer`,
 ≤ 200 a request in one batch, one line "Kas kasir disesuaikan …" for the owner); its flag is read with the migrations' own pos_meta read.
 Indexes `pos_sales.status`, `pos_shifts.shift_id`. Tests `worker/test/v78.test.js` (the 03/11 numbers), `tests/audit-harian.spec.js`.
+**v79 — the Audit harian is sent by the manager or the accountant, once a day, with an evening WhatsApp reminder (owner 3.7.0, server;
+owner 2026-11-08: «اجعل المدير ووحيه هو من يرسل هذه الورقة الأخيرة. كل يوم إذا تم إرسالها من واحد فيهما لا يرسلها الثاني. إلى الواتساب يجب أن
+يأتي إشعار لهم بإرسالها الساعة 9 بالليل», his choice «أ» = Meta's official WhatsApp API; Wahyu = the accountant):** sharing the paper
+("Kirim audit harian") records `audit_mark` (process.js): the first sender of a day is kept in setting `audit_sent` (`{ day: { by, role,
+at } }`, 40 days, activity kind `audit_harian`); `daily_report` returns it as `audit`. The card says "Sudah dikirim oleh {by} ({role}),
+jam …" / "Belum dikirim hari ini"; the other one is asked ("Kirim lagi?") before sending it again; a mark made offline is sent later
+(`au_pending`). The in-app reminder at `report_time` (default 21:00) is the manager's and the accountant's only (no longer the owner's,
+who receives the paper), and gone once either has sent it — the app asks the server (`audit_mark` `peek`, a few rows, ≤ every 10 min)
+while it shows. **Fixed:** the accountant's app refused "Kirim audit harian" (AUDIT_ACTS lacked `au-send` / `au-pdf`). The WhatsApp
+reminder: `worker/src/audit.js` `auditReminderTick` in the 2-minute cron — from that hour until midnight, while nobody has sent it, ONE
+template message `khair_audit_harian` to each active manager / accountant with a number (`wa_manager_number`, new `wa_akuntan_number`),
+the day claimed first (setting `audit_remind`), the result logged for the owner; nothing is read without `WA_TOKEN` + `WA_PHONE_ID`
+(same secrets as Brad, not set yet), shares `brad_wa_cap` / the counter. Owner's Pengaturan: "WhatsApp akuntan" + panel "Pengingat
+WhatsApp audit harian" (`audit_wa`: status / "Daftarkan template ke Meta" / "Kirim tes ke WhatsApp saya", owner only). Setup:
+`worker/docs/whatsapp-setup.md`. Tests `worker/test/v79.test.js`, `tests/audit-harian.spec.js` (4th–5th).
 **History cleaned (2026-10-23; owner chose «ب»: the repo stays public and free):** every branch and the `android` tag were rewritten once
 (git-filter-repo `--sensitive-data-removal`): the owner's full name, the owner's and the manager's personal WhatsApp numbers, the bank
 account, the old notes' store-key hints, the cold stores' agreed rates and a supplier's name are gone from every old version; the owner's

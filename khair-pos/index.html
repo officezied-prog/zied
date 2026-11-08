@@ -160,7 +160,7 @@ CONFIG.PHOTO_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khai
 CONFIG.FIELD_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-field';
 CONFIG.ATT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-att';
 CONFIG.CHAT_URL = 'https://khair-mart-jumla.officezied.workers.dev/webhook/khair-chat';
-const APP_VERSION = '3.6.1';
+const APP_VERSION = '3.7.0';
 // ?demo=1 = demo data (like ?mock=1) with an open login: tap a name, no store key or PIN. &u=Name logs that person in directly.
 const DEMO = /[?&]demo=1\b/.test(location.search);
 const MOCK = DEMO || /[?&]mock=1\b/.test(location.search);
@@ -460,7 +460,7 @@ const isAudit = () => S.role === 'akuntan';
 const canAudit = () => isApprover() || isAudit();
 // v36 (owner 2026-10-11: "the visits table … a copy for the manager, the accountant and the owner"): + the field page, read-only
 const AUDIT_VIEWS = ['reports', 'finance', 'gudang', 'history', 'purchases', 'products', 'customers', 'suppliers', 'retur', 'bank', 'cold', 'koreksi', 'invchg', 'approvals', 'shoplist', 'field', 'settings'];
-const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|printer-open|scanner-open|pu-confirm|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*|fin-.*|gd-tab|gd-refresh|pk-.*)$/; // v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
+const AUDIT_ACTS = /^(go|nav-more|lock|logout-store|modal-close|refresh-data|toggle-lang|set-lang|login-.*|pin-.*|pc-.*|hist-.*|rep-.*|rp-.*|yr-.*|dr-.*|cust-open|cust-statement|cust-vcf|sp-open|sp-refresh|bk-csv|rc-print|printer-open|scanner-open|pu-confirm|rc-copy|rc-invoice|rc-sj|pu-doc|photo-zoom|photo-view|rt-tab|act-.*|outbox-open|bell|kas-refresh|apr-refresh|apr-decide|prod-new|field-rep|field-refresh|lead-photos|fd-.*|nt-.*|sd-new|sd-edit|bk-tab|bt-.*|fin-.*|gd-tab|gd-refresh|pk-.*|au-send|au-pdf)$/; // v79: au-send / au-pdf — the accountant sends the Audit harian too; v36: apr-decide — the accountant decides the shared manager-or-accountant requests (the server checks each one)
 const prodById = id => S.products.find(p => p.id == id);
 const custById = id => id == null || id === '' ? null : S.customers.find(c => c.id == id);
 const settings = () => Object.assign({}, DEFAULT_SETTINGS, S.settings || {});
@@ -2982,6 +2982,7 @@ async function refreshAttention(force) {
   let d = null;
   // v38: these 30 days (sales, items, payments… for the stock / drawer alerts) are read at most every 30 minutes, not every 4
   try { d = await loadSales(addDays(today(), -30), today(), true, 30 * 60000); } catch (e) { }
+  try { await auditCheck(); } catch (e) { } // v79
   ATT.items = computeAttention(d).concat(await gudangAttention(), await loadFieldAttention(), await bankAttention(), laterAttention());
   updateBell(); renderNavDots(); ntFlush(); // v38: a "Tutup" made offline reaches the server with the next refresh
   if (S.view === 'home') drawAttention();
@@ -5160,6 +5161,9 @@ Object.assign(I18N.id, {
   'au.downloaded': 'PDF audit diunduh — lampirkan di chat WhatsApp Pemilik dan Manajer',
   'au.fail': 'PDF audit gagal dibuat', 'au.open': 'Kasir masih buka: Zero malam terisi setelah tutup kasir.',
   'au.diff': 'Zero malam tidak sama dengan seharusnya (selisih {d}).',
+  // v79: sent by the manager or the accountant, once a day
+  'au.sent_by': 'Sudah dikirim oleh {by} ({role}), jam {time}', 'au.not_yet': 'Belum dikirim hari ini. Dikirim oleh manajer atau akuntan — siapa yang lebih dulu; yang lain tidak perlu mengirim lagi.',
+  'au.not_sent': 'Audit hari ini tidak tercatat dikirim.', 'au.again_q': 'Audit harian ini sudah dikirim oleh {by} jam {time}. Kirim lagi?', 'au.again': 'Kirim lagi',
 });
 Object.assign(I18N.ar, {
   'au.title': 'ورقة التدقيق اليومي (ورقة المحل)', 'au.send': 'إرسال ملف الورقة إلى واتساب', 'au.send_short': 'إرسال الورقة اليومية', 'au.pdf': 'تنزيل PDF',
@@ -5168,6 +5172,8 @@ Object.assign(I18N.ar, {
   'au.downloaded': 'نُزّل ملف الورقة — أرفقه في محادثة المالك والمدير على واتساب',
   'au.fail': 'تعذّر إنشاء ملف الورقة', 'au.open': 'الصندوق ما زال مفتوحاً: نقد المساء يظهر بعد إغلاقه.',
   'au.diff': 'نقد المساء لا يساوي ما يجب أن يكون (الفرق {d}).',
+  'au.sent_by': 'أرسلها {by} ({role}) الساعة {time}', 'au.not_yet': 'لم تُرسل اليوم بعد. يرسلها المدير أو المحاسب — من يسبق؛ ولا يرسلها الآخر.',
+  'au.not_sent': 'لا يوجد تسجيل بإرسال ورقة هذا اليوم.', 'au.again_q': 'أرسل {by} هذه الورقة الساعة {time}. هل ترسلها مرة أخرى؟', 'au.again': 'أرسل مرة أخرى',
 });
 Object.assign(I18N.id, {
   'role.manager': 'Manajer', 'nav.approvals': 'Persetujuan', 'navs.approvals': 'Setuju', 'required_short': 'wajib',
@@ -5507,6 +5513,7 @@ RENDER.settings = function () {
   $$('[data-user-role]').forEach(sel => sel.onchange = () => { const u = S.users.find(x => x.name === sel.dataset.userRole); if (u) saveUser({ name: u.name, role: sel.value, active: u.active !== false }); });
   const qn = $('#st-q-new'); if (qn) qn.addEventListener('keydown', e => { if (e.key === 'Enter') ACT['sq-add'](); });
   pkPanelFill(); // v77
+  auwaFill(); // v79
 };
 async function saveSettings(partial, errEl) {
   try {
@@ -8745,7 +8752,7 @@ function renderDaily(v) {
 }
 async function loadDaily() {
   const seq = ++DR.seq, b = $('#dr-body'); if (b) b.style.opacity = '.55';
-  try { const r = await api('daily_report', { date: DR.date }); if (seq !== DR.seq) return; DR.data = r; DR.err = ''; } catch (e) { if (seq !== DR.seq) return; DR.data = null; DR.err = errMsg(e); }
+  try { const r = await api('daily_report', { date: DR.date }); if (seq !== DR.seq) return; DR.data = r; DR.err = ''; if (r && r.audit) { const had = !!auditSentOn(r.audit.date); auditRemember(r.audit); if (!had) refreshAttention(); } } catch (e) { if (seq !== DR.seq) return; DR.data = null; DR.err = errMsg(e); }
   try { const d = await loadSales(DR.date, DR.date, true); if (seq === DR.seq) DR.day = d; if (seq === DR.seq && DR.data) { const ok = d.sales.filter(x => x.status !== 'void' && x.sale_date === DR.date); DR.data.send_fees = { count: ok.filter(x => int(x.send_fee) > 0).length, total: sum(ok, x => int(x.send_fee)) }; } } catch (e) { }
   drawDaily();
 }
@@ -8779,7 +8786,6 @@ function drawDaily() {
       ${nums.length < 3 ? `<p class="small muted" style="margin-bottom:0">${esc(t('dr.set_numbers'))}${isOwner() ? ` <button class="btn xs" data-act="go" data-view="settings">${esc(t('nav.settings'))}</button>` : ''}</p>` : ''}
       <details style="margin-top:10px"><summary class="small muted">${esc(t('dr.preview'))}</summary><pre class="small" id="dr-text" style="white-space:pre-wrap;background:var(--surface);padding:10px;border-radius:8px">${esc(dailyText(R, own && DR.withProfit))}</pre></details></div>`;
   const pc = $('#dr-profit'); if (pc) pc.onchange = () => { DR.withProfit = pc.checked; drawDaily(); };
-  $$('#dr-wa [data-wa]').forEach(a => a.addEventListener('click', () => { if (DR.date === today()) { store.set('daily_sent', today()); refreshAttention(); } }));
 }
 /** v37 (owner 2026-10-12): ① every cashier's own day — sales per payment method, the debt he gave, voids, debt payments he
  *  took in, money paid out, expenses and his drawer — then ② the whole store (the panels below). Empty with an old Worker. */
@@ -8920,10 +8926,35 @@ function dailyText(R, withProfit) {
   dailyGoodsText(R, withProfit).forEach(x => L.push(x)); // v37: goods in today (qty + stock now) and invoice changes
   return L.join('\n');
 }
+/* v79 (owner 2026-11-08: «اجعل المدير ووحيه هو من يرسل هذه الورقة الأخيرة. كل يوم إذا تم إرسالها من واحد فيهما لا يرسلها الثاني. إلى
+   الواتساب يجب أن يأتي إشعار لهم بإرسالها الساعة 9 بالليل»): the day's Audit harian is sent by the manager or the accountant. The first
+   one is kept on the server (audit_mark → settings audit_sent { day: { by, role, at } }): the other sees "sudah dikirim oleh …", is no
+   longer reminded and is asked before sending it again. The evening reminder (report_time, 21:00) is theirs only — the owner receives
+   the paper — and the Worker sends both one WhatsApp reminder at that hour while nobody has sent it (official API, src/audit.js). */
+const auditSentOn = day => { const a = settings().audit_sent; return a && typeof a === 'object' && a[day] ? Object.assign({ date: day }, a[day]) : null; };
+function auditRemember(a) {
+  if (!a || !/^\d{4}-\d{2}-\d{2}$/.test(String(a.date || ''))) return;
+  const cur = settings().audit_sent, log = Object.assign({}, cur && typeof cur === 'object' ? cur : {});
+  log[a.date] = { by: a.by, role: a.role, at: a.at };
+  S.settings = Object.assign({}, S.settings, { audit_sent: log }); saveCache();
+}
 function dailyReminderDue() {
-  if (!isApprover()) return false;
+  if (S.role !== 'manager' && !isAudit()) return false;
   const rt = /^\d{2}:\d{2}$/.test(String(settings().report_time || '')) ? settings().report_time : '21:00';
-  return jktTime(new Date()) >= rt && store.get('daily_sent', '') !== today();
+  return jktTime(new Date()) >= rt && !auditSentOn(today()) && store.get('daily_sent', '') !== today();
+}
+/** While the reminder shows: ask the server (a few rows, at most every 10 minutes) whether the other one has sent it meanwhile;
+ *  and send a mark this phone could not deliver (no internet when it was shared). */
+const AUP = { at: 0 };
+async function auditCheck() {
+  const pend = store.get('au_pending', '');
+  if (pend) {
+    try { const r = await api('audit_mark', { date: pend }); store.set('au_pending', ''); if (r && r.audit) auditRemember(r.audit); }
+    catch (e) { if (!(e instanceof NetError) && e && e.code !== 'SERVER' && e.code !== 'QUOTA') store.set('au_pending', ''); }
+  }
+  if (!dailyReminderDue() || Date.now() - AUP.at < 10 * 60000) return;
+  AUP.at = Date.now();
+  try { const r = await api('audit_mark', { date: today(), peek: true }); if (r && r.audit) auditRemember(r.audit); } catch (e) { /* the next check */ }
 }
 
 /* ========== Audit harian (v76, owner 2026-11-05: «كل يوم نقوم بوجهين ورقة مثل هذه … اريدك ان تجهز مثل هذه كل يوم و ترسلها الى الواتس مع شعار
@@ -9083,6 +9114,10 @@ const auditCaption = A => `Audit harian ${settings().store_name || 'Khair Mart'}
 /** One tap: the PDF straight into WhatsApp (the phone's share sheet: choose the owner's and the manager's chats); else it is downloaded. */
 async function auditSend(download) {
   const A = auditOf(); if (!A) { toast(t('loading'), 'warn'); return; }
+  // v79: already sent by the other one (the manager or the accountant) → asked first; the PDF download alone is never asked
+  const prev = !download && ((DR.data && DR.data.audit && DR.data.audit.date === A.date && DR.data.audit) || auditSentOn(A.date));
+  if (prev && String(prev.by || '').toLowerCase() !== String(S.user || '').toLowerCase()
+    && !(await confirmBox(t('au.again_q', { by: prev.by, time: jktTime(prev.at) }), { ok: t('au.again') })).ok) return;
   let blob;
   try { blob = await auditPdf(A); } catch (e) { toast(t('au.fail'), 'err'); return; }
   const name = auditFileName(A);
@@ -9091,18 +9126,36 @@ async function auditSend(download) {
     let can = false; try { can = navigator.canShare({ files: [file] }); } catch (e) { can = false; }
     if (can) {
       try { await navigator.share({ files: [file], title: name, text: auditCaption(A) }); } catch (e) { if (e && e.name === 'AbortError') return; can = false; }
-      if (can) { if (DR.date === today()) { store.set('daily_sent', today()); refreshAttention(); } toast(t('au.sent'), 'ok'); return; }
+      if (can) { toast(t('au.sent'), 'ok'); auditMarkSent(A.date); return; }
     }
   }
   const url = URL.createObjectURL(blob), a = document.createElement('a');
   a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
   toast(t(download ? 'au.saved' : 'au.downloaded'), 'ok', 7000);
+  if (!download) auditMarkSent(A.date); // a computer: downloaded to attach in WhatsApp
+}
+/** v79: the server keeps the first sender of the day (audit_mark); no internet → this phone sends the mark later (auditCheck). */
+async function auditMarkSent(day) {
+  if (day === today()) store.set('daily_sent', today());
+  if (!auditSentOn(day)) auditRemember({ date: day, by: S.user, role: S.role, at: new Date().toISOString() });
+  try {
+    const r = await api('audit_mark', { date: day });
+    if (r && r.audit) { auditRemember(r.audit); if (DR.data && DR.date === day) DR.data.audit = r.audit; }
+  } catch (e) { if (e instanceof NetError || (e && (e.code === 'SERVER' || e.code === 'QUOTA'))) store.set('au_pending', day); }
+  const el = $('#au-by'); if (el && DR.date === day) el.outerHTML = auditByHTML(day);
+  refreshAttention();
+}
+function auditByHTML(day) {
+  const a = (DR.data && DR.data.audit && DR.data.audit.date === day && DR.data.audit) || auditSentOn(day);
+  if (a) return `<p class="small green" id="au-by" data-by="${esc(a.by || '')}" style="margin:0 0 8px">✓ ${esc(t('au.sent_by', { by: a.by || '?', role: t('role.' + (a.role || 'manager')), time: jktTime(a.at) }))}</p>`;
+  return `<p class="small muted" id="au-by" data-by="" style="margin:0 0 8px">${esc(t(day === today() ? 'au.not_yet' : 'au.not_sent'))}</p>`;
 }
 function auditCardHTML() {
   const A = auditOf(); if (!A) return '';
   const to = (DR.data && DR.data.send_to) || {}, who = [[t('role.owner'), to.owner], [t('role.manager'), to.manager]].filter(x => x[1]).map(x => `${x[0]} (${x[1]})`).join(' & ') || `${t('role.owner')} & ${t('role.manager')}`;
   return `<div class="card pad" id="au-card" style="margin-bottom:14px"><h3 style="margin:0 0 6px;font-size:16px">${ic('report')} ${esc(t('au.title'))}</h3>
+    ${auditByHTML(A.date)}
     <p class="small muted" style="margin:0 0 8px">${esc(t('au.hint', { who }))}</p>
     ${A.open ? `<p class="small" style="margin:0 0 8px;color:var(--warn,#b45309)">${esc(t('au.open'))}</p>` : A.diff ? `<p class="small red" style="margin:0 0 8px">${esc(t('au.diff', { d: fmtRp(A.diff) }))}</p>` : ''}
     <div class="row wrap" style="gap:8px;margin-bottom:10px"><button class="btn primary" data-act="au-send" id="au-send">${ic('wa')} ${esc(t('au.send'))}</button><button class="btn" data-act="au-pdf" id="au-pdf">${ic('download')} ${esc(t('au.pdf'))}</button></div>
@@ -9377,9 +9430,11 @@ function settingsExtraHTML() {
     <div class="panel" id="st-report"><h3>${ic('report')} ${esc(t('set.report_title'))}</h3><div class="pb">
       <div class="field"><label class="f" for="st-wa-company">${esc(t('set.wa_company'))}</label><input class="input" id="st-wa-company" type="tel" inputmode="tel" value="${esc(st.wa_shop_number || '')}" placeholder="08xx xxxx xxxx"></div>
       <div class="field"><label class="f" for="st-wa-manager">${esc(t('set.wa_manager'))}</label><input class="input" id="st-wa-manager" type="tel" inputmode="tel" value="${esc(st.wa_manager_number || '')}" placeholder="08xx xxxx xxxx"></div>
+      <div class="field"><label class="f" for="st-wa-akuntan">${esc(t('set.wa_akuntan'))}</label><input class="input" id="st-wa-akuntan" type="tel" inputmode="tel" value="${esc(st.wa_akuntan_number || '')}" placeholder="08xx xxxx xxxx"></div>
       <div class="field"><label class="f" for="st-wa-owner">${esc(t('set.wa_owner'))}</label><input class="input" id="st-wa-owner" type="tel" inputmode="tel" value="${esc(st.wa_owner_number || '')}" placeholder="08xx xxxx xxxx"></div>
-      <div class="field"><label class="f" for="st-report-time">${esc(t('set.report_time'))}</label><input class="input" id="st-report-time" type="time" value="${esc(st.report_time || '21:00')}" style="max-width:160px"></div>
+      <div class="field"><label class="f" for="st-report-time">${esc(t('set.report_time'))}</label><input class="input" id="st-report-time" type="time" value="${esc(st.report_time || '21:00')}" style="max-width:160px"><div class="small muted" style="margin-top:4px">${esc(t('set.report_time_hint'))}</div></div>
       <div class="red" id="st-report-err"></div><button class="btn primary" data-act="set-save-report">${esc(t('save'))}</button></div></div>
+    ${auwaPanelHTML()}
     <div class="panel" id="st-invoice"><h3>${ic('print')} ${esc(t('set.inv_title'))}</h3><div class="pb">
       <div class="field"><label class="f" for="st-due-days">${esc(t('set.due_days'))}</label><input class="input num" id="st-due-days" inputmode="numeric" value="${esc(String(st.invoice_due_days ?? 14))}" style="max-width:140px"></div>
       <label class="check"><input type="checkbox" id="st-ak-cost" ${st.akuntan_sees_cost === true ? 'checked' : ''}> ${esc(t('set.ak_cost'))}</label><div class="small muted">${esc(t('set.ak_cost_hint'))}</div>
@@ -9412,6 +9467,76 @@ function readBankAccounts() {
   });
 }
 function parseCoord(v) { const s0 = String(v || '').trim().replace(',', '.'); if (!s0) return 0; const n = Number(s0); return Number.isFinite(n) ? n : NaN; }
+
+/* v79: the owner's view of the WhatsApp reminder for the Audit harian (Worker audit_wa: status / register the template / a test to his
+   own number). The secrets themselves are set only in the Cloudflare dashboard — the app never sees them, only whether they are there. */
+const AUWA = { st: null, at: 0, err: '' };
+function auwaPanelHTML() {
+  return `<div class="panel" id="st-auwa"><h3>${ic('wa')} ${esc(t('auwa.title'))}</h3><div class="pb">
+      <p class="small muted" style="margin-top:0">${esc(t('auwa.hint'))}</p>
+      <div id="auwa-body">${auwaBodyHTML()}</div>
+      <div class="row wrap" style="gap:8px;margin-top:8px"><button class="btn sm" data-act="auwa-refresh" id="auwa-refresh">${ic('refresh')} ${esc(t('auwa.check'))}</button><button class="btn sm" data-act="auwa-register" id="auwa-register">${esc(t('auwa.register'))}</button><button class="btn sm" data-act="auwa-test" id="auwa-test">${ic('wa')} ${esc(t('auwa.test'))}</button></div>
+      <div class="red small" id="auwa-err">${esc(AUWA.err)}</div></div></div>`;
+}
+function auwaBodyHTML() {
+  const s0 = AUWA.st; if (!s0) return `<div class="muted small">${esc(t('loading'))}</div>`;
+  const line = (k, v, cls = '', id = '') => `<div class="dr-row"><span>${esc(k)}</span><b class="${cls}" ${id ? `data-auwa="${id}"` : ''}>${v}</b></div>`;
+  const miss = Object.entries({ WA_TOKEN: s0.set && s0.set.token, WA_PHONE_ID: s0.set && s0.set.phone, WA_WABA_ID: s0.set && s0.set.waba }).filter(x => !x[1]).map(x => x[0]);
+  const tpl = s0.template, tplCls = tpl === 'APPROVED' ? 'green' : tpl === 'PENDING' ? 'amber' : 'red', tk = 'auwa.t_' + String(tpl || '').toLowerCase(), tplText = t(tk) === tk ? String(tpl || '') : t(tk);
+  const rec = (s0.recipients || []).map(r => `${esc(t('role.' + r.role))} ${esc(r.name)} ${r.has_number ? '<span class="green">✓</span>' : `<span class="red">✗ ${esc(t('auwa.no_number'))}</span>`}`).join('<br>') || `<span class="red">${esc(t('auwa.no_staff'))}</span>`;
+  const L = s0.last;
+  const last = L && L.date ? `${esc(fmtDate(L.date))} · ${esc(t('auwa.last_sent', { n: fmtNum(int(L.sent)) }))}${(L.results || []).filter(x => !x.ok).map(x => ` · ${esc(t('role.' + x.role))}: ${esc(x.error === 'NO_NUMBER' ? t('auwa.no_number') : x.error || '?')}`).join('')}` : esc(t('auwa.never'));
+  return line(t('auwa.api'), s0.on ? `<span class="green">✓ ${esc(t('auwa.on'))}</span>` : `<span class="red">✗ ${esc(t('auwa.off'))}${miss.length ? ' (' + esc(miss.join(', ')) + ')' : ''}</span>`, '', 'api')
+    + line(t('auwa.template'), tpl ? `<span class="${tplCls}">${esc(tplText)}</span>` : '—', '', 'template')
+    + line(t('auwa.time'), esc((s0.time || '21:00') + ' WIB'), 'num', 'time')
+    + line(t('auwa.to'), rec, '', 'to')
+    + line(t('auwa.last'), last, 'small', 'last')
+    + (s0.on ? '' : `<p class="small muted" style="margin:8px 0 0">${esc(t('auwa.off_hint'))}</p>`);
+}
+async function auwaFill(force) {
+  const box = $('#auwa-body'); if (!box || !isOwner()) return;
+  if (!force && AUWA.st && Date.now() - AUWA.at < 5 * 60000) { box.innerHTML = auwaBodyHTML(); return; }
+  try { AUWA.st = await api('audit_wa', { op: 'status' }); AUWA.at = Date.now(); AUWA.err = ''; }
+  catch (e) { AUWA.err = errMsg(e); if (!AUWA.st) AUWA.st = { on: false, set: {}, template: null, time: settings().report_time || '21:00', recipients: [], last: null }; }
+  const b = $('#auwa-body'); if (b) b.innerHTML = auwaBodyHTML();
+  const er = $('#auwa-err'); if (er) er.textContent = AUWA.err;
+}
+Object.assign(ACT, {
+  'auwa-refresh': () => auwaFill(true),
+  'auwa-register': async () => {
+    const er = $('#auwa-err'); if (er) er.textContent = '';
+    try {
+      const r = await api('audit_wa', { op: 'register' });
+      const x = (r.templates || [])[0] || {};
+      toast(t(x.status === 'EXISTS' ? 'auwa.reg_exists' : x.status === 'ERROR' ? 'auwa.reg_err' : 'auwa.reg_sent', { e: x.error || '' }), x.status === 'ERROR' ? 'err' : 'ok', 7000);
+      auwaFill(true);
+    } catch (e) { if (er) er.textContent = errMsg(e); }
+  },
+  'auwa-test': async () => {
+    const er = $('#auwa-err'); if (er) er.textContent = '';
+    try { await api('audit_wa', { op: 'test' }); toast(t('auwa.test_ok'), 'ok', 7000); } catch (e) { if (er) er.textContent = errMsg(e); }
+  }
+});
+Object.assign(I18N.id, {
+  'auwa.title': 'Pengingat WhatsApp audit harian', 'auwa.hint': 'Jam pengingat, bila audit hari itu belum dikirim, manajer dan akuntan masing-masing menerima satu pesan WhatsApp dari nomor resmi toko (API WhatsApp Meta, ±Rp 400 per pesan). Begitu salah satu mengirim audit, tidak ada pengingat lagi hari itu.',
+  'auwa.check': 'Periksa', 'auwa.register': 'Daftarkan template ke Meta', 'auwa.test': 'Kirim tes ke WhatsApp saya',
+  'auwa.api': 'API WhatsApp', 'auwa.on': 'aktif', 'auwa.off': 'belum diatur', 'auwa.template': 'Template', 'auwa.time': 'Jam pengingat', 'auwa.to': 'Penerima', 'auwa.last': 'Terakhir',
+  'auwa.no_number': 'nomor belum diisi', 'auwa.no_staff': 'Tidak ada akun manajer / akuntan aktif', 'auwa.last_sent': '{n} pesan terkirim', 'auwa.never': 'belum pernah',
+  'auwa.t_approved': 'disetujui Meta', 'auwa.t_pending': 'menunggu persetujuan Meta', 'auwa.t_rejected': 'ditolak Meta', 'auwa.t_missing': 'belum didaftarkan', 'auwa.t_unknown': 'tidak terbaca', 'auwa.t_paused': 'dijeda Meta', 'auwa.t_disabled': 'dinonaktifkan Meta',
+  'auwa.off_hint': 'Tanpa API WhatsApp, pengingat tetap muncul di aplikasi manajer dan akuntan. Cara mengatur: worker/docs/whatsapp-setup.md (rahasia WA_TOKEN, WA_PHONE_ID, WA_WABA_ID di dashboard Cloudflare).',
+  'auwa.reg_sent': 'Template dikirim ke Meta untuk ditinjau (biasanya beberapa menit sampai 1 hari).', 'auwa.reg_exists': 'Template sudah terdaftar di Meta.', 'auwa.reg_err': 'Meta menolak template: {e}',
+  'auwa.test_ok': 'Pesan tes dikirim ke WhatsApp pemilik.'
+});
+Object.assign(I18N.ar, {
+  'auwa.title': 'تذكير واتساب بورقة التدقيق اليومي', 'auwa.hint': 'في ساعة التذكير، إذا لم تُرسل ورقة ذلك اليوم، يصل كلاً من المدير والمحاسب رسالة واتساب واحدة من رقم المحل الرسمي (واجهة واتساب الرسمية من ميتا، نحو 400 روبية للرسالة). وبمجرد أن يرسل أحدهما الورقة لا يأتي تذكير آخر ذلك اليوم.',
+  'auwa.check': 'تحقق', 'auwa.register': 'تسجيل القالب لدى ميتا', 'auwa.test': 'أرسل تجربة إلى واتسابي',
+  'auwa.api': 'واجهة واتساب', 'auwa.on': 'مفعّلة', 'auwa.off': 'غير مُعدّة', 'auwa.template': 'القالب', 'auwa.time': 'ساعة التذكير', 'auwa.to': 'المستلمون', 'auwa.last': 'آخر مرة',
+  'auwa.no_number': 'الرقم غير مُدخل', 'auwa.no_staff': 'لا يوجد حساب مدير / محاسب مفعّل', 'auwa.last_sent': 'أُرسلت {n} رسالة', 'auwa.never': 'لم يحدث بعد',
+  'auwa.t_approved': 'وافقت عليه ميتا', 'auwa.t_pending': 'بانتظار موافقة ميتا', 'auwa.t_rejected': 'رفضته ميتا', 'auwa.t_missing': 'لم يُسجّل بعد', 'auwa.t_unknown': 'تعذّرت قراءته', 'auwa.t_paused': 'أوقفته ميتا مؤقتاً', 'auwa.t_disabled': 'عطّلته ميتا',
+  'auwa.off_hint': 'بدون واجهة واتساب يبقى التذكير يظهر في تطبيق المدير والمحاسب. طريقة الإعداد: worker/docs/whatsapp-setup.md (الأسرار WA_TOKEN و WA_PHONE_ID و WA_WABA_ID في لوحة Cloudflare).',
+  'auwa.reg_sent': 'أُرسل القالب إلى ميتا للمراجعة (عادةً من دقائق إلى يوم).', 'auwa.reg_exists': 'القالب مسجّل لدى ميتا من قبل.', 'auwa.reg_err': 'رفضت ميتا القالب: {e}',
+  'auwa.test_ok': 'أُرسلت رسالة التجربة إلى واتساب المالك.'
+});
 Object.assign(ACT, {
   'pay-alloc': el => { const L = LG.data; if (!L) return; const p = L.payments.find(x => x.pay_id === el.dataset.pay); if (p) openAllocate(LG.kind, LG.party, p, L); },
   'sp-refresh': () => { SUP.list = null; GD.yearAt = 0; loadSuppliers(); },
@@ -9461,7 +9586,7 @@ Object.assign(ACT, {
   },
   'set-save-report': () => {
     const err = $('#st-report-err'), out = {};
-    for (const [id, k] of [['st-wa-company', 'wa_shop_number'], ['st-wa-manager', 'wa_manager_number'], ['st-wa-owner', 'wa_owner_number']]) {
+    for (const [id, k] of [['st-wa-company', 'wa_shop_number'], ['st-wa-manager', 'wa_manager_number'], ['st-wa-akuntan', 'wa_akuntan_number'], ['st-wa-owner', 'wa_owner_number']]) {
       const raw = $('#' + id).value.trim(), n = normPhone(raw);
       if (raw && !n) { err.textContent = t('wa.bad_phone'); $('#' + id).focus(); return; }
       out[k] = n;
@@ -9490,7 +9615,7 @@ Object.assign(I18N.id, {
   'ak.masuk': 'Barang masuk', 'ak.minta_koreksi': 'Minta koreksi', 'ak.koreksi_masuk': 'Koreksi barang masuk', 'ak.harga': 'Ubah harga', 'ak.minta_harga': 'Minta ubah harga', 'ak.keputusan': 'Keputusan', 'ak.batal': 'Faktur batal', 'ak.minta_batal': 'Minta batal',
   'ak.stok': 'Penyesuaian stok', 'ak.opname': 'Stok opname', 'ak.minta_opname': 'Minta opname', 'ak.kemas_ulang': 'Kemas ulang', 'ak.biaya': 'Pengeluaran', 'ak.kas': 'Kas masuk/keluar', 'ak.tutup_kas': 'Tutup kas', 'ak.buka_kas': 'Buka kas', 'ak.hutang': 'Penjualan hutang',
   'ak.produk': 'Ubah produk', 'ak.produk_baru': 'Produk baru', 'ak.impor': 'Impor produk', 'ak.pengaturan': 'Pengaturan', 'ak.pengguna': 'Pengguna', 'ak.perangkat_baru': 'Perangkat baru', 'ak.bayar_masuk': 'Pembayaran masuk', 'ak.bayar_keluar': 'Bayar pemasok', 'ak.alokasi': 'Alokasi pembayaran', 'ak.rekening': 'Rekening bank', 'ak.keamanan': 'Keamanan',
-  'att.activity': '{n} catatan penting baru', 'att.bukakas': 'Buka kas menunggu persetujuan ({n})', 'att.daily': 'Kirim laporan harian', 'att.bank_recon': 'Rekonsiliasi rekening bulan lalu belum dibuat ({acc}, {m})',
+  'att.activity': '{n} catatan penting baru', 'att.bukakas': 'Buka kas menunggu persetujuan ({n})', 'att.daily': 'Kirim audit harian (belum dikirim hari ini)', 'att.bank_recon': 'Rekonsiliasi rekening bulan lalu belum dibuat ({acc}, {m})',
   'apr.kind_fix': 'Koreksi barang masuk {no}', 'apr.kind_bukakas': 'Buka kas: {name}', 'apr.new_fix': 'Permintaan koreksi barang masuk {no} dari {cashier} →', 'apr.new_bukakas': 'Buka kas {cashier} menunggu persetujuan →',
   'bk.opening': 'Modal awal dihitung', 'bk.last': 'Tutup kas terakhir ({name})', 'bk.open_hint': 'Cek jumlah uang di laci pagi ini dibanding hitungan tutup kas terakhir. Penjualan tidak diblokir.',
   'shift.no_drawer_title': 'Pemilik & manajer menjual tanpa buka kas', 'shift.no_drawer_hint': 'Hanya akun kasir yang membuka kas (aplikasi Khair Kasir). Pembukaan kas setiap pagi masuk ke Persetujuan untuk dicek.',
@@ -9571,7 +9696,8 @@ Object.assign(I18N.id, {
   'set.key_show': 'Tampilkan', 'set.key_hide': 'Sembunyikan', 'set.loc_title': 'Lokasi toko', 'set.loc_hint': 'Dipakai untuk jarak perangkat ke toko. Tekan tombol di bawah saat berada di toko.', 'set.lat': 'Lintang (lat)', 'set.lng': 'Bujur (lng)', 'set.loc_here': 'Pakai lokasi saya sekarang', 'set.loc_got': 'Lokasi diambil (± {acc} m) — tekan Simpan',
   'set.loc_bad': 'Lintang / bujur tidak valid', 'set.req_loc': 'Wajibkan lokasi perangkat untuk kasir & manajer', 'set.req_loc_hint': 'Aplikasi kasir / manajer tidak bisa dipakai sebelum lokasi diizinkan.',
   'set.bank_title': 'Rekening bank toko', 'set.bank_hint': 'Rekening yang dipakai manajer / akuntan untuk semua pembayaran bank. Yang pertama aktif menjadi pilihan awal.', 'set.bank_add': 'Tambah rekening', 'set.bank_name': 'Bank', 'set.bank_no': 'Nomor rekening', 'set.bank_holder': 'Atas nama', 'set.bank_bad': 'Isi nama bank dan nomor rekening (angka saja)',
-  'set.report_title': 'Laporan harian (WhatsApp)', 'set.wa_company': 'WhatsApp toko / perusahaan', 'set.wa_manager': 'WhatsApp manajer', 'set.wa_owner': 'WhatsApp pemilik', 'set.report_time': 'Pengingat kirim laporan (jam)', 'set.report_time_bad': 'Jam tidak valid'
+  'set.report_title': 'Laporan harian (WhatsApp)', 'set.wa_company': 'WhatsApp toko / perusahaan', 'set.wa_manager': 'WhatsApp manajer', 'set.wa_owner': 'WhatsApp pemilik', 'set.report_time': 'Pengingat kirim laporan (jam)', 'set.report_time_bad': 'Jam tidak valid',
+  'set.wa_akuntan': 'WhatsApp akuntan', 'set.report_time_hint': 'Jam ini manajer dan akuntan diingatkan mengirim audit harian (di aplikasi, dan lewat WhatsApp bila API WhatsApp sudah diatur) — selama belum ada yang mengirim.'
 });
 Object.assign(I18N.ar, {
   'nav.koreksi': 'الأخطاء', 'navs.koreksi': 'الأخطاء',
@@ -9590,7 +9716,7 @@ Object.assign(I18N.ar, {
   'ak.masuk': 'بضاعة واردة', 'ak.minta_koreksi': 'طلب تصحيح', 'ak.koreksi_masuk': 'تصحيح وارد', 'ak.harga': 'تغيير سعر', 'ak.minta_harga': 'طلب تغيير سعر', 'ak.keputusan': 'قرار', 'ak.batal': 'إلغاء فاتورة', 'ak.minta_batal': 'طلب إلغاء',
   'ak.stok': 'تسوية مخزون', 'ak.opname': 'جرد', 'ak.minta_opname': 'طلب جرد', 'ak.kemas_ulang': 'إعادة تعبئة', 'ak.biaya': 'مصروف', 'ak.kas': 'إدخال/إخراج نقد', 'ak.tutup_kas': 'إغلاق الصندوق', 'ak.buka_kas': 'فتح الصندوق', 'ak.hutang': 'بيع بالدَّين',
   'ak.produk': 'تعديل منتج', 'ak.produk_baru': 'منتج جديد', 'ak.impor': 'استيراد منتجات', 'ak.pengaturan': 'الإعدادات', 'ak.pengguna': 'المستخدمون', 'ak.perangkat_baru': 'جهاز جديد', 'ak.bayar_masuk': 'دفعة واردة', 'ak.bayar_keluar': 'دفع لمورد', 'ak.alokasi': 'تخصيص دفعة', 'ak.rekening': 'الحساب البنكي', 'ak.keamanan': 'الأمان',
-  'att.activity': '{n} ملاحظات مهمة جديدة', 'att.bukakas': 'فتح صندوق بانتظار الموافقة ({n})', 'att.daily': 'أرسل التقرير اليومي', 'att.bank_recon': 'لم تُنجز مطابقة الحساب البنكي للشهر الماضي ({acc}، {m})',
+  'att.activity': '{n} ملاحظات مهمة جديدة', 'att.bukakas': 'فتح صندوق بانتظار الموافقة ({n})', 'att.daily': 'أرسل ورقة التدقيق اليومي (لم تُرسل اليوم)', 'att.bank_recon': 'لم تُنجز مطابقة الحساب البنكي للشهر الماضي ({acc}، {m})',
   'apr.kind_fix': 'تصحيح وارد {no}', 'apr.kind_bukakas': 'فتح الصندوق: {name}', 'apr.new_fix': 'طلب تصحيح الوارد {no} من {cashier} ←', 'apr.new_bukakas': 'فتح صندوق {cashier} بانتظار الموافقة ←',
   'bk.opening': 'رصيد الافتتاح المعدود', 'bk.last': 'آخر إغلاق ({name})', 'bk.open_hint': 'قارن نقد الدرج صباح اليوم بعدّ آخر إغلاق. البيع غير متوقف.',
   'shift.no_drawer_title': 'المالك والمدير يبيعان دون فتح صندوق', 'shift.no_drawer_hint': 'فتح الصندوق من حساب الكاشير فقط (تطبيق Khair Kasir). يصل فتح الصندوق كل صباح إلى الموافقات للمراجعة.',
@@ -9671,7 +9797,8 @@ Object.assign(I18N.ar, {
   'set.key_show': 'إظهار', 'set.key_hide': 'إخفاء', 'set.loc_title': 'موقع المتجر', 'set.loc_hint': 'يُستخدم لحساب مسافة الأجهزة عن المتجر. اضغط الزر أدناه وأنت في المتجر.', 'set.lat': 'خط العرض', 'set.lng': 'خط الطول', 'set.loc_here': 'استخدم موقعي الآن', 'set.loc_got': 'أُخذ الموقع (± {acc} م) — اضغط حفظ',
   'set.loc_bad': 'إحداثيات غير صالحة', 'set.req_loc': 'إلزام الكاشير والمدير بمشاركة موقع الجهاز', 'set.req_loc_hint': 'لا يُفتح تطبيق الكاشير / المدير قبل السماح بالموقع.',
   'set.bank_title': 'الحساب البنكي للشركة', 'set.bank_hint': 'الحساب الذي يستخدمه المدير / المحاسب لكل المدفوعات البنكية. أول حساب نشط هو الاختيار الافتراضي.', 'set.bank_add': 'إضافة حساب', 'set.bank_name': 'البنك', 'set.bank_no': 'رقم الحساب', 'set.bank_holder': 'باسم', 'set.bank_bad': 'أدخل اسم البنك ورقم الحساب (أرقام فقط)',
-  'set.report_title': 'التقرير اليومي (واتساب)', 'set.wa_company': 'واتساب المتجر / الشركة', 'set.wa_manager': 'واتساب المدير', 'set.wa_owner': 'واتساب المالك', 'set.report_time': 'تذكير إرسال التقرير (الساعة)', 'set.report_time_bad': 'ساعة غير صالحة'
+  'set.report_title': 'التقرير اليومي (واتساب)', 'set.wa_company': 'واتساب المتجر / الشركة', 'set.wa_manager': 'واتساب المدير', 'set.wa_owner': 'واتساب المالك', 'set.report_time': 'تذكير إرسال التقرير (الساعة)', 'set.report_time_bad': 'ساعة غير صالحة',
+  'set.wa_akuntan': 'واتساب المحاسب', 'set.report_time_hint': 'في هذه الساعة يُذكَّر المدير والمحاسب بإرسال ورقة التدقيق اليومي (في التطبيق، وعلى واتساب إذا أُعدّت واجهة واتساب الرسمية) — ما دام لم يرسلها أحد.'
 });
 // v23: supplier pay plan — the manager proposes, the owner authorizes, the manager records the payment.
 Object.assign(I18N.id, {
@@ -10627,7 +10754,7 @@ function stampInputs(root) {
 }
 /** Marks known fields with their rule (forms built before this module). */
 const RULE_FIELDS = { '#pf-name': 'pname', '#pf-sku': 'sku', '#pf-category': 'cat', '#pf-unit': 'unit', '#pf-supplier': 'pname', '#pu-sup': 'pname', '#nu-name': 'name', '[name="c_name"]': 'pname', '[name="c_phone"]': 'phone',
-  '[name="c_email"]': 'email', '#mb-name': 'pname', '#mb-phone': 'phone', '#mb-email': 'email', '#py-ref': 'doc', '#st-wa-company': 'phone', '#st-wa-manager': 'phone', '#st-wa-owner': 'phone', '#st-wa-shop': 'phone', '#st-phone': 'text', '#sp-name': 'pname' };
+  '[name="c_email"]': 'email', '#mb-name': 'pname', '#mb-phone': 'phone', '#mb-email': 'email', '#py-ref': 'doc', '#st-wa-company': 'phone', '#st-wa-manager': 'phone', '#st-wa-akuntan': 'phone', '#st-wa-owner': 'phone', '#st-wa-shop': 'phone', '#st-phone': 'text', '#sp-name': 'pname' };
 const RULE_SEL = Object.keys(RULE_FIELDS).join(',');
 function stampRules(root) {
   const els = $$(RULE_SEL, root); if (root.matches && root.matches(RULE_SEL)) els.push(root);

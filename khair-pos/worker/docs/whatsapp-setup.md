@@ -44,6 +44,21 @@ Each order shows the phone that got its message; tap the cold store's buttons (S
    them, usually within a day) → when the four show APPROVED, "Kirim tes" to your own number.
 9. Tell each cold store the new number, and that they can answer with the buttons (or "pintu N").
 
+## The Audit harian reminder (v79)
+Owner 2026-11-08: «اجعل المدير ووحيه هو من يرسل هذه الورقة الأخيرة. كل يوم إذا تم إرسالها من واحد فيهما لا يرسلها الثاني. إلى الواتساب يجب
+أن يأتي إشعار لهم بإرسالها الساعة 9 بالليل». The same number, token and secrets as above (only `WA_TOKEN`, `WA_PHONE_ID`, `WA_WABA_ID`
+are needed for this; the webhook is not). At the report hour (Pengaturan → Laporan harian → "Pengingat kirim laporan", 21:00 by default)
+the manager and the accountant each get one message while nobody has sent that day's Audit harian:
+
+| Template (Indonesian, UTILITY) | Text | To |
+|---|---|---|
+| `khair_audit_harian` | Halo {{1}}, audit harian Khair Mart tanggal {{2}} belum dikirim. Buka aplikasi Khair Mart: Laporan, Harian, lalu tekan Kirim audit harian. Terima kasih. | the manager (`wa_manager_number`) and the accountant (`wa_akuntan_number`) |
+
+Steps: owner app → Pengaturan → fill "WhatsApp manajer" and "WhatsApp akuntan" → panel "Pengingat WhatsApp audit harian" → "Periksa"
+(API ✓) → "Daftarkan template ke Meta" → when it shows "disetujui Meta", "Kirim tes ke WhatsApp saya" (to "WhatsApp pemilik").
+Cost: at most 2 messages a day (none on a day the paper was sent before the hour) ≈ Rp 25.000 a month. Without the secrets the
+manager's and the accountant's apps still show the reminder at that hour (nothing else changes). Code: `worker/src/audit.js`.
+
 ## Code
 `backend/brad/brad-core.js` (`WA_TEMPLATES`, `waOut`, `waEvent`, `stampOf`), `worker/src/wa.js` (Graph API calls, signature,
 monthly counter `pos_api_usage` api `wa_send`), `worker/src/brad.js` (sending after each step, `wa_admin`, `handleWaWebhook`),
