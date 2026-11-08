@@ -35,7 +35,9 @@ const SEED = `
   const hasLater = db.payments.some(p => p.direction === 'in' && p.pay_date >= M && p.pay_date <= T && allocOf(p).some(a => db.sales.some(s => s.invoice_no === a.ref && inR(s) && s.sale_date < p.pay_date)));
   const debtor = !hasLater && list.find((s, i) => i > 8 && s.sale_date < T && s.status !== 'void' && s.payment_method !== 'campur');
   if (debtor) {
-    const cu = db.customers.find(c => c.id === debtor.customer_id) || db.customers[0];
+    // not Toko Al-Barokah: the demo leaves that customer's newest payment unallocated on purpose (mock.js), which emptied this one
+    const free = c => !/Al-Barokah/.test(c.name);
+    const cu = db.customers.find(c => c.id === debtor.customer_id && free(c)) || db.customers.find(free);
     Object.assign(debtor, { payment_method: 'hutang', paid_amount: 0, debt_amount: debtor.total, customer_id: cu.id, customer_name: cu.name });
     db.payments.push({ id: 990002, pay_id: 'PYLATER01', pay_date: T, pay_time: new Date().toISOString(), direction: 'in', party_type: 'customer', customer_id: cu.id, customer_name: cu.name, supplier: '',
       amount: debtor.total, method: 'tunai', account_id: '', alloc: JSON.stringify([{ ref: debtor.invoice_no, amount: debtor.total }]), cashier: 'Siti', note: '' });

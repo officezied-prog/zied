@@ -67,12 +67,12 @@ test('owner: numbers of a seeded day per method; WhatsApp links to the shop, man
   await expect(page.locator('#dr-wa-company')).toBeVisible();
 });
 
-test('reminder after report_time until sent from this device; the manager sees no profit', async ({ page }) => {
+test('reminder after report_time until the Audit harian is sent (v79); the manager sees no profit', async ({ page }) => {
   await login(page, 'Jihan', '2222', '', { stay: true });
   await editDb(page, `db.settings.report_time = '00:00'; db.settings.wa_shop_number = '6281280002700';`);
   await page.evaluate(() => refreshData(true).then(() => refreshAttention()));
   await page.click('#tb-bell');
-  await expect(page.locator('#bell-att [data-key="daily"]')).toContainText('Kirim laporan harian');
+  await expect(page.locator('#bell-att [data-key="daily"]')).toContainText('Kirim audit harian');
   await page.locator('#bell-att [data-key="daily"]').click();
   await expect(page.locator('#dr-body [data-dr="tunai"]')).toBeVisible();
   await expect(page.locator('#dr-profit')).toHaveCount(0);
@@ -80,11 +80,16 @@ test('reminder after report_time until sent from this device; the manager sees n
   const r = await page.evaluate(() => api('daily_report', { date: today() }));
   expect('profit' in r.report).toBe(false);
   expect(decodeURIComponent(await page.locator('#dr-wa-company').getAttribute('href'))).not.toContain('Laba');
-  // tapping a WhatsApp button marks today's report as sent (stays on this page in the test)
+  // v79: the text report's WhatsApp buttons no longer count — the day's Audit harian does (recorded on the server for the accountant too)
   await page.locator('#dr-wa-company').evaluate(a => { a.addEventListener('click', e => e.preventDefault()); a.click(); });
+  expect(await page.evaluate(() => refreshAttention().then(() => ATT.items.some(i => i.key === 'daily')))).toBe(true);
+  await page.evaluate(() => { navigator.canShare = d => !!(d && d.files && d.files.length); navigator.share = async () => {}; });
+  await page.click('#au-send');
+  await expect(page.locator('#au-by')).toContainText('Sudah dikirim oleh Jihan');
   await page.evaluate(() => refreshAttention());
   await page.click('#tb-bell');
   await expect(page.locator('#bell-att [data-key="daily"]')).toHaveCount(0);
+  expect((await getDb(page)).settings.audit_sent[jktToday()].by).toBe('Jihan');
   await page.keyboard.press('Escape');
   expect((await asUser(page, 'Siti', '1111', 'daily_report', { date: jktToday() })).error).toBe('FORBIDDEN');
   // phone + Arabic
