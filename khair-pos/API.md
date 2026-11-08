@@ -823,3 +823,21 @@ checks shared with the apps' demo: `shared/passkey.js` (`KPasskey`), demo twin `
 cash / transfer / QRIS / card / debt parts, total and count; when the drawer is already closed, also `expected_cash` (− the cash part)
 and `difference` (+ the cash part). Done once per sale (`pos_sales.drawer_undone`). Sales cancelled before v78 were corrected once by the
 Worker (activity line by "Sistem", kind `kas`).
+
+## Audit harian: the manager or the accountant sends it, once a day (v79)
+- `audit_mark` (owner, manager, accountant) `{ date? }` (default today, Jakarta) → `{ audit: { date, by, role, at }, already }`. The
+  first call of a day is kept in setting `audit_sent` (`{ 'YYYY-MM-DD': { by, role, at } }`, the last 40 days) and logged (activity kind
+  `audit_harian`); a later call returns the first sender with `already: true` and changes nothing. `{ date, peek: true }` only reads
+  (`audit: null` while nobody has sent it): the app's evening check, at most every 10 minutes while its reminder shows.
+- `daily_report` also returns `audit` (the day's sender, or `null`).
+- `audit_wa` (owner only, own PIN; handled by the Worker, `src/audit.js`) `{ op }`: `'status'` → `{ on, set: { token, phone, waba },
+  template (APPROVED / PENDING / REJECTED / MISSING / UNKNOWN / null without the secrets), time, recipients: [{ role, name, has_number }],
+  last }`; `'register'` → the template `khair_audit_harian` sent to Meta for review (`templates: [{ name, status }]`, `EXISTS` when it is
+  already there); `'test'` → the template to `wa_owner_number`.
+- The reminder (Worker cron, every 2 minutes): from `report_time` (default 21:00, Jakarta) until midnight, while `audit_sent` has no entry
+  for today and `audit_remind.date` is not today, each active manager / accountant with a number (`wa_manager_number`,
+  `wa_akuntan_number`) gets ONE message `khair_audit_harian` ({{1}} name, {{2}} "08 November 2026"); the day is claimed first in setting
+  `audit_remind`, results kept there and logged for the owner (activity by "Sistem", kind `audit_harian`, `warn` on a missing number or
+  a refusal). It shares the monthly WhatsApp cap `brad_wa_cap` and counter with Khair Order Brad. Without `WA_TOKEN` + `WA_PHONE_ID`
+  nothing is read or sent.
+- Settings key `wa_akuntan_number` (owner's Pengaturan → Laporan harian).

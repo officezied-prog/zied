@@ -11,6 +11,7 @@ import { handleCold } from './cold.js';
 import { handleBrad, handleWaWebhook, handleLalaCron, handleLalaWebhook } from './brad.js';
 import { authGate, credsOf } from './authgate.js';
 import { PASSKEY_OPEN, PASSKEY_ACTIONS, passkeyOpen, passkeyAction, passkeyAfterUserChange } from './passkey.js';
+import { auditReminderTick, auditWaAction } from './audit.js';
 import { withTableCache, QuotaError } from './tablecache.js';
 
 const CORS = {
@@ -218,6 +219,8 @@ export default {
       let response;
       if (route === 'pos' && PASSKEY_ACTIONS.includes(creds.action)) {
         response = await passkeyAction(adapter, text, env); // v77: make / list / remove a passkey (own PIN)
+      } else if (route === 'pos' && creds.action === 'audit_wa') {
+        response = await auditWaAction(adapter, text, env); // v79: the owner's WhatsApp reminder of the Audit harian (status / template / test)
       } else if (path.endsWith('khair-pos-photo')) {
         // v36: the base of the stored-photo links (…/webhook/khair-pos-photo) on this Worker's own host.
         response = await handlePhoto(adapter, text, headers, env.STORE_KEY, env, { base: url.origin + path });
@@ -258,9 +261,13 @@ export default {
   async scheduled(event, env, ctx) {
     if (!env || !env.DB) return;
     const adapter = d1Adapter(env.DB);
-    const job = handleLalaCron(adapter, env)
-      .then((r) => (r && r.synced ? recordUsage(env.DB, adapter.use) : null))
-      .catch(() => { /* tried again in 2 minutes */ });
+    const job = (async () => {
+      let counted = false;
+      try { const r = await handleLalaCron(adapter, env); counted = !!(r && r.synced); } catch (e) { /* tried again in 2 minutes */ }
+      // v79: the evening WhatsApp reminder of the Audit harian (src/audit.js): nothing read or sent without the WhatsApp secrets
+      try { const r = await auditReminderTick(adapter, env); counted = counted || !!(r && (r.sent || r.failed)); } catch (e) { /* tried again in 2 minutes */ }
+      if (counted) await recordUsage(env.DB, adapter.use);
+    })().catch(() => { /* never in the way */ });
     if (ctx && ctx.waitUntil) ctx.waitUntil(job); else await job;
   },
 };

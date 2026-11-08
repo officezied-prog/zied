@@ -3,7 +3,7 @@
 // records — what left the drawer (PEMBAYARAN TUNDA), each cash / transfer / Shopee / EDC receipt, the cash taken to the bank, Zero pagi
 // and Zero malam, the store's and the online income — and one tap shares it as a PDF with the logo (WhatsApp); a computer downloads it.
 const { test, expect } = require('@playwright/test');
-const { jktToday, login, getDb, nav, editDb } = require('./helpers');
+const { jktToday, login, getDb, nav, editDb, openApp, enterKey, staffSession, switchUser, asUser } = require('./helpers');
 
 const NF = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
 const n = v => NF.format(Math.round(v));
@@ -169,4 +169,85 @@ test('a cash sale cancelled after the drawer closed: SEHARUSNYA and SELISIH move
   // the paper shows the corrected drawer
   await openDaily(page, day);
   await expect.poll(seharusnya).toBe(before - cash);
+});
+
+// v79 (owner 2026-11-08: «اجعل المدير ووحيه هو من يرسل هذه الورقة الأخيرة. كل يوم إذا تم إرسالها من واحد فيهما لا يرسلها الثاني. إلى
+// الواتساب يجب أن يأتي إشعار لهم بإرسالها الساعة 9 بالليل»): the manager or the accountant sends it — the first one is kept for the day;
+// the other is told, asked before a second send and no longer reminded; the owner (who receives it) is not reminded.
+const keys = async page => {
+  await page.waitForFunction(() => S.inApp && settings().report_time === '00:00'); // the server's settings are in (not the empty cache)
+  return page.evaluate(() => refreshAttention().then(() => ATT.items.map(i => i.key)));
+};
+const share = page => page.evaluate(() => {
+  window.__shared = 0;
+  navigator.canShare = d => !!(d && d.files && d.files.length);
+  navigator.share = async () => { window.__shared++; };
+});
+test('sent by the manager or the accountant, once a day: the other is told, asked before sending again, not reminded', async ({ page }) => {
+  const day = jktToday(0);
+  await openApp(page);
+  const hash = await page.evaluate(() => KPOS.pinHash('demo', 'Wahyu', '5555'));
+  await editDb(page, `db.users.push({ name: 'Wahyu', role: 'akuntan', pin_hash: arg, active: true }); db.settings.report_time = '00:00'; delete db.settings.audit_sent;`, hash);
+  // the accountant: the hour has come and nobody sent it → reminded
+  await enterKey(page);
+  await staffSession(page, 'Wahyu', '5555');
+  await expect(page.locator('#app')).toBeVisible();
+  expect(await keys(page)).toContain('daily');
+  await openDaily(page, day);
+  await expect(page.locator('#au-by')).toContainText('Belum dikirim hari ini');
+  await share(page);
+  await page.click('#dr-au-send');
+  await expect(page.locator('#au-by')).toContainText('Sudah dikirim oleh Wahyu (Akuntan)');
+  expect(await page.evaluate(() => window.__shared)).toBe(1);
+  const db = await getDb(page);
+  expect(db.settings.audit_sent[day]).toMatchObject({ by: 'Wahyu', role: 'akuntan' });
+  expect(db.activity.some(a => a.kind === 'audit_harian' && a.summary.includes('dikirim oleh Wahyu'))).toBe(true);
+  expect(await keys(page)).not.toContain('daily');
+  // the manager on another phone (nothing remembered here): not reminded, sees who sent it
+  await page.evaluate(() => store.del('daily_sent'));
+  await staffSession(page, 'Jihan', '2222');
+  await expect(page.locator('#app')).toBeVisible();
+  expect(await keys(page)).not.toContain('daily');
+  await openDaily(page, day);
+  await expect(page.locator('#au-by')).toContainText('Sudah dikirim oleh Wahyu');
+  // sending it again is asked first: cancelled → nothing shared
+  await share(page);
+  await page.click('#au-send');
+  await expect(page.locator('.modal')).toContainText('sudah dikirim oleh Wahyu');
+  await page.locator('.modal [data-act="modal-close"]').last().click();
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => window.__shared)).toBe(0);
+  await page.click('#au-send');
+  await page.click('#cf-ok');
+  await expect.poll(() => page.evaluate(() => window.__shared)).toBe(1);
+  expect((await getDb(page)).settings.audit_sent[day].by).toBe('Wahyu'); // the first sender stays
+  // a phone that loaded before the other one sent: the evening check finds it on the server
+  await page.evaluate(() => { S.settings.audit_sent = {}; store.set('daily_sent', ''); AUP.at = 0; });
+  expect(await keys(page)).not.toContain('daily');
+  expect(await page.evaluate(() => settings().audit_sent[today()].by)).toBe('Wahyu');
+  // a cashier cannot mark it; the owner cannot be reminded
+  expect((await asUser(page, 'Siti', '1111', 'audit_mark', { date: day })).error).toBe('FORBIDDEN');
+  await switchUser(page, 'Pemilik', '1234');
+  expect(await page.evaluate(() => { S.settings.audit_sent = {}; store.set('daily_sent', ''); return [S.role, dailyReminderDue()]; })).toEqual(['owner', false]);
+});
+
+test('owner settings: the accountant\'s WhatsApp number and the WhatsApp reminder panel (off in the demo)', async ({ page }) => {
+  await openApp(page);
+  const hash = await page.evaluate(() => KPOS.pinHash('demo', 'Wahyu', '5555'));
+  await editDb(page, `db.users.push({ name: 'Wahyu', role: 'akuntan', pin_hash: arg, active: true });`, hash);
+  await login(page, 'Pemilik', '1234', '', { stay: true });
+  await nav(page, 'settings');
+  await page.fill('#st-wa-akuntan', '0812 3456 7890');
+  await page.locator('#st-report [data-act="set-save-report"]').click();
+  await expect.poll(async () => (await getDb(page)).settings.wa_akuntan_number).toBe('6281234567890');
+  const p = page.locator('#st-auwa');
+  await expect(p.locator('[data-auwa="api"]')).toContainText('belum diatur');
+  await expect(p.locator('[data-auwa="time"]')).toContainText('WIB');
+  await expect(p.locator('[data-auwa="to"]')).toContainText('Akuntan Wahyu');
+  await expect(p.locator('[data-auwa="to"]')).toContainText('Manajer Jihan');
+  await expect(p).toContainText('WA_TOKEN');
+  // only the owner
+  expect((await asUser(page, 'Jihan', '2222', 'audit_wa', { op: 'status' })).error).toBe('FORBIDDEN');
+  await page.evaluate(() => setLang('ar'));
+  await expect(page.locator('#st-auwa')).toContainText('تذكير واتساب');
 });

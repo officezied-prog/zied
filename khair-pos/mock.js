@@ -1240,7 +1240,7 @@ const MockServer = (() => {
     const prodById = id => db.products.find(p => p.id === Number(id));
     const custById = id => db.customers.find(c => c.id === Number(id));
     if (u.role === 'sales' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper'].includes(action)) throw E('FORBIDDEN', 'Akun sales memakai aplikasi Khair Sales');
-    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'confirm_purchase', 'repack_finish', 'get_sales', 'list_purchases', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank', 'finance_position'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
+    if (u.role === 'akuntan' && !['login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'confirm_purchase', 'repack_finish', 'get_sales', 'list_purchases', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_photos', 'photo_file', 'list_corrections', 'save_product', 'list_approvals', 'decide_approval', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank', 'finance_position', 'audit_mark'].includes(action)) throw E('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
     if (['list_devices', 'list_activity'].includes(action) && !owner) throw E('FORBIDDEN', 'Hanya pemilik');
     if (action !== 'device_ping' && !['scan_purchase', 'scan_exit', 'scan_payment', 'scan_supplier_return', 'scan_expense', 'list_photos', 'photo_file'].includes(action)) deviceTouch(db, u, data.device, false);
 
@@ -2607,7 +2607,28 @@ const MockServer = (() => {
         if (cOk) rep.goods_in.total = sum(notes, g => int(g.total));
         rep.invoice_changes = { count: changesDay.length, list: changesDay };
         const st = db.settings;
-        return { report: rep, send_to: { company: strv(st.wa_shop_number), manager: strv(st.wa_manager_number), owner: strv(st.wa_owner_number) } };
+        return { report: rep, send_to: { company: strv(st.wa_shop_number), manager: strv(st.wa_manager_number), owner: strv(st.wa_owner_number) },
+          audit: (db.settings.audit_sent || {})[day] ? Object.assign({ date: day }, db.settings.audit_sent[day]) : null }; // v79
+      }
+      // v79: the day's Audit harian — the first of the manager / accountant who sends it is kept (process.js audit_mark)
+      case 'audit_mark': {
+        if (!isAppr(u) && u.role !== 'akuntan') throw E('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+        const day = isYmd(data.date) ? data.date : jktDate();
+        const log = Object.assign({}, db.settings.audit_sent || {});
+        if (log[day]) return { audit: Object.assign({ date: day }, log[day]), already: true };
+        if (data.peek === true) return { audit: null, already: false };
+        log[day] ={ by: u.name, role: u.role, at: new Date().toISOString() };
+        const keep = {}; Object.keys(log).sort().slice(-40).forEach(k => { keep[k] = log[k]; });
+        db.settings.audit_sent = keep;
+        logAct(db, u, 'audit_harian', 'Audit harian ' + day + ' dikirim oleh ' + u.name, day, 0, 'info');
+        return { audit: Object.assign({ date: day }, log[day]), already: false };
+      }
+      // v79: the WhatsApp reminder needs Meta's official API on the Worker — never in the demo
+      case 'audit_wa': {
+        needOwner();
+        const ROLE_KEY = { manager: 'wa_manager_number', akuntan: 'wa_akuntan_number' };
+        return { on: false, set: { token: false, phone: false, waba: false }, template: null, time: /^\d{2}:\d{2}$/.test(strv(db.settings.report_time)) ? db.settings.report_time : '21:00',
+          recipients: db.users.filter(x => x.active && ROLE_KEY[x.role]).map(x => ({ role: x.role, name: x.name, has_number: !!strv(db.settings[ROLE_KEY[x.role]]) })), last: null };
       }
       case 'save_purchase': {
         if (!Array.isArray(data.items) || !data.items.length) throw E('INVALID', 'Tidak ada barang');
@@ -2936,7 +2957,7 @@ const MockServer = (() => {
         if (s.exit_photo_min_qty !== undefined) s.exit_photo_min_qty = Math.max(0, num(s.exit_photo_min_qty));
         if (s.wa_shop_number !== undefined) s.wa_shop_number = String(s.wa_shop_number || '').replace(/[^\d+]/g, '').slice(0, 20);
         if (s.survey_voice !== undefined) s.survey_voice = !(s.survey_voice === false || s.survey_voice === 'false');
-        ['wa_manager_number', 'wa_owner_number'].forEach(k => { if (s[k] !== undefined) s[k] = String(s[k] || '').replace(/[^\d+]/g, '').slice(0, 20); });
+        ['wa_manager_number', 'wa_owner_number', 'wa_akuntan_number'].forEach(k => { if (s[k] !== undefined) s[k] = String(s[k] || '').replace(/[^\d+]/g, '').slice(0, 20); });
         if (s.report_time !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(s.report_time))) throw E('INVALID', 'report_time HH:MM');
         if (s.invoice_due_days !== undefined) { const dd = Math.round(num(s.invoice_due_days)); if (!(dd >= 0 && dd <= 120)) throw E('INVALID', 'Jatuh tempo faktur 0–120 hari'); s.invoice_due_days = dd; }
         if (s.akuntan_sees_cost !== undefined) s.akuntan_sees_cost = s.akuntan_sees_cost === true;

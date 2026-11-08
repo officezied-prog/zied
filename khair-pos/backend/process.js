@@ -149,7 +149,7 @@ const role = me.role === 'owner' ? 'owner' : (me.role === 'manager' ? 'manager' 
 // by canDecide — and may register a member (save_customer); the cashier may no longer create members.
 // v63 (owner 2026-10-20: «المدير و المحاسب»): and confirm the packs a repack really made (repack_finish), like the manager.
 // v65 (owner 2026-10-20: «المدير و المحاسب يصادق عليها»): and confirm a goods-in note with how it was paid (confirm_purchase).
-const AKUNTAN_READ = ['confirm_purchase', 'repack_finish', 'login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'list_purchases', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank', 'finance_position']; // v67: + the Keuangan screen (read only)
+const AKUNTAN_READ = ['confirm_purchase', 'repack_finish', 'login', 'bootstrap', 'device_ping', 'change_pin', 'report_tamper', 'get_sales', 'list_purchases', 'get_sale', 'list_returns', 'daily_report', 'party_ledger', 'bank_recon', 'check_approval', 'list_corrections', 'list_approvals', 'decide_approval', 'save_customer', 'save_product', 'list_invoice_changes', 'cancel_repack', 'save_supplier', 'set_transfer_bank', 'finance_position', 'audit_mark']; // v67: + the Keuangan screen (read only); v79: + the Audit harian he sent
 if (role === 'akuntan' && AKUNTAN_READ.indexOf(req.action) < 0) return fail('FORBIDDEN', 'Akun akuntan hanya untuk melihat laporan');
 // v36: report_tamper too — the field app reports a code attempt here (it was refused before, so the rep's account was never locked).
 // v71 security: no POS bootstrap for a rep either (it carried every customer's phone, address and debt; the field app has its own).
@@ -599,6 +599,14 @@ function normPhone(v) {
   else if (d.indexOf('8') === 0) d = '62' + d;
   return d.length >= 9 && d.length <= 15 ? d : '';
 }
+// v79: the Audit harian sent per day ({ 'YYYY-MM-DD': { by, role, at } }) and one day's record (null when nobody sent it yet)
+function auditLog() {
+  const r0 = settingRows.find(function (x) { return x.skey === 'audit_sent'; });
+  let v = {};
+  try { v = r0 ? JSON.parse(r0.svalue) : {}; } catch (e) { v = {}; }
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+}
+function auditOfDay(day) { const a = auditLog()[day]; return a ? Object.assign({ date: day }, a) : null; }
 function readSettings() {
   const s = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
   settingRows.forEach(function (r) {
@@ -759,7 +767,7 @@ function settingsOut() {
   // v71 security: a cashier / rep never receives the cold stores' and drivers' contacts, the Brad / Lalamove / attendance settings,
   // the names of locked accounts, the agreed limits or the shop's coordinates — none is used by their apps.
   if (['owner', 'manager', 'akuntan'].indexOf(role) < 0) Object.keys(st).forEach(function (k) {
-    if (/^(brad_|cold_|att_|lala|wa_admin|wa_log|chat_)/.test(k) || ['locked_accounts', 'limit_agreements', 'akuntan_sees_cost', 'store_lat', 'store_lng', 'street_return_days'].indexOf(k) >= 0) delete st[k];
+    if (/^(brad_|cold_|att_|lala|wa_admin|wa_log|chat_|audit_)/.test(k) || ['locked_accounts', 'limit_agreements', 'akuntan_sees_cost', 'store_lat', 'store_lng', 'street_return_days', 'wa_akuntan_number'].indexOf(k) >= 0) delete st[k]; // v79: + audit_* / the accountant's number
   });
   if (Object.keys(os).length) {
     const o = Object.assign({}, os);
@@ -3783,7 +3791,27 @@ switch (req.action) {
       mismatch: notes.filter(function (g) { return g.match_status === 'tidak_cocok' || g.match_status === 'perlu_cek'; }).length, notes: notes };
     if (noteTotalOk()) rep.goods_in.total = notes.reduce(function (a1, g) { return a1 + money(g.total); }, 0);
     rep.invoice_changes = { count: changesDay.length, list: changesDay };
-    return done({ ok: true, report: rep, send_to: { company: str(st.wa_shop_number), manager: str(st.wa_manager_number), owner: str(st.wa_owner_number) } });
+    return done({ ok: true, report: rep, send_to: { company: str(st.wa_shop_number), manager: str(st.wa_manager_number), owner: str(st.wa_owner_number) },
+      audit: auditOfDay(day) }); // v79: who already sent the day's Audit harian (the manager or the accountant), when
+  }
+
+  // v79 (owner 2026-11-08: «اجعل المدير ووحيه هو من يرسل هذه الورقة الأخيرة. كل يوم إذا تم إرسالها من واحد فيهما لا يرسلها الثاني»): the
+  // day's Audit harian is sent by the manager or the accountant. The first who sends it is kept for that day (setting audit_sent:
+  // { 'YYYY-MM-DD': { by, role, at } }, the last 40 days): the other sees "sudah dikirim oleh …", gets no reminder in the app nor on
+  // WhatsApp at the evening hour (src/audit.js), and is asked before sending it a second time.
+  case 'audit_mark': {
+    if (!canAudit) return fail('FORBIDDEN', 'Hanya pemilik, manajer atau akuntan');
+    const day = isDate(data.date) ? data.date : jkDate();
+    const r0 = settingRows.find(function (x) { return x.skey === 'audit_sent'; });
+    const log = auditLog();
+    if (log[day]) return done({ ok: true, audit: Object.assign({ date: day }, log[day]), already: true });
+    if (data.peek === true) return done({ ok: true, audit: null, already: false }); // the app's evening check: is it still to send?
+    log[day] = { by: me.name, role: role, at: new Date().toISOString() };
+    const keep = {};
+    Object.keys(log).sort().slice(-40).forEach(function (k) { keep[k] = log[k]; });
+    ops.settings.push({ _id: r0 ? r0.id : -1, skey: 'audit_sent', svalue: JSON.stringify(keep) });
+    logAct('audit_harian', 'Audit harian ' + day + ' dikirim oleh ' + me.name, day, 0, 'info');
+    return done({ ok: true, audit: Object.assign({ date: day }, log[day]), already: false });
   }
 
   case 'party_ledger': {
@@ -4199,7 +4227,7 @@ switch (req.action) {
 
   case 'save_settings': {
     const incoming = data.settings && typeof data.settings === 'object' ? data.settings : {};
-    const allowed = ['store_name', 'address', 'phone', 'receipt_footer', 'paper', 'survey_questions', 'survey_auto', 'auto_lock_minutes', 'language', 'exit_photo_min_total', 'exit_photo_min_qty', 'require_purchase_photo', 'require_shift', 'wa_shop_number', 'wa_manager_number', 'wa_owner_number', 'report_time', 'max_discount_pct', 'receipt_send_fee', 'sell_from_shop_only', 'return_owner_min_value', 'return_owner_min_qty', 'return_fee_pct', 'require_return_photo', 'require_carrier', 'member_enabled', 'member_tiers', 'survey_voice', 'store_lat', 'store_lng', 'require_device_location', 'bank_accounts', 'invoice_due_days', 'akuntan_sees_cost', 'opname_every_days'];
+    const allowed = ['store_name', 'address', 'phone', 'receipt_footer', 'paper', 'survey_questions', 'survey_auto', 'auto_lock_minutes', 'language', 'exit_photo_min_total', 'exit_photo_min_qty', 'require_purchase_photo', 'require_shift', 'wa_shop_number', 'wa_manager_number', 'wa_owner_number', 'wa_akuntan_number', 'report_time', 'max_discount_pct', 'receipt_send_fee', 'sell_from_shop_only', 'return_owner_min_value', 'return_owner_min_qty', 'return_fee_pct', 'require_return_photo', 'require_carrier', 'member_enabled', 'member_tiers', 'survey_voice', 'store_lat', 'store_lng', 'require_device_location', 'bank_accounts', 'invoice_due_days', 'akuntan_sees_cost', 'opname_every_days'];
     const byKey = {};
     settingRows.forEach(function (r) { byKey[r.skey] = r; });
     if (AGREED_KEYS.some(function (k) { return incoming[k] !== undefined && JSON.stringify(incoming[k]) !== JSON.stringify(readSettings()[k]); })) {
