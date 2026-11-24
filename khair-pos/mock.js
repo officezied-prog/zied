@@ -3110,7 +3110,7 @@ const MockServer = (() => {
     return attLoad || (attLoad = one('backend/attendance/att-core.js').then(() => one('shared/att-mock.js')));
   }
   // Phase 3 chat: the same core as the server (backend/chat/chat-core.js) + demo handler (shared/chat-mock.js)
-  const CHAT_ACTIONS = ['chat_bootstrap', 'chat_poll', 'chat_send', 'chat_set_retention', 'notice_close']; // v38: + notice_close (Tutup)
+  const CHAT_ACTIONS = ['chat_bootstrap', 'chat_poll', 'chat_send', 'chat_set_retention', 'notice_close', 'assistant_key_status', 'assistant_key_new', 'assistant_key_off']; // v38: + notice_close (Tutup); v80: + the assistant's key
   let chatLoad = null;
   function loadChatMock() {
     if (window.KChat && window.KChatMock) return Promise.resolve();

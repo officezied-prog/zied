@@ -184,6 +184,18 @@ the day claimed first (setting `audit_remind`), the result logged for the owner;
 (same secrets as Brad, not set yet), shares `brad_wa_cap` / the counter. Owner's Pengaturan: "WhatsApp akuntan" + panel "Pengingat
 WhatsApp audit harian" (`audit_wa`: status / "Daftarkan template ke Meta" / "Kirim tes ke WhatsApp saya", owner only). Setup:
 `worker/docs/whatsapp-setup.md`. Tests `worker/test/v79.test.js`, `tests/audit-harian.spec.js` (4th–5th).
+**v80 — the owner reads every chat; his Claude assistant writes into the app (owner 3.8.0, kasir 1.12.0, sales 1.11.0, server; owner
+2026-11-24: «أنا المالك أستطيع أن أرى كل المحادثات … وأنا الوحيد» + «عندما أقول لك أرسل هذا على تطبيق إلى المدير، ترسله مباشرة من هنا»):**
+in Obrolan → Tim the OWNER also gets every private room of the others ('dm:' and the assistant's 'as:'), under "👁 Pantau", read-only
+(`readonly: true`, role `pantau`, name "A ↔ B"; never unread, `chat_send` there → FORBIDDEN); nobody else gains anything; the team hint
+now tells everyone "Semua obrolan kerja dapat dilihat oleh pemilik". **Asisten Khair** = the owner's Claude assistant: no account, no PIN.
+The owner makes its key in Obrolan → Tim → "🤖 Asisten Claude" → "Buat kunci baru" (shown ONCE; only its SHA-256 in setting
+`assistant_key_hash`; "Matikan" stops it at once) — chat actions `assistant_key_status` / `_new` / `_off`, owner only (`worker/src/assistant.js`).
+The assistant calls `POST /webhook/khair-assistant` with `Authorization: Bearer kma_…` (no store key / PIN; a wrong key = 401 after one
+small pos_settings read): `as_team`, `as_send {to: name | 'general', body, cid?}` (≤ 300 a day), `as_read {after?}`. It reaches
+`KChat.core` as a system request (`req.__sys === 'assistant'`, set only by that route; `parseChat` never copies it). A person's room with
+the assistant (`as:<uid>`) appears in his team list once it holds a message, and he replies there. Tests `worker/test/v80.test.js`,
+`tests/v80-owner-watch.spec.js`.
 **History cleaned (2026-10-23; owner chose «ب»: the repo stays public and free):** every branch and the `android` tag were rewritten once
 (git-filter-repo `--sensitive-data-removal`): the owner's full name, the owner's and the manager's personal WhatsApp numbers, the bank
 account, the old notes' store-key hints, the cold stores' agreed rates and a supplier's name are gone from every old version; the owner's

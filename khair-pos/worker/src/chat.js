@@ -4,6 +4,7 @@
 import { execSpecs, makeAccessor, applyOps, Q } from './db.js';
 import { OPS_TABLE_CHAT } from '../tables.js';
 import { runProcessChat } from './generated/process-chat.gen.js';
+import { ASSISTANT_KEY_ACTIONS, assistantKeyAction } from './assistant.js';
 
 // Port of the live "Parse Chat" code node.
 export function parseChat(body) {
@@ -47,6 +48,8 @@ export function _resetChatSchemaForTests() { chatSchemaEnsured = false; }
 export async function handleChat(adapter, body, headers, STORE_KEY) {
   await ensureChatSchema(adapter);
   const req = parseChat(body);
+  // v80: the owner makes / turns off the key of his Claude assistant (src/assistant.js) from the chat panel
+  if (ASSISTANT_KEY_ACTIONS.includes(req.action)) return assistantKeyAction(adapter, req);
   const nodes = await loadChatNodes(adapter, req);
   const $ = makeAccessor(nodes);
   const out = runProcessChat($, STORE_KEY)[0].json; // { response, ops }

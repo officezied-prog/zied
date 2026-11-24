@@ -3,7 +3,7 @@
    local mock DB (kmock.db), so the demo behaves like the real Chat workflow. */
 (function () {
   'use strict';
-  var ACTIONS = ['chat_bootstrap', 'chat_poll', 'chat_send', 'chat_set_retention', 'notice_close']; // v38 (owner 2026-10-12: «نعم زر رد او اغلق مباشر ما في مشكل»)
+  var ACTIONS = ['chat_bootstrap', 'chat_poll', 'chat_send', 'chat_set_retention', 'notice_close', 'assistant_key_status', 'assistant_key_new', 'assistant_key_off']; // v80: + the assistant's key (demo) // v38 (owner 2026-10-12: «نعم زر رد او اغلق مباشر ما في مشكل»)
 
   function back(iso, sec) { return new Date(Date.parse(iso) - sec * 1000).toISOString(); }
 
@@ -34,6 +34,15 @@
     handle: function (db, body, mkErr) {
       if (!window.KChat || typeof window.KChat.core !== 'function') throw mkErr('SERVER', 'Chat core (backend/chat/chat-core.js) not loaded');
       var nowIso = new Date().toISOString();
+      // v80 demo: the owner's assistant key (the real one is made by the Worker, src/assistant.js)
+      if (String(body.action).indexOf('assistant_key_') === 0) {
+        var me = (db.users || []).find(function (u) { return String(u.name).toLowerCase() === String(body.user || '').toLowerCase(); });
+        if (!me || me.role !== 'owner') throw mkErr('FORBIDDEN', 'Hanya pemilik');
+        db.settings = db.settings || {};
+        if (body.action === 'assistant_key_new') { db.settings.assistant_key_at = nowIso; db._dirty = true; return { ok: true, on: true, at: nowIso, key: 'kma_DEMO' + Math.random().toString(36).slice(2, 14) }; }
+        if (body.action === 'assistant_key_off') { db.settings.assistant_key_at = ''; db._dirty = true; return { ok: true, on: false }; }
+        return { ok: true, on: !!db.settings.assistant_key_at, at: db.settings.assistant_key_at || '' };
+      }
       ensureSeed(db, nowIso);
       var seeded = db._chatSeeded === true; delete db._chatSeeded;
       var state = { key_ok: true, users: db.users || [], settings: settingsRows(db), chat: db.chat };

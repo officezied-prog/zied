@@ -841,3 +841,15 @@ Worker (activity line by "Sistem", kind `kas`).
   a refusal). It shares the monthly WhatsApp cap `brad_wa_cap` and counter with Khair Order Brad. Without `WA_TOKEN` + `WA_PHONE_ID`
   nothing is read or sent.
 - Settings key `wa_akuntan_number` (owner's Pengaturan → Laporan harian).
+
+
+## Owner's Claude assistant — `POST /webhook/khair-assistant` (v80)
+Header `Authorization: Bearer kma_…` (the key the owner makes in Obrolan → Tim → "Asisten Claude"; only its SHA-256 is stored in
+setting `assistant_key_hash`). No store key, no PIN. Body `{action, data}`. Wrong / missing / turned-off key → HTTP 401 `BAD_KEY`.
+- `as_team` → `{team: [{name, role}]}` (active accounts)
+- `as_send {to, body, cid?}` → `to` = a person's name (his private room with "Asisten Khair", `as:<uid>`) or `general` (Umum);
+  `{to, message}`; the same `cid` again = `dup: true`; ≤ 300 messages a day (`LIMIT`).
+- `as_read {after?}` → `{messages: [{…message, room}]}` of the assistant's rooms + Umum after that ISO time (default 3 days, ≤ 200).
+Chat actions (owner only, on `/webhook/khair-chat`): `assistant_key_status` → `{on, at}`, `assistant_key_new` → `{key}` (once),
+`assistant_key_off`. The owner's `chat_bootstrap` / `chat_poll` also list every other private room as `{name, role: 'pantau',
+channel, readonly: true}` (read-only).
