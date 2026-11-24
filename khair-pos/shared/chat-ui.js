@@ -25,14 +25,16 @@
   var POLL_OPEN = 4000, POLL_IDLE = 20000;
 
   var T = {
-    id: { title: 'Obrolan', general: 'Umum', owner_mgr: 'Pemilik & Manajer', team: 'Tim', back: 'Kembali ke tim', team_hint: 'Pilih nama untuk obrolan pribadi (hanya kalian berdua).', send: 'Kirim', ph: 'Tulis pesan…',
+    id: { title: 'Obrolan', general: 'Umum', owner_mgr: 'Pemilik & Manajer', team: 'Tim', back: 'Kembali ke tim', team_hint: 'Pilih nama untuk obrolan pribadi. Semua obrolan kerja dapat dilihat oleh pemilik.', send: 'Kirim', ph: 'Tulis pesan…',
       img: 'Gambar', empty: 'Belum ada pesan.', you: 'Anda', close: 'Tutup', today: 'Hari ini', yesterday: 'Kemarin',
       sending: 'mengirim…', failed: 'gagal', big: 'Gambar terlalu besar — coba foto lebih kecil.', retry: 'Coba lagi',
-      locked: 'Akun terkunci.', offline: 'Luring — pesan menunggu.', quote: 'Pemberitahuan' },
-    ar: { title: 'المحادثة', general: 'عام', owner_mgr: 'المالك والمدير', team: 'الفريق', back: 'رجوع إلى الفريق', team_hint: 'اختر اسمًا لمحادثة خاصة (بينكما فقط).', send: 'إرسال', ph: 'اكتب رسالة…',
+      locked: 'Akun terkunci.', offline: 'Luring — pesan menunggu.', quote: 'Pemberitahuan', watch: 'Pantau — semua obrolan (hanya pemilik, hanya baca)', ro: 'Hanya baca: obrolan ini milik dua orang lain.',
+      as_t: 'Asisten Claude', as_on: 'Aktif sejak', as_off: 'Belum aktif. Buat kunci agar Claude bisa mengirim pesan ke tim di sini.', as_new: 'Buat kunci baru', as_stop: 'Matikan', as_copy: 'Salin kunci', as_once: 'Kunci hanya ditampilkan sekali. Tempel di formulir aman Claude, jangan di obrolan.', as_copied: 'Tersalin' },
+    ar: { title: 'المحادثة', general: 'عام', owner_mgr: 'المالك والمدير', team: 'الفريق', back: 'رجوع إلى الفريق', team_hint: 'اختر اسمًا لمحادثة خاصة. كل محادثات العمل يمكن أن يراها مالك المتجر.', send: 'إرسال', ph: 'اكتب رسالة…',
       img: 'صورة', empty: 'لا توجد رسائل بعد.', you: 'أنت', close: 'إغلاق', today: 'اليوم', yesterday: 'أمس',
       sending: 'يُرسل…', failed: 'فشل', big: 'الصورة كبيرة جداً — جرّب صورة أصغر.', retry: 'إعادة',
-      locked: 'الحساب مقفل.', offline: 'غير متصل — الرسالة تنتظر.', quote: 'إشعار' }
+      locked: 'الحساب مقفل.', offline: 'غير متصل — الرسالة تنتظر.', quote: 'إشعار', watch: 'مراقبة — كل المحادثات (للمالك فقط، قراءة فقط)', ro: 'قراءة فقط: هذه المحادثة بين شخصين آخرين.',
+      as_t: 'مساعد Claude', as_on: 'مفعّل منذ', as_off: 'غير مفعّل. أنشئ مفتاحًا ليستطيع Claude إرسال رسائل للفريق هنا.', as_new: 'إنشاء مفتاح جديد', as_stop: 'إيقاف', as_copy: 'نسخ المفتاح', as_once: 'المفتاح يظهر مرة واحدة فقط. ألصقه في النموذج الآمن لـ Claude، لا في المحادثة.', as_copied: 'تم النسخ' }
   };
 
   var S = null; // state while running
@@ -146,7 +148,7 @@
     S.msgs[ch].sort(function (a, b) { return String(a.created_at).localeCompare(String(b.created_at)); });
   }
 
-  function isDm(ch) { return String(ch || '').indexOf('dm:') === 0; }
+  function isDm(ch) { ch = String(ch || ''); return ch.indexOf('dm:') === 0 || ch.indexOf('as:') === 0; } // v80: + the assistant's rooms
   function unreadFor(ch) {
     // v36: a private room this device has not opened yet → the server's count (same poll); an open one → counted here
     if (isDm(ch) && !(ch in S.cursors)) return (S.unreadSrv && S.unreadSrv[ch]) || 0;
@@ -196,7 +198,9 @@
     if (!S.peerBar) return;
     var dm = S.view !== 'team' && isDm(S.cur) && S.peer;
     S.peerBar.style.display = dm ? 'flex' : 'none';
-    S.foot.style.display = S.view === 'team' ? 'none' : '';
+    var ro = !!(dm && S.peer.readonly); // v80: the owner reads the others' rooms, never posts there
+    S.foot.style.display = S.view === 'team' || ro ? 'none' : '';
+    if (ro) note(tr('ro')); else if (S.note && S.note.textContent === tr('ro')) note('');
     if (dm) { S.peerName.textContent = S.peer.name; S.backBtn.textContent = S.lang === 'ar' ? '›' : '‹'; S.backBtn.title = tr('back'); S.backBtn.setAttribute('aria-label', tr('back')); }
   }
 
@@ -213,7 +217,10 @@
       return (unreadFor(b.channel) > 0) - (unreadFor(a.channel) > 0) || String((S.last || {})[b.channel] || '').localeCompare(String((S.last || {})[a.channel] || '')) || a.name.localeCompare(b.name);
     });
     list.appendChild(el('div', 'kchat-hint', tr('team_hint')));
-    team.forEach(function (t) {
+    var mineT = team.filter(function (t) { return !t.readonly; }), watchT = team.filter(function (t) { return t.readonly; });
+    team = mineT.concat(watchT);
+    team.forEach(function (t, i) {
+      if (t.readonly && (i === 0 || !team[i - 1].readonly)) list.appendChild(el('div', 'kchat-hint', '👁 ' + tr('watch'))); // v80
       var b = el('button', 'kchat-member'); b.type = 'button'; b.setAttribute('data-name', t.name);
       b.appendChild(el('span', 'av', (t.name || '?').trim().charAt(0).toUpperCase()));
       b.appendChild(el('span', 'nm', t.name));
@@ -222,6 +229,33 @@
       b.addEventListener('click', function () { openDm(t); });
       list.appendChild(b);
     });
+    if (S.me && S.me.role === 'owner') list.appendChild(assistantCard()); // v80
+  }
+
+  /* v80: the owner's key for his Claude assistant (src/assistant.js on the Worker): status, a new key shown once, off */
+  function assistantCard() {
+    var box = el('div', 'kchat-hint kchat-as'); box.style.cssText = 'margin-top:14px;border-top:1px solid #dde;padding-top:10px';
+    box.appendChild(el('b', null, '🤖 ' + tr('as_t')));
+    var st = el('div', null, '…'), keyBox = el('div'), row = el('div'); row.style.cssText = 'display:flex;gap:8px;margin-top:6px;flex-wrap:wrap';
+    box.appendChild(st); box.appendChild(keyBox); box.appendChild(row);
+    function btn(label, fn) { var b = el('button', 'kchat-ic', label); b.type = 'button'; b.style.cssText = 'width:auto;height:auto;padding:4px 10px;font-size:13px'; b.addEventListener('click', fn); row.appendChild(b); return b; }
+    function show(res) {
+      row.innerHTML = '';
+      st.textContent = res && res.on ? tr('as_on') + ' ' + (res.at ? dayLabel(res.at) + ' ' + timeLabel(res.at) : '') : tr('as_off');
+      btn(tr('as_new'), function () {
+        S.api('assistant_key_new', {}).then(function (r) {
+          keyBox.innerHTML = '';
+          var k = el('div', null, r.key); k.style.cssText = 'font-family:monospace;word-break:break-all;background:#fff;border:1px solid #ccd;padding:6px;margin-top:6px;user-select:all';
+          keyBox.appendChild(k); keyBox.appendChild(el('div', null, tr('as_once')));
+          var c = el('button', 'kchat-ic', tr('as_copy')); c.type = 'button'; c.style.cssText = 'width:auto;height:auto;padding:4px 10px;font-size:13px;margin-top:4px';
+          c.addEventListener('click', function () { try { navigator.clipboard.writeText(r.key).then(function () { c.textContent = tr('as_copied'); }); } catch (e) { } });
+          keyBox.appendChild(c); show(r);
+        }).catch(function () { st.textContent = tr('failed'); });
+      });
+      if (res && res.on) btn(tr('as_stop'), function () { S.api('assistant_key_off', {}).then(function (r) { keyBox.innerHTML = ''; show(r); }); });
+    }
+    S.api('assistant_key_status', {}).then(show).catch(function () { st.textContent = tr('failed'); });
+    return box;
   }
 
   function renderList(keepScroll) {
@@ -426,7 +460,7 @@
     // v36: open a private room with a team member by name (used by the apps and the tests)
     openWith: function (name) { if (!S) return false; var t = (S.team || []).find(function (x) { return x.name === name; }); if (!t) return false; if (!S.openState) open(); openDm(t); return true; },
     // v38: the people this user can write to privately ([{name, role, channel}]) — names for the reply picker
-    team: function () { return S ? (S.team || []).map(function (t) { return { name: t.name, role: t.role, channel: t.channel }; }) : []; },
+    team: function () { return S ? (S.team || []).filter(function (t) { return !t.readonly; }).map(function (t) { return { name: t.name, role: t.role, channel: t.channel }; }) : []; },
     /** v38: a private message to one team member (a reply to a notice: {body, quote, ref}). Resolves with the server's answer. */
     sendTo: function (name, msg) {
       if (!S) return Promise.reject(Object.assign(new Error('chat not started'), { code: 'NO_SESSION' }));

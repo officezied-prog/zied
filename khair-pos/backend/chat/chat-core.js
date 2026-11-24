@@ -23,7 +23,16 @@
      room: nobody can post or read it through chat_send / the rooms; append-only like every message).
    - The user's notice state {v, closed:{id:at}, replied:{id:{at,to}}} is computed from those rows + his own messages
      carrying a ref, and rides on chat_bootstrap always and on chat_poll only when data.notice_v differs (no new polling,
-     no settings row, so nothing leaks to other users and two devices never overwrite each other). */
+     no settings row, so nothing leaks to other users and two devices never overwrite each other).
+   v80 (owner 2026-11-24: «أنا المالك أستطيع أن أرى كل المحادثات … وأنا الوحيد» + «عندما أقول لك أرسل هذا على تطبيق إلى المدير، ترسله
+   مباشرة من هنا»):
+   - The OWNER reads every private room of the others ('dm:' and 'as:') as a read-only "pantau" entry in his team list
+     ({name:'A ↔ B', role:'pantau', readonly:true}); he never posts there, and nobody else gains anything.
+   - 'as:<uid>' = the room between "Asisten Khair" (the owner's Claude assistant, no account, no PIN) and one user. It appears in
+     that user's team list once it holds a message; the user replies there like in any private room.
+   - The assistant itself reaches the core only through the Worker's /webhook/khair-assistant (a key the owner makes in the
+     chat panel; only its SHA-256 is stored) as a system request (req.__sys === 'assistant', set by the Worker alone — the
+     public chat parser never copies it): as_team, as_send {to: name | 'general', body}, as_read {after}. */
 var KChat = (function () {
   'use strict';
   var CHANNELS = ['general', 'owner_mgr'];
@@ -54,6 +63,31 @@ var KChat = (function () {
     return (state.users || []).filter(function (u) { return isActive(u) && str(u.name) && ALL_ROLES.indexOf(str(u.role)) >= 0 && norm(u.name) !== norm(meRow.name); })
       .map(function (u) { return { name: str(u.name), role: str(u.role), channel: dmChannel(meRow, u) }; })
       .sort(function (x, y) { return x.name.localeCompare(y.name); });
+  }
+
+  // ---- v80: the assistant's rooms + the owner's read-only view ----
+  var ASSIST = 'Asisten Khair', ASSIST_DAY_MAX = 300;
+  function asChannel(u) { return 'as:' + uid(u); }
+  function isPrivRoom(ch) { ch = str(ch); return ch.indexOf('dm:') === 0 || ch.indexOf('as:') === 0; }
+  /** The name of a room's member id ('3.jihan') from the accounts (renamed / gone → the name part of the id). */
+  function nameOfUid(state, id) {
+    var u = (state.users || []).find(function (x) { return uid(x) === id; });
+    if (u) return str(u.name);
+    var p = id.indexOf('.'); return (p >= 0 ? id.slice(p + 1) : id).replace(/_/g, ' ');
+  }
+  function roomLabel(state, ch) {
+    ch = str(ch);
+    if (ch.indexOf('as:') === 0) return ASSIST + ' ↔ ' + nameOfUid(state, ch.slice(3));
+    return ch.slice(3).split('|').map(function (id) { return nameOfUid(state, id); }).join(' ↔ ');
+  }
+  /** The owner's read-only entries: every private room with a message that is not his own. */
+  function watchFor(state, msgs, own) {
+    var seen = {}, outw = [];
+    msgs.forEach(function (m) {
+      var ch = str(m.channel); if (!isPrivRoom(ch) || own[ch] || seen[ch]) return;
+      seen[ch] = true; outw.push({ name: roomLabel(state, ch), role: 'pantau', channel: ch, readonly: true });
+    });
+    return outw.sort(function (x, y) { return x.name.localeCompare(y.name); });
   }
 
   function settingsMap(rows) { var m = {}; (rows || []).forEach(function (r) { if (r && r.skey !== undefined && r.skey !== null) m[r.skey] = r.svalue; }); return m; }
@@ -142,12 +176,19 @@ var KChat = (function () {
 
   function core(state, req, nowIso) {
     var nowMs = Date.parse(nowIso); if (!isFinite(nowMs)) nowMs = Date.now();
+    if (req && req.__sys === 'assistant') return assistantCore(state, req, nowIso, nowMs); // v80: set by the Worker only
     var a = auth(state, req, nowMs);
     if (a.err) return a.err;
     var role = a.role, name = a.name, data = (req.data && typeof req.data === 'object') ? req.data : {};
     var chans = channelsFor(role), action = str(req.action);
-    var team = teamFor(state, a.row), dms = team.map(function (t) { return t.channel; });
+    var team = teamFor(state, a.row);
+    // v80: my room with the assistant, once it holds a message
+    var myAs = asChannel(a.row), all0 = activeMsgs(state, nowMs);
+    if (all0.some(function (m) { return str(m.channel) === myAs; })) team.push({ name: ASSIST, role: 'asisten', channel: myAs });
+    var dms = team.map(function (t) { return t.channel; });
     var myRooms = {}; chans.concat(dms).forEach(function (ch) { myRooms[ch] = true; });
+    // v80: the owner reads the others' private rooms (never posts there)
+    var watch = role === 'owner' ? watchFor(state, all0, myRooms) : [], watched = watch.map(function (t) { return t.channel; });
 
     if (action === 'chat_bootstrap' || action === 'chat_poll') {
       var msgs = activeMsgs(state, nowMs);
@@ -159,17 +200,20 @@ var KChat = (function () {
         messages[ch] = channelMessages(msgs, ch, after);
       });
       // v36: the private rooms the app has open (a key in cursors) — never a room I am not in
-      dms.forEach(function (ch) { if (typeof cursors[ch] === 'string') messages[ch] = channelMessages(msgs, ch, action === 'chat_poll' ? cursors[ch] : ''); });
+      dms.concat(watched).forEach(function (ch) { if (typeof cursors[ch] === 'string') messages[ch] = channelMessages(msgs, ch, action === 'chat_poll' ? cursors[ch] : ''); });
       // v36: unread per room (messages from others after what this device last read) + the last message time per room
       var mine = {}; chans.concat(dms).forEach(function (ch) { mine[ch] = true; });
       var unread = {}, last = {}, meN = norm(name);
+      var wset = {}; watched.forEach(function (ch) { wset[ch] = true; });
       msgs.forEach(function (m) {
-        var ch = str(m.channel); if (!mine[ch]) return;
+        var ch = str(m.channel);
+        if (wset[ch]) { var at0 = str(m.created_at); if (at0 > (last[ch] || '')) last[ch] = at0; return; } // v80: shown, never "unread"
+        if (!mine[ch]) return;
         var at = str(m.created_at); if (at > (last[ch] || '')) last[ch] = at;
         if (norm(m.from_user || m.from_name) !== meN && at > (typeof seen[ch] === 'string' ? seen[ch] : '')) unread[ch] = (unread[ch] || 0) + 1;
       });
       var resp = { ok: true, me: { name: name, role: role }, channels: chans, retention_days: retentionDays(state), messages: messages,
-        team: team, unread: unread, last: last, now: nowIso };
+        team: team.concat(watch), unread: unread, last: last, now: nowIso };
       // v38: my notice state — always on bootstrap, on a poll only when it changed since what this device holds
       var ns = noticeState(msgs, a.row, myRooms, team, nowMs);
       if (action === 'chat_bootstrap' || (data.notice_v !== undefined && str(data.notice_v) !== ns.v)) resp.notices = ns;
@@ -178,7 +222,8 @@ var KChat = (function () {
 
     if (action === 'chat_send') {
       var ch = str(data.channel) || 'general';
-      var isDm = ch.indexOf('dm:') === 0;
+      var isDm = isPrivRoom(ch);
+      if (isDm && watched.indexOf(ch) >= 0) return fail('FORBIDDEN', 'Obrolan ini hanya bisa dibaca oleh pemilik'); // v80
       if (!isDm && CHANNELS.indexOf(ch) < 0) return fail('INVALID', 'Saluran tidak dikenal');
       if (isDm ? dms.indexOf(ch) < 0 : !canSee(role, ch)) return fail('FORBIDDEN', 'Anda tidak boleh di saluran ini');
       var body = cleanText(data.body, MSG_MAX).replace(/[ \t]+$/gm, '').replace(/\n{4,}/g, '\n\n\n').trim();
@@ -231,6 +276,46 @@ var KChat = (function () {
     return fail('UNKNOWN', 'Aksi tidak dikenal: ' + action);
   }
 
-  return { core: core, channelsFor: channelsFor, dmChannel: dmChannel, noticeChannel: noticeChannel, CHANNELS: CHANNELS, MSG_MAX: MSG_MAX, IMG_MAX: IMG_MAX, PAGE: PAGE };
+  /* v80: the owner's assistant (Claude) — reached only through the Worker's /webhook/khair-assistant with the owner's key. */
+  function assistantCore(state, req, nowIso, nowMs) {
+    var data = (req.data && typeof req.data === 'object') ? req.data : {}, action = str(req.action);
+    var users = (state.users || []).filter(function (u) { return isActive(u) && str(u.name) && ALL_ROLES.indexOf(str(u.role)) >= 0; });
+    if (action === 'as_team') {
+      return { response: { ok: true, team: users.map(function (u) { return { name: str(u.name), role: str(u.role) }; }) }, writes: [] };
+    }
+    if (action === 'as_send') {
+      var to = str(data.to).trim(), ch, toName;
+      if (norm(to) === 'general' || norm(to) === 'umum') { ch = 'general'; toName = 'Umum'; }
+      else {
+        var u = users.find(function (x) { return norm(x.name) === norm(to); });
+        if (!u) return { response: { ok: false, error: 'NOT_FOUND', message: 'Nama tidak ditemukan', team: users.map(function (x) { return str(x.name); }) }, writes: [] };
+        ch = asChannel(u); toName = str(u.name);
+      }
+      var body = cleanText(data.body, MSG_MAX).replace(/[ \t]+$/gm, '').replace(/\n{4,}/g, '\n\n\n').trim();
+      if (!body) return fail('INVALID', 'Pesan kosong');
+      var today = nowIso.slice(0, 10);
+      var sentToday = (state.chat || []).filter(function (m) { return str(m.from_role) === 'asisten' && str(m.created_at).slice(0, 10) === today; }).length;
+      if (sentToday >= ASSIST_DAY_MAX) return fail('LIMIT', 'Batas pesan asisten hari ini tercapai');
+      var cid = cleanText(data.cid, 40).replace(/[^A-Za-z0-9_.\-]/g, '');
+      var dup = cid ? (state.chat || []).find(function (m) { return str(m.cid) === cid && str(m.from_role) === 'asisten'; }) : null;
+      if (dup) return { response: { ok: true, to: toName, message: out(dup), dup: true }, writes: [] };
+      if (!cid || (state.chat || []).some(function (m) { return str(m.cid) === cid; })) cid = 'as' + nowMs + '-' + Math.floor(Math.random() * 1e9).toString(36);
+      var row = { channel: ch, cid: cid, from_user: ASSIST, from_name: ASSIST, from_role: 'asisten', body: body, image: '', created_at: nowIso, deleted: false };
+      return { response: { ok: true, to: toName, message: out(row) }, writes: [{ table: 'chat', row: row }] };
+    }
+    if (action === 'as_read') {
+      var after = str(data.after) || new Date(nowMs - 3 * 86400000).toISOString();
+      var rows = sortMsgs(activeMsgs(state, nowMs).filter(function (m) {
+        var c = str(m.channel); return (c.indexOf('as:') === 0 || c === 'general') && str(m.created_at) > after;
+      }));
+      if (rows.length > 200) rows = rows.slice(rows.length - 200);
+      return { response: { ok: true, messages: rows.map(function (m) {
+        var o = out(m); o.room = str(m.channel) === 'general' ? 'Umum' : roomLabel(state, m.channel); return o;
+      }), now: nowIso }, writes: [] };
+    }
+    return fail('UNKNOWN', 'Aksi tidak dikenal: ' + action);
+  }
+
+  return { core: core, asChannel: asChannel, ASSIST: ASSIST, channelsFor: channelsFor, dmChannel: dmChannel, noticeChannel: noticeChannel, CHANNELS: CHANNELS, MSG_MAX: MSG_MAX, IMG_MAX: IMG_MAX, PAGE: PAGE };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = KChat;

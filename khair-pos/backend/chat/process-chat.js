@@ -15,7 +15,7 @@ var state = {
   settings: rowsOf('Get Settings', function (r) { return r.skey !== undefined && r.skey !== null && r.skey !== ''; }),
   chat: rowsOf('Get Chat', function (r) { return r.channel || r.cid || r.created_at; })
 };
-var result = KChat.core(state, { action: req.action, user: req.user, pin_hash: req.pin_hash, data: req.data || {} }, new Date().toISOString());
+var result = KChat.core(state, { action: req.action, user: req.user, pin_hash: req.pin_hash, data: req.data || {}, __sys: req.__sys }, new Date().toISOString());
 var ops = { chat: [], settings: [] };
 (result.writes || []).forEach(function (w) {
   var row = {}; Object.keys(w.row).forEach(function (k) { row[k] = w.row[k]; });

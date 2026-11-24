@@ -13,6 +13,7 @@ import { authGate, credsOf } from './authgate.js';
 import { PASSKEY_OPEN, PASSKEY_ACTIONS, passkeyOpen, passkeyAction, passkeyAfterUserChange } from './passkey.js';
 import { auditReminderTick, auditWaAction } from './audit.js';
 import { withTableCache, QuotaError } from './tablecache.js';
+import { handleAssistant } from './assistant.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*', // store-key auth, no cookies → safe
@@ -194,6 +195,21 @@ export default {
       : path.endsWith('khair-att') ? 'att' : path.endsWith('khair-cold') ? 'cold' : path.endsWith('khair-brad') ? 'brad' : 'pos';
     let creds = credsOf(text);
     let viaPasskey = null;
+    // v80: the owner's Claude assistant (src/assistant.js) — its own key in the Authorization header, no store key / PIN
+    if (path.endsWith('khair-assistant')) {
+      try {
+        const answer = await handleAssistant(adapter, text, headers);
+        if (answer && answer.error !== 'BAD_KEY') {
+          const counted = recordUsage(env.DB, adapter.use, new Date(), 'assistant:' + String((credsOf(text) || {}).action || ''));
+          if (ctx && ctx.waitUntil) ctx.waitUntil(counted); else await counted;
+        }
+        return json(answer, answer && answer.error === 'BAD_KEY' ? 401 : 200);
+      } catch (e) {
+        if (e instanceof QuotaError) return json(e.response, 200);
+        try { console.error('khair-pos fault', path, String((e && e.message) || e).slice(0, 300)); } catch (e2) { /* never in the way */ }
+        return json({ ok: false, error: 'SERVER', message: 'Server error' }, 500);
+      }
+    }
     try {
       // v77: the fingerprint / face login (src/passkey.js) — the store key first, then the passkey is the proof; a verified one is
       // from here on the user's own ordinary login, with the PIN hash the server keeps (the gate below lets it through as such).

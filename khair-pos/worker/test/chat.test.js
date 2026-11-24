@@ -108,11 +108,12 @@ test('chat v36: a private room with any team member — stored in pos_chat, visi
   assert.equal(p1.messages[room], undefined);
   const p2 = await handleChat(a, base('chat_poll', 'Wahyu', '4444', { cursors: { [room]: '' } }), {}, KEY);
   assert.equal(p2.messages[room][0].body, 'rahasia kecil');
-  // the owner and the manager never see it, even when asking for it
+  // the manager never sees it, even when asking for it; v80 (owner 2026-11-24): the owner reads it (read-only), neither posts there
   for (const [u, p] of [['Pemilik', '1234'], ['Jihan', '2222']]) {
     const po = await handleChat(a, base('chat_poll', u, p, { cursors: { [room]: '' } }), {}, KEY);
     assert.equal(po.ok, true);
-    assert.ok(!JSON.stringify(po).includes('rahasia kecil'), u + ' must not receive the private room');
+    if (u === 'Pemilik') assert.equal(po.messages[room][0].body, 'rahasia kecil');
+    else assert.ok(!JSON.stringify(po).includes('rahasia kecil'), u + ' must not receive the private room');
     const no = await handleChat(a, base('chat_send', u, p, { channel: room, body: 'x', cid: 'dm-x-' + u }), {}, KEY);
     assert.equal(no.error, 'FORBIDDEN');
   }
